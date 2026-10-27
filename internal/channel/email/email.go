@@ -28,7 +28,7 @@ import (
 	"log/slog"
 	"net"
 	"net/smtp"
-	"slices"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -164,7 +164,7 @@ func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error 
 	if err != nil {
 		return fmt.Errorf("selecting %s: %w", c.cfg.Mailbox, err)
 	}
-	if err := c.checkValidity(ctx, sel); err != nil {
+	if err := c.checkValidity(ctx, sel, func() (imap.UID, error) { return highestUID(client, sel.NumMessages) }); err != nil {
 		return err
 	}
 	for {
@@ -198,8 +198,9 @@ const (
 )
 
 // checkValidity starts from the newest message when the mailbox is new to
-// the agent or was recreated, instead of answering old mail.
-func (c *Channel) checkValidity(ctx context.Context, sel *imap.SelectData) error {
+// the agent or was recreated, instead of answering old mail. highest looks up
+// the newest UID for servers which don't report UIDNEXT.
+func (c *Channel) checkValidity(ctx context.Context, sel *imap.SelectData, highest func() (imap.UID, error)) error {
 	v := strconv.FormatUint(uint64(sel.UIDValidity), 10)
 	cur, ok, err := c.kv.Get(ctx, uidValidityKey)
 	if err != nil {
@@ -208,14 +209,31 @@ func (c *Channel) checkValidity(ctx context.Context, sel *imap.SelectData) error
 	if ok && cur == v {
 		return nil
 	}
-	last := uint32(0)
-	if sel.UIDNext > 0 {
-		last = uint32(sel.UIDNext) - 1
+	var last imap.UID
+	switch {
+	case sel.UIDNext > 0:
+		last = sel.UIDNext - 1
+	case sel.NumMessages > 0:
+		if last, err = highest(); err != nil {
+			return fmt.Errorf("finding the newest message: %w", err)
+		}
 	}
 	if err := c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(uint64(last), 10)); err != nil {
 		return err
 	}
 	return c.kv.Set(ctx, uidValidityKey, v)
+}
+
+// highestUID returns the UID of message n, the newest of the mailbox.
+func highestUID(client *imapclient.Client, n uint32) (imap.UID, error) {
+	msgs, err := client.Fetch(imap.SeqSetNum(n), &imap.FetchOptions{UID: true}).Collect()
+	if err != nil {
+		return 0, err
+	}
+	if len(msgs) == 0 {
+		return 0, fmt.Errorf("message %d not found", n)
+	}
+	return msgs[0].UID, nil
 }
 
 func (c *Channel) fetchNew(ctx context.Context, client *imapclient.Client, in chan<- channel.Inbound) error {
@@ -306,14 +324,16 @@ func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
 		subject = ""
 	}
 
+	identity := "mail:" + sender
+	authentic := Authentic(h.Values("Authentication-Results"), c.cfg.TrustedAuthServ, domainOf(sender))
 	in := channel.Inbound{
 		Channel:   c.Name(),
-		MessageID: msgID,
-		Identity:  "mail:" + sender,
+		MessageID: dedupID(identity, msgID, authentic),
+		Identity:  identity,
 		Name:      from[0].Name,
 		Conv:      ConvKey(sender, root, subject),
 		Direct:    true,
-		Authentic: Authentic(h.Values("Authentication-Results"), c.cfg.TrustedAuthServ, domainOf(sender)),
+		Authentic: authentic,
 	}
 	var text string
 	for {
@@ -355,10 +375,35 @@ func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
 	return in, true, nil
 }
 
+// dedupID is the dedup key of a message. The Message-ID is chosen by the
+// sender, so it is scoped to the sender and whether it was authenticated:
+// forged mail can't use up the Message-ID of a genuine one.
+func dedupID(identity, msgID string, authentic bool) string {
+	if !authentic {
+		return "unverified|" + identity + "|" + msgID
+	}
+	return identity + "|" + msgID
+}
+
 // ConvKey identifies an email thread: the correspondent, the thread root and
-// the subject, separated by tabs.
+// the subject without reply and forward prefixes, separated by tabs.
 func ConvKey(addr, root, subject string) channel.ConvKey {
-	return channel.ConvKey(addr + "\t" + root + "\t" + strings.ReplaceAll(subject, "\t", " "))
+	return channel.ConvKey(addr + "\t" + root + "\t" + strings.ReplaceAll(baseSubject(subject), "\t", " "))
+}
+
+// subjectPrefix matches one reply or forward prefix, such as "Re:", "RE[2]:",
+// "Fwd:", the German "AW:" and "WG:" or the Swedish "SV:".
+var subjectPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?|aw|wg|sv)(\[\d+\])?\s*:\s*`)
+
+// baseSubject strips the reply and forward prefixes of a subject.
+func baseSubject(subject string) string {
+	for {
+		loc := subjectPrefix.FindStringIndex(subject)
+		if loc == nil {
+			return strings.TrimSpace(subject)
+		}
+		subject = subject[loc[1]:]
+	}
 }
 
 func parseConv(conv channel.ConvKey) (addr, root, subject string) {
@@ -383,21 +428,23 @@ func Authentic(results []string, trusted, fromDomain string) bool {
 		if !ok || !strings.EqualFold(strings.Fields(id + " x")[0], trusted) {
 			continue
 		}
-		for res := range strings.SplitSeq(rest, ";") {
-			fields := strings.Fields(strings.ToLower(res))
-			if len(fields) == 0 {
+		_, parsed, err := parseAuthResults(r)
+		if err != nil {
+			slog.Warn("email: malformed Authentication-Results of the trusted server", "error", err, "results", rest)
+			return false
+		}
+		for _, res := range parsed {
+			if res.result != "pass" {
 				continue
 			}
-			switch fields[0] {
-			case "dmarc=pass":
-				if slices.Contains(fields[1:], "header.from="+fromDomain) {
+			switch res.method {
+			case "dmarc":
+				if strings.EqualFold(res.props["header.from"], fromDomain) {
 					return true
 				}
-			case "dkim=pass":
-				for _, f := range fields[1:] {
-					if d, ok := strings.CutPrefix(f, "header.d="); ok && aligned(d, fromDomain) {
-						return true
-					}
+			case "dkim":
+				if aligned(strings.ToLower(res.props["header.d"]), fromDomain) {
+					return true
 				}
 			}
 		}
@@ -521,50 +568,15 @@ func writeMessage(w io.Writer, h mail.Header, m channel.Outbound) error {
 }
 
 func (c *Channel) sendSMTP(ctx context.Context, to string, msg []byte) error {
-	host, _, err := net.SplitHostPort(c.cfg.SMTP)
+	client, err := c.dialSMTP(ctx)
 	if err != nil {
-		return fmt.Errorf("email: smtp must be host:port: %w", err)
-	}
-	d := net.Dialer{Timeout: 30 * time.Second}
-	var conn net.Conn
-	if strings.HasSuffix(c.cfg.SMTP, ":465") {
-		conn, err = (&tls.Dialer{NetDialer: &d, Config: &tls.Config{ServerName: host}}).DialContext(ctx, "tcp", c.cfg.SMTP)
-	} else {
-		conn, err = d.DialContext(ctx, "tcp", c.cfg.SMTP)
-	}
-	if err != nil {
-		return fmt.Errorf("email: SMTP: %w", err)
-	}
-	// A stalled server would otherwise block every later reply, which wait
-	// for c.mu.
-	deadline, ok := ctx.Deadline()
-	if !ok {
-		deadline = time.Now().Add(smtpTimeout)
-	}
-	if err := conn.SetDeadline(deadline); err != nil {
-		return errors.Join(fmt.Errorf("email: SMTP: %w", err), conn.Close())
-	}
-	client, err := smtp.NewClient(conn, host)
-	if err != nil {
-		return errors.Join(fmt.Errorf("email: SMTP: %w", err), conn.Close())
+		return err
 	}
 	defer func() {
 		if err := client.Close(); err != nil {
 			slog.Debug("email: closing SMTP", "error", err)
 		}
 	}()
-	_, implicitTLS := conn.(*tls.Conn)
-	switch ok, _ := client.Extension("STARTTLS"); {
-	case ok:
-		if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
-			return fmt.Errorf("email: STARTTLS: %w", err)
-		}
-	case !implicitTLS && !isLoopback(host):
-		return fmt.Errorf("email: %s doesn't offer STARTTLS; refusing to send the password unencrypted", c.cfg.SMTP)
-	}
-	if err := client.Auth(smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, host)); err != nil {
-		return fmt.Errorf("email: SMTP auth: %w", err)
-	}
 	if err := client.Mail(c.cfg.Address); err != nil {
 		return err
 	}
@@ -582,6 +594,50 @@ func (c *Channel) sendSMTP(ctx context.Context, to string, msg []byte) error {
 		return err
 	}
 	return client.Quit()
+}
+
+// dialSMTP connects and logs in to the SMTP server.
+func (c *Channel) dialSMTP(ctx context.Context) (*smtp.Client, error) {
+	host, _, err := net.SplitHostPort(c.cfg.SMTP)
+	if err != nil {
+		return nil, fmt.Errorf("email: smtp must be host:port: %w", err)
+	}
+	d := net.Dialer{Timeout: 30 * time.Second}
+	var conn net.Conn
+	if strings.HasSuffix(c.cfg.SMTP, ":465") {
+		conn, err = (&tls.Dialer{NetDialer: &d, Config: &tls.Config{ServerName: host}}).DialContext(ctx, "tcp", c.cfg.SMTP)
+	} else {
+		conn, err = d.DialContext(ctx, "tcp", c.cfg.SMTP)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("email: SMTP: %w", err)
+	}
+	// A stalled server would otherwise block every later reply, which wait
+	// for c.mu.
+	deadline, ok := ctx.Deadline()
+	if !ok {
+		deadline = time.Now().Add(smtpTimeout)
+	}
+	if err := conn.SetDeadline(deadline); err != nil {
+		return nil, errors.Join(fmt.Errorf("email: SMTP: %w", err), conn.Close())
+	}
+	client, err := smtp.NewClient(conn, host)
+	if err != nil {
+		return nil, errors.Join(fmt.Errorf("email: SMTP: %w", err), conn.Close())
+	}
+	_, implicitTLS := conn.(*tls.Conn)
+	switch ok, _ := client.Extension("STARTTLS"); {
+	case ok:
+		if err := client.StartTLS(&tls.Config{ServerName: host}); err != nil {
+			return nil, errors.Join(fmt.Errorf("email: STARTTLS: %w", err), client.Close())
+		}
+	case !implicitTLS && !isLoopback(host):
+		return nil, errors.Join(fmt.Errorf("email: %s doesn't offer STARTTLS; refusing to send the password unencrypted", c.cfg.SMTP), client.Close())
+	}
+	if err := client.Auth(smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, host)); err != nil {
+		return nil, errors.Join(fmt.Errorf("email: SMTP auth: %w", err), client.Close())
+	}
+	return client, nil
 }
 
 func isLoopback(host string) bool {
