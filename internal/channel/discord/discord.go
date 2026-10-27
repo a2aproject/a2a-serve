@@ -19,6 +19,7 @@ package discord
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -40,6 +41,8 @@ const (
 	maxFile = 20 << 20
 	// catchUpLimit is Discord's page size for message history.
 	catchUpLimit = 50
+	// maxCatchUpPages bounds catching up on a busy channel after a long outage.
+	maxCatchUpPages = 20
 	// convsKey lists the conversations to catch up on after a reconnect.
 	convsKey = "discord:convs"
 )
@@ -169,13 +172,24 @@ func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	convs := slices.Clone(c.convs)
 	c.mu.Unlock()
 	for _, conv := range convs {
-		c.catchUp(s, conv)
+		c.catchUp(s, s.State, conv)
 	}
 }
 
 func lastKey(conv string) string { return "discord:last:" + conv }
 
-func (c *Channel) catchUp(s *discordgo.Session, conv string) {
+// restAPI is the part of the Discord REST API that catching up uses.
+type restAPI interface {
+	threadStarter
+	ChannelMessages(channelID string, limit int, beforeID, afterID, aroundID string, options ...discordgo.RequestOption) ([]*discordgo.Message, error)
+	Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+}
+
+type threadStarter interface {
+	MessageThreadStartComplex(channelID, messageID string, data *discordgo.ThreadStart, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+}
+
+func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
 	ctx := context.Background()
 	last, ok, err := c.kv.Get(ctx, lastKey(conv))
 	if err != nil {
@@ -185,24 +199,59 @@ func (c *Channel) catchUp(s *discordgo.Session, conv string) {
 	if !ok || last == "" {
 		return
 	}
-	msgs, err := s.ChannelMessages(conv, catchUpLimit, "", last, "")
+	msgs, err := missed(s, conv, last)
 	if err != nil {
 		slog.Warn("discord: catching up", "channel", conv, "error", err)
+	}
+	if len(msgs) == 0 {
 		return
 	}
-	if len(msgs) == catchUpLimit {
-		slog.Warn("discord: catching up on the latest messages only; older missed messages are skipped", "channel", conv, "count", catchUpLimit)
+	direct := isDirect(s, st, conv)
+	for _, m := range msgs {
+		c.handleMessage(s, m, direct)
 	}
-	// Messages come newest first.
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.GuildID == "" {
-			if ch, err := s.State.Channel(conv); err == nil {
-				m.GuildID = ch.GuildID
-			}
+}
+
+// missed returns the messages of conv after last, oldest first. On an error
+// it returns the messages read so far.
+func missed(api restAPI, conv, last string) ([]*discordgo.Message, error) {
+	var all []*discordgo.Message
+	for range maxCatchUpPages {
+		page, err := api.ChannelMessages(conv, catchUpLimit, "", last, "")
+		if err != nil {
+			return all, err
 		}
-		c.onMessage(s, &discordgo.MessageCreate{Message: m})
+		slices.SortFunc(page, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) })
+		all = append(all, page...)
+		if len(page) < catchUpLimit {
+			return all, nil
+		}
+		last = page[len(page)-1].ID
 	}
+	slog.Warn("discord: catching up on the oldest missed messages only; newer ones are skipped", "channel", conv, "count", len(all))
+	return all, nil
+}
+
+func compareSnowflakes(a, b string) int {
+	if c := cmp.Compare(len(a), len(b)); c != 0 {
+		return c
+	}
+	return strings.Compare(a, b)
+}
+
+// isDirect reports whether conv is a direct message channel. Messages read
+// over REST have no guild_id and the state may not know the channel yet, so
+// it asks Discord; a channel that can't be found counts as a guild channel,
+// where the bot only answers when mentioned.
+func isDirect(api restAPI, st *discordgo.State, conv string) bool {
+	ch, err := st.Channel(conv)
+	if err != nil {
+		if ch, err = api.Channel(conv); err != nil {
+			slog.Warn("discord: looking up channel", "channel", conv, "error", err)
+			return false
+		}
+	}
+	return ch.Type == discordgo.ChannelTypeDM || ch.Type == discordgo.ChannelTypeGroupDM
 }
 
 // track records the last message of a conversation for catching up.
@@ -237,11 +286,14 @@ func (c *Channel) ownThread(id string) bool {
 }
 
 func (c *Channel) onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
+	c.handleMessage(s, m.Message, m.GuildID == "")
+}
+
+func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bool) {
 	if m.Author == nil || m.Author.Bot || m.Author.ID == c.me.ID {
 		return
 	}
 	text := m.Content
-	direct := m.GuildID == ""
 	// In guild channels the bot answers when mentioned and moves the
 	// conversation into a thread of its own, once the sender is allowed in.
 	newThread := !direct && !c.ownThread(m.ChannelID)
