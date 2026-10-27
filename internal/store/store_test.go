@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 )
 
 func openStore(t *testing.T) *Store {
@@ -323,15 +324,19 @@ func TestSessions(t *testing.T) {
 	if _, ok, err := ss.Get(ctx, "c"); err != nil || ok {
 		t.Fatalf("Get() = %v, %v, want false, nil", ok, err)
 	}
-	if err := ss.Put(ctx, "c", "s1"); err != nil {
-		t.Fatal(err)
+	if err := ss.Put(ctx, "c", a2aacp.Session{ID: "s1"}); err != nil {
+		t.Fatalf("Put() error = %v", err)
 	}
-	if err := ss.Put(ctx, "c", "s2"); err != nil {
-		t.Fatal(err)
+	want := a2aacp.Session{ID: "s2", AgentKey: "k"}
+	if err := ss.Put(ctx, "c", want); err != nil {
+		t.Fatalf("Put() error = %v", err)
 	}
 	got, ok, err := ss.Get(ctx, "c")
-	if err != nil || !ok || got != "s2" {
-		t.Fatalf("Get() = %q, %v, %v, want s2, true, nil", got, ok, err)
+	if err != nil || !ok {
+		t.Fatalf("Get() = %v, %v, want true, nil", ok, err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
 	}
 }
 

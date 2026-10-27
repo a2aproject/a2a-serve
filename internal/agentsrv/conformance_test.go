@@ -71,18 +71,35 @@ func TestConformanceToolProgress(t *testing.T) {
 
 func TestConformanceApprovals(t *testing.T) {
 	t.Parallel()
+	typed := func(reply string) func(*testing.T, *a2a.Task, *approvals.Question) *a2a.Message {
+		return func(_ *testing.T, task *a2a.Task, _ *approvals.Question) *a2a.Message {
+			return userText(reply, string(task.ID), task.ContextID)
+		}
+	}
 	tests := []struct {
-		reply string
-		want  string
+		name   string
+		answer func(*testing.T, *a2a.Task, *approvals.Question) *a2a.Message
+		want   string
 	}{
-		{reply: "approve", want: "Pushed (allow)."},
-		{reply: "always", want: "Pushed (always)."},
-		{reply: "deny", want: "Push denied."},
+		{name: "approve", answer: typed("approve"), want: "Pushed (allow)."},
+		{name: "always", answer: typed("always"), want: "Pushed (always)."},
+		{name: "deny", answer: typed("deny"), want: "Push denied."},
+		{
+			name: "structured input",
+			answer: func(t *testing.T, task *a2a.Task, q *approvals.Question) *a2a.Message {
+				msg, err := approvals.AnswerMessage(task.ID, task.ContextID, q.ID, "once")
+				if err != nil {
+					t.Fatalf("approvals.AnswerMessage() error = %v", err)
+				}
+				return msg
+			},
+			want: "Pushed (allow).",
+		},
 	}
 	ts := startServer(t, serverOpts{})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	for _, tc := range tests {
-		t.Run(tc.reply, func(t *testing.T) {
+		t.Run(tc.name, func(t *testing.T) {
 			task := send(t, c, userText("ask", "", ""))
 			if task.Status.State != a2a.TaskStateInputRequired {
 				t.Fatalf("task state = %s, want input-required", task.Status.State)
@@ -91,7 +108,7 @@ func TestConformanceApprovals(t *testing.T) {
 			if q == nil || q.Type != approvals.TypePermission || len(q.Options) != 3 {
 				t.Fatalf("question = %+v, want a permission question with 3 options", q)
 			}
-			wantResult(t, send(t, c, userText(tc.reply, string(task.ID), task.ContextID)), a2a.TaskStateCompleted, tc.want)
+			wantResult(t, send(t, c, tc.answer(t, task, q)), a2a.TaskStateCompleted, tc.want)
 		})
 	}
 }

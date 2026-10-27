@@ -174,8 +174,11 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 	if rec.Contact != "" {
 		return s.Remote.AnswerRemote(ctx, rec, q, option, p)
 	}
-	msg := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
-	_, err := s.Handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
+	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
+	if err != nil {
+		return err
+	}
+	_, err = s.Handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
 		Message: msg,
 		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
 	})

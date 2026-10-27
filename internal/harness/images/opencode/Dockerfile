@@ -4,7 +4,7 @@
 # mounts the host's a2a binary over this one. The server builds the image with
 # A2A_CLI_VERSION set to the version of the host's a2a CLI.
 FROM golang:1.26-bookworm AS a2a
-ARG A2A_CLI_VERSION=latest
+ARG A2A_CLI_VERSION=v0.3.2-0.20261027071959-4abaf842d69f
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/a2aproject/a2a-cli@${A2A_CLI_VERSION}
 
 FROM node:22-bookworm-slim

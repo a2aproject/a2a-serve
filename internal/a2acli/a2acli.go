@@ -28,6 +28,11 @@ import (
 // Binary is the name of the a2a CLI on PATH.
 const Binary = "a2a"
 
+// PinnedVersion is the a2a CLI module version used when the installed
+// version is unknown or a development build: the first with --unix-socket
+// and credential helpers, and without its own server command.
+const PinnedVersion = "v0.3.2-0.20261027071959-4abaf842d69f"
+
 // Path returns the path of the a2a CLI on PATH.
 func Path() (string, error) {
 	p, err := exec.LookPath(Binary)
@@ -43,25 +48,25 @@ func Skill(ctx context.Context) (string, error) {
 }
 
 // Version returns the version of the installed a2a CLI as a Go module
-// version, such as v0.4.0, or "latest" when it is unknown or a development
-// build.
+// version, such as v0.4.0, or [PinnedVersion] when it is unknown or a
+// development build.
 func Version(ctx context.Context) string {
 	out, err := run(ctx, "version", "-o", "json")
 	if err != nil {
-		return "latest"
+		return PinnedVersion
 	}
 	var info struct {
 		Version string `json:"version"`
 	}
 	if err := json.Unmarshal([]byte(out), &info); err != nil {
-		return "latest"
+		return PinnedVersion
 	}
 	return moduleVersion(info.Version)
 }
 
 func moduleVersion(v string) string {
 	if v == "" || v == "dev" || v == "(devel)" {
-		return "latest"
+		return PinnedVersion
 	}
 	if !strings.HasPrefix(v, "v") {
 		return "v" + v

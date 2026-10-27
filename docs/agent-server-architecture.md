@@ -44,7 +44,7 @@ Code, or any `--command`) into an A2A agent:
 | Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token. | `internal/auth` |
 | A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/relay/api`. Tasks are stored in SQLite. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
 | Router | Runs the messenger channels, maps a conversation to an A2A context, renders streaming answers and approval buttons. | `agentsrv/router.go`, `internal/channel/*` |
-| Executor | `a2aacp` from a2a-go: one ACP session per A2A context, task updates from ACP notifications, permission requests as `hitl` questions. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go` |
+| Executor | `a2aacp` from a2a-go: one ACP session per A2A context, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go` |
 | Approvals | Stores questions, decides who may answer, sends answers to the task here or at another agent, serves `/hitl/<token>`. | `agentsrv/approvals` |
 | Sandbox | `docker run` with the workspace, `state/home` as `/home/agent`, dropped capabilities and limits; or the host with `--sandbox local`. Images are pulled, or built from Dockerfiles in the binary. `harness.Prepare` turns a spec into the command to start. | `internal/harness` |
 | Peers proxy | Serves contacts and nodes to the harness as A2A agents under `/<handle>/<agent>`, guards approvals, watches tasks. Keeps one A2A client per contact. | `agentsrv/agents.go`, `agentsrv/peers.go` |
@@ -112,7 +112,8 @@ removes a node.
    questions don't, because the executor parses them.
 3. The harness is configured to ask before every tool call that changes
    something. `--allow-tools` and `--deny-tools` answer by ACP tool kind;
-   anything else pauses the task in `input-required` with a `hitl` data part.
+   anything else pauses the task in `input-required` with a structured input
+   request.
 4. The owner and approvers get the question with buttons on their
    messengers, or the `/hitl/<token>` page. A member who started the task sees
    `input-required` but can't answer it.

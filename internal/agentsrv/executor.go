@@ -97,14 +97,10 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
 
-	acp, err := a2aacp.NewExecutor(ctx, a2aacp.Config{
-		Command:    prepared.Args,
-		Dir:        mounts[0].Src,
-		Env:        prepared.Env,
-		Stderr:     harnessLog,
-		AllowTools: cfg.Approvals.Allow,
-		DenyTools:  cfg.Approvals.Deny,
-		Sessions:   s.store.Sessions(),
+	agent := a2aacp.Process{Argv: prepared.Args, Dir: mounts[0].Src, Env: prepared.Env, Stderr: harnessLog}
+	acp, err := a2aacp.NewExecutor(ctx, agent, &a2aacp.Config{
+		AutoAnswer:   a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny},
+		SessionStore: s.store.Sessions(),
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", profile.Name(), err), prepared.Stop(ctx))

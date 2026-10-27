@@ -21,9 +21,9 @@ func TestModuleVersion(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{in: "", want: "latest"},
-		{in: "dev", want: "latest"},
-		{in: "(devel)", want: "latest"},
+		{in: "", want: PinnedVersion},
+		{in: "dev", want: PinnedVersion},
+		{in: "(devel)", want: PinnedVersion},
 		{in: "0.4.0", want: "v0.4.0"},
 		{in: "v0.4.0", want: "v0.4.0"},
 		{in: "v0.4.1-0.20261022125340-9a4ea7697c42", want: "v0.4.1-0.20261022125340-9a4ea7697c42"},

@@ -145,15 +145,15 @@ can reach the network, and API keys passed with `--secret` are visible inside it
 ## Approvals
 
 The harness is configured so that every tool call that changes something asks
-first. A tool call pauses the task in `input-required` with a `hitl` data part:
-
-```json
-{"hitl": {"id": "…", "type": "permission", "title": "bash",
-          "options": [{"id": "once"}, {"id": "always"}, {"id": "reject"}]}}
-```
+first. A tool call pauses the task in `input-required` with a request of the
+[Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input),
+which the agent card advertises: a data part with the JSON Schema of the answer,
+an object whose `option` is one of `once`, `always` or `reject`. A `toolCall`
+data part describes the call.
 
 Answer with a message on the same task: the option ID or label, `approve`,
-`deny`, or a data part `{"hitl": {"id": "…", "answer": "once"}}`.
+`deny`, or structured input `{"option": "once"}` tagged with the request ID
+(`structuredinput.NewResponse` in a2a-go).
 
 - The **owner** answers approvals. `--approver pair:anna` adds approvers.
 - A **member** can talk to the agent, but can't approve. When a member's task

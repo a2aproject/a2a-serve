@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
@@ -116,7 +117,10 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 			a2a.NewAgentInterface(baseURL, a2a.TransportProtocolJSONRPC),
 			a2a.NewAgentInterface(baseURL, a2a.TransportProtocolHTTPJSON),
 		},
-		Capabilities:       a2a.AgentCapabilities{Streaming: true},
+		Capabilities: a2a.AgentCapabilities{
+			Streaming:  true,
+			Extensions: []a2a.AgentExtension{structuredinput.NewExtension(structuredinput.Draft202012)},
+		},
 		DefaultInputModes:  []string{"text/plain", "application/octet-stream"},
 		DefaultOutputModes: []string{"text/plain", "application/json"},
 		Skills: []a2a.AgentSkill{{

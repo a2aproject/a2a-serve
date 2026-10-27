@@ -546,8 +546,13 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 			r.reply(ctx, ch, in, "Already answered.")
 			return
 		}
+		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
+		if err != nil {
+			slog.Error("answering question", "question", rec.ID, "error", err)
+			r.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
+			return
+		}
 		r.MarkAnswered(ctx, rec.ID, opt.Label, who)
-		msg := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
 		unlock := r.lockConv(in.Channel, in.Conv)
 		defer unlock()
 		r.stream(ctx, ch, in.Conv, channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg})

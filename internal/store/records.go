@@ -22,6 +22,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 )
 
@@ -31,20 +33,24 @@ type SessionStore struct{ s *Store }
 // Sessions returns the ACP session store.
 func (s *Store) Sessions() SessionStore { return SessionStore{s: s} }
 
+var _ a2aacp.SessionStore = SessionStore{}
+
 // Get returns the ACP session of an A2A context.
-func (ss SessionStore) Get(ctx context.Context, contextID string) (string, bool, error) {
-	var id string
-	err := ss.s.db.QueryRowContext(ctx, `SELECT session_id FROM sessions WHERE context_id = ?`, contextID).Scan(&id)
+func (ss SessionStore) Get(ctx context.Context, contextID string) (a2aacp.Session, bool, error) {
+	var sess a2aacp.Session
+	err := ss.s.db.QueryRowContext(ctx, `SELECT session_id, agent_key FROM sessions WHERE context_id = ?`, contextID).
+		Scan(&sess.ID, &sess.AgentKey)
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", false, nil
+		return a2aacp.Session{}, false, nil
 	}
-	return id, err == nil, err
+	return sess, err == nil, err
 }
 
 // Put records the ACP session of an A2A context.
-func (ss SessionStore) Put(ctx context.Context, contextID, sessionID string) error {
-	_, err := ss.s.db.ExecContext(ctx, `INSERT INTO sessions (context_id, session_id) VALUES (?, ?)
-		ON CONFLICT (context_id) DO UPDATE SET session_id = excluded.session_id`, contextID, sessionID)
+func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Session) error {
+	_, err := ss.s.db.ExecContext(ctx, `INSERT INTO sessions (context_id, session_id, agent_key) VALUES (?, ?, ?)
+		ON CONFLICT (context_id) DO UPDATE SET session_id = excluded.session_id, agent_key = excluded.agent_key`,
+		contextID, sess.ID, sess.AgentKey)
 	return err
 }
 
@@ -486,7 +492,7 @@ type Question struct {
 	// HitlID is the ID the agent gave the question; with Contact and
 	// TaskID it identifies a remote agent's question.
 	HitlID string
-	// Data is the hitl data part of the question.
+	// Data describes the question: its ID, type, title, options and text.
 	Data       map[string]any
 	Created    time.Time
 	AnsweredBy string

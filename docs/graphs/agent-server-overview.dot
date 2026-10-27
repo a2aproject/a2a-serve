@@ -32,7 +32,7 @@ digraph agent_server_overview {
     Router  [label="Router\nchannels, conversations,\napproval buttons"];
     Auth    [label="Auth chain\nchannel link, Tailscale WhoIs,\npairing token -> principal"];
     Handler [label="A2A handler\nJSON-RPC + REST, card,\n/pair, /hitl, /n/<node>, /relay"];
-    Approvals [label="Approvals\nhitl questions"];
+    Approvals [label="Approvals\nstructured input questions"];
     Exec    [label="Executor (a2aacp)\nA2A task <-> ACP turn,\nadds the [a2a agents] line"];
     DB      [label="server.db (SQLite)\ntasks, sessions, tokens, links,\ncontacts, nodes, handles, watches", shape=cylinder, fillcolor="#f4f4f4"];
   }

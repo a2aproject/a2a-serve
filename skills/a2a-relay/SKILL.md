@@ -27,9 +27,9 @@ install that binary another way, then use `a2a-serve` and `a2a` instead of
 `./a2a-serve` and `./a2a` below:
 
 - `a2a-serve`: `go install github.com/a2aproject/a2a-serve@latest`
-- `a2a`: download the archive for your OS and CPU from
-  https://github.com/a2aproject/a2a-cli/releases/latest, extract it and put
-  `a2a` on your PATH; or `brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli && brew install a2a`.
+- `a2a`: `go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261027071959-4abaf842d69f`,
+  then rename the installed `a2a-cli` to `a2a`. Releases don't have credential
+  helpers yet.
 
 With both on your PATH, `a2a serve <command>` is the same as
 `a2a-serve <command>`. If you can't run either, every command below has an

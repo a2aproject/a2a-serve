@@ -18,26 +18,45 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
+	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-func permissionMessage() *a2a.Message {
-	return a2a.NewMessage(a2a.MessageRoleAgent,
-		a2a.NewTextPart("Run git push?"),
-		a2a.NewDataPart(map[string]any{hitlKey: map[string]any{
-			"id": "tool1", "type": TypePermission, "title": "git push",
-			"options": []any{
-				map[string]any{"id": "once", "label": "Allow"},
-				map[string]any{"id": "always", "label": "Always allow"},
-				map[string]any{"id": "reject"},
-			},
-		}}))
+func questionMessage(t *testing.T, id, title string, content *jsonschema.Schema, options ...[2]string) *a2a.Message {
+	t.Helper()
+	optionSchema := &jsonschema.Schema{Type: "string"}
+	for _, o := range options {
+		optionSchema.OneOf = append(optionSchema.OneOf, &jsonschema.Schema{Const: jsonschema.Ptr[any](o[0]), Title: o[1]})
+	}
+	schema := &jsonschema.Schema{Type: "object", Title: title, Properties: map[string]*jsonschema.Schema{"option": optionSchema}}
+	if content != nil {
+		schema.Properties["content"] = content
+	}
+	part, err := structuredinput.NewSchemaPart(id, schema)
+	if err != nil {
+		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
+	}
+	return a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Run git push?"), part)
+}
+
+func permissionMessage(t *testing.T) *a2a.Message {
+	t.Helper()
+	return questionMessage(t, "tool1", "git push", nil, [2]string{"once", "Allow"}, [2]string{"always", "Always allow"}, [2]string{"reject", ""})
 }
 
 func TestFromStatus(t *testing.T) {
 	t.Parallel()
+	inputRequired := func(msg *a2a.Message) a2a.TaskStatus {
+		return a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg}
+	}
+	otherSchema, err := structuredinput.NewSchemaPart("q", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"branch": {Type: "string"}}})
+	if err != nil {
+		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
+	}
 	tests := []struct {
 		name   string
 		status a2a.TaskStatus
@@ -45,12 +64,20 @@ func TestFromStatus(t *testing.T) {
 	}{
 		{
 			name:   "permission",
-			status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage()},
+			status: inputRequired(permissionMessage(t)),
 			want: &Question{ID: "tool1", Type: TypePermission, Title: "git push", Text: "Run git push?",
 				Options: []Option{{ID: "once", Label: "Allow"}, {ID: "always", Label: "Always allow"}, {ID: "reject", Label: "reject"}}},
 		},
-		{name: "working", status: a2a.TaskStatus{State: a2a.TaskStateWorking, Message: permissionMessage()}},
-		{name: "plain input request", status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?"))}},
+		{
+			name: "form",
+			status: inputRequired(questionMessage(t, "elicitation-1", "Pick a branch", &jsonschema.Schema{Type: "object"},
+				[2]string{"accept", "Accept"}, [2]string{"decline", "Decline"})),
+			want: &Question{ID: "elicitation-1", Type: TypeForm, Title: "Pick a branch", Text: "Run git push?",
+				Options: []Option{{ID: "accept", Label: "Accept"}, {ID: "decline", Label: "Decline"}}},
+		},
+		{name: "working", status: a2a.TaskStatus{State: a2a.TaskStateWorking, Message: permissionMessage(t)}},
+		{name: "plain input request", status: inputRequired(a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?")))},
+		{name: "input request without options", status: inputRequired(a2a.NewMessage(a2a.MessageRoleAgent, otherSchema))},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -65,7 +92,7 @@ func TestFromStatus(t *testing.T) {
 
 func TestFromRecordKeepsText(t *testing.T) {
 	t.Parallel()
-	q := FromMessage(permissionMessage())
+	q := FromMessage(permissionMessage(t))
 	rec := store.Question{Data: map[string]any{"id": q.ID, "type": q.Type, "title": q.Title, "options": q.Data["options"], "text": q.Text}}
 	got := FromRecord(rec)
 	if got.Display() != "Run git push?" || len(got.Options) != 3 {
@@ -75,7 +102,7 @@ func TestFromRecordKeepsText(t *testing.T) {
 
 func TestMatch(t *testing.T) {
 	t.Parallel()
-	q := FromMessage(permissionMessage())
+	q := FromMessage(permissionMessage(t))
 	tests := []struct {
 		reply  string
 		want   string
@@ -99,6 +126,37 @@ func TestMatch(t *testing.T) {
 	}
 	if got, want := q.Words(), "approve, always, deny"; got != want {
 		t.Fatalf("Words() = %q, want %q", got, want)
+	}
+}
+
+func TestAnswerMessage(t *testing.T) {
+	t.Parallel()
+	msg, err := AnswerMessage("task", "ctx", "tool1", "once")
+	if err != nil {
+		t.Fatalf("AnswerMessage() error = %v", err)
+	}
+	task := &a2a.Task{ID: "task", ContextID: "ctx", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage(t)}}
+	req, err := structuredinput.PendingRequest(task)
+	if err != nil {
+		t.Fatalf("structuredinput.PendingRequest() error = %v", err)
+	}
+	var p structuredinput.Processor
+	res, err := p.Process(t.Context(), req, msg)
+	if err != nil {
+		t.Fatalf("Processor.Process() error = %v", err)
+	}
+	if !res.Accepted() {
+		t.Fatalf("Processor.Process() outcome = %v, want accepted", res.Outcome)
+	}
+	var got a2aacp.Answer
+	if err := res.Decode(&got); err != nil {
+		t.Fatalf("ProcessorResult.Decode() error = %v", err)
+	}
+	if diff := cmp.Diff(a2aacp.Answer{Option: "once"}, got); diff != "" {
+		t.Fatalf("AnswerMessage() wrong result (-want +got) diff = %s", diff)
+	}
+	if msg.TaskID != "task" || msg.ContextID != "ctx" {
+		t.Fatalf("AnswerMessage() = task %q, context %q, want task, ctx", msg.TaskID, msg.ContextID)
 	}
 }
 

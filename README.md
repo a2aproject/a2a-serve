@@ -20,10 +20,17 @@ a2a plugin set-enabled true   # let `a2a` run a2a-serve as `a2a serve`
 mkdir -p ~/.config/a2a-cli && echo 'credential-helper: a2a-serve credential' >> ~/.config/a2a-cli/config.yaml
 ```
 
-You also need the `a2a` CLI ([installation](https://github.com/a2aproject/a2a-cli#installation)):
-callers use it to send tasks, and harnesses use it to call other agents. The
-server mounts the `a2a` from its `PATH` into Linux sandboxes and builds harness
-images with the same version.
+You also need the `a2a` CLI: callers use it to send tasks, and harnesses use it
+to call other agents. Until a release has `--unix-socket` and credential
+helpers, install this version:
+
+```bash
+go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261027071959-4abaf842d69f
+mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
+```
+
+The server mounts the `a2a` from its `PATH` into Linux sandboxes and builds
+harness images with the same version.
 
 ## Usage
 

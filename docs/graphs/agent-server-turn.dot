@@ -25,7 +25,7 @@ digraph agent_server_turn {
       Exec    [label="Executor (a2aacp)\ncontext -> ACP session\none turn per context at a time"];
       Line    [label="[a2a agents] line\nadded to new prompts,\nkept out of task history", shape=note, fillcolor="#fff7d6"];
     }
-    Hitl    [label="input-required\n{\"hitl\": {id, type: permission,\noptions: once, always, reject}}"];
+    Hitl    [label="input-required\nstructured input request\n{option: once | always | reject}"];
   }
 
   subgraph cluster_sandbox {
@@ -45,6 +45,6 @@ digraph agent_server_turn {
   Rules -> Hitl    [label="8. otherwise ask"];
   Hitl -> Router   [label="9. buttons to approvers;\nmembers see input-required", constraint=false];
   Router -> Approver [constraint=false];
-  Approver -> Handler [label="10. answer on the same task:\noption, approve/deny or hitl data", color="#2e7d32", fontcolor="#2e7d32"];
+  Approver -> Handler [label="10. answer on the same task:\noption, approve/deny or structured input", color="#2e7d32", fontcolor="#2e7d32"];
   Handler -> Exec  [label="11. only owners and approvers\nmay answer", style=dashed, color="#2e7d32", fontcolor="#2e7d32"];
 }

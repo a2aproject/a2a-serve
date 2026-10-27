@@ -3,12 +3,13 @@ module github.com/a2aproject/a2a-serve
 go 1.26.6
 
 require (
-	github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261022125340-9a4ea7697c42
+	github.com/a2aproject/a2a-go/v2 v2.7.1-0.20261026191603-75941345a8c4
 	github.com/bwmarrin/discordgo v0.29.0
 	github.com/emersion/go-imap/v2 v2.0.0-beta.8
 	github.com/emersion/go-message v0.18.2
 	github.com/go-telegram/bot v1.27.0
 	github.com/google/go-cmp v0.7.0
+	github.com/google/jsonschema-go v0.4.3
 	github.com/google/shlex v0.0.0-20191202100458-e7afc7fbc510
 	github.com/hashicorp/mdns v1.0.7
 	github.com/spf13/cobra v1.10.2

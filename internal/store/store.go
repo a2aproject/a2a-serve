@@ -82,6 +82,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV2)
 		return err
 	},
+	// 3: ACP sessions record the key of the agent process which has them.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN agent_key TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
 }
 
 const schemaV1 = `

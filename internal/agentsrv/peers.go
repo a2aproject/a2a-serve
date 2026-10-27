@@ -465,7 +465,11 @@ func (p *Peers) AnswerRemote(ctx context.Context, rec store.Question, q *approva
 	if err != nil {
 		return err
 	}
-	if _, err = t.send(ctx, approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)); err != nil {
+	msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
+	if err != nil {
+		return err
+	}
+	if _, err = t.send(ctx, msg); err != nil {
 		p.forgetClient(rec.Contact)
 	}
 	return err
