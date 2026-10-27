@@ -82,13 +82,18 @@ func ParseNodeToken(token string) (apiBase, nodeID string, ok bool) {
 	if !ok {
 		return "", "", false
 	}
-	parts := strings.Split(rest, ".")
-	if len(parts) != 3 || parts[1] == "" || parts[2] == "" {
+	// Node IDs may contain dots; base64url and the secret don't.
+	enc, rest, ok := strings.Cut(rest, ".")
+	if !ok {
 		return "", "", false
 	}
-	u, err := base64.RawURLEncoding.DecodeString(parts[0])
+	i := strings.LastIndex(rest, ".")
+	if i <= 0 || i == len(rest)-1 {
+		return "", "", false
+	}
+	u, err := base64.RawURLEncoding.DecodeString(enc)
 	if err != nil {
 		return "", "", false
 	}
-	return string(u), parts[1], true
+	return string(u), rest[:i], true
 }
