@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -31,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -55,7 +57,14 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 	if err := dir.Init(); err != nil {
 		return err
 	}
-	logFile, err := openLog(dir.LogPath())
+	// A second start must fail before it touches the running agent's log.
+	if err := checkNotRunning(dir); err != nil {
+		return err
+	}
+	if err := rotateLog(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
+		return err
+	}
+	logFile, err := os.OpenFile(dir.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return err
 	}
@@ -88,18 +97,103 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 	return err
 }
 
-func openLog(path string) (*os.File, error) {
-	if info, err := os.Stat(path); err == nil && info.Size() > maxLogSize {
-		if err := os.Rename(path, path+".1"); err != nil {
-			return nil, err
-		}
+// checkNotRunning fails if an agent server holds the lock of dir. The lock
+// is released at once: the server takes it again when it starts.
+func checkNotRunning(dir agentdir.Dir) error {
+	release, err := fsutil.TryLock(dir.LockPath())
+	if errors.Is(err, fsutil.ErrLocked) {
+		return fmt.Errorf("an agent server is already running in %s (a2a serve status)", dir.Root)
 	}
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	if err != nil {
+		return fmt.Errorf("locking the agent directory: %w", err)
+	}
+	return release()
 }
 
-// ServiceName is the name of the agent's background service.
-func ServiceName(dir agentdir.Dir, cfg *agentdir.Config) string {
-	return "a2a-" + cfg.Name + "-" + dir.ID()
+// rotateLog moves the log at path to path.1 once it is larger than limit. A
+// log this process already writes to through one of writers, as the stdout
+// a detached start or the service manager opened, is copied and truncated
+// instead, since a rename would leave those writes in path.1.
+func rotateLog(path string, limit int64, writers ...*os.File) error {
+	info, err := os.Stat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if info.Size() <= limit {
+		return nil
+	}
+	if !slices.ContainsFunc(writers, func(f *os.File) bool { return sameFile(f, info) }) {
+		return os.Rename(path, path+".1")
+	}
+	return copyTruncate(path, path+".1")
+}
+
+func sameFile(f *os.File, info os.FileInfo) bool {
+	if f == nil {
+		return false
+	}
+	fi, err := f.Stat()
+	return err == nil && os.SameFile(fi, info)
+}
+
+func copyTruncate(src, dst string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, in.Close()) }()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, in); err != nil {
+		return errors.Join(err, out.Close())
+	}
+	if err := out.Close(); err != nil {
+		return err
+	}
+	return os.Truncate(src, 0)
+}
+
+// ServiceName is the name of the agent's background service. Services
+// installed before the name was derived from the directory alone also had
+// the agent name in it; while only such a unit is installed, its name is
+// returned, so that `a2a serve stop --uninstall` removes it.
+func ServiceName(dir agentdir.Dir, _ *agentdir.Config) string {
+	name := serviceName(dir)
+	if service.Installed(name) {
+		return name
+	}
+	if legacy := legacyServices(dir); len(legacy) > 0 {
+		return legacy[0]
+	}
+	return name
+}
+
+// InstalledServices returns the installed services of the agent, legacy
+// ones included.
+func InstalledServices(dir agentdir.Dir) []string {
+	var out []string
+	if name := serviceName(dir); service.Installed(name) {
+		out = append(out, name)
+	}
+	return append(out, legacyServices(dir)...)
+}
+
+func serviceName(dir agentdir.Dir) string { return "a2a-" + dir.ID() }
+
+// legacyServices returns the installed services of dir named
+// a2a-<agent name>-<id>.
+func legacyServices(dir agentdir.Dir) []string {
+	names, err := service.Glob("a2a-*-" + dir.ID())
+	if err != nil {
+		slog.Debug("listing services", "error", err)
+		return nil
+	}
+	return names
 }
 
 // Background starts the agent detached from the terminal, or as a user
@@ -120,6 +214,13 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	if _, err := controlapi.NewClient(dir).Status(ctx); err == nil {
 		return fmt.Errorf("the agent is already running (a2a serve status); stop it first with `a2a serve stop`")
 	}
+	if err := checkNotRunning(dir); err != nil {
+		return err
+	}
+	// The child's stdout is the log, so it is rotated before the child opens it.
+	if err := rotateLog(dir.LogPath(), maxLogSize); err != nil {
+		return err
+	}
 	var offset int64
 	if info, err := os.Stat(dir.LogPath()); err == nil {
 		offset = info.Size()
@@ -129,7 +230,7 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		args = append(args, "--quiet")
 	}
 	u := service.Unit{
-		Name:        ServiceName(dir, cfg),
+		Name:        serviceName(dir),
 		Description: fmt.Sprintf("a2a serve %s (%s)", cfg.Name, dir.Root),
 		Exe:         exe,
 		Args:        args,
@@ -140,6 +241,13 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	var note string
 	alive := func() bool { return true }
 	if asService {
+		// A unit named after the agent's former name would keep starting and
+		// failing on the lock.
+		for _, name := range legacyServices(dir) {
+			if err := service.Uninstall(name); err != nil {
+				return fmt.Errorf("removing the old service %s: %w", name, err)
+			}
+		}
 		if note, err = service.Install(u); err != nil {
 			return err
 		}

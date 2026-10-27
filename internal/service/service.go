@@ -78,6 +78,20 @@ func Detach(u Unit) (<-chan struct{}, error) {
 	return exited, closeErr
 }
 
+// globNames returns the service names of the files matching the glob path,
+// whose base names are prefix+name+suffix.
+func globNames(path, prefix, suffix string) ([]string, error) {
+	files, err := filepath.Glob(path)
+	if err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(files))
+	for _, f := range files {
+		names = append(names, strings.TrimSuffix(strings.TrimPrefix(filepath.Base(f), prefix), suffix))
+	}
+	return names, nil
+}
+
 func run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
