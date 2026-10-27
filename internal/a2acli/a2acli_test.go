@@ -31,8 +31,8 @@ func TestModuleVersion(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.in, func(t *testing.T) {
 			t.Parallel()
-			if got := moduleVersion(tc.in); got != tc.want {
-				t.Fatalf("moduleVersion(%q) = %q, want %q", tc.in, got, tc.want)
+			if got := ModuleVersion(tc.in); got != tc.want {
+				t.Fatalf("ModuleVersion(%q) = %q, want %q", tc.in, got, tc.want)
 			}
 		})
 	}

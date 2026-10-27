@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/doctor"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
@@ -84,7 +85,7 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: level})))
 	slog.Info("starting agent server", "name", cfg.Name, "harness", cfg.Harness, "dir", dir.Root)
-	opts := agentsrv.Options{Dir: dir, Config: cfg, Secrets: secrets, Out: out, HarnessLog: logOut, ImageProgress: out, Credentials: creds}
+	opts := agentsrv.Options{Dir: dir, Config: cfg, Secrets: secrets, Out: out, HarnessLog: logOut, ImageProgress: out, Credentials: creds, SetupProblems: doctor.SetupProblems}
 	if quiet {
 		lw := &logLines{msg: "harness image"}
 		defer lw.flush()

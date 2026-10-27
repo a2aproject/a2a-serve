@@ -61,10 +61,12 @@ func Version(ctx context.Context) string {
 	if err := json.Unmarshal([]byte(out), &info); err != nil {
 		return PinnedVersion
 	}
-	return moduleVersion(info.Version)
+	return ModuleVersion(info.Version)
 }
 
-func moduleVersion(v string) string {
+// ModuleVersion turns the version `a2a version -o json` reports into a Go
+// module version, or [PinnedVersion] for an unknown or development build.
+func ModuleVersion(v string) string {
 	if v == "" || v == "dev" || v == "(devel)" {
 		return PinnedVersion
 	}

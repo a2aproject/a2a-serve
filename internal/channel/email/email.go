@@ -567,6 +567,37 @@ func writeMessage(w io.Writer, h mail.Header, m channel.Outbound) error {
 	return mw.Close()
 }
 
+// Validate implements [channel.Validator]: it logs in to the IMAP and SMTP
+// servers.
+func (c *Channel) Validate(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	client, err := dialIMAP(c.cfg.IMAP, nil)
+	if err != nil {
+		return fmt.Errorf("IMAP %s: %w", c.cfg.IMAP, err)
+	}
+	stop := context.AfterFunc(ctx, func() {
+		if err := client.Close(); err != nil {
+			slog.Debug("email: closing IMAP", "error", err)
+		}
+	})
+	defer stop()
+	if err := client.Login(c.cfg.Username, c.cfg.Password).Wait(); err != nil {
+		return errors.Join(fmt.Errorf("IMAP login: %w", err), client.Close())
+	}
+	if err := client.Logout().Wait(); err != nil {
+		slog.Debug("email: IMAP logout", "error", err)
+	}
+	if err := client.Close(); err != nil {
+		slog.Debug("email: closing IMAP", "error", err)
+	}
+	smtpClient, err := c.dialSMTP(ctx)
+	if err != nil {
+		return err
+	}
+	return smtpClient.Quit()
+}
+
 func (c *Channel) sendSMTP(ctx context.Context, to string, msg []byte) error {
 	client, err := c.dialSMTP(ctx)
 	if err != nil {

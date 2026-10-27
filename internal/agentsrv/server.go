@@ -65,6 +65,9 @@ type Options struct {
 	Credentials *credstore.Store
 	// TelegramServerURL overrides the Telegram Bot API URL, for tests.
 	TelegramServerURL string
+	// SetupProblems, if set, returns the problems of this machine's setup
+	// to print on start, such as an a2a CLI without the credential helper.
+	SetupProblems func(context.Context) []string
 	// Ready is called with the server once it serves requests.
 	Ready func(*Server)
 }
@@ -91,6 +94,7 @@ type Server struct {
 	bridge  harnessBridge
 
 	credentials       *credstore.Store
+	setupProblems     func(context.Context) []string
 	telegramServerURL string
 
 	urlMu      sync.Mutex
@@ -149,6 +153,7 @@ func Run(ctx context.Context, opts Options) error {
 
 		credentials:       opts.Credentials,
 		telegramServerURL: opts.TelegramServerURL,
+		setupProblems:     opts.SetupProblems,
 
 		pairFailures: newFailureLimiter(10, time.Minute),
 	}
@@ -474,7 +479,12 @@ func (s *Server) printSummary(ctx context.Context) error {
 		if err := s.saveLocalOwnerToken(ctx); err != nil {
 			s.logf("! saving an owner token for this machine: %v", err)
 		} else {
-			s.logf("→ call it from this machine: a2a send -a %s \"…\"\n  (%s)", local, credstore.HelperSetup)
+			s.logf("→ call it from this machine: a2a send -a %s \"…\"", local)
+		}
+	}
+	if s.setupProblems != nil {
+		for _, p := range s.setupProblems(ctx) {
+			s.logf("! %s", p)
 		}
 	}
 	return s.router.announce(ctx)

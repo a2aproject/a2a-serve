@@ -1,0 +1,274 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+// Package doctor checks the setup of this machine and of an agent: the a2a
+// CLI and its config, the sandbox, the agent's config and secrets, the
+// running server and its network, and applies the local fixes it can.
+package doctor
+
+import (
+	"bytes"
+	"context"
+	"fmt"
+	"io"
+	"log/slog"
+	"net"
+	"net/http"
+	"os"
+	"os/exec"
+	"strconv"
+	"strings"
+	"time"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/credstore"
+)
+
+// Status is the outcome of a check.
+type Status string
+
+// Check outcomes. Only [StatusFail] makes doctor exit non-zero.
+const (
+	StatusOK   Status = "ok"
+	StatusWarn Status = "warn"
+	StatusFail Status = "fail"
+	StatusSkip Status = "skip"
+)
+
+// Groups of checks.
+const (
+	GroupCLI      = "a2a CLI"
+	GroupSandbox  = "Sandbox"
+	GroupNetwork  = "Network"
+	GroupChannels = "Channels"
+)
+
+// Result is the outcome of one check.
+type Result struct {
+	ID      string `json:"id"`
+	Status  Status `json:"status"`
+	Message string `json:"message"`
+	// Fix is the command, or the action, which fixes a failure or a warning.
+	Fix string `json:"fix"`
+	// Group is the heading the result is listed under.
+	Group string `json:"-"`
+	// Detail explains a failure in the text output.
+	Detail string `json:"-"`
+
+	apply func() (string, error)
+}
+
+// Fixable reports whether --fix can fix the result.
+func (r Result) Fixable() bool {
+	return r.apply != nil && (r.Status == StatusFail || r.Status == StatusWarn)
+}
+
+// Apply applies the local fix of the result and describes what it did.
+func (r Result) Apply() (string, error) {
+	if r.apply == nil {
+		return "", fmt.Errorf("%s has no automatic fix", r.ID)
+	}
+	return r.apply()
+}
+
+// Env is what the checks read from the machine. Nil functions of the
+// optional dependencies skip the checks which need them.
+type Env struct {
+	// Home is the home directory of the a2a CLI config.
+	Home string
+	// Credentials holds the owner token of this machine.
+	Credentials *credstore.Store
+	LookupEnv   func(string) (string, bool)
+	LookPath    func(string) (string, error)
+	Executable  func() (string, error)
+	// Run runs a command and returns its stdout.
+	Run  func(ctx context.Context, name string, args ...string) ([]byte, error)
+	HTTP *http.Client
+	// Status returns the status of the running agent, or
+	// [controlapi.ErrNotRunning].
+	Status func(context.Context, agentdir.Dir) (*controlapi.Status, error)
+	// PortFree reports whether a localhost port can be listened on.
+	PortFree func(port int) bool
+	// ServiceUnit returns the path of the agent's installed service unit,
+	// or "" if none is installed. Optional.
+	ServiceUnit func(agentdir.Dir) (string, error)
+	// ValidateChannel checks the credentials of a channel. Optional.
+	ValidateChannel func(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error
+}
+
+// System returns the environment of this process.
+func System() (Env, error) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return Env{}, fmt.Errorf("resolving home directory: %w", err)
+	}
+	return Env{
+		Home:        home,
+		Credentials: credstore.At(home),
+		LookupEnv:   os.LookupEnv,
+		LookPath:    exec.LookPath,
+		Executable:  os.Executable,
+		Run:         runCommand,
+		HTTP:        &http.Client{Timeout: 5 * time.Second},
+		Status: func(ctx context.Context, d agentdir.Dir) (*controlapi.Status, error) {
+			return controlapi.NewClient(d).Status(ctx)
+		},
+		PortFree: portFree,
+	}, nil
+}
+
+func runCommand(ctx context.Context, name string, args ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	var stderr bytes.Buffer
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		if msg := strings.TrimSpace(stderr.String()); msg != "" {
+			return out, fmt.Errorf("%w: %s", err, msg)
+		}
+		return out, err
+	}
+	return out, nil
+}
+
+func portFree(port int) bool {
+	l, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return false
+	}
+	if err := l.Close(); err != nil {
+		slog.Debug("closing the port probe", "error", err)
+	}
+	return true
+}
+
+// Options select the checks of [Run].
+type Options struct {
+	// Dir is the agent to check, or nil to check only the machine.
+	Dir *agentdir.Dir
+	// Online adds checks which call external services.
+	Online bool
+}
+
+// Run runs the checks of the machine, and of the agent in opts.Dir.
+func Run(ctx context.Context, env Env, opts Options) []Result {
+	results, a2aVersion := cliChecks(ctx, env)
+	var cfg *agentdir.Config
+	var agent []Result
+	if opts.Dir != nil {
+		agent, cfg = agentChecks(ctx, env, *opts.Dir, opts.Online)
+	}
+	results = append(results, sandboxChecks(ctx, env, opts.Dir, cfg, a2aVersion, opts.Online)...)
+	results = append(results, agent...)
+	if cfg != nil {
+		results = append(results, networkChecks(*opts.Dir, cfg)...)
+		if opts.Online {
+			results = append(results, channelChecks(ctx, env, *opts.Dir, cfg)...)
+		}
+	}
+	return results
+}
+
+// CLIChecks runs the offline checks of the a2a CLI and its config.
+func CLIChecks(ctx context.Context, env Env) []Result {
+	results, _ := cliChecks(ctx, env)
+	return results
+}
+
+// SetupProblems returns one line per failed a2a CLI check of this machine,
+// for the server to print on start.
+func SetupProblems(ctx context.Context) []string {
+	env, err := System()
+	if err != nil {
+		return []string{err.Error()}
+	}
+	var out []string
+	for _, r := range CLIChecks(ctx, env) {
+		if r.Status != StatusFail {
+			continue
+		}
+		line := r.Message
+		if r.Fix != "" {
+			line += ": " + r.Fix
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// Failed reports whether any check failed.
+func Failed(results []Result) bool {
+	for _, r := range results {
+		if r.Status == StatusFail {
+			return true
+		}
+	}
+	return false
+}
+
+var symbols = map[Status]string{StatusOK: "✓", StatusWarn: "!", StatusFail: "✗", StatusSkip: "-"}
+
+// Render writes the results as text, one line per check under its group,
+// and a summary.
+func Render(w io.Writer, results []Result) error {
+	var sb strings.Builder
+	group := ""
+	failed, warned := 0, 0
+	for _, r := range results {
+		if r.Group != group {
+			group = r.Group
+			fmt.Fprintln(&sb, group)
+		}
+		switch r.Status {
+		case StatusFail:
+			failed++
+		case StatusWarn:
+			warned++
+		}
+		line := r.Message
+		if r.Status == StatusWarn && r.Fix != "" {
+			line += ": " + r.Fix
+		}
+		fmt.Fprintf(&sb, "  %s %s\n", symbols[r.Status], line)
+		if r.Detail != "" && r.Status != StatusOK {
+			fmt.Fprintf(&sb, "      %s\n", r.Detail)
+		}
+		if r.Status == StatusFail && r.Fix != "" {
+			fmt.Fprintf(&sb, "      fix: %s\n", r.Fix)
+		}
+	}
+	fmt.Fprintln(&sb, summary(failed, warned))
+	_, err := io.WriteString(w, sb.String())
+	return err
+}
+
+func summary(failed, warned int) string {
+	var parts []string
+	if failed > 0 {
+		parts = append(parts, fmt.Sprintf("%d failed", failed))
+	}
+	switch {
+	case warned == 1:
+		parts = append(parts, "1 warning")
+	case warned > 1:
+		parts = append(parts, fmt.Sprintf("%d warnings", warned))
+	}
+	if len(parts) == 0 {
+		return "no problems found"
+	}
+	return strings.Join(parts, ", ")
+}
