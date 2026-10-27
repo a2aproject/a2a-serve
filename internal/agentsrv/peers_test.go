@@ -242,6 +242,9 @@ func TestAgentsURLHandles(t *testing.T) {
 	if diff := cmp.Diff(owner, got); diff != "" {
 		t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
 	}
+	if len(h) != handleLen {
+		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
+	}
 	if _, ok := p.claimsOf(ctx, "unknown"); ok {
 		t.Fatalf("claimsOf(unknown) ok = true, want false")
 	}
@@ -418,5 +421,27 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 	answer.TaskID, answer.ContextID = task.ID, task.ContextID
 	if _, err := client.SendMessage(ctx, &a2a.SendMessageRequest{Message: answer}); err == nil {
 		t.Fatalf("SendMessage() answering an approval error = nil, want error")
+	}
+}
+
+func TestLegacyShortHandleIsReplaced(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	p, ctx := ts.srv.peers, context.Background()
+	claims := callClaims{ContextID: "ctx1", OnBehalfOf: auth.OwnerID}
+	if err := p.store.PutHandle(ctx, store.Handle{Handle: "ab", ContextID: claims.ContextID, OnBehalfOf: claims.OnBehalfOf}); err != nil {
+		t.Fatal(err)
+	}
+
+	h, err := p.handle(ctx, claims)
+	if err != nil {
+		t.Fatalf("handle() error = %v", err)
+	}
+
+	if len(h) != handleLen {
+		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
+	}
+	if _, ok := p.claimsOf(ctx, "ab"); ok {
+		t.Fatalf("claimsOf(legacy handle) ok = true, want false")
 	}
 }

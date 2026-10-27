@@ -114,29 +114,35 @@ type callClaims struct {
 // handleAlphabet avoids characters that are easy to confuse.
 const handleAlphabet = "abcdefghijkmnpqrstuvwxyz23456789"
 
-// handle returns the short handle of the agents URL for c. The same claims
-// keep their handle, also across restarts. A handle is not a secret: only
-// the harness reaches the listener it is used on.
+// handleLen is the length of handles. One harness serves every
+// conversation, so a handle must not be guessable from another one.
+const handleLen = 16
+
+// handle returns the handle of the agents URL for c. The same claims keep
+// their handle, also across restarts. Shorter handles of older versions are
+// replaced.
 func (p *Peers) handle(ctx context.Context, c callClaims) (string, error) {
 	want := store.Handle{ContextID: c.ContextID, OnBehalfOf: c.OnBehalfOf, Hops: c.Hops}
 	p.handleMu.Lock()
 	defer p.handleMu.Unlock()
 	h, err := p.store.HandleFor(ctx, want)
-	if err == nil {
+	switch {
+	case err == nil && len(h.Handle) >= handleLen:
 		return h.Handle, nil
-	}
-	if !errors.Is(err, store.ErrNotFound) {
+	case err == nil:
+		if err := p.store.DeleteHandle(ctx, h.Handle); err != nil {
+			return "", err
+		}
+	case !errors.Is(err, store.ErrNotFound):
 		return "", err
 	}
-	for n := 2; ; n++ {
-		for range 8 {
-			want.Handle = cryptoutil.RandomString(n, handleAlphabet)
-			err := p.store.PutHandle(ctx, want)
-			if errors.Is(err, store.ErrExists) {
-				continue
-			}
-			return want.Handle, err
+	for {
+		want.Handle = cryptoutil.RandomString(handleLen, handleAlphabet)
+		err := p.store.PutHandle(ctx, want)
+		if errors.Is(err, store.ErrExists) {
+			continue
 		}
+		return want.Handle, err
 	}
 }
 
@@ -148,6 +154,9 @@ func (p *Peers) claimsOf(ctx context.Context, name string) (callClaims, bool) {
 	}
 	if err != nil {
 		slog.Error("loading agents URL handle", "error", err)
+		return callClaims{}, false
+	}
+	if len(h.Handle) < handleLen {
 		return callClaims{}, false
 	}
 	return callClaims{ContextID: h.ContextID, OnBehalfOf: h.OnBehalfOf, Hops: h.Hops}, true

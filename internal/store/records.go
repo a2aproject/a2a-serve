@@ -683,6 +683,12 @@ func (s *Store) HandleFor(ctx context.Context, h Handle) (Handle, error) {
 	return s.handle(ctx, `context_id = ? AND on_behalf_of = ? AND hops = ?`, h.ContextID, h.OnBehalfOf, h.Hops)
 }
 
+// DeleteHandle deletes a handle.
+func (s *Store) DeleteHandle(ctx context.Context, handle string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM handles WHERE handle = ?`, handle)
+	return err
+}
+
 func (s *Store) handle(ctx context.Context, where string, args ...any) (Handle, error) {
 	var h Handle
 	err := s.db.QueryRowContext(ctx, `SELECT handle, context_id, on_behalf_of, hops FROM handles WHERE `+where, args...).
