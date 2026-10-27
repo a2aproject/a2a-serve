@@ -202,30 +202,56 @@ func TestHarnessCommandValidation(t *testing.T) {
 	}
 }
 
-func TestSecretReader(t *testing.T) {
-	t.Parallel()
+// pipeWith returns the read end of a pipe which holds text.
+func pipeWith(t *testing.T, text string) *os.File {
+	t.Helper()
 	r, w, err := os.Pipe()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := w.WriteString("123:abc\n"); err != nil {
+	t.Cleanup(func() {
+		if err := r.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	if _, err := w.WriteString(text); err != nil {
 		t.Fatal(err)
 	}
 	if err := w.Close(); err != nil {
 		t.Fatal(err)
 	}
-	sr := &secretReader{in: r}
-	flags := settingsFlags{s: agentdir.Settings{Telegram: "-"}}
-	got, err := flags.settings(sr)
-	if err != nil {
-		t.Fatalf("settings() error = %v", err)
+	return r
+}
+
+func TestSecretReader(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		flags settingsFlags
+		got   func(agentdir.Settings) string
+	}{
+		{name: "telegram", flags: settingsFlags{s: agentdir.Settings{Telegram: "-"}}, got: func(s agentdir.Settings) string { return s.Telegram }},
+		{name: "discord", flags: settingsFlags{s: agentdir.Settings{Discord: "-"}}, got: func(s agentdir.Settings) string { return s.Discord }},
+		{name: "email-password", flags: settingsFlags{email: agentdir.EmailSettings{Password: "-"}}, got: func(s agentdir.Settings) string { return s.Email.Password }},
+		{name: "tailscale-authkey", flags: settingsFlags{s: agentdir.Settings{TailscaleAuthKey: "-"}}, got: func(s agentdir.Settings) string { return s.TailscaleAuthKey }},
+		{name: "ngrok-authtoken", flags: settingsFlags{s: agentdir.Settings{NgrokAuthToken: "-"}}, got: func(s agentdir.Settings) string { return s.NgrokAuthToken }},
 	}
-	if got.Telegram != "123:abc" {
-		t.Fatalf("settings().Telegram = %q, want %q", got.Telegram, "123:abc")
-	}
-	flags = settingsFlags{s: agentdir.Settings{Discord: "-"}}
-	if _, err := flags.settings(sr); !isUsage(err) {
-		t.Fatalf("settings() reading stdin twice error = %v, want a usage error", err)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sr := &secretReader{in: pipeWith(t, "123:abc\n")}
+
+			got, err := tc.flags.settings(sr)
+			if err != nil {
+				t.Fatalf("settings() error = %v", err)
+			}
+			if tc.got(got) != "123:abc" {
+				t.Fatalf("settings() --%s = %q, want %q", tc.name, tc.got(got), "123:abc")
+			}
+			if _, err := tc.flags.settings(sr); !isUsage(err) {
+				t.Fatalf("settings() reading stdin twice error = %v, want a usage error", err)
+			}
+		})
 	}
 }
 
