@@ -216,8 +216,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
+		// Errors after the dial come from a server that runs.
 		var opErr *net.OpError
-		if errors.As(err, &opErr) {
+		if errors.As(err, &opErr) && opErr.Op == "dial" {
 			return ErrNotRunning
 		}
 		return err
