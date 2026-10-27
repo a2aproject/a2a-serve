@@ -182,6 +182,28 @@ func TestRouterHandlesConversationInOrder(t *testing.T) {
 	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
 }
 
+func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	ts.ch.write("tg:1", "dm1", "ask")
+	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+	ctx := context.Background()
+	contextID, err := ts.srv.store.ContextOf(ctx, "fake", "dm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
+		t.Fatalf("injectTurn() error = %v", err)
+	}
+	time.Sleep(500 * time.Millisecond)
+	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+
+	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))
+	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
+}
+
 func TestRouterGroupMessageDoesNotJoinOthersPendingTask(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})

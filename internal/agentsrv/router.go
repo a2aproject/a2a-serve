@@ -723,23 +723,62 @@ func (r *Router) remember(ctx context.Context, questionID, ch string, conv chann
 }
 
 // injectTurn posts text into a context as a new turn, rendered in the
-// context's conversation if it has one.
+// context's conversation if it has one. While the context's latest task
+// waits for input, the turn is held back: text sent to that task would
+// interrupt it as if it were the answer.
 func (r *Router) injectTurn(ctx context.Context, contextID string, p auth.Principal, text string) error {
-	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))
-	msg.ContextID = contextID
 	chName, conv, err := r.store.ConvOf(ctx, contextID)
-	if err == nil {
-		if ch := r.channel(chName); ch != nil {
-			go func() {
-				defer r.lockConv(chName, channel.ConvKey(conv))()
-				if last, err := r.tasks.LatestInContext(ctx, contextID); err == nil && last.Status.State == a2a.TaskStateInputRequired {
-					msg.TaskID = last.ID
-				}
-				r.stream(ctx, ch, channel.ConvKey(conv), channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg})
-			}()
-			return nil
-		}
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return err
 	}
-	_, err = r.handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
-	return err
+	ch := r.channel(chName)
+	go func() {
+		for {
+			msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))
+			msg.ContextID = contextID
+			if ch == nil {
+				if r.waitingForInput(ctx, contextID) {
+					if !r.waitInput(ctx) {
+						return
+					}
+					continue
+				}
+				if _, err := r.handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}}); err != nil {
+					slog.Error("posting a turn", "context", contextID, "error", err)
+				}
+				return
+			}
+			unlock := r.lockConv(chName, channel.ConvKey(conv))
+			if r.waitingForInput(ctx, contextID) {
+				unlock()
+				if !r.waitInput(ctx) {
+					return
+				}
+				continue
+			}
+			r.stream(ctx, ch, channel.ConvKey(conv), channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg})
+			unlock()
+			return
+		}
+	}()
+	return nil
+}
+
+// injectRetry is how often a held-back turn checks whether it can be posted.
+var injectRetry = 2 * time.Second
+
+func (r *Router) waitingForInput(ctx context.Context, contextID string) bool {
+	last, err := r.tasks.LatestInContext(ctx, contextID)
+	return err == nil && last.Status.State == a2a.TaskStateInputRequired
+}
+
+// waitInput waits before checking a held-back turn again, and reports false
+// when ctx ended.
+func (r *Router) waitInput(ctx context.Context) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case <-time.After(injectRetry):
+		return true
+	}
 }
