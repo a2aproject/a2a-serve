@@ -176,7 +176,7 @@ var _ a2asrv.AgentExecutor = (*observedExecutor)(nil)
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	withLine := e.peers.withAgentsLine(ctx, execCtx)
-	events := withAnswerOrder(execCtx, e.inner.Execute(ctx, withLine))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.inner.Execute(ctx, withLine)))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}
