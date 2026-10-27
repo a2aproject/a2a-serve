@@ -17,6 +17,7 @@ package harness
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -68,14 +69,17 @@ type DockerRunner struct {
 	// Home is the host directory mounted at /home/agent.
 	Home string
 	// Env holds NAME=value pairs passed into the container. Values are passed
-	// through the environment of the docker CLI, not its arguments, so they
-	// don't show up in process listings.
+	// in a private env file, not in the arguments or the environment of the
+	// docker CLI, so they neither show up in process listings nor change
+	// which docker the host runs.
 	Env    []string
 	Limits Limits
 	Labels map[string]string
 	// Rootless is set for rootless Docker, where container root is the host
 	// user, so files the agent writes stay owned by you.
 	Rootless bool
+
+	envFiles []string
 }
 
 var _ Runner = (*DockerRunner)(nil)
@@ -97,16 +101,49 @@ const startScript = `docker rm -f "$0" >/dev/null 2>&1; exec docker run --name "
 
 // Command implements [Runner].
 func (r *DockerRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error) {
-	args, env := r.runArgs(c)
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, args...)...)
-	cmd.Env = append(os.Environ(), env...)
+	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile)...)...)
+	cmd.Env = os.Environ()
 	cmd.Dir = os.TempDir()
 	return cmd, nil
 }
 
-// runArgs returns the arguments of docker run after --name, and the
-// environment of the docker CLI.
-func (r *DockerRunner) runArgs(c Command) ([]string, []string) {
+// writeEnvFile writes env to a file only the user can read, for docker run
+// --env-file. It returns "" when env is empty.
+func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
+	var buf strings.Builder
+	for _, kv := range env {
+		name, value, ok := strings.Cut(kv, "=")
+		if !ok || name == "" {
+			continue
+		}
+		if strings.ContainsAny(value, "\r\n") {
+			return "", fmt.Errorf("the value of %s has a line break, which docker can't pass to the container", name)
+		}
+		buf.WriteString(name + "=" + value + "\n")
+	}
+	if buf.Len() == 0 {
+		return "", nil
+	}
+	f, err := os.CreateTemp("", "a2a-env-*")
+	if err != nil {
+		return "", fmt.Errorf("creating the container env file: %w", err)
+	}
+	if _, err := f.WriteString(buf.String()); err != nil {
+		return "", errors.Join(fmt.Errorf("writing the container env file: %w", err), f.Close(), os.Remove(f.Name()))
+	}
+	if err := f.Close(); err != nil {
+		return "", errors.Join(fmt.Errorf("writing the container env file: %w", err), os.Remove(f.Name()))
+	}
+	r.envFiles = append(r.envFiles, f.Name())
+	return f.Name(), nil
+}
+
+// runArgs returns the arguments of docker run after --name.
+func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	limits := r.Limits
 	if limits.Memory == "" {
 		limits.Memory = "4g"
@@ -144,30 +181,27 @@ func (r *DockerRunner) runArgs(c Command) ([]string, []string) {
 	if r.Home != "" {
 		args = append(args, "-v", r.Home+":"+ContainerHome)
 	}
+	// -e takes precedence over --env-file, so the harness keeps its home.
+	if envFile != "" {
+		args = append(args, "--env-file", envFile)
+	}
 	args = append(args, "-e", "HOME="+ContainerHome)
 	if c.Dir != "" {
 		args = append(args, "-w", c.Dir)
 	}
-	var env []string
-	for _, kv := range append(append([]string{}, r.Env...), c.Env...) {
-		name, _, ok := strings.Cut(kv, "=")
-		if !ok || name == "" {
-			continue
-		}
-		args = append(args, "-e", name)
-		env = append(env, kv)
-	}
 	args = append(args, r.Image, c.Path)
-	return append(args, c.Args...), env
+	return append(args, c.Args...)
 }
 
 // hiddenDsts returns the container paths at which mounts expose the hidden
-// host paths.
+// host paths. Paths are compared with symlinks resolved, as docker resolves
+// them in bind sources.
 func hiddenDsts(mounts []agentdir.Mount, hidden []string) []string {
 	var out []string
 	for _, h := range hidden {
+		h = resolvePath(h)
 		for _, m := range mounts {
-			rel, err := filepath.Rel(m.Src, h)
+			rel, err := filepath.Rel(resolvePath(m.Src), h)
 			if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				continue
 			}
@@ -180,24 +214,40 @@ func hiddenDsts(mounts []agentdir.Mount, hidden []string) []string {
 	return out
 }
 
-// Stop removes the container if it is still running.
+// resolvePath returns p with symlinks resolved, or cleaned when it doesn't
+// exist.
+func resolvePath(p string) string {
+	if r, err := filepath.EvalSymlinks(p); err == nil {
+		return r
+	}
+	return filepath.Clean(p)
+}
+
+// Stop removes the container if it is still running, and the env files.
 func (r *DockerRunner) Stop(ctx context.Context) error {
+	var errs []error
 	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", r.Name).CombinedOutput()
 	if err != nil && !bytes.Contains(out, []byte("No such container")) {
-		return fmt.Errorf("docker rm -f %s: %w: %s", r.Name, err, bytes.TrimSpace(out))
+		errs = append(errs, fmt.Errorf("docker rm -f %s: %w: %s", r.Name, err, bytes.TrimSpace(out)))
 	}
-	return nil
+	for _, f := range r.envFiles {
+		if err := os.Remove(f); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+		}
+	}
+	r.envFiles = nil
+	return errors.Join(errs...)
 }
 
 // CheckDocker reports whether the docker daemon is reachable and whether it
 // runs rootless.
 func CheckDocker(ctx context.Context) (rootless bool, err error) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return false, fmt.Errorf("docker is not installed; install Docker or run with --sandbox local: %w", err)
+		return false, fmt.Errorf("docker is not installed; install Docker or run a2a serve config set --sandbox local, or run a2a serve doctor: %w", err)
 	}
 	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.SecurityOptions}}").Output()
 	if err != nil {
-		return false, fmt.Errorf("docker is not running; start Docker or run with --sandbox local: %w", exitErr(err))
+		return false, fmt.Errorf("docker is not running; start Docker or run a2a serve config set --sandbox local, or run a2a serve doctor: %w", exitErr(err))
 	}
 	return bytes.Contains(out, []byte("rootless")), nil
 }

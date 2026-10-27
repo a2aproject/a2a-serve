@@ -38,12 +38,18 @@ func TestDockerRunnerCommand(t *testing.T) {
 			{Src: "/home/u/docs", Dst: "/docs", ReadOnly: true},
 		},
 		Home: "/src/app/.a2a/state/home",
-		Env:  []string{"OPENAI_API_KEY=sk-secret"},
+		Env:  []string{"OPENAI_API_KEY=sk-secret", "DOCKER_HOST=tcp://evil:2375", "HOME=/root"},
 	}
 	cmd, err := r.Command(context.Background(), Command{Path: "opencode", Args: []string{"acp"}, Dir: "/src/app", Env: []string{"X=1"}})
 	if err != nil {
 		t.Fatalf("Command() error = %v", err)
 	}
+	envFile := argAfter(cmd.Args, "--env-file")
+	t.Cleanup(func() {
+		if err := os.Remove(envFile); err != nil {
+			t.Errorf("removing %s error = %v", envFile, err)
+		}
+	})
 	want := []string{
 		"sh", "-c", startScript, "a2a-coder-123",
 		"--rm", "-i", "--init",
@@ -54,21 +60,48 @@ func TestDockerRunnerCommand(t *testing.T) {
 		"-v", "/src/app:/src/app",
 		"-v", "/home/u/docs:/docs:ro",
 		"-v", "/src/app/.a2a/state/home:/home/agent",
+		"--env-file", envFile,
 		"-e", "HOME=/home/agent",
 		"-w", "/src/app",
-		"-e", "OPENAI_API_KEY",
-		"-e", "X",
 		"img:1", "opencode", "acp",
 	}
 	if diff := cmp.Diff(want, cmd.Args); diff != "" {
 		t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
 	}
-	if strings.Contains(strings.Join(cmd.Args, " "), "sk-secret") {
-		t.Fatalf("Command() args contain a secret value: %v", cmd.Args)
+	if diff := cmp.Diff(os.Environ(), cmd.Env); diff != "" {
+		t.Fatalf("Command() wrong docker CLI environment (-want +got) diff = %s", diff)
 	}
-	if !slices.Contains(cmd.Env, "OPENAI_API_KEY=sk-secret") {
-		t.Fatalf("Command() env does not pass the secret to the docker CLI")
+	data, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("reading the env file error = %v", err)
 	}
+	wantEnv := "OPENAI_API_KEY=sk-secret\nDOCKER_HOST=tcp://evil:2375\nHOME=/root\nX=1\n"
+	if diff := cmp.Diff(wantEnv, string(data)); diff != "" {
+		t.Fatalf("Command() wrong env file (-want +got) diff = %s", diff)
+	}
+	fi, err := os.Stat(envFile)
+	if err != nil {
+		t.Fatalf("os.Stat() error = %v", err)
+	}
+	if got := fi.Mode().Perm(); got != 0o600 {
+		t.Fatalf("env file mode = %v, want %v", got, os.FileMode(0o600))
+	}
+}
+
+func TestDockerRunnerCommandRejectsMultilineEnv(t *testing.T) {
+	t.Parallel()
+	r := &DockerRunner{Name: "n", Image: "img", Env: []string{"KEY=line1\nline2"}}
+	if _, err := r.Command(context.Background(), Command{Path: "opencode"}); err == nil {
+		t.Fatalf("Command() error = nil, want an error")
+	}
+}
+
+func argAfter(args []string, flag string) string {
+	i := slices.Index(args, flag)
+	if i < 0 || i+1 >= len(args) {
+		return ""
+	}
+	return args[i+1]
 }
 
 func TestDockerRunnerHidden(t *testing.T) {
@@ -101,6 +134,57 @@ func TestDockerRunnerHidden(t *testing.T) {
 			name:   "outside every mount",
 			mounts: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}},
 			hidden: []string{"/src/application/.a2a", "/other/.a2a"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := &DockerRunner{Name: "n", Image: "img", Mounts: tc.mounts, Hidden: tc.hidden}
+			cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
+			if err != nil {
+				t.Fatalf("Command() error = %v", err)
+			}
+			var got []string
+			for i, a := range cmd.Args {
+				if a == "--mount" {
+					got = append(got, cmd.Args[i+1])
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestDockerRunnerHiddenThroughSymlinks(t *testing.T) {
+	t.Parallel()
+	tmp := t.TempDir()
+	real := filepath.Join(tmp, "real")
+	if err := os.MkdirAll(filepath.Join(real, ".a2a"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(tmp, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name   string
+		mounts []agentdir.Mount
+		hidden []string
+		want   []string
+	}{
+		{
+			name:   "root through a symlink, mount of the real path",
+			mounts: []agentdir.Mount{{Src: link, Dst: link}, {Src: real, Dst: "/real"}},
+			hidden: []string{filepath.Join(link, ".a2a")},
+			want:   []string{"type=tmpfs,dst=" + filepath.Join(link, ".a2a") + ",readonly", "type=tmpfs,dst=/real/.a2a,readonly"},
+		},
+		{
+			name:   "real root, mount through a symlink",
+			mounts: []agentdir.Mount{{Src: link, Dst: "/w"}},
+			hidden: []string{filepath.Join(real, ".a2a")},
+			want:   []string{"type=tmpfs,dst=/w/.a2a,readonly"},
 		},
 	}
 	for _, tc := range tests {

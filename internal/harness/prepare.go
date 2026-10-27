@@ -124,11 +124,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
-	image := spec.Image
-	if image == "" {
-		image = spec.Profile.Image()
-	}
-	image, what, err := EnsureImage(ctx, image, spec.Profile.Name(), spec.Progress)
+	image, what, err := EnsureImage(ctx, spec.Image, spec.Profile, spec.Progress)
 	if err != nil {
 		return nil, err
 	}

@@ -45,10 +45,15 @@ func LocalImage(harness, cliVersion string) string {
 	return "a2a-harness-" + harness + ":" + tag
 }
 
-// EnsureImage makes image available to docker: it uses a local copy, pulls
-// it, or builds the harness's embedded Dockerfile when the pull fails. It
-// returns the image to run and a line describing what it did.
-func EnsureImage(ctx context.Context, image, harness string, progress io.Writer) (string, string, error) {
+// EnsureImage makes image, or the profile's image when empty, available to
+// docker: it uses a local copy or pulls it. Only the profile's own image
+// falls back to building the harness's embedded Dockerfile when the pull
+// fails. It returns the image to run and a line describing what it did.
+func EnsureImage(ctx context.Context, image string, profile Profile, progress io.Writer) (string, string, error) {
+	harness := profile.Name()
+	if image == "" {
+		image = profile.Image()
+	}
 	if image == "" {
 		return "", "", fmt.Errorf("harness %q has no container image; pass --image or --sandbox local", harness)
 	}
@@ -60,6 +65,9 @@ func EnsureImage(ctx context.Context, image, harness string, progress io.Writer)
 	pullErr := pull.Run()
 	if pullErr == nil {
 		return image, "pulled " + image, nil
+	}
+	if image != profile.Image() {
+		return "", "", fmt.Errorf("docker pull %s: %w", image, pullErr)
 	}
 	df, ok := Dockerfile(harness)
 	if !ok {
