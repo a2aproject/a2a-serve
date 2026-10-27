@@ -226,6 +226,11 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 		slog.Warn("no credential store for the owner token of this machine", "error", err)
 	}
 	return launch.Foreground(ctx, d, cfg.Out, cfg.verbose, m.quiet, creds, func() {
+		// A detached or service child writes to the log, which the parent
+		// relays: the hint would contradict how it was started.
+		if f, ok := cfg.Out.(*os.File); !ok || !term.IsTerminal(int(f.Fd())) {
+			return
+		}
 		if _, err := fmt.Fprintln(cfg.Out, "  (running in the foreground; Ctrl-C to stop, or start with --detach)"); err != nil {
 			slog.Debug("writing progress", "error", err)
 		}
