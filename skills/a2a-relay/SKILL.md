@@ -40,7 +40,7 @@ HTTP equivalent (see "Without the CLI").
 The agent's owner adds your webhook and gives you a pairing code such as
 K7QF-M2XD. It is valid for 15 minutes and works once:
 
-    ./a2a-serve pair add {{BASE}} <code>
+    ./a2a-serve tokens add {{BASE}} <code>
 
 This prints your node token and saves it to ~/.config/a2a-serve/credentials.json.
 If you run in a fresh environment on every wake, store the token as a secret
@@ -94,7 +94,7 @@ history with `./a2a-serve relay task <taskId>`.
 
 Your node token also works as an A2A token for the agent, as a member: you
 can send it tasks, but not approve its tool calls. `a2a send` attaches the
-token saved by `a2a-serve pair add`, or $A2A_RELAY_TOKEN, through a2a-serve's
+token saved by `a2a-serve tokens add`, or $A2A_RELAY_TOKEN, through a2a-serve's
 credential helper:
 
     export A2ACLI_CREDENTIAL_HELPER="$PWD/a2a-serve credential"

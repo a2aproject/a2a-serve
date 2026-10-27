@@ -32,8 +32,9 @@ a few questions instead. Change settings later with the same flags, through
 `a2a serve config set` (see [Changing settings](#changing-settings)).
 
 On start, the server saves an owner token for its local URL in your
-`~/.config/a2a-serve/credentials.json` and prints how to call it. The `a2a` CLI attaches it through a2a-serve's credential helper, which you
-enable once in `~/.config/a2a-cli/config.yaml`:
+`~/.config/a2a-serve/credentials.json` and prints how to call it. The `a2a`
+CLI attaches it through a2a-serve's credential helper, which
+`a2a-serve doctor --fix` enables once in `~/.config/a2a-cli/config.yaml`:
 
 ```yaml
 credential-helper: a2a-serve credential
@@ -49,7 +50,7 @@ Anyone else needs an invitation:
 
 ```sh
 a2a serve pair invite anna                    # in ~/src/app: prints a one-time code
-a2a serve pair add <agent-url> <code>                # on anna's side: saves a token for that URL
+a2a serve tokens add <agent-url> <code>       # on anna's side: saves a token for that URL
 ```
 
 `a2a send`, `a2a task …` and `a2a card get` attach the saved token
@@ -79,8 +80,9 @@ speaks the [Agent Client Protocol](https://agentclientprotocol.com), and
 ```
 
 Management commands find the agent the way git finds a repository, or take
-`--dir <path>`. They talk to the running process over `server.sock`, so
-changes apply without a restart.
+`--dir <path>` (`~/` is expanded). They talk to the running process over
+`server.sock`, so changes apply without a restart; `--timeout` bounds each
+call (default 60s).
 
 `--secret VAR`, `--telegram env:VAR` and similar flags read values from your
 shell when you run the command and store them in `state/secrets`. A detached
@@ -193,18 +195,18 @@ Docker isn't available. It runs as you, so it can read your
 machine.
 
 The harness calls other agents with the `a2a` CLI, through the server (see
-[Agent to agent](#agent-to-agent)), over a Unix socket that only the harness
-reaches: in Docker on Linux it is mounted at `/run/a2a/a2a.sock`, along with
-the `a2a` binary from the server's `PATH` at `/usr/local/bin/a2a`. `A2ACLI_UNIX_SOCKET=a2a=<socket>`
-sends requests for the host `a2a` through it, and everything else as usual.
-Docker Desktop (macOS) can't mount it, so there the harness connects over TCP
-with a key. The server writes a credential helper that returns the key into
-the harness home and sets `A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<helper>`,
-so the harness's `a2a` sends the key to that host only. The harness images also install `a2a`, at the version of the server's
-`a2a`, for macOS; a custom `--image` needs it too. With `--sandbox local` the
-directory of the server's `a2a` is put first on the harness's `PATH`. The harness's `a2a` waits up to 5 minutes for a reply
-(`A2ACLI_TIMEOUT=5m`, instead of the CLI's 30s default); set
-`--env A2ACLI_TIMEOUT=<duration>` to change it.
+[Agent to agent](#agent-to-agent)). How it reaches the server depends on the
+sandbox:
+
+| Sandbox | Connection to the server | `a2a` binary |
+| --- | --- | --- |
+| Docker on Linux | A Unix socket only the harness reaches, mounted at `/run/a2a/a2a.sock`. `A2ACLI_UNIX_SOCKET=a2a=<socket>` sends requests for the host `a2a` through it. | The server's `a2a`, mounted at `/usr/local/bin/a2a`. |
+| Docker Desktop (macOS) | TCP with a key, since the socket can't be mounted. A credential helper in the harness home returns the key, and `A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<helper>` sends it to that host only. | The image's `a2a`, installed at the version of the server's `a2a`; a custom `--image` needs it too. |
+| `--sandbox local` | The Unix socket, on the host. | The server's `a2a`: its directory is put first on the harness's `PATH`. |
+
+The harness's `a2a` waits up to 5 minutes for a reply (`A2ACLI_TIMEOUT=5m`,
+instead of the CLI's 30s default); set `--env A2ACLI_TIMEOUT=<duration>` to
+change it.
 
 Not in this version: an egress proxy and credential injection. The container
 can reach the network, and API keys passed with `--secret` are visible inside it.
@@ -249,7 +251,8 @@ a2a serve pair rm grok                     # revoke its tokens and messenger lin
 ```
 
 A code works once, for 15 minutes. The caller exchanges it with
-`a2a serve pair add <agent-url> <code>`, or sends `link <code>` to the agent's bot.
+`a2a serve tokens add <agent-url> <code>`, or sends `link <code>` to the agent's bot.
+`a2a serve tokens list` and `tokens rm <agent-url>` manage the saved tokens.
 The agent card and `/pair` are public; every A2A request needs a principal.
 
 The owner token the server saves for this machine is listed as `local`.
@@ -280,9 +283,10 @@ at Headscale.
 a2a serve opencode --telegram env:CODER_BOT_TOKEN      # or later:
 a2a serve channel add telegram --token env:CODER_BOT_TOKEN
 a2a serve channel add discord --token env:CODER_DISCORD_TOKEN
-a2a serve channel add email --address coder@example.com \
-  --imap imap.example.com:993 --smtp smtp.example.com:465 \
-  --password env:MAIL_PASSWORD --trusted-authserv mx.example.com
+a2a serve channel add email --email-address coder@example.com \
+  --email-imap imap.example.com:993 --email-smtp smtp.example.com:465 \
+  --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com
+a2a serve channel list                                 # and whether they run
 a2a serve channel rm discord
 ```
 
@@ -377,7 +381,7 @@ for 10 minutes fails. The node's instructions are served at
 
 The node token also authenticates A2A calls to the agent, as the member
 `node:grok`, so the node can send the agent tasks of its own:
-`a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve pair add`, or
+`a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve tokens add`, or
 `$A2A_RELAY_TOKEN`. `pair rm grok` revokes both directions.
 
 ## Output and exit codes
@@ -385,12 +389,13 @@ The node token also authenticates A2A calls to the agent, as the member
 Management commands take `-o json` or `-o jsonl`. `status -o json` has the same
 schema whether the agent runs or not: `running` is always set, and the
 fields of the running server, such as `pid` and `local`, only while it runs.
-Removals (`stop`, `channel rm`, `contact rm`, `pair rm`, `pair forget`)
+Removals (`stop`, `channel rm`, `contact rm`, `pair rm`, `tokens rm`)
 print `{"removed": true, "kind": …, "name": …}`, and `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`.
 
-Errors follow the error contract of the [a2a CLI](https://github.com/a2aproject/a2a-cli)
-(`specification/SPEC.md`): with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
+Errors follow the error contract of the
+[a2a CLI](https://github.com/a2aproject/a2a-cli) (`specification/SPEC.md`):
+with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
 
 | Exit | Code | |
 | --- | --- | --- |
@@ -449,6 +454,39 @@ limits: {memory: 8g, cpus: "4", pids: 1024}
 
 Configs from earlier versions, in which the first of `mounts` is the
 workspace, are read as `workspace` and the remaining mounts.
+
+## Test servers
+
+`echo`, `proxy` and `script` run a local A2A server without an agent
+directory, for trying out clients:
+
+```sh
+a2a serve echo                                  # reply with the message
+a2a serve proxy https://agent.example.com       # forward to another agent, logging the traffic
+a2a serve script 'tr a-z A-Z'                   # run a shell command per message
+```
+
+All three take `--host`, `--port` (default 8080), `--name`, `--description`,
+`--card`, `--card-compat`, `--protocol`, `--transport` (`rest`, `jsonrpc` or
+`grpc`), `--advertise-address` and `--quiet`. `proxy` also takes
+`--svc-param`, `--auth`, `--tenant` and `--insecure` for the proxied agent.
+
+`script` runs the command with `sh -c` for each message, with the message
+text on stdin and `A2A_TASK_ID` and `A2A_CONTEXT_ID` in its environment, so
+a script can keep state per conversation. Its stdout is the reply artifact;
+`--stream` streams it line by line and `--chunk <delim>` in chunks split at
+a delimiter. A non-zero exit fails the task with stderr as the message.
+
+## Shell completion
+
+```sh
+source <(a2a serve completion bash)    # also zsh, fish, powershell
+```
+
+The script completes `a2a-serve` commands, harness names, channel kinds,
+enum flags such as `--private`, `--public` and `--sandbox`, and the contacts
+and pairings of a running agent. Completing `a2a serve …` through the `a2a`
+CLI needs it to forward completion requests to command plugins.
 
 ## Testing a harness
 

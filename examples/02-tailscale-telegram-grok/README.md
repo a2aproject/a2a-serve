@@ -124,7 +124,7 @@ a2a send -a https://coder.your-tailnet.ts.net "What's in notes.md?"
 ```
 
 Other people get a code from you, as in lesson 1:
-`a2a serve pair invite anna`, and then they run `a2a serve pair add` with it.
+`a2a serve pair invite anna`, and then they run `a2a serve tokens add` with it.
 
 ## 6. Add the Grok bot as a webhook node
 
@@ -165,7 +165,7 @@ run any pairing command yourself. The downloads are the server's own binaries,
 so they run for the bot when the server runs on Linux; otherwise the bot needs
 Linux builds, or it can use the plain HTTPS API at the end of the skill.
 
-On its first run, the bot pairs with `a2a-serve pair add` and gets a node token.
+On its first run, the bot pairs with `a2a-serve tokens add` and gets a node token.
 Store that token where the bot keeps secrets, as `A2A_RELAY_TOKEN`: it
 includes the agent's URL, so it is the only setting the bot needs on later
 wakes. Each wake is a JSON body with `kind`, `taskId`, `text` and

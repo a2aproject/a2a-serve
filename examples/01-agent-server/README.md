@@ -78,7 +78,7 @@ Terminal A shows:
 
 Other people and other machines need an invitation:
 `a2a serve pair invite <name>` prints a one-time code, which they redeem
-with `a2a serve pair add <agent-url> <code>`. Step 7 does the same for another
+with `a2a serve tokens add <agent-url> <code>`. Step 7 does the same for another
 agent.
 
 Set the agent card once so the commands below stay short, and give the agent
@@ -164,7 +164,7 @@ the sandbox. If reviewer needs an approval, the request reaches you, not coder.
 ```bash
 cd ~/a2a-lesson1/coder && a2a serve stop
 cd ~/a2a-lesson1/reviewer && a2a serve stop
-a2a serve pair forget http://127.0.0.1:46757    # the owner token of this machine
+a2a serve tokens rm http://127.0.0.1:46757      # the owner token of this machine
 ```
 
 Everything an agent keeps is in `.a2a/` in its workspace; delete the

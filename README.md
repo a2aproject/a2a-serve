@@ -65,7 +65,7 @@ From the agent's project directory:
 cd ~/src/app
 a2a serve opencode --name coder --secret OPENROUTER_API_KEY --private tailscale --telegram env:CODER_BOT_TOKEN
 a2a send -a "$(a2a serve url --local)" "What does this project do?"   # from this machine: no pairing
-a2a serve pair invite anna   # a one-time code for anyone else; they run: a2a serve pair add <agent-url> <code>
+a2a serve pair invite anna   # a one-time code for anyone else; they run: a2a serve tokens add <agent-url> <code>
 ```
 
 The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`. Change settings later with the same flags: `a2a serve config set --sandbox local`.
@@ -81,14 +81,15 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve pair invite <who> [--role owner]` | Create a one-time code for a caller or a messenger account. The user running the server needs none: the server saves an owner token for its local URL. |
 | `serve pair invite <id> --webhook <url>` | Host a webhook node and create its code; without `--webhook`, a new code for an existing node. |
 | `serve pair list` / `pair rm <name>` | List callers and nodes, or revoke a caller / remove a node. |
-| `serve pair add <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the `serve credential` helper. `pair tokens` / `pair forget <agent-url>` manage the saved tokens. |
+| `serve tokens add <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the `serve credential` helper. `tokens list` / `tokens rm <agent-url>` manage the saved tokens. |
 | `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper and makes state files private. `-o json`. |
 | `serve credential get` | The credential helper for the `a2a` CLI. |
+| `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
 | `serve peers` | Agents found on the private network. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
-| `serve channel add\|rm <telegram\|discord\|email>` | Messengers. |
+| `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
 | `serve relay reply\|task\|inbox` | Commands a webhook node runs. |
-| `serve --echo` / `--proxy <agent-url>` / `--exec <cmd>` | A local test server: echo the message, forward to another agent, or run a command per message. |
+| `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
 See the **[agent server guide](./docs/agent-server.md)** and its **[architecture](./docs/agent-server-architecture.md)** for sandboxing, approvals, networks, messengers, agent-to-agent calls and webhook nodes.
 
@@ -103,7 +104,7 @@ Learn A2A Serve by example. Each lesson in the **[cookbook](./examples/)** is a 
 
 - Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
 - `--unix-socket` (`A2ACLI_UNIX_SOCKET`): harnesses in a Linux sandbox reach the server through a mounted Unix socket.
-- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve pair add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_RELAY_TOKEN` for its agent. Enable it once in `~/.config/a2a-cli/config.yaml` with `credential-helper: a2a-serve credential`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host.
+- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve tokens add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_RELAY_TOKEN` for its agent. Enable it once in `~/.config/a2a-cli/config.yaml` with `credential-helper: a2a-serve credential`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host.
 - `a2a skill` and `a2a version -o json`, which the server serves at `/skill.md` and uses to tag harness images.
 
 ## How to Contribute & Provide Feedback
