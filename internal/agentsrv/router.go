@@ -453,15 +453,9 @@ func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.Co
 		timeout := time.NewTimer(25 * time.Hour)
 		defer timeout.Stop()
 		for {
-			select {
-			case <-ctx.Done():
+			ev, ok := events.next(ctx, timeout.C)
+			if !ok || rd.onEvent(ctx, ev) {
 				return
-			case <-timeout.C:
-				return
-			case ev := <-events:
-				if rd.onEvent(ctx, ev) {
-					return
-				}
 			}
 		}
 	}()

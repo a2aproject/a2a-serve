@@ -20,12 +20,12 @@ import (
 	"fmt"
 	"io"
 	"iter"
-	"log/slog"
 	"net"
 	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -218,26 +218,66 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 // eventBus fans out task events to in-process followers, such as a channel
-// conversation waiting for a task someone else answered.
+// conversation waiting for a task someone else answered. Followers never
+// miss events: a slow follower's events queue up.
 type eventBus struct {
 	mu   sync.Mutex
-	subs map[a2a.TaskID]map[chan a2a.Event]struct{}
+	subs map[a2a.TaskID]map[*subscription]struct{}
 }
 
-func newEventBus() *eventBus { return &eventBus{subs: map[a2a.TaskID]map[chan a2a.Event]struct{}{}} }
+// subscription is the queue of events of one follower. ready has a value
+// when events are queued.
+type subscription struct {
+	mu     sync.Mutex
+	events []a2a.Event
+	ready  chan struct{}
+}
 
-func (b *eventBus) subscribe(id a2a.TaskID) (<-chan a2a.Event, func()) {
-	ch := make(chan a2a.Event, 64)
+// next returns the next event, or false when ctx ends or done is closed.
+func (s *subscription) next(ctx context.Context, done <-chan time.Time) (a2a.Event, bool) {
+	for {
+		s.mu.Lock()
+		if len(s.events) > 0 {
+			ev := s.events[0]
+			s.events = s.events[1:]
+			s.mu.Unlock()
+			return ev, true
+		}
+		s.mu.Unlock()
+		select {
+		case <-ctx.Done():
+			return nil, false
+		case <-done:
+			return nil, false
+		case <-s.ready:
+		}
+	}
+}
+
+func (s *subscription) push(ev a2a.Event) {
+	s.mu.Lock()
+	s.events = append(s.events, ev)
+	s.mu.Unlock()
+	select {
+	case s.ready <- struct{}{}:
+	default:
+	}
+}
+
+func newEventBus() *eventBus { return &eventBus{subs: map[a2a.TaskID]map[*subscription]struct{}{}} }
+
+func (b *eventBus) subscribe(id a2a.TaskID) (*subscription, func()) {
+	sub := &subscription{ready: make(chan struct{}, 1)}
 	b.mu.Lock()
 	if b.subs[id] == nil {
-		b.subs[id] = map[chan a2a.Event]struct{}{}
+		b.subs[id] = map[*subscription]struct{}{}
 	}
-	b.subs[id][ch] = struct{}{}
+	b.subs[id][sub] = struct{}{}
 	b.mu.Unlock()
-	return ch, func() {
+	return sub, func() {
 		b.mu.Lock()
 		defer b.mu.Unlock()
-		delete(b.subs[id], ch)
+		delete(b.subs[id], sub)
 		if len(b.subs[id]) == 0 {
 			delete(b.subs, id)
 		}
@@ -247,12 +287,8 @@ func (b *eventBus) subscribe(id a2a.TaskID) (<-chan a2a.Event, func()) {
 func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	for ch := range b.subs[id] {
-		select {
-		case ch <- ev:
-		default:
-			slog.Warn("dropping event for a slow follower", "task", id)
-		}
+	for sub := range b.subs[id] {
+		sub.push(ev)
 	}
 }
 
