@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 
@@ -247,4 +248,27 @@ func TestMemberCannotApproveAndOwnerIsAsked(t *testing.T) {
 	ch.click("tg:1", "dm1", ref, q.Question, 0)
 	ch.waitFor(t, "dm1", hasText("✓ Allow"))
 	wantResult(t, waitState(t, member, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
+}
+
+func TestConformanceAnswerFollowsQuestionInHistory(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("ask", "", ""))
+	answer := userText("approve", string(task.ID), task.ContextID)
+
+	done := send(t, c, answer)
+
+	var got []string
+	for _, m := range done.History {
+		got = append(got, string(m.Role)+": "+messageText(m))
+	}
+	question := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == task.Status.Message.ID })
+	answered := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == answer.ID })
+	if question < 0 || answered < 0 || question > answered {
+		t.Fatalf("task history = %q, want the question before the answer", got)
+	}
+	if n := len(slices.Compact(slices.Clone(got))); n != len(got) {
+		t.Fatalf("task history = %q, want no repeated messages", got)
+	}
 }

@@ -176,7 +176,7 @@ var _ a2asrv.AgentExecutor = (*observedExecutor)(nil)
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	withLine := e.peers.withAgentsLine(ctx, execCtx)
-	events := e.inner.Execute(ctx, withLine)
+	events := withAnswerOrder(execCtx, e.inner.Execute(ctx, withLine))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}
@@ -190,6 +190,47 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 			}
 		}
 	})
+}
+
+// withAnswerOrder starts the events of a turn which answers the task's
+// status message, such as a question, with a snapshot of the task which has
+// the question before the answer in its history. a2a-go appends the answer
+// to the history right away, but moves the question there only with the
+// next status update, after the answer.
+func withAnswerOrder(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	t := answerOrdered(execCtx.StoredTask, execCtx.Message)
+	if t == nil {
+		return events
+	}
+	return func(yield func(a2a.Event, error) bool) {
+		if !yield(t, nil) {
+			return
+		}
+		for ev, err := range events {
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+// answerOrdered returns task with its status message moved into the history
+// before msg, the message which continues the task, or nil if msg doesn't
+// follow a status message which isn't in the history yet.
+func answerOrdered(task *a2a.Task, msg *a2a.Message) *a2a.Task {
+	if task == nil || msg == nil || task.Status.Message == nil || len(task.History) == 0 {
+		return nil
+	}
+	q := task.Status.Message
+	last := len(task.History) - 1
+	if task.History[last].ID != msg.ID || slices.ContainsFunc(task.History, func(m *a2a.Message) bool { return m.ID == q.ID }) {
+		return nil
+	}
+	c := *task
+	c.History = slices.Concat(task.History[:last], []*a2a.Message{q, task.History[last]})
+	now := time.Now()
+	c.Status = a2a.TaskStatus{State: a2a.TaskStateWorking, Timestamp: &now}
+	return &c
 }
 
 // withOriginalMessage replaces the message with the agents line in a task's
