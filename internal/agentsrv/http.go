@@ -95,11 +95,22 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 		}
 		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="a2a"`)
-			jsonhttp.Error(w, http.StatusUnauthorized, "this agent needs a token: ask its owner for a pairing code and run `a2a serve pair add <agent-url> <code>`")
+			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
 	})
+}
+
+// unauthorizedHint explains a 401. On the machine running the agent the
+// caller is usually the owner whose a2a CLI doesn't attach the owner token.
+func unauthorizedHint(kind string) string {
+	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a serve doctor --fix`)"
+	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a serve pair add <agent-url> <code>`"
+	if kind == network.ListenerLocal {
+		return "this agent needs a token: " + local + "; " + remote
+	}
+	return "this agent needs a token: " + remote + "; " + local
 }
 
 // card builds the agent card served at baseURL.
