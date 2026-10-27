@@ -15,7 +15,14 @@
 package nodes
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+
+	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 func TestValidateWebhook(t *testing.T) {
@@ -58,4 +65,51 @@ func TestRedactURL(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestRepeatedEventInLaterTurn(t *testing.T) {
+	t.Parallel()
+	h := New(t.Context(), Config{})
+	node := store.Node{ID: "grok"}
+	ev := relayapi.Event{IdempotencyKey: "k1", State: "input-required", Text: "which one?"}
+
+	post := func() relayapi.EventResult {
+		t.Helper()
+		body, err := json.Marshal(ev)
+		if err != nil {
+			t.Fatalf("json.Marshal() error = %v", err)
+		}
+		r := httptest.NewRequest(http.MethodPost, "/relay/api/tasks/t1/events", bytes.NewReader(body))
+		r.SetPathValue("id", "t1")
+		w := httptest.NewRecorder()
+		h.handleEvent(w, r, "", node)
+		if w.Code != http.StatusOK {
+			t.Fatalf("handleEvent() status = %d, want %d: %s", w.Code, http.StatusOK, w.Body)
+		}
+		var res relayapi.EventResult
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Fatalf("json.Unmarshal() error = %v", err)
+		}
+		return res
+	}
+	turn := func(wantDuplicate bool) {
+		t.Helper()
+		w := h.openTask("t1", node.ID)
+		defer h.closeTask("t1", w)
+		go func() {
+			select {
+			case d := <-w.events:
+				d.result <- nil
+			case <-w.done:
+			}
+		}()
+		if got := post(); got.Duplicate {
+			t.Fatalf("handleEvent() Duplicate = %v, want false", got.Duplicate)
+		}
+		if got := post(); got.Duplicate != wantDuplicate {
+			t.Fatalf("handleEvent() retried Duplicate = %v, want %v", got.Duplicate, wantDuplicate)
+		}
+	}
+	turn(true)
+	turn(true)
 }

@@ -85,7 +85,7 @@ type Host struct {
 	mu       sync.Mutex
 	handlers map[string]a2asrv.RequestHandler
 	open     map[a2a.TaskID]*nodeWaiter
-	keys     map[a2a.TaskID]map[string]relayapi.EventResult
+	keys     map[a2a.TaskID]*turnKeys
 	inbox    map[string][]*relayapi.InboxEntry
 	failed   map[string]bool
 }
@@ -98,6 +98,13 @@ type nodeWaiter struct {
 }
 
 func (w *nodeWaiter) close() { w.once.Do(func() { close(w.done) }) }
+
+// turnKeys are the idempotency keys of one waiter, so that a node asking the
+// same question in a later turn isn't taken for a retry.
+type turnKeys struct {
+	w    *nodeWaiter
+	seen map[string]relayapi.EventResult
+}
 
 type nodeDelivery struct {
 	ev     relayapi.Event
@@ -114,7 +121,7 @@ func New(ctx context.Context, cfg Config) *Host {
 		ctx:      ctx,
 		handlers: map[string]a2asrv.RequestHandler{},
 		open:     map[a2a.TaskID]*nodeWaiter{},
-		keys:     map[a2a.TaskID]map[string]relayapi.EventResult{},
+		keys:     map[a2a.TaskID]*turnKeys{},
 		inbox:    map[string][]*relayapi.InboxEntry{},
 		failed:   map[string]bool{},
 	}
@@ -382,7 +389,7 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 	}
 	keys := n.keys[taskID]
 	if ev.IdempotencyKey != "" && keys != nil {
-		if res, seen := keys[ev.IdempotencyKey]; seen {
+		if res, seen := keys.seen[ev.IdempotencyKey]; seen {
 			n.mu.Unlock()
 			res.Duplicate = true
 			jsonhttp.Write(w, http.StatusOK, res)
@@ -400,10 +407,11 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 	}
 	res := relayapi.EventResult{TaskID: string(taskID), State: relayapi.StateName(state)}
 	if ev.IdempotencyKey != "" {
-		if n.keys[taskID] == nil {
-			n.keys[taskID] = map[string]relayapi.EventResult{}
+		if keys == nil || keys.w != wt {
+			keys = &turnKeys{w: wt, seen: map[string]relayapi.EventResult{}}
+			n.keys[taskID] = keys
 		}
-		n.keys[taskID][ev.IdempotencyKey] = res
+		keys.seen[ev.IdempotencyKey] = res
 	}
 	n.mu.Unlock()
 
@@ -420,7 +428,9 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 	if err != nil {
 		if ev.IdempotencyKey != "" {
 			n.mu.Lock()
-			delete(n.keys[taskID], ev.IdempotencyKey)
+			if k := n.keys[taskID]; k != nil {
+				delete(k.seen, ev.IdempotencyKey)
+			}
 			n.mu.Unlock()
 		}
 		jsonhttp.Error(w, http.StatusConflict, fmt.Sprintf("task %s: %v", taskID, err))
@@ -555,12 +565,14 @@ func (n *Host) openTask(id a2a.TaskID, node string) *nodeWaiter {
 	if old := n.open[id]; old != nil {
 		old.close()
 	}
+	delete(n.keys, id)
 	n.open[id] = w
 	return w
 }
 
 // idempotencyRetention is how long the idempotency keys of a closed task are
 // kept, so that a node retrying its last event still gets a duplicate reply.
+// Reopening the task drops them.
 var idempotencyRetention = 10 * time.Minute
 
 func (n *Host) closeTask(id a2a.TaskID, w *nodeWaiter) {
@@ -574,7 +586,7 @@ func (n *Host) closeTask(id a2a.TaskID, w *nodeWaiter) {
 	time.AfterFunc(idempotencyRetention, func() {
 		n.mu.Lock()
 		defer n.mu.Unlock()
-		if n.open[id] == nil {
+		if k := n.keys[id]; k != nil && k.w == w {
 			delete(n.keys, id)
 		}
 	})
