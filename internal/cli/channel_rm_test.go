@@ -61,3 +61,34 @@ func TestChannelRmOffline(t *testing.T) {
 		})
 	}
 }
+
+func TestChannelAddEmailFlagNames(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		prefix string
+	}{
+		{name: "email flags", prefix: "--email-"},
+		{name: "deprecated flags", prefix: "--"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := agentdir.Open(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := d.SaveConfig(&agentdir.Config{Name: "coder", Harness: "opencode"}); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = runCMD(t, "channel", "add", "email", "--dir", d.Root,
+				tc.prefix+"address", "coder@example.com", tc.prefix+"imap", "127.0.0.1:1", tc.prefix+"smtp", "127.0.0.1:2",
+				tc.prefix+"username", "coder", tc.prefix+"password", "pw", tc.prefix+"trusted-authserv", "mx.example.com")
+
+			if err == nil || !strings.Contains(err.Error(), "IMAP 127.0.0.1:1") {
+				t.Fatalf("channel add email with %s flags error = %v, want the IMAP login of the given server to fail", tc.prefix, err)
+			}
+		})
+	}
+}

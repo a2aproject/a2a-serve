@@ -15,14 +15,20 @@
 package agentsrv
 
 import (
+	"bytes"
 	"context"
+	"log/slog"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
 func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
@@ -63,5 +69,48 @@ func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
 	got, ok := rules.AutoAnswer(context.Background(), nil, q)
 	if !ok || got.Option != a2aacp.OptionOnce {
 		t.Fatalf("AutoAnswer() after allowing read = %+v, %v, want %q", got, ok, a2aacp.OptionOnce)
+	}
+}
+
+// lockedBuffer is a log destination safe for concurrent writes.
+type lockedBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *lockedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *lockedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestTaskLifecycleIsLogged(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("ask", "", ""))
+	send(t, c, userText("approve", string(task.ID), task.ContextID))
+
+	var got []string
+	for line := range strings.Lines(logs.String()) {
+		if strings.Contains(line, "task="+string(task.ID)) && strings.Contains(line, `msg="task `) {
+			msg := line[strings.Index(line, `msg="`)+5:]
+			got = append(got, msg[:strings.Index(msg, `"`)])
+		}
+	}
+	want := []string{"task received", "task input-required", "task received", "task completed"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("task log wrong result (-want +got) diff = %s", diff)
 	}
 }

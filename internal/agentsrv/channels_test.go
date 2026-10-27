@@ -99,3 +99,14 @@ func TestAddChannelSavesOnlyValidTokens(t *testing.T) {
 		})
 	}
 }
+
+func TestDeleteChannelNotConfigured(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+
+	err := controlapi.NewClient(ts.dir).DeleteChannel(context.Background(), "telegram")
+
+	if err == nil || !strings.Contains(err.Error(), "telegram is not configured") {
+		t.Fatalf("DeleteChannel() error = %v, want telegram is not configured", err)
+	}
+}
