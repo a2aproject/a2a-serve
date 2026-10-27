@@ -1,0 +1,126 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentsrv
+
+import (
+	"context"
+	"fmt"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/discord"
+	"github.com/a2aproject/a2a-serve/internal/channel/email"
+	"github.com/a2aproject/a2a-serve/internal/channel/telegram"
+)
+
+// Channel kinds.
+const (
+	ChannelTelegram = agentdir.ChannelTelegram
+	ChannelDiscord  = agentdir.ChannelDiscord
+	ChannelEmail    = agentdir.ChannelEmail
+)
+
+// buildChannels creates the channels of the config.
+func (s *Server) buildChannels() ([]channel.Channel, error) {
+	cfg := s.config()
+	s.cfgMu.Lock()
+	secrets := s.secrets
+	s.cfgMu.Unlock()
+	configured := []struct {
+		kind string
+		set  bool
+	}{
+		{ChannelTelegram, cfg.Channels.Telegram != nil},
+		{ChannelDiscord, cfg.Channels.Discord != nil},
+		{ChannelEmail, cfg.Channels.Email != nil},
+	}
+	var out []channel.Channel
+	for _, c := range configured {
+		if !c.set {
+			continue
+		}
+		ch, err := s.buildChannel(cfg, secrets, c.kind)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, ch)
+	}
+	return out, nil
+}
+
+func (s *Server) buildChannel(cfg *agentdir.Config, secrets agentdir.Secrets, kind string) (channel.Channel, error) {
+	return newChannel(cfg, secrets, kind, s.store.ChannelState(), s.telegramServerURL)
+}
+
+// ValidateChannel checks the credentials of the channel of kind configured
+// in cfg, such as a bot token, without starting it.
+func ValidateChannel(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error {
+	ch, err := newChannel(cfg, secrets, kind, nil, "")
+	if err != nil {
+		return err
+	}
+	return validateChannel(ctx, ch)
+}
+
+func validateChannel(ctx context.Context, ch channel.Channel) error {
+	if v, ok := ch.(channel.Validator); ok {
+		return v.Validate(ctx)
+	}
+	return nil
+}
+
+// newChannel creates the channel of kind configured in cfg. kv keeps the
+// channel's state; telegramURL overrides the Telegram Bot API URL.
+func newChannel(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, kv channel.KV, telegramURL string) (channel.Channel, error) {
+	switch kind {
+	case ChannelTelegram:
+		if cfg.Channels.Telegram == nil {
+			return nil, fmt.Errorf("telegram is not configured")
+		}
+		tok, err := secrets.Resolve(cfg.Channels.Telegram.Token)
+		if err != nil {
+			return nil, fmt.Errorf("telegram: %w", err)
+		}
+		ch := telegram.New(tok)
+		ch.ServerURL = telegramURL
+		return ch, nil
+	case ChannelDiscord:
+		if cfg.Channels.Discord == nil {
+			return nil, fmt.Errorf("discord is not configured")
+		}
+		tok, err := secrets.Resolve(cfg.Channels.Discord.Token)
+		if err != nil {
+			return nil, fmt.Errorf("discord: %w", err)
+		}
+		return discord.New(tok, kv), nil
+	case ChannelEmail:
+		ec := cfg.Channels.Email
+		if ec == nil {
+			return nil, fmt.Errorf("email is not configured")
+		}
+		if ec.TrustedAuthServ == "" {
+			return nil, fmt.Errorf("email: trusted_authserv must be set, or no mail could be trusted")
+		}
+		pw, err := secrets.Resolve(ec.Password)
+		if err != nil {
+			return nil, fmt.Errorf("email: %w", err)
+		}
+		return email.New(email.Config{
+			Address: ec.Address, IMAP: ec.IMAP, SMTP: ec.SMTP, Username: ec.Username, Password: pw,
+			Mailbox: ec.Mailbox, TrustedAuthServ: ec.TrustedAuthServ,
+		}, kv), nil
+	}
+	return nil, fmt.Errorf("unknown channel %q: want telegram, discord or email", kind)
+}
