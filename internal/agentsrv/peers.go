@@ -537,7 +537,7 @@ func (p *Peers) watch(w store.Watch) {
 		}()
 		claims := callClaims{ContextID: w.OriginContextID, OnBehalfOf: w.OnBehalfOf}
 		interval := watchInterval
-		failingSince := time.Time{}
+		failingSince := w.FailingSince
 		for {
 			select {
 			case <-ctx.Done():
@@ -548,17 +548,28 @@ func (p *Peers) watch(w store.Watch) {
 				interval += watchInterval
 			}
 			task, err := p.poll(ctx, w)
+			if errors.Is(err, store.ErrNotFound) {
+				slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
+				if err := p.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
+					slog.Error("deleting watch", "error", err)
+				}
+				return
+			}
 			if err != nil {
 				if failingSince.IsZero() {
 					failingSince = time.Now()
+					p.setWatchFailing(ctx, w, failingSince)
 				}
-				if time.Since(failingSince) < 24*time.Hour {
+				if time.Since(failingSince) < watchGiveUp {
 					continue
 				}
 				p.finishWatch(ctx, w, fmt.Sprintf("%s has been unreachable for a day; giving up on task %s: %v", w.Contact, w.TaskID, err))
 				return
 			}
-			failingSince = time.Time{}
+			if !failingSince.IsZero() {
+				failingSince = time.Time{}
+				p.setWatchFailing(ctx, w, failingSince)
+			}
 			if task.Status.State == a2a.TaskStateInputRequired {
 				if q := approvals.FromStatus(task.Status); q != nil && q.Type == approvals.TypePermission {
 					p.relay(ctx, claims, w.Contact, task, q)
@@ -577,6 +588,15 @@ func (p *Peers) watch(w store.Watch) {
 			return
 		}
 	}()
+}
+
+// watchGiveUp is how long a watched task's agent may be unreachable.
+const watchGiveUp = 24 * time.Hour
+
+func (p *Peers) setWatchFailing(ctx context.Context, w store.Watch, since time.Time) {
+	if err := p.store.SetWatchFailing(ctx, w.Contact, w.TaskID, since); err != nil {
+		slog.Warn("recording an unreachable watch", "agent", w.Contact, "task", w.TaskID, "error", err)
+	}
 }
 
 func (p *Peers) poll(ctx context.Context, w store.Watch) (*a2a.Task, error) {

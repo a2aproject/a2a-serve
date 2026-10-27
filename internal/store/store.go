@@ -98,6 +98,12 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV4)
 		return err
 	},
+	// 5: watches record since when their agent is unreachable, so that a
+	// restart doesn't reset the time until they give up.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE watches ADD COLUMN failing_since INTEGER NOT NULL DEFAULT 0`)
+		return err
+	},
 }
 
 const schemaV1 = `

@@ -406,9 +406,14 @@ func (s *Store) Contacts(ctx context.Context) ([]Contact, error) {
 	return out, rows.Err()
 }
 
-// DeleteContact removes a contact.
+// DeleteContact removes a contact and its watches.
 func (s *Store) DeleteContact(ctx context.Context, name string) error {
-	return s.deleteOne(ctx, `DELETE FROM contacts WHERE name = ?`, name)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact = ?`, name); err != nil {
+			return err
+		}
+		return deleteOneTx(ctx, tx, `DELETE FROM contacts WHERE name = ?`, name)
+	})
 }
 
 // Node is a webhook node hosted by the agent.
@@ -486,10 +491,15 @@ func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
 
 // DeleteNode removes a node and its pending codes.
 func (s *Store) DeleteNode(ctx context.Context, id string) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM codes WHERE purpose = 'node' AND name = ?`, id); err != nil {
-		return err
-	}
-	return s.deleteOne(ctx, `DELETE FROM nodes WHERE id = ?`, id)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE purpose = 'node' AND name = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact = ?`, id); err != nil {
+			return err
+		}
+		return deleteOneTx(ctx, tx, `DELETE FROM nodes WHERE id = ?`, id)
+	})
 }
 
 // Question is a pending agent question relayed to a channel or a web page.
@@ -708,6 +718,8 @@ type Watch struct {
 	OriginContextID string
 	OnBehalfOf      string
 	Created         time.Time
+	// FailingSince is when polling the task started failing, or zero.
+	FailingSince time.Time
 }
 
 // PutWatch stores a watch.
@@ -720,7 +732,7 @@ func (s *Store) PutWatch(ctx context.Context, w Watch) error {
 
 // Watches lists watches.
 func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created FROM watches`)
+	rows, err := s.db.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created, failing_since FROM watches`)
 	if err != nil {
 		return nil, err
 	}
@@ -728,16 +740,27 @@ func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
 	var out []Watch
 	for rows.Next() {
 		var (
-			w       Watch
-			created int64
+			w                     Watch
+			created, failingSince int64
 		)
-		if err := rows.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &created); err != nil {
+		if err := rows.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &created, &failingSince); err != nil {
 			return nil, err
 		}
-		w.Created = unixTime(created)
+		w.Created, w.FailingSince = unixTime(created), unixTime(failingSince)
 		out = append(out, w)
 	}
 	return out, rows.Err()
+}
+
+// SetWatchFailing records since when polling a watched task fails; zero
+// clears it.
+func (s *Store) SetWatchFailing(ctx context.Context, contact, taskID string, since time.Time) error {
+	var n int64
+	if !since.IsZero() {
+		n = since.UnixNano()
+	}
+	_, err := s.db.ExecContext(ctx, `UPDATE watches SET failing_since = ? WHERE contact = ? AND task_id = ?`, n, contact, taskID)
+	return err
 }
 
 // DeleteWatch removes a watch.
@@ -746,8 +769,11 @@ func (s *Store) DeleteWatch(ctx context.Context, contact, taskID string) error {
 	return err
 }
 
-func (s *Store) deleteOne(ctx context.Context, query string, args ...any) error {
-	res, err := s.db.ExecContext(ctx, query, args...)
+// deleteOneTx runs a delete and returns [ErrNotFound] if it deleted nothing.
+func deleteOneTx(ctx context.Context, db interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}, query string, args ...any) error {
+	res, err := db.ExecContext(ctx, query, args...)
 	if err != nil {
 		return err
 	}

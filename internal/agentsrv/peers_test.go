@@ -468,6 +468,33 @@ func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
 	}
 }
 
+func TestWatchOfRemovedContactEnds(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	p, ctx := ts.srv.peers, context.Background()
+	w := store.Watch{Contact: "gone", TaskID: "t1", OriginContextID: "c1", OnBehalfOf: auth.OwnerID}
+	if err := p.store.PutWatch(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+
+	p.watch(w)
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		ws, err := p.store.Watches(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(ws) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("store.Watches() = %+v, want none", ws)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func TestContactNameTakenByNode(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
