@@ -24,7 +24,7 @@ import (
 )
 
 // WriteAtomic replaces the file at path with data, readable as perm. Readers
-// see the old or the new content, never a partial write.
+// see the old or the new content, never a partial write, also after a crash.
 func WriteAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*.tmp")
 	if err != nil {
@@ -41,10 +41,16 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	if err := f.Chmod(perm); err != nil {
 		return errors.Join(err, f.Close())
 	}
+	if err := f.Sync(); err != nil {
+		return errors.Join(err, f.Close())
+	}
 	if err := f.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), path)
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
 }
 
 // WithLock runs fn while holding an exclusive advisory lock on path+".lock",
