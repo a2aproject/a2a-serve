@@ -20,6 +20,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -139,6 +140,30 @@ func TestRouterStop(t *testing.T) {
 	ts.ch.waitFor(t, "dm1", hasText("..."))
 	ts.ch.write("tg:1", "dm1", "/stop")
 	ts.ch.waitFor(t, "dm1", hasText("Stopped."))
+}
+
+// linkAs links identity as name with role in conversation conv.
+func linkAs(t *testing.T, ts *testServer, name, role, identity, conv string) {
+	t.Helper()
+	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: name, Role: role})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ts.ch.write(identity, conv, "link "+code.Code)
+	ts.ch.waitFor(t, conv, hasText("Linked as "+role))
+}
+
+func TestRouterApproverAnswersMembersApproval(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), approver: "pair:bob"})
+	linkAs(t, ts, "bob", auth.RoleMember, "tg:2", "dm2")
+	c := ts.client(ts.pair("grok", auth.RoleMember))
+
+	task := sendAsync(t, c, userText("ask", "", ""))
+	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
+	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+
+	wantResult(t, waitState(t, c, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
 }
 
 func TestRouterHandlesConversationInOrder(t *testing.T) {

@@ -595,6 +595,13 @@ func (s *Store) AnswerQuestion(ctx context.Context, id, by, answer string) error
 	return ErrAnswered
 }
 
+// UnanswerQuestion clears an answer by, so that a question whose answer
+// couldn't be delivered can be answered again.
+func (s *Store) UnanswerQuestion(ctx context.Context, id, by string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE questions SET answered_by = '', answer = '' WHERE id = ? AND answered_by = ?`, id, by)
+	return err
+}
+
 // QuestionMessage is a channel message which shows a question, kept so that
 // it can be updated once the question is answered.
 type QuestionMessage struct {

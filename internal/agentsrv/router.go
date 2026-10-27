@@ -463,8 +463,19 @@ func (r *Router) stop(ctx context.Context, ch channel.Channel, in channel.Inboun
 
 // stream sends a message to the agent and renders the task in the conversation.
 func (r *Router) stream(ctx context.Context, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal, req *a2a.SendMessageRequest) {
+	r.streamThen(ctx, ch, conv, replyTo, p, req, func(error) {})
+}
+
+// streamThen is stream which calls accepted once the agent accepted the
+// message, with its first event, or with the error it was refused with.
+func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal, req *a2a.SendMessageRequest, accepted func(error)) {
 	rd := newRenderer(r, ch, conv, replyTo, p)
+	first := true
 	for ev, err := range r.handler.SendStreamingMessage(auth.InProcess(ctx, p), req) {
+		if first {
+			first = false
+			accepted(err)
+		}
 		if err != nil {
 			rd.fail(ctx, err)
 			return
@@ -473,7 +484,18 @@ func (r *Router) stream(ctx context.Context, ch channel.Channel, conv channel.Co
 			return
 		}
 	}
+	if first {
+		accepted(errors.New("the agent ended the stream without a reply"))
+	}
 	rd.finish(ctx)
+}
+
+// restorePending makes a question whose answer wasn't delivered the one a
+// typed reply in the conversation answers again.
+func (r *Router) restorePending(ctx context.Context, in channel.Inbound, questionID string) {
+	if err := r.store.SetPendingQuestion(context.WithoutCancel(ctx), in.Channel, string(in.Conv), questionID); err != nil {
+		slog.Warn("restoring the pending question", "error", err)
+	}
 }
 
 // follow renders the rest of a task which continues after someone else
@@ -562,6 +584,12 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 		slog.Warn("resolving conversation context", "error", err)
 	}
 	if rec.Contact == "" && rec.ContextID == own {
+		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
+		if err != nil {
+			slog.Error("answering question", "question", rec.ID, "error", err)
+			r.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
+			return
+		}
 		if err := r.store.AnswerQuestion(ctx, rec.ID, p.ID, opt.ID); err != nil {
 			if !errors.Is(err, store.ErrAnswered) {
 				slog.Error("answering question", "question", rec.ID, "error", err)
@@ -571,16 +599,22 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 			r.reply(ctx, ch, in, "Already answered.")
 			return
 		}
-		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
-		if err != nil {
-			slog.Error("answering question", "question", rec.ID, "error", err)
-			r.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
-			return
-		}
-		r.MarkAnswered(ctx, rec.ID, opt.Label, who)
 		unlock := r.lockConv(in.Channel, in.Conv)
 		defer unlock()
-		r.stream(ctx, ch, in.Conv, channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg})
+		answered := false
+		r.streamThen(ctx, ch, in.Conv, channel.Ref{}, r.approvals.AnswerAs(ctx, p), &a2a.SendMessageRequest{Message: msg}, func(err error) {
+			if err == nil {
+				answered = true
+				r.MarkAnswered(ctx, rec.ID, opt.Label, who)
+				return
+			}
+			if err := r.store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); err != nil {
+				slog.Error("clearing an undelivered answer", "question", rec.ID, "error", err)
+			}
+		})
+		if !answered {
+			r.restorePending(ctx, in, rec.ID)
+		}
 		return
 	}
 	if err := r.approvals.Answer(ctx, rec, p, opt); err != nil {
@@ -588,6 +622,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 			r.reply(ctx, ch, in, "Already answered.")
 			return
 		}
+		r.restorePending(ctx, in, rec.ID)
 		r.reply(ctx, ch, in, "Couldn't send the answer: "+err.Error())
 		return
 	}

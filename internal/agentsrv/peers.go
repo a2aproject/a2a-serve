@@ -486,7 +486,22 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 	if q.Title != "" {
 		header = fmt.Sprintf("%s wants to run %s", agent, q.Title)
 	}
-	p.chat.Ask(ctx, []string{user}, chName, channel.ConvKey(conv), header, rec)
+	if p.approvals.CanApprove(ctx, auth.Principal{ID: user}) && (chName != "" || p.hasLinks(ctx, user)) {
+		p.chat.Ask(ctx, []string{user}, chName, channel.ConvKey(conv), header, rec)
+		return
+	}
+	header += fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user))
+	p.chat.Ask(ctx, p.approvals.ApproverIDs(), "", "", header, rec)
+}
+
+// hasLinks reports whether user can be asked in a messenger.
+func (p *Peers) hasLinks(ctx context.Context, user string) bool {
+	links, err := p.store.LinksOf(ctx, user)
+	if err != nil {
+		slog.Warn("listing links", "user", user, "error", err)
+		return false
+	}
+	return len(links) > 0
 }
 
 // AnswerRemote forwards an answer to a remote agent's question.

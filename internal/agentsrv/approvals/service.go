@@ -91,16 +91,26 @@ func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 
 // CanApprove reports whether p may answer permission requests.
 func (s *Service) CanApprove(ctx context.Context, p auth.Principal) bool {
-	if auth.CanApprove(p, s.Approvers()) {
+	if p.ID == auth.OwnerID || auth.CanApprove(p, s.Approvers()) {
 		return true
 	}
 	u, err := s.Store.User(ctx, p.ID)
 	return err == nil && auth.CanApprove(auth.Principal{ID: u.ID, Roles: u.Roles}, nil)
 }
 
-// approverIDs are the users who receive approval requests.
-func (s *Service) approverIDs() []string {
+// ApproverIDs are the users who receive approval requests.
+func (s *Service) ApproverIDs() []string {
 	return append([]string{auth.OwnerID}, s.Approvers()...)
+}
+
+// AnswerAs is the principal p's answers are sent to the agent as. The task
+// store shows tasks only to their starter and to owners, so an approver who
+// isn't an owner answers as the owner, on their own behalf.
+func (s *Service) AnswerAs(ctx context.Context, p auth.Principal) auth.Principal {
+	if p.Has(auth.RoleOwner) || !s.CanApprove(ctx, p) {
+		return p
+	}
+	return auth.Principal{ID: auth.OwnerID, Roles: []string{auth.RoleOwner}, OnBehalfOf: p.ID, Hops: p.Hops}
 }
 
 // PageURL is the page where an approver can answer a question.
@@ -133,7 +143,7 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 		}
 		slog.Info("approval needed", "task", execCtx.TaskID, "from", starter, "question", rec.ID)
 		header := fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter))
-		s.Notifier.Ask(ctx, s.approverIDs(), "", "", header, rec)
+		s.Notifier.Ask(ctx, s.ApproverIDs(), "", "", header, rec)
 	}()
 }
 
@@ -162,7 +172,8 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 }
 
 // Answer answers a stored question with option on behalf of p. Questions of
-// remote agents are forwarded to them.
+// remote agents are forwarded to them. An answer which can't be delivered
+// isn't kept, so that the question can be answered again.
 func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option) error {
 	q := FromRecord(rec)
 	if q.Type == TypePermission && !s.CanApprove(ctx, p) {
@@ -171,6 +182,17 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 	if err := s.Store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
 		return err
 	}
+	err := s.deliver(ctx, rec, q, p, option)
+	if err == nil {
+		return nil
+	}
+	if uerr := s.Store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); uerr != nil {
+		return errors.Join(err, fmt.Errorf("clearing the undelivered answer: %w", uerr))
+	}
+	return err
+}
+
+func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option) error {
 	if rec.Contact != "" {
 		return s.Remote.AnswerRemote(ctx, rec, q, option, p)
 	}
@@ -178,7 +200,7 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 	if err != nil {
 		return err
 	}
-	_, err = s.Handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
+	_, err = s.Handler.SendMessage(auth.InProcess(ctx, s.AnswerAs(ctx, p)), &a2a.SendMessageRequest{
 		Message: msg,
 		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
 	})
