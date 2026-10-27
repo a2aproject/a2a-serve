@@ -22,8 +22,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Build metadata. These defaults are overwritten at release time using
-// ldflags specified in .goreleaser.yaml.
+// Build metadata, which release builds set with -ldflags "-X". Other builds
+// read the module version and VCS stamp of the binary.
 var (
 	version = "dev"
 	commit  = "none"
@@ -45,13 +45,13 @@ func newVersionCmd(cfg *globalConfig) *cobra.Command {
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info := buildVersionInfo()
-			if cfg.output == "json" {
+			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
 			_, err := fmt.Fprintf(
 				cfg.Out,
 				"a2a-serve %s\ncommit:  %s\nbuilt:   %s\ngo:      %s\nos/arch: %s\n",
-				info.Version, info.Commit, date, runtime.Version(), info.Platform,
+				info.Version, info.Commit, info.Date, info.GoVersion, info.Platform,
 			)
 			return err
 		},
@@ -59,17 +59,29 @@ func newVersionCmd(cfg *globalConfig) *cobra.Command {
 }
 
 func buildVersionInfo() versionInfo {
-	v := version
-	if v == "dev" { // go install produces binaries without ldflags
-		if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
-			v = bi.Main.Version
-		}
-	}
-	return versionInfo{
-		Version:   v,
+	info := versionInfo{
+		Version:   version,
 		Commit:    commit,
 		Date:      date,
 		GoVersion: runtime.Version(),
 		Platform:  runtime.GOOS + "/" + runtime.GOARCH,
 	}
+	bi, ok := debug.ReadBuildInfo()
+	if !ok {
+		return info
+	}
+	if info.Version == "dev" && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		info.Version = bi.Main.Version
+	}
+	for _, s := range bi.Settings {
+		switch {
+		case s.Key == "vcs.revision" && info.Commit == "none":
+			info.Commit = s.Value
+		case s.Key == "vcs.time" && info.Date == "unknown":
+			info.Date = s.Value
+		case s.Key == "vcs.modified" && s.Value == "true" && info.Commit != "none":
+			info.Commit += "-dirty"
+		}
+	}
+	return info
 }

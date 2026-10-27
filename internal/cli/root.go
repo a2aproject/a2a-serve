@@ -141,6 +141,7 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
 	}
 	serve := newServeCmd(cfg)
+	serve.SetVersionTemplate("a2a-serve {{.Version}}\n")
 	pf := serve.PersistentFlags()
 	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line)")
 	pf.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Request timeout")
@@ -150,7 +151,7 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 		case output.ModeText, output.ModeJson, output.ModeJSONL:
 			cfg.Mode = output.Mode(cfg.output)
 		default:
-			return clierr.Usage(fmt.Sprintf("invalid --output %q (want text or json)", cfg.output))
+			return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json or jsonl)", cfg.output))
 		}
 		return nil
 	}
