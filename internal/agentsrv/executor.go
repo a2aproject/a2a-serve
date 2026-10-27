@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"iter"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"slices"
@@ -203,8 +204,18 @@ func (e *observedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorC
 
 func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		start := time.Now()
+		from := ""
+		if p, ok := auth.Caller(ctx); ok {
+			from = p.User()
+		}
+		slog.Info("task received", "task", execCtx.TaskID, "context", execCtx.ContextID, "from", from)
 		for ev, err := range events {
+			if err != nil {
+				slog.Info("task failed", "task", execCtx.TaskID, "duration", time.Since(start).Round(time.Millisecond), "error", err)
+			}
 			if err == nil {
+				logTransition(execCtx.TaskID, ev, start)
 				e.bus.publish(execCtx.TaskID, ev)
 				if q := approvals.FromEvent(ev); q != nil {
 					e.approvals.OnQuestion(ctx, execCtx, q)
@@ -215,6 +226,24 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 			}
 		}
 	}
+}
+
+// logTransition logs a task reaching a state where it stops: it finished or
+// waits for input.
+func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
+	var state a2a.TaskState
+	switch e := ev.(type) {
+	case *a2a.Task:
+		state = e.Status.State
+	case *a2a.TaskStatusUpdateEvent:
+		state = e.Status.State
+	default:
+		return
+	}
+	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
+		return
+	}
+	slog.Info("task "+stateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
 }
 
 // eventBus fans out task events to in-process followers, such as a channel
