@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -201,7 +202,7 @@ func (s *Store) Node() (Credential, error) {
 var ErrNoNode = errors.New("no node token saved")
 
 // Normalize drops the query, the trailing slash and the well-known card
-// path, and lowercases the scheme and host.
+// path, resolves dot segments, and lowercases the scheme and host.
 func Normalize(raw string) string {
 	u, err := url.Parse(strings.TrimSpace(raw))
 	if err != nil || u.Host == "" {
@@ -209,6 +210,9 @@ func Normalize(raw string) string {
 	}
 	u.Scheme, u.Host = strings.ToLower(u.Scheme), strings.ToLower(u.Host)
 	u.RawQuery, u.Fragment, u.User = "", "", nil
+	if u.Path != "" {
+		u.Path = path.Clean("/" + u.Path)
+	}
 	u.Path = strings.TrimSuffix(u.Path, "/.well-known/agent-card.json")
 	u.Path = strings.TrimSuffix(u.Path, "/.well-known/agent.json")
 	u.Path = strings.TrimSuffix(u.Path, "/")

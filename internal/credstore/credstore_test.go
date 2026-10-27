@@ -49,6 +49,10 @@ func TestLookup(t *testing.T) {
 		{target: "https://Assistant.tail1234.ts.net/.well-known/agent-card.json", want: "a2p_root"},
 		{target: "https://assistant.tail1234.ts.net/n/grok/.well-known/agent-card.json", want: "a2p_node"},
 		{target: "https://assistant.tail1234.ts.net/n/grokx", want: "a2p_root"},
+		{target: "https://assistant.tail1234.ts.net/n/grok/../other", want: "a2p_root"},
+		{target: "https://assistant.tail1234.ts.net/n/grok/%2e%2e/other", want: "a2p_root"},
+		{target: "https://assistant.tail1234.ts.net/n/other/../grok/", want: "a2p_node"},
+		{target: "https://assistant.tail1234.ts.net/n/./grok", want: "a2p_node"},
 		{target: "https://other.example.com", want: ""},
 	}
 	for _, tc := range tests {
