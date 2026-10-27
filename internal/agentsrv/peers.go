@@ -72,6 +72,10 @@ type Peers struct {
 
 	handleMu sync.Mutex
 
+	// buildMu serializes building contact clients, so that two calls don't
+	// build one each and destroy the other's.
+	buildMu sync.Mutex
+
 	mu       sync.Mutex
 	watching map[string]bool
 	cache    []network.PeerInfo
@@ -189,6 +193,12 @@ func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
 		return store.Contact{}, errors.New("contact name must be non-empty, without spaces or slashes")
+	}
+	if node, err := p.isNode(ctx, req.Name); err != nil || node {
+		if err != nil {
+			return store.Contact{}, err
+		}
+		return store.Contact{}, fmt.Errorf("%q is the name of a webhook node; pick another name", req.Name)
 	}
 	c := store.Contact{Name: req.Name, URL: trimSlash(req.URL), Token: req.Token, Via: ViaHTTPS}
 	if c.URL == "" {
@@ -381,11 +391,13 @@ func (p *Peers) contactClient(ctx context.Context, name string) (*a2aclient.Clie
 	if err != nil {
 		return nil, err
 	}
-	p.mu.Lock()
-	cached := p.clients[name]
-	p.mu.Unlock()
-	if cached != nil && sameContact(cached.contact, c) {
-		return cached.client, nil
+	if client := p.cachedClient(name, c); client != nil {
+		return client, nil
+	}
+	p.buildMu.Lock()
+	defer p.buildMu.Unlock()
+	if client := p.cachedClient(name, c); client != nil {
+		return client, nil
 	}
 	hc := p.httpClient(c)
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
@@ -406,6 +418,15 @@ func (p *Peers) contactClient(ctx context.Context, name string) (*a2aclient.Clie
 		destroyClient(old.client)
 	}
 	return client, nil
+}
+
+func (p *Peers) cachedClient(name string, c store.Contact) *a2aclient.Client {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if cached := p.clients[name]; cached != nil && sameContact(cached.contact, c) {
+		return cached.client
+	}
+	return nil
 }
 
 func sameContact(a, b store.Contact) bool {

@@ -24,7 +24,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -421,6 +423,45 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 	answer.TaskID, answer.ContextID = task.ID, task.ContextID
 	if _, err := client.SendMessage(ctx, &a2a.SendMessageRequest{Message: answer}); err == nil {
 		t.Fatalf("SendMessage() answering an approval error = nil, want error")
+	}
+}
+
+func TestContactNameTakenByNode(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, assistant, "grok", 0)
+
+	_, err := controlapi.NewClient(assistant.dir).AddContact(context.Background(), controlapi.ContactRequest{Name: "grok", URL: coder.localURL()})
+	if err == nil || !strings.Contains(err.Error(), "webhook node") {
+		t.Fatalf("AddContact() error = %v, want the name taken by a node", err)
+	}
+}
+
+func TestConcurrentContactClientsAreOne(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	p := assistant.srv.peers
+
+	clients := make([]*a2aclient.Client, 8)
+	var wg sync.WaitGroup
+	for i := range clients {
+		wg.Go(func() {
+			c, err := p.contactClient(context.Background(), "coder")
+			if err != nil {
+				t.Errorf("contactClient() error = %v", err)
+			}
+			clients[i] = c
+		})
+	}
+	wg.Wait()
+
+	for _, c := range clients {
+		if c != clients[0] {
+			t.Fatalf("contactClient() built %d different clients concurrently, want one", len(slices.Compact(slices.Clone(clients))))
+		}
 	}
 }
 
