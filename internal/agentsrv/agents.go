@@ -237,7 +237,9 @@ func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.Send
 			}
 		}
 		if last != nil {
-			g.after(ctx, last)
+			// The harness may have dropped the stream, which cancels ctx;
+			// the task still has to be watched.
+			g.after(context.WithoutCancel(ctx), last)
 		}
 	}
 }

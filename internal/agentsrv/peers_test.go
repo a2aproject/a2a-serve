@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"iter"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -35,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -423,6 +425,46 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 	answer.TaskID, answer.ContextID = task.ID, task.ContextID
 	if _, err := client.SendMessage(ctx, &a2a.SendMessageRequest{Message: answer}); err == nil {
 		t.Fatalf("SendMessage() answering an approval error = nil, want error")
+	}
+}
+
+// streamingHandler streams one working status update of a task.
+type streamingHandler struct {
+	a2asrv.RequestHandler
+}
+
+func (streamingHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		ev := a2a.NewStatusUpdateEvent(&a2a.Task{ID: "t1", ContextID: "remote"}, a2a.TaskStateWorking, nil)
+		if !yield(ev, nil) {
+			return
+		}
+		<-ctx.Done()
+	}
+}
+
+func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, ts, "grok", 0)
+	g := &guardedHandler{RequestHandler: streamingHandler{}, p: ts.srv.peers, claims: callClaims{ContextID: "c1", OnBehalfOf: auth.OwnerID}, agent: "grok"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, err := range g.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: userText("hi", "", "")}) {
+		if err != nil {
+			t.Fatalf("SendStreamingMessage() error = %v", err)
+		}
+		cancel()
+		break
+	}
+
+	ws, err := ts.srv.store.Watches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 || ws[0].TaskID != "t1" {
+		t.Fatalf("store.Watches() = %+v, want a watch of task t1", ws)
 	}
 }
 
