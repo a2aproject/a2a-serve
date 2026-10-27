@@ -17,6 +17,7 @@ package network
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -54,6 +55,7 @@ func TestSplitListener(t *testing.T) {
 	t.Parallel()
 	closed := false
 	l := newSplitListener(&net.TCPAddr{}, func() error { closed = true; return nil })
+	l.claim()
 	a, b := net.Pipe()
 	go l.deliver(a)
 	c, err := l.Accept()
@@ -67,6 +69,21 @@ func TestSplitListener(t *testing.T) {
 		t.Fatalf("Accept() after Close() error = %v, want %v", err, net.ErrClosed)
 	}
 	l.deliver(b)
+}
+
+func TestSplitListenerUnclaimedClosesConnections(t *testing.T) {
+	t.Parallel()
+	l := newSplitListener(&net.TCPAddr{}, nil)
+	a, b := net.Pipe()
+	done := make(chan struct{})
+	go func() {
+		l.deliver(a)
+		close(done)
+	}()
+	if _, err := b.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("Read() error = %v, want %v", err, io.EOF)
+	}
+	<-done
 }
 
 func TestLANListensOnAdvertisedAddress(t *testing.T) {

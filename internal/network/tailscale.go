@@ -190,6 +190,7 @@ func (t *Tailscale) ListenPrivate(ctx context.Context) (net.Listener, *url.URL, 
 	if err := t.split(); err != nil {
 		return nil, nil, err
 	}
+	t.private.claim()
 	return t.private, t.url, nil
 }
 
@@ -204,6 +205,7 @@ func (t *Tailscale) ListenPublic(ctx context.Context) (net.Listener, *url.URL, e
 	if err := t.split(); err != nil {
 		return nil, nil, err
 	}
+	t.public.claim()
 	return t.public, t.url, nil
 }
 

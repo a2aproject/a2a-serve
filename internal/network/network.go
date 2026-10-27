@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -145,12 +146,14 @@ func FetchCard(ctx context.Context, client *http.Client, base string) (*a2a.Agen
 }
 
 // splitListener is a net.Listener fed from another listener's accept loop.
+// Until it is claimed, nobody accepts from it, so it closes what it gets.
 type splitListener struct {
-	addr   net.Addr
-	conns  chan net.Conn
-	done   chan struct{}
-	once   sync.Once
-	closer func() error
+	addr    net.Addr
+	conns   chan net.Conn
+	done    chan struct{}
+	once    sync.Once
+	closer  func() error
+	claimed atomic.Bool
 }
 
 func newSplitListener(addr net.Addr, closer func() error) *splitListener {
@@ -179,8 +182,18 @@ func (l *splitListener) Close() error {
 
 func (l *splitListener) Addr() net.Addr { return l.addr }
 
-// deliver hands c to the listener, or closes it if the listener is closed.
+// claim marks the listener as accepted from.
+func (l *splitListener) claim() { l.claimed.Store(true) }
+
+// deliver hands c to the listener, or closes it if the listener is closed or
+// unclaimed.
 func (l *splitListener) deliver(c net.Conn) {
+	if !l.claimed.Load() {
+		if err := c.Close(); err != nil {
+			slog.Debug("closing connection", "error", err)
+		}
+		return
+	}
 	select {
 	case l.conns <- c:
 	case <-l.done:
