@@ -45,7 +45,8 @@ const maxFile = 20 << 20
 type Channel struct {
 	token string
 	// ServerURL overrides the Bot API URL, for tests.
-	ServerURL string
+	ServerURL       string
+	downloadTimeout time.Duration
 
 	connMu sync.Mutex
 	bot    *bot.Bot
@@ -62,7 +63,7 @@ var (
 )
 
 // New returns a channel for the bot with token.
-func New(token string) *Channel { return &Channel{token: token} }
+func New(token string) *Channel { return &Channel{token: token, downloadTimeout: 2 * time.Minute} }
 
 // Name implements [channel.Channel].
 func (c *Channel) Name() string { return "telegram" }
@@ -94,6 +95,9 @@ func (c *Channel) connect(ctx context.Context) error {
 		return fmt.Errorf("connecting to the Telegram bot: %w", err)
 	}
 	me, err := b.GetMe(ctx)
+	if errors.Is(err, bot.ErrorNotFound) || errors.Is(err, bot.ErrorUnauthorized) {
+		return errors.New("invalid Telegram bot token")
+	}
 	if err != nil {
 		return fmt.Errorf("telegram getMe: %w", err)
 	}
@@ -205,15 +209,9 @@ func (c *Channel) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	}
 	direct := msg.Chat.Type == "private"
 	if !direct {
-		// In groups, the bot answers when addressed, so that it doesn't
-		// treat every message of a linked user as a task.
-		mention := "@" + c.me.Username
 		replyToBot := msg.ReplyToMessage != nil && msg.ReplyToMessage.From != nil && msg.ReplyToMessage.From.ID == c.me.ID
-		switch {
-		case strings.Contains(text, mention):
-			text = strings.TrimSpace(strings.ReplaceAll(text, mention, ""))
-		case replyToBot, strings.HasPrefix(text, "/"):
-		default:
+		var ok bool
+		if text, ok = addressed(text, c.me.Username, replyToBot); !ok {
 			return
 		}
 	}
@@ -257,6 +255,29 @@ func (c *Channel) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	c.deliver(ctx, m)
 }
 
+// addressed returns the text of a group message meant for the bot, so that
+// it doesn't treat every message of a linked user as a task: a command
+// without a bot suffix or with its own, a mention or a reply to the bot.
+func addressed(text, username string, replyToBot bool) (string, bool) {
+	if cmd, ok := strings.CutPrefix(text, "/"); ok {
+		name, args, _ := strings.Cut(cmd, " ")
+		name, target, hasTarget := strings.Cut(name, "@")
+		if hasTarget && !strings.EqualFold(target, username) {
+			return "", false
+		}
+		return strings.TrimSpace("/" + name + " " + args), true
+	}
+	mention := "@" + username
+	switch {
+	case strings.Contains(text, mention):
+		return strings.TrimSpace(strings.ReplaceAll(text, mention, "")), true
+	case replyToBot:
+		return text, true
+	default:
+		return "", false
+	}
+}
+
 func (c *Channel) download(ctx context.Context, b *bot.Bot, fileID, name, mediaType string) (channel.File, error) {
 	f, err := b.GetFile(ctx, &bot.GetFileParams{FileID: fileID})
 	if err != nil {
@@ -265,6 +286,8 @@ func (c *Channel) download(ctx context.Context, b *bot.Bot, fileID, name, mediaT
 	if f.FileSize > maxFile {
 		return channel.File{}, fmt.Errorf("file %s is too large (%d bytes)", name, f.FileSize)
 	}
+	ctx, cancel := context.WithTimeout(ctx, c.downloadTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(f), nil)
 	if err != nil {
 		return channel.File{}, err
@@ -278,9 +301,12 @@ func (c *Channel) download(ctx context.Context, b *bot.Bot, fileID, name, mediaT
 			slog.Debug("telegram: closing download", "error", err)
 		}
 	}()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile))
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
 	if err != nil {
 		return channel.File{}, err
+	}
+	if len(data) > maxFile {
+		return channel.File{}, fmt.Errorf("file %s is too large (over %d bytes)", name, maxFile)
 	}
 	return channel.File{Name: name, MediaType: mediaType, Data: data}, nil
 }
