@@ -16,6 +16,7 @@ package localsrv
 
 import (
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -355,4 +356,33 @@ func mustWriteTmpCardFile(t *testing.T, params CardParams) string {
 		t.Fatalf("createAgentCard(%v) error = %v", params, err)
 	}
 	return testutil.MustWriteTmpCardFile(t, card)
+}
+
+func TestListenCardUsesTheServerHost(t *testing.T) {
+	t.Parallel()
+	main, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := main.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	card, err := listenCard(main)
+	if err != nil {
+		t.Fatalf("listenCard() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := card.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	host, _, err := net.SplitHostPort(card.Addr().String())
+	if err != nil {
+		t.Fatalf("net.SplitHostPort() error = %v", err)
+	}
+	if host != "127.0.0.1" {
+		t.Fatalf("listenCard() host = %q, want %q", host, "127.0.0.1")
+	}
 }

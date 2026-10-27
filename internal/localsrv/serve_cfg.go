@@ -78,6 +78,16 @@ func startHTTPServer(ctx context.Context, cfg Config, handler http.Handler) erro
 	return nil
 }
 
+// listenCard opens the agent card listener of a gRPC server on the host of
+// its listener.
+func listenCard(ln net.Listener) (net.Listener, error) {
+	host, _, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		return nil, err
+	}
+	return net.Listen("tcp", net.JoinHostPort(host, "0"))
+}
+
 func startGRPCServer(ctx context.Context, cfg Config, handler a2asrv.RequestHandler, card *a2a.AgentCard) error {
 	s := grpc.NewServer()
 	if cfg.ProtocolVersion == "0.3" {
@@ -88,7 +98,7 @@ func startGRPCServer(ctx context.Context, cfg Config, handler a2asrv.RequestHand
 
 	cardMux := http.NewServeMux()
 	cardMux.Handle(a2asrv.WellKnownAgentCardPath, agentCardHandler(card, cfg))
-	cardListener, err := net.Listen("tcp", ":0")
+	cardListener, err := listenCard(cfg.Listener)
 	if err != nil {
 		return fmt.Errorf("creating agent card listener: %w", err)
 	}
