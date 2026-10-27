@@ -53,7 +53,7 @@ type Router struct {
 
 	mu    sync.Mutex
 	chans map[string]*runningChannel
-	convs map[string]*convMutex
+	convs map[string][]*convTicket
 }
 
 type runningChannel struct {
@@ -64,9 +64,12 @@ type runningChannel struct {
 	err error
 }
 
-type convMutex struct {
-	sync.Mutex
-	refs int
+// convTicket is a place in the line of a conversation. turn is closed when
+// the ticket is first in line.
+type convTicket struct {
+	key  string
+	turn chan struct{}
+	once sync.Once
 }
 
 // Channel restarts back off from channelRetryMin to channelRetryMax.
@@ -80,7 +83,7 @@ func (r *Router) start(ctx context.Context) {
 	r.ctx = ctx
 	r.in = make(chan channel.Inbound, 64)
 	r.chans = map[string]*runningChannel{}
-	r.convs = map[string]*convMutex{}
+	r.convs = map[string][]*convTicket{}
 	go r.dispatch(ctx)
 }
 
@@ -258,32 +261,58 @@ func (r *Router) dispatch(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case in := <-r.in:
-			go r.handle(ctx, in)
+			// Messages take their place in line on arrival, so that a slow
+			// Prepare doesn't let a later message overtake them.
+			var t *convTicket
+			if in.Action == nil {
+				t = r.enqueue(in.Channel, in.Conv)
+			}
+			go r.handle(ctx, in, t)
 		}
 	}
 }
 
-// lockConv serializes the handling of one conversation's messages. The
-// returned function unlocks it.
-func (r *Router) lockConv(ch string, conv channel.ConvKey) func() {
-	key := ch + "\x00" + string(conv)
+// enqueue puts a ticket at the end of the line of a conversation.
+func (r *Router) enqueue(ch string, conv channel.ConvKey) *convTicket {
+	t := &convTicket{key: ch + "\x00" + string(conv), turn: make(chan struct{})}
 	r.mu.Lock()
-	l := r.convs[key]
-	if l == nil {
-		l = &convMutex{}
-		r.convs[key] = l
+	defer r.mu.Unlock()
+	r.convs[t.key] = append(r.convs[t.key], t)
+	if len(r.convs[t.key]) == 1 {
+		close(t.turn)
 	}
-	l.refs++
-	r.mu.Unlock()
-	l.Lock()
-	return func() {
-		l.Unlock()
+	return t
+}
+
+// release takes a ticket out of line, wherever it is, and lets the next one
+// go if it was first. Releasing twice is a no-op.
+func (r *Router) release(t *convTicket) {
+	t.once.Do(func() {
 		r.mu.Lock()
 		defer r.mu.Unlock()
-		if l.refs--; l.refs == 0 {
-			delete(r.convs, key)
+		line := r.convs[t.key]
+		i := slices.Index(line, t)
+		if i < 0 {
+			return
 		}
-	}
+		line = slices.Delete(line, i, i+1)
+		if len(line) == 0 {
+			delete(r.convs, t.key)
+			return
+		}
+		r.convs[t.key] = line
+		if i == 0 {
+			close(line[0].turn)
+		}
+	})
+}
+
+// lockConv serializes the handling of one conversation's messages in the
+// order they lock it. The returned function unlocks it.
+func (r *Router) lockConv(ch string, conv channel.ConvKey) func() {
+	t := r.enqueue(ch, conv)
+	<-t.turn
+	return func() { r.release(t) }
 }
 
 func (r *Router) reply(ctx context.Context, ch channel.Channel, in channel.Inbound, text string) {
@@ -292,7 +321,10 @@ func (r *Router) reply(ctx context.Context, ch channel.Channel, in channel.Inbou
 	}
 }
 
-func (r *Router) handle(ctx context.Context, in channel.Inbound) {
+func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) {
+	if t != nil {
+		defer r.release(t)
+	}
 	ch := r.channel(in.Channel)
 	if ch == nil {
 		return
@@ -337,15 +369,17 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound) {
 	// Stops and answers must not wait for the turn they stop or unblock,
 	// which holds the conversation.
 	if isCommand(in.Text, "stop") {
+		r.release(t)
 		r.stop(ctx, ch, in, p)
 		return
 	}
-	if r.answerTyped(ctx, ch, in, p) {
+	if rec, q, opt, ok := r.typedAnswer(ctx, in); ok {
+		r.release(t)
+		r.answerIn(ctx, ch, in, p, rec, q, opt)
 		return
 	}
 
-	unlock := r.lockConv(in.Channel, in.Conv)
-	defer unlock()
+	<-t.turn
 	switch {
 	case isCommand(in.Text, "new"):
 		if err := r.store.SetContext(ctx, in.Channel, string(in.Conv), a2a.NewContextID()); err != nil {
@@ -489,27 +523,24 @@ func (r *Router) handleAction(ctx context.Context, ch channel.Channel, in channe
 	r.answerIn(ctx, ch, in, p, rec, q, q.Options[in.Action.Option])
 }
 
-// answerTyped answers a question asked in this conversation by text, for
-// channels without buttons and for people who type instead of clicking.
-func (r *Router) answerTyped(ctx context.Context, ch channel.Channel, in channel.Inbound, p auth.Principal) bool {
+// typedAnswer returns the answer a message types to the question pending
+// in its conversation, for channels without buttons and for people who
+// type instead of clicking.
+func (r *Router) typedAnswer(ctx context.Context, in channel.Inbound) (store.Question, *approvals.Question, approvals.Option, bool) {
 	id, err := r.store.PendingQuestion(ctx, in.Channel, string(in.Conv))
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			slog.Warn("loading the pending question", "error", err)
 		}
-		return false
+		return store.Question{}, nil, approvals.Option{}, false
 	}
 	rec, err := r.store.QuestionByID(ctx, id)
 	if err != nil || rec.AnsweredBy != "" {
-		return false
+		return store.Question{}, nil, approvals.Option{}, false
 	}
 	q := approvals.FromRecord(rec)
 	opt, ok := q.Match(in.Text)
-	if !ok {
-		return false
-	}
-	r.answerIn(ctx, ch, in, p, rec, q, opt)
-	return true
+	return rec, q, opt, ok
 }
 
 // answerIn answers a question from a conversation. If the question belongs

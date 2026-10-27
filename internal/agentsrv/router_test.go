@@ -18,6 +18,7 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -138,4 +139,20 @@ func TestRouterStop(t *testing.T) {
 	ts.ch.waitFor(t, "dm1", hasText("..."))
 	ts.ch.write("tg:1", "dm1", "/stop")
 	ts.ch.waitFor(t, "dm1", hasText("Stopped."))
+}
+
+func TestRouterHandlesConversationInOrder(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "tg:1", "dm1")
+
+	slow := ts.ch.message("tg:1", "dm1", "remember red")
+	slow.Prepare = func(context.Context, *channel.Inbound) error {
+		time.Sleep(500 * time.Millisecond)
+		return nil
+	}
+	ts.ch.deliver(slow)
+	ts.ch.write("tg:1", "dm1", "recall")
+
+	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
 }
