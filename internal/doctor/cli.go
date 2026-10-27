@@ -34,7 +34,7 @@ import (
 // minA2AVersion is the oldest a2a CLI with --unix-socket and credential
 // helpers. Replace the comparison with the capability list of
 // `a2a version -o json` (or the plugin info document) once a2a-cli
-// reports one.
+// reports one: https://github.com/a2aproject/a2a-cli/issues/102.
 const minA2AVersion = a2acli.PinnedVersion
 
 // installA2A installs the a2a CLI this build needs.

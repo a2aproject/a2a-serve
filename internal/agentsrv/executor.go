@@ -197,6 +197,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 // the question before the answer in its history. a2a-go appends the answer
 // to the history right away, but moves the question there only with the
 // next status update, after the answer.
+// https://github.com/a2aproject/a2a-go/issues/498
 func withAnswerOrder(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	t := answerOrdered(execCtx.StoredTask, execCtx.Message)
 	if t == nil {
