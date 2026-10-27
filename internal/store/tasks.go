@@ -63,45 +63,73 @@ func (ts *TaskStore) Create(ctx context.Context, task *a2a.Task) (taskstore.Task
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	data, err := json.Marshal(task)
+	stored, blobs := externalize(task)
+	data, err := json.Marshal(stored)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	res, err := ts.s.db.ExecContext(ctx, `INSERT INTO tasks (id, scope, context_id, owner, version, state, status_time, updated, data)
-		VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		string(task.ID), ts.scope, task.ContextID, user, string(task.Status.State), statusTime(task), ts.s.now().UnixNano(), string(data))
+	err = ts.s.inTx(ctx, func(tx *sql.Tx) error {
+		res, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, scope, context_id, owner, version, state, status_time, updated, data)
+			VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			string(task.ID), ts.scope, task.ContextID, user, string(task.Status.State), statusTime(task), ts.s.now().UnixNano(), string(data))
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return errors.Join(taskstore.ErrTaskAlreadyExists, err)
+		}
+		return saveBlobs(ctx, tx, ts.scope, task.ID, blobs)
+	})
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
-	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return taskstore.TaskVersionMissing, errors.Join(taskstore.ErrTaskAlreadyExists, err)
 	}
 	return 1, nil
 }
 
-// Update implements [taskstore.Store].
+// Update implements [taskstore.Store]. Attachments the task already had
+// aren't written again.
 func (ts *TaskStore) Update(ctx context.Context, req *taskstore.UpdateRequest) (taskstore.TaskVersion, error) {
-	stored, err := ts.Get(ctx, req.Task.ID)
+	user, all, err := ts.viewer(ctx)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	if req.PrevVersion != taskstore.TaskVersionMissing && stored.Version != req.PrevVersion {
-		return taskstore.TaskVersionMissing, taskstore.ErrConcurrentModification
-	}
-	data, err := json.Marshal(req.Task)
+	stored, blobs := externalize(req.Task)
+	data, err := json.Marshal(stored)
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	next := stored.Version + 1
-	res, err := ts.s.db.ExecContext(ctx, `UPDATE tasks SET version = ?, state = ?, status_time = ?, updated = ?, data = ?
-		WHERE scope = ? AND id = ? AND version = ?`,
-		int64(next), string(req.Task.Status.State), statusTime(req.Task), ts.s.now().UnixNano(), string(data),
-		ts.scope, string(req.Task.ID), int64(stored.Version))
+	var next taskstore.TaskVersion
+	err = ts.s.inTx(ctx, func(tx *sql.Tx) error {
+		var (
+			owner   string
+			version int64
+		)
+		err := tx.QueryRowContext(ctx, `SELECT owner, version FROM tasks WHERE scope = ? AND id = ?`,
+			ts.scope, string(req.Task.ID)).Scan(&owner, &version)
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && owner != user) {
+			return a2a.ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		if req.PrevVersion != taskstore.TaskVersionMissing && taskstore.TaskVersion(version) != req.PrevVersion {
+			return taskstore.ErrConcurrentModification
+		}
+		res, err := tx.ExecContext(ctx, `UPDATE tasks SET version = ?, state = ?, status_time = ?, updated = ?, data = ?
+			WHERE scope = ? AND id = ? AND version = ?`,
+			version+1, string(req.Task.Status.State), statusTime(req.Task), ts.s.now().UnixNano(), string(data),
+			ts.scope, string(req.Task.ID), version)
+		if err != nil {
+			return err
+		}
+		if n, err := res.RowsAffected(); err != nil || n == 0 {
+			return errors.Join(taskstore.ErrConcurrentModification, err)
+		}
+		next = taskstore.TaskVersion(version + 1)
+		return saveBlobs(ctx, tx, ts.scope, req.Task.ID, blobs)
+	})
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
-	}
-	if n, err := res.RowsAffected(); err != nil || n == 0 {
-		return taskstore.TaskVersionMissing, errors.Join(taskstore.ErrConcurrentModification, err)
 	}
 	return next, nil
 }
@@ -127,6 +155,9 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 	task := &a2a.Task{}
 	if err := json.Unmarshal([]byte(data), task); err != nil {
 		return nil, fmt.Errorf("decoding task %s: %w", taskID, err)
+	}
+	if err := ts.s.loadBlobs(ctx, task); err != nil {
+		return nil, err
 	}
 	return &taskstore.StoredTask{Task: task, Version: taskstore.TaskVersion(version), User: owner}, nil
 }
@@ -226,7 +257,13 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 		lastUpdated = updated
 		resp.Tasks = append(resp.Tasks, task)
 	}
-	return resp, rows.Err()
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	if err := ts.s.loadBlobs(ctx, resp.Tasks...); err != nil {
+		return nil, err
+	}
+	return resp, nil
 }
 
 func encodePageToken(updated int64, id string) string {
@@ -303,7 +340,13 @@ func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2
 		return nil, err
 	}
 	task := &a2a.Task{}
-	return task, json.Unmarshal([]byte(data), task)
+	if err := json.Unmarshal([]byte(data), task); err != nil {
+		return nil, err
+	}
+	if err := ts.s.loadBlobs(ctx, task); err != nil {
+		return nil, err
+	}
+	return task, nil
 }
 
 // TaskCounts returns the number of tasks of the scope per state.

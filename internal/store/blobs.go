@@ -1,0 +1,193 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package store
+
+import (
+	"context"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
+	"errors"
+	"fmt"
+	"maps"
+	"slices"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+)
+
+// blobKey is the part metadata key under which a stored raw part refers to
+// its bytes in the blobs table.
+const blobKey = "a2a-serve.blob"
+
+type blob struct {
+	hash string
+	data []byte
+}
+
+// externalize returns a copy of task whose raw parts refer to blobs, and the
+// blobs. It doesn't change task.
+func externalize(task *a2a.Task) (*a2a.Task, []blob) {
+	var blobs []blob
+	part := func(p *a2a.Part) *a2a.Part {
+		raw := p.Raw()
+		if len(raw) == 0 {
+			return p
+		}
+		sum := sha256.Sum256(raw)
+		h := hex.EncodeToString(sum[:])
+		blobs = append(blobs, blob{hash: h, data: raw})
+		ref := *p
+		ref.Content = a2a.Raw{}
+		ref.Metadata = maps.Clone(p.Metadata)
+		if ref.Metadata == nil {
+			ref.Metadata = map[string]any{}
+		}
+		ref.Metadata[blobKey] = h
+		return &ref
+	}
+	message := func(m *a2a.Message) *a2a.Message {
+		if m == nil {
+			return nil
+		}
+		parts, changed := replaceEach(m.Parts, part)
+		if !changed {
+			return m
+		}
+		ref := *m
+		ref.Parts = parts
+		return &ref
+	}
+	artifact := func(a *a2a.Artifact) *a2a.Artifact {
+		if a == nil {
+			return nil
+		}
+		parts, changed := replaceEach(a.Parts, part)
+		if !changed {
+			return a
+		}
+		ref := *a
+		ref.Parts = parts
+		return &ref
+	}
+	out := *task
+	out.Status.Message = message(task.Status.Message)
+	out.History, _ = replaceEach(task.History, message)
+	out.Artifacts, _ = replaceEach(task.Artifacts, artifact)
+	return &out, blobs
+}
+
+// replaceEach maps the elements of in with f, cloning in on the first
+// element f changes.
+func replaceEach[T comparable](in []T, f func(T) T) ([]T, bool) {
+	out, changed := in, false
+	for i, v := range in {
+		nv := f(v)
+		if nv == v {
+			continue
+		}
+		if !changed {
+			out, changed = slices.Clone(in), true
+		}
+		out[i] = nv
+	}
+	return out, changed
+}
+
+// saveBlobs stores the blobs of a task and drops its references to blobs
+// it no longer has. Blobs it already refers to aren't written again.
+func saveBlobs(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID, blobs []blob) error {
+	rows, err := tx.QueryContext(ctx, `SELECT hash FROM task_blobs WHERE scope = ? AND task_id = ?`, scope, string(taskID))
+	if err != nil {
+		return err
+	}
+	stale := map[string]bool{}
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		stale[h] = true
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	saved := map[string]bool{}
+	for _, b := range blobs {
+		if saved[b.hash] {
+			continue
+		}
+		saved[b.hash] = true
+		if stale[b.hash] {
+			delete(stale, b.hash)
+			continue
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO blobs (hash, data) VALUES (?, ?) ON CONFLICT DO NOTHING`, b.hash, b.data); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `INSERT INTO task_blobs (scope, task_id, hash) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+			scope, string(taskID), b.hash); err != nil {
+			return err
+		}
+	}
+	for h := range stale {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM task_blobs WHERE scope = ? AND task_id = ? AND hash = ?`, scope, string(taskID), h); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// loadBlobs puts the bytes of the blobs the raw parts of tasks refer to back
+// into the parts. It must not run while rows of the store are open: the
+// store has a single connection.
+func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
+	refs := map[string][]*a2a.Part{}
+	collect := func(parts []*a2a.Part) {
+		for _, p := range parts {
+			if h, ok := p.Metadata[blobKey].(string); ok {
+				refs[h] = append(refs[h], p)
+			}
+		}
+	}
+	for _, t := range tasks {
+		if t.Status.Message != nil {
+			collect(t.Status.Message.Parts)
+		}
+		for _, m := range t.History {
+			if m != nil {
+				collect(m.Parts)
+			}
+		}
+		for _, a := range t.Artifacts {
+			if a != nil {
+				collect(a.Parts)
+			}
+		}
+	}
+	for h, parts := range refs {
+		var data []byte
+		if err := s.db.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data); err != nil {
+			return fmt.Errorf("loading blob %s: %w", h, err)
+		}
+		for _, p := range parts {
+			p.Content = a2a.Raw(data)
+			delete(p.Metadata, blobKey)
+			if len(p.Metadata) == 0 {
+				p.Metadata = nil
+			}
+		}
+	}
+	return nil
+}

@@ -15,6 +15,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"os"
@@ -438,5 +439,189 @@ func TestHandles(t *testing.T) {
 	}
 	if _, err := s.HandleFor(ctx, Handle{ContextID: "c1"}); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("HandleFor() of other claims error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestTaskAttachmentsStoredOnce(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	photo := bytes.Repeat([]byte{0xff, 0xd8, 0x01}, 4096)
+	attachment := a2a.NewRawPart(photo)
+	attachment.Filename, attachment.MediaType = "photo.jpg", "image/jpeg"
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("what is this?"), attachment)}
+	if _, err := ts.Create(owner, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for v := 1; v < 4; v++ {
+		task.Artifacts = append(task.Artifacts, &a2a.Artifact{ID: a2a.NewArtifactID(), Parts: []*a2a.Part{a2a.NewTextPart("chunk")}})
+		if _, err := ts.Update(owner, &taskstore.UpdateRequest{Task: task, PrevVersion: taskstore.TaskVersion(v)}); err != nil {
+			t.Fatalf("Update() error = %v", err)
+		}
+	}
+
+	var rowSize, blobs int
+	if err := s.db.QueryRow(`SELECT length(data) FROM tasks WHERE id = 't1'`).Scan(&rowSize); err != nil {
+		t.Fatalf("reading the task row: %v", err)
+	}
+	if rowSize >= len(photo) {
+		t.Fatalf("task row size = %d, want less than the attachment (%d)", rowSize, len(photo))
+	}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
+		t.Fatalf("counting blobs: %v", err)
+	}
+	if blobs != 1 {
+		t.Fatalf("blobs = %d, want 1", blobs)
+	}
+
+	got, err := ts.Get(owner, "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if diff := cmp.Diff(task, got.Task); diff != "" {
+		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+	}
+	latest, err := ts.LatestInContext(context.Background(), "c1")
+	if err != nil {
+		t.Fatalf("LatestInContext() error = %v", err)
+	}
+	if diff := cmp.Diff(task, latest); diff != "" {
+		t.Fatalf("LatestInContext() wrong result (-want +got) diff = %s", diff)
+	}
+	list, err := ts.List(owner, &a2a.ListTasksRequest{IncludeArtifacts: true})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if diff := cmp.Diff([]*a2a.Task{task}, list.Tasks); diff != "" {
+		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestUpdateKeepsCallerTask(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	task := newTask("t1", "c1")
+	task.Status.Message = a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewRawPart([]byte("file")))
+	if _, err := ts.Create(owner, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	want := a2a.NewRawPart([]byte("file"))
+	if diff := cmp.Diff(want, task.Status.Message.Parts[0]); diff != "" {
+		t.Fatalf("Create() changed the task (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPrune(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+
+	finished := newTask("old", "c-old")
+	finished.Status.State = a2a.TaskStateCompleted
+	finished.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
+	for _, task := range []*a2a.Task{finished, newTask("running", "c-running")} {
+		if _, err := ts.Create(owner, task); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	for _, q := range []Question{
+		{ID: "q-old", Token: "t-old", TaskID: "old", ContextID: "c-old"},
+		{ID: "q-running", Token: "t-running", TaskID: "running", ContextID: "c-running"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion() error = %v", err)
+		}
+	}
+	if err := s.SetPendingQuestion(ctx, "telegram", "1", "q-old"); err != nil {
+		t.Fatalf("SetPendingQuestion() error = %v", err)
+	}
+	for _, h := range []Handle{{Handle: "ab", ContextID: "c-old"}, {Handle: "cd", ContextID: "c-running"}} {
+		if err := s.PutHandle(ctx, h); err != nil {
+			t.Fatalf("PutHandle() error = %v", err)
+		}
+	}
+	if err := s.PutCode(ctx, "EXPIRED", Code{Purpose: "pair", Expires: start.Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+
+	now = start.Add(taskRetention + time.Hour)
+	if err := s.PutCode(ctx, "FRESH", Code{Purpose: "pair", Expires: now.Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	if _, err := ts.Get(owner, "old"); !errors.Is(err, a2a.ErrTaskNotFound) {
+		t.Fatalf("Get() of a pruned task error = %v, want %v", err, a2a.ErrTaskNotFound)
+	}
+	if _, err := ts.Get(owner, "running"); err != nil {
+		t.Fatalf("Get() of an unfinished task error = %v", err)
+	}
+	if _, err := s.QuestionByID(ctx, "q-old"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("QuestionByID() of a pruned task error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.QuestionByID(ctx, "q-running"); err != nil {
+		t.Fatalf("QuestionByID() of an unfinished task error = %v", err)
+	}
+	if _, err := s.PendingQuestion(ctx, "telegram", "1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("PendingQuestion() of a pruned question error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.HandleByName(ctx, "ab"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("HandleByName() of a pruned context error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.HandleByName(ctx, "cd"); err != nil {
+		t.Fatalf("HandleByName() of a live context error = %v", err)
+	}
+	if _, err := s.TakeCode(ctx, "EXPIRED", "pair"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("TakeCode() of an expired code error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.TakeCode(ctx, "FRESH", "pair"); err != nil {
+		t.Fatalf("TakeCode() of a fresh code error = %v", err)
+	}
+	var blobs int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
+		t.Fatalf("counting blobs: %v", err)
+	}
+	if blobs != 0 {
+		t.Fatalf("blobs after pruning = %d, want 0", blobs)
+	}
+}
+
+func TestReplaceCode(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	expires := time.Now().Add(time.Minute)
+	owner := Code{Purpose: "pair", Name: "owner", Role: "owner", Expires: expires}
+	if err := s.PutCode(ctx, "OTHER", Code{Purpose: "pair", Name: "grok", Role: "member", Expires: expires}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	for _, code := range []string{"FIRST", "SECOND"} {
+		if err := s.ReplaceCode(ctx, code, owner); err != nil {
+			t.Fatalf("ReplaceCode(%s) error = %v", code, err)
+		}
+	}
+	tests := []struct {
+		code    string
+		wantErr error
+	}{
+		{code: "FIRST", wantErr: ErrNotFound},
+		{code: "SECOND"},
+		{code: "OTHER"},
+	}
+	for _, tc := range tests {
+		if _, err := s.TakeCode(ctx, tc.code, "pair"); !errors.Is(err, tc.wantErr) {
+			t.Fatalf("TakeCode(%s) error = %v, want %v", tc.code, err, tc.wantErr)
+		}
 	}
 }

@@ -22,8 +22,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "modernc.org/sqlite" // registers the sqlite driver
@@ -36,6 +38,8 @@ var ErrNotFound = errors.New("not found")
 type Store struct {
 	db  *sql.DB
 	now func() time.Time
+	// pruned is when FirstSeen last pruned the database, in Unix nanoseconds.
+	pruned atomic.Int64
 }
 
 // Open opens or creates the database at path. ":memory:" opens a private
@@ -85,6 +89,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	// 3: ACP sessions record the key of the agent process which has them.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN agent_key TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
+	// 4: raw parts of tasks move to a blob table, so that updating a task
+	// doesn't rewrite its attachments. Tasks stored before keep them inline
+	// until their next update.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV4)
 		return err
 	},
 }
@@ -159,6 +170,16 @@ CREATE TABLE question_messages (
 	PRIMARY KEY (question_id, channel, message_id));
 `
 
+const schemaV4 = `
+CREATE TABLE blobs (hash TEXT PRIMARY KEY, data BLOB NOT NULL);
+CREATE TABLE task_blobs (
+	scope TEXT NOT NULL, task_id TEXT NOT NULL, hash TEXT NOT NULL,
+	PRIMARY KEY (scope, task_id, hash));
+CREATE INDEX task_blobs_hash ON task_blobs (hash);
+CREATE INDEX tasks_state_updated ON tasks (state, updated);
+CREATE INDEX tasks_context_any_scope ON tasks (context_id);
+`
+
 func (s *Store) migrate(ctx context.Context) error {
 	var version int
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
@@ -191,6 +212,18 @@ func (s *Store) runMigration(ctx context.Context, from int) (err error) {
 	// PRAGMA takes no bound parameters; the version is an int.
 	if _, err := tx.ExecContext(ctx, fmt.Sprintf("PRAGMA user_version = %d", from+1)); err != nil {
 		return err
+	}
+	return tx.Commit()
+}
+
+// inTx runs fn in a transaction, committing it if fn succeeds.
+func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
 	}
 	return tx.Commit()
 }
@@ -252,6 +285,11 @@ func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
 	}
 	if _, err := s.db.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
 		return false, err
+	}
+	if last := s.pruned.Load(); now.UnixNano()-last >= int64(pruneInterval) && s.pruned.CompareAndSwap(last, now.UnixNano()) {
+		if err := s.Prune(ctx); err != nil {
+			slog.Error("pruning the database", "error", err)
+		}
 	}
 	return n == 1, nil
 }

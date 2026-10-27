@@ -207,6 +207,19 @@ func (s *Store) PutCode(ctx context.Context, code string, c Code) error {
 	return err
 }
 
+// ReplaceCode stores a code by its hash and deletes the other codes of its
+// purpose and name, so that at most one of them is pending.
+func (s *Store) ReplaceCode(ctx context.Context, code string, c Code) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE purpose = ? AND name = ?`, c.Purpose, c.Name); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO codes (hash, purpose, name, role, expires) VALUES (?, ?, ?, ?, ?)`,
+			cryptoutil.Hash(code), c.Purpose, c.Name, c.Role, c.Expires.UnixNano())
+		return err
+	})
+}
+
 // ErrCodeExpired is returned when a code was found but has expired.
 var ErrCodeExpired = errors.New("the code has expired")
 
