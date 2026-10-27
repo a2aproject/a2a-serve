@@ -28,7 +28,8 @@ a2a serve opencode --name coder --secret OPENROUTER_API_KEY
 The first run saves the flags to `.a2a/config.yaml` and starts the agent in
 the foreground. Later runs, from the project or a subdirectory, are just
 `a2a serve`. Run `a2a serve` without flags in a new directory and it asks
-a few questions instead.
+a few questions instead. Change settings later with the same flags, through
+`a2a serve config set` (see [Changing settings](#changing-settings)).
 
 On start, the server saves an owner token for its local URL in your
 `~/.config/a2a-serve/credentials.json` and prints how to call it. The `a2a` CLI attaches it through a2a-serve's credential helper, which you
@@ -41,7 +42,7 @@ credential-helper: a2a-serve credential
 Then, from another terminal on the same machine:
 
 ```sh
-a2a send -a http://127.0.0.1:<port> "What does this project do?"
+a2a send -a "$(a2a serve url --local)" "What does this project do?"
 ```
 
 Anyone else needs an invitation:
@@ -100,21 +101,87 @@ or service process doesn't depend on your shell's environment.
 | `a2a serve --detach` | Starts it in the background. |
 | `a2a serve --service` | Installs and starts a systemd (Linux) or launchd (macOS) user service. |
 | `a2a serve status` | URLs, channels, owner links, task counts. |
+| `a2a serve url [--local\|--private\|--public]` | The agent's URL which reaches furthest: public, then private, then local. |
 | `a2a serve logs [-f]` | The server and harness log. |
 | `a2a serve stop [--uninstall]` | Stops it, detached or as a service; `--uninstall` also removes the service. |
+| `a2a serve restart` | Stops it and starts it again in the same mode, detached or as a service. |
+
+`restart` checks the settings first, so an agent which couldn't start again
+isn't stopped. An agent running in the foreground of another terminal can't
+be restarted from here: press Ctrl-C there and run `a2a serve` again.
+
+## Changing settings
+
+`a2a serve config set` takes the flags of `a2a serve <harness>`, so the first
+run teaches the vocabulary for later changes. Every change is validated
+before it is saved, printed as a diff, and says whether it applies now or
+after a restart:
+
+```console
+$ a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
+  sandbox      (default) → local
+  secret       + ANTHROPIC_API_KEY (stored)
+  allow-tools  + read, + search
+✓ saved .a2a/config.yaml
+! coder is running; restart to apply sandbox, secret: a2a serve restart
+```
+
+| Command | What it does |
+| --- | --- |
+| `a2a serve config` | The same as `config show`. |
+| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the `a2a serve <harness> …` command which recreates the agent, with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
+| `a2a serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
+| `a2a serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`; `email` removes the email channel. |
+| `a2a serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
+
+Scalars such as `--name`, `--sandbox`, `--private` or `--port` are
+overwritten by `set` and reset by `unset`; `--private none` is the same as
+`unset private`. Lists are keyed, so setting an existing entry replaces it:
+
+| List | Key | Example |
+| --- | --- | --- |
+| `--secret NAME` | name; setting it again re-reads the value | `config unset secret OPENROUTER_API_KEY` |
+| `--env NAME=value` | `NAME` | `config unset env DEBUG` |
+| `--mount src[:dst][:ro]` | destination | `config unset mount /docs` |
+| `--identity login=role` | login | `config unset identity anna@example.com` |
+| `--allow-tools`, `--deny-tools`, `--approver` | the value | `config unset allow-tools search` |
+
+`unset secret NAME`, and unsetting a channel, also delete the value from
+`state/secrets`. `--secret NAME` reads `$NAME`, or prompts for it on a
+terminal when it isn't set. The secret-valued flags (`--telegram`,
+`--discord`, `--email-password`, `--tailscale-authkey`, `--ngrok-authtoken`)
+take `-`: on a terminal it prompts without echo, otherwise it reads stdin,
+which keeps tokens out of the shell history:
+
+```sh
+a2a serve config set --telegram -
+pass show coder/bot | a2a serve config set --discord -
+```
+
+A running agent applies channels, the description, approvers and the
+allowed and denied tools at once, through its control socket; other settings are saved and wait for
+`a2a serve restart`, and `config show` and `status` list them.
+
+`a2a serve <harness>` in an existing agent goes through the same path, then
+starts the agent unless it already runs. It refuses another harness:
+`this agent runs opencode; switch with a2a serve config set --harness claude`.
+
+An invalid `config.yaml` written by hand stops `a2a serve` with an error
+naming the setting; fix it with `config set`, `config unset` or `config edit`.
 
 ## Sandbox
 
 By default the harness runs in Docker:
 
-- the workspace is mounted at its own path, and more directories with
-  `--mount src[:dst][:ro]` (repeatable; the first one is the workspace);
+- the workspace, by default the directory holding `.a2a`, is mounted at its
+  own path; `--workspace src[:dst][:ro]` picks another one, and
+  `--mount src[:dst][:ro]` (repeatable) adds more directories;
 - `.a2a` shows up as an empty read-only directory, so the harness can't read
   the secrets, tokens or config of its own server;
 - `state/home` is mounted as `/home/agent`;
 - the container runs as your user (as container root under rootless Docker,
   which maps to you), with all capabilities dropped, `no-new-privileges`,
-  4 GB of memory, 2 CPUs and 512 processes.
+  4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 
 The image is `ghcr.io/a2aproject/harness-<harness>:latest`. If it can't be
 pulled, the server builds it from the Dockerfile bundled in the binary
@@ -170,7 +237,7 @@ Answer with a message on the same task: the option ID or label, `approve`,
 | You, on the machine running the agent | The owner token the server saves in your a2a credentials | `user:owner` |
 | Messenger account | Linked once with a pairing code | `user:owner` or `pair:<name>` |
 | Your machines on the tailnet | Tailscale `WhoIs`: the same user as the agent | `user:owner` |
-| Other tailnet users | `network.identities` in `config.yaml`, or the `a2aproject.org/cap/a2a` app capability | `user:<login>` |
+| Other tailnet users | `--identity login=role` (`network.identities` in `config.yaml`), or the `a2aproject.org/cap/a2a` app capability | `user:<login>` |
 | Anyone else, on any listener | Bearer token from pairing | `pair:<name>` |
 | [Webhook nodes](#webhook-nodes) | Their node token, as members | `node:<name>` |
 
@@ -313,6 +380,29 @@ The node token also authenticates A2A calls to the agent, as the member
 `a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve pair add`, or
 `$A2A_RELAY_TOKEN`. `pair rm grok` revokes both directions.
 
+## Output and exit codes
+
+Management commands take `-o json` or `-o jsonl`. `status -o json` has the same
+schema whether the agent runs or not: `running` is always set, and the
+fields of the running server, such as `pid` and `local`, only while it runs.
+Removals (`stop`, `channel rm`, `contact rm`, `pair rm`, `pair forget`)
+print `{"removed": true, "kind": …, "name": …}`, and `stop` prints
+`{"name", "stopped", "serviceInstalled", "serviceRemoved"}`.
+
+Errors follow the error contract of the [a2a CLI](https://github.com/a2aproject/a2a-cli)
+(`specification/SPEC.md`): with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
+
+| Exit | Code | |
+| --- | --- | --- |
+| 0 | | Success |
+| 1 | `A2ACLI_ERR_INTERNAL`, `A2ACLI_ERR_PROTOCOL` | Any other failure |
+| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags or settings |
+| 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
+| 4 | `A2ACLI_ERR_CARD_INVALID` | An agent card couldn't be used |
+| 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` expired |
+| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a serve --detach` |
+| 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
+
 ## HTTP routes
 
 Served on every listener:
@@ -331,15 +421,17 @@ Served on every listener:
 
 ## Configuration reference
 
-`config.yaml` holds what the flags set. Secret values are references such as
-`secret:TELEGRAM_BOT_TOKEN`.
+`config.yaml` holds what the flags set; each key is changed with the flag of
+the same name through `a2a serve config set`. Secret values are references
+such as `secret:TELEGRAM_BOT_TOKEN`.
 
 ```yaml
 name: coder
 harness: opencode
 command: [cloudcode, acp]        # optional: replaces the profile's command
 sandbox: docker                  # or local
-mounts: [/home/u/src/app, /home/u/docs:/docs:ro]
+workspace: /home/u/src/app       # optional: default the directory holding .a2a
+mounts: [/home/u/docs:/docs:ro]  # besides the workspace
 secrets: [OPENROUTER_API_KEY]     # passed to the harness as environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
@@ -354,6 +446,9 @@ approvals:
   approvers: [pair:anna]
 limits: {memory: 8g, cpus: "4", pids: 1024}
 ```
+
+Configs from earlier versions, in which the first of `mounts` is the
+workspace, are read as `workspace` and the remaining mounts.
 
 ## Testing a harness
 

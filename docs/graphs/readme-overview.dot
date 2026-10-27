@@ -1,0 +1,57 @@
+// README overview: a simplified agent-server-overview.dot. Top to bottom:
+// callers, the server, the sandboxed harness; the harness calls other agents
+// back through the server.
+// Render: dot -Tpng -Gdpi=110 readme-overview.dot -o readme-overview.png
+digraph readme_overview {
+  rankdir=TB;
+  graph [fontname="Helvetica", nodesep=0.4, ranksep=0.45, pad=0.3, newrank=true];
+  node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
+
+  subgraph cluster_callers {
+    label="Callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
+    { rank=same;
+      Client    [label="A2A clients\na2a CLI, other agents", shape=ellipse, fillcolor="#dbe8ff"];
+      Owner     [label="Owner\na2a serve ...", shape=ellipse, fillcolor="#dbe8ff"];
+      Messenger [label="Messengers\nTelegram, Discord, email", shape=ellipse, fillcolor="#dbe8ff"];
+    }
+  }
+
+  subgraph cluster_server {
+    label="a2a serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    { rank=same;
+      Listeners [label="Listeners\nlocalhost, tailnet or LAN,\nFunnel or ngrok"];
+      Control   [label="Control socket"];
+      Router    [label="Channels"];
+    }
+    { rank=same;
+      Core  [label="A2A server\npairing, tasks, approvals"];
+      Proxy [label="Peers proxy\napproval guard"];
+    }
+  }
+
+  subgraph cluster_sandbox {
+    label="Docker sandbox"; labeljust=l; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
+    { rank=same;
+      Harness [label="Coding agent\nopencode, Claude Code, ACP"];
+      CLI     [label="a2a CLI"];
+    }
+  }
+
+  { rank=same;
+    Remote  [label="Contacts\nother agent servers", shape=ellipse, fillcolor="#e3f4e3"];
+    Webhook [label="Webhook nodes", shape=ellipse, fillcolor="#e3f4e3"];
+  }
+
+  Client -> Listeners;
+  Owner -> Control;
+  Messenger -> Router;
+  Listeners -> Core;
+  Control -> Core [style=dashed];
+  Router -> Core;
+  Core -> Harness [label="ACP"];
+  Harness -> CLI [label="a2a send"];
+  Proxy -> CLI [dir=back];
+  Proxy -> Remote;
+  Proxy -> Webhook;
+}

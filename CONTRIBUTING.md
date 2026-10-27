@@ -58,3 +58,19 @@ A few checks run on every pull request. Follow these tips to pass them:
   go test -race ./...
   golangci-lint run
   ```
+
+### Trying changes end to end
+
+The tests drive a scripted ACP agent, `fakeacp`, which needs no Docker and no API key. Run a local build of the server with it to try a change by hand:
+
+```sh
+go build -o /tmp/a2a-serve . && go build -o /tmp/fakeacp ./internal/agentsrv/testdata/fakeacp
+export PATH=/tmp:$PATH   # a2a runs the a2a-serve it finds on PATH
+cd "$(mktemp -d)"
+a2a serve acp --sandbox local --command /tmp/fakeacp --detach
+a2a send -a "$(a2a serve url)" hello   # "ask" requests an approval, "slow" streams until stopped
+a2a serve logs
+a2a serve stop
+```
+
+`internal/agentsrv/testdata/fakeacp/main.go` lists the prompts it understands.
