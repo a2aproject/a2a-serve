@@ -619,7 +619,7 @@ func TestRender(t *testing.T) {
   ✓ a2a v0.4.0 at /usr/bin/a2a
   ✗ credential helper not configured
       calls get 401
-      fix: a2a serve doctor --fix
+      fix: a2a-serve doctor --fix
 Agent coder (/src/app)
   ✓ config valid
   ! not running: a2a serve --detach

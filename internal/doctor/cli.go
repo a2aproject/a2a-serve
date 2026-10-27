@@ -43,8 +43,9 @@ const installA2A = "go install github.com/a2aproject/a2a-cli@" + a2acli.PinnedVe
 
 const installServe = "go install github.com/a2aproject/a2a-serve@latest"
 
-// fixCommand is the fix of the problems --fix fixes.
-const fixCommand = "a2a serve doctor --fix"
+// fixCommand is the fix of the problems --fix fixes. It names the binary,
+// which runs also while the a2a CLI has command plugins disabled.
+const fixCommand = "a2a-serve doctor --fix"
 
 // Keys of the a2a CLI config, and the environment variables which override them.
 const (
@@ -125,7 +126,7 @@ func checkPlugins(env Env, path string, values map[string]any) Result {
 	r.Status, r.Message = StatusFail, "command plugins not enabled"
 	r.Detail = `a2a serve fails with unknown command "serve" for "a2a"`
 	// `a2a serve` doesn't run until the fix is applied.
-	r.Fix = "a2a-serve doctor --fix"
+	r.Fix = fixCommand
 	r.apply = func() (string, error) {
 		if _, err := SetUserConfigKey(path, keyPluginsEnabled, scalar("!!bool", "true")); err != nil {
 			return "", err

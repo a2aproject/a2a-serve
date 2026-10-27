@@ -106,7 +106,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 // unauthorizedHint explains a 401. On the machine running the agent the
 // caller is usually the owner whose a2a CLI doesn't attach the owner token.
 func unauthorizedHint(kind string) string {
-	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a serve doctor --fix`)"
+	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a-serve doctor --fix`)"
 	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a serve tokens add <agent-url> <code>`"
 	if kind == network.ListenerLocal {
 		return "this agent needs a token: " + local + "; " + remote
