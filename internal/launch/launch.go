@@ -54,6 +54,9 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 	if err != nil {
 		return err
 	}
+	if err := dir.CheckConfig(cfg, secrets); err != nil {
+		return err
+	}
 	if err := dir.Init(); err != nil {
 		return err
 	}
@@ -202,6 +205,13 @@ func legacyServices(dir agentdir.Dir) []string {
 func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, out io.Writer) error {
 	cfg, err := dir.LoadConfig()
 	if err != nil {
+		return err
+	}
+	secrets, err := dir.LoadSecrets()
+	if err != nil {
+		return err
+	}
+	if err := dir.CheckConfig(cfg, secrets); err != nil {
 		return err
 	}
 	if err := dir.Init(); err != nil {

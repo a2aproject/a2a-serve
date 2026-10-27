@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
@@ -71,12 +72,11 @@ func runCMDWithCreds(t *testing.T, creds *credstore.Store, args ...string) (stri
 	var buf bytes.Buffer
 	cfg := &globalConfig{
 		Printer:     output.NewPrinter(&buf, output.ModeText),
-		svcParams:   &flagparse.ServiceParams{},
 		credentials: creds,
 	}
 	root := newRootCmd(cfg)
 	root.SetOut(&buf)
-	root.SetArgs(append([]string{pluginName}, args...))
+	root.SetArgs(rootArgs(args))
 	err := root.Execute()
 	return buf.String(), err
 }
@@ -147,7 +147,8 @@ func TestServerPairAndSend(t *testing.T) {
 		done <- err
 	}()
 	var status struct {
-		Local string `json:"local"`
+		Running bool   `json:"running"`
+		Local   string `json:"local"`
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for {
@@ -166,11 +167,23 @@ func TestServerPairAndSend(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
+	if !status.Running {
+		t.Fatalf("a2a serve status -o json running = false, want true")
+	}
 	out, err := send(t, creds, status.Local, "hello")
 	if err != nil || !strings.Contains(out, "Hello from fakeacp.") {
 		t.Fatalf("send with the owner token of this machine = %q, %v, want the agent's answer", out, err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "pair", "--dir", dir); err != nil || !strings.Contains(out, "invite") {
+	if out, err := runCMDWithCreds(t, creds, "url", "--dir", dir); err != nil || out != status.Local+"\n" {
+		t.Fatalf("a2a serve url = %q, %v, want %q", out, err, status.Local)
+	}
+	if _, err := runCMDWithCreds(t, creds, "url", "--private", "--dir", dir); err == nil || !strings.Contains(err.Error(), "has no private URL") {
+		t.Fatalf("a2a serve url --private error = %v, want no private URL", err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "contact", "list", "--dir", dir); err != nil || !strings.Contains(out, "no contacts; add one with") {
+		t.Fatalf("a2a serve contact list = %q, %v, want a hint to add one", out, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "pair"); err != nil || !strings.Contains(out, "invite") {
 		t.Fatalf("a2a serve pair = %q, %v, want help listing invite", out, err)
 	}
 
@@ -178,12 +191,15 @@ func TestServerPairAndSend(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a serve pair invite error = %v", err)
 	}
+	if !strings.Contains(out, "this URL only works on this machine") {
+		t.Fatalf("a2a serve pair invite on a localhost-only agent = %q, want a warning", out)
+	}
 	code := regexp.MustCompile(`code ([A-Z0-9]{4}-[A-Z0-9]{4})`).FindStringSubmatch(out)
 	if code == nil {
 		t.Fatalf("a2a serve pair invite = %q, want a code", out)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "add", status.Local, code[1]); err != nil {
-		t.Fatalf("a2a serve pair add error = %v", err)
+	if _, err := runCMDWithCreds(t, creds, "tokens", "add", status.Local, code[1]); err != nil {
+		t.Fatalf("a2a serve tokens add error = %v", err)
 	}
 	out, err = send(t, creds, status.Local, "hello")
 	if err != nil {
@@ -204,8 +220,8 @@ func TestServerPairAndSend(t *testing.T) {
 	if code == nil {
 		t.Fatalf("a2a serve pair invite --webhook = %q, want the node's instructions", out)
 	}
-	if out, err := runCMDWithCreds(t, creds, "pair", "add", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
-		t.Fatalf("a2a serve pair add with a node code = %q, %v, want the node token", out, err)
+	if out, err := runCMDWithCreds(t, creds, "tokens", "add", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
+		t.Fatalf("a2a serve tokens add with a node code = %q, %v, want the node token", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "relay", "inbox"); err != nil || !strings.Contains(out, "grok (node grok)") {
 		t.Fatalf("a2a serve relay inbox = %q, %v, want the node", out, err)
@@ -217,8 +233,8 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !strings.Contains(out, "user:owner") || !strings.Contains(out, "node:grok") {
 		t.Fatalf("a2a serve pair list = %q, %v, want me and grok", out, err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "pair", "rm", "grok", "--dir", dir); err != nil || !strings.Contains(out, "removed node grok") {
-		t.Fatalf("a2a serve pair rm grok = %q, %v, want the node removed", out, err)
+	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || out != `{"kind":"node","name":"grok","removed":true}`+"\n" {
+		t.Fatalf("a2a serve -o jsonl pair rm grok = %q, %v, want the node removed", out, err)
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "rm", "me", "--dir", dir); err != nil {
 		t.Fatalf("a2a serve pair rm error = %v", err)
@@ -241,16 +257,33 @@ func TestServerPairAndSend(t *testing.T) {
 	}
 }
 
-func TestServeModeValidation(t *testing.T) {
+func TestServeNoAgent(t *testing.T) {
 	t.Parallel()
+	_, err := runCMD(t, "--dir", "/nonexistent-a2a-agent")
+	if err == nil || !strings.Contains(err.Error(), "has no .a2a/config.yaml") {
+		t.Fatalf("a2a serve --dir /nonexistent-a2a-agent error = %v, want %q", err, "has no .a2a/config.yaml")
+	}
+}
+
+func TestServeUsageErrors(t *testing.T) {
+	t.Parallel()
+	const agentURL = "https://agent.example.com"
 	tests := []struct {
 		name    string
 		args    []string
 		wantErr string
 	}{
-		{name: "no mode and no agent", args: []string{"--dir", "/nonexistent-a2a-agent"}, wantErr: "has no .a2a/config.yaml"},
-		{name: "multiple modes", args: []string{"--echo", "--exec", "cat"}, wantErr: "mutually exclusive"},
-		{name: "test server flag without a test server", args: []string{"--dir", "/nonexistent-a2a-agent", "--port", "9000"}, wantErr: "--port only applies to test servers"},
+		{name: "legacy echo", args: []string{"--echo"}, wantErr: "run `a2a serve echo`"},
+		{name: "legacy proxy", args: []string{"--proxy", agentURL}, wantErr: "run `a2a serve proxy " + agentURL + "`"},
+		{name: "legacy exec", args: []string{"--exec", "tr a-z A-Z"}, wantErr: "run `a2a serve script 'tr a-z A-Z'`"},
+		{name: "test server flag on serve", args: []string{"--port", "9000"}, wantErr: "unknown flag: --port"},
+		{name: "script stream and chunk", args: []string{"script", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
+		{name: "pair add", args: []string{"pair", "add", agentURL, "3MZ8-LQ0D"}, wantErr: "run `a2a serve tokens add " + agentURL + " 3MZ8-LQ0D`"},
+		{name: "pair add without arguments", args: []string{"pair", "add"}, wantErr: "run `a2a serve tokens add <agent-url> <code>`"},
+		{name: "pair tokens", args: []string{"pair", "tokens"}, wantErr: "run `a2a serve tokens list`"},
+		{name: "pair forget", args: []string{"pair", "forget", agentURL}, wantErr: "run `a2a serve tokens rm " + agentURL + "`"},
+		{name: "dir on a command without an agent", args: []string{"tokens", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
+		{name: "timeout on a command without requests", args: []string{"logs", "--timeout", "1s"}, wantErr: "unknown flag: --timeout"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -258,6 +291,9 @@ func TestServeModeValidation(t *testing.T) {
 			_, err := runCMD(t, tc.args...)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("a2a serve %s error = %v, want %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+			if got := clierr.Classify(err).Code; got != clierr.CodeUsage {
+				t.Fatalf("a2a serve %s error code = %v, want %v", strings.Join(tc.args, " "), got, clierr.CodeUsage)
 			}
 		})
 	}

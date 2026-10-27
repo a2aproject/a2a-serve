@@ -93,7 +93,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
-	if resp.Node == nil || resp.PairCommand != "a2a serve pair add "+ts.localURL()+" "+resp.Code {
+	if resp.Node == nil || resp.PairCommand != "a2a serve tokens add "+ts.localURL()+" "+resp.Code {
 		t.Fatalf("Pair() = %+v, want a node code and its pair command", resp)
 	}
 	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/relay/skill.md and follow it.\nYour pairing code is %s.", id, ts.localURL(), ts.localURL(), resp.Code)

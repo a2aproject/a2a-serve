@@ -1,0 +1,376 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentdir
+
+import (
+	"fmt"
+	"maps"
+	"path/filepath"
+	"slices"
+	"strconv"
+	"strings"
+)
+
+// field is a setting of config.yaml, named by its flag. A scalar has at
+// most one entry.
+type field struct {
+	flag string
+	list bool
+	// live settings are applied by a running server without a restart.
+	live bool
+	get  func(*Config) []string
+	// put replaces the entries; nil resets the setting.
+	put func(*Config, []string)
+	// key returns the key of an entry, or of an argument naming it.
+	key func(string) string
+}
+
+func scalar(flag string, live bool, p func(*Config) *string) field {
+	return field{
+		flag: flag, live: live,
+		get: func(c *Config) []string { return nonEmpty(*p(c)) },
+		put: func(c *Config, v []string) { *p(c) = first(v) },
+	}
+}
+
+func intField(flag string, p func(*Config) *int) field {
+	return field{
+		flag: flag,
+		get: func(c *Config) []string {
+			if *p(c) == 0 {
+				return nil
+			}
+			return []string{strconv.Itoa(*p(c))}
+		},
+		put: func(c *Config, v []string) {
+			n, err := strconv.Atoi(first(v))
+			if err != nil {
+				n = 0
+			}
+			*p(c) = n
+		},
+	}
+}
+
+func list(flag string, live bool, p func(*Config) *[]string, key func(string) string) field {
+	return field{
+		flag: flag, list: true, live: live, key: key,
+		get: func(c *Config) []string { return *p(c) },
+		put: func(c *Config, v []string) { *p(c) = v },
+	}
+}
+
+func emailField(flag string, p func(*EmailConfig) *string) field {
+	return field{
+		flag: flag, live: true,
+		get: func(c *Config) []string {
+			if c.Channels.Email == nil {
+				return nil
+			}
+			return nonEmpty(*p(c.Channels.Email))
+		},
+		put: func(c *Config, v []string) {
+			if c.Channels.Email == nil {
+				c.Channels.Email = &EmailConfig{}
+			}
+			*p(c.Channels.Email) = first(v)
+		},
+	}
+}
+
+func tokenField(kind string, set func(*Config, string)) field {
+	return field{
+		flag: kind, live: true,
+		get: func(c *Config) []string { return nonEmpty(c.ChannelToken(kind)) },
+		put: func(c *Config, v []string) { set(c, first(v)) },
+	}
+}
+
+func nonEmpty(v string) []string {
+	if v == "" {
+		return nil
+	}
+	return []string{v}
+}
+
+func first(v []string) string {
+	if len(v) == 0 {
+		return ""
+	}
+	return v[0]
+}
+
+func identity(s string) string { return s }
+
+func loginKey(s string) string {
+	login, _, _ := strings.Cut(s, "=")
+	return login
+}
+
+func mountArgKey(s string) string {
+	if strings.Contains(s, ":") {
+		return mountKey(s)
+	}
+	return filepath.Clean(s)
+}
+
+var fields = []field{
+	scalar("harness", false, func(c *Config) *string { return &c.Harness }),
+	scalar("name", false, func(c *Config) *string { return &c.Name }),
+	scalar("description", true, func(c *Config) *string { return &c.Description }),
+	{
+		flag: "command",
+		get:  func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
+		put:  func(c *Config, v []string) { c.Command = nil },
+	},
+	scalar("image", false, func(c *Config) *string { return &c.Image }),
+	scalar("sandbox", false, func(c *Config) *string { return &c.Sandbox }),
+	scalar("workspace", false, func(c *Config) *string { return &c.Workspace }),
+	list("mount", false, func(c *Config) *[]string { return &c.Mounts }, mountArgKey),
+	list("secret", false, func(c *Config) *[]string { return &c.Secrets }, identity),
+	list("env", false, func(c *Config) *[]string { return &c.Env }, envKey),
+	intField("port", func(c *Config) *int { return &c.Port }),
+	scalar("private", false, func(c *Config) *string { return &c.Network.Private }),
+	scalar("public", false, func(c *Config) *string { return &c.Network.Public }),
+	scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL }),
+	scalar("ngrok-url", false, func(c *Config) *string { return &c.Network.NgrokURL }),
+	{
+		flag: "identity", list: true, key: loginKey,
+		get: func(c *Config) []string {
+			out := []string{}
+			for _, login := range slices.Sorted(maps.Keys(c.Network.Identities)) {
+				out = append(out, login+"="+c.Network.Identities[login])
+			}
+			return out
+		},
+		put: func(c *Config, v []string) {
+			c.Network.Identities = nil
+			for _, kv := range v {
+				login, role, _ := strings.Cut(kv, "=")
+				if c.Network.Identities == nil {
+					c.Network.Identities = map[string]string{}
+				}
+				c.Network.Identities[login] = role
+			}
+		},
+	},
+	tokenField(ChannelTelegram, func(c *Config, v string) {
+		c.Channels.Telegram = nil
+		if v != "" {
+			c.Channels.Telegram = &TelegramConfig{Token: v}
+		}
+	}),
+	tokenField(ChannelDiscord, func(c *Config, v string) {
+		c.Channels.Discord = nil
+		if v != "" {
+			c.Channels.Discord = &DiscordConfig{Token: v}
+		}
+	}),
+	emailField("email-address", func(e *EmailConfig) *string { return &e.Address }),
+	emailField("email-imap", func(e *EmailConfig) *string { return &e.IMAP }),
+	emailField("email-smtp", func(e *EmailConfig) *string { return &e.SMTP }),
+	emailField("email-username", func(e *EmailConfig) *string { return &e.Username }),
+	emailField("email-password", func(e *EmailConfig) *string { return &e.Password }),
+	emailField("email-mailbox", func(e *EmailConfig) *string { return &e.Mailbox }),
+	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
+	list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity),
+	list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity),
+	list("approver", true, func(c *Config) *[]string { return &c.Approvals.Approvers }, identity),
+	scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }),
+	scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }),
+	intField("pids", func(c *Config) *int { return &c.Limits.PIDs }),
+}
+
+// unsetOnly are settings which `config unset` accepts besides the fields:
+// the email channel as a whole and the stored network secrets.
+var unsetOnly = map[string]string{
+	ChannelEmail:        "",
+	"tailscale-authkey": SecretTailscaleKey,
+	"ngrok-authtoken":   SecretNgrokToken,
+}
+
+func lookupField(flag string) (field, bool) {
+	i := slices.IndexFunc(fields, func(f field) bool { return f.flag == flag })
+	if i < 0 {
+		return field{}, false
+	}
+	return fields[i], true
+}
+
+// SettingNames returns the names `config unset` accepts.
+func SettingNames() []string {
+	out := slices.Collect(maps.Keys(unsetOnly))
+	for _, f := range fields {
+		out = append(out, f.flag)
+	}
+	slices.Sort(out)
+	return out
+}
+
+// IsLive reports whether a running server applies the setting without a
+// restart.
+func IsLive(setting string) bool {
+	f, ok := lookupField(setting)
+	return ok && f.live
+}
+
+// Change is the difference of one setting between two configs.
+type Change struct {
+	Setting string `json:"setting"`
+	// Old and New are set for scalars.
+	Old string `json:"old,omitempty"`
+	New string `json:"new,omitempty"`
+	// Added and Removed are set for lists.
+	Added   []string `json:"added,omitempty"`
+	Removed []string `json:"removed,omitempty"`
+	Live    bool     `json:"live"`
+}
+
+// Diff returns the settings which differ from old to next.
+func Diff(old, next *Config) []Change {
+	var out []Change
+	for _, f := range fields {
+		o, n := f.get(old), f.get(next)
+		if slices.Equal(o, n) {
+			continue
+		}
+		c := Change{Setting: f.flag, Live: f.live}
+		if f.list {
+			for _, e := range n {
+				if !slices.Contains(o, e) {
+					c.Added = append(c.Added, e)
+				}
+			}
+			for _, e := range o {
+				if !slices.Contains(n, e) {
+					c.Removed = append(c.Removed, e)
+				}
+			}
+		} else {
+			c.Old, c.New = first(o), first(n)
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
+// Unset removes entries from a list setting, or the whole list without
+// entries, or resets a scalar setting to its default. It returns the names
+// of stored secrets which are no longer used, to delete.
+func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, error) {
+	before := cfg.referencedSecrets()
+	var deleted []string
+	f, ok := lookupField(setting)
+	secret, extra := unsetOnly[setting]
+	switch {
+	case extra && len(entries) > 0:
+		return nil, fmt.Errorf("%s takes no entries: run `a2a serve config unset %s`", setting, setting)
+	case extra && secret != "":
+		deleted = append(deleted, secret)
+	case extra:
+		cfg.Channels.Email = nil
+	case !ok:
+		return nil, fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))
+	case setting == "harness":
+		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a serve config set --harness <name>`")
+	case !f.list && len(entries) > 0:
+		return nil, fmt.Errorf("%s is not a list: run `a2a serve config unset %s` to reset it", setting, setting)
+	case setting == "name":
+		cfg.Name = d.DefaultName()
+	case f.list && len(entries) > 0:
+		cur := f.get(cfg)
+		for _, arg := range entries {
+			k := f.key(arg)
+			i := slices.IndexFunc(cur, func(e string) bool { return f.key(e) == k })
+			if i < 0 {
+				return nil, fmt.Errorf("%s %s is not set", setting, arg)
+			}
+			cur = slices.Delete(slices.Clone(cur), i, i+1)
+		}
+		f.put(cfg, cur)
+	default:
+		f.put(cfg, nil)
+	}
+	if e := cfg.Channels.Email; e != nil && *e == (EmailConfig{}) {
+		cfg.Channels.Email = nil
+	}
+	after := cfg.referencedSecrets()
+	for name := range before {
+		if !after[name] {
+			deleted = append(deleted, name)
+		}
+	}
+	slices.Sort(deleted)
+	return deleted, nil
+}
+
+// AsCommand returns the arguments of `a2a serve` which recreate the agent
+// in an empty directory. Secrets are passed as env:NAME; stored is used to
+// tell which network secrets are set.
+func (c *Config) AsCommand(stored Secrets) []string {
+	h := c.Harness
+	if !slices.Contains(Harnesses, h) {
+		h = HarnessACP
+	}
+	args := []string{"a2a", "serve", h}
+	add := func(flag string, values ...string) {
+		for _, v := range values {
+			if v, ok := strings.CutPrefix(v, SecretPrefix); ok {
+				args = append(args, "--"+flag, "env:"+v)
+				continue
+			}
+			args = append(args, "--"+flag, v)
+		}
+	}
+	for _, f := range fields {
+		if f.flag == "harness" || (f.flag == "name" && c.Name == "") {
+			continue
+		}
+		add(f.flag, f.get(c)...)
+	}
+	for _, flag := range slices.Sorted(maps.Keys(unsetOnly)) {
+		if name := unsetOnly[flag]; name != "" && stored[name] != "" {
+			add(flag, SecretPrefix+name)
+		}
+	}
+	return args
+}
+
+// ShellJoin quotes args for a POSIX shell.
+func ShellJoin(args []string) string {
+	out := make([]string, len(args))
+	for i, a := range args {
+		out[i] = shellQuote(a)
+	}
+	return strings.Join(out, " ")
+}
+
+func shellQuote(s string) string {
+	if s != "" && strings.IndexFunc(s, func(r rune) bool {
+		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@,+%", r))
+	}) < 0 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// CopyLive copies the settings a running server applies without a restart,
+// other than channels, from src to dst.
+func CopyLive(dst, src *Config) {
+	dst.Description = src.Description
+	dst.Approvals.Approvers = slices.Clone(src.Approvals.Approvers)
+	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
+	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
+}

@@ -48,6 +48,24 @@ func TestClassify(t *testing.T) {
 			wantExit: 4,
 		},
 		{
+			name:     "error marked as a usage error",
+			err:      fmt.Errorf("loading: %w", markedUsage{}),
+			wantCode: CodeUsage,
+			wantExit: 2,
+		},
+		{
+			name:     "agent server not running",
+			err:      fmt.Errorf("coder: %w", markedNotRunning{}),
+			wantCode: CodeNotRunning,
+			wantExit: 6,
+		},
+		{
+			name:     "no agent directory",
+			err:      fmt.Errorf("loading: %w", markedNoAgent{}),
+			wantCode: CodeNoAgent,
+			wantExit: 7,
+		},
+		{
 			name:     "deadline exceeded is a timeout",
 			err:      fmt.Errorf("waiting: %w", context.DeadlineExceeded),
 			wantCode: CodeTimeout,
@@ -106,6 +124,21 @@ func TestClassify(t *testing.T) {
 		})
 	}
 }
+
+type markedUsage struct{}
+
+func (markedUsage) Error() string    { return "invalid setting" }
+func (markedUsage) UsageError() bool { return true }
+
+type markedNotRunning struct{}
+
+func (markedNotRunning) Error() string    { return "the agent server is not running" }
+func (markedNotRunning) NotRunning() bool { return true }
+
+type markedNoAgent struct{}
+
+func (markedNoAgent) Error() string { return "no .a2a directory found" }
+func (markedNoAgent) NoAgent() bool { return true }
 
 func TestClassifyNil(t *testing.T) {
 	t.Parallel()

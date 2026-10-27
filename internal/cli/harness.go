@@ -17,27 +17,25 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
-	"github.com/google/shlex"
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
-// newHarnessCmd builds `a2a serve <harness>`, which saves the flags of
-// the first run to .a2a/config.yaml and starts the agent. "acp" starts any
-// ACP agent given with --command.
+// newHarnessCmd builds `a2a serve <harness>`, which creates the agent on
+// the first run and starts it. In an existing agent the flags go through
+// the `config set` path first. "acp" starts any ACP agent given with
+// --command.
 func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Command {
 	var (
-		s       agentdir.Settings
-		email   agentdir.EmailSettings
-		command string
-		mode    runMode
+		flags settingsFlags
+		mode  runMode
 	)
-	short := fmt.Sprintf("Start a %s agent in this directory", name)
-	if name == "acp" {
+	short := fmt.Sprintf("Start %s agent in this directory", output.WithArticle(name))
+	if name == agentdir.HarnessACP {
 		short = "Start any ACP agent (--command) in this directory"
 	}
 	cmd := &cobra.Command{
@@ -45,61 +43,46 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 		Short: short,
 		Example: fmt.Sprintf(`  a2a serve %[1]s --name coder --secret OPENROUTER_API_KEY
   a2a serve %[1]s --private tailscale --telegram env:CODER_BOT_TOKEN --detach
-  a2a serve %[1]s --mount ~/src/app --mount ~/docs:/docs:ro`, name),
+  a2a serve %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if command != "" {
-				argv, err := shlex.Split(command)
-				if err != nil || len(argv) == 0 {
-					return clierr.Usage(fmt.Sprintf("invalid --command %q", command))
-				}
-				s.Command = argv
-			}
-			if name == "acp" && len(s.Command) == 0 {
-				return clierr.Usage("a2a serve acp needs --command, such as --command \"gemini --experimental-acp\"")
-			}
-			s.Harness = name
-			if email != (agentdir.EmailSettings{}) {
-				s.Email = &email
-			}
 			d, err := harnessDir(sf.dir)
 			if err != nil {
 				return err
 			}
-			if err := saveSettings(d, s); err != nil {
+			s, err := flags.settings(newSecretReader(cfg.stderr()))
+			if err != nil {
+				return err
+			}
+			if d.Exists() {
+				conf, err := d.ReadConfig()
+				if err != nil {
+					return err
+				}
+				if err := conf.CheckHarness(name); err != nil {
+					return err
+				}
+			}
+			s.Harness = name
+			res, err := agentctl.Set(cmd.Context(), d, s, false)
+			if err != nil {
+				return err
+			}
+			if !res.Created {
+				if err := printConfigResult(cfg, res); err != nil {
+					return err
+				}
+			}
+			if res.Running {
+				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a serve status)\n", res.Name)
 				return err
 			}
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}
+	flags.register(cmd, false)
 	f := cmd.Flags()
-	f.StringVar(&s.Name, "name", "", "Agent name, also its tailnet machine name (default: the directory name)")
-	f.StringVar(&s.Description, "description", "", "Agent description for its card")
-	f.StringArrayVar(&s.Secrets, "secret", nil, "Environment variable passed to the harness, such as an API key; its value is stored in .a2a/state/secrets (repeatable)")
-	f.StringArrayVar(&s.Mounts, "mount", nil, "Directory to mount: src[:dst][:ro]; the first is the workspace (repeatable, default: the current directory)")
-	f.StringArrayVar(&s.Env, "env", nil, "Extra NAME=value for the harness (repeatable)")
-	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan or none")
-	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok or none")
-	f.StringVar(&s.Telegram, "telegram", "", "Telegram bot token: env:VAR or the token")
-	f.StringVar(&s.Discord, "discord", "", "Discord bot token: env:VAR or the token")
-	f.StringVar(&email.Address, "email-address", "", "Email channel: the agent's address")
-	f.StringVar(&email.IMAP, "email-imap", "", "Email channel: IMAP host:port")
-	f.StringVar(&email.SMTP, "email-smtp", "", "Email channel: SMTP host:port")
-	f.StringVar(&email.Username, "email-username", "", "Email channel: login (default: the address)")
-	f.StringVar(&email.Password, "email-password", "", "Email channel: password, env:VAR or the value")
-	f.StringVar(&email.Mailbox, "email-mailbox", "", "Email channel: mailbox to watch (default INBOX)")
-	f.StringVar(&email.TrustedAuthServ, "email-trusted-authserv", "", "Email channel: authserv-id of your mail server's Authentication-Results")
-	f.StringVar(&s.Sandbox, "sandbox", "", "Where the harness runs: docker (default) or local")
-	f.StringVar(&s.Image, "image", "", "Container image of the harness")
-	f.StringVar(&command, "command", "", "Command line of the ACP agent, replacing the profile's")
-	f.IntVar(&s.Port, "port", 0, "Localhost port (default: a free port, kept across runs)")
-	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, "ACP tool kinds approved without asking, such as read,search")
-	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, "ACP tool kinds denied without asking")
-	f.StringSliceVar(&s.Approvers, "approver", nil, "Principals besides the owner who may approve tool calls, such as pair:anna")
-	f.StringVar(&s.TailscaleControlURL, "tailscale-control-url", "", "Headscale URL, instead of Tailscale's control server")
-	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", "Tailscale auth key, env:VAR or the key, to join without the login link")
-	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
-	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", "ngrok authtoken, env:VAR or the token")
+	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
 	f.BoolVar(&mode.detach, "detach", false, "Run the agent in the background")
 	f.BoolVar(&mode.service, "service", false, "Install and start the agent as a launchd or systemd user service")
 	f.BoolVar(&mode.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
@@ -115,13 +98,6 @@ func harnessDir(dir string) (agentdir.Dir, error) {
 			return agentdir.Dir{}, err
 		}
 		dir = wd
-	}
-	if strings.HasPrefix(dir, "~/") {
-		home, err := os.UserHomeDir()
-		if err != nil {
-			return agentdir.Dir{}, err
-		}
-		dir = home + dir[1:]
 	}
 	return agentdir.Open(dir)
 }

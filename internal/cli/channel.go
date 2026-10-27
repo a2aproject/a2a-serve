@@ -27,6 +27,7 @@ func newChannelCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			return cmd.Help()
 		},
 	}
-	cmd.AddCommand(newChannelAddCmd(cfg, sf), newChannelRmCmd(cfg, sf))
+	sf.addControlFlags(cmd.PersistentFlags())
+	cmd.AddCommand(newChannelAddCmd(cfg, sf), newChannelListCmd(cfg, sf), newChannelRmCmd(cfg, sf))
 	return cmd
 }

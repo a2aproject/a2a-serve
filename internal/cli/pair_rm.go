@@ -15,18 +15,38 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
 func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "rm <name>",
 		Short: "Revoke the tokens and messenger links issued to a name, or remove a webhook node",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: controlCompletions(sf, func(ctx context.Context, c *controlapi.Client) ([]string, error) {
+			toks, err := c.Tokens(ctx)
+			if err != nil {
+				return nil, err
+			}
+			nodes, err := c.Nodes(ctx)
+			if err != nil {
+				return nil, err
+			}
+			names := make([]string, 0, len(toks)+len(nodes))
+			for _, t := range toks {
+				names = append(names, t.Name)
+			}
+			for _, n := range nodes {
+				names = append(names, n.ID)
+			}
+			return names, nil
+		}),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()
 			if err != nil {
@@ -37,11 +57,11 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if resp.Kind == pairapi.KindNode {
-				_, err = fmt.Fprintf(cfg.Out, "✓ removed node %s; the agent can no longer wake it\n", args[0])
-				return err
+				return cfg.PrintRemoved(resp.Kind, args[0], fmt.Sprintf("✓ removed node %s; the agent can no longer wake it", args[0]))
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ %s can no longer call the agent\n", args[0])
-			return err
+			return cfg.PrintRemoved(pairapi.KindCaller, args[0], fmt.Sprintf("✓ %s can no longer call the agent", args[0]))
 		},
 	}
+	sf.addControlFlags(cmd.Flags())
+	return cmd
 }

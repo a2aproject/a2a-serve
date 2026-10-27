@@ -15,35 +15,30 @@
 package cli
 
 import (
-	"time"
+	"fmt"
 
 	"github.com/spf13/cobra"
 )
 
-func newPairTokensCmd(cfg *globalConfig) *cobra.Command {
+func newTokensRmCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
-		Use:   "tokens",
-		Short: "List the agent tokens saved by pair add",
-		Args:  cobra.NoArgs,
+		Use:               "rm <agent-url>",
+		Short:             "Delete the token saved for an agent",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: savedTokenCompletions(cfg),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			store, err := cfg.credentialStore()
 			if err != nil {
 				return err
 			}
-			creds, err := store.List()
+			ok, err := store.Delete(args[0])
 			if err != nil {
 				return err
 			}
-			rows := make([][]string, 0, len(creds))
-			out := make([]map[string]string, 0, len(creds))
-			for _, c := range creds {
-				rows = append(rows, []string{c.URL, c.Agent, c.Principal, c.Created.Format(time.DateTime)})
-				out = append(out, map[string]string{"url": c.URL, "agent": c.Agent, "principal": c.Principal})
+			if !ok {
+				return fmt.Errorf("no saved token for %s", args[0])
 			}
-			if cfg.IsJSON() {
-				return cfg.PrintJSON(out)
-			}
-			return cfg.PrintTable([]string{"URL", "AGENT", "PRINCIPAL", "CREATED"}, rows)
+			return cfg.PrintRemoved("token", args[0], "✓ deleted the token for "+args[0])
 		},
 	}
 }

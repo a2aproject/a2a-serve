@@ -27,6 +27,7 @@ func newContactCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			return cmd.Help()
 		},
 	}
+	sf.addControlFlags(cmd.PersistentFlags())
 	cmd.AddCommand(
 		newContactAddCmd(cfg, sf),
 		newContactListCmd(cfg, sf),

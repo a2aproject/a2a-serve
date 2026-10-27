@@ -348,7 +348,15 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	if err := s.dir.SaveConfig(&next); err != nil {
+	// config.yaml may hold changes waiting for a restart; keep them.
+	saved, err := s.dir.ReadConfig()
+	if err != nil {
+		slog.Debug("saving the running config", "error", err)
+		saved = &next
+	} else if err := fn(saved); err != nil {
+		return err
+	}
+	if err := s.dir.SaveConfig(saved); err != nil {
 		return err
 	}
 	*s.cfg = next

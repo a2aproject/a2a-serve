@@ -41,5 +41,6 @@ func newLogsCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Keep printing new lines")
 	cmd.Flags().IntVarP(&lines, "lines", "n", 100, "Number of lines to print first; 0 prints all")
+	sf.addDirFlag(cmd.Flags())
 	return cmd
 }

@@ -16,11 +16,13 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/relayapi"
@@ -35,7 +37,7 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "invite <name>",
 		Short: "Create a one-time code that lets someone call or message the agent, or host a webhook node",
 		Long: `Create an 8-character code, valid once for 15 minutes, for <name>. The caller
-redeems it for a token with ` + "`a2a serve pair add <agent-url> <code>`" + `, or links a
+redeems it for a token with ` + "`a2a serve tokens add <agent-url> <code>`" + `, or links a
 messenger account by sending "link <code>" to the agent's bot.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,
@@ -73,9 +75,15 @@ values may be env:VAR.`,
 				return err
 			}
 			if cfg.IsJSON() {
+				if err := warnLocalOnly(cfg.stderr(), resp); err != nil {
+					return err
+				}
 				return cfg.PrintJSON(resp)
 			}
-			return printPairCode(cfg, resp)
+			if err := printPairCode(cfg, resp); err != nil {
+				return err
+			}
+			return warnLocalOnly(cfg.Out, resp)
 		},
 	}
 	f := cmd.Flags()
@@ -83,6 +91,8 @@ values may be env:VAR.`,
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\" (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
+	sf.addControlFlags(f)
+	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
 	return cmd
 }
 
@@ -123,5 +133,16 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 		sb.WriteString("  " + h + "\n")
 	}
 	_, err := fmt.Fprint(cfg.Out, sb.String())
+	return err
+}
+
+// warnLocalOnly warns when the code is redeemed at a URL which only works
+// on this machine, which is useless to invite someone else.
+func warnLocalOnly(w io.Writer, resp *controlapi.PairCodeResponse) error {
+	if !controlapi.LocalOnly(resp.URL) {
+		return nil
+	}
+	_, err := fmt.Fprint(w, "! this URL only works on this machine; to invite someone on another one, add a private or public URL with\n"+
+		"  `a2a serve config set --private tailscale` (or lan) or `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`\n")
 	return err
 }

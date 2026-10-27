@@ -218,3 +218,100 @@ func TestClientErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestClientWithTimeout(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		timeout time.Duration
+		wantErr bool
+	}{
+		{name: "call slower than the timeout", timeout: 50 * time.Millisecond, wantErr: true},
+		{name: "zero keeps the default", timeout: 0},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				select {
+				case <-time.After(300 * time.Millisecond):
+				case <-r.Context().Done():
+					return
+				}
+				w.Header().Set("Content-Type", "application/json")
+				if _, err := w.Write([]byte(`{"name":"coder"}`)); err != nil {
+					t.Errorf("Write() error = %v", err)
+				}
+			}))
+
+			_, err := NewClient(dir, WithTimeout(tc.timeout)).Status(t.Context())
+
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("Client.Status() error = %v, want error %t", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestStatusURL(t *testing.T) {
+	t.Parallel()
+	all := &Status{Name: "coder", Local: "http://127.0.0.1:4000", Private: "http://coder.tail.ts.net", Public: "https://coder.example.com"}
+	localOnly := &Status{Name: "coder", Local: "http://127.0.0.1:4000"}
+	tests := []struct {
+		name    string
+		status  *Status
+		scope   string
+		want    string
+		wantErr string
+	}{
+		{name: "best is public", status: all, want: "https://coder.example.com"},
+		{name: "best is private without public", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://coder.lan:4000"}, want: "http://coder.lan:4000"},
+		{name: "best is local without networks", status: localOnly, want: "http://127.0.0.1:4000"},
+		{name: "local", status: all, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
+		{name: "private", status: all, scope: ScopePrivate, want: "http://coder.tail.ts.net"},
+		{name: "public", status: all, scope: ScopePublic, want: "https://coder.example.com"},
+		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a serve config set --private tailscale` (or lan), then `a2a serve restart`"},
+		{name: "no public URL", status: localOnly, scope: ScopePublic, wantErr: "coder has no public URL; add one with `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tc.status.URL(tc.scope)
+			if tc.wantErr != "" {
+				if err == nil || err.Error() != tc.wantErr {
+					t.Fatalf("Status.URL(%q) error = %v, want %q", tc.scope, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Status.URL(%q) error = %v, want nil", tc.scope, err)
+			}
+			if got != tc.want {
+				t.Fatalf("Status.URL(%q) = %q, want %q", tc.scope, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLocalOnly(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		url  string
+		want bool
+	}{
+		{url: "http://127.0.0.1:4000", want: true},
+		{url: "http://localhost:4000/n/grok", want: true},
+		{url: "http://[::1]:4000", want: true},
+		{url: "http://coder.tail.ts.net", want: false},
+		{url: "https://coder.example.com", want: false},
+		{url: "http://192.168.1.10:4000", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.url, func(t *testing.T) {
+			t.Parallel()
+			if got := LocalOnly(tc.url); got != tc.want {
+				t.Fatalf("LocalOnly(%q) = %v, want %v", tc.url, got, tc.want)
+			}
+		})
+	}
+}

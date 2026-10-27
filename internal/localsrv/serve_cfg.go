@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package localsrv runs local A2A servers in echo, exec and proxy modes for
+// Package localsrv runs local A2A servers in echo, script and proxy modes for
 // development and testing.
 package localsrv
 
@@ -36,7 +36,7 @@ import (
 // LoggerFunc logs a formatted diagnostic message from the local server.
 type LoggerFunc func(format string, args ...any)
 
-// Config holds the settings shared by the local server modes (echo, exec, proxy).
+// Config holds the settings shared by the local server modes (echo, script, proxy).
 type Config struct {
 	CardParams
 

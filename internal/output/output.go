@@ -104,6 +104,16 @@ func (p *Printer) PrintTable(headers []string, rows [][]string) error {
 	return tw.Flush()
 }
 
+// PrintTableOrEmpty writes rows like PrintTable, or the line empty when
+// there are none.
+func (p *Printer) PrintTableOrEmpty(headers []string, rows [][]string, empty string) error {
+	if len(rows) > 0 {
+		return p.PrintTable(headers, rows)
+	}
+	_, err := fmt.Fprintln(p.Out, empty)
+	return err
+}
+
 // PrintCard writes an agent card in the configured Mode.
 func (p *Printer) PrintCard(card *a2a.AgentCard) error {
 	if p.IsJSON() {
@@ -234,6 +244,16 @@ func (p *Printer) PrintPushConfigDeleted(taskID, configID string) error {
 		return p.PrintJSON(map[string]any{"deleted": true, "taskId": taskID, "id": configID})
 	}
 	_, err := fmt.Fprintf(p.Out, "Deleted:  %s (task %s)\n", configID, taskID)
+	return err
+}
+
+// PrintRemoved confirms the removal of name, of kind: as text, or else as
+// JSON.
+func (p *Printer) PrintRemoved(kind, name, text string) error {
+	if p.IsJSON() {
+		return p.PrintJSON(map[string]any{"removed": true, "kind": kind, "name": name})
+	}
+	_, err := fmt.Fprintln(p.Out, text)
 	return err
 }
 

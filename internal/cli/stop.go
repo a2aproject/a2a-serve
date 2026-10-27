@@ -41,15 +41,18 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := controlapi.NewClient(d)
+			client := sf.controlClient(d)
 			_, err = client.Status(cmd.Context())
 			running := err == nil
 			if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 				return err
 			}
-			name := launch.ServiceName(d, conf)
-			installed := service.Installed(name)
-			if uninstall && installed {
+			services := launch.InstalledServices(d)
+			installed := len(services) > 0
+			for _, name := range services {
+				if !uninstall {
+					break
+				}
 				if err := service.Uninstall(name); err != nil {
 					return err
 				}
@@ -57,6 +60,9 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			// A detached agent, or one the service manager didn't stop.
 			if err := client.Stop(cmd.Context()); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 				return err
+			}
+			if cfg.IsJSON() {
+				return cfg.PrintJSON(stopResult{Name: conf.Name, Stopped: running, ServiceInstalled: installed && !uninstall, ServiceRemoved: installed && uninstall})
 			}
 			var sb strings.Builder
 			if running {
@@ -77,5 +83,16 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		},
 	}
 	cmd.Flags().BoolVar(&uninstall, "uninstall", false, "Also remove the launchd or systemd service")
+	sf.addControlFlags(cmd.Flags())
 	return cmd
+}
+
+// stopResult is the JSON output of stop.
+type stopResult struct {
+	Name string `json:"name"`
+	// Stopped is false if the agent wasn't running.
+	Stopped bool `json:"stopped"`
+	// ServiceInstalled is true if the agent starts again at login.
+	ServiceInstalled bool `json:"serviceInstalled"`
+	ServiceRemoved   bool `json:"serviceRemoved"`
 }

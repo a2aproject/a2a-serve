@@ -66,6 +66,77 @@ func TestPrintTable(t *testing.T) {
 	}
 }
 
+func TestPrintTableOrEmpty(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		rows [][]string
+		want string
+	}{
+		{
+			name: "rows print a table",
+			rows: [][]string{{"anna"}},
+			want: "NAME\nanna\n",
+		},
+		{
+			name: "no rows print the empty line",
+			want: "no contacts\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			p := NewPrinter(&buf, ModeText)
+			if err := p.PrintTableOrEmpty([]string{"NAME"}, tt.rows, "no contacts"); err != nil {
+				t.Fatalf("PrintTableOrEmpty() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(tt.want, buf.String()); diff != "" {
+				t.Fatalf("PrintTableOrEmpty() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrintRemoved(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		mode Mode
+		want string
+	}{
+		{
+			name: "text",
+			mode: ModeText,
+			want: "✓ removed contact anna\n",
+		},
+		{
+			name: "jsonl",
+			mode: ModeJSONL,
+			want: `{"kind":"contact","name":"anna","removed":true}` + "\n",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			p := NewPrinter(&buf, tt.mode)
+			if err := p.PrintRemoved("contact", "anna", "✓ removed contact anna"); err != nil {
+				t.Fatalf("PrintRemoved() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(tt.want, buf.String()); diff != "" {
+				t.Fatalf("PrintRemoved() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestMessageTextFileParts(t *testing.T) {
 	t.Parallel()
 

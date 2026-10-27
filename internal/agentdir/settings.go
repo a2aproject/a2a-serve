@@ -22,20 +22,25 @@ import (
 	"strings"
 )
 
-// Settings are the start flags of `a2a serve <harness>`. Set fields
-// override the config; unset fields keep what earlier runs saved.
+// Settings are the flags of `a2a serve <harness>` and `a2a serve config
+// set`. Set scalars override the config; list entries are added, replacing
+// the entry with the same key; unset fields keep what earlier runs saved.
 type Settings struct {
 	Harness     string
 	Name        string
 	Description string
 	Command     []string
 	// Secrets are names of environment variables passed to the harness.
-	// Their values are read from the CLI's environment and stored.
-	Secrets []string
-	Mounts  []string
-	Env     []string
-	Private string
-	Public  string
+	// Their values are taken from SecretValues, or else read from the CLI's
+	// environment, and stored.
+	Secrets      []string
+	SecretValues Secrets
+	// Workspace is a src[:dst][:ro] spec; Mounts are mounted besides it.
+	Workspace string
+	Mounts    []string
+	Env       []string
+	Private   string
+	Public    string
 	// Telegram and Discord are bot tokens: env:VAR, secret:NAME or the value.
 	Telegram string
 	Discord  string
@@ -43,6 +48,12 @@ type Settings struct {
 	Sandbox  string
 	Image    string
 	Port     int
+
+	Memory string
+	CPUs   string
+	PIDs   int
+	// Identities are login=role pairs for network logins of other users.
+	Identities []string
 
 	AllowTools []string
 	DenyTools  []string
@@ -56,7 +67,7 @@ type Settings struct {
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
-// secret:NAME or the value.
+// secret:NAME or the value. Set fields override the configured channel.
 type EmailSettings struct {
 	Address         string
 	IMAP            string
@@ -76,8 +87,9 @@ const (
 	SecretNgrokToken    = "NGROK_AUTHTOKEN"
 )
 
-// Apply merges the settings into cfg and returns the secrets to store.
-func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
+// Apply merges the settings into cfg, an agent's config in d, and returns
+// the secrets to store. It doesn't validate the result.
+func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	secrets := Secrets{}
 	set := func(dst *string, v string) {
 		if v != "" {
@@ -87,7 +99,7 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 	set(&cfg.Harness, s.Harness)
 	set(&cfg.Name, s.Name)
 	if cfg.Name == "" {
-		cfg.Name = defaultName
+		cfg.Name = d.DefaultName()
 	}
 	cfg.Name = SanitizeName(cfg.Name)
 	set(&cfg.Description, s.Description)
@@ -97,41 +109,66 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 	setNetwork(&cfg.Network.Public, s.Public)
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
 	set(&cfg.Network.NgrokURL, s.NgrokURL)
+	set(&cfg.Limits.Memory, s.Memory)
+	set(&cfg.Limits.CPUs, s.CPUs)
+	if s.PIDs != 0 {
+		cfg.Limits.PIDs = s.PIDs
+	}
 	if len(s.Command) > 0 {
 		cfg.Command = s.Command
-	}
-	if len(s.Mounts) > 0 {
-		for _, m := range s.Mounts {
-			if _, err := ParseMount(m); err != nil {
-				return nil, err
-			}
-		}
-		cfg.Mounts = s.Mounts
-	}
-	if len(s.Env) > 0 {
-		cfg.Env = s.Env
 	}
 	if s.Port != 0 {
 		cfg.Port = s.Port
 	}
-	if len(s.AllowTools) > 0 {
-		cfg.Approvals.Allow = s.AllowTools
+	if s.Workspace != "" {
+		m, err := ParseMount(s.Workspace)
+		if err != nil {
+			return nil, fmt.Errorf("--workspace: %w", err)
+		}
+		cfg.Workspace = m.String()
+		if m == (Mount{Src: d.Root, Dst: d.Root}) {
+			cfg.Workspace = ""
+		}
 	}
-	if len(s.DenyTools) > 0 {
-		cfg.Approvals.Deny = s.DenyTools
+	for _, spec := range s.Mounts {
+		m, err := ParseMount(spec)
+		if err != nil {
+			return nil, fmt.Errorf("--mount: %w", err)
+		}
+		cfg.Mounts = putKeyed(cfg.Mounts, m.String(), mountKey)
 	}
-	if len(s.Approvers) > 0 {
-		cfg.Approvals.Approvers = s.Approvers
+	for _, kv := range s.Env {
+		cfg.Env = putKeyed(cfg.Env, kv, envKey)
+	}
+	for _, v := range s.AllowTools {
+		cfg.Approvals.Allow = putKeyed(cfg.Approvals.Allow, v, nil)
+	}
+	for _, v := range s.DenyTools {
+		cfg.Approvals.Deny = putKeyed(cfg.Approvals.Deny, v, nil)
+	}
+	for _, v := range s.Approvers {
+		cfg.Approvals.Approvers = putKeyed(cfg.Approvals.Approvers, v, nil)
+	}
+	for _, kv := range s.Identities {
+		login, role, ok := strings.Cut(kv, "=")
+		if !ok || login == "" {
+			return nil, fmt.Errorf("invalid --identity %q: want login=role", kv)
+		}
+		if cfg.Network.Identities == nil {
+			cfg.Network.Identities = map[string]string{}
+		}
+		cfg.Network.Identities[login] = role
 	}
 	for _, name := range s.Secrets {
-		v := os.Getenv(name)
+		v := s.SecretValues[name]
+		if v == "" {
+			v = os.Getenv(name)
+		}
 		if v == "" {
 			return nil, fmt.Errorf("--secret %s: the environment variable is not set", name)
 		}
 		secrets[name] = v
-		if !slices.Contains(cfg.Secrets, name) {
-			cfg.Secrets = append(cfg.Secrets, name)
-		}
+		cfg.Secrets = putKeyed(cfg.Secrets, name, nil)
 	}
 	resolve := func(v, fallback string) (string, error) {
 		ref, sec, err := ResolveInput(v, fallback)
@@ -155,18 +192,25 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 		}
 		cfg.Channels.Discord = &DiscordConfig{Token: ref}
 	}
-	if e := s.Email; e != nil {
-		if e.Address == "" || e.IMAP == "" || e.SMTP == "" || e.Password == "" || e.TrustedAuthServ == "" {
-			return nil, fmt.Errorf("the email channel needs --email-address, --email-imap, --email-smtp, --email-password and --email-trusted-authserv")
+	if e := s.Email; e != nil && *e != (EmailSettings{}) {
+		next := EmailConfig{}
+		if cfg.Channels.Email != nil {
+			next = *cfg.Channels.Email
 		}
-		ref, err := resolve(e.Password, SecretEmailPassword)
-		if err != nil {
-			return nil, fmt.Errorf("--email-password: %w", err)
+		set(&next.Address, e.Address)
+		set(&next.IMAP, e.IMAP)
+		set(&next.SMTP, e.SMTP)
+		set(&next.Username, e.Username)
+		set(&next.Mailbox, e.Mailbox)
+		set(&next.TrustedAuthServ, e.TrustedAuthServ)
+		if e.Password != "" {
+			ref, err := resolve(e.Password, SecretEmailPassword)
+			if err != nil {
+				return nil, fmt.Errorf("--email-password: %w", err)
+			}
+			next.Password = ref
 		}
-		cfg.Channels.Email = &EmailConfig{
-			Address: e.Address, IMAP: e.IMAP, SMTP: e.SMTP, Username: e.Username, Password: ref,
-			Mailbox: e.Mailbox, TrustedAuthServ: e.TrustedAuthServ,
-		}
+		cfg.Channels.Email = &next
 	}
 	// Network providers read their secrets by well-known names.
 	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken} {
@@ -184,38 +228,86 @@ func (s Settings) Apply(cfg *Config, defaultName string) (Secrets, error) {
 			secrets[name] = val
 		}
 	}
-	if cfg.Harness == "" {
-		return nil, fmt.Errorf("no harness: run `a2a serve <harness>`")
-	}
 	return secrets, nil
 }
 
-// SettingsError is returned by [Dir.SaveSettings] for settings which can't
-// be applied, as opposed to failures to read or write the agent directory.
+// putKeyed adds entry to list, replacing the entry with the same key. A nil
+// key compares whole entries.
+func putKeyed(list []string, entry string, key func(string) string) []string {
+	if key == nil {
+		key = func(s string) string { return s }
+	}
+	k := key(entry)
+	for i, e := range list {
+		if key(e) == k {
+			out := slices.Clone(list)
+			out[i] = entry
+			return out
+		}
+	}
+	return append(slices.Clone(list), entry)
+}
+
+// mountKey is the destination of a mount spec.
+func mountKey(spec string) string {
+	m, err := parseMount(spec, "/")
+	if err != nil {
+		return spec
+	}
+	return m.Dst
+}
+
+// envKey is the name of a NAME=value pair.
+func envKey(kv string) string {
+	name, _, _ := strings.Cut(kv, "=")
+	return name
+}
+
+// SettingsError is returned for settings which can't be applied, such as
+// an invalid config, as opposed to failures to read or write the agent
+// directory. It is a usage error of the CLI.
 type SettingsError struct{ Err error }
 
 func (e *SettingsError) Error() string { return e.Err.Error() }
 
 func (e *SettingsError) Unwrap() error { return e.Err }
 
-// ApplySettings returns the agent's config with start flags merged in, and
-// the secrets to store with it, without saving either.
-func (d Dir) ApplySettings(s Settings) (*Config, Secrets, error) {
-	conf := &Config{}
-	if d.Exists() {
-		var err error
-		if conf, err = d.LoadConfig(); err != nil {
-			return nil, nil, err
-		}
+// UsageError marks the error as a usage error for the CLI.
+func (e *SettingsError) UsageError() bool { return true }
+
+// LoadOrNewConfig reads the agent's config without validating it, or
+// returns an empty one if the agent has none yet.
+func (d Dir) LoadOrNewConfig() (*Config, error) {
+	if !d.Exists() {
+		return &Config{}, nil
 	}
-	secrets, err := s.Apply(conf, d.DefaultName())
+	return d.ReadConfig()
+}
+
+// ApplySettings returns the agent's config with the settings merged in,
+// and the secrets to store with it, without saving either. The result is
+// validated against the stored secrets and the new ones.
+func (d Dir) ApplySettings(s Settings) (*Config, Secrets, error) {
+	conf, err := d.LoadOrNewConfig()
 	if err != nil {
+		return nil, nil, err
+	}
+	secrets, err := s.Apply(conf, d)
+	if err != nil {
+		return nil, nil, &SettingsError{Err: err}
+	}
+	stored, err := d.LoadSecrets()
+	if err != nil {
+		return nil, nil, err
+	}
+	maps.Copy(stored, secrets)
+	if err := d.CheckConfig(conf, stored); err != nil {
 		return nil, nil, &SettingsError{Err: err}
 	}
 	return conf, secrets, nil
 }
 
-// SaveSettings merges start flags into the agent's config and secrets.
+// SaveSettings merges settings into the agent's config and secrets.
 func (d Dir) SaveSettings(s Settings) error {
 	conf, secrets, err := d.ApplySettings(s)
 	if err != nil {
@@ -231,7 +323,7 @@ func (d Dir) SaveSettings(s Settings) error {
 func setNetwork(dst *string, v string) {
 	switch v {
 	case "":
-	case "none":
+	case NetworkNone:
 		*dst = ""
 	default:
 		*dst = v

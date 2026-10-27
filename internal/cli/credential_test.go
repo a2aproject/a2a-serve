@@ -24,7 +24,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
@@ -34,7 +33,6 @@ func credentialGet(t *testing.T, creds *credstore.Store, stdin string) (credenti
 	var out bytes.Buffer
 	cfg := &globalConfig{
 		Printer:     output.NewPrinter(&out, output.ModeText),
-		svcParams:   &flagparse.ServiceParams{},
 		credentials: creds,
 	}
 	root := newRootCmd(cfg)

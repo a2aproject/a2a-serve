@@ -16,34 +16,32 @@ package localsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
-	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
-// Options select a local server mode and how it is served.
+// Options configure how a test server is served.
 type Options struct {
-	Echo bool
-	// Proxy is the agent card URL of the agent to forward requests to.
-	Proxy string
-	Exec  string
-	// Chunk streams exec output split at this delimiter.
-	Chunk string
+	Host       string
+	Port       int
+	Protocol   string
+	Transport  string
+	CardCompat bool
+	Quiet      bool
+	Logger     LoggerFunc
+	Card       CardParams
+}
 
-	Host           string
-	Port           int
-	Protocol       string
-	ServeTransport string
-	CardCompat     bool
-	Quiet          bool
-	Logger         LoggerFunc
-	Card           CardParams
-
+// ProxyOptions select the agent the proxy test server forwards to.
+type ProxyOptions struct {
+	// URL is the agent card URL of the agent to forward requests to.
+	URL string
 	// SvcParams and Tenant are forwarded to the proxied agent, and
 	// InsecureGRPC allows reaching it over plaintext gRPC.
 	SvcParams    *flagparse.ServiceParams
@@ -51,33 +49,67 @@ type Options struct {
 	InsecureGRPC bool
 }
 
-// Run serves the echo, proxy or exec test server until ctx ends.
-func Run(ctx context.Context, o Options) error {
-	if o.Protocol != "latest" && o.Protocol != "0.3" {
-		return fmt.Errorf("--protocol must be %q or %q", "latest", "0.3")
-	}
-	modes := 0
-	for _, on := range []bool{o.Echo, o.Proxy != "", o.Exec != ""} {
-		if on {
-			modes++
-		}
-	}
-	if modes > 1 {
-		return clierr.Usage("--echo, --proxy, and --exec are mutually exclusive")
-	}
-	if modes == 0 {
-		return clierr.Usage("specify --echo, --proxy <agent-url>, or --exec <cmd>")
-	}
-	transport, err := flagparse.SingleTransport([]string{o.ServeTransport})
+// ScriptOptions select the command the script test server runs per message.
+type ScriptOptions struct {
+	Command string
+	// Chunk streams the output split at this delimiter.
+	Chunk string
+	// Stream streams the output line by line, keeping the line endings.
+	Stream bool
+}
+
+// RunEcho serves the echo test server until ctx ends.
+func RunEcho(ctx context.Context, o Options) error {
+	sc, err := listen(o)
 	if err != nil {
 		return err
 	}
+	return ServeEcho(ctx, sc)
+}
+
+// RunProxy serves the proxy test server until ctx ends.
+func RunProxy(ctx context.Context, o Options, p ProxyOptions) error {
+	sc, err := listen(o)
+	if err != nil {
+		return err
+	}
+	var proxyOpts []a2aclient.FactoryOption
+	if !o.Quiet {
+		proxyOpts = append(proxyOpts, ProxyLogInterceptorOption())
+	}
+	client, err := UpstreamClient(ctx, p.URL, p.SvcParams, p.InsecureGRPC, proxyOpts...)
+	if err != nil {
+		if cerr := sc.Listener.Close(); cerr != nil {
+			return errors.Join(fmt.Errorf("creating upstream client: %w", err), cerr)
+		}
+		return fmt.Errorf("creating upstream client: %w", err)
+	}
+	return ServeProxy(ctx, sc, p.SvcParams, client, p.Tenant)
+}
+
+// RunScript serves the script test server until ctx ends.
+func RunScript(ctx context.Context, o Options, s ScriptOptions) error {
+	sc, err := listen(o)
+	if err != nil {
+		return err
+	}
+	return ServeScript(ctx, sc, s)
+}
+
+func listen(o Options) (Config, error) {
+	if o.Protocol != "latest" && o.Protocol != "0.3" {
+		return Config{}, fmt.Errorf("--protocol must be %q or %q", "latest", "0.3")
+	}
+	transport, err := flagparse.SingleTransport([]string{o.Transport})
+	if err != nil {
+		return Config{}, err
+	}
 	if !isBuiltinTransport(transport) {
-		return fmt.Errorf("serve %q transport not supported", transport)
+		return Config{}, fmt.Errorf("serve %q transport not supported", transport)
 	}
 	listener, err := net.Listen("tcp", net.JoinHostPort(o.Host, fmt.Sprint(o.Port)))
 	if err != nil {
-		return fmt.Errorf("listen: %w", err)
+		return Config{}, fmt.Errorf("listen: %w", err)
 	}
 	sc := Config{
 		Listener:        listener,
@@ -91,22 +123,7 @@ func Run(ctx context.Context, o Options) error {
 	if sc.AdvertiseAddress == "" {
 		sc.AdvertiseAddress = listener.Addr().String()
 	}
-	switch {
-	case o.Echo:
-		return ServeEcho(ctx, sc)
-	case o.Proxy != "":
-		var proxyOpts []a2aclient.FactoryOption
-		if !o.Quiet {
-			proxyOpts = append(proxyOpts, ProxyLogInterceptorOption())
-		}
-		client, err := UpstreamClient(ctx, o.Proxy, o.SvcParams, o.InsecureGRPC, proxyOpts...)
-		if err != nil {
-			return fmt.Errorf("creating upstream client: %w", err)
-		}
-		return ServeProxy(ctx, sc, o.SvcParams, client, o.Tenant)
-	default:
-		return ServeExec(ctx, sc, o.Exec, o.Chunk)
-	}
+	return sc, nil
 }
 
 func isBuiltinTransport(protocol a2a.TransportProtocol) bool {

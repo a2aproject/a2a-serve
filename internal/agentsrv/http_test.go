@@ -36,7 +36,7 @@ func TestUnauthorizedHint(t *testing.T) {
 			t.Parallel()
 			got := unauthorizedHint(tc.kind)
 			first, _, _ := strings.Cut(got, ";")
-			if !strings.Contains(first, tc.wantFirst) || !strings.Contains(got, "credential helper") || !strings.Contains(got, "`a2a serve pair add <agent-url> <code>`") {
+			if !strings.Contains(first, tc.wantFirst) || !strings.Contains(got, "credential helper") || !strings.Contains(got, "`a2a serve tokens add <agent-url> <code>`") {
 				t.Fatalf("unauthorizedHint(%q) = %q, want both cases, %q first", tc.kind, got, tc.wantFirst)
 			}
 		})

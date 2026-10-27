@@ -1,0 +1,321 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package cli
+
+import (
+	"encoding/json"
+	"errors"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+	"gopkg.in/yaml.v3"
+
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+)
+
+func newTestAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
+	t.Helper()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	if cfg == nil {
+		return d
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	return d
+}
+
+func isUsage(err error) bool {
+	var ce *clierr.Error
+	return errors.As(clierr.Classify(err), &ce) && ce.Code == clierr.CodeUsage
+}
+
+func TestConfigCommands(t *testing.T) {
+	t.Parallel()
+	base := func() *agentdir.Config {
+		return &agentdir.Config{Name: "coder", Harness: "opencode", Env: []string{"DEBUG=1"}, Approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}}
+	}
+	tests := []struct {
+		name       string
+		args       []string
+		wantOut    []string
+		wantUsage  bool
+		wantConfig func(*agentdir.Config)
+	}{
+		{
+			name:    "set",
+			args:    []string{"config", "set", "--sandbox", "local", "--allow-tools", "read,search", "--env", "DEBUG=0", "--memory", "8g", "--identity", "anna=member"},
+			wantOut: []string{"sandbox      (default) → local", "allow-tools  + search", "env          − DEBUG=1, + DEBUG=0", "memory       (default) → 8g", "✓ saved"},
+			wantConfig: func(c *agentdir.Config) {
+				c.Sandbox, c.Approvals.Allow, c.Env, c.Limits.Memory, c.Network.Identities = "local", []string{"read", "search"}, []string{"DEBUG=0"}, "8g", map[string]string{"anna": "member"}
+			},
+		},
+		{
+			name:    "set dry run",
+			args:    []string{"config", "set", "--sandbox", "local", "--dry-run"},
+			wantOut: []string{"sandbox      (default) → local", "(dry run: nothing saved)"},
+		},
+		{name: "set invalid", args: []string{"config", "set", "--private", "tailscal"}, wantUsage: true},
+		{name: "set missing mount", args: []string{"config", "set", "--mount", "/nonexistent-a2a:/x"}, wantUsage: true},
+		{
+			name:       "set harness",
+			args:       []string{"config", "set", "--harness", "claude"},
+			wantOut:    []string{"harness      opencode → claude"},
+			wantConfig: func(c *agentdir.Config) { c.Harness = "claude" },
+		},
+		{
+			name:       "unset entry",
+			args:       []string{"config", "unset", "env", "DEBUG"},
+			wantOut:    []string{"env          − DEBUG=1", "✓ saved"},
+			wantConfig: func(c *agentdir.Config) { c.Env = nil },
+		},
+		{name: "unset unknown entry", args: []string{"config", "unset", "allow-tools", "edit"}, wantUsage: true},
+		{name: "unset unknown setting", args: []string{"config", "unset", "nope"}, wantUsage: true},
+		{name: "unset harness", args: []string{"config", "unset", "harness"}, wantUsage: true},
+		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
+		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
+		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a serve opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
+		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, base())
+			out, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if tc.wantUsage {
+				if !isUsage(err) {
+					t.Fatalf("a2a serve %s error = %v, want a usage error", strings.Join(tc.args, " "), err)
+				}
+			} else if err != nil {
+				t.Fatalf("a2a serve %s error = %v", strings.Join(tc.args, " "), err)
+			}
+			for _, want := range tc.wantOut {
+				if !strings.Contains(out, want) {
+					t.Fatalf("a2a serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
+				}
+			}
+			want := base()
+			if tc.wantConfig != nil {
+				tc.wantConfig(want)
+			}
+			got, err := d.ReadConfig()
+			if err != nil {
+				t.Fatalf("ReadConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("a2a serve %s wrong config (-want +got) diff = %s", strings.Join(tc.args, " "), diff)
+			}
+		})
+	}
+}
+
+func TestConfigShowMachineReadable(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}})
+	tests := []struct {
+		format    string
+		unmarshal func([]byte, any) error
+	}{
+		{format: "json", unmarshal: json.Unmarshal},
+		{format: "yaml", unmarshal: yaml.Unmarshal},
+	}
+	for _, tc := range tests {
+		t.Run(tc.format, func(t *testing.T) {
+			t.Parallel()
+			out, err := runCMD(t, "-o", tc.format, "config", "show", "--defaults", "--dir", d.Root)
+			if err != nil {
+				t.Fatalf("a2a serve config show -o %s error = %v", tc.format, err)
+			}
+			var got agentctl.View
+			if err := tc.unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("parsing %q error = %v", out, err)
+			}
+			if got.Config.Name != "coder" || got.Secrets["KEY"] != agentctl.SecretStateMissing || got.Defaults == nil || got.Defaults.Sandbox != "docker" {
+				t.Fatalf("a2a serve config show -o %s = %+v, want coder with KEY missing and the default sandbox", tc.format, got)
+			}
+			if !strings.Contains(got.Invalid, "secret KEY is not stored") {
+				t.Fatalf("a2a serve config show -o %s invalid = %q, want the missing secret", tc.format, got.Invalid)
+			}
+		})
+	}
+}
+
+func TestHarnessCommandValidation(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		existing *agentdir.Config
+		args     []string
+		wantErr  string
+	}{
+		{name: "invalid setting on the first run", args: []string{"opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
+		{name: "acp without a command", args: []string{"acp"}, wantErr: "harness acp needs a command"},
+		{
+			name:     "acp command from the config",
+			existing: &agentdir.Config{Name: "coder", Harness: "acp", Command: []string{"fakeacp"}},
+			args:     []string{"acp", "--private", "tailscal"},
+			wantErr:  `invalid --private "tailscal"`,
+		},
+		{
+			name:     "other harness",
+			existing: &agentdir.Config{Name: "coder", Harness: "opencode"},
+			args:     []string{"claude"},
+			wantErr:  "this agent runs opencode; switch with `a2a serve config set --harness claude`",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, tc.existing)
+			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+			if tc.existing != nil {
+				return
+			}
+			if d.Exists() {
+				t.Fatalf("a2a serve %s saved an invalid config", strings.Join(tc.args, " "))
+			}
+		})
+	}
+}
+
+func TestSecretReader(t *testing.T) {
+	t.Parallel()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.WriteString("123:abc\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
+	}
+	sr := &secretReader{in: r}
+	flags := settingsFlags{s: agentdir.Settings{Telegram: "-"}}
+	got, err := flags.settings(sr)
+	if err != nil {
+		t.Fatalf("settings() error = %v", err)
+	}
+	if got.Telegram != "123:abc" {
+		t.Fatalf("settings().Telegram = %q, want %q", got.Telegram, "123:abc")
+	}
+	flags = settingsFlags{s: agentdir.Settings{Discord: "-"}}
+	if _, err := flags.settings(sr); !isUsage(err) {
+		t.Fatalf("settings() reading stdin twice error = %v, want a usage error", err)
+	}
+}
+
+// TestConfigRunningAgent runs serially, like TestServerPairAndSend.
+func TestConfigRunningAgent(t *testing.T) {
+	fake := buildFakeACP(t)
+	dir, err := os.MkdirTemp("", "a2a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Errorf("removing %s: %v", dir, err)
+		}
+	})
+	d, err := agentdir.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := runCMD(t, "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
+		done <- err
+	}()
+	client := controlapi.NewClient(d)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := client.Status(t.Context()); err == nil {
+			break
+		}
+		select {
+		case err := <-done:
+			t.Fatalf("a2a serve acp error = %v", err)
+		default:
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("agent did not start")
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	out, err := runCMD(t, "acp", "--dir", dir, "--description", "reviews code")
+	if err != nil {
+		t.Fatalf("a2a serve acp on the running agent error = %v", err)
+	}
+	for _, want := range []string{"description  (default) → reviews code", "✓ applied to the running agent: description", "✓ coder is already running"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a2a serve acp on the running agent = %q, want %q", out, want)
+		}
+	}
+	running, err := client.Config(t.Context())
+	if err != nil {
+		t.Fatalf("Config() error = %v", err)
+	}
+	if running.Description != "reviews code" {
+		t.Fatalf("running description = %q, want %q", running.Description, "reviews code")
+	}
+
+	out, err = runCMD(t, "config", "set", "--dir", dir, "--env", "DEBUG=1")
+	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: a2a serve restart") {
+		t.Fatalf("a2a serve config set --env = %q, %v, want a restart notice", out, err)
+	}
+	out, err = runCMD(t, "config", "--dir", dir)
+	if err != nil || !strings.Contains(out, "! restart to apply env: a2a serve restart") {
+		t.Fatalf("a2a serve config = %q, %v, want env pending", out, err)
+	}
+	out, err = runCMD(t, "status", "--dir", dir)
+	if err != nil || !strings.Contains(out, "pending  env (a2a serve restart)") {
+		t.Fatalf("a2a serve status = %q, %v, want env pending", out, err)
+	}
+	if _, err := runCMD(t, "restart", "--dir", dir); err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
+		t.Fatalf("a2a serve restart of a foreground agent error = %v, want a refusal", err)
+	}
+
+	if _, err := runCMD(t, "stop", "--dir", dir); err != nil {
+		t.Fatalf("a2a serve stop error = %v", err)
+	}
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("a2a serve acp error = %v", err)
+		}
+	case <-time.After(30 * time.Second):
+		t.Fatalf("agent did not stop")
+	}
+	saved, err := d.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{"DEBUG=1"}, saved.Env); diff != "" {
+		t.Fatalf("saved env wrong result (-want +got) diff = %s", diff)
+	}
+}

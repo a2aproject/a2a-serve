@@ -47,6 +47,14 @@ const (
 	// CodeInternal marks an unexpected CLI-side failure, or any condition with
 	// no better code. Exit 1.
 	CodeInternal = "A2ACLI_ERR_INTERNAL"
+
+	// CodeNotRunning marks a command which needs the agent server while it
+	// doesn't run; exit 6. a2a-cli reserves its own prefix, so codes of
+	// a2a-serve use A2ASERVE_ERR_.
+	CodeNotRunning = "A2ASERVE_ERR_NOT_RUNNING"
+	// CodeNoAgent marks a command run outside an agent directory, or with a
+	// --dir that has none; exit 7.
+	CodeNoAgent = "A2ASERVE_ERR_NO_AGENT"
 )
 
 // Error is a classified CLI failure.
@@ -64,6 +72,8 @@ type Error struct {
 
 	// err is the wrapped cause, exposed via Unwrap.
 	err error
+	// silent marks a failure the command already reported.
+	silent bool
 }
 
 // Error returns the failure message, satisfying the error interface.
@@ -71,6 +81,15 @@ func (e *Error) Error() string { return e.Message }
 
 // Unwrap returns the wrapped cause so errors.Is and errors.As can inspect it.
 func (e *Error) Unwrap() error { return e.err }
+
+// Exit builds an error which only sets the exit status, for a command which
+// already reported its failure in its output.
+func Exit(code int, msg string) *Error {
+	return &Error{Code: CodeInternal, Message: msg, Exit: code, silent: true}
+}
+
+// Silent reports whether the failure was already reported.
+func (e *Error) Silent() bool { return e.silent }
 
 // UsageHint is remediation advice attached to every usage error.
 const UsageHint = "run `a2a serve --help` for the current commands and flags"
@@ -125,6 +144,18 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 	}})
 }
 
+// usageError is implemented by errors of other packages which report
+// invalid input, such as an invalid agent config.
+type usageError interface{ UsageError() bool }
+
+// notRunningError is implemented by the error of a client which found no
+// agent server to talk to.
+type notRunningError interface{ NotRunning() bool }
+
+// noAgentError is implemented by the error of a lookup which found no
+// agent directory.
+type noAgentError interface{ NoAgent() bool }
+
 // Classify maps an arbitrary error to a classified CLI Error with a stable code
 // and exit status. It returns nil for a nil error and passes an already
 // classified *Error (e.g. from Usage or CardResolution) through unchanged.
@@ -139,6 +170,21 @@ func Classify(err error) *Error {
 	}
 
 	msg := err.Error()
+
+	var ue usageError
+	if errors.As(err, &ue) && ue.UsageError() {
+		return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: 2, err: err}
+	}
+
+	var nr notRunningError
+	if errors.As(err, &nr) && nr.NotRunning() {
+		return &Error{Code: CodeNotRunning, Message: msg, Exit: 6, err: err}
+	}
+
+	var na noAgentError
+	if errors.As(err, &na) && na.NoAgent() {
+		return &Error{Code: CodeNoAgent, Message: msg, Exit: 7, err: err}
+	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
 		return &Error{

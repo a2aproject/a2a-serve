@@ -18,27 +18,28 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
-func newPairForgetCmd(cfg *globalConfig) *cobra.Command {
+// newPairMovedCmd returns a hidden `pair <name>` command of the caller
+// side, which moved to `a2a serve tokens <replacement>`, that fails naming
+// the new command. usage stands for the arguments when none are given.
+func newPairMovedCmd(name, replacement, usage string) *cobra.Command {
 	return &cobra.Command{
-		Use:   "forget <agent-url>",
-		Short: "Forget the token saved for an agent by pair add",
-		Args:  cobra.ExactArgs(1),
+		Use:                name,
+		Hidden:             true,
+		DisableFlagParsing: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := cfg.credentialStore()
-			if err != nil {
-				return err
+			line := "a2a serve tokens " + replacement
+			switch {
+			case len(args) > 0:
+				line += " " + agentdir.ShellJoin(args)
+			case usage != "":
+				line += " " + usage
 			}
-			ok, err := store.Delete(args[0])
-			if err != nil {
-				return err
-			}
-			if !ok {
-				return fmt.Errorf("no saved token for %s", args[0])
-			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ forgot the token for %s\n", args[0])
-			return err
+			return clierr.Usage(fmt.Sprintf("`a2a serve pair %s` moved: run `%s`", name, line))
 		},
 	}
 }

@@ -35,16 +35,17 @@ func newRelayCmd(cfg *globalConfig) *cobra.Command {
 		Short: "Answer tasks as a webhook node hosted by an agent server",
 		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
 Grok Bot routine, hosted by an agent server ("a2a serve pair invite --webhook" on its side).
-The node pairs once with "a2a serve pair add <agent-url> <code>", then answers each
+The node pairs once with "a2a serve tokens add <agent-url> <code>", then answers each
 wake with reply.
 
 The node token comes from --token, $` + relayapi.EnvNodeToken + `, or the token
-"a2a serve pair add" saved. It includes the agent's URL.`,
+"a2a serve tokens add" saved. It includes the agent's URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
+	addRequestTimeout(cmd.PersistentFlags(), cfg)
 	cmd.AddCommand(
 		newRelayReplyCmd(cfg),
 		newRelayTaskCmd(cfg),
@@ -59,7 +60,7 @@ type relayClientFlags struct {
 }
 
 func (r *relayClientFlags) register(f *pflag.FlagSet) {
-	f.StringVar(&r.token, "token", "", "Node token, or env:VAR (default: $"+relayapi.EnvNodeToken+" or the token saved by a2a serve pair add)")
+	f.StringVar(&r.token, "token", "", "Node token, or env:VAR (default: $"+relayapi.EnvNodeToken+" or the token saved by a2a serve tokens add)")
 }
 
 func (r *relayClientFlags) nodeClient(cfg *globalConfig) (*relayapi.Client, error) {
@@ -83,7 +84,7 @@ func (r *relayClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	}
 	c, err := store.Node()
 	if errors.Is(err, credstore.ErrNoNode) {
-		return "", fmt.Errorf("no node token: run `a2a serve pair add <agent-url> <code>`, or set %s", relayapi.EnvNodeToken)
+		return "", fmt.Errorf("no node token: run `a2a serve tokens add <agent-url> <code>`, or set %s", relayapi.EnvNodeToken)
 	}
 	if err != nil {
 		return "", err

@@ -23,8 +23,10 @@ import (
 	"os/signal"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -32,31 +34,37 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/launch"
-	"github.com/a2aproject/a2a-serve/internal/localsrv"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
-// serverFlags holds the flags of `a2a serve` itself: the agent directory,
-// background modes, and the echo, proxy and exec modes.
+// serverFlags holds the flags of `a2a serve` itself, and the agent
+// directory and control timeout of the commands which manage an agent.
 type serverFlags struct {
 	dir     string
+	timeout time.Duration
 	detach  bool
 	service bool
+	quiet   bool
 
-	port             int
-	host             string
-	name             string
-	desc             string
-	cardFile         string
-	cardCompat       bool
-	protocol         string
-	serveTransport   string
-	quiet            bool
-	echo             bool
-	proxy            string
-	execCmd          string
-	chunk            string
-	advertiseAddress string
+	// legacyEcho, legacyProxy and legacyExec are the flags which the echo,
+	// proxy and script commands replaced.
+	legacyEcho  bool
+	legacyProxy string
+	legacyExec  string
+}
+
+const dirUsage = "Agent directory (default: the nearest directory with .a2a, walking up from the current one)"
+
+// addDirFlag adds --dir to a command which uses an agent directory.
+func (f *serverFlags) addDirFlag(fs *pflag.FlagSet) {
+	fs.StringVar(&f.dir, "dir", "", dirUsage)
+}
+
+// addControlFlags adds --dir and --timeout to a command which calls the
+// running agent.
+func (f *serverFlags) addControlFlags(fs *pflag.FlagSet) {
+	f.addDirFlag(fs)
+	fs.DurationVar(&f.timeout, "timeout", controlapi.DefaultTimeout, "Timeout of each call to the running agent")
 }
 
 // serveShort describes the command in its help and in `a2a plugin list`.
@@ -78,60 +86,51 @@ Telegram, Discord and email.
 Management commands (pair, status, contact, ...) find the agent the way
 git finds a repository, or take --dir.
 
---echo, --proxy and --exec run a local test server instead.`,
+echo, proxy and script run a local test server instead.`,
 		Version: buildVersionInfo().Version,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if f.echo || f.proxy != "" || f.execCmd != "" {
-				return runLocalServer(cmd.Context(), cfg, &f)
-			}
-			if err := checkTestServerFlags(cmd); err != nil {
+			if err := f.checkLegacyTestServer(); err != nil {
 				return err
 			}
 			return runConfiguredAgent(cmd, cfg, &f)
 		},
 	}
-	pf := cmd.PersistentFlags()
-	pf.StringVar(&f.dir, "dir", "", "Agent directory (default: the nearest directory with .a2a, walking up from the current one)")
-
 	fl := cmd.Flags()
+	f.addDirFlag(fl)
 	fl.BoolVar(&f.detach, "detach", false, "Run the agent in the background")
 	fl.BoolVar(&f.service, "service", false, "Install and start the agent as a launchd or systemd user service")
-	fl.IntVar(&f.port, "port", 8080, "Listen port (test servers)")
-	fl.StringVar(&f.host, "host", "127.0.0.1", "Bind address (test servers)")
-	fl.StringVar(&f.name, "name", "", "Agent name for the auto-generated card (test servers)")
-	fl.StringVar(&f.desc, "description", "", "Agent description (test servers)")
-	fl.StringVar(&f.cardFile, "card", "", "Serve a custom agent card JSON file (test servers)")
-	fl.BoolVar(&f.cardCompat, "card-compat", false, "Serve the agent card in a dual v0.3/v1.0 format (test servers)")
-	fl.StringVar(&f.protocol, "protocol", "latest", `Protocol version: "latest" or "0.3" (test servers)`)
-	fl.StringVar(&f.serveTransport, "serve-transport", "rest", "Transport to serve: rest, jsonrpc, grpc (test servers)")
-	fl.BoolVar(&f.quiet, "quiet", false, "Keep the harness image pull and build output in the log; for test servers, suppress traffic logging to stderr")
-	fl.BoolVar(&f.echo, "echo", false, "Echo mode: return the user's message as a response")
-	fl.StringVar(&f.proxy, "proxy", "", "Proxy mode: forward requests to the agent with this agent card URL")
-	cfg.svcParams.Attach(fl)
-	fl.Lookup("svc-param").Usage += " for the proxied agent (test servers)"
-	fl.Lookup("auth").Usage += " for the proxied agent (test servers)"
-	fl.StringVar(&cfg.tenant, "tenant", "", "Tenant of the proxied agent (test servers)")
-	fl.BoolVar(&cfg.insecureGRPC, "insecure", false, "Reach the proxied agent over plaintext gRPC (test servers)")
-	fl.StringVar(&f.execCmd, "exec", "", "Exec mode: run a command as an A2A agent")
-	fl.StringVar(&f.chunk, "chunk", "", "Delimiter for streaming exec output (implies --exec)")
-	fl.StringVar(&f.advertiseAddress, "advertise-address", "", "Agent endpoint which will appear in the server agent card (test servers)")
+	fl.BoolVar(&f.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
+	fl.BoolVar(&f.legacyEcho, "echo", false, "Replaced by `a2a serve echo`")
+	fl.StringVar(&f.legacyProxy, "proxy", "", "Replaced by `a2a serve proxy <agent-url>`")
+	fl.StringVar(&f.legacyExec, "exec", "", "Replaced by `a2a serve script <command>`")
+	for _, name := range []string{"echo", "proxy", "exec"} {
+		must(fl.MarkHidden(name))
+	}
 
 	for _, name := range harness.ProfileNames() {
 		cmd.AddCommand(newHarnessCmd(cfg, &f, name))
 	}
 	cmd.AddCommand(
 		newHarnessCmd(cfg, &f, "acp"),
+		newEchoCmd(cfg),
+		newProxyCmd(cfg),
+		newScriptCmd(cfg),
 		newStatusCmd(cfg, &f),
+		newURLCmd(cfg, &f),
 		newLogsCmd(cfg, &f),
 		newStopCmd(cfg, &f),
+		newRestartCmd(cfg, &f),
+		newConfigCmd(cfg, &f),
 		newPairCmd(cfg, &f),
+		newTokensCmd(cfg),
 		newPeersCmd(cfg, &f),
 		newContactCmd(cfg, &f),
 		newChannelCmd(cfg, &f),
 		newRelayCmd(cfg),
 		newCredentialCmd(cfg),
 		newVersionCmd(cfg),
+		newCompletionCmd(),
 	)
 	return cmd
 }
@@ -144,7 +143,7 @@ func (f *serverFlags) agentDir() (agentdir.Dir, error) {
 			return agentdir.Dir{}, err
 		}
 		if !d.Exists() {
-			return agentdir.Dir{}, fmt.Errorf("%s has no .a2a/config.yaml; start an agent there with `a2a serve <harness>`", d.Root)
+			return agentdir.Dir{}, agentdir.NotFoundIn(d.Root)
 		}
 		return d, nil
 	}
@@ -161,7 +160,12 @@ func (f *serverFlags) control() (*controlapi.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return controlapi.NewClient(d), nil
+	return f.controlClient(d), nil
+}
+
+// controlClient returns a client for the agent in d, with --timeout.
+func (f *serverFlags) controlClient(d agentdir.Dir) *controlapi.Client {
+	return controlapi.NewClient(d, controlapi.WithTimeout(f.timeout))
 }
 
 // runConfiguredAgent starts the agent saved in .a2a/config.yaml, or asks
@@ -170,7 +174,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags) e
 	d, err := f.agentDir()
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return clierr.Usage("no agent here: start one with `a2a serve <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with --echo, --proxy or --exec")
+			return clierr.Usage("no agent here: start one with `a2a serve <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a serve echo`, `proxy` or `script`")
 		}
 		return runWizard(cmd, cfg)
 	}
@@ -189,7 +193,23 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
 	if err != nil {
 		return err
 	}
-	res, err := wizard.Run(os.Stdin, cfg.Out, d.DefaultName(), harness.ProfileNames(), os.Getenv)
+	dockerCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
+	defer cancel()
+	_, dockerErr := harness.CheckDocker(dockerCtx)
+	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
+		DefaultName: d.DefaultName(),
+		Harnesses:   harness.ProfileNames(),
+		Getenv:      os.Getenv,
+		DockerErr:   dockerErr,
+		ReadSecret:  newSecretReader(cfg.Out).read,
+		Command: func(s agentdir.Settings) (string, error) {
+			conf, secrets, err := d.ApplySettings(s)
+			if err != nil {
+				return "", err
+			}
+			return agentdir.ShellJoin(conf.AsCommand(secrets)), nil
+		},
+	})
 	if err != nil {
 		return err
 	}
@@ -241,31 +261,19 @@ func signalContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 }
 
-// runLocalServer runs the echo, proxy or exec test server.
-func runLocalServer(ctx context.Context, cfg *globalConfig, f *serverFlags) error {
-	ctx, stop := signalContext(ctx)
-	defer stop()
-	return localsrv.Run(ctx, localsrv.Options{
-		Echo: f.echo, Proxy: f.proxy, Exec: f.execCmd, Chunk: f.chunk,
-		Host: f.host, Port: f.port, Protocol: f.protocol, ServeTransport: f.serveTransport,
-		CardCompat: f.cardCompat, Quiet: f.quiet, Logger: cfg.logf,
-		Card:         localsrv.CardParams{AgentName: f.name, AgentDesc: f.desc, CardPath: f.cardFile, AdvertiseAddress: f.advertiseAddress},
-		SvcParams:    cfg.svcParams,
-		Tenant:       cfg.tenant,
-		InsecureGRPC: cfg.insecureGRPC,
-	})
-}
-
-// testServerFlags only apply to the echo, proxy and exec test servers.
-var testServerFlags = []string{"port", "host", "name", "description", "card", "card-compat", "protocol", "serve-transport", "chunk", "advertise-address", "svc-param", "auth", "tenant", "insecure"}
-
-// checkTestServerFlags rejects test server flags without a test server mode,
-// rather than ignoring them.
-func checkTestServerFlags(cmd *cobra.Command) error {
-	for _, name := range testServerFlags {
-		if cmd.Flags().Changed(name) {
-			return clierr.Usage(fmt.Sprintf("--%s only applies to test servers (--echo, --proxy or --exec); to configure an agent, run `a2a serve <harness> --%s ...`", name, name))
-		}
+// checkLegacyTestServer rejects --echo, --proxy and --exec, naming the
+// command which replaced them.
+func (f *serverFlags) checkLegacyTestServer() error {
+	var flag, replacement string
+	switch {
+	case f.legacyEcho:
+		flag, replacement = "--echo", "a2a serve echo"
+	case f.legacyProxy != "":
+		flag, replacement = "--proxy", "a2a serve proxy "+agentdir.ShellJoin([]string{f.legacyProxy})
+	case f.legacyExec != "":
+		flag, replacement = "--exec", "a2a serve script "+agentdir.ShellJoin([]string{f.legacyExec})
+	default:
+		return nil
 	}
-	return nil
+	return clierr.Usage(fmt.Sprintf("%s was replaced by a command: run `%s`", flag, replacement))
 }

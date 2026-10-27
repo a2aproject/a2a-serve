@@ -61,7 +61,11 @@ func newRelayInboxCmd(cfg *globalConfig) *cobra.Command {
 				rows = append(rows, []string{e.Envelope.CreatedAt.Format("15:04:05"), e.Envelope.Kind, e.Envelope.TaskID,
 					e.Envelope.Sender.String(), strconv.FormatBool(e.Delivered), strconv.FormatBool(e.Open), oneLine(e.Envelope.Text, 60)})
 			}
-			return cfg.PrintTable([]string{"TIME", "KIND", "TASK", "SENDER", "DELIVERED", "OPEN", "TEXT"}, rows)
+			empty := "no wakes waiting for a reply; `--all` lists the last ones"
+			if all {
+				empty = "no wakes yet"
+			}
+			return cfg.PrintTableOrEmpty([]string{"TIME", "KIND", "TASK", "SENDER", "DELIVERED", "OPEN", "TEXT"}, rows, empty)
 		},
 	}
 	rf.register(cmd.Flags())

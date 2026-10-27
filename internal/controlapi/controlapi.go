@@ -18,6 +18,7 @@ package controlapi
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -52,6 +53,48 @@ type Status struct {
 	Owners   []string        `json:"owners,omitempty"`
 	Contacts int             `json:"contacts"`
 	Nodes    int             `json:"nodes"`
+}
+
+// URL scopes of an agent.
+const (
+	ScopeLocal   = "local"
+	ScopePrivate = "private"
+	ScopePublic  = "public"
+)
+
+// URL returns the agent's URL in scope, or with an empty scope the one
+// which reaches furthest: public, then private, then local.
+func (s *Status) URL(scope string) (string, error) {
+	switch scope {
+	case "":
+		return cmp.Or(s.Public, s.Private, s.Local), nil
+	case ScopeLocal:
+		return s.Local, nil
+	case ScopePrivate:
+		if s.Private == "" {
+			return "", fmt.Errorf("%s has no private URL; add one with `a2a serve config set --private tailscale` (or lan), then `a2a serve restart`", s.Name)
+		}
+		return s.Private, nil
+	case ScopePublic:
+		if s.Public == "" {
+			return "", fmt.Errorf("%s has no public URL; add one with `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`", s.Name)
+		}
+		return s.Public, nil
+	}
+	return "", fmt.Errorf("unknown URL scope %q", scope)
+}
+
+// LocalOnly reports whether rawURL only works on this machine.
+func LocalOnly(rawURL string) bool {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return false
+	}
+	if u.Hostname() == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(u.Hostname())
+	return ip != nil && ip.IsLoopback()
 }
 
 // ChannelStatus describes a channel of the agent.
@@ -155,7 +198,7 @@ type NodeInfo struct {
 
 // PairCommand is the command a caller or a node runs to pair with code.
 func PairCommand(agentURL, code string) string {
-	return fmt.Sprintf("a2a serve pair add %s %s", agentURL, code)
+	return fmt.Sprintf("a2a serve tokens add %s %s", agentURL, code)
 }
 
 // NodeInstructions is the message which tells the agent behind webhook node
@@ -172,7 +215,30 @@ func ChannelRequestFromConfig(conf *agentdir.Config, kind string) ChannelRequest
 }
 
 // ErrNotRunning is returned when no agent server answers on the control socket.
-var ErrNotRunning = errors.New("the agent server is not running; start it with `a2a serve`")
+var ErrNotRunning error = &notRunningError{name: "the agent server"}
+
+// NotRunning returns an error, matching [ErrNotRunning], for the agent name.
+func NotRunning(name string) error { return &notRunningError{name: name} }
+
+type notRunningError struct{ name string }
+
+func (e *notRunningError) Error() string {
+	return e.name + " is not running; start it with `a2a serve --detach`"
+}
+
+func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
+
+// NotRunning marks the error for the CLI's exit code.
+func (e *notRunningError) NotRunning() bool { return true }
+
+// ErrUnsupported is returned when the running server is older than the
+// client and doesn't know the call.
+var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a serve restart`")
+
+// ReloadResponse lists the settings a server applied from config.yaml.
+type ReloadResponse struct {
+	Applied []string `json:"applied"`
+}
 
 // Client talks to a running agent server over its control socket.
 type Client struct {
@@ -180,11 +246,26 @@ type Client struct {
 	hc  *http.Client
 }
 
+// DefaultTimeout bounds a control call unless WithTimeout changes it.
+const DefaultTimeout = 60 * time.Second
+
+// Option configures a Client.
+type Option func(*Client)
+
+// WithTimeout bounds each control call by d; zero keeps DefaultTimeout.
+func WithTimeout(d time.Duration) Option {
+	return func(c *Client) {
+		if d > 0 {
+			c.hc.Timeout = d
+		}
+	}
+}
+
 // NewClient returns a client for the agent in dir.
-func NewClient(dir agentdir.Dir) *Client {
+func NewClient(dir agentdir.Dir, opts ...Option) *Client {
 	path := dir.SocketPath()
-	return &Client{dir: dir, hc: &http.Client{
-		Timeout: 60 * time.Second,
+	c := &Client{dir: dir, hc: &http.Client{
+		Timeout: DefaultTimeout,
 		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			if err := fsutil.CheckPrivate(filepath.Dir(path)); err != nil {
 				if errors.Is(err, fs.ErrNotExist) {
@@ -196,6 +277,10 @@ func NewClient(dir agentdir.Dir) *Client {
 			return d.DialContext(ctx, "unix", path)
 		}},
 	}}
+	for _, o := range opts {
+		o(c)
+	}
+	return c
 }
 
 func (c *Client) do(ctx context.Context, method, path string, in, out any) error {
@@ -232,6 +317,9 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	if err != nil {
 		return err
 	}
+	if resp.StatusCode == http.StatusNotFound && !strings.HasPrefix(resp.Header.Get("Content-Type"), "application/json") {
+		return ErrUnsupported
+	}
 	if resp.StatusCode/100 != 2 {
 		return errors.New(jsonhttp.ErrorMessage(resp.Status, data))
 	}
@@ -250,6 +338,20 @@ func (c *Client) Status(ctx context.Context) (*Status, error) {
 // Stop stops the server.
 func (c *Client) Stop(ctx context.Context) error {
 	return c.do(ctx, http.MethodPost, "/stop", nil, nil)
+}
+
+// Config returns the config the server runs with, which differs from
+// config.yaml by the changes waiting for a restart.
+func (c *Client) Config(ctx context.Context) (*agentdir.Config, error) {
+	var out agentdir.Config
+	return &out, c.do(ctx, http.MethodGet, "/config", nil, &out)
+}
+
+// ReloadConfig makes the server apply the settings of config.yaml it can
+// apply without a restart, other than channels.
+func (c *Client) ReloadConfig(ctx context.Context) (*ReloadResponse, error) {
+	var out ReloadResponse
+	return &out, c.do(ctx, http.MethodPost, "/config/reload", nil, &out)
 }
 
 // Pair mints a pairing code.

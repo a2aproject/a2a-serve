@@ -17,8 +17,10 @@ package agentdir
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -30,78 +32,80 @@ import (
 // values like bot tokens are references of the form secret:<NAME>, resolved
 // from the secrets file.
 type Config struct {
-	Name        string `yaml:"name"`
-	Description string `yaml:"description,omitempty"`
-	Harness     string `yaml:"harness"`
+	Name        string `yaml:"name" json:"name"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	Harness     string `yaml:"harness" json:"harness"`
 	// Command replaces the harness profile's command line, for any ACP agent.
-	Command []string `yaml:"command,omitempty"`
+	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 	// Image overrides the container image of the harness profile.
-	Image string `yaml:"image,omitempty"`
+	Image string `yaml:"image,omitempty" json:"image,omitempty"`
 	// Sandbox is where the harness runs: docker (default) or local.
-	Sandbox string `yaml:"sandbox,omitempty"`
-	// Mounts are src[:dst][:ro] specs. The first one is the workspace.
-	// Empty means the directory holding .a2a.
-	Mounts []string `yaml:"mounts,omitempty"`
+	Sandbox string `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
+	// Workspace is a src[:dst][:ro] spec. Empty means the directory holding
+	// .a2a; a relative source is relative to it.
+	Workspace string `yaml:"workspace,omitempty" json:"workspace,omitempty"`
+	// Mounts are src[:dst][:ro] specs mounted besides the workspace.
+	Mounts []string `yaml:"mounts,omitempty" json:"mounts,omitempty"`
 	// Secrets are the names of secrets passed to the harness as environment variables.
-	Secrets []string `yaml:"secrets,omitempty"`
+	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	// Env are extra NAME=value pairs for the harness.
-	Env []string `yaml:"env,omitempty"`
+	Env []string `yaml:"env,omitempty" json:"env,omitempty"`
 	// Port is the localhost port. Zero picks a free port on first run.
-	Port int `yaml:"port,omitempty"`
+	Port int `yaml:"port,omitempty" json:"port,omitempty"`
 
-	Network   NetworkConfig   `yaml:"network,omitempty"`
-	Channels  ChannelsConfig  `yaml:"channels,omitempty"`
-	Approvals ApprovalsConfig `yaml:"approvals,omitempty"`
-	Limits    LimitsConfig    `yaml:"limits,omitempty"`
+	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
+	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
+	Approvals ApprovalsConfig `yaml:"approvals,omitempty" json:"approvals,omitzero"`
+	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
 }
 
 // NetworkConfig selects the providers which make the agent reachable beyond
 // localhost.
 type NetworkConfig struct {
 	// Private is tailscale, lan or empty.
-	Private string `yaml:"private,omitempty"`
+	Private string `yaml:"private,omitempty" json:"private,omitempty"`
 	// Public is tailscale, ngrok or empty.
-	Public string `yaml:"public,omitempty"`
+	Public string `yaml:"public,omitempty" json:"public,omitempty"`
 
-	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty"`
+	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty" json:"tailscaleControlURL,omitempty"`
 	// NgrokURL is a reserved ngrok domain, such as https://coder.ngrok.app.
-	NgrokURL string `yaml:"ngrok_url,omitempty"`
+	NgrokURL string `yaml:"ngrok_url,omitempty" json:"ngrokURL,omitempty"`
 	// LANPort is the port of the LAN listener. Zero picks one on first run.
-	LANPort int `yaml:"lan_port,omitempty"`
+	LANPort int `yaml:"lan_port,omitempty" json:"lanPort,omitempty"`
 	// Identities maps network logins of other users to roles.
-	Identities map[string]string `yaml:"identities,omitempty"`
+	Identities map[string]string `yaml:"identities,omitempty" json:"identities,omitempty"`
 }
 
 // ChannelsConfig configures the messengers the agent is reachable from.
 type ChannelsConfig struct {
-	Telegram *TelegramConfig `yaml:"telegram,omitempty"`
-	Discord  *DiscordConfig  `yaml:"discord,omitempty"`
-	Email    *EmailConfig    `yaml:"email,omitempty"`
+	Telegram *TelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"`
+	Discord  *DiscordConfig  `yaml:"discord,omitempty" json:"discord,omitempty"`
+	Email    *EmailConfig    `yaml:"email,omitempty" json:"email,omitempty"`
 }
 
 // TelegramConfig configures the Telegram bot of the agent.
 type TelegramConfig struct {
-	Token string `yaml:"token"`
+	Token string `yaml:"token" json:"token"`
 }
 
 // DiscordConfig configures the Discord bot of the agent.
 type DiscordConfig struct {
-	Token string `yaml:"token"`
+	Token string `yaml:"token" json:"token"`
 }
 
 // EmailConfig configures the mailbox of the agent.
 type EmailConfig struct {
 	// Address is the agent's own address.
-	Address string `yaml:"address"`
+	Address string `yaml:"address" json:"address"`
 	// IMAP and SMTP are host:port. Port 993 and 465 use implicit TLS, others STARTTLS.
-	IMAP     string `yaml:"imap"`
-	SMTP     string `yaml:"smtp"`
-	Username string `yaml:"username,omitempty"`
-	Password string `yaml:"password"`
-	Mailbox  string `yaml:"mailbox,omitempty"`
+	IMAP     string `yaml:"imap" json:"imap"`
+	SMTP     string `yaml:"smtp" json:"smtp"`
+	Username string `yaml:"username,omitempty" json:"username,omitempty"`
+	Password string `yaml:"password" json:"password"`
+	Mailbox  string `yaml:"mailbox,omitempty" json:"mailbox,omitempty"`
 	// TrustedAuthServ is the authserv-id of the Authentication-Results header
 	// added by the receiving mail server. Only its verdicts are trusted.
-	TrustedAuthServ string `yaml:"trusted_authserv"`
+	TrustedAuthServ string `yaml:"trusted_authserv" json:"trustedAuthServ"`
 }
 
 // Channel kinds.
@@ -110,6 +114,9 @@ const (
 	ChannelDiscord  = "discord"
 	ChannelEmail    = "email"
 )
+
+// ChannelKinds are the messengers an agent can be reached from.
+var ChannelKinds = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
 
 // SetChannel configures the channel of kind. A bot token is a secret
 // reference; an empty token or nil email removes the channel.
@@ -133,6 +140,19 @@ func (c *Config) SetChannel(kind, token string, email *EmailConfig) error {
 	return nil
 }
 
+// HasChannel reports whether the channel of kind is configured.
+func (c *Config) HasChannel(kind string) bool {
+	switch kind {
+	case ChannelTelegram:
+		return c.Channels.Telegram != nil
+	case ChannelDiscord:
+		return c.Channels.Discord != nil
+	case ChannelEmail:
+		return c.Channels.Email != nil
+	}
+	return false
+}
+
 // ChannelToken returns the bot token reference of a telegram or discord
 // channel, or "" if it isn't configured.
 func (c *Config) ChannelToken(kind string) string {
@@ -148,21 +168,42 @@ func (c *Config) ChannelToken(kind string) string {
 // ApprovalsConfig decides who answers tool permission requests.
 type ApprovalsConfig struct {
 	// Allow and Deny are ACP tool kind globs answered without asking.
-	Allow []string `yaml:"allow,omitempty"`
-	Deny  []string `yaml:"deny,omitempty"`
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
 	// Approvers are principal IDs, besides owners, who may answer approvals.
-	Approvers []string `yaml:"approvers,omitempty"`
+	Approvers []string `yaml:"approvers,omitempty" json:"approvers,omitempty"`
 }
 
 // LimitsConfig are container resource limits.
 type LimitsConfig struct {
-	Memory string `yaml:"memory,omitempty"`
-	CPUs   string `yaml:"cpus,omitempty"`
-	PIDs   int    `yaml:"pids,omitempty"`
+	Memory string `yaml:"memory,omitempty" json:"memory,omitempty"`
+	CPUs   string `yaml:"cpus,omitempty" json:"cpus,omitempty"`
+	PIDs   int    `yaml:"pids,omitempty" json:"pids,omitempty"`
 }
 
-// LoadConfig reads config.yaml.
+// DefaultLimits are the limits of a container when the config sets none.
+var DefaultLimits = LimitsConfig{Memory: "4g", CPUs: "2", PIDs: 512}
+
+// defaultWorkspace is how config.yaml spells the default workspace when it
+// also lists mounts, which tells it apart from a config in which the first
+// mount was the workspace.
+const defaultWorkspace = "."
+
+// LoadConfig reads and validates config.yaml.
 func (d Dir) LoadConfig() (*Config, error) {
+	cfg, err := d.ReadConfig()
+	if err != nil {
+		return nil, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a serve config set` or `a2a serve config edit`", d.ConfigPath(), err)}
+	}
+	return cfg, nil
+}
+
+// ReadConfig reads config.yaml without validating it, so that an invalid
+// config can be fixed.
+func (d Dir) ReadConfig() (*Config, error) {
 	data, err := os.ReadFile(d.ConfigPath())
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, fmt.Errorf("%s does not exist: %w", d.ConfigPath(), ErrNotFound)
@@ -170,24 +211,81 @@ func (d Dir) LoadConfig() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	cfg, err := ParseConfig(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", d.ConfigPath(), err)
+	}
+	return cfg, nil
+}
+
+// ParseConfig parses the content of config.yaml. A config in which the first
+// mount is the workspace is migrated to the workspace setting.
+func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", d.ConfigPath(), err)
+		return nil, err
+	}
+	if cfg.Workspace == "" && len(cfg.Mounts) > 0 {
+		cfg.Workspace, cfg.Mounts = cfg.Mounts[0], cfg.Mounts[1:]
+	}
+	if cfg.Workspace == defaultWorkspace {
+		cfg.Workspace = ""
+	}
+	if len(cfg.Mounts) == 0 {
+		cfg.Mounts = nil
 	}
 	return &cfg, nil
 }
+
+// MarshalConfig returns the content of config.yaml for cfg.
+func MarshalConfig(cfg *Config) ([]byte, error) {
+	out := *cfg
+	if out.Workspace == "" && len(out.Mounts) > 0 {
+		out.Workspace = defaultWorkspace
+	}
+	data, err := yaml.Marshal(&out)
+	if err != nil {
+		return nil, err
+	}
+	return append([]byte(configHeader), data...), nil
+}
+
+const configHeader = "# Agent definition for `a2a serve`. Secrets are kept in state/secrets, never here.\n"
 
 // SaveConfig writes config.yaml.
 func (d Dir) SaveConfig(cfg *Config) error {
 	if err := d.Init(); err != nil {
 		return err
 	}
-	data, err := yaml.Marshal(cfg)
+	data, err := MarshalConfig(cfg)
 	if err != nil {
 		return err
 	}
-	header := "# Agent definition for `a2a serve`. Secrets are kept in state/secrets, never here.\n"
-	return fsutil.WriteAtomic(d.ConfigPath(), append([]byte(header), data...), 0o644)
+	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
+}
+
+// Clone returns a deep copy of c.
+func (c *Config) Clone() *Config {
+	out := *c
+	out.Command = slices.Clone(c.Command)
+	out.Mounts = slices.Clone(c.Mounts)
+	out.Secrets = slices.Clone(c.Secrets)
+	out.Env = slices.Clone(c.Env)
+	out.Network.Identities = maps.Clone(c.Network.Identities)
+	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
+	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
+	out.Approvals.Approvers = slices.Clone(c.Approvals.Approvers)
+	if t := c.Channels.Telegram; t != nil {
+		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
+	}
+	if dc := c.Channels.Discord; dc != nil {
+		out.Channels.Discord = &DiscordConfig{Token: dc.Token}
+	}
+	if e := c.Channels.Email; e != nil {
+		email := *e
+		out.Channels.Email = &email
+	}
+	return &out
 }
 
 // Mount is a parsed src[:dst][:ro] spec.
@@ -197,8 +295,15 @@ type Mount struct {
 	ReadOnly bool
 }
 
-// ParseMount parses a src[:dst][:ro] spec. A missing dst mirrors src.
+// ParseMount parses a src[:dst][:ro] spec. A missing dst mirrors src; a
+// relative src is relative to the current directory.
 func ParseMount(spec string) (Mount, error) {
+	return parseMount(spec, "")
+}
+
+// parseMount parses spec, resolving a relative src against base, or the
+// current directory if base is empty.
+func parseMount(spec, base string) (Mount, error) {
 	parts := strings.Split(spec, ":")
 	m := Mount{}
 	if n := len(parts); n > 1 && parts[n-1] == "ro" {
@@ -220,6 +325,9 @@ func ParseMount(spec string) (Mount, error) {
 	if err != nil {
 		return Mount{}, err
 	}
+	if base != "" && !filepath.IsAbs(src) {
+		src = filepath.Join(base, src)
+	}
 	if m.Src, err = filepath.Abs(src); err != nil {
 		return Mount{}, err
 	}
@@ -229,6 +337,7 @@ func ParseMount(spec string) (Mount, error) {
 	if !filepath.IsAbs(m.Dst) {
 		return Mount{}, fmt.Errorf("invalid mount %q: destination must be absolute", spec)
 	}
+	m.Dst = filepath.Clean(m.Dst)
 	return m, nil
 }
 
@@ -244,15 +353,28 @@ func (m Mount) String() string {
 	return s
 }
 
-// Mounts returns the parsed mounts of the agent. The first one is the
-// workspace, which defaults to the directory holding .a2a.
-func (d Dir) Mounts(cfg *Config) ([]Mount, error) {
-	if len(cfg.Mounts) == 0 {
-		return []Mount{{Src: d.Root, Dst: d.Root}}, nil
+// WorkspaceMount returns the parsed workspace of the agent, by default the
+// directory holding .a2a.
+func (d Dir) WorkspaceMount(cfg *Config) (Mount, error) {
+	if cfg.Workspace == "" {
+		return Mount{Src: d.Root, Dst: d.Root}, nil
 	}
-	out := make([]Mount, 0, len(cfg.Mounts))
+	m, err := parseMount(cfg.Workspace, d.Root)
+	if err != nil {
+		return Mount{}, fmt.Errorf("workspace: %w", err)
+	}
+	return m, nil
+}
+
+// Mounts returns the parsed mounts of the agent, the workspace first.
+func (d Dir) Mounts(cfg *Config) ([]Mount, error) {
+	ws, err := d.WorkspaceMount(cfg)
+	if err != nil {
+		return nil, err
+	}
+	out := []Mount{ws}
 	for _, spec := range cfg.Mounts {
-		m, err := ParseMount(spec)
+		m, err := parseMount(spec, d.Root)
 		if err != nil {
 			return nil, err
 		}

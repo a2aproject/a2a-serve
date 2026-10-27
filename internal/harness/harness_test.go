@@ -318,3 +318,12 @@ func TestLocalImage(t *testing.T) {
 		})
 	}
 }
+
+func TestProfileNamesAreNotReserved(t *testing.T) {
+	t.Parallel()
+	for _, name := range ProfileNames() {
+		if slices.Contains(agentdir.ReservedHarnesses, name) {
+			t.Fatalf("ProfileNames() = %v, want none of the reserved %v", ProfileNames(), agentdir.ReservedHarnesses)
+		}
+	}
+}

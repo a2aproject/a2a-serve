@@ -88,8 +88,27 @@ func (p *prompter) choose(question string, options []string, def string) (string
 	}
 }
 
+// ErrCanceled is returned by [Run] when the user doesn't confirm the settings.
+var ErrCanceled = errors.New("canceled; nothing was saved")
+
+// Options configure [Run].
+type Options struct {
+	DefaultName string
+	Harnesses   []string
+	Getenv      func(string) string
+	// DockerErr is why Docker can't run the agent, or nil if it can.
+	DockerErr error
+	// ReadSecret prints prompt and reads an answer without echoing it; nil
+	// reads it like any other answer.
+	ReadSecret func(prompt string) (string, error)
+	// Command validates the settings and returns the `a2a serve <harness>`
+	// command which creates the same agent, shown before saving.
+	Command func(agentdir.Settings) (string, error)
+}
+
 // Run asks for the settings of a new agent.
-func Run(in io.Reader, out io.Writer, defaultName string, harnesses []string, getenv func(string) string) (Result, error) {
+func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
+	harnesses, getenv := opts.Harnesses, opts.Getenv
 	if len(harnesses) == 0 {
 		return Result{}, errors.New("no harnesses to choose from")
 	}
@@ -107,7 +126,10 @@ func Run(in io.Reader, out io.Writer, defaultName string, harnesses []string, ge
 	if s.Harness, err = p.choose("Harness", harnesses, def); err != nil {
 		return res, err
 	}
-	if s.Name, err = p.ask("Agent name", defaultName); err != nil {
+	if s.Name, err = p.ask("Agent name", opts.DefaultName); err != nil {
+		return res, err
+	}
+	if s.Sandbox, err = p.sandbox(opts.DockerErr); err != nil {
 		return res, err
 	}
 
@@ -157,11 +179,58 @@ func Run(in io.Reader, out io.Writer, defaultName string, harnesses []string, ge
 			return res, err
 		}
 	}
-	if s.Telegram, err = p.ask("Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)", ""); err != nil {
+	const telegram = "Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)"
+	if opts.ReadSecret != nil {
+		s.Telegram, err = opts.ReadSecret(telegram)
+	} else {
+		s.Telegram, err = p.ask(telegram, "")
+	}
+	if err != nil {
 		return res, err
 	}
 	if res.Mode, err = p.choose("Run", []string{ModeForeground, ModeDetach, ModeService}, ModeForeground); err != nil {
 		return res, err
 	}
-	return res, nil
+	if opts.Command == nil {
+		return res, nil
+	}
+	return res, p.confirm(res, opts.Command)
+}
+
+// sandbox asks where the agent runs, defaulting to local without Docker.
+func (p *prompter) sandbox(dockerErr error) (string, error) {
+	def := agentdir.SandboxDocker
+	if dockerErr != nil {
+		def = agentdir.SandboxLocal
+		if _, err := fmt.Fprintf(p.out, "  Docker is not available (%v).\n  local runs the agent on this machine, unsandboxed, with your permissions; `a2a serve doctor` helps set up Docker.\n", dockerErr); err != nil {
+			return "", err
+		}
+	}
+	v, err := p.choose("Sandbox", []string{agentdir.SandboxDocker, agentdir.SandboxLocal}, def)
+	if err != nil || v == agentdir.SandboxDocker {
+		return "", err
+	}
+	return v, nil
+}
+
+// confirm shows the command which creates the same agent and asks to save it.
+func (p *prompter) confirm(res Result, command func(agentdir.Settings) (string, error)) error {
+	cmd, err := command(res.Settings)
+	if err != nil {
+		return err
+	}
+	if res.Mode != ModeForeground {
+		cmd += " --" + res.Mode
+	}
+	if _, err := fmt.Fprintf(p.out, "\nThis is the same as running:\n  %s\n\n", cmd); err != nil {
+		return err
+	}
+	ok, err := p.choose("Save .a2a/config.yaml and start the agent", []string{"y", "n"}, "y")
+	if err != nil {
+		return err
+	}
+	if ok != "y" {
+		return ErrCanceled
+	}
+	return nil
 }

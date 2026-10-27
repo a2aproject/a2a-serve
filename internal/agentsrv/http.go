@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/skills"
@@ -106,7 +107,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 // caller is usually the owner whose a2a CLI doesn't attach the owner token.
 func unauthorizedHint(kind string) string {
 	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a serve doctor --fix`)"
-	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a serve pair add <agent-url> <code>`"
+	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a serve tokens add <agent-url> <code>`"
 	if kind == network.ListenerLocal {
 		return "this agent needs a token: " + local + "; " + remote
 	}
@@ -118,7 +119,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 	cfg := s.config()
 	desc := cfg.Description
 	if desc == "" {
-		desc = cfg.Name + " is a " + cfg.Harness + " coding agent reached through `a2a serve`."
+		desc = cfg.Name + " is " + output.WithArticle(cfg.Harness) + " coding agent reached through `a2a serve`."
 	}
 	card := &a2a.AgentCard{
 		Name:        cfg.Name,
@@ -143,7 +144,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 	}
 	if kind != network.ListenerPrivate {
 		card.SecuritySchemes = a2a.NamedSecuritySchemes{
-			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a serve pair add <agent-url> <code>`, with a code from the owner."},
+			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a serve tokens add <agent-url> <code>`, with a code from the owner."},
 		}
 		card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
 	}

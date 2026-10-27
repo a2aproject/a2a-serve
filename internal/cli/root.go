@@ -29,7 +29,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -42,18 +41,13 @@ const infoSubcommand = "info"
 
 type globalConfig struct {
 	output  string
-	timeout time.Duration
 	verbose bool
-
-	// svcParams, tenant and insecureGRPC configure the upstream of the
-	// proxy test server.
-	svcParams    *flagparse.ServiceParams
-	tenant       string
-	insecureGRPC bool
+	// timeout bounds the HTTP requests of tokens add and the relay commands.
+	timeout time.Duration
 
 	errOut        io.Writer
 	httpTransport http.RoundTripper
-	// credentials overrides the store of `a2a serve pair add` tokens, for tests.
+	// credentials overrides the store of `a2a serve tokens add` tokens, for tests.
 	credentials *credstore.Store
 
 	*output.Printer
@@ -87,12 +81,9 @@ func Execute(args []string) int {
 	if len(args) == 1 && args[0] == infoSubcommand {
 		return printPluginInfo(os.Stdout)
 	}
-	cfg := &globalConfig{
-		Printer:   &output.Printer{Out: os.Stdout},
-		svcParams: &flagparse.ServiceParams{},
-	}
+	cfg := &globalConfig{Printer: &output.Printer{Out: os.Stdout}}
 	root := newRootCmd(cfg)
-	root.SetArgs(append([]string{pluginName}, args...))
+	root.SetArgs(rootArgs(args))
 	if err := root.Execute(); err != nil {
 		return cfg.renderError(err)
 	}
@@ -117,6 +108,9 @@ func printPluginInfo(w io.Writer) int {
 
 func (g *globalConfig) renderError(err error) int {
 	ce := clierr.Classify(err)
+	if ce.Silent() {
+		return ce.Exit
+	}
 	if g.IsJSON() {
 		if perr := g.PrintJSON(ce); perr != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
@@ -128,6 +122,16 @@ func (g *globalConfig) renderError(err error) int {
 		fmt.Fprintf(os.Stderr, "hint: %s\n", ce.Hint)
 	}
 	return ce.Exit
+}
+
+// rootArgs returns the arguments of the `a2a` root command for args, the
+// command line of `a2a serve`. Shell completion asks `a2a-serve __complete
+// <args>`, which completes `a2a serve <args>`.
+func rootArgs(args []string) []string {
+	if len(args) > 0 && (args[0] == cobra.ShellCompRequestCmd || args[0] == cobra.ShellCompNoDescRequestCmd) {
+		return append([]string{args[0], pluginName}, args[1:]...)
+	}
+	return append([]string{pluginName}, args...)
 }
 
 // newRootCmd returns the `a2a` command with `serve` as its only subcommand,
@@ -144,7 +148,6 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 	serve.SetVersionTemplate("a2a-serve {{.Version}}\n")
 	pf := serve.PersistentFlags()
 	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line)")
-	pf.DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Request timeout")
 	pf.BoolVarP(&cfg.verbose, "verbose", "v", false, "Verbose output to stderr")
 	serve.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		switch output.Mode(cfg.output) {
@@ -155,7 +158,9 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 		}
 		return nil
 	}
+	must(serve.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
 	serve.AddCommand(newHelpCmd(serve))
+	addGroups(serve)
 	root.AddCommand(serve)
 	markUsageErrors(root)
 	return root

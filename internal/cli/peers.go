@@ -19,7 +19,7 @@ import (
 )
 
 func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "peers",
 		Short: "List agents found on the private network",
 		Args:  cobra.NoArgs,
@@ -43,7 +43,9 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{p.Name, p.URL, p.Description, state})
 			}
-			return cfg.PrintTable([]string{"NAME", "URL", "DESCRIPTION", "STATE"}, rows)
+			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "DESCRIPTION", "STATE"}, rows, "no agents found on the private network")
 		},
 	}
+	sf.addControlFlags(cmd.Flags())
+	return cmd
 }

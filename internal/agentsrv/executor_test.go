@@ -20,6 +20,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
@@ -44,5 +47,21 @@ func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
 	}
 	if got := last.(*a2a.TaskStatusUpdateEvent).Status.State; got != a2a.TaskStateCompleted {
 		t.Fatalf("last event state = %v, want %v", got, a2a.TaskStateCompleted)
+	}
+}
+
+func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
+	t.Parallel()
+	cfg := &agentdir.Config{}
+	rules := liveToolRules(func() *agentdir.Config { return cfg })
+	q := a2aacp.Question{Options: []string{a2aacp.OptionOnce, a2aacp.OptionReject}, Tool: &a2aacp.ToolCall{Kind: "read"}}
+
+	if _, ok := rules.AutoAnswer(context.Background(), nil, q); ok {
+		t.Fatalf("AutoAnswer() without rules ok = true, want false")
+	}
+	cfg = &agentdir.Config{Approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}}
+	got, ok := rules.AutoAnswer(context.Background(), nil, q)
+	if !ok || got.Option != a2aacp.OptionOnce {
+		t.Fatalf("AutoAnswer() after allowing read = %+v, %v, want %q", got, ok, a2aacp.OptionOnce)
 	}
 }

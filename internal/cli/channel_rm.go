@@ -27,23 +27,23 @@ import (
 
 func newChannelRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rm <telegram|discord|email>",
-		Short: "Remove a messenger",
-		Args:  cobra.ExactArgs(1),
+		Use:       "rm <telegram|discord|email>",
+		Short:     "Remove a messenger",
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: agentdir.ChannelKinds,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
-			err = controlapi.NewClient(d).DeleteChannel(cmd.Context(), args[0])
+			err = sf.controlClient(d).DeleteChannel(cmd.Context(), args[0])
 			if errors.Is(err, controlapi.ErrNotRunning) {
 				err = removeChannelOffline(d, args[0])
 			}
 			if err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ removed %s\n", args[0])
-			return err
+			return cfg.PrintRemoved("channel", args[0], "✓ removed "+args[0])
 		},
 	}
 }
@@ -53,8 +53,12 @@ func removeChannelOffline(d agentdir.Dir, kind string) error {
 	if err != nil {
 		return err
 	}
+	had := conf.HasChannel(kind)
 	if err := conf.SetChannel(kind, "", nil); err != nil {
 		return clierr.Usage(err.Error())
+	}
+	if !had {
+		return fmt.Errorf("%s is not configured", kind)
 	}
 	return d.SaveConfig(conf)
 }

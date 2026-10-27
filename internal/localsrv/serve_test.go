@@ -129,7 +129,7 @@ func TestCreateAgentCard_InterfaceURLScheme(t *testing.T) {
 
 func TestExecExecutor_PipesStdinToCommand(t *testing.T) {
 	t.Parallel()
-	client := startExecTestServer(t, "cat", "")
+	client := startExecTestServer(t, ScriptOptions{Command: "cat"})
 
 	task := execSendText(t, client, "echo back")
 
@@ -144,7 +144,7 @@ func TestExecExecutor_PipesStdinToCommand(t *testing.T) {
 
 func TestExecExecutor_CommandOutput(t *testing.T) {
 	t.Parallel()
-	client := startExecTestServer(t, "echo hello", "")
+	client := startExecTestServer(t, ScriptOptions{Command: "echo hello"})
 
 	task := execSendText(t, client, "ignored")
 
@@ -159,7 +159,7 @@ func TestExecExecutor_CommandOutput(t *testing.T) {
 
 func TestExecExecutor_NonZeroExitFails(t *testing.T) {
 	t.Parallel()
-	client := startExecTestServer(t, "exit 1", "")
+	client := startExecTestServer(t, ScriptOptions{Command: "exit 1"})
 
 	task := execSendText(t, client, "will fail")
 
@@ -170,7 +170,7 @@ func TestExecExecutor_NonZeroExitFails(t *testing.T) {
 
 func TestExecExecutor_ChunkedAssemblesArtifact(t *testing.T) {
 	t.Parallel()
-	client := startExecTestServer(t, `printf "a\nb\nc"`, "\n")
+	client := startExecTestServer(t, ScriptOptions{Command: `printf "a\nb\nc"`, Chunk: "\n"})
 
 	task := execSendText(t, client, "go")
 
@@ -189,7 +189,7 @@ func TestExecExecutor_ChunkedAssemblesArtifact(t *testing.T) {
 func TestExecExecutor_ChunkedStreaming(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	client := startExecTestServer(t, `printf "x\ny\nz"`, "\n")
+	client := startExecTestServer(t, ScriptOptions{Command: `printf "x\ny\nz"`, Chunk: "\n"})
 
 	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("go"))
 	var gotArtifactEvents int
@@ -216,6 +216,41 @@ func TestExecExecutor_ChunkedStreaming(t *testing.T) {
 	}
 }
 
+func TestExecExecutor_Script(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		opts ScriptOptions
+		want func(task *a2a.Task) string
+	}{
+		{
+			name: "stream keeps line endings",
+			opts: ScriptOptions{Command: `printf "a\nb\nc\n"`, Stream: true},
+			want: func(*a2a.Task) string { return "a\nb\nc\n" },
+		},
+		{
+			name: "task and context in the environment",
+			opts: ScriptOptions{Command: `printf "%s %s" "$A2A_TASK_ID" "$A2A_CONTEXT_ID"`},
+			want: func(task *a2a.Task) string { return string(task.ID) + " " + task.ContextID },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			client := startExecTestServer(t, tc.opts)
+
+			task := execSendText(t, client, "go")
+
+			if task.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("task.Status.State = %v, want %v", task.Status.State, a2a.TaskStateCompleted)
+			}
+			if diff := cmp.Diff(tc.want(task), testutil.AllArtifactText(task)); diff != "" {
+				t.Fatalf("artifact text wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestSplitByDelimiter(t *testing.T) {
 	t.Parallel()
 
@@ -223,18 +258,20 @@ func TestSplitByDelimiter(t *testing.T) {
 		name  string
 		input string
 		delim string
+		keep  bool
 		want  []string
 	}{
-		{"newline", "a\nb\nc", "\n", []string{"a", "b", "c"}},
-		{"space", "alpha beta gamma", " ", []string{"alpha", "beta", "gamma"}},
-		{"paragraph", "one\n\ntwo\n\nthree", "\n\n", []string{"one", "two", "three"}},
-		{"no delimiter", "all one chunk", "|", []string{"all one chunk"}},
+		{"newline", "a\nb\nc", "\n", false, []string{"a", "b", "c"}},
+		{"space", "alpha beta gamma", " ", false, []string{"alpha", "beta", "gamma"}},
+		{"paragraph", "one\n\ntwo\n\nthree", "\n\n", false, []string{"one", "two", "three"}},
+		{"no delimiter", "all one chunk", "|", false, []string{"all one chunk"}},
+		{"keep newline", "a\nb\nc", "\n", true, []string{"a\n", "b\n", "c"}},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			split := splitByDelimiter(tt.delim)
+			split := splitByDelimiter(tt.delim, tt.keep)
 			var got []string
 			data := []byte(tt.input)
 			for {
@@ -299,11 +336,10 @@ func TestResolveProxyCard(t *testing.T) {
 	}
 }
 
-func startExecTestServer(t *testing.T, command, chunk string) *a2aclient.Client {
+func startExecTestServer(t *testing.T, s ScriptOptions) *a2aclient.Client {
 	t.Helper()
-	executor := newExecExecutor(command, chunk)
-	streaming := chunk != ""
-	return startTestServer(t, "Exec Test", executor, a2a.AgentCapabilities{Streaming: streaming})
+	executor := newExecExecutor(s)
+	return startTestServer(t, "Exec Test", executor, a2a.AgentCapabilities{Streaming: executor.streaming()})
 }
 
 func startTestServer(t *testing.T, name string, executor a2asrv.AgentExecutor, capabilities a2a.AgentCapabilities) *a2aclient.Client {

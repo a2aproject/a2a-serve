@@ -37,9 +37,10 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "add <telegram|discord|email>",
 		Short: "Add a messenger, or replace its settings",
 		Example: `  a2a serve channel add telegram --token env:CODER_BOT_TOKEN
-  a2a serve channel add email --address coder@example.com --imap imap.example.com:993 \
-    --smtp smtp.example.com:465 --password env:MAIL_PASSWORD --trusted-authserv mx.example.com`,
-		Args: cobra.ExactArgs(1),
+  a2a serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
+    --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
+		Args:      cobra.ExactArgs(1),
+		ValidArgs: agentdir.ChannelKinds,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
 			if err != nil {
@@ -69,7 +70,7 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			}
 			req := controlapi.ChannelRequestFromConfig(conf, args[0])
 			req.Secrets = secrets
-			st, err := controlapi.NewClient(d).AddChannel(cmd.Context(), req)
+			st, err := sf.controlClient(d).AddChannel(cmd.Context(), req)
 			if errors.Is(err, controlapi.ErrNotRunning) {
 				return addChannelOffline(cmd.Context(), cfg, d, conf, secrets, args[0])
 			}
@@ -85,13 +86,19 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&token, "token", "", "Bot token: env:VAR or the token")
-	f.StringVar(&email.Address, "address", "", "Email: the agent's address")
-	f.StringVar(&email.IMAP, "imap", "", "Email: IMAP host:port")
-	f.StringVar(&email.SMTP, "smtp", "", "Email: SMTP host:port")
-	f.StringVar(&email.Username, "username", "", "Email: login (default: the address)")
-	f.StringVar(&email.Password, "password", "", "Email: password, env:VAR or the value")
-	f.StringVar(&email.Mailbox, "mailbox", "", "Email: mailbox to watch (default INBOX)")
-	f.StringVar(&email.TrustedAuthServ, "trusted-authserv", "", "Email: authserv-id of your mail server's Authentication-Results")
+	registerEmailFlags(f, &email, "password, env:VAR or the value")
+	for name, dst := range map[string]*string{
+		"address":          &email.Address,
+		"imap":             &email.IMAP,
+		"smtp":             &email.SMTP,
+		"username":         &email.Username,
+		"password":         &email.Password,
+		"mailbox":          &email.Mailbox,
+		"trusted-authserv": &email.TrustedAuthServ,
+	} {
+		f.StringVar(dst, name, "", "")
+		must(f.MarkDeprecated(name, "use --email-"+name))
+	}
 	return cmd
 }
 

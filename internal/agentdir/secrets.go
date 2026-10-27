@@ -72,6 +72,30 @@ func (d Dir) SaveSecrets(s Secrets) error {
 	})
 }
 
+// DeleteSecrets removes the named secrets from the secrets file.
+func (d Dir) DeleteSecrets(names ...string) error {
+	if len(names) == 0 {
+		return nil
+	}
+	if _, err := os.Stat(d.SecretsPath()); errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	return fsutil.WithLock(d.SecretsPath(), func() error {
+		cur, err := d.LoadSecrets()
+		if err != nil {
+			return err
+		}
+		for _, name := range names {
+			delete(cur, name)
+		}
+		data, err := yaml.Marshal(cur)
+		if err != nil {
+			return err
+		}
+		return fsutil.WriteAtomic(d.SecretsPath(), data, 0o600)
+	})
+}
+
 // Resolve returns the value of a config field: the secret it references, or
 // the value itself.
 func (s Secrets) Resolve(v string) (string, error) {

@@ -51,6 +51,34 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestOpenExpandsHome(t *testing.T) {
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatalf("os.UserHomeDir() error = %v", err)
+	}
+	tests := []struct {
+		root string
+		want string
+	}{
+		{root: "~", want: home},
+		{root: "~/src/app", want: filepath.Join(home, "src", "app")},
+		{root: "/src/~/app", want: "/src/~/app"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.root, func(t *testing.T) {
+			t.Parallel()
+			got, err := Open(tc.root)
+			if err != nil {
+				t.Fatalf("Open(%q) error = %v", tc.root, err)
+			}
+			if got.Root != tc.want {
+				t.Fatalf("Open(%q) = %v, want %v", tc.root, got.Root, tc.want)
+			}
+		})
+	}
+}
+
 func TestConfigRoundTrip(t *testing.T) {
 	t.Parallel()
 	d, err := Open(t.TempDir())
@@ -60,7 +88,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	want := &Config{
 		Name:     "coder",
 		Harness:  "opencode",
-		Mounts:   []string{"/src/app", "/home/u/docs:/docs:ro"},
+		Mounts:   []string{"/home/u/docs:/docs:ro"},
 		Network:  NetworkConfig{Private: "tailscale"},
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 	}
@@ -181,25 +209,36 @@ func TestSecrets(t *testing.T) {
 func TestSettingsApply(t *testing.T) {
 	t.Setenv("A2A_TEST_KEY", "sk-1")
 	t.Setenv("A2A_TEST_BOT", "123:abc")
+	d, err := Open(filepath.Join(t.TempDir(), "My App"))
+	if err != nil {
+		t.Fatal(err)
+	}
 	cfg := &Config{Network: NetworkConfig{Public: "tailscale"}}
 	secrets, err := Settings{
-		Harness:  "opencode",
-		Secrets:  []string{"A2A_TEST_KEY"},
-		Private:  "tailscale",
-		Public:   "none",
-		Telegram: "env:A2A_TEST_BOT",
-		Mounts:   []string{"/src/app", "/docs:/docs:ro"},
-	}.Apply(cfg, "My App")
+		Harness:    "opencode",
+		Secrets:    []string{"A2A_TEST_KEY"},
+		Private:    "tailscale",
+		Public:     "none",
+		Telegram:   "env:A2A_TEST_BOT",
+		Workspace:  "/src/app",
+		Mounts:     []string{"/docs:/docs:ro"},
+		Memory:     "8g",
+		CPUs:       "4",
+		PIDs:       1024,
+		Identities: []string{"anna=member"},
+	}.Apply(cfg, d)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	want := &Config{
-		Name:     "my-app",
-		Harness:  "opencode",
-		Secrets:  []string{"A2A_TEST_KEY"},
-		Mounts:   []string{"/src/app", "/docs:/docs:ro"},
-		Network:  NetworkConfig{Private: "tailscale"},
-		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:A2A_TEST_BOT"}},
+		Name:      "my-app",
+		Harness:   "opencode",
+		Secrets:   []string{"A2A_TEST_KEY"},
+		Workspace: "/src/app",
+		Mounts:    []string{"/docs:ro"},
+		Network:   NetworkConfig{Private: "tailscale", Identities: map[string]string{"anna": "member"}},
+		Channels:  ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:A2A_TEST_BOT"}},
+		Limits:    LimitsConfig{Memory: "8g", CPUs: "4", PIDs: 1024},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)
@@ -208,11 +247,75 @@ func TestSettingsApply(t *testing.T) {
 		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
 	}
 
-	if _, err := (Settings{Secrets: []string{"A2A_TEST_UNSET"}}).Apply(cfg, ""); err == nil {
+	if _, err := (Settings{Secrets: []string{"A2A_TEST_UNSET"}}).Apply(cfg, d); err == nil {
 		t.Fatalf("Apply() with an unset secret error = nil, want error")
 	}
-	if _, err := (Settings{}).Apply(&Config{}, "x"); err == nil {
-		t.Fatalf("Apply() without a harness error = nil, want error")
+	got, err := Settings{Secrets: []string{"A2A_TEST_UNSET"}, SecretValues: Secrets{"A2A_TEST_UNSET": "typed"}}.Apply(cfg, d)
+	if err != nil {
+		t.Fatalf("Apply() with a typed secret error = %v", err)
+	}
+	if diff := cmp.Diff(Secrets{"A2A_TEST_UNSET": "typed"}, got); diff != "" {
+		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSettingsApplyKeyedLists(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{
+		Name:      "coder",
+		Harness:   "opencode",
+		Mounts:    []string{"/a:/docs", "/b:/data"},
+		Env:       []string{"DEBUG=1", "MODE=fast"},
+		Approvals: ApprovalsConfig{Allow: []string{"read"}, Approvers: []string{"pair:anna"}},
+		Network:   NetworkConfig{Identities: map[string]string{"anna": "member"}},
+	}
+	_, err = Settings{
+		Mounts:     []string{"/c:/docs:ro", "/e:/extra"},
+		Env:        []string{"DEBUG=0"},
+		AllowTools: []string{"read", "search"},
+		Approvers:  []string{"pair:bob"},
+		Identities: []string{"anna=owner"},
+		Workspace:  d.Root,
+	}.Apply(cfg, d)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := &Config{
+		Name:      "coder",
+		Harness:   "opencode",
+		Mounts:    []string{"/c:/docs:ro", "/b:/data", "/e:/extra"},
+		Env:       []string{"DEBUG=0", "MODE=fast"},
+		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, Approvers: []string{"pair:anna", "pair:bob"}},
+		Network:   NetworkConfig{Identities: map[string]string{"anna": "owner"}},
+	}
+	if diff := cmp.Diff(want, cfg); diff != "" {
+		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSettingsApplyEmail(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{Channels: ChannelsConfig{Email: &EmailConfig{
+		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
+	}}}
+	secrets, err := Settings{Email: &EmailSettings{Password: "new", Mailbox: "Agent"}}.Apply(cfg, d)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", Mailbox: "Agent", TrustedAuthServ: "mx"}
+	if diff := cmp.Diff(want, cfg.Channels.Email); diff != "" {
+		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(Secrets{SecretEmailPassword: "new"}, secrets); diff != "" {
+		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
 	}
 }
 
@@ -231,7 +334,7 @@ func TestSettingsApplyNetworkSecrets(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := Settings{Harness: "opencode", TailscaleAuthKey: tc.authKey}.Apply(&Config{}, "x")
+			got, err := Settings{Harness: "opencode", TailscaleAuthKey: tc.authKey}.Apply(&Config{}, Dir{Root: "/x"})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("Apply() error = %v, want error %v", err, tc.wantErr)
 			}

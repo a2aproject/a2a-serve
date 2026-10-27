@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -100,7 +101,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 
 	agent := a2aacp.Process{Argv: prepared.Args, Dir: mounts[0].Src, Env: prepared.Env, Stderr: harnessLog}
 	acp, err := a2aacp.NewExecutor(ctx, agent, &a2aacp.Config{
-		AutoAnswer:   a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny},
+		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 	})
 	if err != nil {
@@ -108,6 +109,15 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ %s is running (ACP)", profile.Name())
 	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), prepared.Stop(ctx)) }, nil
+}
+
+// liveToolRules answers tool permissions with the allow and deny rules of
+// the current config, so that changing them doesn't need a restart.
+type liveToolRules func() *agentdir.Config
+
+func (f liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
+	cfg := f()
+	return a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.AutoAnswer(ctx, execCtx, q)
 }
 
 // listenHarness opens the listener through which the harness calls other

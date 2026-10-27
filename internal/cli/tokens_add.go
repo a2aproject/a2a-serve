@@ -25,8 +25,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
-func newPairAddCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
+func newTokensAddCmd(cfg *globalConfig) *cobra.Command {
+	cmd := &cobra.Command{
 		Use:   "add <agent-url> <code>",
 		Short: "Exchange a pairing code for a token and save it",
 		Long: `Exchange a pairing code from an agent's owner (a2a serve pair invite) for a token.
@@ -37,7 +37,7 @@ credential helper ` + "`" + credstore.HelperCommand + "`" + `: add
 
 A code for a webhook node (a2a serve pair invite --webhook) returns a node token
 instead, which the a2a serve relay commands use.`,
-		Example: "  a2a serve pair add https://assistant.tail1234.ts.net 3MZ8-LQ0D",
+		Example: "  a2a serve tokens add https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.timeout)
@@ -63,6 +63,8 @@ instead, which the a2a serve relay commands use.`,
 			return err
 		},
 	}
+	addRequestTimeout(cmd.Flags(), cfg)
+	return cmd
 }
 
 func printNodePaired(cfg *globalConfig, c credstore.Credential, saved string) error {

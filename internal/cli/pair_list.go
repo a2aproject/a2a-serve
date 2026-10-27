@@ -25,7 +25,7 @@ import (
 )
 
 func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List the callers and webhook nodes paired with the agent",
@@ -64,7 +64,9 @@ func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{n.ID, pairapi.KindNode, "node:" + n.ID, "", n.Created.Format(time.DateTime), used})
 			}
-			return cfg.PrintTable([]string{"NAME", "KIND", "PRINCIPAL", "ROLES", "CREATED", "LAST USED"}, rows)
+			return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "PRINCIPAL", "ROLES", "CREATED", "LAST USED"}, rows, "no callers or webhook nodes; invite one with `a2a serve pair invite <name>`")
 		},
 	}
+	sf.addControlFlags(cmd.Flags())
+	return cmd
 }

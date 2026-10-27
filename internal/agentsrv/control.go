@@ -78,6 +78,8 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("POST /channels", s.ctlAddChannel)
 	mux.HandleFunc("DELETE /channels/{kind}", s.ctlDeleteChannel)
 	mux.HandleFunc("GET /nodes", s.ctlNodes)
+	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { jsonhttp.Write(w, http.StatusOK, s.config()) })
+	mux.HandleFunc("POST /config/reload", s.ctlReloadConfig)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
@@ -355,12 +357,30 @@ func (s *Server) ctlDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if !s.config().HasChannel(kind) {
+		jsonhttp.Error(w, http.StatusNotFound, kind+" is not configured")
+		return
+	}
 	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	s.router.remove(kind)
 	jsonhttp.Write(w, http.StatusOK, map[string]string{"removed": kind})
+}
+
+// ctlReloadConfig applies the live settings of config.yaml, which the CLI
+// has validated and saved.
+func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
+	saved, err := s.dir.LoadConfig()
+	if err != nil {
+		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	s.cfgMu.Lock()
+	agentdir.CopyLive(s.cfg, saved)
+	s.cfgMu.Unlock()
+	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "approver", "allow-tools", "deny-tools"}})
 }
 
 func (s *Server) ctlNodes(w http.ResponseWriter, r *http.Request) {

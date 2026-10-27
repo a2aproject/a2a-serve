@@ -18,26 +18,37 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"iter"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
-// ServeExec runs a local server whose agent executes the given shell command
-// for each request, streaming its output back split on the provided chunk delimiter.
-func ServeExec(ctx context.Context, cfg Config, command, chunk string) error {
+// Environment variables of the script, so it can keep state per task or
+// conversation.
+const (
+	EnvTaskID    = "A2A_TASK_ID"
+	EnvContextID = "A2A_CONTEXT_ID"
+)
+
+// ServeScript runs a local server whose agent runs a shell command for each
+// message, streaming its output when s.Chunk or s.Stream is set.
+func ServeScript(ctx context.Context, cfg Config, s ScriptOptions) error {
 	if cfg.AgentName == "" {
-		cfg.AgentName = "Exec Agent"
+		cfg.AgentName = "Script Agent"
 	}
 	if cfg.AgentDesc == "" {
-		cfg.AgentDesc = fmt.Sprintf("Wraps command: %s", command)
+		cfg.AgentDesc = fmt.Sprintf("Runs the command: %s", s.Command)
 	}
 
 	card, err := createAgentCard(cfg.CardParams)
@@ -45,12 +56,12 @@ func ServeExec(ctx context.Context, cfg Config, command, chunk string) error {
 		return err
 	}
 
-	caps := &a2a.AgentCapabilities{Streaming: chunk != ""}
-	executor := newExecExecutor(command, chunk)
+	executor := newExecExecutor(s)
+	caps := &a2a.AgentCapabilities{Streaming: executor.streaming()}
 	handler := a2asrv.NewHandler(executor, a2asrv.WithCapabilityChecks(caps))
 
 	if !cfg.Quiet {
-		cfg.Logger("exec mode, command=%q chunk=%q transport=%s protocol=%s", command, chunk, cfg.Transport, cfg.ProtocolVersion)
+		cfg.Logger("script mode, command=%q chunk=%q stream=%t transport=%s protocol=%s", s.Command, s.Chunk, s.Stream, cfg.Transport, cfg.ProtocolVersion)
 	}
 
 	return serve(ctx, cfg, handler, card)
@@ -59,17 +70,33 @@ func ServeExec(ctx context.Context, cfg Config, command, chunk string) error {
 type execExecutor struct {
 	command string
 	chunk   string
+	// keepDelim keeps the delimiter at the end of each chunk.
+	keepDelim bool
 
 	mu        sync.Mutex
 	processes map[a2a.TaskID]*os.Process
 }
 
-func newExecExecutor(command, chunk string) *execExecutor {
-	return &execExecutor{
-		command:   command,
-		chunk:     chunk,
+func newExecExecutor(s ScriptOptions) *execExecutor {
+	e := &execExecutor{
+		command:   s.Command,
+		chunk:     s.Chunk,
 		processes: make(map[a2a.TaskID]*os.Process),
 	}
+	if s.Stream && s.Chunk == "" {
+		e.chunk, e.keepDelim = "\n", true
+	}
+	return e
+}
+
+func (e *execExecutor) streaming() bool { return e.chunk != "" }
+
+// newCommand returns the script process for the task of execCtx.
+func (e *execExecutor) newCommand(ctx context.Context, execCtx *a2asrv.ExecutorContext, input string) *exec.Cmd {
+	cmd := exec.CommandContext(ctx, "sh", "-c", e.command)
+	cmd.Stdin = strings.NewReader(input)
+	cmd.Env = append(os.Environ(), EnvTaskID+"="+string(execCtx.TaskID), EnvContextID+"="+execCtx.ContextID)
+	return cmd
 }
 
 func (e *execExecutor) trackProcess(id a2a.TaskID, p *os.Process) {
@@ -106,7 +133,7 @@ func (e *execExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 		}
 		input := output.MessageText(execCtx.Message)
 
-		if e.chunk == "" {
+		if !e.streaming() {
 			e.executeBuffered(ctx, execCtx, input, yield)
 		} else {
 			e.executeChunked(ctx, execCtx, input, yield)
@@ -115,8 +142,7 @@ func (e *execExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 }
 
 func (e *execExecutor) executeBuffered(ctx context.Context, execCtx *a2asrv.ExecutorContext, input string, yield func(a2a.Event, error) bool) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", e.command)
-	cmd.Stdin = strings.NewReader(input)
+	cmd := e.newCommand(ctx, execCtx, input)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -149,8 +175,9 @@ func (e *execExecutor) executeBuffered(ctx context.Context, execCtx *a2asrv.Exec
 }
 
 func (e *execExecutor) executeChunked(ctx context.Context, execCtx *a2asrv.ExecutorContext, input string, yield func(a2a.Event, error) bool) {
-	cmd := exec.CommandContext(ctx, "sh", "-c", e.command)
-	cmd.Stdin = strings.NewReader(input)
+	cmd := e.newCommand(ctx, execCtx, input)
+	// Background children of the shell can keep stderr open after it exits.
+	cmd.WaitDelay = 5 * time.Second
 
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
@@ -166,11 +193,17 @@ func (e *execExecutor) executeChunked(ctx context.Context, execCtx *a2asrv.Execu
 	}
 	e.trackProcess(execCtx.TaskID, cmd.Process)
 	defer e.untrackProcess(execCtx.TaskID)
+	waited := false
+	defer func() {
+		if !waited {
+			stopProcess(cmd, stdout)
+		}
+	}()
 
 	scanner := bufio.NewScanner(stdout)
 	const maxScanCapacity = 10 * 1024 * 1024 // 10 MB
 	scanner.Buffer(make([]byte, 64*1024), maxScanCapacity)
-	scanner.Split(splitByDelimiter(e.chunk))
+	scanner.Split(splitByDelimiter(e.chunk, e.keepDelim))
 
 	// Buffer one chunk ahead so we can set LastChunk on the final one.
 	var pending *string
@@ -219,6 +252,7 @@ func (e *execExecutor) executeChunked(ctx context.Context, execCtx *a2asrv.Execu
 		}
 	}
 
+	waited = true
 	if err := cmd.Wait(); err != nil {
 		msg := stderr.String()
 		if msg == "" {
@@ -231,6 +265,21 @@ func (e *execExecutor) executeChunked(ctx context.Context, execCtx *a2asrv.Execu
 	yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
 }
 
+// stopProcess kills a command whose output is no longer read, and reaps it.
+// Closing stdout first ends children of the shell which are blocked writing
+// to it.
+func stopProcess(cmd *exec.Cmd, stdout io.Closer) {
+	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+		slog.Debug("killing exec command", "error", err)
+	}
+	if err := stdout.Close(); err != nil {
+		slog.Debug("closing exec command output", "error", err)
+	}
+	if err := cmd.Wait(); err != nil {
+		slog.Debug("exec command stopped", "error", err)
+	}
+}
+
 func (e *execExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		if err := e.killProcess(execCtx.TaskID); err != nil {
@@ -241,13 +290,17 @@ func (e *execExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext
 	}
 }
 
-func splitByDelimiter(delim string) bufio.SplitFunc {
+func splitByDelimiter(delim string, keep bool) bufio.SplitFunc {
 	return func(data []byte, atEOF bool) (advance int, token []byte, err error) {
 		if atEOF && len(data) == 0 {
 			return 0, nil, nil
 		}
 		if i := bytes.Index(data, []byte(delim)); i >= 0 {
-			return i + len(delim), data[:i], nil
+			end := i
+			if keep {
+				end += len(delim)
+			}
+			return i + len(delim), data[:end], nil
 		}
 		if atEOF {
 			return len(data), data, nil

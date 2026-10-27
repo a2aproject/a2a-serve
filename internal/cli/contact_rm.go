@@ -15,9 +15,11 @@
 package cli
 
 import (
-	"fmt"
+	"context"
 
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -25,6 +27,17 @@ func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "rm <name>",
 		Short: "Remove a contact",
 		Args:  cobra.ExactArgs(1),
+		ValidArgsFunction: controlCompletions(sf, func(ctx context.Context, c *controlapi.Client) ([]string, error) {
+			cs, err := c.Contacts(ctx)
+			if err != nil {
+				return nil, err
+			}
+			names := make([]string, 0, len(cs))
+			for _, x := range cs {
+				names = append(names, x.Name)
+			}
+			return names, nil
+		}),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()
 			if err != nil {
@@ -33,8 +46,7 @@ func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err := c.DeleteContact(cmd.Context(), args[0]); err != nil {
 				return err
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ removed contact %s\n", args[0])
-			return err
+			return cfg.PrintRemoved("contact", args[0], "✓ removed contact "+args[0])
 		},
 	}
 }

@@ -146,13 +146,13 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	limits := r.Limits
 	if limits.Memory == "" {
-		limits.Memory = "4g"
+		limits.Memory = agentdir.DefaultLimits.Memory
 	}
 	if limits.CPUs == "" {
-		limits.CPUs = "2"
+		limits.CPUs = agentdir.DefaultLimits.CPUs
 	}
 	if limits.PIDs == 0 {
-		limits.PIDs = 512
+		limits.PIDs = agentdir.DefaultLimits.PIDs
 	}
 	user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 	if r.Rootless {
