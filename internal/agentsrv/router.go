@@ -403,9 +403,28 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	msg.ContextID = contextID
 	msg.Metadata = map[string]any{"channel": in.Channel, "identity": in.Identity, "sender": in.Name}
 	if last, err := r.tasks.LatestInContext(ctx, contextID); err == nil && last.Status.State == a2a.TaskStateInputRequired {
-		msg.TaskID = last.ID
+		if r.canContinue(ctx, p, last.ID) {
+			msg.TaskID = last.ID
+		} else {
+			r.reply(ctx, ch, in, "⏳ Another task in this conversation is waiting for an answer; yours starts after it.")
+		}
 	}
 	r.stream(ctx, ch, in.Conv, channel.Ref{Conv: in.Conv, ID: in.MessageID}, p, &a2a.SendMessageRequest{Message: msg})
+}
+
+// canContinue reports whether p's message continues the task: p started it
+// or is an owner. Others start a task of their own, so that a group
+// member's message doesn't land in another member's pending task.
+func (r *Router) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) bool {
+	if p.Has(auth.RoleOwner) {
+		return true
+	}
+	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	if err != nil {
+		slog.Warn("loading the pending task of a conversation", "task", taskID, "error", err)
+		return false
+	}
+	return stored.User == p.ID
 }
 
 // isCommand reports whether text is the bot command /name, optionally

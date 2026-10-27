@@ -181,3 +181,24 @@ func TestRouterHandlesConversationInOrder(t *testing.T) {
 
 	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
 }
+
+func TestRouterGroupMessageDoesNotJoinOthersPendingTask(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	linkAs(t, ts, "bob", auth.RoleMember, "tg:3", "dm3")
+	inGroup := func(identity, text string) {
+		in := ts.ch.message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.deliver(in)
+	}
+
+	inGroup("tg:2", "ask")
+	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+	inGroup("tg:3", "hello")
+	ts.ch.waitFor(t, "grp", hasText("yours starts after it"))
+	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+
+	ts.ch.waitFor(t, "grp", hasText("Hello from fakeacp."))
+}
