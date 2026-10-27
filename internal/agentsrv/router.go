@@ -208,15 +208,16 @@ func (r *Router) channelStatus(ch channel.Channel, hint string) *controlapi.Chan
 }
 
 // announce prints the channels, and how to link the owner if nobody is
-// linked as owner yet.
+// linked as owner yet. One owner code serves every channel.
 func (r *Router) announce(ctx context.Context) error {
+	code := ""
 	for _, ch := range r.channels() {
 		line := "✓ " + ch.Name()
 		if d, ok := ch.(channel.Describer); ok {
 			line += " " + d.Describe()
 		}
 		r.logf("%s", line)
-		if hint := r.ownerHint(ctx, ch); hint != "" {
+		if hint := r.ownerHintWith(ctx, ch, &code); hint != "" {
 			r.logf("%s", hint)
 		}
 	}
@@ -225,6 +226,14 @@ func (r *Router) announce(ctx context.Context) error {
 
 // ownerHint mints an owner code for a channel nobody is linked on as owner.
 func (r *Router) ownerHint(ctx context.Context, ch channel.Channel) string {
+	code := ""
+	return r.ownerHintWith(ctx, ch, &code)
+}
+
+// ownerHintWith is ownerHint which mints *code if it is empty, and reuses it
+// otherwise. A new owner code replaces the pending one, so that restarts
+// don't pile up codes.
+func (r *Router) ownerHintWith(ctx context.Context, ch channel.Channel, code *string) string {
 	links, err := r.store.LinksOf(ctx, auth.OwnerID)
 	if err != nil {
 		slog.Error("listing owner links", "error", err)
@@ -237,12 +246,15 @@ func (r *Router) ownerHint(ctx context.Context, ch channel.Channel) string {
 	if !ok {
 		return ""
 	}
-	code, _, err := auth.MintCode(ctx, r.store, auth.PurposePair, "owner", auth.RoleOwner)
-	if err != nil {
-		slog.Error("minting owner code", "error", err)
-		return ""
+	if *code == "" {
+		c, _, err := auth.MintSoleCode(ctx, r.store, auth.PurposePair, "owner", auth.RoleOwner)
+		if err != nil {
+			slog.Error("minting owner code", "error", err)
+			return ""
+		}
+		*code = c
 	}
-	return fmt.Sprintf("→ link yourself as owner: %s   (%d min)", d.LinkHint(code), int(auth.CodeTTL.Minutes()))
+	return fmt.Sprintf("→ link yourself as owner: %s   (%d min)", d.LinkHint(*code), int(auth.CodeTTL.Minutes()))
 }
 
 func (r *Router) linkHints(code string) []string {

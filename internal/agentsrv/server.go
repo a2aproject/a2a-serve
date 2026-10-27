@@ -319,6 +319,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 		s.router.add(ch)
 	}
 	s.peers.resumeWatches(ctx)
+	go s.pruneLoop(ctx)
 	return errc, s.printSummary(ctx)
 }
 
@@ -431,6 +432,25 @@ func (s *Server) bestURL() string {
 		return private
 	}
 	return local
+}
+
+// pruneInterval is how often the server drops expired and old records.
+var pruneInterval = time.Hour
+
+// pruneLoop prunes the store now and every pruneInterval until ctx ends.
+func (s *Server) pruneLoop(ctx context.Context) {
+	t := time.NewTicker(pruneInterval)
+	defer t.Stop()
+	for {
+		if err := s.store.Prune(ctx); err != nil && ctx.Err() == nil {
+			slog.Warn("pruning the database", "error", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }
 
 func (s *Server) printSummary(ctx context.Context) error {

@@ -312,6 +312,17 @@ func MintCode(ctx context.Context, s *store.Store, purpose, name, role string) (
 	return code, expires, nil
 }
 
+// MintSoleCode is MintCode which also revokes the other pending codes of
+// purpose and name.
+func MintSoleCode(ctx context.Context, s *store.Store, purpose, name, role string) (string, time.Time, error) {
+	code := NewCode()
+	expires := time.Now().Add(CodeTTL)
+	if err := s.ReplaceCode(ctx, NormalizeCode(code), store.Code{Purpose: purpose, Name: name, Role: role, Expires: expires}); err != nil {
+		return "", time.Time{}, err
+	}
+	return code, expires, nil
+}
+
 // ErrInvalidCode is returned for unknown, used or expired codes.
 var ErrInvalidCode = errors.New("invalid or expired code")
 

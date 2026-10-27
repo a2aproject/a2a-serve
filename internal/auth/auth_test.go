@@ -17,6 +17,7 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -281,5 +282,25 @@ func TestLinkCode(t *testing.T) {
 		if ok != tc.wantOK || got != tc.want {
 			t.Errorf("LinkCode(%q) = %q, %v, want %q, %v", tc.text, got, ok, tc.want, tc.wantOK)
 		}
+	}
+}
+
+func TestMintSoleCodeRevokesPendingCode(t *testing.T) {
+	t.Parallel()
+	s, ctx := openStore(t), context.Background()
+	first, _, err := MintSoleCode(ctx, s, PurposePair, "owner", RoleOwner)
+	if err != nil {
+		t.Fatalf("MintSoleCode() error = %v", err)
+	}
+	second, _, err := MintSoleCode(ctx, s, PurposePair, "owner", RoleOwner)
+	if err != nil {
+		t.Fatalf("MintSoleCode() error = %v", err)
+	}
+
+	if _, err := s.TakeCode(ctx, NormalizeCode(first), PurposePair); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("TakeCode(first) error = %v, want %v", err, store.ErrNotFound)
+	}
+	if _, err := s.TakeCode(ctx, NormalizeCode(second), PurposePair); err != nil {
+		t.Fatalf("TakeCode(second) error = %v, want nil", err)
 	}
 }
