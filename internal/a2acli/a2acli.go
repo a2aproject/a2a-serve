@@ -23,15 +23,18 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"golang.org/x/mod/semver"
 )
 
 // Binary is the name of the a2a CLI on PATH.
 const Binary = "a2a"
 
-// PinnedVersion is the a2a CLI module version used when the installed
-// version is unknown or a development build: the first with --unix-socket
-// and credential helpers, and without its own server command.
-const PinnedVersion = "v0.3.2-0.20261027071959-4abaf842d69f"
+// PinnedVersion is the a2a CLI module version this build needs: main with
+// --unix-socket <path> and credential helpers listed as {scope, command} in
+// config files. Harness images carry it, and it stands in for an installed
+// version which is unknown or a development build.
+const PinnedVersion = "v0.3.2-0.20261030153310-f90e4eb628cd"
 
 // Path returns the path of the a2a CLI on PATH.
 func Path() (string, error) {
@@ -74,6 +77,12 @@ func ModuleVersion(v string) string {
 		return "v" + v
 	}
 	return v
+}
+
+// Outdated reports whether the a2a CLI module version v predates
+// [PinnedVersion].
+func Outdated(v string) bool {
+	return semver.Compare(v, PinnedVersion) < 0
 }
 
 func run(ctx context.Context, args ...string) (string, error) {

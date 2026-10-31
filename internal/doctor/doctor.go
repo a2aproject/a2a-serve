@@ -166,13 +166,13 @@ type Options struct {
 
 // Run runs the checks of the machine, and of the agent in opts.Dir.
 func Run(ctx context.Context, env Env, opts Options) []Result {
-	results, a2aVersion := cliChecks(ctx, env)
+	results := cliChecks(ctx, env)
 	var cfg *agentdir.Config
 	var agent []Result
 	if opts.Dir != nil {
 		agent, cfg = agentChecks(ctx, env, *opts.Dir, opts.Online)
 	}
-	results = append(results, sandboxChecks(ctx, env, opts.Dir, cfg, a2aVersion, opts.Online)...)
+	results = append(results, sandboxChecks(ctx, env, opts.Dir, cfg, opts.Online)...)
 	results = append(results, agent...)
 	if cfg != nil {
 		results = append(results, networkChecks(*opts.Dir, cfg)...)
@@ -185,8 +185,7 @@ func Run(ctx context.Context, env Env, opts Options) []Result {
 
 // CLIChecks runs the offline checks of the a2a CLI and its config.
 func CLIChecks(ctx context.Context, env Env) []Result {
-	results, _ := cliChecks(ctx, env)
-	return results
+	return cliChecks(ctx, env)
 }
 
 // SetupProblems returns one line per failed a2a CLI check of this machine,

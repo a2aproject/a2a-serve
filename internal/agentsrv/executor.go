@@ -69,24 +69,21 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		env = append(env, s.bridge.helperEnv)
 	}
 	spec := harness.Spec{
-		Profile:    profile,
-		Sandbox:    cfg.Sandbox,
-		Mounts:     mounts,
-		Home:       s.dir.HomeDir(),
-		Hidden:     []string{s.dir.Path()},
-		Env:        env,
-		Name:       "a2a-" + cfg.Name + "-" + s.dir.ID(),
-		Image:      cfg.Image,
-		Limits:     harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
-		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
-		Socket:     s.bridge.socket,
-		SocketHost: harnessHost,
-		Progress:   imageProgress,
+		Profile:  profile,
+		Sandbox:  cfg.Sandbox,
+		Mounts:   mounts,
+		Home:     s.dir.HomeDir(),
+		Hidden:   []string{s.dir.Path()},
+		Env:      env,
+		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
+		Image:    cfg.Image,
+		Limits:   harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
+		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
+		Socket:   s.bridge.socket,
+		Progress: imageProgress,
 	}
-	if cli, err := a2acli.Path(); err == nil {
-		spec.CLI = cli
-	} else {
-		s.logf("! the harness can only call other agents with the a2a CLI of its image: %v", err)
+	if cfg.Sandbox == harness.SandboxLocal {
+		spec.CLI = s.localCLI(ctx)
 	}
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
@@ -109,6 +106,20 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ %s is running (ACP)", profile.Name())
 	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), prepared.Stop(ctx)) }, nil
+}
+
+// localCLI returns the a2a CLI on PATH, with which a harness without a
+// sandbox calls other agents, and warns when that can't work.
+func (s *Server) localCLI(ctx context.Context) string {
+	cli, err := a2acli.Path()
+	if err != nil {
+		s.logf("! the harness can't call other agents: %v", err)
+		return ""
+	}
+	if v := a2acli.Version(ctx); a2acli.Outdated(v) {
+		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a serve doctor", v, cli, a2acli.PinnedVersion)
+	}
+	return cli
 }
 
 // liveToolRules answers tool permissions with the allow and deny rules of

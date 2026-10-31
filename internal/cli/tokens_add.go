@@ -32,8 +32,9 @@ func newTokensAddCmd(cfg *globalConfig) *cobra.Command {
 		Long: `Exchange a pairing code from an agent's owner (a2a serve pair invite) for a token.
 The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
 attaches it to later requests for the same agent, such as a2a send, with the
-credential helper ` + "`" + credstore.HelperCommand + "`" + `: add
-"credential-helper: ` + credstore.HelperCommand + `" to ~/.config/a2a-cli/config.yaml.
+credential helper ` + "`" + credstore.HelperCommand + "`" + `: run a2a-serve doctor --fix,
+or list ` + credstore.HelperEntry + ` under credential-helper in
+~/.config/a2a-cli/config.yaml.
 
 A code for a webhook node (a2a serve pair invite --webhook) returns a node token
 instead, which the a2a serve relay commands use.`,

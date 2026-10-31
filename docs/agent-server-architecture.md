@@ -126,12 +126,14 @@ The harness calls other agents with the plain `a2a` CLI. Everything that
 makes the call trustworthy happens in the server:
 
 - **Reaching the server.** The harness listener is a Unix socket, mounted into
-  the container at `/run/a2a/a2a.sock` with the `a2a` from the server's `PATH`
-  at `/usr/local/bin/a2a`. `A2ACLI_UNIX_SOCKET=a2a=<socket>` sends requests for
-  the host `a2a` through it and everything else normally. Docker Desktop can't
-  mount the socket, so there the listener is TCP and the harness sends a key,
-  returned by a credential helper script the server writes into the harness
-  home and scopes to that host with `A2ACLI_CREDENTIAL_HELPER`.
+  the container at `/run/a2a/a2a.sock`. `A2ACLI_UNIX_SOCKET=<socket>` sends
+  every request of the harness's `a2a` through it, so the host `a2a` of
+  agents URLs only names the server. The container's `a2a` comes from the
+  harness image, whose tag names the `a2a` version the server needs, so the
+  harness runs that version on every host. Docker Desktop can't mount the
+  socket, so there the listener is TCP and the harness sends a key, returned
+  by a credential helper script the server writes into the harness home and
+  scopes to that host with `A2ACLI_CREDENTIAL_HELPER=<host>=<path>`.
 - **Which conversation.** One harness process serves every conversation, and
   a shell command carries nothing that ties it to one. So each prompt's
   `[a2a agents]` line gives a short handle, `http://a2a/k3`, which the server

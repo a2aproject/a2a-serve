@@ -17,7 +17,6 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
@@ -30,9 +29,11 @@ protocol (https://github.com/EngFlow/credential-helper-spec). It returns the
 token saved by "a2a serve tokens add" for an agent URL, or the node token in
 $` + relayapi.EnvNodeToken + ` for requests to its agent.
 
-Enable it for the a2a CLI in ~/.config/a2a-cli/config.yaml:
+Enable it for the a2a CLI with a2a-serve doctor --fix, or in
+~/.config/a2a-cli/config.yaml:
 
-  credential-helper: ` + credstore.HelperCommand,
+  credential-helper:
+    - command: [a2a-serve, credential]`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()

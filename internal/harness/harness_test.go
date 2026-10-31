@@ -19,12 +19,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
@@ -293,29 +295,21 @@ func TestBootstrap(t *testing.T) {
 func TestDockerfiles(t *testing.T) {
 	t.Parallel()
 	for _, name := range ProfileNames() {
-		if _, ok := Dockerfile(name); !ok {
+		df, ok := Dockerfile(name)
+		if !ok {
 			t.Errorf("Dockerfile(%q) missing", name)
+			continue
+		}
+		if want := "\nARG A2A_CLI_VERSION=" + a2acli.PinnedVersion + "\n"; !strings.Contains(string(df), want) {
+			t.Errorf("Dockerfile(%q) doesn't contain %q, which CI publishes as tag %s", name, strings.TrimSpace(want), ImageTag)
 		}
 	}
 }
 
-func TestLocalImage(t *testing.T) {
+func TestImageTag(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		version string
-		want    string
-	}{
-		{version: "v0.3.1", want: "a2a-harness-opencode:v0.3.1"},
-		{version: "v0.3.2-0.20261022190000-609d0b5dd28f+dirty", want: "a2a-harness-opencode:v0.3.2-0.20261022190000-609d0b5dd28f-dirty"},
-		{version: "latest", want: "a2a-harness-opencode:local"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.version, func(t *testing.T) {
-			t.Parallel()
-			if got := LocalImage("opencode", tc.version); got != tc.want {
-				t.Fatalf("LocalImage() = %q, want %q", got, tc.want)
-			}
-		})
+	if !regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`).MatchString(ImageTag) {
+		t.Fatalf("ImageTag = %q, want a valid docker tag", ImageTag)
 	}
 }
 

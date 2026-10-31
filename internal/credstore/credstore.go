@@ -237,5 +237,9 @@ func Pair(ctx context.Context, hc *http.Client, agentURL, code string) (Credenti
 // HelperCommand is the a2a CLI credential helper that reads this store.
 const HelperCommand = "a2a-serve credential"
 
+// HelperEntry is the credential-helper entry of the a2a CLI config which
+// runs HelperCommand.
+const HelperEntry = "{command: [a2a-serve, credential]}"
+
 // HelperSetup tells how to have the a2a CLI attach the stored tokens.
-const HelperSetup = "for the a2a CLI to send it, add `credential-helper: " + HelperCommand + "` to ~/.config/a2a-cli/config.yaml"
+const HelperSetup = "for the a2a CLI to send it, run a2a-serve doctor --fix, or list " + HelperEntry + " under credential-helper in ~/.config/a2a-cli/config.yaml"

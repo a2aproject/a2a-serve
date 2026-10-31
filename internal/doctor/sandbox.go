@@ -28,7 +28,7 @@ const useLocalSandbox = "a2a serve config set --sandbox local"
 // sandboxChecks checks Docker and the harness image, or the harness command
 // of an agent without a sandbox. cfg is nil outside an agent or when its
 // config can't be read.
-func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config, a2aVersion string, online bool) []Result {
+func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config, online bool) []Result {
 	var results []Result
 	if cfg != nil && cfg.Sandbox == agentdir.SandboxLocal {
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
@@ -38,7 +38,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		docker := checkDocker(ctx, env)
 		results = append(results, docker)
 		if docker.Status == StatusOK && cfg != nil {
-			if r, ok := checkImage(ctx, env, cfg, a2aVersion, online); ok {
+			if r, ok := checkImage(ctx, env, cfg, online); ok {
 				results = append(results, r)
 			}
 		}
@@ -71,7 +71,7 @@ func checkDocker(ctx context.Context, env Env) Result {
 // checkImage checks that the harness image is present, or with online that
 // it can be pulled. It reports nothing when the harness is unknown, which
 // the config check reports.
-func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, a2aVersion string, online bool) (Result, bool) {
+func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool) (Result, bool) {
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
 		return Result{}, false
@@ -95,8 +95,8 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, a2aVersion s
 	}
 	_, buildable := harness.Dockerfile(profile.Name())
 	buildable = buildable && image == profile.Image()
-	if buildable && a2aVersion != "" {
-		if local := harness.LocalImage(profile.Name(), a2aVersion); present(local) {
+	if buildable {
+		if local := harness.LocalImage(profile.Name()); present(local) {
 			r.Status, r.Message = StatusOK, "image "+local+" present"
 			return r, true
 		}

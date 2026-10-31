@@ -37,7 +37,8 @@ CLI attaches it through a2a-serve's credential helper, which
 `a2a-serve doctor --fix` enables once in `~/.config/a2a-cli/config.yaml`:
 
 ```yaml
-credential-helper: a2a-serve credential
+credential-helper:
+  - command: [a2a-serve, credential]
 ```
 
 Then, from another terminal on the same machine:
@@ -200,8 +201,8 @@ sandbox:
 
 | Sandbox | Connection to the server | `a2a` binary |
 | --- | --- | --- |
-| Docker on Linux | A Unix socket only the harness reaches, mounted at `/run/a2a/a2a.sock`. `A2ACLI_UNIX_SOCKET=a2a=<socket>` sends requests for the host `a2a` through it. | The server's `a2a`, mounted at `/usr/local/bin/a2a`. |
-| Docker Desktop (macOS) | TCP with a key, since the socket can't be mounted. A credential helper in the harness home returns the key, and `A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<helper>` sends it to that host only. | The image's `a2a`, installed at the version of the server's `a2a`; a custom `--image` needs it too. |
+| Docker on Linux | A Unix socket only the harness reaches, mounted at `/run/a2a/a2a.sock`. `A2ACLI_UNIX_SOCKET=<socket>` sends every request of the harness's `a2a` through it. | The image's `a2a`, at the version this `a2a-serve` needs, whatever `a2a` is on the host. The image tag names that version (`:a2a-<version>`); a custom `--image` needs a compatible `a2a` too. |
+| Docker Desktop (macOS) | TCP with a key, since the socket can't be mounted. A credential helper in the harness home returns the key, and `A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<helper>` sends it to that host only. | The image's `a2a`, as on Linux. |
 | `--sandbox local` | The Unix socket, on the host. | The server's `a2a`: its directory is put first on the harness's `PATH`. |
 
 The harness's `a2a` waits up to 5 minutes for a reply (`A2ACLI_TIMEOUT=5m`,

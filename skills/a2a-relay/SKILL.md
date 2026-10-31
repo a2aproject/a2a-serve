@@ -27,7 +27,7 @@ install that binary another way, then use `a2a-serve` and `a2a` instead of
 `./a2a-serve` and `./a2a` below:
 
 - `a2a-serve`: `go install github.com/a2aproject/a2a-serve@latest`
-- `a2a`: `go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261027071959-4abaf842d69f`,
+- `a2a`: `go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261030153310-f90e4eb628cd`,
   then rename the installed `a2a-cli` to `a2a`. Releases don't have credential
   helpers yet.
 
@@ -95,9 +95,11 @@ history with `./a2a-serve relay task <taskId>`.
 Your node token also works as an A2A token for the agent, as a member: you
 can send it tasks, but not approve its tool calls. `a2a send` attaches the
 token saved by `a2a-serve tokens add`, or $A2A_RELAY_TOKEN, through a2a-serve's
-credential helper:
+credential helper. A2ACLI_CREDENTIAL_HELPER takes the path of a program
+without arguments, so wrap `a2a-serve credential` in a script:
 
-    export A2ACLI_CREDENTIAL_HELPER="$PWD/a2a-serve credential"
+    printf '#!/bin/sh\nexec "%s/a2a-serve" credential "$@"\n' "$PWD" > a2a-credential && chmod +x a2a-credential
+    export A2ACLI_CREDENTIAL_HELPER="$PWD/a2a-credential"
 
     ./a2a send -a {{BASE}} "Summarize what changed today"
     ./a2a send -a {{BASE}} --async "Run the test suite"   # returns the task ID at once

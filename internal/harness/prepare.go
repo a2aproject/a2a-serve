@@ -34,12 +34,12 @@ const (
 	SandboxLocal  = "local"
 )
 
-// EnvUnixSocket tells the a2a CLI to send requests for one host through a
-// Unix socket: <host>=<path>.
+// EnvUnixSocket tells the a2a CLI to send every HTTP request through the
+// Unix socket at its path, whatever the URL's host.
 const EnvUnixSocket = "A2ACLI_UNIX_SOCKET"
 
-// EnvCredentialHelper sets the credential helpers of the a2a CLI:
-// [scope=]command, which prints the headers for a URL.
+// EnvCredentialHelper sets the credential helper of the a2a CLI:
+// [scope=]path of a program which prints the headers for a URL.
 const EnvCredentialHelper = "A2ACLI_CREDENTIAL_HELPER"
 
 // EnvTimeout sets the request timeout of the a2a CLI. Harnesses get
@@ -72,11 +72,11 @@ type Spec struct {
 	Labels map[string]string
 
 	// Socket is the host path of the Unix socket through which the harness
-	// reaches the agent server, and SocketHost the host name the a2a CLI
-	// sends through it. Empty when the harness reaches the server over TCP.
-	Socket     string
-	SocketHost string
-	// CLI is the host path of the a2a binary made available to the harness.
+	// reaches the agent server. Empty when the harness reaches the server
+	// over TCP.
+	Socket string
+	// CLI is the host path of the a2a binary put first on the PATH of a
+	// local harness. A harness in Docker uses the a2a of its image.
 	CLI string
 
 	// Progress receives the output of pulling or building the image.
@@ -141,9 +141,8 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	}
 	if spec.Socket != "" {
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir})
-		dr.Env = append(dr.Env, EnvUnixSocket+"="+spec.SocketHost+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
+		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
-	dr.Mounts = append(dr.Mounts, dockerCLIMount(spec.CLI, runtime.GOOS)...)
 	cmd, err := dr.Command(ctx, spec.Profile.Command(ws))
 	if err != nil {
 		return nil, err
@@ -159,16 +158,6 @@ func cliEnv(env []string) []string {
 	return append([]string{EnvTimeout + "=" + CLITimeout.String()}, env...)
 }
 
-// dockerCLIMount mounts the server's binary over the image's a2a CLI. Only
-// a Linux host's binary runs in the container; elsewhere the image's own
-// build, made for the server's commit, is used.
-func dockerCLIMount(cli, goos string) []agentdir.Mount {
-	if cli == "" || goos != "linux" {
-		return nil
-	}
-	return []agentdir.Mount{{Src: cli, Dst: SandboxCLI, ReadOnly: true}}
-}
-
 func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
 	c := spec.Profile.Command(ws)
 	c.Env = append(c.Env, cliEnv(spec.Env)...)
@@ -176,7 +165,7 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 		c.Env = append(c.Env, "PATH="+filepath.Dir(spec.CLI)+string(os.PathListSeparator)+os.Getenv("PATH"))
 	}
 	if spec.Socket != "" {
-		c.Env = append(c.Env, EnvUnixSocket+"="+spec.SocketHost+"="+spec.Socket)
+		c.Env = append(c.Env, EnvUnixSocket+"="+spec.Socket)
 	}
 	cmd, err := LocalRunner{}.Command(ctx, c)
 	if err != nil {

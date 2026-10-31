@@ -67,7 +67,7 @@ a2a-serve's credential helper:
 
 ```bash
 mkdir -p ~/.config/a2a-cli
-echo 'credential-helper: a2a-serve credential' >> ~/.config/a2a-cli/config.yaml
+printf 'credential-helper:\n  - command: [a2a-serve, credential]\n' >> ~/.config/a2a-cli/config.yaml
 ```
 
 Terminal A shows:

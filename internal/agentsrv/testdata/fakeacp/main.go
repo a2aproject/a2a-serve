@@ -383,18 +383,16 @@ func callAgent(agentsURL, name, text string, async bool) (string, error) {
 	return "", fmt.Errorf("unexpected result %T", res)
 }
 
-// httpClient honors A2ACLI_UNIX_SOCKET=<host>=<path> like the a2a CLI.
+// httpClient honors A2ACLI_UNIX_SOCKET=<path> like the a2a CLI: every
+// request goes through the socket.
 func httpClient() *http.Client {
-	host, path, ok := strings.Cut(os.Getenv("A2ACLI_UNIX_SOCKET"), "=")
-	if !ok {
+	path := os.Getenv("A2ACLI_UNIX_SOCKET")
+	if path == "" {
 		return http.DefaultClient
 	}
 	var d net.Dialer
-	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
-		if h, _, err := net.SplitHostPort(addr); err == nil && h == host {
-			return d.DialContext(ctx, "unix", path)
-		}
-		return d.DialContext(ctx, network, addr)
+	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return d.DialContext(ctx, "unix", path)
 	}}}
 }
 

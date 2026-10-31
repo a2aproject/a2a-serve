@@ -14,7 +14,7 @@ digraph agent_server_a2a {
       Prompt  [label="[a2a agents] Agents URL for this\nconversation: http://a2a/k3\n(agents: coder, grok; ...)", shape=note, fillcolor="#fff7d6"];
       Harness [label="Harness"];
     }
-    CLI [label="a2a send -a http://a2a/k3/coder \"...\"\nA2ACLI_UNIX_SOCKET=a2a=/run/a2a/a2a.sock"];
+    CLI [label="a2a send -a http://a2a/k3/coder \"...\"\nA2ACLI_UNIX_SOCKET=/run/a2a/a2a.sock"];
   }
 
   User [label="User", shape=ellipse, fillcolor="#dbe8ff"];

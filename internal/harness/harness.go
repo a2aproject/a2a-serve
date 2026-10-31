@@ -23,6 +23,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/a2aproject/a2a-serve/internal/a2acli"
 )
 
 // Workspace is what a harness works on.
@@ -86,8 +88,10 @@ func Lookup(name string, command []string) (Profile, error) {
 // ImageRepo is where harness images are published.
 const ImageRepo = "ghcr.io/a2aproject/harness-"
 
-// ImageTag is the tag of the harness images this build uses.
-const ImageTag = "latest"
+// ImageTag is the tag of the harness images this build uses. It names the a2a
+// CLI version the images carry, so that a harness never calls other agents
+// with an a2a CLI this build doesn't configure correctly.
+const ImageTag = "a2a-" + a2acli.PinnedVersion
 
 // opencodePermission makes opencode ask before tools that change things,
 // instead of its default of approving them.

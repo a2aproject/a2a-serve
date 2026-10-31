@@ -35,20 +35,16 @@ func Dockerfile(harness string) ([]byte, bool) {
 	return data, err == nil
 }
 
-// LocalImage is the tag of a harness image built on this machine for the
-// a2a CLI version cliVersion.
-func LocalImage(harness, cliVersion string) string {
-	tag := "local"
-	if cliVersion != "latest" {
-		tag = strings.NewReplacer("+", "-", "/", "-").Replace(cliVersion)
-	}
-	return "a2a-harness-" + harness + ":" + tag
+// LocalImage is the tag of a harness image built on this machine.
+func LocalImage(harness string) string {
+	return "a2a-harness-" + harness + ":" + ImageTag
 }
 
 // EnsureImage makes image, or the profile's image when empty, available to
 // docker: it uses a local copy or pulls it. Only the profile's own image
 // falls back to building the harness's embedded Dockerfile when the pull
-// fails. It returns the image to run and a line describing what it did.
+// fails, with the a2a CLI at [a2acli.PinnedVersion] whatever the a2a on
+// PATH is. It returns the image to run and a line describing what it did.
 func EnsureImage(ctx context.Context, image string, profile Profile, progress io.Writer) (string, string, error) {
 	harness := profile.Name()
 	if image == "" {
@@ -73,12 +69,11 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 	if !ok {
 		return "", "", fmt.Errorf("docker pull %s: %w", image, pullErr)
 	}
-	version := a2acli.Version(ctx)
-	local := LocalImage(harness, version)
+	local := LocalImage(harness)
 	if imageExists(ctx, local) {
 		return local, "using " + local, nil
 	}
-	build := exec.CommandContext(ctx, "docker", "build", "-t", local, "--build-arg", "A2A_CLI_VERSION="+version, "-")
+	build := exec.CommandContext(ctx, "docker", "build", "-t", local, "--build-arg", "A2A_CLI_VERSION="+a2acli.PinnedVersion, "-")
 	build.Stdin = bytes.NewReader(df)
 	build.Stdout, build.Stderr = progress, progress
 	if err := build.Run(); err != nil {

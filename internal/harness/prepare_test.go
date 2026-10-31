@@ -34,14 +34,13 @@ func TestPrepareLocal(t *testing.T) {
 		t.Fatalf("Lookup() error = %v", err)
 	}
 	p, err := Prepare(context.Background(), Spec{
-		Profile:    profile,
-		Sandbox:    SandboxLocal,
-		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
-		Home:       home,
-		Env:        []string{"API_KEY=k"},
-		Socket:     "/run/agent/a2a.sock",
-		SocketHost: "a2a",
-		CLI:        "/opt/a2a/bin/a2a",
+		Profile: profile,
+		Sandbox: SandboxLocal,
+		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Env:     []string{"API_KEY=k"},
+		Socket:  "/run/agent/a2a.sock",
+		CLI:     "/opt/a2a/bin/a2a",
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -49,7 +48,7 @@ func TestPrepareLocal(t *testing.T) {
 	if !slices.Equal(p.Args, []string{"my-acp", "--flag"}) {
 		t.Fatalf("Prepare() args = %v, want the custom command", p.Args)
 	}
-	for _, want := range []string{"API_KEY=k", EnvUnixSocket + "=a2a=/run/agent/a2a.sock", "PATH=/opt/a2a/bin" + string(os.PathListSeparator)} {
+	for _, want := range []string{"API_KEY=k", EnvUnixSocket + "=/run/agent/a2a.sock", "PATH=/opt/a2a/bin" + string(os.PathListSeparator)} {
 		if !slices.ContainsFunc(p.Env, func(kv string) bool { return strings.HasPrefix(kv, want) }) {
 			t.Fatalf("Prepare() env is missing %q", want)
 		}
@@ -59,6 +58,56 @@ func TestPrepareLocal(t *testing.T) {
 	}
 	if err := p.Stop(context.Background()); err != nil {
 		t.Fatalf("Stop() error = %v", err)
+	}
+}
+
+// runningDocker runs rootful, has every image and removes any container.
+const runningDocker = `case "$1" in
+info) echo "[name=seccomp,profile=builtin]" ;;
+image|rm) ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+
+func TestPrepareDocker(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Name:    "a2a-test",
+		Socket:  filepath.Join(sockDir, "a2a.sock"),
+		CLI:     "/opt/a2a/bin/a2a",
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Stop(context.Background()); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+	var mounts []string
+	var envFile string
+	for i := 0; i+1 < len(p.Args); i++ {
+		switch p.Args[i] {
+		case "-v":
+			mounts = append(mounts, p.Args[i+1])
+		case "--env-file":
+			envFile = p.Args[i+1]
+		}
+	}
+	wantMounts := []string{ws + ":" + ws, sockDir + ":" + SandboxDir, home + ":" + ContainerHome}
+	if diff := cmp.Diff(wantMounts, mounts); diff != "" {
+		t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+	}
+	env, err := os.ReadFile(envFile)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if want := EnvUnixSocket + "=" + SandboxDir + "/a2a.sock"; !slices.Contains(strings.Split(string(env), "\n"), want) {
+		t.Fatalf("Prepare() env = %q, want it to contain %q", env, want)
 	}
 }
 
@@ -94,30 +143,6 @@ func TestPrepareCLITimeout(t *testing.T) {
 			}
 			if diff := cmp.Diff([]string{tc.want}, got); diff != "" {
 				t.Fatalf("Prepare() wrong result (-want +got) diff = %s", diff)
-			}
-		})
-	}
-}
-
-func TestDockerCLIMount(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		cli  string
-		goos string
-		want []agentdir.Mount
-	}{
-		{name: "linux host", cli: "/opt/a2a", goos: "linux", want: []agentdir.Mount{{Src: "/opt/a2a", Dst: SandboxCLI, ReadOnly: true}}},
-		{name: "macOS host keeps the image's binary", cli: "/opt/a2a", goos: "darwin"},
-		{name: "windows host keeps the image's binary", cli: `C:\a2a.exe`, goos: "windows"},
-		{name: "no binary", goos: "linux"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got := dockerCLIMount(tc.cli, tc.goos)
-			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("dockerCLIMount() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

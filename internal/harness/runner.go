@@ -87,12 +87,9 @@ var _ Runner = (*DockerRunner)(nil)
 // ContainerHome is the home directory of the harness in the container.
 const ContainerHome = "/home/agent"
 
-// Paths in the container where the directory of the socket the harness
-// reaches the server through, and the a2a CLI, are mounted.
-const (
-	SandboxDir = "/run/a2a"
-	SandboxCLI = "/usr/local/bin/a2a"
-)
+// SandboxDir is where the directory of the socket the harness reaches the
+// server through is mounted in the container.
+const SandboxDir = "/run/a2a"
 
 // startScript removes a container left behind by a crash, which would keep
 // the name taken, and replaces itself with docker run. Signals sent to the

@@ -37,3 +37,25 @@ func TestModuleVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestOutdated(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		version string
+		want    bool
+	}{
+		{version: "v0.3.1", want: true},
+		{version: "v0.3.2-0.20261027071959-4abaf842d69f", want: true},
+		{version: PinnedVersion, want: false},
+		{version: "v0.3.2", want: false},
+		{version: "v0.4.0", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.version, func(t *testing.T) {
+			t.Parallel()
+			if got := Outdated(tc.version); got != tc.want {
+				t.Fatalf("Outdated(%q) = %v, want %v", tc.version, got, tc.want)
+			}
+		})
+	}
+}

@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 // fakeMachine is a machine on which every tool works and is configured.
@@ -66,7 +67,7 @@ func newFakeMachine(t *testing.T) *fakeMachine {
 		self:  "/usr/bin/a2a-serve",
 		busy:  map[int]bool{},
 	}
-	m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper: a2a-serve credential\n")
+	m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper:\n  - command: [a2a-serve, credential]\n")
 	return m
 }
 
@@ -170,7 +171,7 @@ func TestCLIChecks(t *testing.T) {
 		{
 			name: "config under environment variable names",
 			setup: func(t *testing.T, m *fakeMachine) {
-				m.writeUserConfig(t, "A2ACLI_PLUGINS_ENABLED: \"true\"\nA2ACLI_CREDENTIAL_HELPER: [example.com=other, a2a-serve credential]\n")
+				m.writeUserConfig(t, "A2ACLI_PLUGINS_ENABLED: \"true\"\nA2ACLI_CREDENTIAL_HELPER:\n  - {scope: example.com, command: [other]}\n  - command: [/usr/bin/a2a-serve, credential]\n")
 			},
 			want: healthyCLI,
 		},
@@ -183,9 +184,35 @@ func TestCLIChecks(t *testing.T) {
 			want: []check{{"a2a", StatusOK}, {"plugins", StatusFail}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
 		},
 		{
+			name:  "environment helper with arguments",
+			setup: func(_ *testing.T, m *fakeMachine) { m.env["A2ACLI_CREDENTIAL_HELPER"] = "a2a-serve credential" },
+			want:  []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
+		},
+		{
 			name: "other credential helper",
 			setup: func(t *testing.T, m *fakeMachine) {
 				m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper: other-helper\n")
+			},
+			want: []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
+		},
+		{
+			name: "old credential helper form",
+			setup: func(t *testing.T, m *fakeMachine) {
+				m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper: a2a-serve credential\n")
+			},
+			want: []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
+		},
+		{
+			name: "old credential helper list",
+			setup: func(t *testing.T, m *fakeMachine) {
+				m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper: [example.com=other, a2a-serve credential]\n")
+			},
+			want: []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
+		},
+		{
+			name: "invalid credential helper",
+			setup: func(t *testing.T, m *fakeMachine) {
+				m.writeUserConfig(t, "plugins-enabled: true\ncredential-helper:\n  - cmd: [a2a-serve, credential]\n")
 			},
 			want: []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusFail}},
 		},
@@ -275,9 +302,67 @@ func TestFixes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("os.ReadFile() error = %v", err)
 	}
-	want := "# my settings\ntimeout: 30s\nplugins-enabled: true\ncredential-helper: a2a-serve credential\n"
+	want := "# my settings\ntimeout: 30s\nplugins-enabled: true\ncredential-helper:\n  - command: [a2a-serve, credential]\n"
 	if diff := cmp.Diff(want, string(data)); diff != "" {
 		t.Fatalf("config.yaml after fixes wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestFixCredentialHelper(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name:   "not configured",
+			config: "timeout: 30s\n",
+			want:   "timeout: 30s\ncredential-helper:\n  - command: [a2a-serve, credential]\n",
+		},
+		{
+			name:   "old form",
+			config: "credential-helper: a2a-serve credential # caller tokens\ntimeout: 30s\n",
+			want:   "credential-helper:\n  - command: [a2a-serve, credential]\ntimeout: 30s\n",
+		},
+		{
+			name:   "old list under the environment variable name",
+			config: "A2ACLI_CREDENTIAL_HELPER:\n  - \"*.corp.example=corp-helper --realm 'Corp Users'\"\n  - /usr/bin/a2a-serve credential\n",
+			want:   "A2ACLI_CREDENTIAL_HELPER:\n  - scope: '*.corp.example'\n    command: [corp-helper, --realm, Corp Users]\n  - command: [/usr/bin/a2a-serve, credential]\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newFakeMachine(t)
+			m.writeUserConfig(t, tc.config)
+			helper := func() Result {
+				for _, r := range CLIChecks(t.Context(), m.Env()) {
+					if r.ID == "credential-helper" {
+						return r
+					}
+				}
+				t.Fatalf("CLIChecks() has no credential-helper result")
+				return Result{}
+			}
+			r := helper()
+			if r.Status != StatusFail || !r.Fixable() {
+				t.Fatalf("CLIChecks() credential-helper = %+v, want a fixable failure", r)
+			}
+			if _, err := r.Apply(); err != nil {
+				t.Fatalf("Result{ID: %q}.Apply() error = %v", r.ID, err)
+			}
+			if r := helper(); r.Status != StatusOK {
+				t.Fatalf("CLIChecks() credential-helper after the fix = %+v, want OK", r)
+			}
+			data, err := os.ReadFile(UserConfigPath(m.home))
+			if err != nil {
+				t.Fatalf("os.ReadFile() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, string(data)); diff != "" {
+				t.Fatalf("config.yaml after the fix wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 
@@ -406,6 +491,14 @@ func TestAgentChecks(t *testing.T) {
 			cfg:    agentdir.Config{Name: "coder", Harness: "opencode"},
 			online: true,
 			want:   []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "profile image built before",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.outputs["docker image inspect --format {{.Id}} "+harness.LocalImage("opencode")] = "sha256:1"
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name: "local sandbox without the harness command",

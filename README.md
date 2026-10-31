@@ -35,7 +35,7 @@ Install `a2a-serve` and the `a2a` CLI: callers use `a2a` to send tasks, and harn
 
 ```bash
 go install github.com/a2aproject/a2a-serve@latest
-go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261027071959-4abaf842d69f
+go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261030153310-f90e4eb628cd
 # go install names the binary `a2a-cli`; rename it to `a2a`
 mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
 a2a-serve doctor --fix   # enable the plugin and the credential helper, check Docker
@@ -48,12 +48,12 @@ a2a-serve doctor --fix   # enable the plugin and the credential helper, check Do
 a2a plugin set-enabled true   # let `a2a` run a2a-serve as `a2a serve`
 mkdir -p ~/.config/a2a-cli
 grep -q '^credential-helper:' ~/.config/a2a-cli/config.yaml 2>/dev/null ||
-  echo 'credential-helper: a2a-serve credential' >> ~/.config/a2a-cli/config.yaml
+  printf 'credential-helper:\n  - command: [a2a-serve, credential]\n' >> ~/.config/a2a-cli/config.yaml
 ```
 
 </details>
 
-The server mounts the `a2a` from its `PATH` into Linux sandboxes and builds harness images with the same version.
+Harnesses in Docker call other agents with the `a2a` of their image, which carries the version this `a2a-serve` needs; only `--sandbox local` uses the `a2a` on your `PATH`.
 
 Run `a2a serve doctor` whenever something looks wrong: it checks the `a2a` CLI and its config, Docker, and the agent of the current directory, and prints the command which fixes each failure. If `a2a serve` fails with `unknown command "serve" for "a2a"`, command plugins are disabled or `a2a-serve` is not on `PATH`; run `a2a-serve doctor --fix`.
 
@@ -103,9 +103,9 @@ Learn A2A Serve by example. Each lesson in the **[cookbook](./examples/)** is a 
 ## What It Needs from the A2A CLI
 
 - Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
-- `--unix-socket` (`A2ACLI_UNIX_SOCKET`): harnesses in a Linux sandbox reach the server through a mounted Unix socket.
-- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve tokens add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_RELAY_TOKEN` for its agent. Enable it once in `~/.config/a2a-cli/config.yaml` with `credential-helper: a2a-serve credential`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host.
-- `a2a skill` and `a2a version -o json`, which the server serves at `/skill.md` and uses to tag harness images.
+- `--unix-socket` (`A2ACLI_UNIX_SOCKET=<path>`): on Linux and with `--sandbox local`, the harness's `a2a` sends every request through the server's Unix socket.
+- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve tokens add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_RELAY_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once under `credential-helper` in `~/.config/a2a-cli/config.yaml` as `{command: [a2a-serve, credential]}`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
+- `a2a skill` and `a2a version -o json`, which the server serves at `/skill.md` and `a2a serve doctor` uses to check the installed version.
 
 ## How to Contribute & Provide Feedback
 

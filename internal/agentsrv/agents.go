@@ -40,7 +40,7 @@ import (
 )
 
 // harnessHost is the host of agents URLs when the harness reaches the server
-// through a Unix socket; the CLI sends requests for it through the socket.
+// through a Unix socket; the CLI sends every request through the socket.
 const (
 	harnessHost = "a2a"
 	socketHost  = "http://" + harnessHost

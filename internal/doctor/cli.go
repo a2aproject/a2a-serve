@@ -25,17 +25,9 @@ import (
 	"strconv"
 	"strings"
 
-	"golang.org/x/mod/semver"
-
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
-
-// minA2AVersion is the oldest a2a CLI with --unix-socket and credential
-// helpers. Replace the comparison with the capability list of
-// `a2a version -o json` (or the plugin info document) once a2a-cli
-// reports one: https://github.com/a2aproject/a2a-cli/issues/102.
-const minA2AVersion = a2acli.PinnedVersion
 
 // installA2A installs the a2a CLI this build needs.
 const installA2A = "go install github.com/a2aproject/a2a-cli@" + a2acli.PinnedVersion +
@@ -55,11 +47,9 @@ const (
 	envCredentialHelper = "A2ACLI_CREDENTIAL_HELPER"
 )
 
-// cliChecks checks the a2a CLI, its config and the credentials file. It also
-// returns the version of the a2a CLI, or "" if it isn't usable.
-func cliChecks(ctx context.Context, env Env) ([]Result, string) {
-	a2a, version := checkA2A(ctx, env)
-	results := []Result{a2a}
+// cliChecks checks the a2a CLI, its config and the credentials file.
+func cliChecks(ctx context.Context, env Env) []Result {
+	results := []Result{checkA2A(ctx, env)}
 	path := UserConfigPath(env.Home)
 	values, err := readUserConfig(path)
 	if err != nil {
@@ -77,16 +67,16 @@ func cliChecks(ctx context.Context, env Env) ([]Result, string) {
 	for i := range results {
 		results[i].Group = GroupCLI
 	}
-	return results, version
+	return results
 }
 
-func checkA2A(ctx context.Context, env Env) (Result, string) {
-	fail := func(msg, detail string) (Result, string) {
-		return Result{ID: "a2a", Status: StatusFail, Message: msg, Detail: detail, Fix: installA2A}, ""
+func checkA2A(ctx context.Context, env Env) Result {
+	fail := func(msg, detail string) Result {
+		return Result{ID: "a2a", Status: StatusFail, Message: msg, Detail: detail, Fix: installA2A}
 	}
 	path, err := env.LookPath(a2acli.Binary)
 	if err != nil {
-		return fail("a2a not on PATH", "callers send tasks with it, and harnesses call other agents with it")
+		return fail("a2a not on PATH", "callers send tasks with it, and harnesses without a sandbox call other agents with it")
 	}
 	out, err := env.Run(ctx, path, "version", "-o", "json")
 	if err != nil {
@@ -102,11 +92,13 @@ func checkA2A(ctx context.Context, env Env) (Result, string) {
 	if shown == "" {
 		shown = "(unknown version)"
 	}
-	version := a2acli.ModuleVersion(info.Version)
-	if semver.Compare(version, minA2AVersion) < 0 {
-		return fail(fmt.Sprintf("a2a %s at %s is too old", shown, path), "it lacks --unix-socket or credential helpers, so calls from this machine get a bare 401")
+	// Replace the version comparison with the capability list of
+	// `a2a version -o json` (or the plugin info document) once a2a-cli
+	// reports one: https://github.com/a2aproject/a2a-cli/issues/102.
+	if a2acli.Outdated(a2acli.ModuleVersion(info.Version)) {
+		return fail(fmt.Sprintf("a2a %s at %s is too old", shown, path), "it lacks --unix-socket or credential helpers in the format a2a-serve configures, so calls from this machine get a bare 401")
 	}
-	return Result{ID: "a2a", Status: StatusOK, Message: fmt.Sprintf("a2a %s at %s", shown, path)}, version
+	return Result{ID: "a2a", Status: StatusOK, Message: fmt.Sprintf("a2a %s at %s", shown, path)}
 }
 
 func checkPlugins(env Env, path string, values map[string]any) Result {
@@ -119,7 +111,7 @@ func checkPlugins(env Env, path string, values map[string]any) Result {
 		r.Status, r.Message, r.Fix = StatusFail, "command plugins disabled by $"+envPluginsEnabled, "unset "+envPluginsEnabled
 		return r
 	}
-	if v, ok := lookupKey(values, keyPluginsEnabled, envPluginsEnabled); ok && parseBool(fmt.Sprint(v)) {
+	if _, v, ok := lookupKey(values, keyPluginsEnabled, envPluginsEnabled); ok && parseBool(fmt.Sprint(v)) {
 		r.Status, r.Message = StatusOK, "command plugins enabled"
 		return r
 	}
@@ -168,36 +160,49 @@ func checkServeBinary(env Env) Result {
 func checkCredentialHelper(env Env, path string, values map[string]any) Result {
 	r := Result{ID: "credential-helper"}
 	if v, ok := env.LookupEnv(envCredentialHelper); ok {
-		if isServeHelper(v) {
-			r.Status, r.Message = StatusOK, "credential helper configured ($"+envCredentialHelper+")"
-			return r
-		}
-		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("$%s is %q, which replaces %s", envCredentialHelper, v, credstore.HelperCommand), "unset "+envCredentialHelper
+		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("$%s is %q, which replaces %s in %s", envCredentialHelper, v, keyCredentialHelper, path), "unset "+envCredentialHelper
+		r.Detail = "it takes only [scope=]path, so it can't run " + credstore.HelperCommand
 		return r
 	}
-	v, ok := lookupKey(values, keyCredentialHelper, envCredentialHelper)
+	key, v, ok := lookupKey(values, keyCredentialHelper, envCredentialHelper)
 	if !ok {
 		r.Status, r.Message, r.Fix = StatusFail, "credential helper not configured", fixCommand
 		r.Detail = "a2a won't attach this machine's owner token, so calls get 401"
-		r.apply = func() (string, error) {
-			if _, err := SetUserConfigKey(path, keyCredentialHelper, scalar("!!str", credstore.HelperCommand)); err != nil {
-				return "", err
-			}
-			return fmt.Sprintf("set %s: %s in %s", keyCredentialHelper, credstore.HelperCommand, path), nil
-		}
+		r.apply = setHelpers(path, keyCredentialHelper, []helperEntry{serveHelper()})
 		return r
 	}
-	specs := helperSpecs(v)
-	if slices.ContainsFunc(specs, isServeHelper) {
+	helpers, old, err := parseHelpers(v)
+	if err != nil {
+		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("%s in %s: %v", key, path, err), "fix "+key+" in "+path
+		r.Detail = "a2a fails every command"
+		return r
+	}
+	if old {
+		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("%s in %s has the old \"[scope=]command args\" form", key, path), fixCommand
+		r.Detail = "a2a now lists helpers as {scope, command}, so it doesn't run them"
+		r.apply = setHelpers(path, key, helpers)
+		return r
+	}
+	if slices.ContainsFunc(helpers, helperEntry.isServe) {
 		r.Status, r.Message = StatusOK, "credential helper configured"
 		return r
 	}
 	// Adding a second unscoped helper would replace the user's for every agent.
 	r.Status = StatusFail
-	r.Message = fmt.Sprintf("%s in %s is %s, not %s", keyCredentialHelper, path, strings.Join(specs, ", "), credstore.HelperCommand)
+	r.Message = fmt.Sprintf("%s in %s is %s, not %s", key, path, joinHelpers(helpers), credstore.HelperCommand)
 	r.Detail = "a2a won't attach this machine's owner token, so calls get 401"
-	r.Fix = fmt.Sprintf("add %q to %s in %s", credstore.HelperCommand, keyCredentialHelper, path)
+	r.Fix = fmt.Sprintf("list %s under %s in %s", credstore.HelperEntry, key, path)
 	return r
+}
+
+// setHelpers sets key to helpers in the a2a CLI config at path.
+func setHelpers(path, key string, helpers []helperEntry) func() (string, error) {
+	return func() (string, error) {
+		if _, err := SetUserConfigKey(path, key, helpersNode(helpers)); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("set %s in %s to %s", key, path, joinHelpers(helpers)), nil
+	}
 }
 
 // checkCredentialsFile reports a credentials file others can read. It
@@ -233,38 +238,13 @@ func chmod(path string, mode os.FileMode) func() (string, error) {
 }
 
 // lookupKey returns the value of a config key, which the a2a CLI also
-// accepts under the name of its environment variable.
-func lookupKey(values map[string]any, key, envName string) (any, bool) {
+// accepts under the name of its environment variable, and the name it has.
+func lookupKey(values map[string]any, key, envName string) (string, any, bool) {
 	if v, ok := values[key]; ok {
-		return v, true
+		return key, v, true
 	}
 	v, ok := values[envName]
-	return v, ok
-}
-
-func helperSpecs(v any) []string {
-	switch v := v.(type) {
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, s := range v {
-			out = append(out, fmt.Sprint(s))
-		}
-		return out
-	case nil:
-		return nil
-	}
-	return []string{fmt.Sprint(v)}
-}
-
-// isServeHelper reports whether a credential helper spec, [scope=]command,
-// runs `a2a-serve credential`.
-func isServeHelper(spec string) bool {
-	rest := strings.TrimSpace(spec)
-	if scope, cmd, ok := strings.Cut(rest, "="); ok && !strings.ContainsAny(scope, " \t/\\\"'") {
-		rest = cmd
-	}
-	fields := strings.Fields(rest)
-	return len(fields) >= 2 && filepath.Base(fields[0]) == "a2a-serve" && fields[1] == "credential"
+	return envName, v, ok
 }
 
 func parseBool(s string) bool {
