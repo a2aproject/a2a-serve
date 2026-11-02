@@ -223,6 +223,9 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "tokens", "add", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
 		t.Fatalf("a2a serve tokens add with a node code = %q, %v, want the node token", out, err)
 	}
+	if out, err := runCMDWithCreds(t, creds, "mailbox", "list"); err != nil || !strings.Contains(out, "grok (node grok)") {
+		t.Fatalf("a2a serve mailbox list = %q, %v, want the node", out, err)
+	}
 	if out, err := runCMDWithCreds(t, creds, "relay", "inbox"); err != nil || !strings.Contains(out, "grok (node grok)") {
 		t.Fatalf("a2a serve relay inbox = %q, %v, want the node", out, err)
 	}

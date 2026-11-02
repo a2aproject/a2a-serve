@@ -88,7 +88,7 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve peers` | Agents found on the private network. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
 | `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
-| `serve relay reply\|task\|inbox` | Commands a webhook node runs. |
+| `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
 | `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
 See the **[agent server guide](./docs/agent-server.md)** and its **[architecture](./docs/agent-server-architecture.md)** for sandboxing, approvals, networks, messengers, agent-to-agent calls and webhook nodes.
@@ -104,7 +104,7 @@ Learn A2A Serve by example. Each lesson in the **[cookbook](./examples/)** is a 
 
 - Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
 - `--unix-socket` (`A2ACLI_UNIX_SOCKET=<path>`): on Linux and with `--sandbox local`, the harness's `a2a` sends every request through the server's Unix socket.
-- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve tokens add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_RELAY_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once under `credential-helper` in `~/.config/a2a-cli/config.yaml` as `{command: [a2a-serve, credential]}`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
+- Credential helpers (`credential-helper`, the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)): `a2a-serve credential` returns the token `a2a serve tokens add` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or `$A2A_NODE_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once under `credential-helper` in `~/.config/a2a-cli/config.yaml` as `{command: [a2a-serve, credential]}`. On Docker Desktop the harness gets its key from a helper script scoped to the bridge host (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
 - `a2a skill` and `a2a version -o json`, which the server serves at `/skill.md` and `a2a serve doctor` uses to check the installed version.
 
 ## How to Contribute & Provide Feedback

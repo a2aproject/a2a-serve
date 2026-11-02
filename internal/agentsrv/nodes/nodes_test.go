@@ -21,7 +21,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -71,22 +71,22 @@ func TestRepeatedEventInLaterTurn(t *testing.T) {
 	t.Parallel()
 	h := New(t.Context(), Config{})
 	node := store.Node{ID: "grok"}
-	ev := relayapi.Event{IdempotencyKey: "k1", State: "input-required", Text: "which one?"}
+	ev := mailboxapi.Event{IdempotencyKey: "k1", State: "input-required", Text: "which one?"}
 
-	post := func() relayapi.EventResult {
+	post := func() mailboxapi.EventResult {
 		t.Helper()
 		body, err := json.Marshal(ev)
 		if err != nil {
 			t.Fatalf("json.Marshal() error = %v", err)
 		}
-		r := httptest.NewRequest(http.MethodPost, "/relay/api/tasks/t1/events", bytes.NewReader(body))
+		r := httptest.NewRequest(http.MethodPost, "/mailbox/api/tasks/t1/events", bytes.NewReader(body))
 		r.SetPathValue("id", "t1")
 		w := httptest.NewRecorder()
 		h.handleEvent(w, r, "", node)
 		if w.Code != http.StatusOK {
 			t.Fatalf("handleEvent() status = %d, want %d: %s", w.Code, http.StatusOK, w.Body)
 		}
-		var res relayapi.EventResult
+		var res mailboxapi.EventResult
 		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
 			t.Fatalf("json.Unmarshal() error = %v", err)
 		}

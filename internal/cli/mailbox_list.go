@@ -20,20 +20,20 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
-func newRelayInboxCmd(cfg *globalConfig) *cobra.Command {
+func newMailboxListCmd(cfg *globalConfig) *cobra.Command {
 	var (
-		rf  relayClientFlags
+		rf  nodeClientFlags
 		all bool
 	)
 	cmd := &cobra.Command{
-		Use:   "inbox",
+		Use:   "list",
 		Short: "Show the node, and wakes not delivered yet or tasks still waiting for a reply",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := relayContext(cmd, cfg)
+			ctx, cancel := nodeContext(cmd, cfg)
 			defer cancel()
 			c, err := rf.nodeClient(cfg)
 			if err != nil {
@@ -49,8 +49,8 @@ func newRelayInboxCmd(cfg *globalConfig) *cobra.Command {
 			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(struct {
-					Node    *relayapi.NodeInfo    `json:"node"`
-					Entries []relayapi.InboxEntry `json:"entries"`
+					Node    *mailboxapi.NodeInfo    `json:"node"`
+					Entries []mailboxapi.InboxEntry `json:"entries"`
 				}{node, inbox.Entries})
 			}
 			if _, err := fmt.Fprintf(cfg.Out, "%s (node %s)\n  A2A URL: %s\n  Webhook: %s\n\n", node.Name, node.ID, node.URL, node.Webhook); err != nil {

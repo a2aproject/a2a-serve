@@ -1,13 +1,13 @@
 ---
-name: a2a-relay
-description: Receive and answer A2A tasks as a webhook node hosted by an `a2a serve` agent, and send tasks to that agent. Use when a webhook wakes you with JSON that has kind, taskId and replyUrl fields, when asked to pair as a relay node using a code, to reply to, check or list A2A tasks, or to ask the hosting agent for something.
+name: a2a-mailbox
+description: Receive and answer A2A tasks as a webhook node hosted by an `a2a serve` agent, and send tasks to that agent. Use when a webhook wakes you with JSON that has kind, taskId and replyUrl fields, when asked to pair as a webhook node using a code, to reply to, check or list A2A tasks, or to ask the hosting agent for something.
 ---
 
 # A2A webhook node
 
 The agent at {{BASE}} hosts you as a webhook node. It gives you an A2A
-address ({{BASE}}/n/<node-id>) while you are asleep: it holds each task and
-wakes you by POSTing a JSON envelope to your webhook. You answer later with
+address ({{BASE}}/n/<node-id>) while you are asleep: it holds each task in
+your mailbox and wakes you by POSTing a JSON envelope to your webhook. You answer later with
 the `a2a-serve` CLI or plain HTTPS. The agent keeps all task state, so you don't
 need to remember anything between wakes: every wake carries its task ID.
 
@@ -44,10 +44,10 @@ K7QF-M2XD. It is valid for 15 minutes and works once:
 
 This prints your node token and saves it to ~/.config/a2a-serve/credentials.json.
 If you run in a fresh environment on every wake, store the token as a secret
-named A2A_RELAY_TOKEN. The token also contains the agent's URL, so it is the
+named A2A_NODE_TOKEN. The token also contains the agent's URL, so it is the
 only setting you need. Never share it.
 
-    ./a2a-serve relay inbox
+    ./a2a-serve mailbox list
 
 ## Handle a wake
 
@@ -66,14 +66,14 @@ Every wake has the same JSON shape, signed with the header
 | ping | Test wake. | Nothing. |
 
 Use contextId to recognize follow-ups in the same conversation. Fetch the full
-history with `./a2a-serve relay task <taskId>`.
+history with `./a2a-serve mailbox task <taskId>`.
 
 ## Reply
 
-    ./a2a-serve relay reply <taskId> --status working --text "Looking into it"
-    ./a2a-serve relay reply <taskId> --input-required "Which branch?"
-    ./a2a-serve relay reply <taskId> --final "Done: …" --artifact report.pdf
-    ./a2a-serve relay reply <taskId> --fail "Could not reach the repo"
+    ./a2a-serve mailbox reply <taskId> --status working --text "Looking into it"
+    ./a2a-serve mailbox reply <taskId> --input-required "Which branch?"
+    ./a2a-serve mailbox reply <taskId> --final "Done: …" --artifact report.pdf
+    ./a2a-serve mailbox reply <taskId> --fail "Could not reach the repo"
 
 - Finish every task with --final, --input-required or --fail. A task with no
   reply for 10 minutes fails, and each reply resets that timer, so post
@@ -87,14 +87,14 @@ history with `./a2a-serve relay task <taskId>`.
 
 ## Catch up
 
-    ./a2a-serve relay inbox          # wakes not delivered, or tasks still waiting for you
-    ./a2a-serve relay inbox --all    # the last 200 wakes
+    ./a2a-serve mailbox list          # wakes not delivered, or tasks still waiting for you
+    ./a2a-serve mailbox list --all    # the last 200 wakes
 
 ## Call the agent
 
 Your node token also works as an A2A token for the agent, as a member: you
 can send it tasks, but not approve its tool calls. `a2a send` attaches the
-token saved by `a2a-serve tokens add`, or $A2A_RELAY_TOKEN, through a2a-serve's
+token saved by `a2a-serve tokens add`, or $A2A_NODE_TOKEN, through a2a-serve's
 credential helper. A2ACLI_CREDENTIAL_HELPER takes the path of a program
 without arguments, so wrap `a2a-serve credential` in a script:
 
@@ -110,13 +110,13 @@ to answer a task it sent you: reply to that task instead.
 
 ## Without the CLI
 
-Send the header Authorization: Bearer $A2A_RELAY_TOKEN and JSON bodies.
+Send the header Authorization: Bearer $A2A_NODE_TOKEN and JSON bodies.
 
     POST {{BASE}}/pair                          {"code": "K7QF-M2XD"}   (no token; returns it)
-    POST {{BASE}}/relay/api/tasks/<id>/events   {"state": "completed", "text": "…", "idempotencyKey": "<unique>"}
-    GET  {{BASE}}/relay/api/tasks/<id>
-    GET  {{BASE}}/relay/api/inbox[?all=1]
-    GET  {{BASE}}/relay/api/node
+    POST {{BASE}}/mailbox/api/tasks/<id>/events {"state": "completed", "text": "…", "idempotencyKey": "<unique>"}
+    GET  {{BASE}}/mailbox/api/tasks/<id>
+    GET  {{BASE}}/mailbox/api/inbox[?all=1]
+    GET  {{BASE}}/mailbox/api/node
 
 To call the agent, POST A2A JSON-RPC to {{BASE}}/ with the same token and the
 header A2A-Version: 1.0:

@@ -27,8 +27,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -82,7 +82,7 @@ func TestChainAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken() error = %v", err)
 	}
-	nodeToken := relayapi.NewNodeToken("https://agent/relay", "grok-node", "secret")
+	nodeToken := mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "secret")
 	if err := s.PutNode(ctx, store.Node{ID: "grok-node", Name: "Grok", TokenHash: cryptoutil.Hash(nodeToken)}); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
 	}
@@ -165,11 +165,11 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name: "node token with a wrong secret",
-			req:  Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+relayapi.NewNodeToken("https://agent/relay", "grok-node", "stale"))},
+			req:  Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "stale"))},
 		},
 		{
 			name: "token of an unknown node",
-			req:  Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+relayapi.NewNodeToken("https://agent/relay", "nobody", "secret"))},
+			req:  Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "nobody", "secret"))},
 		},
 	}
 	for _, tc := range tests {

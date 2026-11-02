@@ -21,7 +21,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func newContactAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -41,7 +41,7 @@ agent's owner, or pass a token.`,
 				return err
 			}
 			req.Name = args[0]
-			if req.Token, err = relayapi.Secret(req.Token); err != nil {
+			if req.Token, err = mailboxapi.Secret(req.Token); err != nil {
 				return clierr.Usage("--token: " + err.Error())
 			}
 			info, err := c.AddContact(cmd.Context(), req)

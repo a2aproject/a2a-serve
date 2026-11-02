@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -59,10 +60,12 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 		jsonhttp.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /skill.md", handleCLISkill)
-	mux.HandleFunc("GET /relay/skill.md", func(w http.ResponseWriter, r *http.Request) {
+	nodeSkill := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-		writeBody(w, strings.ReplaceAll(skills.A2ARelay, "{{BASE}}", base(baseURL, r)))
-	})
+		writeBody(w, strings.ReplaceAll(skills.A2AMailbox, "{{BASE}}", base(baseURL, r)))
+	}
+	mux.HandleFunc("GET "+mailboxapi.Prefix+"/skill.md", nodeSkill)
+	mux.HandleFunc("GET "+mailboxapi.LegacyPrefix+"/skill.md", nodeSkill)
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
 	mux.HandleFunc("POST "+pairapi.Path, func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })

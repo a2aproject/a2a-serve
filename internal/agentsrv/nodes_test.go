@@ -33,8 +33,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
 // fakeNode is a webhook node which answers every task after delay.
@@ -44,9 +44,9 @@ type fakeNode struct {
 	answer string
 
 	mu     sync.Mutex
-	client *relayapi.Client
+	client *mailboxapi.Client
 	secret func() string
-	wakes  []relayapi.Envelope
+	wakes  []mailboxapi.Envelope
 	badSig bool
 }
 
@@ -56,26 +56,26 @@ func (n *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		n.t.Errorf("reading wake: %v", err)
 		return
 	}
-	var env relayapi.Envelope
+	var env mailboxapi.Envelope
 	if err := json.Unmarshal(body, &env); err != nil {
 		n.t.Errorf("decoding wake: %v", err)
 		return
 	}
 	n.mu.Lock()
 	n.wakes = append(n.wakes, env)
-	if relayapi.Verify(n.secret(), r.Header.Get(relayapi.SignatureHeader), body, time.Now(), time.Minute) != nil {
+	if mailboxapi.Verify(n.secret(), r.Header.Get(mailboxapi.SignatureHeader), body, time.Now(), time.Minute) != nil {
 		n.badSig = true
 	}
 	client := n.client
 	n.mu.Unlock()
 	w.WriteHeader(http.StatusAccepted)
-	if env.Kind != relayapi.KindTask {
+	if env.Kind != mailboxapi.KindTask {
 		return
 	}
 	go func() {
 		time.Sleep(n.delay)
-		ev := relayapi.Event{State: "completed", Text: n.answer + ": " + env.Text}
-		ev.IdempotencyKey = relayapi.ContentKey(env.TaskID, ev)
+		ev := mailboxapi.Event{State: "completed", Text: n.answer + ": " + env.Text}
+		ev.IdempotencyKey = mailboxapi.ContentKey(env.TaskID, ev)
 		if _, err := client.PostEvent(context.Background(), env.TaskID, ev); err != nil {
 			n.t.Errorf("PostEvent() error = %v", err)
 		}
@@ -96,7 +96,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if resp.Node == nil || resp.PairCommand != "a2a serve tokens add "+ts.localURL()+" "+resp.Code {
 		t.Fatalf("Pair() = %+v, want a node code and its pair command", resp)
 	}
-	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/relay/skill.md and follow it.\nYour pairing code is %s.", id, ts.localURL(), ts.localURL(), resp.Code)
+	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", id, ts.localURL(), ts.localURL(), resp.Code)
 	if diff := cmp.Diff(wantInstructions, resp.Instructions); diff != "" {
 		t.Fatalf("Pair() wrong instructions (-want +got) diff = %s", diff)
 	}
@@ -107,12 +107,12 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if paired.Kind != credstore.KindNode || paired.URL != ts.localURL()+"/n/"+id {
 		t.Fatalf("Pair() = %+v, want a node token for %s/n/%s", paired, ts.localURL(), id)
 	}
-	client, err := relayapi.NodeClient(paired.Token)
+	client, err := mailboxapi.NodeClient(paired.Token)
 	if err != nil {
 		t.Fatalf("NodeClient() error = %v", err)
 	}
-	if base, nodeID, _ := relayapi.ParseNodeToken(paired.Token); nodeID != id || base != relayapi.APIBase(ts.localURL()) {
-		t.Fatalf("ParseNodeToken() = %q, %q, want %q, %q", base, nodeID, relayapi.APIBase(ts.localURL()), id)
+	if base, nodeID, _ := mailboxapi.ParseNodeToken(paired.Token); nodeID != id || base != mailboxapi.APIBase(ts.localURL()) {
+		t.Fatalf("ParseNodeToken() = %q, %q, want %q, %q", base, nodeID, mailboxapi.APIBase(ts.localURL()), id)
 	}
 	node.mu.Lock()
 	node.client = client
@@ -138,11 +138,11 @@ func TestWebhookNodeAnswersAgent(t *testing.T) {
 
 	node.mu.Lock()
 	defer node.mu.Unlock()
-	if len(node.wakes) == 0 || node.wakes[0].Sender.Kind != relayapi.SenderAgent || node.wakes[0].Sender.OnBehalfOf != auth.OwnerID {
+	if len(node.wakes) == 0 || node.wakes[0].Sender.Kind != mailboxapi.SenderAgent || node.wakes[0].Sender.OnBehalfOf != auth.OwnerID {
 		t.Fatalf("wakes = %+v, want a wake from the agent on behalf of the owner", node.wakes)
 	}
 	if node.badSig {
-		t.Fatalf("a wake had an invalid %s", relayapi.SignatureHeader)
+		t.Fatalf("a wake had an invalid %s", mailboxapi.SignatureHeader)
 	}
 }
 
@@ -163,6 +163,40 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 	}
 	if _, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")}); err == nil {
 		t.Fatalf("SendMessage() with the token of a removed node error = nil, want error")
+	}
+}
+
+func TestNodeAPIAtLegacyRelayPath(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	node := addNode(t, ts, "grok", 0)
+	node.mu.Lock()
+	token := node.client.Token
+	node.mu.Unlock()
+
+	legacy := &mailboxapi.Client{BaseURL: ts.localURL() + mailboxapi.LegacyPrefix, Token: token}
+	info, err := legacy.Node(context.Background())
+	if err != nil {
+		t.Fatalf("Client.Node() at %s error = %v", mailboxapi.LegacyPrefix, err)
+	}
+	if info.ID != "grok" {
+		t.Fatalf("Client.Node() at %s = %+v, want grok", mailboxapi.LegacyPrefix, info)
+	}
+	for _, path := range []string{mailboxapi.Prefix + "/skill.md", mailboxapi.LegacyPrefix + "/skill.md"} {
+		resp, err := http.Get(ts.localURL() + path)
+		if err != nil {
+			t.Fatalf("GET %s error = %v", path, err)
+		}
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			t.Fatalf("reading %s: %v", path, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("closing %s: %v", path, err)
+		}
+		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "name: a2a-mailbox") {
+			t.Fatalf("GET %s = %d %q, want the a2a-mailbox skill", path, resp.StatusCode, body)
+		}
 	}
 }
 

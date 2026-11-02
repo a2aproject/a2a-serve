@@ -42,7 +42,7 @@ const infoSubcommand = "info"
 type globalConfig struct {
 	output  string
 	verbose bool
-	// timeout bounds the HTTP requests of tokens add and the relay commands.
+	// timeout bounds the HTTP requests of tokens add and the mailbox commands.
 	timeout time.Duration
 
 	errOut        io.Writer

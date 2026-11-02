@@ -17,13 +17,12 @@ package cli
 import (
 	"encoding/json"
 	"fmt"
-	"os"
 
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 // credentialRequest and credentialResponse are the messages of the Bazel
@@ -63,7 +62,7 @@ func newCredentialGetCmd(cfg *globalConfig) *cobra.Command {
 }
 
 // lookupCredential returns the saved token for uri, or the node token in
-// $A2A_RELAY_TOKEN when uri is its agent.
+// $A2A_NODE_TOKEN (or the legacy $A2A_RELAY_TOKEN) when uri is its agent.
 func lookupCredential(cfg *globalConfig, uri string) (credstore.Credential, bool, error) {
 	store, err := cfg.credentialStore()
 	if err != nil {
@@ -73,6 +72,6 @@ func lookupCredential(cfg *globalConfig, uri string) (credstore.Credential, bool
 	if err != nil || ok {
 		return c, ok, err
 	}
-	c, ok = credstore.NodeCredential(os.Getenv(relayapi.EnvNodeToken), uri)
+	c, ok = credstore.NodeCredential(mailboxapi.EnvToken(), uri)
 	return c, ok, nil
 }

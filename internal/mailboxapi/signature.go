@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package relayapi
+package mailboxapi
 
 import (
 	"crypto/hmac"
@@ -28,7 +28,7 @@ import (
 const SignatureHeader = "X-A2A-Serve-Signature"
 
 // WakeHeader carries the ID of a wake, the same for every retry of it.
-const WakeHeader = "X-A2A-Serve-Relay-Wake"
+const WakeHeader = "X-A2A-Serve-Wake"
 
 // Sign returns the signature header value of a wake body.
 func Sign(secret string, t time.Time, body []byte) string {

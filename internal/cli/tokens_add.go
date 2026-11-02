@@ -22,7 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func newTokensAddCmd(cfg *globalConfig) *cobra.Command {
@@ -37,7 +37,7 @@ or list ` + credstore.HelperEntry + ` under credential-helper in
 ~/.config/a2a-cli/config.yaml.
 
 A code for a webhook node (a2a serve pair invite --webhook) returns a node token
-instead, which the a2a serve relay commands use.`,
+instead, which the a2a serve mailbox commands use.`,
 		Example: "  a2a serve tokens add https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -72,8 +72,8 @@ func printNodePaired(cfg *globalConfig, c credstore.Credential, saved string) er
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(map[string]string{"url": c.URL, "node": c.Agent, "principal": c.Principal, "token": c.Token, "saved": saved})
 	}
-	agent, _ := relayapi.AgentURL(c.Token)
+	agent, _ := mailboxapi.AgentURL(c.Token)
 	_, err := fmt.Fprintf(cfg.Out, "✓ paired as node %s at %s; token saved to %s\n\n  Node token: %s\n\nKeep the token as the secret %s if the node runs elsewhere; it includes the agent's URL.\nThe node calls the agent with: a2a send -a %s \"…\"\n(%s)\n",
-		c.Agent, c.URL, saved, c.Token, relayapi.EnvNodeToken, agent, credstore.HelperSetup)
+		c.Agent, c.URL, saved, c.Token, mailboxapi.EnvNodeToken, agent, credstore.HelperSetup)
 	return err
 }

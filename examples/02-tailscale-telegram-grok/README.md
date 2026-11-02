@@ -147,7 +147,7 @@ a2a serve pair invite grok \
   send this to the agent behind the webhook (the code works once, for 15 min):
 
     You are the webhook node "grok" of the agent at https://coder.your-tailnet.ts.net.
-    Read https://coder.your-tailnet.ts.net/relay/skill.md and follow it.
+    Read https://coder.your-tailnet.ts.net/mailbox/skill.md and follow it.
     Your pairing code is 8HD2-PQ7M.
 
   you can call it yourself at https://coder.your-tailnet.ts.net/n/grok
@@ -166,13 +166,13 @@ so they run for the bot when the server runs on Linux; otherwise the bot needs
 Linux builds, or it can use the plain HTTPS API at the end of the skill.
 
 On its first run, the bot pairs with `a2a-serve tokens add` and gets a node token.
-Store that token where the bot keeps secrets, as `A2A_RELAY_TOKEN`: it
+Store that token where the bot keeps secrets, as `A2A_NODE_TOKEN`: it
 includes the agent's URL, so it is the only setting the bot needs on later
 wakes. Each wake is a JSON body with `kind`, `taskId`, `text` and
 `instructions`, signed with `X-A2A-Serve-Signature`, and the bot answers with:
 
 ```bash
-a2a-serve relay reply <taskId> --final "Here is what I found: ..."
+a2a-serve mailbox reply <taskId> --final "Here is what I found: ..."
 ```
 
 The same token lets the bot call your agent, as a member, for example from a

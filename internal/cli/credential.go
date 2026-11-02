@@ -17,7 +17,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func newCredentialCmd(cfg *globalConfig) *cobra.Command {
@@ -27,7 +27,7 @@ func newCredentialCmd(cfg *globalConfig) *cobra.Command {
 		Long: `A credential helper for the a2a CLI, following the Bazel credential helper
 protocol (https://github.com/EngFlow/credential-helper-spec). It returns the
 token saved by "a2a serve tokens add" for an agent URL, or the node token in
-$` + relayapi.EnvNodeToken + ` for requests to its agent.
+$` + mailboxapi.EnvNodeToken + ` for requests to its agent.
 
 Enable it for the a2a CLI with a2a-serve doctor --fix, or in
 ~/.config/a2a-cli/config.yaml:

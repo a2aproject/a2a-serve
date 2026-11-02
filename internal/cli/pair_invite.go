@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -44,7 +44,7 @@ With --webhook, <name> is a webhook node: an agent which only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
 it as <name> with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with
-` + "`a2a serve relay reply`" + `, and can call the agent with its token. Inviting a node
+` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. Inviting a node
 again issues a new code, for example after it lost its token; with --webhook
 it also updates the node, and its previous token stops working. Header
 values may be env:VAR.`,
@@ -105,7 +105,7 @@ func parseWebhookHeaders(headers []string) (map[string]string, error) {
 		}
 		v = strings.TrimSpace(v)
 		if i := strings.Index(v, "env:"); i >= 0 {
-			secret, err := relayapi.Secret(v[i:])
+			secret, err := mailboxapi.Secret(v[i:])
 			if err != nil {
 				return nil, clierr.Usage(fmt.Sprintf("--webhook-header %s: %v", strings.TrimSpace(k), err))
 			}

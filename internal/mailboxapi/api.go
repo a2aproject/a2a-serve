@@ -12,11 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package relayapi is the wire format between an agent server and the
+// Package mailboxapi is the wire format between an agent server and the
 // webhook nodes it hosts: agents which only run when woken, such as cloud
 // agents. The server POSTs an [Envelope] to the node's webhook and the node
-// answers with [Event]s, usually through `a2a-serve relay reply`.
-package relayapi
+// answers with [Event]s, usually through `a2a-serve mailbox reply`.
+package mailboxapi
 
 import (
 	"strings"
@@ -25,9 +25,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 )
 
-// CLI is the command a node runs to talk to the relay. Wakes and the skill
+// CLI is the command a node runs to talk to its mailbox. Wakes and the skill
 // refer to it in their instructions.
-const CLI = "a2a-serve relay"
+const CLI = "a2a-serve mailbox"
 
 // Envelope kinds.
 const (
@@ -41,7 +41,7 @@ const (
 	KindPing = "ping"
 )
 
-// Envelope is the JSON body the relay POSTs to a node's webhook. Every kind
+// Envelope is the JSON body the agent server POSTs to a node's webhook. Every kind
 // has the same shape, so a node handles all wakes in one place.
 type Envelope struct {
 	ID        string `json:"id"`
@@ -69,12 +69,13 @@ const (
 	// SenderAgent is the hosting agent, calling the node for a user.
 	SenderAgent = "agent"
 	SenderOwner = "owner"
-	SenderRelay = "relay"
+	// SenderServer is the hosting agent server itself.
+	SenderServer = "server"
 )
 
 // Sender identifies the caller of a node.
 type Sender struct {
-	// Kind is agent, owner or relay (the hosting server itself).
+	// Kind is agent, owner or server.
 	Kind string `json:"kind"`
 	// Name is the agent name.
 	Name string `json:"name,omitempty"`

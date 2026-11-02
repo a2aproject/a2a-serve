@@ -18,14 +18,14 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newRelayTaskCmd(cfg *globalConfig) *cobra.Command {
-	var rf relayClientFlags
+func newMailboxTaskCmd(cfg *globalConfig) *cobra.Command {
+	var rf nodeClientFlags
 	cmd := &cobra.Command{
 		Use:   "task <task-id>",
 		Short: "Show a task addressed to the node, with history and artifacts",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := relayContext(cmd, cfg)
+			ctx, cancel := nodeContext(cmd, cfg)
 			defer cancel()
 			c, err := rf.nodeClient(cfg)
 			if err != nil {

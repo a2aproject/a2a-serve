@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package relayapi
+package mailboxapi
 
 import (
 	"bytes"
@@ -37,7 +37,7 @@ const maxResponse = 32 << 20
 
 // Client calls the node API of an agent server with a node token.
 type Client struct {
-	// BaseURL is the node API base, <agent URL>/relay.
+	// BaseURL is the node API base, <agent URL>/mailbox.
 	BaseURL string
 	Token   string
 	HTTP    *http.Client
