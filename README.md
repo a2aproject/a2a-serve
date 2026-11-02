@@ -12,7 +12,11 @@
 </p>
 
 > [!WARNING]
-> Alpha. Commands, flags and stored state may change.
+> A2A Serve is pre-1.0 and under active development. Commands, flags and
+> `config.yaml` keys may still change; stored state always migrates forward
+> (see [upgrades](./docs/upgrades.md)). Read the [security page](./docs/security.md)
+> before you expose an agent to other people, and the
+> [known limitations](#known-limitations) below.
 
 **A2A Serve** (`a2a-serve`) runs a coding agent (opencode, Claude Code, or any ACP agent) as an [A2A (Agent2Agent)](https://a2a-protocol.org/latest/) server. It is a command plugin of the [A2A CLI](https://github.com/a2aproject/a2a-cli): with `a2a-serve` on your `PATH`, it runs as `a2a serve`. It also works on its own, as `a2a-serve`.
 
@@ -91,7 +95,33 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
 | `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
-See the **[agent server guide](./docs/agent-server.md)** and its **[architecture](./docs/agent-server-architecture.md)** for sandboxing, approvals, networks, messengers, agent-to-agent calls and webhook nodes.
+See the **[agent server guide](./docs/agent-server.md)** and its **[architecture](./docs/agent-server-architecture.md)** for sandboxing, approvals, networks, messengers, agent-to-agent calls and webhook nodes, the **[security page](./docs/security.md)** for what the sandbox protects and what each token grants, and **[upgrades](./docs/upgrades.md)** for how stored state migrates.
+
+## Supported Platforms
+
+| Platform | Status |
+|---|---|
+| Linux (amd64, arm64) with Docker, rootful or rootless | Supported. The harness reaches the server through a Unix socket. `--service` installs a systemd user unit. |
+| macOS (Apple silicon, Intel) with Docker Desktop | Supported. Docker Desktop can't mount the socket, so the harness reaches the server over TCP on the host's loopback with a key. `--service` installs a launchd agent. |
+| Linux and macOS without Docker | `--sandbox local` only: the harness runs on the host with no isolation. |
+| Windows | Builds, but untested; `--service` isn't available. |
+
+Harnesses:
+
+| Harness | Image | Version |
+|---|---|---|
+| `opencode` | `ghcr.io/a2aproject/harness-opencode` | `opencode-ai`, the latest release when the image was published |
+| `claude` | `ghcr.io/a2aproject/harness-claude` | `@zed-industries/claude-agent-acp` and `@anthropic-ai/claude-code`, the latest releases when the image was published |
+| `acp --command …` | any, with `--image` | any agent that speaks ACP |
+
+Both images are Debian with Node.js 22, `git`, `ripgrep`, `python3`, and the `a2a` CLI at the version this `a2a-serve` needs, which the image tag names (`:a2a-<version>`). Building from source needs Go 1.26.
+
+## Known Limitations
+
+- **API keys are visible inside the sandbox.** Values passed with `--secret` are environment variables of the harness, so a tricked agent can send them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
+- **The sandbox can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
+- **A project's files decide what runs.** `config.yaml` and `.mcp.json` pick the command, image, mounts, variables and MCP servers; read them in a repository you didn't write before you start an agent from it.
+- **Harness images follow the latest harness releases** at the time they were published, so the same tag can carry different harness versions over time.
 
 ## Cookbook
 

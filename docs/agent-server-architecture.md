@@ -1,7 +1,7 @@
 # Agent server: summary and architecture
 
 > [!WARNING]
-> Alpha. This describes the current design; it may change.
+> Pre-1.0. This describes the current design; it may change.
 
 How to use it is in the [agent server guide](agent-server.md). This page is
 about how it works.

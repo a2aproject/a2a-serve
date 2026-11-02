@@ -1,7 +1,9 @@
 # Agent server: `a2a serve <harness>`
 
 > [!WARNING]
-> Alpha. Commands, flags and stored state may change.
+> Pre-1.0. Commands, flags and `config.yaml` keys may change; stored state
+> always migrates forward ([upgrades](upgrades.md)). See the
+> [security page](security.md) for what the sandbox protects.
 
 `a2a serve` runs one coding agent per process, started from its project
 directory. The agent runs in Docker, is reachable over A2A, from Telegram,
