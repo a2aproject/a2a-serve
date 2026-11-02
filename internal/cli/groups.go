@@ -48,6 +48,8 @@ var commandGroups = map[string]string{
 	"contact":    groupManage,
 	"peers":      groupManage,
 	"schedule":   groupManage,
+	"backup":     groupManage,
+	"restore":    groupManage,
 	"pair":       groupPairing,
 	"tokens":     groupPairing,
 	"mailbox":    groupNode,

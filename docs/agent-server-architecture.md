@@ -51,6 +51,7 @@ Code, or any `--command`) into an A2A agent:
 | Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
 | Schedules | Run a prompt as a user on a cron expression or once, posted into a conversation as a new turn. The harness manages its own through the built-in `schedules` agent at its agents URL. | `agentsrv/schedules.go`, `agentsrv/schedules_agent.go`, `internal/schedule` |
 | Advertised pairings | A gossiped table of the webhook nodes agents advertise to the private network, kept in `state/ads.json`; `contact add <node>@<agent>` calls one through its host. | `internal/gossip`, `agentsrv/ads.go` |
+| Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a serve restore`. | `internal/backup`, `agentsrv/backups.go` |
 | CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:

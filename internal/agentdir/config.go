@@ -21,7 +21,9 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -58,6 +60,7 @@ type Config struct {
 	Approvals ApprovalsConfig `yaml:"approvals,omitempty" json:"approvals,omitzero"`
 	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
+	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
 }
 
 // AuthConfig lets people call the agent after signing in with Google.
@@ -69,6 +72,56 @@ type AuthConfig struct {
 	// The secret is a secret reference.
 	GoogleClientID     string `yaml:"google_client_id,omitempty" json:"googleClientID,omitempty"`
 	GoogleClientSecret string `yaml:"google_client_secret,omitempty" json:"googleClientSecret,omitempty"`
+}
+
+// BackupConfig configures the agent's backup snapshots.
+type BackupConfig struct {
+	// To is a directory, gs://bucket/prefix or s3://bucket/prefix.
+	To string `yaml:"to,omitempty" json:"to,omitempty"`
+	// Key references the secret snapshots are encrypted with.
+	Key string `yaml:"key,omitempty" json:"key,omitempty"`
+	// Interval is the time between snapshots, such as 1h. Default 24h.
+	Interval string `yaml:"interval,omitempty" json:"interval,omitempty"`
+	// Retention is how long snapshots are kept, such as 7d. Default 7d.
+	Retention string `yaml:"retention,omitempty" json:"retention,omitempty"`
+}
+
+// Backup defaults.
+const (
+	DefaultBackupInterval  = 24 * time.Hour
+	DefaultBackupRetention = 7 * 24 * time.Hour
+)
+
+// ParseDays parses a Go duration, or a number of days such as 7d.
+func ParseDays(v string) (time.Duration, error) {
+	if days, ok := strings.CutSuffix(v, "d"); ok {
+		n, err := strconv.Atoi(days)
+		if err != nil || n <= 0 {
+			return 0, fmt.Errorf("invalid duration %q: want a number of days such as 7d, or a duration such as 12h", v)
+		}
+		return time.Duration(n) * 24 * time.Hour, nil
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return 0, fmt.Errorf("invalid duration %q: want a number of days such as 7d, or a duration such as 12h", v)
+	}
+	return d, nil
+}
+
+// BackupInterval returns the time between snapshots.
+func (b BackupConfig) BackupInterval() time.Duration {
+	if d, err := ParseDays(b.Interval); err == nil {
+		return d
+	}
+	return DefaultBackupInterval
+}
+
+// BackupRetention returns how long snapshots are kept.
+func (b BackupConfig) BackupRetention() time.Duration {
+	if d, err := ParseDays(b.Retention); err == nil {
+		return d
+	}
+	return DefaultBackupRetention
 }
 
 // NetworkConfig selects the providers which make the agent reachable beyond

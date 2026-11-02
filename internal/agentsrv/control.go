@@ -150,6 +150,7 @@ func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
 		st.ProjectError = err.Error()
 	}
+	st.Backup = s.backups.get()
 	jsonhttp.Write(w, http.StatusOK, st)
 }
 

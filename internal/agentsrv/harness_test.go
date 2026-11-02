@@ -61,6 +61,7 @@ func TestMain(m *testing.M) {
 	nodeWebhookRetries = []time.Duration{0, 100 * time.Millisecond}
 	channelRetryMin = 10 * time.Millisecond
 	googleauth.SharedClientID = "shared-app"
+	firstBackupDelay = 50 * time.Millisecond
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)

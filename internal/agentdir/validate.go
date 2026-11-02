@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // HarnessACP is the harness which runs any ACP agent given as a command.
@@ -166,6 +167,7 @@ func (c *Config) Validate() error {
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
 		add("--google-client-id and --google-client-secret go together: they are your Google app")
 	}
+	errs = append(errs, c.Backup.validate()...)
 	return errors.Join(errs...)
 }
 
@@ -182,6 +184,29 @@ func validEmailEntry(entry string) error {
 // Mesh relay by its URL.
 func isRelayURL(v string) bool {
 	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
+}
+
+func (b BackupConfig) validate() []error {
+	var errs []error
+	if b.To != "" && b.Key == "" {
+		errs = append(errs, errors.New("--backup needs --backup-key: snapshots are always encrypted"))
+	}
+	if b.To != "" && strings.Contains(b.To, "://") && !strings.HasPrefix(b.To, "gs://") && !strings.HasPrefix(b.To, "s3://") && !strings.HasPrefix(b.To, "file://") {
+		errs = append(errs, fmt.Errorf("invalid --backup %q: want a directory, gs://bucket/prefix or s3://bucket/prefix", b.To))
+	}
+	if b.Interval != "" {
+		if d, err := ParseDays(b.Interval); err != nil {
+			errs = append(errs, fmt.Errorf("--backup-interval: %w", err))
+		} else if d < time.Minute {
+			errs = append(errs, fmt.Errorf("--backup-interval %s: want at least 1m", b.Interval))
+		}
+	}
+	if b.Retention != "" {
+		if _, err := ParseDays(b.Retention); err != nil {
+			errs = append(errs, fmt.Errorf("--backup-retention: %w", err))
+		}
+	}
+	return errs
 }
 
 // CheckConfig validates cfg, and checks that its mount sources exist, that
@@ -239,6 +264,9 @@ func (c *Config) secretRefs() []secretRef {
 	}
 	if strings.HasPrefix(c.Auth.GoogleClientSecret, SecretPrefix) {
 		refs = append(refs, secretRef{"google-client-secret", c.Auth.GoogleClientSecret})
+	}
+	if strings.HasPrefix(c.Backup.Key, SecretPrefix) {
+		refs = append(refs, secretRef{"backup-key", c.Backup.Key})
 	}
 	return refs
 }

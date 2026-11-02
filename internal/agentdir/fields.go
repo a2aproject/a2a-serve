@@ -194,6 +194,10 @@ var fields = []field{
 	list("allow-email", true, func(c *Config) *[]string { return &c.Auth.AllowEmails }, strings.ToLower),
 	scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID }),
 	scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret }),
+	scalar("backup", false, func(c *Config) *string { return &c.Backup.To }),
+	scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key }),
+	scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval }),
+	scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention }),
 }
 
 // unsetOnly are settings which `config unset` accepts besides the fields:

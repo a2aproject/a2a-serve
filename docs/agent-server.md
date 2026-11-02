@@ -624,6 +624,46 @@ Served on every listener:
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
 
+## Backups
+
+An agent's conversations, pairings and harness sessions live in `.a2a/` on
+one machine. Backups keep encrypted snapshots of them elsewhere, so the agent
+survives the loss of the machine and moves to another host.
+
+```sh
+a2a serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
+a2a serve backup now
+a2a serve backup list
+a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
+```
+
+- A snapshot holds a consistent copy of `server.db` (made with SQLite's
+  `VACUUM INTO`), `config.yaml`, `state/secrets`, the advertised pairings in
+  `state/ads.json`, `state/home` without its caches (`.cache`, `.npm`), and the
+  network identity in `state/tsnet` and `state/agentmesh`. The workspace isn't
+  included: it is usually in git.
+- `--backup` is a directory, `gs://bucket/prefix` or `s3://bucket/prefix`.
+  Google Cloud Storage and S3 go through the `gcloud` and `aws` CLIs, which
+  find credentials the usual way (`gcloud auth application-default login`,
+  `AWS_PROFILE`, instance metadata); `doctor` checks that the CLI is
+  installed.
+- Snapshots are always encrypted with `--backup-key`, using a key derived with
+  scrypt and AES-256-GCM. The key is stored with the agent's secrets; keep a
+  copy somewhere other than the backups, since a restore needs it.
+- A running agent takes a snapshot every `--backup-interval` (default 24h),
+  the first one an interval after the latest stored snapshot. Snapshots older
+  than `--backup-retention` (default 7d) are removed, and the latest one is
+  always kept. `status` shows the last and the next snapshot.
+- `a2a serve restore` recreates the `.a2a` directory from the latest snapshot,
+  or `--snapshot <name>`. The network identity is restored only with
+  `--take-over`, so the old and the new host don't run as the same tailnet
+  machine; stop the agent on the old host first. Without it, the agent joins
+  the network as a new machine.
+
+Not in this version: continuous replication (snapshots are periodic, so the
+changes since the last one are lost with the machine), and native Cloud
+Storage and S3 clients.
+
 ## Configuration reference
 
 `config.yaml` holds what the flags set; each key is changed with the flag of
@@ -654,6 +694,11 @@ auth:                            # --allow-email, --google-client-id, --google-c
   allow_emails: [mom@example.com, "*@example.com"]
   google_client_id: 1234.apps.googleusercontent.com
   google_client_secret: secret:GOOGLE_CLIENT_SECRET
+backup:                          # --backup, --backup-key, --backup-interval, --backup-retention
+  to: gs://my-bucket/agents/coder
+  key: secret:BACKUP_KEY
+  interval: 1h
+  retention: 7d
 ```
 
 Configs from earlier versions, in which the first of `mounts` is the
