@@ -54,6 +54,11 @@ local. --local, --private and --public pick one.`,
 			if err != nil {
 				return err
 			}
+			if u == st.Private && st.PrivateNote != "" {
+				if _, err := fmt.Fprintf(cfg.stderr(), "note: this private URL %s\n", st.PrivateNote); err != nil {
+					return err
+				}
+			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(map[string]string{"url": u})
 			}

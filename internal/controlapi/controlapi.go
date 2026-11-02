@@ -41,19 +41,22 @@ import (
 
 // Status describes a running agent server.
 type Status struct {
-	Name     string          `json:"name"`
-	Harness  string          `json:"harness"`
-	Dir      string          `json:"dir"`
-	PID      int             `json:"pid"`
-	Started  time.Time       `json:"started"`
-	Local    string          `json:"local"`
-	Private  string          `json:"private,omitempty"`
-	Public   string          `json:"public,omitempty"`
-	Channels []ChannelStatus `json:"channels,omitempty"`
-	Tasks    map[string]int  `json:"tasks"`
-	Owners   []string        `json:"owners,omitempty"`
-	Contacts int             `json:"contacts"`
-	Nodes    int             `json:"nodes"`
+	Name    string    `json:"name"`
+	Harness string    `json:"harness"`
+	Dir     string    `json:"dir"`
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+	Local   string    `json:"local"`
+	Private string    `json:"private,omitempty"`
+	// PrivateNote explains a private URL people can't open, such as one on
+	// an Agent Mesh relay.
+	PrivateNote string          `json:"privateNote,omitempty"`
+	Public      string          `json:"public,omitempty"`
+	Channels    []ChannelStatus `json:"channels,omitempty"`
+	Tasks       map[string]int  `json:"tasks"`
+	Owners      []string        `json:"owners,omitempty"`
+	Contacts    int             `json:"contacts"`
+	Nodes       int             `json:"nodes"`
 	// MCPServers and Skills are what the project brings for the harness.
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`

@@ -355,6 +355,8 @@ the shared app.
 | `--private lan` | the local network, over plain HTTP; peers found with mDNS | pairing tokens |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public ngrok` | the internet, `--ngrok-url` for a reserved domain | pairing tokens |
+| `--private https://relay…` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's verified identity |
+| `--public https://relay…` | the internet, at a URL on the relay | pairing tokens |
 
 Each agent joins the tailnet as its own machine with
 [tsnet](https://tailscale.com/kb/1244/tsnet), even when the computer already
@@ -363,6 +365,44 @@ runs Tailscale. On the first run it prints a login link, or use
 admin console. HTTPS must be enabled in the tailnet, and Funnel needs the
 `funnel` node attribute in the tailnet policy. `--tailscale-control-url` points
 at Headscale.
+
+### Agent Mesh relays (experimental)
+
+An agent can join an [Agent Mesh](https://github.com/google/agentmesh) relay
+and needs no Tailscale account. Agents on the relay call each other from
+anywhere, including from behind NAT, and each can get a public URL on the
+relay:
+
+```sh
+a2a serve opencode --private https://relay.example.com --public https://relay.example.com
+# first run: → sign in to the relay https://relay.example.com: https://…
+a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without the link
+```
+
+- Name the relay by its URL; there are no other relay flags. The agent runs
+  Agent Mesh's `meshnet` library in-process and keeps its identity in
+  `state/agentmesh`, so it keeps its URLs across restarts.
+- The first run prints a sign-in link to the relay's identity provider, as
+  with Tailscale. `--relay-token` joins with a token instead.
+- Agents signed in as the same person treat each other as the owner, as on a
+  tailnet. Other agents on the relay are members, recognized like other
+  callers of a private network (`--identity <email>=member`). Agents which
+  joined with a token don't say who owns them.
+- The public URL forwards requests unchanged, so pairing codes and Google
+  sign-in work there.
+- The private URL (`http://agentmesh.local/mesh/<peer>/a2a/<name>`) works only
+  from other a2a-serve agents on the relay; `url` and `status` say so. Give
+  people the public URL.
+- Source builds need `-tags agentmesh`
+  (`go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`). It
+  adds about 36 MB to the binary and many Go modules, so release binaries
+  leave it out until `meshnet` is a separate Go module. Without it, a relay
+  URL fails with that hint.
+- This build joins relays with Agent Mesh v0.2.0. `doctor` checks that the
+  build supports relays and, with `--online`, that the relay answers; relays
+  don't report their version yet.
+
+[Lesson 3](../examples/03-agentmesh-relay/) runs two agents on a relay.
 
 ## Messengers
 

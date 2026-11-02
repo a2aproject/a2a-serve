@@ -106,6 +106,10 @@ func (d Dir) SecretsPath() string { return filepath.Join(d.StateDir(), "secrets"
 // TSNetDir returns the directory of the Tailscale node identity.
 func (d Dir) TSNetDir() string { return filepath.Join(d.StateDir(), "tsnet") }
 
+// AgentMeshDir returns the directory of the agent's identity on an Agent
+// Mesh relay.
+func (d Dir) AgentMeshDir() string { return filepath.Join(d.StateDir(), "agentmesh") }
+
 // HomeDir returns the harness home, mounted at /home/agent in a container.
 func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }
 

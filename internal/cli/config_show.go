@@ -138,6 +138,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 		{"ngrok-url", c.Network.NgrokURL},
 		{agentdir.SecretTailscaleKey, v.Secrets[agentdir.SecretTailscaleKey]},
 		{agentdir.SecretNgrokToken, v.Secrets[agentdir.SecretNgrokToken]},
+		{agentdir.SecretRelayToken, v.Secrets[agentdir.SecretRelayToken]},
 	} {
 		if extra.value != "" {
 			network = append(network, extra.label+" "+extra.value)

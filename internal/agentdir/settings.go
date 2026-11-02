@@ -64,6 +64,9 @@ type Settings struct {
 	// TailscaleAuthKey and NgrokAuthToken are env:VAR, secret:NAME or the value.
 	TailscaleAuthKey string
 	NgrokAuthToken   string
+	// RelayToken joins an Agent Mesh relay without signing in: env:VAR,
+	// secret:NAME or the value.
+	RelayToken string
 
 	// AllowEmails are added to the people who may sign in with Google.
 	AllowEmails    []string
@@ -92,6 +95,7 @@ const (
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretNgrokToken    = "NGROK_AUTHTOKEN"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
+	SecretRelayToken    = "RELAY_TOKEN"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns
@@ -236,7 +240,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		cfg.Channels.Email = &next
 	}
 	// Network providers read their secrets by well-known names.
-	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken} {
+	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken, SecretRelayToken: s.RelayToken} {
 		if v == "" {
 			continue
 		}

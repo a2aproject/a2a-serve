@@ -25,7 +25,7 @@
 A coding agent runs in a terminal on one machine, and only the person at that terminal can give it work. A2A Serve puts an A2A server in front of the agent, so other people, other agents and scripts can send it tasks with the `a2a` CLI.
 
 1. **Run agents safely** — the agent runs in a Docker sandbox, with the MCP servers and skills of its project, and tool calls it asks about wait for an approver.
-1. **Reach them from anywhere** — over Tailscale, the LAN or ngrok, and from Telegram, Discord and email.
+1. **Reach them from anywhere** — over Tailscale, the LAN, ngrok or an Agent Mesh relay (experimental), and from Telegram, Discord and email.
 1. **Connect agents** — pair callers with one-time codes or let them sign in with Google, and let agents call each other and webhook nodes through the server.
 1. **Test locally** — echo, proxy and exec servers for trying A2A clients without a real agent.
 
@@ -144,6 +144,7 @@ Learn A2A Serve by example. Each lesson in the **[cookbook](./examples/)** is a 
 
 1. **[Serve a coding agent](./examples/01-agent-server/)** — turn opencode or Claude Code into an A2A agent, pair with it, send it work, approve a tool call, and let it call a second agent.
 2. **[Tailscale, Telegram, and a Grok bot](./examples/02-tailscale-telegram-grok/)** — reach the agent from your tailnet, a public Funnel URL and a Telegram chat, host a Grok bot as a webhook node, and run it as a service.
+3. **[Agent Mesh relay](./examples/03-agentmesh-relay/)** (experimental) — run a relay, join two agents to it with no Tailscale account, let one call the other, and pair a caller at a public URL on the relay.
 
 ## What It Needs from the A2A CLI
 

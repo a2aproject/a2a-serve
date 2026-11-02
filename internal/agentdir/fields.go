@@ -201,6 +201,7 @@ var fields = []field{
 var unsetOnly = map[string]string{
 	ChannelEmail:        "",
 	"tailscale-authkey": SecretTailscaleKey,
+	"relay-token":       SecretRelayToken,
 	"ngrok-authtoken":   SecretNgrokToken,
 }
 

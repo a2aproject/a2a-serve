@@ -17,6 +17,7 @@ package agentdir
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -79,8 +80,23 @@ func (c *Config) Validate() error {
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
 		add("invalid --sandbox %q: want docker or local", c.Sandbox)
 	}
-	checkEnum("private", c.Network.Private, NetworkTailscale, NetworkLAN)
-	checkEnum("public", c.Network.Public, NetworkTailscale, NetworkNgrok)
+	if !isRelayURL(c.Network.Private) {
+		checkEnum("private", c.Network.Private, NetworkTailscale, NetworkLAN)
+	}
+	if !isRelayURL(c.Network.Public) {
+		checkEnum("public", c.Network.Public, NetworkTailscale, NetworkNgrok)
+	}
+	for flag, v := range map[string]string{"private": c.Network.Private, "public": c.Network.Public} {
+		if !isRelayURL(v) {
+			continue
+		}
+		if u, err := url.Parse(v); err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
+			add("invalid --%s %q: want a relay URL such as https://relay.example.com", flag, v)
+		}
+	}
+	if isRelayURL(c.Network.Private) && isRelayURL(c.Network.Public) && strings.TrimSuffix(c.Network.Private, "/") != strings.TrimSuffix(c.Network.Public, "/") {
+		add("--private and --public name different relays (%s, %s): an agent joins one relay", c.Network.Private, c.Network.Public)
+	}
 	if c.Workspace != "" {
 		if _, err := parseMount(c.Workspace, "/"); err != nil {
 			add("--workspace: %w", err)
@@ -160,6 +176,12 @@ func validEmailEntry(entry string) error {
 		return fmt.Errorf("invalid --allow-email %q: want an email, or *@domain for a Google Workspace domain", entry)
 	}
 	return nil
+}
+
+// isRelayURL reports whether a --private or --public value names an Agent
+// Mesh relay by its URL.
+func isRelayURL(v string) bool {
+	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
 }
 
 // CheckConfig validates cfg, and checks that its mount sources exist, that
