@@ -39,8 +39,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -86,7 +86,7 @@ type Host struct {
 	handlers map[string]a2asrv.RequestHandler
 	open     map[a2a.TaskID]*nodeWaiter
 	keys     map[a2a.TaskID]*turnKeys
-	inbox    map[string][]*relayapi.InboxEntry
+	inbox    map[string][]*mailboxapi.InboxEntry
 	failed   map[string]bool
 }
 
@@ -103,11 +103,11 @@ func (w *nodeWaiter) close() { w.once.Do(func() { close(w.done) }) }
 // same question in a later turn isn't taken for a retry.
 type turnKeys struct {
 	w    *nodeWaiter
-	seen map[string]relayapi.EventResult
+	seen map[string]mailboxapi.EventResult
 }
 
 type nodeDelivery struct {
-	ev     relayapi.Event
+	ev     mailboxapi.Event
 	result chan error
 }
 
@@ -122,7 +122,7 @@ func New(ctx context.Context, cfg Config) *Host {
 		handlers: map[string]a2asrv.RequestHandler{},
 		open:     map[a2a.TaskID]*nodeWaiter{},
 		keys:     map[a2a.TaskID]*turnKeys{},
-		inbox:    map[string][]*relayapi.InboxEntry{},
+		inbox:    map[string][]*mailboxapi.InboxEntry{},
 		failed:   map[string]bool{},
 	}
 }
@@ -210,10 +210,12 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	}
 	mux.HandleFunc("/n/{node}", serveNode)
 	mux.HandleFunc("/n/{node}/{rest...}", serveNode)
-	mux.HandleFunc("GET /relay/api/node", n.nodeAPI(base, n.handleGetNode))
-	mux.HandleFunc("POST /relay/api/tasks/{id}/events", n.nodeAPI(base, n.handleEvent))
-	mux.HandleFunc("GET /relay/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
-	mux.HandleFunc("GET /relay/api/inbox", n.nodeAPI(base, n.handleInbox))
+	for _, prefix := range []string{mailboxapi.Prefix, mailboxapi.LegacyPrefix} {
+		mux.HandleFunc("GET "+prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))
+		mux.HandleFunc("POST "+prefix+"/api/tasks/{id}/events", n.nodeAPI(base, n.handleEvent))
+		mux.HandleFunc("GET "+prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
+		mux.HandleFunc("GET "+prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
+	}
 }
 
 func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
@@ -293,7 +295,7 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 		return
 	}
 	secret := cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
-	token := relayapi.NewNodeToken(relayapi.APIBase(baseURL), node.ID, secret)
+	token := mailboxapi.NewNodeToken(mailboxapi.APIBase(baseURL), node.ID, secret)
 	node.TokenHash = cryptoutil.Hash(token)
 	if err := n.cfg.Store.PutNode(r.Context(), node); err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
@@ -305,8 +307,8 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 	})
 }
 
-func (n *Host) wireInfo(baseURL string, node store.Node) relayapi.NodeInfo {
-	return relayapi.NodeInfo{
+func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
+	return mailboxapi.NodeInfo{
 		ID: node.ID, Name: node.Name, Description: node.Description, URL: trimSlash(baseURL) + "/n/" + node.ID,
 		Webhook: redactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
@@ -316,7 +318,7 @@ func (n *Host) wireInfo(baseURL string, node store.Node) relayapi.NodeInfo {
 func (n *Host) nodeAPI(base func(*http.Request) string, h func(http.ResponseWriter, *http.Request, string, store.Node)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok, _ := auth.BearerToken(r.Header.Get("Authorization"))
-		if _, _, ok := relayapi.ParseNodeToken(tok); !ok {
+		if _, _, ok := mailboxapi.ParseNodeToken(tok); !ok {
 			jsonhttp.Error(w, http.StatusUnauthorized, "node token required")
 			return
 		}
@@ -349,10 +351,10 @@ func (n *Host) handleGetTask(w http.ResponseWriter, r *http.Request, _ string, n
 func (n *Host) handleInbox(w http.ResponseWriter, r *http.Request, _ string, node store.Node) {
 	all := r.URL.Query().Get("all") != ""
 	n.mu.Lock()
-	out := []relayapi.InboxEntry{}
+	out := []mailboxapi.InboxEntry{}
 	for _, e := range n.inbox[node.ID] {
 		entry := *e
-		if entry.Envelope.Kind == relayapi.KindTask || entry.Envelope.Kind == relayapi.KindMessage {
+		if entry.Envelope.Kind == mailboxapi.KindTask || entry.Envelope.Kind == mailboxapi.KindMessage {
 			entry.Open = n.open[a2a.TaskID(entry.Envelope.TaskID)] != nil
 		}
 		if all || !entry.Delivered || entry.Open {
@@ -360,16 +362,16 @@ func (n *Host) handleInbox(w http.ResponseWriter, r *http.Request, _ string, nod
 		}
 	}
 	n.mu.Unlock()
-	jsonhttp.Write(w, http.StatusOK, relayapi.Inbox{Entries: out})
+	jsonhttp.Write(w, http.StatusOK, mailboxapi.Inbox{Entries: out})
 }
 
 func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, node store.Node) {
 	taskID := a2a.TaskID(r.PathValue("id"))
-	var ev relayapi.Event
+	var ev mailboxapi.Event
 	if !jsonhttp.Read(w, r, &ev) {
 		return
 	}
-	state, ok := relayapi.ParseState(ev.State)
+	state, ok := mailboxapi.ParseState(ev.State)
 	if !ok {
 		jsonhttp.Error(w, http.StatusBadRequest, "state must be one of working, input-required, auth-required, completed, failed, rejected, canceled")
 		return
@@ -400,15 +402,15 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 		n.mu.Unlock()
 		current := "unknown"
 		if t, err := n.tasks(r.Context(), node.ID).Get(auth.WithPrincipal(r.Context(), auth.Owner()), taskID); err == nil {
-			current = relayapi.StateName(t.Task.Status.State)
+			current = mailboxapi.StateName(t.Task.Status.State)
 		}
 		jsonhttp.Error(w, http.StatusConflict, fmt.Sprintf("task %s is %s and not waiting for an event from the node", taskID, current))
 		return
 	}
-	res := relayapi.EventResult{TaskID: string(taskID), State: relayapi.StateName(state)}
+	res := mailboxapi.EventResult{TaskID: string(taskID), State: mailboxapi.StateName(state)}
 	if ev.IdempotencyKey != "" {
 		if keys == nil || keys.w != wt {
-			keys = &turnKeys{w: wt, seen: map[string]relayapi.EventResult{}}
+			keys = &turnKeys{w: wt, seen: map[string]mailboxapi.EventResult{}}
 			n.keys[taskID] = keys
 		}
 		keys.seen[ev.IdempotencyKey] = res
@@ -452,9 +454,9 @@ var _ a2asrv.AgentExecutor = (*nodeExecutor)(nil)
 func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		n := e.n
-		kind, state := relayapi.KindMessage, a2a.TaskStateWorking
+		kind, state := mailboxapi.KindMessage, a2a.TaskStateWorking
 		if ec.StoredTask == nil {
-			kind, state = relayapi.KindTask, a2a.TaskStateSubmitted
+			kind, state = mailboxapi.KindTask, a2a.TaskStateSubmitted
 			if !yield(a2a.NewSubmittedTask(ec, ec.Message), nil) {
 				return
 			}
@@ -465,9 +467,9 @@ func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) 
 		w := n.openTask(ec.TaskID, e.node)
 		defer n.closeTask(ec.TaskID, w)
 
-		n.wake(e.node, relayapi.Envelope{
+		n.wake(e.node, mailboxapi.Envelope{
 			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.AgentName()),
-			Message: ec.Message, Text: relayapi.TextOf(ec.Message), State: relayapi.StateName(state),
+			Message: ec.Message, Text: mailboxapi.TextOf(ec.Message), State: mailboxapi.StateName(state),
 		})
 
 		timer := time.NewTimer(nodeTaskTimeout)
@@ -499,8 +501,8 @@ var errTaskClosed = errors.New("the task is no longer waiting for events")
 
 // applyNodeEvent emits the A2A events for a node event and reports whether
 // the execution is over.
-func applyNodeEvent(ec *a2asrv.ExecutorContext, ev relayapi.Event, yield func(a2a.Event, error) bool) (bool, error) {
-	state, _ := relayapi.ParseState(ev.State)
+func applyNodeEvent(ec *a2asrv.ExecutorContext, ev mailboxapi.Event, yield func(a2a.Event, error) bool) (bool, error) {
+	state, _ := mailboxapi.ParseState(ev.State)
 	for _, art := range ev.Artifacts {
 		if art.ID == "" {
 			art.ID = a2a.NewArtifactID()
@@ -541,21 +543,21 @@ func (e *nodeExecutor) Cancel(ctx context.Context, ec *a2asrv.ExecutorContext) i
 		if w != nil {
 			w.close()
 		}
-		n.wake(e.node, relayapi.Envelope{Kind: relayapi.KindCanceled, TaskID: string(ec.TaskID), ContextID: ec.ContextID,
-			Sender: senderOf(ctx, n.cfg.AgentName()), State: relayapi.StateName(a2a.TaskStateCanceled)})
+		n.wake(e.node, mailboxapi.Envelope{Kind: mailboxapi.KindCanceled, TaskID: string(ec.TaskID), ContextID: ec.ContextID,
+			Sender: senderOf(ctx, n.cfg.AgentName()), State: mailboxapi.StateName(a2a.TaskStateCanceled)})
 		yield(a2a.NewStatusUpdateEvent(ec, a2a.TaskStateCanceled, nil), nil)
 	}
 }
 
-func senderOf(ctx context.Context, agent string) relayapi.Sender {
+func senderOf(ctx context.Context, agent string) mailboxapi.Sender {
 	p, ok := auth.Caller(ctx)
 	if !ok {
-		return relayapi.Sender{Kind: relayapi.SenderRelay}
+		return mailboxapi.Sender{Kind: mailboxapi.SenderServer}
 	}
 	if strings.HasPrefix(p.ID, "agent:") {
-		return relayapi.Sender{Kind: relayapi.SenderAgent, Name: agent, OnBehalfOf: p.OnBehalfOf}
+		return mailboxapi.Sender{Kind: mailboxapi.SenderAgent, Name: agent, OnBehalfOf: p.OnBehalfOf}
 	}
-	return relayapi.Sender{Kind: relayapi.SenderOwner, Name: p.ID}
+	return mailboxapi.Sender{Kind: mailboxapi.SenderOwner, Name: p.ID}
 }
 
 func (n *Host) openTask(id a2a.TaskID, node string) *nodeWaiter {
@@ -594,15 +596,15 @@ func (n *Host) closeTask(id a2a.TaskID, w *nodeWaiter) {
 
 // wake records an envelope in the node's inbox and delivers it to the
 // node's webhook in the background.
-func (n *Host) wake(nodeID string, env relayapi.Envelope) *relayapi.InboxEntry {
+func (n *Host) wake(nodeID string, env mailboxapi.Envelope) *mailboxapi.InboxEntry {
 	env.ID = "wake_" + cryptoutil.RandomString(12, cryptoutil.Alphanumeric)
 	env.Node = nodeID
 	env.CreatedAt = time.Now().UTC()
-	if env.TaskID != "" && (env.Kind == relayapi.KindTask || env.Kind == relayapi.KindMessage) {
-		env.ReplyURL = relayapi.APIBase(n.cfg.BaseURL()) + "/api/tasks/" + env.TaskID + "/events"
+	if env.TaskID != "" && (env.Kind == mailboxapi.KindTask || env.Kind == mailboxapi.KindMessage) {
+		env.ReplyURL = mailboxapi.APIBase(n.cfg.BaseURL()) + "/api/tasks/" + env.TaskID + "/events"
 	}
 	env.Instructions = instructions(env)
-	entry := &relayapi.InboxEntry{Envelope: env}
+	entry := &mailboxapi.InboxEntry{Envelope: env}
 
 	n.mu.Lock()
 	list := append(n.inbox[nodeID], entry)
@@ -616,7 +618,7 @@ func (n *Host) wake(nodeID string, env relayapi.Envelope) *relayapi.InboxEntry {
 	return entry
 }
 
-func (n *Host) deliver(ctx context.Context, entry *relayapi.InboxEntry) {
+func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 	env := entry.Envelope
 	body, err := json.Marshal(env)
 	if err != nil {
@@ -663,8 +665,8 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "a2a-server")
-	req.Header.Set(relayapi.WakeHeader, wakeID)
-	req.Header.Set(relayapi.SignatureHeader, relayapi.Sign(node.Secret, time.Now(), body))
+	req.Header.Set(mailboxapi.WakeHeader, wakeID)
+	req.Header.Set(mailboxapi.SignatureHeader, mailboxapi.Sign(node.Secret, time.Now(), body))
 	for k, v := range node.Headers {
 		req.Header.Set(k, v)
 	}
@@ -688,11 +690,11 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 }
 
 // instructions tell an LLM-driven node what a wake means and how to answer.
-func instructions(env relayapi.Envelope) string {
+func instructions(env mailboxapi.Envelope) string {
 	switch env.Kind {
-	case relayapi.KindTask, relayapi.KindMessage:
+	case mailboxapi.KindTask, mailboxapi.KindMessage:
 		what := "New A2A task"
-		if env.Kind == relayapi.KindMessage {
+		if env.Kind == mailboxapi.KindMessage {
 			what = "The caller answered your question on A2A task"
 		}
 		return fmt.Sprintf("%s %s from %s. "+
@@ -700,10 +702,10 @@ func instructions(env relayapi.Envelope) string {
 			"Use `--status working --text \"<progress>\"` to report progress, `--input-required \"<question>\"` to ask the caller, "+
 			"`--fail \"<reason>\"` to give up. Without the CLI, POST {\"state\":\"completed\",\"text\":\"<answer>\",\"idempotencyKey\":\"<unique>\"} "+
 			"to replyUrl with the header `Authorization: Bearer <node token>`. The task fails if you post nothing for %s.",
-			what, env.TaskID, env.Sender, relayapi.CLI, env.TaskID, nodeTaskTimeout)
-	case relayapi.KindCanceled:
+			what, env.TaskID, env.Sender, mailboxapi.CLI, env.TaskID, nodeTaskTimeout)
+	case mailboxapi.KindCanceled:
 		return fmt.Sprintf("The caller canceled task %s. Stop working on it; replies are no longer accepted.", env.TaskID)
-	case relayapi.KindPing:
+	case mailboxapi.KindPing:
 		return "Test wake. No reply needed."
 	}
 	return ""

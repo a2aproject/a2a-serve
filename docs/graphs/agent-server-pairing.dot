@@ -34,7 +34,7 @@ digraph agent_server_pairing {
   subgraph cluster_holders {
     label="4. The holder keeps"; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
     Creds   [label="~/.config/a2a-cli/credentials.json\ncaller token a2p_...\nattached by a2a send, task, card"];
-    NodeCreds [label="credentials.json (kind node)\nor A2A_RELAY_TOKEN\nnode token a2rn.<url>.<id>.<secret>\nused by a2a serve relay"];
+    NodeCreds [label="credentials.json (kind node)\nor A2A_NODE_TOKEN\nnode token a2rn.<url>.<id>.<secret>\nused by a2a serve mailbox"];
     ContactDB [label="the other agent's server.db\ncontact URL + token"];
   }
 
@@ -43,7 +43,7 @@ digraph agent_server_pairing {
     POwner  [label="user:owner\nanswers approvals"];
     PPair   [label="pair:<name>\nmember (talks) or owner"];
     PUser   [label="user:<login>\ntailnet user from\nnetwork.identities or app cap"];
-    PNode   [label="node:<id>\nthe /relay API, and\ncalls the agent as a member"];
+    PNode   [label="node:<id>\nthe /mailbox API, and\ncalls the agent as a member"];
   }
 
   Tailnet [label="Tailscale WhoIs\non the private listener", shape=ellipse, fillcolor="#e3f4e3"];

@@ -374,16 +374,21 @@ previous token stops working.
 
 The agent calls the node as `grok` (`a2a send -a http://a2a/<handle>/grok`), and it is at
 `<agent-url>/n/grok` for the owner. The server keeps its tasks in SQLite and
+holds them in its mailbox, and
 wakes it with a POST signed with
 `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The node
-answers with `a2a-serve relay reply <task> --final "…"`. A task with no event
+answers with `a2a-serve mailbox reply <task> --final "…"`. A task with no event
 for 10 minutes fails. The node's instructions are served at
-`<agent-url>/relay/skill.md`.
+`<agent-url>/mailbox/skill.md`.
 
 The node token also authenticates A2A calls to the agent, as the member
 `node:grok`, so the node can send the agent tasks of its own:
 `a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve tokens add`, or
-`$A2A_RELAY_TOKEN`. `pair rm grok` revokes both directions.
+`$A2A_NODE_TOKEN`. `pair rm grok` revokes both directions.
+
+Nodes set up before mailboxes were called that keep working: `a2a-serve relay
+reply|task|inbox`, the `/relay/…` routes and `$A2A_RELAY_TOKEN` are still
+accepted, and will be removed in a later release.
 
 ## Output and exit codes
 
@@ -421,8 +426,8 @@ Served on every listener:
 | `POST /pair` | exchange a pairing code for a caller or node token |
 | `/hitl/<token>` | answer a question in a browser |
 | `/n/<node>/…` | webhook nodes |
-| `/relay/api/…` | the node API used by `a2a serve relay` |
-| `GET /skill.md`, `GET /relay/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
+| `/mailbox/api/…` | the node API used by `a2a serve mailbox` |
+| `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
 
 ## Configuration reference

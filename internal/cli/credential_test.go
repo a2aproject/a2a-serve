@@ -24,8 +24,8 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
 func credentialGet(t *testing.T, creds *credstore.Store, stdin string) (credentialResponse, error) {
@@ -51,7 +51,7 @@ func credentialGet(t *testing.T, creds *credstore.Store, stdin string) (credenti
 
 func TestCredentialGet(t *testing.T) {
 	t.Parallel()
-	nodeToken := relayapi.NewNodeToken(relayapi.APIBase("https://node-host.example.com"), "grok", "secret")
+	nodeToken := mailboxapi.NewNodeToken(mailboxapi.APIBase("https://node-host.example.com"), "grok", "secret")
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 	for _, c := range []credstore.Credential{
 		{URL: "https://agent.example.com", Token: "a2p_agent"},
@@ -103,15 +103,28 @@ func TestCredentialGet(t *testing.T) {
 
 // TestCredentialGetNodeTokenFromEnv can't run in parallel because of t.Setenv.
 func TestCredentialGetNodeTokenFromEnv(t *testing.T) {
-	nodeToken := relayapi.NewNodeToken(relayapi.APIBase("https://agent.example.com"), "grok", "secret")
-	t.Setenv(relayapi.EnvNodeToken, nodeToken)
-	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
-	got, err := credentialGet(t, creds, `{"uri": "https://agent.example.com"}`)
-	if err != nil {
-		t.Fatalf("a2a serve credential get error = %v", err)
+	tests := []struct {
+		name  string
+		env   string
+		token string
+	}{
+		{name: "node token", env: mailboxapi.EnvNodeToken, token: mailboxapi.NewNodeToken(mailboxapi.APIBase("https://agent.example.com"), "grok", "secret")},
+		{name: "legacy relay token", env: mailboxapi.LegacyEnvNodeToken, token: mailboxapi.NewNodeToken("https://agent.example.com/relay", "grok", "secret")},
 	}
-	want := credentialResponse{Headers: map[string][]string{"Authorization": {"Bearer " + nodeToken}}}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("a2a serve credential get wrong result (-want +got) diff = %s", diff)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv(mailboxapi.EnvNodeToken, "")
+			t.Setenv(mailboxapi.LegacyEnvNodeToken, "")
+			t.Setenv(tc.env, tc.token)
+			creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+			got, err := credentialGet(t, creds, `{"uri": "https://agent.example.com"}`)
+			if err != nil {
+				t.Fatalf("a2a serve credential get error = %v", err)
+			}
+			want := credentialResponse{Headers: map[string][]string{"Authorization": {"Bearer " + tc.token}}}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("a2a serve credential get wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }

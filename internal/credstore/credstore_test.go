@@ -26,8 +26,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
 func TestLookup(t *testing.T) {
@@ -78,7 +78,7 @@ func TestLookup(t *testing.T) {
 
 func TestLookupNodeToken(t *testing.T) {
 	t.Parallel()
-	nodeToken := relayapi.NewNodeToken("https://assistant.example.com/relay", "grok", "secret")
+	nodeToken := mailboxapi.NewNodeToken("https://assistant.example.com/mailbox", "grok", "secret")
 	node := Credential{URL: "https://assistant.example.com/n/grok", Kind: KindNode, Token: nodeToken}
 	caller := Credential{URL: "https://assistant.example.com", Token: "a2p_caller"}
 	tests := []struct {
@@ -114,7 +114,7 @@ func TestLookupNodeToken(t *testing.T) {
 
 func TestNodeCredential(t *testing.T) {
 	t.Parallel()
-	nodeToken := relayapi.NewNodeToken("https://assistant.example.com/relay", "grok", "secret")
+	nodeToken := mailboxapi.NewNodeToken("https://assistant.example.com/mailbox", "grok", "secret")
 	tests := []struct {
 		name   string
 		token  string

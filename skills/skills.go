@@ -17,11 +17,11 @@ package skills
 
 import _ "embed"
 
-// A2ARelay is the contents of the a2a-relay SKILL.md, teaching a webhook node
+// A2AMailbox is the contents of the a2a-mailbox SKILL.md, teaching a webhook node
 // how to answer wakes. {{BASE}} stands for the hosting agent's URL.
 //
-//go:embed a2a-relay/SKILL.md
-var A2ARelay string
+//go:embed a2a-mailbox/SKILL.md
+var A2AMailbox string
 
 // A2AAgents is the contents of the a2a-agents SKILL.md, teaching a harness
 // run by `a2a serve` how to call other agents through the server.

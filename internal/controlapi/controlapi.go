@@ -205,7 +205,7 @@ func PairCommand(agentURL, code string) string {
 // to pair with the agent at agentURL using code.
 func NodeInstructions(agentURL, node, code string) string {
 	agentURL = strings.TrimRight(agentURL, "/")
-	return fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/relay/skill.md and follow it.\nYour pairing code is %s.", node, agentURL, agentURL, code)
+	return fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", node, agentURL, agentURL, code)
 }
 
 // ChannelRequestFromConfig is the request which starts the channel of kind

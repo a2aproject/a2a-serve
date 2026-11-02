@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -26,19 +25,20 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
-func newRelayCmd(cfg *globalConfig) *cobra.Command {
+func newMailboxCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "relay",
+		Use:   "mailbox",
 		Short: "Answer tasks as a webhook node hosted by an agent server",
 		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
 Grok Bot routine, hosted by an agent server ("a2a serve pair invite --webhook" on its side).
-The node pairs once with "a2a serve tokens add <agent-url> <code>", then answers each
-wake with reply.
+The agent server holds the node's tasks in a mailbox until the node wakes. The node
+pairs once with "a2a serve tokens add <agent-url> <code>", then answers each wake
+with reply.
 
-The node token comes from --token, $` + relayapi.EnvNodeToken + `, or the token
+The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the token
 "a2a serve tokens add" saved. It includes the agent's URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,35 +47,51 @@ The node token comes from --token, $` + relayapi.EnvNodeToken + `, or the token
 	}
 	addRequestTimeout(cmd.PersistentFlags(), cfg)
 	cmd.AddCommand(
-		newRelayReplyCmd(cfg),
-		newRelayTaskCmd(cfg),
-		newRelayInboxCmd(cfg),
+		newMailboxReplyCmd(cfg),
+		newMailboxTaskCmd(cfg),
+		newMailboxListCmd(cfg),
 	)
 	return cmd
 }
 
-// relayClientFlags select the node token of a node command.
-type relayClientFlags struct {
+// newLegacyRelayCmd keeps `a2a serve relay reply|task|inbox`, the names of
+// the mailbox commands before `relay` was kept for the team server, working for
+// nodes set up with them.
+func newLegacyRelayCmd(cfg *globalConfig) *cobra.Command {
+	cmd := newMailboxCmd(cfg)
+	cmd.Use = "relay"
+	cmd.Hidden = true
+	for _, c := range cmd.Commands() {
+		c.Hidden = true
+		if c.Name() == "list" {
+			c.Use = "inbox"
+		}
+	}
+	return cmd
+}
+
+// nodeClientFlags select the node token of a node command.
+type nodeClientFlags struct {
 	token string
 }
 
-func (r *relayClientFlags) register(f *pflag.FlagSet) {
-	f.StringVar(&r.token, "token", "", "Node token, or env:VAR (default: $"+relayapi.EnvNodeToken+" or the token saved by a2a serve tokens add)")
+func (r *nodeClientFlags) register(f *pflag.FlagSet) {
+	f.StringVar(&r.token, "token", "", "Node token, or env:VAR (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve tokens add)")
 }
 
-func (r *relayClientFlags) nodeClient(cfg *globalConfig) (*relayapi.Client, error) {
+func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, error) {
 	token, err := r.nodeToken(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return relayapi.NodeClient(token)
+	return mailboxapi.NodeClient(token)
 }
 
-func (r *relayClientFlags) nodeToken(cfg *globalConfig) (string, error) {
+func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	if r.token != "" {
-		return relayapi.Secret(r.token)
+		return mailboxapi.Secret(r.token)
 	}
-	if v := os.Getenv(relayapi.EnvNodeToken); v != "" {
+	if v := mailboxapi.EnvToken(); v != "" {
 		return v, nil
 	}
 	store, err := cfg.credentialStore()
@@ -84,7 +100,7 @@ func (r *relayClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	}
 	c, err := store.Node()
 	if errors.Is(err, credstore.ErrNoNode) {
-		return "", fmt.Errorf("no node token: run `a2a serve tokens add <agent-url> <code>`, or set %s", relayapi.EnvNodeToken)
+		return "", fmt.Errorf("no node token: run `a2a serve tokens add <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
 	}
 	if err != nil {
 		return "", err
@@ -92,7 +108,7 @@ func (r *relayClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	return c.Token, nil
 }
 
-func relayContext(cmd *cobra.Command, cfg *globalConfig) (context.Context, context.CancelFunc) {
+func nodeContext(cmd *cobra.Command, cfg *globalConfig) (context.Context, context.CancelFunc) {
 	return context.WithTimeout(cmd.Context(), cfg.timeout)
 }
 

@@ -14,7 +14,7 @@
 
 // Package credstore keeps the pairing tokens `a2a serve tokens add` obtained:
 // caller tokens, which `a2a serve credential get` gives the a2a CLI for
-// requests to the same agent, and node tokens, which the `a2a serve relay`
+// requests to the same agent, and node tokens, which the `a2a serve mailbox`
 // commands use.
 package credstore
 
@@ -33,8 +33,8 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 )
 
 // KindNode marks the token of a webhook node; other credentials are caller tokens.
@@ -164,7 +164,7 @@ func (s *Store) Lookup(target string) (Credential, bool, error) {
 // NodeCredential returns a credential for token if it is the node token of
 // a node hosted by the agent at target.
 func NodeCredential(token, target string) (Credential, bool) {
-	agent, ok := relayapi.AgentURL(token)
+	agent, ok := mailboxapi.AgentURL(token)
 	if !ok {
 		return Credential{}, false
 	}

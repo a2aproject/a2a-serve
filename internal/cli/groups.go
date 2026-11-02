@@ -49,7 +49,7 @@ var commandGroups = map[string]string{
 	"peers":      groupManage,
 	"pair":       groupPairing,
 	"tokens":     groupPairing,
-	"relay":      groupNode,
+	"mailbox":    groupNode,
 	"doctor":     groupHelpers,
 	"credential": groupHelpers,
 	"version":    groupHelpers,

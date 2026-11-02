@@ -31,8 +31,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -165,7 +165,7 @@ func NodePrincipal(id string) string { return "node:" + id }
 // NodeOfToken returns the webhook node which token belongs to, or false if
 // it isn't the current token of a node.
 func NodeOfToken(ctx context.Context, s *store.Store, token string) (store.Node, bool, error) {
-	_, id, ok := relayapi.ParseNodeToken(token)
+	_, id, ok := mailboxapi.ParseNodeToken(token)
 	if !ok {
 		return store.Node{}, false, nil
 	}

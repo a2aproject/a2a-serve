@@ -42,14 +42,14 @@ Code, or any `--command`) into an A2A agent:
 | --- | --- | --- |
 | Listeners | localhost, private (tsnet or LAN with mDNS), public (Funnel or ngrok), the control socket, and the harness listener. | `internal/network`, `agentsrv/netsetup.go`, `agentsrv/control.go`; the control API is `internal/controlapi` |
 | Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token. | `internal/auth` |
-| A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/relay/api`. Tasks are stored in SQLite. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
+| A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/mailbox/api`. Tasks are stored in SQLite. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
 | Router | Runs the messenger channels, maps a conversation to an A2A context, renders streaming answers and approval buttons. | `agentsrv/router.go`, `internal/channel/*` |
 | Executor | `a2aacp` from a2a-go: one ACP session per A2A context, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go` |
 | Approvals | Stores questions, decides who may answer, sends answers to the task here or at another agent, serves `/hitl/<token>`. | `agentsrv/approvals` |
 | Sandbox | `docker run` with the workspace, `state/home` as `/home/agent`, dropped capabilities and limits; or the host with `--sandbox local`. Images are pulled, or built from Dockerfiles in the binary. `harness.Prepare` turns a spec into the command to start. | `internal/harness` |
 | Peers proxy | Serves contacts and nodes to the harness as A2A agents under `/<handle>/<agent>`, guards approvals, watches tasks. Keeps one A2A client per contact. | `agentsrv/agents.go`, `agentsrv/peers.go` |
-| Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the relay API. | `agentsrv/nodes`, `internal/relayapi` |
-| CLI | `a2a serve ...` on the server side, `a2a serve pair` and `a2a serve relay` on the caller and node side. | `internal/cli`, `internal/launch` |
+| Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
+| CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:
 
@@ -91,7 +91,7 @@ loopback too.
   needed: the callee identifies the caller with `WhoIs`.
 - **Webhook nodes** redeem a node code with the same `a2a serve tokens add`. Their
   token (`a2rn.<api url>.<id>.<secret>`) carries the agent's URL, opens the
-  `/relay/api`, and authenticates the node's own A2A calls to the agent as a
+  `/mailbox/api`, and authenticates the node's own A2A calls to the agent as a
   member.
 
 Principals are `user:owner`, `pair:<name>` (member or owner role),
@@ -158,8 +158,8 @@ makes the call trustworthy happens in the server:
 
 Webhook nodes are the other direction: the server wakes the node with a POST
 signed with `X-A2A-Serve-Signature: t=<time>,v1=<HMAC-SHA256 of "<t>.<body>">`
-(`relayapi.Verify` checks it), and
-the node answers with `a2a serve relay reply`, which posts events to the task. A
+(`mailboxapi.Verify` checks it), and
+the node answers with `a2a serve mailbox reply`, which posts events to the task. A
 task with no event for 10 minutes fails.
 
 ## Design notes

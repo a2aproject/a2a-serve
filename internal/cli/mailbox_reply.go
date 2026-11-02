@@ -20,12 +20,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/relayapi"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
-func newRelayReplyCmd(cfg *globalConfig) *cobra.Command {
+func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
 	var (
-		rf            relayClientFlags
+		rf            nodeClientFlags
 		status        string
 		text          string
 		final         string
@@ -37,14 +37,14 @@ func newRelayReplyCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reply <task-id>",
 		Short: "Post progress, a question or the result of a task",
-		Example: `  a2a serve relay reply <task> --status working --text "on it"
-  a2a serve relay reply <task> --input-required "Which branch?"
-  a2a serve relay reply <task> --final "Done" --artifact report.pdf
-  a2a serve relay reply <task> --fail "Could not reach the repo"`,
+		Example: `  a2a serve mailbox reply <task> --status working --text "on it"
+  a2a serve mailbox reply <task> --input-required "Which branch?"
+  a2a serve mailbox reply <task> --final "Done" --artifact report.pdf
+  a2a serve mailbox reply <task> --fail "Could not reach the repo"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			taskID := args[0]
-			var ev relayapi.Event
+			var ev mailboxapi.Event
 			set := 0
 			for _, f := range []struct{ val, state string }{
 				{final, "completed"}, {inputRequired, "input-required"}, {fail, "failed"},
@@ -66,11 +66,11 @@ func newRelayReplyCmd(cfg *globalConfig) *cobra.Command {
 			if set != 1 {
 				return clierr.Usage("set exactly one of --final, --input-required, --fail or --status")
 			}
-			if _, ok := relayapi.ParseState(ev.State); !ok {
+			if _, ok := mailboxapi.ParseState(ev.State); !ok {
 				return clierr.Usage(fmt.Sprintf("unknown state %q", ev.State))
 			}
 			for _, path := range artifacts {
-				art, err := relayapi.FileArtifact(path)
+				art, err := mailboxapi.FileArtifact(path)
 				if err != nil {
 					return err
 				}
@@ -78,9 +78,9 @@ func newRelayReplyCmd(cfg *globalConfig) *cobra.Command {
 			}
 			ev.IdempotencyKey = key
 			if ev.IdempotencyKey == "" {
-				ev.IdempotencyKey = relayapi.ContentKey(taskID, ev)
+				ev.IdempotencyKey = mailboxapi.ContentKey(taskID, ev)
 			}
-			ctx, cancel := relayContext(cmd, cfg)
+			ctx, cancel := nodeContext(cmd, cfg)
 			defer cancel()
 			c, err := rf.nodeClient(cfg)
 			if err != nil {
