@@ -41,7 +41,7 @@ Code, or any `--command`) into an A2A agent:
 | Component | What it does | Code |
 | --- | --- | --- |
 | Listeners | localhost, private (tsnet or LAN with mDNS), public (Funnel or ngrok), the control socket, and the harness listener. | `internal/network`, `agentsrv/netsetup.go`, `agentsrv/control.go`; the control API is `internal/controlapi` |
-| Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token. | `internal/auth` |
+| Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token, including the tokens the agent issues after a Google sign-in, which it checks against the allowlist on every use. | `internal/auth`, `agentsrv/oauth.go`, `internal/googleauth` |
 | A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/mailbox/api`. Tasks are stored in SQLite. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
 | Router | Runs the messenger channels, maps a conversation to an A2A context, renders streaming answers and approval buttons. | `agentsrv/router.go`, `internal/channel/*` |
 | Executor | `a2aacp` from a2a-go: one ACP session per A2A context, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go` |

@@ -191,6 +191,9 @@ var fields = []field{
 	scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }),
 	scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }),
 	intField("pids", func(c *Config) *int { return &c.Limits.PIDs }),
+	list("allow-email", true, func(c *Config) *[]string { return &c.Auth.AllowEmails }, strings.ToLower),
+	scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID }),
+	scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret }),
 }
 
 // unsetOnly are settings which `config unset` accepts besides the fields:
@@ -373,4 +376,5 @@ func CopyLive(dst, src *Config) {
 	dst.Approvals.Approvers = slices.Clone(src.Approvals.Approvers)
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
+	dst.Auth.AllowEmails = slices.Clone(src.Auth.AllowEmails)
 }

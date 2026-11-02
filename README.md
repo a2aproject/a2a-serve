@@ -22,7 +22,7 @@ A coding agent runs in a terminal on one machine, and only the person at that te
 
 1. **Run agents safely** — the agent runs in a Docker sandbox, and tool calls it asks about wait for an approver.
 1. **Reach them from anywhere** — over Tailscale, the LAN or ngrok, and from Telegram, Discord and email.
-1. **Connect agents** — pair callers with one-time codes, and let agents call each other and webhook nodes through the server.
+1. **Connect agents** — pair callers with one-time codes or let them sign in with Google, and let agents call each other and webhook nodes through the server.
 1. **Test locally** — echo, proxy and exec servers for trying A2A clients without a real agent.
 
 <div align="center">

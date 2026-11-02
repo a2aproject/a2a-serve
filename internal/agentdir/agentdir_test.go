@@ -347,3 +347,27 @@ func TestSettingsApplyNetworkSecrets(t *testing.T) {
 		})
 	}
 }
+
+func TestSettingsApplyGoogleSignIn(t *testing.T) {
+	t.Setenv("A2A_TEST_GOOGLE_ID", "1234.apps.googleusercontent.com")
+	t.Setenv("A2A_TEST_GOOGLE_SECRET", "s3cret")
+	cfg := &Config{Auth: AuthConfig{AllowEmails: []string{"Mom@example.com"}}}
+	s := Settings{
+		Harness: "opencode", AllowEmails: []string{"mom@example.com", "*@example.com"},
+		GoogleClientID: "env:A2A_TEST_GOOGLE_ID", GoogleClientSecret: "env:A2A_TEST_GOOGLE_SECRET",
+	}
+	secrets, err := s.Apply(cfg, Dir{Root: "/x"})
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "1234.apps.googleusercontent.com", GoogleClientSecret: "secret:A2A_TEST_GOOGLE_SECRET"}
+	if diff := cmp.Diff(want, cfg.Auth); diff != "" {
+		t.Fatalf("Apply() wrong auth config (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(Secrets{"A2A_TEST_GOOGLE_SECRET": "s3cret"}, secrets); diff != "" {
+		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
+	}
+	if _, err := (Settings{GoogleClientID: "env:A2A_TEST_UNSET"}).Apply(&Config{}, Dir{Root: "/x"}); err == nil {
+		t.Fatalf("Apply() with an unset --google-client-id variable error = nil, want error")
+	}
+}

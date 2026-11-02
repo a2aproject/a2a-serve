@@ -104,6 +104,7 @@ func secretRefs(cfg *agentdir.Config) []secretRef {
 	if e := cfg.Channels.Email; e != nil {
 		refs = append(refs, secretRef{"email-password", e.Password})
 	}
+	refs = append(refs, secretRef{"google-client-secret", cfg.Auth.GoogleClientSecret})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {

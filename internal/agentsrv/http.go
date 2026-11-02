@@ -70,6 +70,7 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
 	mux.HandleFunc("POST "+pairapi.Path, func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
+	s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
 	s.nodes.Register(mux, kind, func(r *http.Request) string { return base(baseURL, r) })
 	mux.Handle("POST /{$}", s.authenticate(kind, jsonrpc))
 	mux.Handle("/", s.authenticate(kind, rest))
@@ -88,6 +89,20 @@ func base(baseURL string, r *http.Request) string {
 	return scheme + "://" + r.Host
 }
 
+// listenerURL returns the URL of a listener kind, or "" if it has none.
+func (s *Server) listenerURL(kind string) string {
+	local, private, public := s.URLs()
+	switch kind {
+	case network.ListenerLocal:
+		return local
+	case network.ListenerPrivate:
+		return private
+	case network.ListenerPublic:
+		return public
+	}
+	return ""
+}
+
 // authenticate resolves the principal of a request with the auth chain.
 func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -98,7 +113,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			return
 		}
 		if !ok {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="a2a"`)
+			w.Header().Set("WWW-Authenticate", s.oauth.challengeHeader(base(s.listenerURL(kind), r)))
 			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
 			return
 		}

@@ -242,6 +242,7 @@ Answer with a message on the same task: the option ID or label, `approve`,
 | Your machines on the tailnet | Tailscale `WhoIs`: the same user as the agent | `user:owner` |
 | Other tailnet users | `--identity login=role` (`network.identities` in `config.yaml`), or the `a2aproject.org/cap/a2a` app capability | `user:<login>` |
 | Anyone else, on any listener | Bearer token from pairing | `pair:<name>` |
+| People on the allowlist | Signed in with Google, see [Google sign-in](#google-sign-in) | `google:<email>` |
 | [Webhook nodes](#webhook-nodes) | Their node token, as members | `node:<name>` |
 
 ```sh
@@ -259,6 +260,46 @@ The agent card and `/pair` are public; every A2A request needs a principal.
 The owner token the server saves for this machine is listed as `local`.
 `a2a serve pair rm local` revokes it, and the next start issues a new one;
 the name `local` can't be invited.
+
+## Google sign-in
+
+People can call the agent after signing in with Google, limited to an email
+allowlist, with no pairing command:
+
+```sh
+a2a serve config set --allow-email mom@example.com,'*@example.com'
+a2a serve config set --google-client-id env:GOOGLE_CLIENT_ID \
+  --google-client-secret env:GOOGLE_CLIENT_SECRET
+a2a send -a https://coder.example.com "hi"      # signs in once
+```
+
+- The agent is its own OAuth authorization server and issues its own access
+  tokens, which work only at this agent. A request without a token gets a
+  `401` whose `WWW-Authenticate` header points to
+  `/.well-known/oauth-protected-resource`, and from there to the agent's
+  authorization server metadata. A client follows it, signs the user in and
+  retries ([a2aproject/a2a-cli#98](https://github.com/a2aproject/a2a-cli/issues/98)).
+- With your own Google app (`--google-client-id` and
+  `--google-client-secret`), clients use `/oauth/authorize` with PKCE and a
+  loopback redirect; Google sends the user back to `<agent-url>/oauth/callback`,
+  which must be an authorized redirect URI of the app. Use the URL people call
+  the agent at, usually the public one.
+- Without your own app, clients sign in with the A2A project's shared app and
+  trade the Google ID token at `/oauth/token` (token exchange). The token's
+  nonce must be a hash of the agent's URL, so an agent of the same app can't
+  reuse a caller's token elsewhere. This works once the shared app exists and
+  clients support it.
+- The agent checks that the email is verified and on the allowlist.
+  `*@example.com` matches only accounts of the example.com Google Workspace:
+  anyone can create a personal Google account with an @example.com address.
+- People who sign in are members. Removing an email from the allowlist
+  (`a2a serve config unset allow-email <entry>`) cuts them off at their next
+  request; `a2a serve pair rm google:<email>` revokes their tokens.
+- The allowlist belongs to the agent's auth, so it works the same on Funnel,
+  ngrok or your own domain.
+
+Not in this version: providers other than Google, and browser sign-in with
+the shared app.
 
 ## Networks
 
@@ -424,6 +465,7 @@ Served on every listener:
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
 | `/n/<node>/…` | webhook nodes |
 | `/mailbox/api/…` | the node API used by `a2a serve mailbox` |
@@ -456,6 +498,10 @@ approvals:
   allow: [read, search]
   approvers: [pair:anna]
 limits: {memory: 8g, cpus: "4", pids: 1024}
+auth:                            # --allow-email, --google-client-id, --google-client-secret
+  allow_emails: [mom@example.com, "*@example.com"]
+  google_client_id: 1234.apps.googleusercontent.com
+  google_client_secret: secret:GOOGLE_CLIENT_SECRET
 ```
 
 Configs from earlier versions, in which the first of `mounts` is the

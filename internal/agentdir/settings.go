@@ -64,6 +64,12 @@ type Settings struct {
 	// TailscaleAuthKey and NgrokAuthToken are env:VAR, secret:NAME or the value.
 	TailscaleAuthKey string
 	NgrokAuthToken   string
+
+	// AllowEmails are added to the people who may sign in with Google.
+	AllowEmails    []string
+	GoogleClientID string
+	// GoogleClientSecret is env:VAR, secret:NAME or the value.
+	GoogleClientSecret string
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
@@ -85,6 +91,7 @@ const (
 	SecretEmailPassword = "EMAIL_PASSWORD"
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretNgrokToken    = "NGROK_AUTHTOKEN"
+	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns
@@ -149,6 +156,15 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	for _, v := range s.Approvers {
 		cfg.Approvals.Approvers = putKeyed(cfg.Approvals.Approvers, v, nil)
 	}
+	for _, v := range s.AllowEmails {
+		cfg.Auth.AllowEmails = putKeyed(cfg.Auth.AllowEmails, strings.TrimSpace(v), strings.ToLower)
+	}
+	if name, ok := strings.CutPrefix(s.GoogleClientID, "env:"); ok {
+		if s.GoogleClientID = os.Getenv(name); s.GoogleClientID == "" {
+			return nil, fmt.Errorf("--google-client-id: environment variable %s is empty", name)
+		}
+	}
+	set(&cfg.Auth.GoogleClientID, s.GoogleClientID)
 	for _, kv := range s.Identities {
 		login, role, ok := strings.Cut(kv, "=")
 		if !ok || login == "" {
@@ -191,6 +207,13 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 			return nil, fmt.Errorf("--discord: %w", err)
 		}
 		cfg.Channels.Discord = &DiscordConfig{Token: ref}
+	}
+	if s.GoogleClientSecret != "" {
+		ref, err := resolve(s.GoogleClientSecret, SecretGoogleClient)
+		if err != nil {
+			return nil, fmt.Errorf("--google-client-secret: %w", err)
+		}
+		cfg.Auth.GoogleClientSecret = ref
 	}
 	if e := s.Email; e != nil && *e != (EmailSettings{}) {
 		next := EmailConfig{}

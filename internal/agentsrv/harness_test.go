@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -58,6 +59,7 @@ func TestMain(m *testing.M) {
 	watchInterval, watchMaxInterval = 200*time.Millisecond, time.Second
 	nodeWebhookRetries = []time.Duration{0, 100 * time.Millisecond}
 	channelRetryMin = 10 * time.Millisecond
+	googleauth.SharedClientID = "shared-app"
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -81,6 +83,10 @@ type serverOpts struct {
 	approver    string
 	credentials *credstore.Store
 	telegramAPI string
+	secrets     agentdir.Secrets
+	// configure changes the config before the server starts.
+	configure func(*agentdir.Config)
+	google    *googleauth.Endpoints
 }
 
 // startServer starts an agent server and stops it when the test ends.
@@ -115,12 +121,18 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if o.approver != "" {
 		cfg.Approvals.Approvers = []string{o.approver}
 	}
+	if o.configure != nil {
+		o.configure(cfg)
+	}
+	if o.secrets == nil {
+		o.secrets = agentdir.Secrets{}
+	}
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
+	opts := Options{GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

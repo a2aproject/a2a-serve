@@ -51,6 +51,12 @@ func TestValidate(t *testing.T) {
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
 		{name: "cpus", modify: func(c *Config) { c.Limits.CPUs = "-1" }, wantErr: "invalid --cpus"},
 		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "needs --telegram"},
+		{name: "sign-in", modify: func(c *Config) {
+			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
+		}},
+		{name: "allow-email domain without star", modify: func(c *Config) { c.Auth.AllowEmails = []string{"example.com"} }, wantErr: `invalid --allow-email "example.com"`},
+		{name: "allow-email wildcard domain", modify: func(c *Config) { c.Auth.AllowEmails = []string{"*@*.com"} }, wantErr: `invalid --allow-email "*@*.com"`},
+		{name: "google client without secret", modify: func(c *Config) { c.Auth.GoogleClientID = "id" }, wantErr: "go together"},
 		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },

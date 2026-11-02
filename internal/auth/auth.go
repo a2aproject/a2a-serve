@@ -123,7 +123,14 @@ type Chain struct {
 	Net network.Provider
 	// Identities maps network logins of users other than the owner to roles.
 	Identities map[string]string
+	// GoogleAllowed reports whether an email which signed in with Google
+	// may still call the agent. Nil refuses every such token.
+	GoogleAllowed func(email string) bool
 }
+
+// GooglePrefix starts the principals of people who signed in with Google:
+// google:<email>.
+const GooglePrefix = "google:"
 
 var _ Authenticator = (*Chain)(nil)
 
@@ -149,6 +156,10 @@ func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, bool, e
 		}
 		if err != nil {
 			return Principal{}, false, err
+		}
+		// Removing an email from the allowlist cuts it off at once.
+		if email, ok := strings.CutPrefix(t.Principal, GooglePrefix); ok && (a.GoogleAllowed == nil || !a.GoogleAllowed(email)) {
+			return Principal{}, false, nil
 		}
 		return Principal{ID: t.Principal, Roles: t.Roles, Hops: hops(r.Header)}, true, nil
 	}
