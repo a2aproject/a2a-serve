@@ -65,9 +65,16 @@ codes, with a limit on failed attempts), `/skill.md`, the binaries at
 | localhost | Callers with a token. The server saves an owner token named `local` for its local URL in the credentials of the user running it. Loopback connections aren't trusted by themselves, because tunnels reach the server from loopback too. |
 | Tailscale (private) | Your own machines on the tailnet, identified by Tailscale `WhoIs` as the same login, are the owner. Other tailnet users get a role only from `--identity login=role` or the `a2aproject.org/cap/a2a` app capability. Anyone else needs a token. |
 | LAN (private) | Callers with a token. The LAN has no identity, so being on it grants nothing. |
-| Funnel or ngrok (public) | Callers with a token. |
+| Funnel, ngrok or a relay's public URL | Callers with a token, including people on the `--allow-email` list once they sign in with Google. |
+| Agent Mesh relay (private) | Agents signed in to the relay as the same person are the owner. Other agents on the relay get a role only like other private-network callers (`--identity`). The private URL works only from other a2a-serve agents on the relay. |
 | Messengers | Accounts linked with a pairing code. Only verified senders can link: for email, messages that pass DMARC or aligned DKIM at the trusted server. |
 | Harness listener | Only the harness, which reaches the socket. A call there acts for the user of the conversation it came from. |
+
+A webhook node is called only by its host and the host's owner, unless it is
+advertised with `pair invite --advertised`: then members of the host, such as
+other people's agents on the private network, can call it too. Gossip between
+agents only spreads the names of advertised nodes; a call to one goes to the
+host found by name on the private network.
 
 An agent of the same owner on the tailnet can say whom it calls for
 (`X-A2A-Serve-On-Behalf-Of`); the header is ignored from everyone else.
@@ -94,11 +101,13 @@ channels, and open the web inspector. No network role grants that.
 | Owner token `local` | Calls to the local URL as the owner | Same as a caller token, for the user running the server | `a2a serve pair rm local`; the next start issues a new one |
 | Messenger link | Messages from that account as its principal | `server.db` | `a2a serve pair rm <name>` |
 | Webhook node token (`a2rn.…`) | The node's mailbox API, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a serve pair rm <node>`, or a new code for the node |
+| Google sign-in token (`a2p_…`, principal `google:<email>`) | Calls to this agent as a member, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a serve config unset allow-email <entry>`, which takes effect at the next request, or `a2a serve pair rm google:<email>` |
 | Webhook signing secret | Proves wakes come from this agent | `server.db` | `a2a serve pair invite <node> --webhook <url>` again |
 | Contact token | Calls to another agent, made by this server | Plain in this agent's `server.db` | `a2a serve contact rm <name>`, and revoked on the other agent |
 | Harness key (Docker Desktop) | The harness listener | Generated on start, in the harness home | Restart |
 | Inspector login link and session | The web inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
-| `--secret`, bot tokens, email password, Tailscale and ngrok keys, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a serve config unset <setting>`, then rotate at the service |
+| Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
+| `--secret`, bot tokens, email password, Tailscale and ngrok keys, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a serve config unset <setting>`, then rotate at the service |
 
 `state/` is mode 0700 and `state/secrets` 0600; `a2a serve doctor` reports
 looser modes and `doctor --fix` tightens them. Backups contain `state/secrets`
