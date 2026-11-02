@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -85,6 +86,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("POST /schedules", s.ctlAddSchedule)
 	mux.HandleFunc("POST /schedules/{name}/run", s.ctlRunSchedule)
 	mux.HandleFunc("DELETE /schedules/{name}", s.ctlDeleteSchedule)
+	mux.HandleFunc("GET /advertisements", s.ctlAds)
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { jsonhttp.Write(w, http.StatusOK, s.config()) })
 	mux.HandleFunc("POST /config/reload", s.ctlReloadConfig)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
@@ -179,6 +181,10 @@ func (s *Server) ctlPair(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusBadRequest, fmt.Sprintf("%q is the agent the harness manages schedules with; pick another name", schedulesAgent))
 		return
 	}
+	if req.Advertised != nil && req.Webhook == "" && !isNode {
+		jsonhttp.Error(w, http.StatusBadRequest, "--advertised applies to webhook nodes; add --webhook")
+		return
+	}
 	if (req.Webhook != "" || isNode) && req.Role != "" {
 		jsonhttp.Error(w, http.StatusBadRequest, "--role doesn't apply to webhook nodes")
 		return
@@ -229,6 +235,17 @@ func (s *Server) pairNode(w http.ResponseWriter, r *http.Request, req controlapi
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if req.Advertised != nil {
+		node, err := s.store.Node(r.Context(), req.Name)
+		if err == nil {
+			err = s.setAdvertised(node.ID, node.Description, *req.Advertised)
+		}
+		if err != nil {
+			jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		resp.Advertised = *req.Advertised
+	}
 	if !exists {
 		s.refreshInstructions(r.Context())
 	}
@@ -254,6 +271,9 @@ func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
 	err := s.store.DeleteNode(r.Context(), name)
 	if err == nil {
+		if err := s.ads.Withdraw(name); err != nil {
+			slog.Warn("withdrawing the advertisement of a removed node", "node", name, "error", err)
+		}
 		s.refreshInstructions(r.Context())
 		jsonhttp.Write(w, http.StatusOK, controlapi.RevokeResponse{Kind: pairapi.KindNode})
 		return

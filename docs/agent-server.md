@@ -554,6 +554,35 @@ Nodes set up before mailboxes were called that keep working: `a2a-serve relay
 reply|task|inbox`, the `/relay/…` routes and `$A2A_RELAY_TOKEN` are still
 accepted, and will be removed in a later release.
 
+### Advertised pairings
+
+Only the agent that made a pairing can use it. With `--advertised`, every
+agent on the private network learns about a webhook node and can call it
+through its host:
+
+```sh
+a2a serve pair invite grok --webhook https://… --advertised   # on Ben's agent
+a2a serve peers                                               # on Anna's agent: lists grok@ben
+a2a serve contact add grok@ben                                # no code needed
+```
+
+- Each agent keeps a table of advertisements in `state/ads.json`: its own and
+  the ones it heard of. Every minute it swaps the names and versions it knows
+  with up to three random agents on the private network (`POST /gossip` on
+  the private listener), and each downloads the entries the other has newer.
+  After a few rounds every agent has every entry, including agents which
+  were offline or can't reach the host.
+- The host renews its entries every hour, and an entry nobody renews
+  disappears after a day, so the entries of a deleted agent go away.
+  `pair rm grok` or `pair invite grok --advertised=false` marks the entry as
+  removed, and the removal spreads the same way.
+- Anna's calls go to Ben's agent at `/n/grok`, found by Ben's name on the
+  private network, never at an address taken from the advertisement. Ben's
+  agent forwards them to the node and keeps the webhook's credentials. It
+  treats Anna's agent like any other caller from the private network: Anna's
+  login needs a role there (`--identity` or the Tailscale app capability),
+  and an advertised node takes members as well as owners.
+
 ## Output and exit codes
 
 Management commands take `-o json` or `-o jsonl`. `status -o json` has the same

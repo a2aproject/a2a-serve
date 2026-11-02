@@ -32,8 +32,10 @@ func newContactAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Let the agent call another agent with the a2a CLI. Without --url the
 agent is looked up by name on the private network, where it recognizes this
 agent by its network identity. With --url, pair with a code from the other
-agent's owner, or pass a token.`,
-		Example: "  a2a serve contact add coder\n  a2a serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
+agent's owner, or pass a token. A pairing another agent of the private
+network advertises, such as grok@ben from ` + "`a2a serve peers`" + `, needs neither:
+calls to it go through that agent.`,
+		Example: "  a2a serve contact add coder\n  a2a serve contact add grok@ben\n  a2a serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()

@@ -15,13 +15,16 @@
 package cli
 
 import (
+	"fmt"
+
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/spf13/cobra"
 )
 
 func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "peers",
-		Short: "List agents found on the private network",
+		Short: "List agents found on the private network, and the pairings they advertise",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()
@@ -32,8 +35,15 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			ads, err := c.Advertisements(cmd.Context())
+			if err != nil {
+				return err
+			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(peers)
+				return cfg.PrintJSON(struct {
+					Agents     []controlapi.Peer          `json:"agents"`
+					Advertised []controlapi.Advertisement `json:"advertised"`
+				}{nonNilSlice(peers), nonNilSlice(ads)})
 			}
 			rows := make([][]string, 0, len(peers))
 			for _, p := range peers {
@@ -43,9 +53,29 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{p.Name, p.URL, p.Description, state})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "DESCRIPTION", "STATE"}, rows, "no agents found on the private network")
+			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "DESCRIPTION", "STATE"}, rows, "no agents found on the private network"); err != nil {
+				return err
+			}
+			if len(ads) == 0 {
+				return nil
+			}
+			adRows := make([][]string, 0, len(ads))
+			for _, a := range ads {
+				adRows = append(adRows, []string{a.Key, a.Description})
+			}
+			if _, err := fmt.Fprintln(cfg.Out, "\nAdvertised pairings (add one with `a2a serve contact add <name>@<agent>`):"); err != nil {
+				return err
+			}
+			return cfg.PrintTableOrEmpty([]string{"PAIRING", "DESCRIPTION"}, adRows, "")
 		},
 	}
 	sf.addControlFlags(cmd.Flags())
 	return cmd
+}
+
+func nonNilSlice[T any](s []T) []T {
+	if s == nil {
+		return []T{}
+	}
+	return s
 }

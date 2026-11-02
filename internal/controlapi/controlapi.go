@@ -135,6 +135,9 @@ type PairCodeRequest struct {
 	Webhook     string            `json:"webhook,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Description string            `json:"description,omitempty"`
+	// Advertised, when set, advertises the webhook node to the agents of the
+	// private network, or stops advertising it.
+	Advertised *bool `json:"advertised,omitempty"`
 }
 
 // PairCodeResponse carries a pairing code and how to use it.
@@ -144,6 +147,8 @@ type PairCodeResponse struct {
 	URL     string    `json:"url"`
 	// PairCommand is what the caller or the node runs to pair.
 	PairCommand string `json:"pairCommand"`
+	// Advertised is set when the request advertised the node.
+	Advertised bool `json:"advertised,omitempty"`
 	// Hints tell a person how to link a channel identity with the code.
 	Hints []string `json:"hints,omitempty"`
 	// Node is set for node codes.
@@ -472,4 +477,20 @@ func (c *Client) RunSchedule(ctx context.Context, name string) (*ScheduleInfo, e
 // DeleteSchedule removes a schedule.
 func (c *Client) DeleteSchedule(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/schedules/"+url.PathEscape(name), nil, nil)
+}
+
+// Advertisement is a pairing another agent of the private network
+// advertises, which this agent can add as the contact Key.
+type Advertisement struct {
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	Host        string    `json:"host"`
+	Description string    `json:"description,omitempty"`
+	Expires     time.Time `json:"expires"`
+}
+
+// Advertisements lists the pairings other agents advertise.
+func (c *Client) Advertisements(ctx context.Context) ([]Advertisement, error) {
+	var out []Advertisement
+	return out, c.do(ctx, http.MethodGet, "/advertisements", nil, &out)
 }

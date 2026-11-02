@@ -38,6 +38,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -66,6 +67,7 @@ type Peers struct {
 	approvals *approvals.Service
 	chat      chat
 	schedules *schedules
+	ads       *gossip.Table
 	agentName func() string
 	bridge    harnessBridge
 	// ctx ends when the server stops; watches run in it.
@@ -205,7 +207,13 @@ func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (
 		return store.Contact{}, fmt.Errorf("%q is the name of a webhook node; pick another name", req.Name)
 	}
 	c := store.Contact{Name: req.Name, URL: trimSlash(req.URL), Token: req.Token, Via: ViaHTTPS}
-	if c.URL == "" {
+	if name, host, ok := gossip.ParseKey(req.Name); ok && c.URL == "" {
+		u, err := p.advertisedURL(ctx, req.Name, name, host)
+		if err != nil {
+			return store.Contact{}, err
+		}
+		c.URL, c.Via = u, ViaPrivate
+	} else if c.URL == "" {
 		peers, err := p.discover(ctx)
 		if err != nil {
 			return store.Contact{}, err
@@ -237,6 +245,25 @@ func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (
 		return store.Contact{}, fmt.Errorf("can't reach %s: %w", c.URL, err)
 	}
 	return c, p.store.PutContact(ctx, c)
+}
+
+// advertisedURL returns the URL of a pairing advertised as key: the node
+// name at the agent host, found by name on the private network. The
+// advertisement only says it exists, so it can't send calls elsewhere.
+func (p *Peers) advertisedURL(ctx context.Context, key, name, host string) (string, error) {
+	if _, ok := p.ads.Lookup(key); !ok {
+		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a serve peers` lists the advertised pairings", key)
+	}
+	peers, err := p.discover(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, pi := range peers {
+		if strings.EqualFold(pi.Name, host) {
+			return trimSlash(pi.URL) + "/n/" + name, nil
+		}
+	}
+	return "", fmt.Errorf("%s advertises %s, but isn't on the private network now", host, key)
 }
 
 func (p *Peers) onPrivateNetwork(ctx context.Context, u string) bool {
