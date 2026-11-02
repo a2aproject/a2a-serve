@@ -278,6 +278,25 @@ Answer with a message on the same task: the option ID or label, `approve`,
   without asking.
 - Every question also has a page, `/hitl/<token>`, linked from email approvals.
 
+## Inspector
+
+`a2a serve open` opens a page where the owner sees what the agent is doing:
+
+- conversations and their tasks, with messages and artifacts, read-only;
+- pending approvals, with a button for each option;
+- the agent's URLs, task counts, messengers, pairings, webhook nodes and
+  contacts, as `a2a serve status` shows them.
+
+The command mints a one-time login link over the control socket, so only
+someone with access to the agent directory can open it. The link works once,
+for 5 minutes, and the session lasts 12 hours or until the agent restarts.
+The page is served on the local URL, and with `open --private` on the private
+network; never on the public URL. `--no-browser` prints the link instead of
+opening it.
+
+Not in this version: files, live logs, backups, and changing settings from the
+page.
+
 ## Who can call the agent
 
 | Caller | How it is recognized | Principal |
@@ -619,6 +638,7 @@ Served on every listener:
 | `POST /pair` | exchange a pairing code for a caller or node token |
 | `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
+| `/inspect/…` | the owner's web inspector (`a2a serve open`); local and private listeners only |
 | `/n/<node>/…` | webhook nodes |
 | `/mailbox/api/…` | the node API used by `a2a serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |

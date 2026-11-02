@@ -555,14 +555,15 @@ func (s *Store) QuestionByToken(ctx context.Context, token string) (Question, er
 	return s.question(ctx, `token = ?`, token)
 }
 
-func (s *Store) question(ctx context.Context, where string, arg string) (Question, error) {
+const questionColumns = `id, token, task_id, context_id, contact, hitl_id, data, created, answered_by, answer`
+
+func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 	var (
 		q       Question
 		data    string
 		created int64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT id, token, task_id, context_id, contact, hitl_id, data, created, answered_by, answer FROM questions WHERE `+where, arg).
-		Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &data, &created, &q.AnsweredBy, &q.Answer)
+	err := row.Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &data, &created, &q.AnsweredBy, &q.Answer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Question{}, ErrNotFound
 	}
@@ -571,6 +572,29 @@ func (s *Store) question(ctx context.Context, where string, arg string) (Questio
 	}
 	q.Created = unixTime(created)
 	return q, json.Unmarshal([]byte(data), &q.Data)
+}
+
+func (s *Store) question(ctx context.Context, where string, arg string) (Question, error) {
+	return scanQuestion(s.db.QueryRowContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE `+where, arg))
+}
+
+// UnansweredQuestions lists the questions nobody answered yet, newest
+// first. Questions of tasks which ended without an answer are among them.
+func (s *Store) UnansweredQuestions(ctx context.Context) ([]Question, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE answered_by = '' ORDER BY created DESC`)
+	if err != nil {
+		return nil, err
+	}
+	defer closeRows(rows)
+	var out []Question
+	for rows.Next() {
+		q, err := scanQuestion(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, q)
+	}
+	return out, rows.Err()
 }
 
 // ErrAnswered is returned when a question was already answered.

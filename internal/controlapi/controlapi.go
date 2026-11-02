@@ -503,3 +503,15 @@ func (c *Client) Advertisements(ctx context.Context) ([]Advertisement, error) {
 	var out []Advertisement
 	return out, c.do(ctx, http.MethodGet, "/advertisements", nil, &out)
 }
+
+// InspectorLogin opens the web inspector once: Path is relative to the
+// agent's local or private URL.
+type InspectorLogin struct {
+	Path string `json:"path"`
+}
+
+// InspectorLogin mints a one-time login link of the web inspector.
+func (c *Client) InspectorLogin(ctx context.Context) (*InspectorLogin, error) {
+	var out InspectorLogin
+	return &out, c.do(ctx, http.MethodPost, "/inspector/login", nil, &out)
+}

@@ -116,8 +116,9 @@ type Server struct {
 	approvals *approvals.Service
 	oauth     *oauthServer
 	// ads are the advertised pairings of the private network.
-	ads     *gossip.Table
-	backups backups
+	ads       *gossip.Table
+	backups   backups
+	inspector *inspector
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -290,6 +291,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		logf:      s.logf,
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router)
+	s.inspector = newInspector(s)
 	s.peers = &Peers{
 		store:     s.store,
 		private:   s.private,

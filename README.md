@@ -97,6 +97,7 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
+| `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
 | `serve pair invite <who> [--role owner]` | Create a one-time code for a caller or a messenger account. The user running the server needs none: the server saves an owner token for its local URL. |
 | `serve pair invite <id> --webhook <url>` | Host a webhook node and create its code; without `--webhook`, a new code for an existing node. |
 | `serve pair list` / `pair rm <name>` | List callers and nodes, or revoke a caller / remove a node. |
