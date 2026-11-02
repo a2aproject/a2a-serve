@@ -20,7 +20,7 @@
 
 A coding agent runs in a terminal on one machine, and only the person at that terminal can give it work. A2A Serve puts an A2A server in front of the agent, so other people, other agents and scripts can send it tasks with the `a2a` CLI.
 
-1. **Run agents safely** — the agent runs in a Docker sandbox, and tool calls it asks about wait for an approver.
+1. **Run agents safely** — the agent runs in a Docker sandbox, with the MCP servers and skills of its project, and tool calls it asks about wait for an approver.
 1. **Reach them from anywhere** — over Tailscale, the LAN or ngrok, and from Telegram, Discord and email.
 1. **Connect agents** — pair callers with one-time codes, and let agents call each other and webhook nodes through the server.
 1. **Test locally** — echo, proxy and exec servers for trying A2A clients without a real agent.

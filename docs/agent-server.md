@@ -212,6 +212,49 @@ change it.
 Not in this version: an egress proxy and credential injection. The container
 can reach the network, and API keys passed with `--secret` are visible inside it.
 
+## Project MCP servers and skills
+
+The agent gets the MCP servers and skills of its project, as the harness does
+when you run it in that directory.
+
+- **MCP servers.** The server reads `.mcp.json` from the workspace and passes
+  its servers to the harness over ACP when a conversation starts, so every
+  ACP harness gets them. Edits apply to the next conversation.
+
+  ```json
+  {"mcpServers": {
+    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+               "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}},
+    "docs":   {"type": "http", "url": "https://docs.example.com/mcp",
+               "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}}
+  }}
+  ```
+
+  `${VAR}` and `${VAR:-default}` take their values from the agent's `--secret`
+  and `--env` values, so tokens stay out of the file:
+  `a2a serve config set --secret GITHUB_TOKEN`. Other secrets, such as bot
+  tokens, can't be referenced. A server with a variable that has no value is
+  left out; `status` and `doctor` name the variables.
+- **Where they run.** Servers that start a command run inside the sandbox, as
+  children of the harness. The harness images have `npx`, `python3` and
+  `uvx`.
+- **Skills.** Skills in `.claude/skills`, `.opencode/skills` and
+  `.agents/skills` work with every harness profile. opencode reads all three;
+  for Claude Code, the server links the skills of the other two folders into
+  `~/.claude/skills` in the harness home when it starts. A skill in
+  `.claude/skills` wins over one with the same name elsewhere. With
+  `--sandbox local` the harness uses your own home, which the server doesn't
+  change, so only the folders the harness reads itself work.
+- `a2a serve status` lists the MCP servers and skills the agent found.
+
+Like `config.yaml`, a project's `.mcp.json` decides what runs inside the
+sandbox. The harness can edit it, and the change applies to the next
+conversation.
+
+Not in this version: limiting a server to the conversations of chosen roles,
+adding the tokens of HTTP servers outside the sandbox, and the MCP servers and
+skills in your home directory on the host.
+
 ## Approvals
 
 The harness is configured so that every tool call that changes something asks

@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // fakeMachine is a machine on which every tool works and is configured.
@@ -535,6 +536,44 @@ func TestAgentChecks(t *testing.T) {
 				}
 			},
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusFail}, {"secrets", StatusFail}, {"mounts", StatusFail}, {"running", StatusWarn}},
+		},
+		{
+			name: "project MCP servers",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Secrets: []string{"GH_TOKEN"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := d.SaveSecrets(agentdir.Secrets{"GH_TOKEN": "x"}); err != nil {
+					t.Fatalf("SaveSecrets() error = %v", err)
+				}
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusOK}, {"mcp", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "project MCP servers without values",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}, "api": {"url": "https://x/${KEY}"}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"mcp", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
+			name: "invalid project MCP file",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte("{"), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusFail}, {"running", StatusWarn}},
 		},
 		{
 			name: "state readable by others",

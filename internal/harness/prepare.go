@@ -124,6 +124,10 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
+	// A local harness has the user's home, where a2a-serve doesn't write.
+	if err := LinkSkills(spec.Profile, ws); err != nil {
+		return nil, fmt.Errorf("linking project skills: %w", err)
+	}
 	image, what, err := EnsureImage(ctx, spec.Image, spec.Profile, spec.Progress)
 	if err != nil {
 		return nil, err

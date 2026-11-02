@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Status describes a running agent server.
@@ -53,6 +54,21 @@ type Status struct {
 	Owners   []string        `json:"owners,omitempty"`
 	Contacts int             `json:"contacts"`
 	Nodes    int             `json:"nodes"`
+	// MCPServers and Skills are what the project brings for the harness.
+	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
+	Skills     []project.Skill   `json:"skills,omitempty"`
+	// ProjectError is why the project's MCP servers or skills couldn't be read.
+	ProjectError string `json:"projectError,omitempty"`
+}
+
+// MCPServerStatus describes an MCP server of the project's .mcp.json.
+type MCPServerStatus struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Summary string `json:"summary"`
+	// Missing are the variables it references which have no value, so the
+	// harness doesn't get it.
+	Missing []string `json:"missing,omitempty"`
 }
 
 // URL scopes of an agent.
