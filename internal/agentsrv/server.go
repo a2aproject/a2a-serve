@@ -107,6 +107,7 @@ type Server struct {
 
 	router    *Router
 	peers     *Peers
+	schedules *schedules
 	nodes     *nodes.Host
 	approvals *approvals.Service
 	oauth     *oauthServer
@@ -271,12 +272,14 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		agentName: agentName,
 		logf:      s.logf,
 	}
+	s.schedules = newSchedules(ctx, s.store, s.router)
 	s.peers = &Peers{
 		store:     s.store,
 		private:   s.private,
 		nodes:     s.nodes,
 		approvals: s.approvals,
 		chat:      s.router,
+		schedules: s.schedules,
 		agentName: agentName,
 		bridge:    s.bridge,
 		ctx:       ctx,
@@ -337,6 +340,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	}
 	s.peers.resumeWatches(ctx)
 	go s.pruneLoop(ctx)
+	go s.schedules.run(ctx)
 	return errc, s.printSummary(ctx)
 }
 
