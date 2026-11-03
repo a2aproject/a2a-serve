@@ -151,6 +151,12 @@ same-owner recognition against `agentmesh-one` `v0.2.0` and Docker-sandboxed
 bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 ```
 
+The agents use opencode's free `opencode/big-pickle` model unless you pick
+another. It can be slow or rate-limited, and a delegation which doesn't
+answer within 3 minutes fails the run; `--vertex-project <gcp-project>` uses
+Gemini on Vertex AI with your application-default credentials instead, and
+`--model` with `--openai-base-url` any OpenAI-compatible endpoint.
+
 ## What's next
 
 - Sign in instead of tokens: a relay with an identity provider prints a

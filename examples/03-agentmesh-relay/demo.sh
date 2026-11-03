@@ -416,12 +416,13 @@ CODER_LOCAL="$(a2a-serve status --dir "$WORK/coder" --url=local)"
 CODER_PUBLIC="$(a2a-serve status --dir "$WORK/coder" --url=public)"
 
 banner "3. Discovering reviewer over the Agent Mesh DHT & delegating a live LLM task (coder -> reviewer)"
-for _ in $(seq 1 30); do
+# A new agent can take half a minute to show up in the DHT.
+for _ in $(seq 1 120); do
   PEERS_OUT="$(a2a-serve peers --dir "$WORK/coder")"
   if grep -q "reviewer" <<<"$PEERS_OUT"; then
     break
   fi
-  sleep 0.5
+  sleep 1
 done
 echo "$PEERS_OUT"
 grep -q "reviewer" <<<"$PEERS_OUT"
@@ -720,12 +721,12 @@ cat "$WORK/oidc-coder/.a2a/state/agentmesh/owner.json"
 echo
 grep -Fq '"ben@example.com"' "$WORK/oidc-coder/.a2a/state/agentmesh/owner.json"
 
-for _ in $(seq 1 30); do
+for _ in $(seq 1 120); do
   OIDC_PEERS="$(a2a-serve peers --dir "$WORK/oidc-coder")"
   if grep -q "oidc-reviewer" <<<"$OIDC_PEERS"; then
     break
   fi
-  sleep 0.5
+  sleep 1
 done
 echo "$OIDC_PEERS"
 grep -q "oidc-reviewer" <<<"$OIDC_PEERS"
