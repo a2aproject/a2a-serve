@@ -142,7 +142,24 @@ func (c *Config) Validate() error {
 			add("the email channel needs %s", strings.Join(missing, ", "))
 		}
 	}
+	for _, e := range c.Auth.AllowEmails {
+		if err := validEmailEntry(e); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
+		add("--google-client-id and --google-client-secret go together: they are your Google app")
+	}
 	return errors.Join(errs...)
+}
+
+// validEmailEntry checks an --allow-email entry: an email or *@domain.
+func validEmailEntry(entry string) error {
+	local, domain, ok := strings.Cut(entry, "@")
+	if !ok || local == "" || domain == "" || strings.ContainsAny(domain, "@* ") || (strings.Contains(local, "*") && local != "*") {
+		return fmt.Errorf("invalid --allow-email %q: want an email, or *@domain for a Google Workspace domain", entry)
+	}
+	return nil
 }
 
 // CheckConfig validates cfg, and checks that its mount sources exist, that
@@ -197,6 +214,9 @@ func (c *Config) secretRefs() []secretRef {
 	}
 	if e := c.Channels.Email; e != nil && strings.HasPrefix(e.Password, SecretPrefix) {
 		refs = append(refs, secretRef{"email-password", e.Password})
+	}
+	if strings.HasPrefix(c.Auth.GoogleClientSecret, SecretPrefix) {
+		refs = append(refs, secretRef{"google-client-secret", c.Auth.GoogleClientSecret})
 	}
 	return refs
 }

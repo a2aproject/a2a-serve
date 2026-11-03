@@ -235,6 +235,7 @@ func TestSecretReader(t *testing.T) {
 		{name: "email-password", flags: settingsFlags{email: agentdir.EmailSettings{Password: "-"}}, got: func(s agentdir.Settings) string { return s.Email.Password }},
 		{name: "tailscale-authkey", flags: settingsFlags{s: agentdir.Settings{TailscaleAuthKey: "-"}}, got: func(s agentdir.Settings) string { return s.TailscaleAuthKey }},
 		{name: "ngrok-authtoken", flags: settingsFlags{s: agentdir.Settings{NgrokAuthToken: "-"}}, got: func(s agentdir.Settings) string { return s.NgrokAuthToken }},
+		{name: "google-client-secret", flags: settingsFlags{s: agentdir.Settings{GoogleClientSecret: "-"}}, got: func(s agentdir.Settings) string { return s.GoogleClientSecret }},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

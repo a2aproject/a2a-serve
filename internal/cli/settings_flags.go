@@ -75,6 +75,9 @@ func (sf *settingsFlags) register(cmd *cobra.Command, withHarness bool) {
 	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", "Tailscale auth key, env:VAR, - to read it, or the key, to join without the login link")
 	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
 	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", "ngrok authtoken, env:VAR, - to read it, or the token")
+	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, "People who may call the agent after signing in with Google: emails, or *@domain for a Google Workspace domain")
+	f.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of your own Google app for sign-in (optional)")
+	f.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of your own Google app: env:VAR, - to read it, or the value")
 	must(cmd.RegisterFlagCompletionFunc("private", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkLAN, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNgrok, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("sandbox", fixedCompletions(agentdir.SandboxDocker, agentdir.SandboxLocal)))
@@ -155,6 +158,7 @@ func (sf *settingsFlags) settings(r *secretReader) (agentdir.Settings, error) {
 		{"email-password", &email.Password},
 		{"tailscale-authkey", &s.TailscaleAuthKey},
 		{"ngrok-authtoken", &s.NgrokAuthToken},
+		{"google-client-secret", &s.GoogleClientSecret},
 	} {
 		if *v.dst != stdinSecret {
 			continue

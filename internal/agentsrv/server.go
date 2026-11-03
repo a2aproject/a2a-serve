@@ -40,15 +40,18 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Options configure [Run].
 type Options struct {
-	Dir     agentdir.Dir
-	Config  *agentdir.Config
-	Secrets agentdir.Secrets
+	// GoogleEndpoints replace Google's OAuth endpoints, for tests.
+	GoogleEndpoints *googleauth.Endpoints
+	Dir             agentdir.Dir
+	Config          *agentdir.Config
+	Secrets         agentdir.Secrets
 	// Out receives progress lines for the user.
 	Out io.Writer
 	// HarnessLog receives the harness's stderr. Discarded if nil.
@@ -106,6 +109,7 @@ type Server struct {
 	peers     *Peers
 	nodes     *nodes.Host
 	approvals *approvals.Service
+	oauth     *oauthServer
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -234,7 +238,15 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 // build creates the components and starts the harness. Nothing serves yet.
 func (s *Server) build(ctx context.Context, closers *stack, opts Options) error {
 	agentName := func() string { return s.config().Name }
-	s.chain = &auth.Chain{Store: s.store, Net: s.private, Identities: s.config().Network.Identities}
+	s.chain = &auth.Chain{
+		Store: s.store, Net: s.private, Identities: s.config().Network.Identities,
+		GoogleAllowed: func(email string) bool { return googleauth.AllowedEmail(s.config().Auth.AllowEmails, email) },
+	}
+	google := googleauth.Google
+	if opts.GoogleEndpoints != nil {
+		google = *opts.GoogleEndpoints
+	}
+	s.oauth = newOAuthServer(s, google)
 	s.approvals = &approvals.Service{
 		Store:     s.store,
 		Tasks:     s.tasks,

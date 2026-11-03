@@ -57,6 +57,18 @@ type Config struct {
 	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
 	Approvals ApprovalsConfig `yaml:"approvals,omitempty" json:"approvals,omitzero"`
 	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
+	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
+}
+
+// AuthConfig lets people call the agent after signing in with Google.
+type AuthConfig struct {
+	// AllowEmails are the emails, or *@domain for a Google Workspace domain,
+	// of the people who may sign in. Empty turns sign-in off.
+	AllowEmails []string `yaml:"allow_emails,omitempty" json:"allowEmails,omitempty"`
+	// GoogleClientID and GoogleClientSecret are the owner's own Google app.
+	// The secret is a secret reference.
+	GoogleClientID     string `yaml:"google_client_id,omitempty" json:"googleClientID,omitempty"`
+	GoogleClientSecret string `yaml:"google_client_secret,omitempty" json:"googleClientSecret,omitempty"`
 }
 
 // NetworkConfig selects the providers which make the agent reachable beyond
@@ -275,6 +287,7 @@ func (c *Config) Clone() *Config {
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
 	out.Approvals.Approvers = slices.Clone(c.Approvals.Approvers)
+	out.Auth.AllowEmails = slices.Clone(c.Auth.AllowEmails)
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
 	}
