@@ -413,7 +413,7 @@ page.
 
 ```sh
 a2a-serve pair invite grok                 # member: can talk to the agent
-a2a-serve pair invite anna --role owner    # owner: can also approve
+a2a-serve pair invite anna --role owner    # owner: also sees and answers every task
 a2a-serve pair invite anna                 # another code: a second device or account
 a2a-serve pair list                        # the pairings
 a2a-serve pair get anna                    # role, tokens, linked accounts, pending codes

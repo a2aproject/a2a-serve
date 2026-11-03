@@ -62,6 +62,29 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 	}
 }
 
+func TestScheduleApprovalGoesToItsChat(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	ctx := context.Background()
+	ctl := controlapi.NewClient(ts.dir)
+	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "push", Cron: "@daily", Prompt: "ask", As: "anna", Chat: "fake:anna"}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+
+	if _, err := ctl.RunSchedule(ctx, "push"); err != nil {
+		t.Fatalf("RunSchedule() error = %v", err)
+	}
+
+	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
+	if got := ts.ch.questions(); got != 1 {
+		t.Fatalf("questions sent = %d, want only the one in anna's chat: she is the schedule's user", got)
+	}
+	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
+}
+
 func TestAddScheduleErrors(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
