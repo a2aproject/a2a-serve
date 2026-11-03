@@ -272,6 +272,8 @@ func TestLinkCode(t *testing.T) {
 		wantOK bool
 	}{
 		{text: "link K7Q2-9XF4", want: "K7Q2-9XF4", wantOK: true},
+		{text: "join K7Q2-9XF4", want: "K7Q2-9XF4", wantOK: true},
+		{text: "/join k7q29xf4", want: "k7q29xf4", wantOK: true},
 		{text: "/start K7Q29XF4", want: "K7Q29XF4", wantOK: true},
 		{text: "/link@my_bot k7q2-9xf4", want: "k7q2-9xf4", wantOK: true},
 		{text: "please link K7Q2-9XF4 now"},

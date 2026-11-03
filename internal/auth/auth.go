@@ -350,9 +350,10 @@ func IssueToken(ctx context.Context, s *store.Store, c store.Code, agentURL stri
 	return tok, p, nil
 }
 
-var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
+var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:join|link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
 
-// LinkCode returns the code of a "link <code>" or "/start <code>" message.
+// LinkCode returns the code of a "join <code>", "link <code>" or "/start
+// <code>" message.
 func LinkCode(text string) (string, bool) {
 	m := linkCommand.FindStringSubmatch(text)
 	if m == nil {

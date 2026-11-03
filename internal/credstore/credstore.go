@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package credstore keeps the pairing tokens `a2a serve tokens add` obtained:
+// Package credstore keeps the pairing tokens `a2a serve pair join` obtained:
 // caller tokens, which `a2a serve credential get` gives the a2a CLI for
 // requests to the same agent, and node tokens, which the `a2a serve mailbox`
 // commands use.
@@ -242,4 +242,4 @@ const HelperCommand = "a2a-serve credential"
 const HelperEntry = "{command: [a2a-serve, credential]}"
 
 // HelperSetup tells how to have the a2a CLI attach the stored tokens.
-const HelperSetup = "for the a2a CLI to send it, run a2a-serve doctor --fix, or list " + HelperEntry + " under credential-helper in ~/.config/a2a-cli/config.yaml"
+const HelperSetup = "for the a2a CLI to send it, run a2a-serve doctor --fix once"

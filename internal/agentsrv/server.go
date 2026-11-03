@@ -44,6 +44,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -116,6 +117,7 @@ type Server struct {
 	peers     *Peers
 	schedules *schedules
 	nodes     *nodes.Host
+	pairings  *pairings.Service
 	approvals *approvals.Service
 	oauth     *oauthServer
 	// ads are the advertised pairings of the private network.
@@ -280,10 +282,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		BaseURL:        s.bestURL,
 		Authenticate:   s.authenticate,
 		WebhookRetries: nodeWebhookRetries,
-		Advertised: func(id string) bool {
-			_, ok := s.ads.Own()[id]
-			return ok
-		},
+		Advertised:     s.ads.Advertised,
 	})
 	s.router = &Router{
 		store:     s.store,
@@ -293,6 +292,15 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		bus:       s.bus,
 		agentName: agentName,
 		logf:      s.logf,
+	}
+	s.pairings = &pairings.Service{
+		Store:         s.store,
+		BaseURL:       s.bestURL,
+		Ads:           s.ads,
+		LinkHints:     s.router.linkHints,
+		Mailbox:       s.nodes.Mailbox,
+		Changed:       s.refreshInstructions,
+		ReservedNodes: map[string]string{schedulesAgent: "is the agent the harness manages schedules with"},
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router)
 	s.inspector = newInspector(s)

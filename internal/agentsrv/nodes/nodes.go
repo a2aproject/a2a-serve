@@ -252,44 +252,26 @@ func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
 func (n *Host) Info(node store.Node) controlapi.NodeInfo {
 	return controlapi.NodeInfo{
 		ID: node.ID, Name: node.Name, URL: trimSlash(n.cfg.BaseURL()) + "/n/" + node.ID,
-		Webhook: redactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
+		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
-// Put creates or replaces the node req.Name and mints a pairing code for it.
-func (n *Host) Put(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
-	if err := validateWebhook(req.Webhook); err != nil {
-		return nil, err
+// Mailbox counts the wakes of node id not delivered yet, and its tasks
+// waiting for a reply.
+func (n *Host) Mailbox(id string) (waiting, open int) {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	for _, e := range n.inbox[id] {
+		if !e.Delivered {
+			waiting++
+		}
 	}
-	if _, err := n.cfg.Store.Contact(ctx, req.Name); err == nil {
-		return nil, fmt.Errorf("%q is already a contact", req.Name)
+	for _, w := range n.open {
+		if w.node == id {
+			open++
+		}
 	}
-	node := store.Node{
-		ID: req.Name, Name: req.Name, Description: req.Description, Webhook: req.Webhook, Headers: req.Headers,
-		Secret: cryptoutil.RandomString(40, cryptoutil.Alphanumeric),
-	}
-	if err := n.cfg.Store.PutNode(ctx, node); err != nil {
-		return nil, err
-	}
-	return n.NewCode(ctx, req.Name)
-}
-
-// NewCode issues a pairing code for a node, replacing its token on use.
-func (n *Host) NewCode(ctx context.Context, id string) (*controlapi.PairCodeResponse, error) {
-	node, err := n.cfg.Store.Node(ctx, id)
-	if err != nil {
-		return nil, fmt.Errorf("no node %s", id)
-	}
-	code, expires, err := auth.MintCode(ctx, n.cfg.Store, auth.PurposeNode, id, "")
-	if err != nil {
-		return nil, err
-	}
-	info := n.Info(node)
-	base := n.cfg.BaseURL()
-	return &controlapi.PairCodeResponse{
-		Code: code, Expires: expires, URL: base, PairCommand: controlapi.PairCommand(base, code), Node: &info,
-		Instructions: controlapi.NodeInstructions(base, node.Name, code),
-	}, nil
+	return waiting, open
 }
 
 // Pair issues a new node token for the node of a taken node code, replacing
@@ -316,7 +298,7 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	return mailboxapi.NodeInfo{
 		ID: node.ID, Name: node.Name, Description: node.Description, URL: trimSlash(baseURL) + "/n/" + node.ID,
-		Webhook: redactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
+		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
 }
 
@@ -717,7 +699,8 @@ func instructions(env mailboxapi.Envelope) string {
 	return ""
 }
 
-func validateWebhook(u string) error {
+// ValidateWebhook checks the URL of a webhook node.
+func ValidateWebhook(u string) error {
 	p, err := url.Parse(u)
 	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
 		return fmt.Errorf("--webhook must be an http(s) URL, got %q", u)
@@ -725,8 +708,8 @@ func validateWebhook(u string) error {
 	return nil
 }
 
-// redactURL drops the query, which webhook providers often use for secrets.
-func redactURL(u string) string {
+// RedactURL drops the query, which webhook providers often use for secrets.
+func RedactURL(u string) string {
 	p, err := url.Parse(u)
 	if err != nil {
 		return ""

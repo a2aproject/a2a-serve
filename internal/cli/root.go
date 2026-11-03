@@ -43,14 +43,14 @@ const infoSubcommand = "info"
 type globalConfig struct {
 	output  string
 	verbose bool
-	// timeout bounds the HTTP requests of tokens add and the mailbox commands.
+	// timeout bounds the HTTP requests of the mailbox commands.
 	timeout time.Duration
 
 	errOut io.Writer
 	// stdin overrides os.Stdin for secret values read with -, for tests.
 	stdin         *os.File
 	httpTransport http.RoundTripper
-	// credentials overrides the store of `a2a serve tokens add` tokens, for tests.
+	// credentials overrides the store of `a2a serve pair join` tokens, for tests.
 	credentials *credstore.Store
 
 	*output.Printer

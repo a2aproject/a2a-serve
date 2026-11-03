@@ -53,7 +53,7 @@ Code, or any `--command`) into an A2A agent:
 | Advertised pairings | A gossiped table of the webhook nodes agents advertise to the private network, kept in `state/ads.json`; `contact add <node>@<agent>` calls one through its host. | `internal/gossip`, `agentsrv/ads.go` |
 | Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a serve restore`. | `internal/backup`, `agentsrv/backups.go` |
 | Inspector | A read-only web page of conversations, tasks and state, where the owner also answers approvals. `a2a serve open` mints a one-time login code over the control socket; the session is a cookie with a CSRF token. Served on the local and private listeners only. | `agentsrv/inspector.go`, `agentsrv/inspector_pages.go` |
-| CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
+| CLI | `a2a serve ...` on the server side, `a2a serve pair join` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:
 
@@ -81,19 +81,19 @@ that user's `~/.config/a2a-serve/credentials.json`. Loopback connections aren't
 trusted instead, because tunnels such as ngrok reach the server from
 loopback too.
 
-- **Callers** run `a2a serve tokens add <agent-url> <code>`. The token (`a2p_...`) is
+- **Callers** run `a2a serve pair join <agent-url> <code>`. The token (`a2p_...`) is
   saved in `~/.config/a2a-serve/credentials.json`. The `a2a` CLI asks the
   credential helper `a2a-serve credential` for the headers of each agent URL
   ([Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)),
   so later `a2a send`, `a2a task` and `a2a card` commands attach the token for
   that URL only.
-- **Messenger accounts** send `link <code>` to the bot. The server links the
+- **Messenger accounts** send `join <code>` to the bot. The server links the
   channel identity to the principal; only verified senders can link (for
   email, DMARC or aligned DKIM from the trusted server).
 - **Other agents** redeem a code with `a2a serve contact add --url --code`
   and keep the token in their own database. On the same tailnet no code is
   needed: the callee identifies the caller with `WhoIs`.
-- **Webhook nodes** redeem a node code with the same `a2a serve tokens add`. Their
+- **Webhook nodes** redeem a node code with the same `a2a serve pair join`. Their
   token (`a2rn.<api url>.<id>.<secret>`) carries the agent's URL, opens the
   `/mailbox/api`, and authenticates the node's own A2A calls to the agent as a
   member.
@@ -184,7 +184,7 @@ task with no event for 10 minutes fails.
   idempotency keys are kept in memory only, because none would be valid after
   a restart. The database schema is versioned with `PRAGMA user_version`.
 - **Why one code for everything.** `/pair` redeems caller and node codes
-  alike, and `a2a serve tokens add` stores whichever token it gets, so there is one
+  alike, and `a2a serve pair join` stores whichever token it gets, so there is one
   command to learn on each side.
 
 Not in this version: an egress proxy and credential injection for the

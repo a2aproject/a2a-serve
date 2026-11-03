@@ -27,7 +27,7 @@
 #        mesh DHT (`a2a serve peers`), pairs with an invite code, and delegates
 #        a live LLM task (`coder -> reviewer`) over authenticated P2P streams.
 #     4. Pairs an external caller outside the mesh against the public
-#        `/ingress/<peer_id>/a2a/coder` URL (`a2a serve tokens add`) and runs a
+#        `/ingress/<peer_id>/a2a/coder` URL (`a2a serve pair join`) and runs a
 #        two-hop delegation (`internet -> relay -> coder -> reviewer`).
 #
 #   Stage 2 (OIDC Device Sign-In + Same-Owner Zero-Code Recognition):
@@ -434,7 +434,7 @@ DELEGATED_REPLY="$(a2a send -a "$CODER_LOCAL" \
 echo "coder reply: $DELEGATED_REPLY"
 grep -Fq "$REVIEW_TOKEN" <<<"$DELEGATED_REPLY"
 
-banner "4. Calling coder from outside the relay via public /ingress/ URL (a2a serve tokens add)"
+banner "4. Calling coder from outside the relay via public /ingress/ URL (a2a serve pair join)"
 echo "Public A2A URL: $CODER_PUBLIC"
 echo "--- Public AgentCard (rewritten to /ingress/<peer_id>/a2a/coder) ---"
 CARD_OUT="$(HOME="$EXTERNAL_HOME" a2a card get -a "$CODER_PUBLIC")"
@@ -451,7 +451,7 @@ echo "Unauthenticated external call rejected as expected."
 EXT_INVITE="$(a2a serve pair invite external --dir "$WORK/coder" -o json)"
 EXT_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])' <<<"$EXT_INVITE")"
 
-HOME="$EXTERNAL_HOME" a2a serve tokens add "$CODER_PUBLIC" "$EXT_CODE"
+HOME="$EXTERNAL_HOME" a2a serve pair join "$CODER_PUBLIC" "$EXT_CODE"
 echo "Expected token inside reviewer container PUBLIC_CHECK.txt: ${EXT_TOKEN}"
 EXT_REPLY="$(HOME="$EXTERNAL_HOME" a2a send -a "$CODER_PUBLIC" \
   "Ask the reviewer agent synchronously (without --async) to read PUBLIC_CHECK.txt in its current working directory and return the exact token inside, then reply with that exact token.")"

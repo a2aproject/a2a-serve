@@ -37,17 +37,18 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "invite <name>",
 		Short: "Create a one-time code that lets someone call or message the agent, or host a webhook node",
-		Long: `Create an 8-character code, valid once for 15 minutes, for <name>. The caller
-redeems it for a token with ` + "`a2a serve tokens add <agent-url> <code>`" + `, or links a
-messenger account by sending "link <code>" to the agent's bot.
+		Long: `Create a pairing called <name> and print its code: 8 characters, valid once
+for 15 minutes. The caller redeems it for a token with
+` + "`a2a serve pair join <agent-url> <code>`" + `, or links a messenger account by
+sending "join <code>" to the agent's bot. Inviting an existing name issues
+another code, for another device or account; its tokens keep working.
+` + "`a2a serve pair set`" + ` changes a pairing, and rotates its credentials.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
 it as <name> with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with
-` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. Inviting a node
-again issues a new code, for example after it lost its token; with --webhook
-it also updates the node, and its previous token stops working. A header
+` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. A header
 value may end in a secret value, env:VAR or -, as in
 "Authorization: Bearer env:TOKEN".
 
@@ -55,8 +56,7 @@ value may end in a secret value, env:VAR or -, as in
 list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
 ` + "`a2a serve contact add <name>@<this agent>`" + `, with no code. Their calls go
 through this agent, which keeps the webhook's credentials, and it treats
-them like any other caller from the private network. --advertised=false
-stops advertising it, and so does ` + "`pair rm`" + `.`,
+them like any other caller from the private network.`,
 		Example: `  a2a serve pair invite grok
   a2a serve pair invite anna --role owner
   a2a serve pair invite grok --webhook https://example.com/hooks/123 \
@@ -68,8 +68,8 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 			if !cmd.Flags().Changed("role") {
 				req.Role = ""
 			}
-			if req.Webhook == "" && (len(headers) > 0 || req.Description != "") {
-				return clierr.Usage("--webhook-header and --description go with --webhook")
+			if req.Webhook == "" && (len(headers) > 0 || req.Description != "" || cmd.Flags().Changed("advertised")) {
+				return clierr.Usage("--webhook-header, --description and --advertised go with --webhook")
 			}
 			hdrs, err := parseWebhookHeaders(headers, cfg.secretReader(cfg.stderr()))
 			if err != nil {
@@ -105,7 +105,6 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
-	sf.addControlFlags(f)
 	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
 	return cmd
 }
@@ -138,7 +137,7 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a serve contact add %s@<this agent>`\n", resp.Node.ID)
 		}
 	} else {
-		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller: %s\n", resp.Code, mins, resp.PairCommand)
+		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller:    %s\n  messenger: send \"join %s\" to the agent's bot\n", resp.Code, mins, resp.PairCommand, resp.Code)
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")

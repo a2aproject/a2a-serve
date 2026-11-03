@@ -40,8 +40,8 @@ func TestValidateWebhook(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			if err := validateWebhook(tc.url); (err != nil) != tc.wantErr {
-				t.Fatalf("validateWebhook(%q) error = %v, want error %v", tc.url, err, tc.wantErr)
+			if err := ValidateWebhook(tc.url); (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateWebhook(%q) error = %v, want error %v", tc.url, err, tc.wantErr)
 			}
 		})
 	}
@@ -60,8 +60,8 @@ func TestRedactURL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			if got := redactURL(tc.url); got != tc.want {
-				t.Fatalf("redactURL(%q) = %q, want %q", tc.url, got, tc.want)
+			if got := RedactURL(tc.url); got != tc.want {
+				t.Fatalf("RedactURL(%q) = %q, want %q", tc.url, got, tc.want)
 			}
 		})
 	}

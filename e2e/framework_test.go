@@ -156,10 +156,10 @@ func (u *user) mustSend(url string, args ...string) *a2a.Task {
 	return task
 }
 
-// tokensAdd redeems a pairing code for a token to the agent at url.
-func (u *user) tokensAdd(url, code string) {
+// pairJoin redeems a pairing code for a token to the agent at url.
+func (u *user) pairJoin(url, code string) {
 	u.t.Helper()
-	u.run(u.home, "a2a", "serve", "tokens", "add", url, code)
+	u.run(u.home, "a2a", "serve", "pair", "join", url, code)
 }
 
 // agent is an `a2a serve run acp` agent of a user, running fakeacp in the

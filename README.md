@@ -30,7 +30,7 @@ This starts opencode in a Docker sandbox with the project mounted, gives it an H
 
 ```bash
 a2a send -a "$(a2a serve url --local)" "What does this project do?"
-a2a serve pair invite anna   # a one-time code; anna runs: a2a serve tokens add <agent-url> <code>
+a2a serve pair invite anna   # a one-time code; anna runs: a2a serve pair join <agent-url> <code>
 ```
 
 The flags are saved to `.a2a/config.yaml`, so the next start is `a2a serve run`.

@@ -243,8 +243,14 @@ func TestServerPairAndSend(t *testing.T) {
 	if code == nil {
 		t.Fatalf("a2a serve pair invite = %q, want a code", out)
 	}
-	if _, err := runCMDWithCreds(t, creds, "tokens", "add", status.Local, code[1]); err != nil {
-		t.Fatalf("a2a serve tokens add error = %v", err)
+	if _, err := runCMDWithCreds(t, creds, "pair", "join", status.Local, code[1]); err != nil {
+		t.Fatalf("a2a serve pair join error = %v", err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "pair", "get", "me", "--dir", dir); err != nil || !strings.Contains(out, "me (caller, owner)") || !strings.Contains(out, "tokens       1") {
+		t.Fatalf("a2a serve pair get me = %q, %v, want an owner with one token", out, err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "me", "--role", "member", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a serve pair set me --role member") {
+		t.Fatalf("a2a serve pair invite of an owner as a member error = %v, want a hint to pair set", err)
 	}
 	out, err = send(t, creds, status.Local, "hello")
 	if err != nil {
@@ -265,8 +271,14 @@ func TestServerPairAndSend(t *testing.T) {
 	if code == nil {
 		t.Fatalf("a2a serve pair invite --webhook = %q, want the node's instructions", out)
 	}
-	if out, err := runCMDWithCreds(t, creds, "tokens", "add", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
-		t.Fatalf("a2a serve tokens add with a node code = %q, %v, want the node token", out, err)
+	if out, err := runCMDWithCreds(t, creds, "pair", "join", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
+		t.Fatalf("a2a serve pair join with a node code = %q, %v, want the node token", out, err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "grok", "--webhook", "https://example.com/new", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a serve pair set grok") {
+		t.Fatalf("a2a serve pair invite of an existing node with --webhook error = %v, want a hint to pair set", err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "pair", "set", "grok", "--description", "searches", "--dir", dir); err != nil || !strings.Contains(out, "✓ updated grok") {
+		t.Fatalf("a2a serve pair set grok = %q, %v, want it updated", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "mailbox", "list"); err != nil || !strings.Contains(out, "grok (node grok)") {
 		t.Fatalf("a2a serve mailbox list = %q, %v, want the node", out, err)
@@ -275,17 +287,20 @@ func TestServerPairAndSend(t *testing.T) {
 		t.Fatalf("send after pairing a node error = %v", err)
 	}
 
-	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !strings.Contains(out, "user:owner") || !strings.Contains(out, "node:grok") {
+	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+caller\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+node`).MatchString(out) {
 		t.Fatalf("a2a serve pair list = %q, %v, want me and grok", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || out != `{"kind":"node","name":"grok","removed":true}`+"\n" {
 		t.Fatalf("a2a serve -o jsonl pair rm grok = %q, %v, want the node removed", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "rm", "me", "--dir", dir); err != nil {
-		t.Fatalf("a2a serve pair rm error = %v", err)
+	if out, err := runCMDWithCreds(t, creds, "pair", "set", "me", "--rotate", "--dir", dir); err != nil || !strings.Contains(out, "its tokens were revoked") {
+		t.Fatalf("a2a serve pair set --rotate = %q, %v, want a new code", out, err)
 	}
 	if _, err := send(t, creds, status.Local, "hello"); err == nil {
-		t.Fatalf("send after a2a serve pair rm error = nil, want error")
+		t.Fatalf("send after a2a serve pair set --rotate error = nil, want error")
+	}
+	if _, err := runCMDWithCreds(t, creds, "pair", "rm", "me", "--dir", dir); err != nil {
+		t.Fatalf("a2a serve pair rm error = %v", err)
 	}
 
 	out, err = runCMDWithCreds(t, creds, "stop", "--uninstall", "--dir", dir)
@@ -324,7 +339,8 @@ func TestServeUsageErrors(t *testing.T) {
 		{name: "agent flag on serve", args: []string{"--detach"}, wantErr: "unknown flag: --detach"},
 		{name: "unknown run target", args: []string{"run", "gemini"}, wantErr: "unknown command \"gemini\""},
 		{name: "exec stream and chunk", args: []string{"run", "exec", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
-		{name: "dir on a command without an agent", args: []string{"tokens", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
+		{name: "dir on a command without an agent", args: []string{"mailbox", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
+		{name: "pair set without changes", args: []string{"pair", "set", "anna"}, wantErr: "nothing to change"},
 		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
 		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},
 		{name: "timeout on a command without requests", args: []string{"logs", "--timeout", "1s"}, wantErr: "unknown flag: --timeout"},

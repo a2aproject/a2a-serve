@@ -122,7 +122,7 @@ anywhere else:
 ```bash
 PUBLIC="$(a2a serve url --public --dir ~/a2a-lesson3/coder)"
 a2a serve pair invite me --dir ~/a2a-lesson3/coder     # prints a code
-a2a serve tokens add "$PUBLIC" <code>
+a2a serve pair join "$PUBLIC" <code>
 a2a send -a "$PUBLIC" "What does this project do?"
 ```
 

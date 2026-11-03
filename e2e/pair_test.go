@@ -38,7 +38,7 @@ func TestPairedCallerCallsAgentUntilRevoked(t *testing.T) {
 		t.Fatalf("a2a send before pairing error = %v, want 401", err)
 	}
 
-	anna.tokensAdd(coder.url, coder.invite("anna"))
+	anna.pairJoin(coder.url, coder.invite("anna"))
 	got := resultOf(anna.mustSend(coder.url, "hello"))
 	want := taskResult{State: a2a.TaskStateCompleted, Text: "Hello from fakeacp."}
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -91,7 +91,7 @@ func TestWebhookNodeAnswersAgent(t *testing.T) {
 	}))
 	t.Cleanup(webhook.Close)
 
-	grok.tokensAdd(coder.url, coder.invite("grok", "--webhook", webhook.URL+"/hook"))
+	grok.pairJoin(coder.url, coder.invite("grok", "--webhook", webhook.URL+"/hook"))
 	type sent struct {
 		task *a2a.Task
 		err  error

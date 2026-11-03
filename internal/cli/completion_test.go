@@ -57,7 +57,7 @@ func TestCompletion(t *testing.T) {
 		{name: "harness", args: []string{"config", "set", "--harness", ""}, want: []string{"claude", "opencode", "acp"}},
 		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},
 		{name: "role", args: []string{"pair", "invite", "anna", "--role", ""}, want: []string{"member", "owner"}},
-		{name: "saved tokens", args: []string{"tokens", "rm", ""}, want: []string{agentURL}},
+		{name: "joined agents", args: []string{"pair", "rm", "--dir", "/nonexistent-a2a-agent", ""}, want: []string{agentURL}},
 		{name: "contacts of a stopped agent", args: []string{"contact", "rm", "--dir", "/nonexistent-a2a-agent", ""}},
 	}
 	for _, tc := range tests {
@@ -83,7 +83,7 @@ func TestCompletionCommands(t *testing.T) {
 
 	got := completions(t, creds, "")
 
-	for _, want := range []string{"run", "tokens", "channel"} {
+	for _, want := range []string{"run", "pair", "channel"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("a2a-serve __complete \"\" = %v, want %q among them", got, want)
 		}

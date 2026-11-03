@@ -19,8 +19,8 @@ digraph agent_server_pairing {
 
   subgraph cluster_redeem {
     label="2. Redeem"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
-    PairAdd  [label="a2a serve tokens add <agent-url> <code>\nPOST /pair"];
-    Link     [label="\"link <code>\" to the bot\n(Telegram, Discord, email)"];
+    PairAdd  [label="a2a serve pair join <agent-url> <code>\nPOST /pair"];
+    Link     [label="\"join <code>\" to the bot\n(Telegram, Discord, email)"];
     Contact  [label="a2a serve contact add grok\n--url <url> --code <code>\n(on another agent)"];
   }
 

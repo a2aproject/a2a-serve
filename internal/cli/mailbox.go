@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -36,11 +37,11 @@ func newMailboxCmd(cfg *globalConfig) *cobra.Command {
 		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
 Grok Bot routine, hosted by an agent server ("a2a serve pair invite --webhook" on its side).
 The agent server holds the node's tasks in a mailbox until the node wakes. The node
-pairs once with "a2a serve tokens add <agent-url> <code>", then answers each wake
+pairs once with "a2a serve pair join <agent-url> <code>", then answers each wake
 with reply.
 
 The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the token
-"a2a serve tokens add" saved. It includes the agent's URL.
+"a2a serve pair join" saved. It includes the agent's URL.
 
 ` + secretref.Help,
 		Args: cobra.NoArgs,
@@ -48,11 +49,11 @@ The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the toke
 			return cmd.Help()
 		},
 	}
-	addRequestTimeout(cmd.PersistentFlags(), cfg)
+	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Timeout of each request to the agent server")
 	cmd.AddCommand(
-		newMailboxReplyCmd(cfg),
-		newMailboxTaskCmd(cfg),
 		newMailboxListCmd(cfg),
+		newMailboxGetCmd(cfg),
+		newMailboxReplyCmd(cfg),
 	)
 	return cmd
 }
@@ -63,7 +64,7 @@ type nodeClientFlags struct {
 }
 
 func (r *nodeClientFlags) register(f *pflag.FlagSet) {
-	f.StringVar(&r.token, "token", "", secretUsage("Node token (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve tokens add)"))
+	f.StringVar(&r.token, "token", "", secretUsage("Node token (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve pair join)"))
 }
 
 func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, error) {
@@ -87,7 +88,7 @@ func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	}
 	c, err := store.Node()
 	if errors.Is(err, credstore.ErrNoNode) {
-		return "", fmt.Errorf("no node token: run `a2a serve tokens add <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
+		return "", fmt.Errorf("no node token: run `a2a serve pair join <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
 	}
 	if err != nil {
 		return "", err

@@ -191,6 +191,12 @@ func (t *Table) Own() map[string]Entry {
 	return out
 }
 
+// Advertised reports whether this agent advertises name.
+func (t *Table) Advertised(name string) bool {
+	_, ok := t.Own()[name]
+	return ok
+}
+
 // Renew advertises again the entries of this agent older than Refresh.
 func (t *Table) Renew() error {
 	t.mu.Lock()

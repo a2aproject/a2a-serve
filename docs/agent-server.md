@@ -87,7 +87,7 @@ Anyone else needs an invitation:
 
 ```sh
 a2a serve pair invite anna                    # in ~/src/app: prints a one-time code
-a2a serve tokens add <agent-url> <code>       # on anna's side: saves a token for that URL
+a2a serve pair join <agent-url> <code>       # on anna's side: saves a token for that URL
 ```
 
 `a2a send`, `a2a task …` and `a2a card get` attach the saved token
@@ -384,13 +384,17 @@ page.
 ```sh
 a2a serve pair invite grok                 # member: can talk to the agent
 a2a serve pair invite anna --role owner    # owner: can also approve
-a2a serve pair list                        # list issued tokens
+a2a serve pair invite anna                 # another code: a second device or account
+a2a serve pair list                        # the pairings
+a2a serve pair get anna                    # role, tokens, linked accounts, pending codes
+a2a serve pair set anna --role member      # change the role in place
+a2a serve pair set anna --rotate           # revoke her tokens and print a new code
 a2a serve pair rm grok                     # revoke its tokens and messenger links
 ```
 
 A code works once, for 15 minutes. The caller exchanges it with
-`a2a serve tokens add <agent-url> <code>`, or sends `link <code>` to the agent's bot.
-`a2a serve tokens list` and `tokens rm <agent-url>` manage the saved tokens.
+`a2a serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot.
+`a2a serve pair list --joined` and `pair rm <agent-url>` manage the agents you joined.
 The agent card and `/pair` are public; every A2A request needs a principal.
 
 The owner token the server saves for this machine is listed as `local`.
@@ -619,12 +623,16 @@ a2a serve pair invite grok --webhook https://<grok routine webhook URL> \
   --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
 # → a message for the agent behind the webhook: its skill URL and a pairing code
 a2a serve pair invite grok          # a new code, if the node lost its token
-a2a serve pair list                 # callers and nodes
+a2a serve pair set grok --webhook https://<new URL>   # change the node in place
+a2a serve pair set grok --rotate    # revoke its token, change the wake secret, new code
+a2a serve pair get grok             # webhook, headers, mailbox counts
 a2a serve pair rm grok
 ```
 
-Running `pair invite --webhook` again for an existing node updates it, and its
-previous token stops working.
+`pair invite --webhook` for an existing node fails and names `pair set`,
+which changes the webhook, headers, description and advertising in place;
+the node's token keeps working until `--rotate`. The node reads its mailbox
+with `a2a-serve mailbox list`, `mailbox get <task>` and `mailbox reply`.
 
 The agent calls the node as `grok` (`a2a send -a http://a2a/<handle>/grok`), and it is at
 `<agent-url>/n/grok` for the owner. The server keeps its tasks in SQLite and
@@ -637,7 +645,7 @@ for 10 minutes fails. The node's instructions are served at
 
 The node token also authenticates A2A calls to the agent, as the member
 `node:grok`, so the node can send the agent tasks of its own:
-`a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve tokens add`, or
+`a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve pair join`, or
 `$A2A_NODE_TOKEN`. `pair rm grok` revokes both directions.
 
 ### Advertised pairings
@@ -660,7 +668,7 @@ a2a serve contact add grok@ben                                # no code needed
   were offline or can't reach the host.
 - The host renews its entries every hour, and an entry nobody renews
   disappears after a day, so the entries of a deleted agent go away.
-  `pair rm grok` or `pair invite grok --advertised=false` marks the entry as
+  `pair rm grok` or `pair set grok --advertised=false` marks the entry as
   removed, and the removal spreads the same way.
 - Anna's calls go to Ben's agent at `/n/grok`, found by Ben's name on the
   private network, never at an address taken from the advertisement. Ben's
@@ -674,7 +682,7 @@ a2a serve contact add grok@ben                                # no code needed
 Management commands take `-o json` or `-o jsonl`. `status -o json` has the same
 schema whether the agent runs or not: `running` is always set, and the
 fields of the running server, such as `pid` and `local`, only while it runs.
-Removals (`stop`, `channel rm`, `contact rm`, `pair rm`, `tokens rm`)
+Removals (`stop`, `channel rm`, `contact rm`, `pair rm`)
 print `{"removed": true, "kind": …, "name": …}`, and `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`.
 
@@ -762,19 +770,20 @@ Storage and S3 clients.
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
 | `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
-| `serve pair invite <who> [--role owner]` | Create a one-time code for a caller or a messenger account. The user running the server needs none: the server saves an owner token for its local URL. |
-| `serve pair invite <id> --webhook <url>` | Host a webhook node and create its code; without `--webhook`, a new code for an existing node. |
-| `serve pair list` / `pair rm <name>` | List callers and nodes, or revoke a caller / remove a node. |
-| `serve tokens add <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the `serve credential` helper. `tokens list` / `tokens rm <agent-url>` manage the saved tokens. |
-| `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper and makes state files private. `-o json`. |
-| `serve credential get` | The credential helper for the `a2a` CLI. |
+| `serve pair invite <name> [--role owner]` | Create a pairing and print its one-time code, for a caller or a messenger account; for an existing name, another code for another device or account. The user running the server needs none: the server saves an owner token for its local URL. |
+| `serve pair invite <name> --webhook <url>` | Host a webhook node and create its code. |
+| `serve pair list` / `get <name>` | List the pairings, or show one: role, tokens, linked accounts, pending codes, and the webhook and mailbox of a node. |
+| `serve pair set <name> [--role] [--webhook …] [--rotate]` | Change a pairing in place; `--rotate` revokes its tokens and prints a new code. |
+| `serve pair rm <name>` | Revoke a caller, or remove a node. |
+| `serve pair join <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the credential helper. Outside an agent directory (or with `--joined`), `pair list` shows the agents you joined, and `pair get` and `pair rm` take their URL. |
+| `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper the `a2a` CLI calls (`a2a-serve credential get`, hidden from help) and makes state files private. `-o json`. |
 | `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
 | `serve peers` | Agents found on the private network, and the webhook nodes they advertise (`pair invite --advertised`), which `contact add <node>@<agent>` adds without a code. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
 | `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
 | `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
 | `serve backup now\|list` / `serve restore <dest>` | Encrypted snapshots of the agent's state to a directory, `gs://` or `s3://`, taken every `--backup-interval`; restore recreates the agent on another host. |
-| `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
+| `serve mailbox list\|get\|reply` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
 | `serve run echo` / `run proxy <agent-url>` / `run exec '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
 ## Configuration reference
@@ -872,7 +881,7 @@ a2a serve run opencode --sandbox local --command "opencode acp"
   server's Unix socket.
 - Credential helpers (`credential-helper`, the
   [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)):
-  `a2a-serve credential` returns the token `a2a serve tokens add` saved in
+  `a2a-serve credential` returns the token `a2a serve pair join` saved in
   `~/.config/a2a-serve/credentials.json` for the longest matching agent URL,
   or `$A2A_NODE_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once
   under `credential-helper` in `~/.config/a2a-cli/config.yaml` as

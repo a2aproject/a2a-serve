@@ -96,18 +96,18 @@ channels, and open the web inspector. No network role grants that.
 
 | Token | Grants | Stored | Revoke |
 | --- | --- | --- | --- |
-| Pairing code (`K7Q2-9XF4`) | One exchange for a token or a messenger link, within 15 minutes | Hashed in `server.db` | Expires; a new code for the same name replaces it |
-| Caller token (`a2p_…`) | Calls to this agent as its principal, owner or member | Hashed in `server.db`; in the caller's `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a serve pair rm <name>`; the caller drops it with `a2a serve tokens rm <agent-url>` |
+| Pairing code (`K7Q2-9XF4`) | One exchange for a token or a messenger link, within 15 minutes | Hashed in `server.db` | Expires; `a2a serve pair rm <name>` or `pair set <name> --rotate` |
+| Caller token (`a2p_…`) | Calls to this agent as its principal, owner or member | Hashed in `server.db`; in the caller's `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a serve pair rm <name>`, or `pair set <name> --rotate`, which keeps the pairing and prints a new code; the caller drops it with `a2a serve pair rm <agent-url>` |
 | Owner token `local` | Calls to the local URL as the owner | Same as a caller token, for the user running the server | `a2a serve pair rm local`; the next start issues a new one |
 | Messenger link | Messages from that account as its principal | `server.db` | `a2a serve pair rm <name>` |
-| Webhook node token (`a2rn.…`) | The node's mailbox API, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a serve pair rm <node>`, or a new code for the node |
+| Webhook node token (`a2rn.…`) | The node's mailbox API, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a serve pair rm <node>`, `pair set <node> --rotate`, or a new code for the node |
 | Google sign-in token (`a2p_…`, principal `google:<email>`) | Calls to this agent as a member, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a serve config unset allow-email <entry>`, which takes effect at the next request, or `a2a serve pair rm google:<email>` |
-| Webhook signing secret | Proves wakes come from this agent | `server.db` | `a2a serve pair invite <node> --webhook <url>` again |
+| Webhook signing secret | Proves wakes come from this agent | `server.db` | `a2a serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in this agent's `server.db` | `a2a serve contact rm <name>`, and revoked on the other agent |
 | Harness key (Docker Desktop) | The harness listener | Generated on start, in the harness home | Restart |
 | Inspector login link and session | The web inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
 | Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
-| `--secret`, bot tokens, email password, Tailscale and ngrok keys, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a serve config unset <setting>`, then rotate at the service |
+| `--secret`, bot tokens, email password, Tailscale and ngrok keys, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a serve config unset <setting>` or `a2a serve channel rm <kind>`, then rotate at the service |
 
 `state/` is mode 0700 and `state/secrets` 0600; `a2a serve doctor` reports
 looser modes and `doctor --fix` tightens them. Backups contain `state/secrets`

@@ -15,29 +15,95 @@
 package cli
 
 import (
+	"errors"
+	"strings"
+
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
 func newPairCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pair",
-		Short: "Pair callers and webhook nodes with the agent",
-		Long: `"invite", "list" and "rm" manage who may call or message the agent.
-"invite" creates a one-time code, which the caller redeems on their side
-with ` + "`a2a serve tokens add <agent-url> <code>`" + `, or by sending
-"link <code>" to the agent's bot.`,
+		Short: "Pair callers and webhook nodes with the agent, or join another agent",
+		Long: `On the agent's side, "invite" creates a pairing and prints its one-time code;
+"list", "get", "set" and "rm" manage the pairings. The caller redeems the code
+with ` + "`a2a serve pair join <agent-url> <code>`" + `, or by sending "join <code>"
+to the agent's bot.
+
+On the caller's side, "join" saves the agent's token to
+~/.config/a2a-serve/credentials.json, which the a2a CLI sends with requests to
+that agent. Outside an agent directory, or with --joined, "list" shows the
+agents you joined, and "get" and "rm" take an agent URL.`,
 		Example: `  a2a serve pair invite anna
+  a2a serve pair join https://coder.tail1234.ts.net 3MZ8-LQ0D
   a2a serve pair list
+  a2a serve pair set anna --role owner
   a2a serve pair rm anna`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
 		},
 	}
+	sf.addControlFlags(cmd.PersistentFlags())
 	cmd.AddCommand(
 		newPairInviteCmd(cfg, sf),
+		newPairJoinCmd(cfg, sf),
 		newPairListCmd(cfg, sf),
+		newPairGetCmd(cfg, sf),
+		newPairSetCmd(cfg, sf),
 		newPairRmCmd(cfg, sf),
 	)
 	return cmd
+}
+
+// isAgentURL reports whether arg names a joined agent rather than a pairing.
+func isAgentURL(arg string) bool { return strings.Contains(arg, "://") }
+
+// callerView reports whether a pair command acts on the agents this user
+// joined: with joined, or outside an agent directory.
+func (sf *serverFlags) callerView(joined bool) (bool, error) {
+	if joined {
+		return true, nil
+	}
+	_, err := sf.agentDir()
+	if errors.Is(err, agentdir.ErrNotFound) && sf.dir == "" {
+		return true, nil
+	}
+	return false, err
+}
+
+// joinedCredential returns the saved token of the agent at url.
+func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, error) {
+	store, err := cfg.credentialStore()
+	if err != nil {
+		return credstore.Credential{}, err
+	}
+	c, ok, err := store.Lookup(url)
+	if err != nil {
+		return credstore.Credential{}, err
+	}
+	if !ok {
+		return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a serve pair join <agent-url> <code>`")
+	}
+	return c, nil
+}
+
+// joinedCompletions completes the agent URLs of the saved tokens.
+func joinedCompletions(cfg *globalConfig) ([]cobra.Completion, error) {
+	store, err := cfg.credentialStore()
+	if err != nil {
+		return nil, err
+	}
+	creds, err := store.List()
+	if err != nil {
+		return nil, err
+	}
+	urls := make([]cobra.Completion, 0, len(creds))
+	for _, c := range creds {
+		urls = append(urls, c.URL)
+	}
+	return urls, nil
 }

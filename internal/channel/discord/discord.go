@@ -120,7 +120,7 @@ func (c *Channel) Describe() string {
 
 // LinkHint implements [channel.Describer].
 func (c *Channel) LinkHint(code string) string {
-	return fmt.Sprintf("send %s a direct message: /link %s", c.Describe(), code)
+	return fmt.Sprintf("send %s a direct message: /join %s", c.Describe(), code)
 }
 
 // Run implements [channel.Channel].
@@ -159,7 +159,7 @@ func (c *Channel) deliver(m channel.Inbound) {
 // missed while disconnected, since the gateway doesn't replay them.
 func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	cmds := []*discordgo.ApplicationCommand{
-		{Name: "link", Description: "Link your Discord account with a pairing code", Options: []*discordgo.ApplicationCommandOption{
+		{Name: "join", Description: "Join with a pairing code from the agent's owner", Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionString, Name: "code", Description: "The pairing code", Required: true},
 		}},
 		{Name: "new", Description: "Start a new conversation"},
@@ -400,8 +400,8 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	case discordgo.InteractionApplicationCommand:
 		data := i.ApplicationCommandData()
 		in.Text = "/" + data.Name
-		if data.Name == "link" && len(data.Options) > 0 {
-			in.Text = "link " + data.Options[0].StringValue()
+		if (data.Name == "join" || data.Name == "link") && len(data.Options) > 0 {
+			in.Text = "join " + data.Options[0].StringValue()
 		}
 		respond(s, i, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,

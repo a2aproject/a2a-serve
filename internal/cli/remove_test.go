@@ -41,9 +41,9 @@ func TestRemoveCommandsJSON(t *testing.T) {
 			want:    map[string]any{"removed": true, "kind": "channel", "name": "telegram"},
 		},
 		{
-			name: "tokens rm",
-			args: []string{"tokens", "rm", agentURL},
-			want: map[string]any{"removed": true, "kind": "token", "name": agentURL},
+			name: "pair rm of a joined agent",
+			args: []string{"pair", "rm", agentURL},
+			want: map[string]any{"removed": true, "kind": "joined", "name": agentURL},
 		},
 		{
 			name:    "stop",

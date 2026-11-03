@@ -369,7 +369,7 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	}
 	if !ok {
 		if in.Direct && in.Authentic {
-			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a serve pair invite <you>`), then send: link <code>")
+			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a serve pair invite <you>`), then send: join <code>")
 		}
 		return
 	}
