@@ -64,6 +64,13 @@ func TestValidate(t *testing.T) {
 		{name: "two relays", modify: func(c *Config) {
 			c.Network = NetworkConfig{Private: "https://a.example.com", Public: "https://b.example.com"}
 		}, wantErr: "different relays"},
+		{name: "backup", modify: func(c *Config) {
+			c.Backup = BackupConfig{To: "s3://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h", Retention: "14d"}
+		}},
+		{name: "backup without a key", modify: func(c *Config) { c.Backup.To = "/backups" }, wantErr: "--backup needs --backup-key"},
+		{name: "backup to an unknown scheme", modify: func(c *Config) { c.Backup = BackupConfig{To: "ftp://x", Key: "k"} }, wantErr: `invalid --backup "ftp://x"`},
+		{name: "backup interval", modify: func(c *Config) { c.Backup.Interval = "10s" }, wantErr: "--backup-interval 10s: want at least 1m"},
+		{name: "backup retention", modify: func(c *Config) { c.Backup.Retention = "a week" }, wantErr: "--backup-retention: invalid duration"},
 		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },

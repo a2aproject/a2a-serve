@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -56,6 +57,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		}
 		results = append(results, checkMounts(d, cfg)...)
 		results = append(results, checkRelay(ctx, env, cfg, online)...)
+		if r, ok := checkBackupCLI(env, cfg); ok {
+			results = append(results, r)
+		}
 	}
 	state, stateOpen := checkState(d)
 	if stateOpen {
@@ -110,6 +114,7 @@ func secretRefs(cfg *agentdir.Config) []secretRef {
 		refs = append(refs, secretRef{"email-password", e.Password})
 	}
 	refs = append(refs, secretRef{"google-client-secret", cfg.Auth.GoogleClientSecret})
+	refs = append(refs, secretRef{"backup-key", cfg.Backup.Key})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {
@@ -225,6 +230,20 @@ func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s answers %s", relay, resp.Status)}}
 	}
 	return []Result{version}
+}
+
+// checkBackupCLI checks that the CLI the backup destination needs is
+// installed.
+func checkBackupCLI(env Env, cfg *agentdir.Config) (Result, bool) {
+	cli := backup.CLI(cfg.Backup.To)
+	if cli == "" {
+		return Result{}, false
+	}
+	if _, err := env.LookPath(cli); err != nil {
+		return Result{ID: "backup", Status: StatusFail, Message: fmt.Sprintf("backups to %s need the %s CLI, which is not on PATH", cfg.Backup.To, cli),
+			Detail: "install it and sign in, so it finds credentials the usual way"}, true
+	}
+	return Result{ID: "backup", Status: StatusOK, Message: fmt.Sprintf("backups to %s use %s", cfg.Backup.To, cli)}, true
 }
 
 // checkMounts reports mounts whose source doesn't exist.

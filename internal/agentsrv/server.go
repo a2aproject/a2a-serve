@@ -116,7 +116,8 @@ type Server struct {
 	approvals *approvals.Service
 	oauth     *oauthServer
 	// ads are the advertised pairings of the private network.
-	ads *gossip.Table
+	ads     *gossip.Table
+	backups backups
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -359,6 +360,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	go s.pruneLoop(ctx)
 	go s.schedules.run(ctx)
 	go s.runGossip(ctx)
+	go s.runBackups(ctx)
 	return errc, s.printSummary(ctx)
 }
 

@@ -73,6 +73,12 @@ type Settings struct {
 	GoogleClientID string
 	// GoogleClientSecret is env:VAR, secret:NAME or the value.
 	GoogleClientSecret string
+
+	Backup string
+	// BackupKey is env:VAR, secret:NAME or the value.
+	BackupKey       string
+	BackupInterval  string
+	BackupRetention string
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
@@ -96,6 +102,7 @@ const (
 	SecretNgrokToken    = "NGROK_AUTHTOKEN"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 	SecretRelayToken    = "RELAY_TOKEN"
+	SecretBackupKey     = "BACKUP_KEY"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns
@@ -120,6 +127,9 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	setNetwork(&cfg.Network.Public, s.Public)
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
 	set(&cfg.Network.NgrokURL, s.NgrokURL)
+	set(&cfg.Backup.To, s.Backup)
+	set(&cfg.Backup.Interval, s.BackupInterval)
+	set(&cfg.Backup.Retention, s.BackupRetention)
 	set(&cfg.Limits.Memory, s.Memory)
 	set(&cfg.Limits.CPUs, s.CPUs)
 	if s.PIDs != 0 {
@@ -218,6 +228,13 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 			return nil, fmt.Errorf("--google-client-secret: %w", err)
 		}
 		cfg.Auth.GoogleClientSecret = ref
+	}
+	if s.BackupKey != "" {
+		ref, err := resolve(s.BackupKey, SecretBackupKey)
+		if err != nil {
+			return nil, fmt.Errorf("--backup-key: %w", err)
+		}
+		cfg.Backup.Key = ref
 	}
 	if e := s.Email; e != nil && *e != (EmailSettings{}) {
 		next := EmailConfig{}

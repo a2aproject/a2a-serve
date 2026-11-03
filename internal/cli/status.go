@@ -126,6 +126,16 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	if st.ProjectError != "" {
 		fmt.Fprintf(&sb, "  project  ! %s\n", st.ProjectError)
 	}
+	if b := st.Backup; b != nil {
+		last := "none yet"
+		if !b.Last.IsZero() {
+			last = "last " + b.Last.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Fprintf(&sb, "  backup   %s, %s, next %s\n", b.To, last, b.Next.Local().Format("2006-01-02 15:04"))
+		if b.LastError != "" {
+			fmt.Fprintf(&sb, "  %-8s ! the last snapshot failed: %s\n", "", b.LastError)
+		}
+	}
 	if len(pending) > 0 {
 		fmt.Fprintf(&sb, "  pending  %s (a2a serve restart)\n", strings.Join(pending, ", "))
 	}

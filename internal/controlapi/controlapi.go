@@ -62,7 +62,8 @@ type Status struct {
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`
 	// ProjectError is why the project's MCP servers or skills couldn't be read.
-	ProjectError string `json:"projectError,omitempty"`
+	ProjectError string        `json:"projectError,omitempty"`
+	Backup       *BackupStatus `json:"backup,omitempty"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.
@@ -73,6 +74,14 @@ type MCPServerStatus struct {
 	// Missing are the variables it references which have no value, so the
 	// harness doesn't get it.
 	Missing []string `json:"missing,omitempty"`
+}
+
+// BackupStatus describes the agent's backup snapshots.
+type BackupStatus struct {
+	To        string    `json:"to"`
+	Last      time.Time `json:"last,omitzero"`
+	LastError string    `json:"lastError,omitempty"`
+	Next      time.Time `json:"next,omitzero"`
 }
 
 // URL scopes of an agent.

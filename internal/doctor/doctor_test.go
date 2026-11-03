@@ -589,6 +589,28 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"relay", relayStatus}, {"running", StatusWarn}},
 		},
 		{
+			name: "backups to GCS",
+			cfg: agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
+				Backup: agentdir.BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				m.paths["gcloud"] = "/usr/bin/gcloud"
+				if err := d.SaveSecrets(agentdir.Secrets{"BACKUP_KEY": "k"}); err != nil {
+					t.Fatalf("SaveSecrets() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusOK}, {"backup", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "backups to S3 without the aws CLI or the key",
+			cfg: agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
+				Backup: agentdir.BackupConfig{To: "s3://bucket/coder", Key: "secret:BACKUP_KEY"}},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusFail}, {"backup", StatusFail}, {"running", StatusWarn}},
+		},
+		{
 			name: "state readable by others",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Secrets: []string{"API_KEY"}},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
