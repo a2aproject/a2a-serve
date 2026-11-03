@@ -65,6 +65,7 @@ type Peers struct {
 	nodes     *nodes.Host
 	approvals *approvals.Service
 	chat      chat
+	schedules *schedules
 	agentName func() string
 	bridge    harnessBridge
 	// ctx ends when the server stops; watches run in it.
@@ -193,6 +194,9 @@ func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
 		return store.Contact{}, errors.New("contact name must be non-empty, without spaces or slashes")
+	}
+	if req.Name == schedulesAgent {
+		return store.Contact{}, fmt.Errorf("%q is the agent the harness manages schedules with; pick another name", schedulesAgent)
 	}
 	if node, err := p.isNode(ctx, req.Name); err != nil || node {
 		if err != nil {
@@ -639,19 +643,7 @@ func (p *Peers) finishWatch(ctx context.Context, w store.Watch, text string) {
 
 // watchPrincipal is the user a watched task's result is posted as.
 func (p *Peers) watchPrincipal(ctx context.Context, w store.Watch) auth.Principal {
-	if w.OnBehalfOf == "" || w.OnBehalfOf == auth.OwnerID {
-		return auth.Owner()
-	}
-	who := auth.Principal{ID: w.OnBehalfOf}
-	u, err := p.store.User(ctx, who.ID)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			slog.Warn("loading the user of a watch", "user", who.ID, "error", err)
-		}
-		return who
-	}
-	who.Roles = u.Roles
-	return who
+	return userPrincipal(ctx, p.store, w.OnBehalfOf)
 }
 
 // resultText is the text of a finished task: its artifacts, or its status message.

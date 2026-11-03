@@ -23,6 +23,7 @@
 //	recall           replies with the stored value
 //	crash            exits mid-turn
 //	mcp              replies with the MCP servers of session/new
+//	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
 //	acall <agent> <t> the same, without waiting for the result
 //
@@ -317,6 +318,9 @@ func (a *agent) prompt(m message) {
 			return
 		}
 		a.chunk(sid, string(data))
+		end("end_turn")
+	case "scheduled":
+		a.chunk(sid, "ran "+text)
 		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")

@@ -49,6 +49,7 @@ Code, or any `--command`) into an A2A agent:
 | Sandbox | `docker run` with the workspace, `state/home` as `/home/agent`, dropped capabilities and limits; or the host with `--sandbox local`. Images are pulled, or built from Dockerfiles in the binary. `harness.Prepare` turns a spec into the command to start. | `internal/harness` |
 | Peers proxy | Serves contacts and nodes to the harness as A2A agents under `/<handle>/<agent>`, guards approvals, watches tasks. Keeps one A2A client per contact. | `agentsrv/agents.go`, `agentsrv/peers.go` |
 | Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
+| Schedules | Run a prompt as a user on a cron expression or once, posted into a conversation as a new turn. The harness manages its own through the built-in `schedules` agent at its agents URL. | `agentsrv/schedules.go`, `agentsrv/schedules_agent.go`, `internal/schedule` |
 | CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:
@@ -57,7 +58,7 @@ The state is all in the agent directory:
 .a2a/
 ├── config.yaml        # flags of the first run; secrets as secret:NAME references
 └── state/
-    ├── server.db      # tasks, ACP sessions, tokens, links, contacts, nodes, questions, handles, watches
+    ├── server.db      # tasks, ACP sessions, tokens, links, contacts, nodes, questions, handles, watches, schedules
     ├── secrets        # mode 0600
     ├── tsnet/         # the agent's tailnet machine
     ├── home/          # the harness's /home/agent

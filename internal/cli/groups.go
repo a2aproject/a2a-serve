@@ -47,6 +47,7 @@ var commandGroups = map[string]string{
 	"channel":    groupManage,
 	"contact":    groupManage,
 	"peers":      groupManage,
+	"schedule":   groupManage,
 	"pair":       groupPairing,
 	"tokens":     groupPairing,
 	"mailbox":    groupNode,

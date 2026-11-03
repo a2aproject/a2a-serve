@@ -481,6 +481,44 @@ a2a serve contact rm coder
   with buttons. The answer goes back to the remote task, and its result is
   posted into the conversation. The harness itself can't answer approvals.
 
+## Schedules
+
+A schedule runs a prompt with no person on the other side: a weekday
+briefing, triage every two hours, a reminder on Friday at 5.
+
+```sh
+a2a serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
+  --prompt "Summarize today's meetings." --deliver telegram:owner
+a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --conversation same
+a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --deliver telegram
+a2a serve schedule list
+a2a serve schedule run morning-brief   # run it now
+a2a serve schedule rm morning-brief
+```
+
+- Each run is an ordinary A2A task, run as `--as` (the owner by default, or a
+  pairing name). `--cron` takes five fields or a descriptor such as `@daily`
+  or `@every 2h`; `--at` runs once and then removes the schedule. `--tz`
+  defaults to the server's time zone.
+- `--deliver <channel>[:<who>]` shows each run in that user's direct chat on
+  the channel, with its approval requests. The run becomes the chat's
+  conversation, so replying continues it. With `--conversation new` (the
+  default) every run starts a new conversation; with `same` it continues the
+  chat's current one.
+- A run missed while the agent was stopped runs once when it starts.
+
+The harness creates schedules too. When a user asks "remind me on Friday at
+5", the harness calls the built-in `schedules` agent at its agents URL
+(`a2a send -a http://a2a/<handle>/schedules 'add …'`, as the `a2a-agents`
+skill describes). That schedule runs as the user who asked and reports back
+in the same conversation. A user's conversation can list and remove only the
+schedules they made or run as; the owner sees all of them with
+`a2a serve schedule list`. Calls that came through another agent can't
+manage schedules.
+
+Not in this version: schedules in `config.yaml`, and editing a schedule in
+place (remove it and add it again).
+
 ## Webhook nodes
 
 An agent can host agents that only run when woken, such as a Grok Bot
