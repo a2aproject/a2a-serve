@@ -42,8 +42,6 @@ type renderer struct {
 	conv    channel.ConvKey
 	replyTo channel.Ref
 	p       auth.Principal
-	// following is set when rendering a task answered elsewhere.
-	following bool
 
 	mu        sync.Mutex
 	taskID    a2a.TaskID
@@ -337,12 +335,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, messageText(msg))
 		return
 	}
-	if !rd.r.approvals.CanApprove(ctx, rd.p) {
-		rd.send(ctx, fmt.Sprintf("⏳ Waiting for the owner to approve: %s", q.Title))
-		rd.r.follow(ctx, rd.ch, rd.conv, rd.p, taskID)
-		return
-	}
-	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", q)
+	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", rd.p.User(), q)
 	if err != nil {
 		slog.Error("storing question", "error", err)
 		rd.send(ctx, messageText(msg))

@@ -17,7 +17,6 @@ package mailboxapi
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 )
@@ -26,30 +25,18 @@ import (
 // token from.
 const EnvNodeToken = "A2A_NODE_TOKEN"
 
-// LegacyEnvNodeToken is the name EnvNodeToken had before mailboxes were
-// called that. Nodes set up with it keep working.
-const LegacyEnvNodeToken = "A2A_RELAY_TOKEN"
-
 // Prefix is the path of the node API and the node skill on an agent server.
 const Prefix = "/mailbox"
 
-// LegacyPrefix is the path Prefix had before, which node tokens issued then
-// still carry.
-const LegacyPrefix = "/relay"
-
-// EnvToken returns the node token of $A2A_NODE_TOKEN, or of the legacy
-// $A2A_RELAY_TOKEN.
+// EnvToken returns the node token of $A2A_NODE_TOKEN.
 func EnvToken() string {
-	if v := os.Getenv(EnvNodeToken); v != "" {
-		return v
-	}
-	return os.Getenv(LegacyEnvNodeToken)
+	return os.Getenv(EnvNodeToken)
 }
 
 // APIBase turns an agent URL into its node API base.
 func APIBase(agentURL string) string {
 	u := strings.TrimSuffix(agentURL, "/")
-	if strings.HasSuffix(u, Prefix) || strings.HasSuffix(u, LegacyPrefix) {
+	if strings.HasSuffix(u, Prefix) {
 		return u
 	}
 	return u + Prefix
@@ -63,19 +50,6 @@ func NodeClient(token string) (*Client, error) {
 		return nil, errors.New("not a node token")
 	}
 	return &Client{BaseURL: base, Token: token}, nil
-}
-
-// Secret resolves an env:VAR reference to the value of VAR, which must be set.
-func Secret(v string) (string, error) {
-	name, ok := strings.CutPrefix(v, "env:")
-	if !ok {
-		return v, nil
-	}
-	val := os.Getenv(name)
-	if val == "" {
-		return "", fmt.Errorf("environment variable %s is empty", name)
-	}
-	return val, nil
 }
 
 // A node token is a2rn.<base64url node API base>.<node ID>.<secret>, so a
@@ -93,10 +67,7 @@ func AgentURL(token string) (string, bool) {
 	if !ok {
 		return "", false
 	}
-	if u, ok := strings.CutSuffix(base, Prefix); ok {
-		return u, true
-	}
-	return strings.TrimSuffix(base, LegacyPrefix), true
+	return strings.TrimSuffix(base, Prefix), true
 }
 
 // ParseNodeToken returns the node API base and node ID embedded in a node token.

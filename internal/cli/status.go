@@ -25,20 +25,38 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
+// urlFurthest is the value of a bare --url: the URL which reaches furthest.
+const urlFurthest = "furthest"
+
 func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
+	var scope string
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether the agent runs, its URLs and channels",
-		Args:  cobra.NoArgs,
+		Short: "Show whether the agent runs, its URLs and channels, or print one of its URLs",
+		Long: `Show whether the agent runs, its URLs and channels.
+
+--url prints only the agent's URL which reaches furthest: public, then
+private, then local. --url=local, --url=private and --url=public pick one.
+--url=local also works while the agent is stopped, once its first start
+picked its port.`,
+		Example: `  a2a-serve status
+  a2a send -a "$(a2a-serve status --url)" "hello"
+  a2a-serve status --url=private`,
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
 			st, err := sf.controlClient(d).Status(cmd.Context())
+			if scope != "" {
+				return printStatusURL(cfg, d, st, err, scope)
+			}
 			if errors.Is(err, controlapi.ErrNotRunning) {
 				conf, cerr := d.LoadConfig()
 				if cerr != nil {
@@ -47,7 +65,7 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if cfg.IsJSON() {
 					return cfg.PrintJSON(statusJSON{Name: conf.Name, Harness: conf.Harness, Dir: d.Root})
 				}
-				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a serve --detach`\n", conf.Name, conf.Harness, d.Root)
+				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a-serve start --detach`\n", conf.Name, conf.Harness, d.Root)
 				return err
 			}
 			if err != nil {
@@ -63,8 +81,47 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			return printStatus(cfg, st, pending)
 		},
 	}
-	sf.addControlFlags(cmd.Flags())
+	f := cmd.Flags()
+	f.StringVar(&scope, "url", "", "Print only the agent's `scope` URL: local, private or public; without a value, the one which reaches furthest")
+	f.Lookup("url").NoOptDefVal = urlFurthest
+	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(controlapi.ScopeLocal, controlapi.ScopePrivate, controlapi.ScopePublic)))
+	sf.addControlFlags(f)
 	return cmd
+}
+
+// printStatusURL prints one URL of the agent in d, whose status is st or
+// err. A stopped agent has only its local URL, from the saved port.
+func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, err error, scope string) error {
+	if scope == urlFurthest {
+		scope = ""
+	}
+	if errors.Is(err, controlapi.ErrNotRunning) && scope == controlapi.ScopeLocal {
+		conf, cerr := d.LoadConfig()
+		if cerr != nil {
+			return cerr
+		}
+		if conf.LocalURL() == "" {
+			return err
+		}
+		st, err = &controlapi.Status{Local: conf.LocalURL()}, nil
+	}
+	if err != nil {
+		return err
+	}
+	u, err := st.URL(scope)
+	if err != nil {
+		return clierr.Usage(err.Error())
+	}
+	if u == st.Private && st.PrivateNote != "" {
+		if _, err := fmt.Fprintf(cfg.stderr(), "note: this private URL %s\n", st.PrivateNote); err != nil {
+			return err
+		}
+	}
+	if cfg.IsJSON() {
+		return cfg.PrintJSON(map[string]string{"url": u})
+	}
+	_, err = fmt.Fprintln(cfg.Out, u)
+	return err
 }
 
 // statusJSON is the status of a running or stopped agent; the fields of
@@ -109,6 +166,9 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 		fmt.Fprintf(&sb, "  tasks    %s\n", strings.Join(states, ", "))
 	}
 	fmt.Fprintf(&sb, "  contacts %d, webhook nodes %d\n", st.Contacts, st.Nodes)
+	if st.Approvals > 0 {
+		fmt.Fprintf(&sb, "  ! %d approval(s) waiting for an answer: a2a-serve inspect\n", st.Approvals)
+	}
 	for _, m := range st.MCPServers {
 		line := m.Name + ": " + m.Summary
 		if len(m.Missing) > 0 {
@@ -137,7 +197,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 		}
 	}
 	if len(pending) > 0 {
-		fmt.Fprintf(&sb, "  pending  %s (a2a serve restart)\n", strings.Join(pending, ", "))
+		fmt.Fprintf(&sb, "  pending  %s (a2a-serve restart)\n", strings.Join(pending, ", "))
 	}
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err

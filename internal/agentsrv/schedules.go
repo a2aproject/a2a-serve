@@ -19,15 +19,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -140,7 +138,7 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 // a chat becomes the chat's conversation, so replying there continues it.
 func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, error) {
 	if s.DeliverChannel == "" {
-		if s.Conversation == schedule.ConversationSame && s.ContextID != "" {
+		if s.Conversation == schedule.ThreadSame && s.ContextID != "" {
 			return s.ContextID, nil
 		}
 		return a2a.NewContextID(), nil
@@ -148,29 +146,15 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	if sc.router.channel(s.DeliverChannel) == nil {
 		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
 	}
-	conv, err := directConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
+	conv, err := manage.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
 	if err != nil {
 		return "", err
 	}
-	if s.Conversation == schedule.ConversationSame {
+	if s.Conversation == schedule.ThreadSame {
 		return sc.router.contextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
 	}
 	id := a2a.NewContextID()
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
-}
-
-// directConv returns the direct chat of user on a channel.
-func directConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
-	links, err := st.LinksOf(ctx, user)
-	if err != nil {
-		return "", err
-	}
-	for _, l := range links {
-		if l.Channel == ch && l.Conv != "" {
-			return l.Conv, nil
-		}
-	}
-	return "", fmt.Errorf("%s has no chat on %s: link it with a code from `a2a serve pair invite`", approvals.DisplayPrincipal(user), ch)
 }
 
 // userPrincipal is the principal of a stored user, with the roles it has now.
@@ -190,76 +174,13 @@ func userPrincipal(ctx context.Context, st *store.Store, id string) auth.Princip
 	return who
 }
 
-// resolveUser turns owner or a pairing name into a principal ID which has
-// a user. Principal IDs pass through.
-func resolveUser(ctx context.Context, st *store.Store, who string) (string, error) {
-	switch {
-	case who == "" || who == "owner" || who == auth.OwnerID:
-		return auth.OwnerID, nil
-	case !strings.Contains(who, ":"):
-		who = "pair:" + who
-	}
-	if _, err := st.User(ctx, who); err != nil {
-		if errors.Is(err, store.ErrNotFound) {
-			return "", fmt.Errorf("unknown user %s: pair them first with `a2a serve pair invite`", approvals.DisplayPrincipal(who))
-		}
-		return "", err
-	}
-	return who, nil
+// add creates a schedule made by by, in the conversation contextID if set.
+func (sc *schedules) add(ctx context.Context, req schedule.Request, by, contextID string) (store.Schedule, error) {
+	return sc.manage().Add(ctx, req, by, contextID)
 }
 
-// add creates a schedule made by by. A schedule made in a conversation
-// (contextID set) runs as the conversation's user and continues it.
-func (sc *schedules) add(ctx context.Context, req schedule.Request, by, contextID string) (store.Schedule, error) {
-	if err := req.Validate(); err != nil {
-		return store.Schedule{}, err
-	}
-	when, err := req.When()
-	if err != nil {
-		return store.Schedule{}, err
-	}
-	next, ok, err := when.Next(sc.now())
-	if err != nil {
-		return store.Schedule{}, err
-	}
-	if !ok {
-		return store.Schedule{}, fmt.Errorf("--at %s is in the past", req.At)
-	}
-	s := store.Schedule{
-		Name: req.Name, Cron: when.Cron, At: when.At, TZ: when.TZ, Prompt: req.Prompt,
-		Conversation: req.Conversation, ContextID: contextID, CreatedBy: by, NextRun: next,
-	}
-	if s.Conversation == "" {
-		s.Conversation = schedule.ConversationNew
-	}
-	if contextID != "" {
-		s.UserID, s.Conversation = by, schedule.ConversationSame
-	} else if s.UserID, err = resolveUser(ctx, sc.store, req.As); err != nil {
-		return store.Schedule{}, err
-	}
-	if req.Deliver != "" {
-		ch, who, _ := strings.Cut(req.Deliver, ":")
-		s.DeliverChannel, s.DeliverUser = ch, s.UserID
-		if who != "" {
-			if s.DeliverUser, err = resolveUser(ctx, sc.store, who); err != nil {
-				return store.Schedule{}, err
-			}
-		}
-		if _, err := directConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser); err != nil {
-			return store.Schedule{}, err
-		}
-	}
-	if s.Conversation == schedule.ConversationSame && s.ContextID == "" && s.DeliverChannel == "" {
-		s.ContextID = a2a.NewContextID()
-	}
-	if err := sc.store.AddSchedule(ctx, s); err != nil {
-		if errors.Is(err, store.ErrExists) {
-			return store.Schedule{}, fmt.Errorf("a schedule named %s already exists", req.Name)
-		}
-		return store.Schedule{}, err
-	}
-	sc.changed()
-	return s, nil
+func (sc *schedules) manage() manage.Schedules {
+	return manage.Schedules{Store: sc.store, Now: sc.now, Changed: sc.changed}
 }
 
 // runNow starts a run of a schedule at once, without changing when it runs
@@ -277,50 +198,12 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 	return s, runErr
 }
 
-// remove removes a schedule. Only the owner and the user a schedule runs as
-// or who made it can remove it.
+// remove removes a schedule which by may manage.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	s, err := sc.store.Schedule(ctx, name)
-	if err != nil {
-		return err
-	}
-	if !canManage(s, by) {
-		return store.ErrNotFound
-	}
-	if err := sc.store.DeleteSchedule(ctx, name); err != nil {
-		return err
-	}
-	sc.changed()
-	return nil
+	return sc.manage().Remove(ctx, name, by)
 }
 
-// visible lists the schedules by can see: all for the owner, otherwise the
-// ones they run as or made.
+// visible lists the schedules by can see.
 func (sc *schedules) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
-	all, err := sc.store.Schedules(ctx)
-	if err != nil {
-		return nil, err
-	}
-	var out []store.Schedule
-	for _, s := range all {
-		if canManage(s, by) {
-			out = append(out, s)
-		}
-	}
-	return out, nil
-}
-
-func canManage(s store.Schedule, by auth.Principal) bool {
-	return by.Has(auth.RoleOwner) || by.ID == s.UserID || by.ID == s.CreatedBy
-}
-
-func scheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
-	info := controlapi.ScheduleInfo{
-		Name: s.Name, Cron: s.Cron, At: s.At, TZ: s.TZ, Prompt: s.Prompt, User: s.UserID,
-		Conversation: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,
-	}
-	if s.DeliverChannel != "" {
-		info.Deliver = s.DeliverChannel + ":" + approvals.DisplayPrincipal(s.DeliverUser)
-	}
-	return info
+	return sc.manage().Visible(ctx, by)
 }

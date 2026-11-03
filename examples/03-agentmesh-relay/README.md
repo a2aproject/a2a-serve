@@ -72,16 +72,21 @@ provider, so the agents join with the token.
 
 ```bash
 mkdir -p ~/a2a-lesson3/coder && cd ~/a2a-lesson3/coder
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN --detach
+a2a-serve config set --harness opencode --name coder --secret OPENROUTER_API_KEY \
+  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
+a2a-serve start --detach
 
 mkdir -p ~/a2a-lesson3/reviewer && cd ~/a2a-lesson3/reviewer
-a2a serve opencode --name reviewer --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN --detach
+a2a-serve config set --harness opencode --name reviewer --secret OPENROUTER_API_KEY \
+  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
+a2a-serve start --detach
 ```
 
+`--relay-token` is a `config set` setting, so `config set --harness` creates
+each agent with it before its first start, and `start` starts it.
+
 ```bash
-cd ~/a2a-lesson3/coder && a2a serve status
+cd ~/a2a-lesson3/coder && a2a-serve status
 ```
 
 ```
@@ -98,16 +103,16 @@ coder (opencode) running for 4s, pid 51200
 Agents on the relay find each other by name:
 
 ```bash
-a2a serve peers --dir ~/a2a-lesson3/coder     # lists reviewer
+a2a-serve peers --dir ~/a2a-lesson3/coder     # lists reviewer
 ```
 
 The agents joined with a token, so neither knows who owns the other: pair
 them with a code, as you would any caller.
 
 ```bash
-CODE="$(a2a serve -o json pair invite coder --dir ~/a2a-lesson3/reviewer | jq -r .code)"
-a2a serve contact add reviewer --code "$CODE" --dir ~/a2a-lesson3/coder
-a2a send -a "$(a2a serve url --local --dir ~/a2a-lesson3/coder)" \
+CODE="$(a2a-serve -o json pair invite coder --dir ~/a2a-lesson3/reviewer | jq -r .code)"
+a2a-serve contact add reviewer --code "$CODE" --dir ~/a2a-lesson3/coder
+a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-lesson3/coder)" \
   "Ask reviewer what it thinks of the README of this project."
 ```
 
@@ -120,17 +125,17 @@ The public URL forwards requests unchanged, so a caller pairs there like
 anywhere else:
 
 ```bash
-PUBLIC="$(a2a serve url --public --dir ~/a2a-lesson3/coder)"
-a2a serve pair invite me --dir ~/a2a-lesson3/coder     # prints a code
-a2a serve tokens add "$PUBLIC" <code>
+PUBLIC="$(a2a-serve status --url=public --dir ~/a2a-lesson3/coder)"
+a2a-serve pair invite me --dir ~/a2a-lesson3/coder     # prints a code
+a2a-serve pair join "$PUBLIC" <code>
 a2a send -a "$PUBLIC" "What does this project do?"
 ```
 
 ## Clean up
 
 ```bash
-a2a serve stop --dir ~/a2a-lesson3/coder
-a2a serve stop --dir ~/a2a-lesson3/reviewer
+a2a-serve stop --dir ~/a2a-lesson3/coder
+a2a-serve stop --dir ~/a2a-lesson3/reviewer
 # stop agentmesh-one with Ctrl+C
 rm -rf ~/a2a-lesson3
 ```
@@ -145,6 +150,12 @@ same-owner recognition against `agentmesh-one` `v0.2.0` and Docker-sandboxed
 ```bash
 bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 ```
+
+The agents use opencode's free `opencode/big-pickle` model unless you pick
+another. It can be slow or rate-limited, and a delegation which doesn't
+answer within 3 minutes fails the run; `--vertex-project <gcp-project>` uses
+Gemini on Vertex AI with your application-default credentials instead, and
+`--model` with `--openai-base-url` any OpenAI-compatible endpoint.
 
 ## What's next
 

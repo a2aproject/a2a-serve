@@ -66,6 +66,19 @@ func (s *ServiceParams) Params() a2aclient.ServiceParams {
 	return params
 }
 
+// ResolveAuth replaces the value of --auth with resolve's result.
+func (s *ServiceParams) ResolveAuth(resolve func(string) (string, error)) error {
+	if s.auth == "" {
+		return nil
+	}
+	v, err := resolve(s.auth)
+	if err != nil {
+		return err
+	}
+	s.auth = v
+	return nil
+}
+
 // SetDefaultAuth sets the Authorization value used when neither --auth nor
 // an Authorization --svc-param is given, such as a stored pairing token.
 func (s *ServiceParams) SetDefaultAuth(creds string) { s.defaultAuth = creds }

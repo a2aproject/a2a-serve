@@ -25,23 +25,21 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
-func newTokensAddCmd(cfg *globalConfig) *cobra.Command {
+func newPairJoinCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "add <agent-url> <code>",
-		Short: "Exchange a pairing code for a token and save it",
-		Long: `Exchange a pairing code from an agent's owner (a2a serve pair invite) for a token.
+		Use:   "join <agent-url> <code>",
+		Short: "Join another agent with a pairing code from its owner",
+		Long: `Exchange a pairing code from an agent's owner (a2a-serve pair invite) for a token.
 The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
-attaches it to later requests for the same agent, such as a2a send, with the
-credential helper ` + "`" + credstore.HelperCommand + "`" + `: run a2a-serve doctor --fix,
-or list ` + credstore.HelperEntry + ` under credential-helper in
-~/.config/a2a-cli/config.yaml.
+sends it with later requests to the same agent, such as a2a send, through the
+credential helper that a2a-serve doctor --fix configures.
 
-A code for a webhook node (a2a serve pair invite --webhook) returns a node token
-instead, which the a2a serve mailbox commands use.`,
-		Example: "  a2a serve tokens add https://assistant.tail1234.ts.net 3MZ8-LQ0D",
+A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
+instead, which the a2a-serve mailbox commands use.`,
+		Example: "  a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), cfg.timeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
 			defer cancel()
 			c, err := credstore.Pair(ctx, &http.Client{Transport: cfg.httpTransport}, args[0], args[1])
 			if err != nil {
@@ -60,11 +58,14 @@ instead, which the a2a serve mailbox commands use.`,
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(map[string]string{"url": c.URL, "agent": c.Agent, "principal": c.Principal, "saved": store.Path})
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ paired with %s as %s; token saved to %s\n  (%s)\n", c.Agent, c.Principal, store.Path, credstore.HelperSetup)
+			_, err = fmt.Fprintf(cfg.Out, "✓ joined %s as %s; token saved to %s\n  (%s)\n", c.Agent, c.Principal, store.Path, credstore.HelperSetup)
 			return err
 		},
 	}
-	addRequestTimeout(cmd.Flags(), cfg)
+	// Joining another agent uses no agent directory of this one.
+	var dir string
+	cmd.Flags().StringVar(&dir, "dir", "", "")
+	must(cmd.Flags().MarkHidden("dir"))
 	return cmd
 }
 

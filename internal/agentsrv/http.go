@@ -60,12 +60,10 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 		jsonhttp.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})
 	mux.HandleFunc("GET /skill.md", handleCLISkill)
-	nodeSkill := func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+mailboxapi.Prefix+"/skill.md", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		writeBody(w, strings.ReplaceAll(skills.A2AMailbox, "{{BASE}}", base(baseURL, r)))
-	}
-	mux.HandleFunc("GET "+mailboxapi.Prefix+"/skill.md", nodeSkill)
-	mux.HandleFunc("GET "+mailboxapi.LegacyPrefix+"/skill.md", nodeSkill)
+	})
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
 	mux.HandleFunc("POST "+pairapi.Path, func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })
@@ -133,7 +131,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 // caller is usually the owner whose a2a CLI doesn't attach the owner token.
 func unauthorizedHint(kind string) string {
 	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a-serve doctor --fix`)"
-	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a serve tokens add <agent-url> <code>`"
+	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a-serve pair join <agent-url> <code>`"
 	if kind == network.ListenerLocal {
 		return "this agent needs a token: " + local + "; " + remote
 	}
@@ -145,7 +143,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 	cfg := s.config()
 	desc := cfg.Description
 	if desc == "" {
-		desc = cfg.Name + " is " + output.WithArticle(cfg.Harness) + " coding agent reached through `a2a serve`."
+		desc = cfg.Name + " is " + output.WithArticle(cfg.Harness) + " coding agent reached through `a2a-serve`."
 	}
 	card := &a2a.AgentCard{
 		Name:        cfg.Name,
@@ -164,13 +162,13 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 		Skills: []a2a.AgentSkill{{
 			ID:          "coding",
 			Name:        "Coding agent",
-			Description: "Works in its project workspace with " + cfg.Harness + ". Tool calls may pause the task in input-required until an approver answers.",
+			Description: "Works in its project workspace with " + cfg.Harness + ". Tool calls may pause the task in input-required until whoever started it answers.",
 			Tags:        []string{"coding", cfg.Harness},
 		}},
 	}
 	if kind != network.ListenerPrivate {
 		card.SecuritySchemes = a2a.NamedSecuritySchemes{
-			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a serve tokens add <agent-url> <code>`, with a code from the owner."},
+			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a-serve pair join <agent-url> <code>`, with a code from the owner."},
 		}
 		card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
 	}

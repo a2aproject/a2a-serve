@@ -33,7 +33,7 @@ const stopTimeout = 2 * time.Minute
 
 // ErrForeground is returned by [Restart] for an agent which runs in the
 // foreground of a terminal, which can't be restarted from another one.
-var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a serve` again")
+var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a-serve start` again")
 
 // Restart stops the running agent and starts it again in the same mode,
 // detached or as a user service. The config is checked first, so that an
@@ -50,7 +50,7 @@ func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) err
 	if err := d.CheckConfig(cfg, secrets); err != nil {
 		return &agentdir.SettingsError{Err: err}
 	}
-	client := controlapi.NewClient(d)
+	client := controlClient(ctx, d)
 	st, err := client.Status(ctx)
 	if errors.Is(err, controlapi.ErrNotRunning) {
 		return controlapi.NotRunning(cfg.Name)
@@ -58,7 +58,7 @@ func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) err
 	if err != nil {
 		return err
 	}
-	asService := service.Installed(launch.ServiceName(d, cfg))
+	asService := service.Installed(launch.ServiceName(d))
 	if !asService {
 		leader, err := sessionLeader(st.PID)
 		if err != nil {

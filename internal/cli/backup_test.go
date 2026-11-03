@@ -32,26 +32,26 @@ func TestBackupAndRestore(t *testing.T) {
 	}
 
 	if out, err := runCMD(t, "backup", "list", "--dir", d.Root); err != nil || !strings.Contains(out, "no snapshots yet") {
-		t.Fatalf("a2a serve backup list = %q, %v, want no snapshots", out, err)
+		t.Fatalf("a2a-serve backup list = %q, %v, want no snapshots", out, err)
 	}
 	if out, err := runCMD(t, "backup", "now", "--dir", d.Root); err != nil || !strings.Contains(out, "took snapshot coder-") {
-		t.Fatalf("a2a serve backup now = %q, %v, want a snapshot", out, err)
+		t.Fatalf("a2a-serve backup now = %q, %v, want a snapshot", out, err)
 	}
 	out, err := runCMD(t, "-o", "json", "backup", "list", "--dir", d.Root)
 	if err != nil {
-		t.Fatalf("a2a serve backup list error = %v", err)
+		t.Fatalf("a2a-serve backup list error = %v", err)
 	}
 	var snaps []struct {
 		Name  string `json:"name"`
 		Agent string `json:"agent"`
 	}
 	if err := json.Unmarshal([]byte(out), &snaps); err != nil || len(snaps) != 1 || snaps[0].Agent != "coder" {
-		t.Fatalf("a2a serve backup list -o json = %q, %v, want one snapshot of coder", out, err)
+		t.Fatalf("a2a-serve backup list -o json = %q, %v, want one snapshot of coder", out, err)
 	}
 
 	target := t.TempDir()
-	if out, err := runCMD(t, "restore", to, "--dir", target, "--backup-key", "k"); err != nil || !strings.Contains(out, "restored "+snaps[0].Name) {
-		t.Fatalf("a2a serve restore = %q, %v, want the snapshot restored", out, err)
+	if out, err := runCMD(t, "backup", "restore", to, "--dir", target, "--backup-key", "k"); err != nil || !strings.Contains(out, "restored "+snaps[0].Name) {
+		t.Fatalf("a2a-serve backup restore = %q, %v, want the snapshot restored", out, err)
 	}
 	restored, err := agentdir.Open(target)
 	if err != nil {
@@ -60,8 +60,8 @@ func TestBackupAndRestore(t *testing.T) {
 	if conf, err := restored.LoadConfig(); err != nil || conf.Name != "coder" {
 		t.Fatalf("restored config = %+v, %v, want coder", conf, err)
 	}
-	if _, err := runCMD(t, "restore", to, "--dir", target, "--backup-key", "k"); err == nil {
-		t.Fatalf("a2a serve restore into an existing agent error = nil, want error")
+	if _, err := runCMD(t, "backup", "restore", to, "--dir", target, "--backup-key", "k"); err == nil {
+		t.Fatalf("a2a-serve backup restore into an existing agent error = nil, want error")
 	}
 }
 
@@ -72,19 +72,19 @@ func TestRestoreUsageErrors(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "no key", args: []string{"restore", t.TempDir()}, wantErr: "--backup-key is required"},
-		{name: "stored secret", args: []string{"restore", t.TempDir(), "--backup-key", "secret:BACKUP_KEY"}, wantErr: "a restore has no stored secrets"},
-		{name: "unknown destination", args: []string{"restore", "ftp://host/dir", "--backup-key", "k"}, wantErr: "unsupported backup destination"},
+		{name: "no key", args: []string{"backup", "restore", t.TempDir()}, wantErr: "--backup-key is required"},
+		{name: "stored secret", args: []string{"backup", "restore", t.TempDir(), "--backup-key", "secret:BACKUP_KEY"}, wantErr: "secret:NAME only applies to agent settings"},
+		{name: "unknown destination", args: []string{"backup", "restore", "ftp://host/dir", "--backup-key", "k"}, wantErr: "unsupported backup destination"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := runCMD(t, tc.args...)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("a2a serve %s error = %v, want %q", strings.Join(tc.args, " "), err, tc.wantErr)
+				t.Fatalf("a2a-serve %s error = %v, want %q", strings.Join(tc.args, " "), err, tc.wantErr)
 			}
 			if got := clierr.Classify(err).Code; got != clierr.CodeUsage {
-				t.Fatalf("a2a serve %s error code = %v, want %v", strings.Join(tc.args, " "), got, clierr.CodeUsage)
+				t.Fatalf("a2a-serve %s error code = %v, want %v", strings.Join(tc.args, " "), got, clierr.CodeUsage)
 			}
 		})
 	}

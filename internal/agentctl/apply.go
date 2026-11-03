@@ -64,6 +64,19 @@ func (r *Result) Empty() bool { return len(r.Changes) == 0 && len(r.Secrets) == 
 // the secrets to delete.
 type Mutation func(cfg *agentdir.Config) (store agentdir.Secrets, del []string, err error)
 
+type controlOptionsKey struct{}
+
+// WithControlOptions returns a context in which the calls to the running
+// agent use opts, such as a timeout.
+func WithControlOptions(ctx context.Context, opts ...controlapi.Option) context.Context {
+	return context.WithValue(ctx, controlOptionsKey{}, opts)
+}
+
+func controlClient(ctx context.Context, d agentdir.Dir) *controlapi.Client {
+	opts, _ := ctx.Value(controlOptionsKey{}).([]controlapi.Option)
+	return controlapi.NewClient(d, opts...)
+}
+
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, s agentdir.Settings, dryRun bool) (*Result, error) {
 	return Apply(ctx, d, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
@@ -95,7 +108,7 @@ func Replace(ctx context.Context, d agentdir.Dir, data []byte, dryRun bool) (*Re
 
 // Apply changes the agent's config with mutate, validates the result and
 // saves it. A running server applies channels, the description and
-// approvers at once; the result lists the settings which wait for a
+// approval settings at once; the result lists the settings which wait for a
 // restart. Invalid settings are a [agentdir.SettingsError] and nothing is
 // saved.
 func Apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool) (*Result, error) {
@@ -133,7 +146,7 @@ func apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool, ra
 	if dryRun {
 		return res, nil
 	}
-	client := controlapi.NewClient(d)
+	client := controlClient(ctx, d)
 	if !created {
 		_, err := client.Status(ctx)
 		res.Running = err == nil
@@ -293,7 +306,7 @@ func appendNew(list []string, items ...string) []string {
 // Pending returns the settings changed in config.yaml since the running
 // server started, and whether it runs.
 func Pending(ctx context.Context, d agentdir.Dir) ([]string, bool, error) {
-	running, err := controlapi.NewClient(d).Config(ctx)
+	running, err := controlClient(ctx, d).Config(ctx)
 	if errors.Is(err, controlapi.ErrNotRunning) {
 		return nil, false, nil
 	}

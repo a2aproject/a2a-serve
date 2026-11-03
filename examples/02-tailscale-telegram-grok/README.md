@@ -64,13 +64,16 @@ From the agent's project directory:
 
 ```bash
 mkdir -p ~/a2a-lesson2/coder && cd ~/a2a-lesson2/coder
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY \
-  --private tailscale --public tailscale \
-  --telegram env:CODER_BOT_TOKEN
+a2a-serve config set --harness opencode --name coder --secret OPENROUTER_API_KEY \
+  --private tailscale --public tailscale
+a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
+a2a-serve start
 ```
 
-`env:CODER_BOT_TOKEN` reads the token from your shell now and stores it in
-`.a2a/state/secrets`, so later runs don't need the variable.
+`config set --harness` creates the agent without starting it, and
+`channel add` connects the bot. `env:CODER_BOT_TOKEN` reads the token from
+your shell now and stores it in `.a2a/state/secrets`, so later runs don't
+need the variable.
 
 On the first run, the agent asks to join your tailnet:
 
@@ -124,7 +127,7 @@ a2a send -a https://coder.your-tailnet.ts.net "What's in notes.md?"
 ```
 
 Other people get a code from you, as in lesson 1:
-`a2a serve pair invite anna`, and then they run `a2a serve tokens add` with it.
+`a2a-serve pair invite anna`, and then they run `a2a-serve pair join` with it.
 
 ## 6. Add the Grok bot as a webhook node
 
@@ -136,7 +139,7 @@ In the agent's directory, add the node. Header values can be `env:VAR`:
 
 ```bash
 export GROK_WEBHOOK_TOKEN=<token your Grok webhook expects>
-a2a serve pair invite grok \
+a2a-serve pair invite grok \
   --webhook <your Grok bot's webhook URL> \
   --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN" \
   --description "Grok: web search and current events"
@@ -165,7 +168,7 @@ run any pairing command yourself. The downloads are the server's own binaries,
 so they run for the bot when the server runs on Linux; otherwise the bot needs
 Linux builds, or it can use the plain HTTPS API at the end of the skill.
 
-On its first run, the bot pairs with `a2a-serve tokens add` and gets a node token.
+On its first run, the bot pairs with `a2a-serve pair join` and gets a node token.
 Store that token where the bot keeps secrets, as `A2A_NODE_TOKEN`: it
 includes the agent's URL, so it is the only setting the bot needs on later
 wakes. Each wake is a JSON body with `kind`, `taskId`, `text` and
@@ -185,11 +188,11 @@ a2a send -a https://coder.your-tailnet.ts.net "Summarize today's commits"
 Check that the node is paired:
 
 ```bash
-a2a serve pair list
+a2a-serve pair list
 ```
 
 The `grok` row shows `node:grok`. It says `not paired` until the bot has
-redeemed its code. If the code expired, run `a2a serve pair invite grok`
+redeemed its code. If the code expired, run `a2a-serve pair invite grok`
 again for a new one.
 
 ## 8. Delegate to Grok from Telegram
@@ -219,12 +222,12 @@ Stop the foreground process with Ctrl-C, then install the agent as a user
 service (systemd on Linux, launchd on macOS):
 
 ```bash
-a2a serve --service
-a2a serve status
-a2a serve logs -f
+a2a-serve start --service
+a2a-serve status
+a2a-serve logs -f
 ```
 
-`a2a serve stop --uninstall` removes the service again.
+`a2a-serve stop --uninstall` removes the service again.
 
 ## Troubleshooting
 
@@ -234,13 +237,13 @@ a2a serve logs -f
 | No `public` URL | The `funnel` attribute in the tailnet policy (step 1). |
 | The URL doesn't resolve | On the tailnet, the calling machine must run Tailscale with MagicDNS. From the internet, a new Funnel name can take several minutes to appear in public DNS; check with `dig <name> @8.8.8.8`. |
 | `! tailscale: getting the certificate` | HTTPS certificates on the DNS page (step 1); the error says what Tailscale rejected. |
-| The bot never answers | `a2a serve logs`: a wake that failed shows the webhook's status, such as `webhook returned 401` for a wrong token. `a2a serve pair list` shows whether the node is paired. |
-| The node lost its token | `a2a serve pair invite grok` issues a new code; pairing replaces the old token. |
+| The bot never answers | `a2a-serve logs`: a wake that failed shows the webhook's status, such as `webhook returned 401` for a wrong token. `a2a-serve pair list` shows whether the node is paired. |
+| The node lost its token | `a2a-serve pair invite grok` issues a new code; pairing replaces the old token. |
 | Telegram is silent | Only one process can use a bot token; stop any other process using it. |
 
 ## Next steps
 
 The [agent server guide](../../docs/agent-server.md) covers Discord and email,
-approvers besides you, and contacts between agents on the same tailnet. The
+who answers approvals, and contacts between agents on the same tailnet. The
 [architecture](../../docs/agent-server-architecture.md) shows how the pieces
 fit together.

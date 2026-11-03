@@ -29,7 +29,7 @@ func TestStatusStoppedJSON(t *testing.T) {
 
 	out, err := runCMD(t, "-o", "json", "status", "--dir", d.Root)
 	if err != nil {
-		t.Fatalf("a2a serve status error = %v", err)
+		t.Fatalf("a2a-serve status error = %v", err)
 	}
 
 	var got map[string]any
@@ -38,6 +38,6 @@ func TestStatusStoppedJSON(t *testing.T) {
 	}
 	want := map[string]any{"name": "coder", "harness": "opencode", "dir": d.Root, "running": false}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("a2a serve status -o json wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve status -o json wrong result (-want +got) diff = %s", diff)
 	}
 }

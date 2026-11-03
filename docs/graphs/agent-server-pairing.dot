@@ -12,16 +12,16 @@ digraph agent_server_pairing {
 
   subgraph cluster_mint {
     label="1. Mint (control socket)"; style="rounded,filled"; fillcolor="#fdf1e6"; color="#e0b48a";
-    PairCaller [label="a2a serve pair invite anna\n[--role owner]"];
-    PairNode   [label="a2a serve pair invite grok\n--webhook <url>"];
+    PairCaller [label="a2a-serve pair invite anna\n[--role owner]"];
+    PairNode   [label="a2a-serve pair invite grok\n--webhook <url>"];
     Code       [label="one-time code K7Q2-9XF4\n15 min, single use\npurpose: pair or node", shape=note, fillcolor="#fff7d6"];
   }
 
   subgraph cluster_redeem {
     label="2. Redeem"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
-    PairAdd  [label="a2a serve tokens add <agent-url> <code>\nPOST /pair"];
-    Link     [label="\"link <code>\" to the bot\n(Telegram, Discord, email)"];
-    Contact  [label="a2a serve contact add grok\n--url <url> --code <code>\n(on another agent)"];
+    PairAdd  [label="a2a-serve pair join <agent-url> <code>\nPOST /pair"];
+    Link     [label="\"join <code>\" to the bot\n(Telegram, Discord, email)"];
+    Contact  [label="a2a-serve contact add grok\n--url <url> --code <code>\n(on another agent)"];
   }
 
   subgraph cluster_server {
@@ -34,7 +34,7 @@ digraph agent_server_pairing {
   subgraph cluster_holders {
     label="4. The holder keeps"; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
     Creds   [label="~/.config/a2a-cli/credentials.json\ncaller token a2p_...\nattached by a2a send, task, card"];
-    NodeCreds [label="credentials.json (kind node)\nor A2A_NODE_TOKEN\nnode token a2rn.<url>.<id>.<secret>\nused by a2a serve mailbox"];
+    NodeCreds [label="credentials.json (kind node)\nor A2A_NODE_TOKEN\nnode token a2rn.<url>.<id>.<secret>\nused by a2a-serve mailbox"];
     ContactDB [label="the other agent's server.db\ncontact URL + token"];
   }
 
@@ -47,7 +47,7 @@ digraph agent_server_pairing {
   }
 
   Tailnet [label="Tailscale WhoIs\non the private listener", shape=ellipse, fillcolor="#e3f4e3"];
-  Start   [label="a2a serve, on start:\nowner token \"local\"\nfor the local URL", shape=ellipse, fillcolor="#e3f4e3"];
+  Start   [label="a2a-serve start:\nowner token \"local\"\nfor the local URL", shape=ellipse, fillcolor="#e3f4e3"];
 
   Owner -> PairCaller; Owner -> PairNode;
   PairCaller -> Code; PairNode -> Code;
@@ -68,6 +68,6 @@ digraph agent_server_pairing {
   Start -> Tokens [label="no code needed"];
   Start -> Creds [style=dashed, label="the user\nrunning it"];
 
-  Revoke [label="a2a serve pair rm <name>\nrevokes tokens and links,\nor removes a node", shape=note, fillcolor="#fff7d6"];
+  Revoke [label="a2a-serve pair rm <name>\nrevokes tokens and links,\nor removes a node", shape=note, fillcolor="#fff7d6"];
   Revoke -> Tokens [style=dotted]; Revoke -> Links [style=dotted]; Revoke -> NodeT [style=dotted];
 }

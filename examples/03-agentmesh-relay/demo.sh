@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# End-to-end validation of `a2a serve opencode` running Docker-sandboxed coding
+# End-to-end validation of `a2a-serve start opencode` running Docker-sandboxed coding
 # agents backed by a live LLM on an Agent Mesh relay (`agentmesh-one` v0.2.0 +
 # embedded Go SDK `github.com/google/agentmesh/sdk/meshnet`, no sidecar):
 #
@@ -21,19 +21,19 @@
 #     1. Starts `agentmesh-one` v0.2.0 (optionally exposed to the internet via
 #        `--tunnel cloudflare`).
 #     2. Builds `a2a-serve -tags agentmesh`, runs `a2a-serve doctor --fix`, and
-#        starts two Docker-sandboxed `a2a serve opencode` agents (`coder` and
+#        starts two Docker-sandboxed `a2a-serve start opencode` agents (`coder` and
 #        `reviewer`) with `--private "$RELAY" --public "$RELAY" --relay-token`.
-#     3. Verifies `a2a serve doctor --online`, discovers `reviewer` over the
-#        mesh DHT (`a2a serve peers`), pairs with an invite code, and delegates
+#     3. Verifies `a2a-serve doctor --online`, discovers `reviewer` over the
+#        mesh DHT (`a2a-serve peers`), pairs with an invite code, and delegates
 #        a live LLM task (`coder -> reviewer`) over authenticated P2P streams.
 #     4. Pairs an external caller outside the mesh against the public
-#        `/ingress/<peer_id>/a2a/coder` URL (`a2a serve tokens add`) and runs a
+#        `/ingress/<peer_id>/a2a/coder` URL (`a2a-serve pair join`) and runs a
 #        two-hop delegation (`internet -> relay -> coder -> reviewer`).
 #
 #   Stage 2 (OIDC Device Sign-In + Same-Owner Zero-Code Recognition):
 #     5. Starts a local RS256 OIDC Device-Flow Identity Provider and an
 #        `agentmesh-one --issuer <idp> --no-join-token` relay.
-#     6. Starts two Docker-sandboxed `a2a serve opencode` agents (`oidc-coder`
+#     6. Starts two Docker-sandboxed `a2a-serve start opencode` agents (`oidc-coder`
 #        and `oidc-reviewer`) without `--relay-token`, follows the printed
 #        device sign-in link as `Ben@example.com`, verifies `owner.json`, adds
 #        `oidc-reviewer` without `--code`, delegates a live LLM task authorized
@@ -134,6 +134,10 @@ GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
 GOCACHE="${GOCACHE:-$(go env GOCACHE)}"
 export GOMODCACHE GOCACHE
 export PATH="$BIN_DIR:$PATH"
+# The docker context (such as rootless Docker) lives in ~/.docker, which the
+# demo's own HOME hides.
+DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)}"
+export DOCKER_HOST
 export HOME="$OWNER_HOME"
 
 cleanup() {
@@ -375,7 +379,7 @@ export RELAY RELAY_TOKEN
 echo "Agent Mesh relay ready at: ${RELAY}"
 
 banner "2. Starting two Docker-sandboxed opencode agents (coder & reviewer) with --private/--public ${RELAY}"
-a2a serve opencode --dir "$WORK/coder" \
+a2a-serve config set --dir "$WORK/coder" --harness opencode \
   --name coder \
   --description "Primary coding agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \
@@ -383,11 +387,10 @@ a2a serve opencode --dir "$WORK/coder" \
   --private "$RELAY" \
   --public "$RELAY" \
   --relay-token env:RELAY_TOKEN \
-  "${SECRET_ARGS[@]}" \
-  --quiet \
-  --detach
+  "${SECRET_ARGS[@]}"
+a2a-serve start --dir "$WORK/coder" --quiet --detach
 
-a2a serve opencode --dir "$WORK/reviewer" \
+a2a-serve config set --dir "$WORK/reviewer" --harness opencode \
   --name reviewer \
   --description "Code review agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \
@@ -395,40 +398,40 @@ a2a serve opencode --dir "$WORK/reviewer" \
   --private "$RELAY" \
   --public "$RELAY" \
   --relay-token env:RELAY_TOKEN \
-  "${SECRET_ARGS[@]}" \
-  --quiet \
-  --detach
+  "${SECRET_ARGS[@]}"
+a2a-serve start --dir "$WORK/reviewer" --quiet --detach
 
 echo "--- coder status ---"
-a2a serve status --dir "$WORK/coder"
+a2a-serve status --dir "$WORK/coder"
 echo "--- coder doctor --online ---"
-a2a serve doctor --online --dir "$WORK/coder"
+a2a-serve doctor --online --dir "$WORK/coder"
 echo "--- reviewer status ---"
-a2a serve status --dir "$WORK/reviewer"
+a2a-serve status --dir "$WORK/reviewer"
 echo "--- in-process sdk/meshnet state files (no agentmesh-node sidecar) ---"
 ls -1 "$WORK/coder/.a2a/state/agentmesh"
 echo "--- running Docker sandboxes ---"
 docker ps --filter "label=a2a.agent" --format "table {{.Names}}\t{{.Image}}\t{{.Status}}"
 
-CODER_LOCAL="$(a2a serve url --dir "$WORK/coder" --local)"
-CODER_PUBLIC="$(a2a serve url --dir "$WORK/coder" --public)"
+CODER_LOCAL="$(a2a-serve status --dir "$WORK/coder" --url=local)"
+CODER_PUBLIC="$(a2a-serve status --dir "$WORK/coder" --url=public)"
 
 banner "3. Discovering reviewer over the Agent Mesh DHT & delegating a live LLM task (coder -> reviewer)"
-for _ in $(seq 1 30); do
-  PEERS_OUT="$(a2a serve peers --dir "$WORK/coder")"
+# A new agent can take half a minute to show up in the DHT.
+for _ in $(seq 1 120); do
+  PEERS_OUT="$(a2a-serve peers --dir "$WORK/coder")"
   if grep -q "reviewer" <<<"$PEERS_OUT"; then
     break
   fi
-  sleep 0.5
+  sleep 1
 done
 echo "$PEERS_OUT"
 grep -q "reviewer" <<<"$PEERS_OUT"
 
-INVITE_OUT="$(a2a serve pair invite coder --dir "$WORK/reviewer" -o json)"
+INVITE_OUT="$(a2a-serve pair invite coder --dir "$WORK/reviewer" -o json)"
 REVIEWER_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])' <<<"$INVITE_OUT")"
 
-a2a serve contact add reviewer --dir "$WORK/coder" --code "$REVIEWER_CODE"
-a2a serve contact list --dir "$WORK/coder"
+a2a-serve contact add reviewer --dir "$WORK/coder" --code "$REVIEWER_CODE"
+a2a-serve contact list --dir "$WORK/coder"
 
 echo "Expected token inside reviewer container NOTE.txt: ${REVIEW_TOKEN}"
 DELEGATED_REPLY="$(a2a send -a "$CODER_LOCAL" \
@@ -436,7 +439,7 @@ DELEGATED_REPLY="$(a2a send -a "$CODER_LOCAL" \
 echo "coder reply: $DELEGATED_REPLY"
 grep -Fq "$REVIEW_TOKEN" <<<"$DELEGATED_REPLY"
 
-banner "4. Calling coder from outside the relay via public /ingress/ URL (a2a serve tokens add)"
+banner "4. Calling coder from outside the relay via public /ingress/ URL (a2a-serve pair join)"
 echo "Public A2A URL: $CODER_PUBLIC"
 echo "--- Public AgentCard (rewritten to /ingress/<peer_id>/a2a/coder) ---"
 CARD_OUT="$(HOME="$EXTERNAL_HOME" a2a card get -a "$CODER_PUBLIC")"
@@ -450,18 +453,18 @@ if HOME="$EXTERNAL_HOME" a2a send -a "$CODER_PUBLIC" "hello" >/dev/null 2>&1; th
 fi
 echo "Unauthenticated external call rejected as expected."
 
-EXT_INVITE="$(a2a serve pair invite external --dir "$WORK/coder" -o json)"
+EXT_INVITE="$(a2a-serve pair invite external --dir "$WORK/coder" -o json)"
 EXT_CODE="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["code"])' <<<"$EXT_INVITE")"
 
-HOME="$EXTERNAL_HOME" a2a serve tokens add "$CODER_PUBLIC" "$EXT_CODE"
+HOME="$EXTERNAL_HOME" a2a-serve pair join "$CODER_PUBLIC" "$EXT_CODE"
 echo "Expected token inside reviewer container PUBLIC_CHECK.txt: ${EXT_TOKEN}"
 EXT_REPLY="$(HOME="$EXTERNAL_HOME" a2a send -a "$CODER_PUBLIC" \
   "Ask the reviewer agent synchronously (without --async) to read PUBLIC_CHECK.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
 echo "public ingress -> coder -> reviewer reply: $EXT_REPLY"
 grep -Fq "$EXT_TOKEN" <<<"$EXT_REPLY"
 
-a2a serve stop --dir "$WORK/coder" >/dev/null
-a2a serve stop --dir "$WORK/reviewer" >/dev/null
+a2a-serve stop --dir "$WORK/coder" >/dev/null
+a2a-serve stop --dir "$WORK/reviewer" >/dev/null
 kill "$HUB_PID" >/dev/null 2>&1 || true
 wait "$HUB_PID" 2>/dev/null || true
 unset HUB_PID RELAY_TOKEN
@@ -685,7 +688,7 @@ approve_device_signin() {
 banner "6. Signing in oidc-coder & oidc-reviewer as Ben@example.com (no --relay-token) & delegating without pairing code"
 approve_device_signin "$WORK/oidc-coder" &
 SIGNIN_PID=$!
-a2a serve opencode --dir "$WORK/oidc-coder" \
+a2a-serve start opencode --dir "$WORK/oidc-coder" \
   --name oidc-coder \
   --description "OIDC-authenticated coding agent" \
   "${IMAGE_ARGS[@]}" \
@@ -700,7 +703,7 @@ unset SIGNIN_PID
 
 approve_device_signin "$WORK/oidc-reviewer" &
 SIGNIN_PID=$!
-a2a serve opencode --dir "$WORK/oidc-reviewer" \
+a2a-serve start opencode --dir "$WORK/oidc-reviewer" \
   --name oidc-reviewer \
   --description "OIDC-authenticated review agent" \
   "${IMAGE_ARGS[@]}" \
@@ -718,21 +721,21 @@ cat "$WORK/oidc-coder/.a2a/state/agentmesh/owner.json"
 echo
 grep -Fq '"ben@example.com"' "$WORK/oidc-coder/.a2a/state/agentmesh/owner.json"
 
-for _ in $(seq 1 30); do
-  OIDC_PEERS="$(a2a serve peers --dir "$WORK/oidc-coder")"
+for _ in $(seq 1 120); do
+  OIDC_PEERS="$(a2a-serve peers --dir "$WORK/oidc-coder")"
   if grep -q "oidc-reviewer" <<<"$OIDC_PEERS"; then
     break
   fi
-  sleep 0.5
+  sleep 1
 done
 echo "$OIDC_PEERS"
 grep -q "oidc-reviewer" <<<"$OIDC_PEERS"
 
 echo "--- Adding oidc-reviewer contact WITHOUT --code (same-owner OIDC Biscuit identity) ---"
-a2a serve contact add oidc-reviewer --dir "$WORK/oidc-coder"
-a2a serve contact list --dir "$WORK/oidc-coder"
+a2a-serve contact add oidc-reviewer --dir "$WORK/oidc-coder"
+a2a-serve contact list --dir "$WORK/oidc-coder"
 
-OIDC_CODER_LOCAL="$(a2a serve url --dir "$WORK/oidc-coder" --local)"
+OIDC_CODER_LOCAL="$(a2a-serve status --dir "$WORK/oidc-coder" --url=local)"
 echo "Expected token inside oidc-reviewer container OIDC_NOTE.txt: ${OIDC_TOKEN}"
 OIDC_REPLY="$(a2a send -a "$OIDC_CODER_LOCAL" \
   "Ask the oidc-reviewer agent synchronously (without --async) to read OIDC_NOTE.txt in its current working directory and return the exact token inside, then reply with that exact token.")"
@@ -740,7 +743,7 @@ echo "oidc-coder -> oidc-reviewer reply: $OIDC_REPLY"
 grep -Fq "$OIDC_TOKEN" <<<"$OIDC_REPLY"
 
 echo "--- Restarting oidc-coder to verify stored Biscuit + owner.json reuse (no second sign-in) ---"
-a2a serve restart --dir "$WORK/oidc-coder"
-a2a serve status --dir "$WORK/oidc-coder"
+a2a-serve restart --dir "$WORK/oidc-coder"
+a2a-serve status --dir "$WORK/oidc-coder"
 
 banner "ALL REAL E2E CHECKS PASSED (Token Join + Cloudflare Public Ingress + OIDC Device Sign-In + Same-Owner Zero-Code Delegation)"

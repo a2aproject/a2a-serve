@@ -37,11 +37,11 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
 
-	info, err := ctl.AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "0 7 * * 1-5", TZ: "Europe/Zurich", Prompt: "brief me", Deliver: "fake"})
+	info, err := ctl.AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "0 7 * * 1-5", TZ: "Europe/Zurich", Prompt: "brief me", Chat: "fake"})
 	if err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
-	if info.User != auth.OwnerID || info.Deliver != "fake:owner" || info.NextRun.IsZero() {
+	if info.User != auth.OwnerID || info.Chat != "fake:owner" || info.NextRun.IsZero() {
 		t.Fatalf("AddSchedule() = %+v, want a schedule of the owner shown on fake", info)
 	}
 	if _, err := ctl.RunSchedule(ctx, "brief"); err != nil {
@@ -78,7 +78,7 @@ func TestAddScheduleErrors(t *testing.T) {
 		{name: "existing name", req: schedule.Request{Name: "taken", Cron: "@daily", Prompt: "x"}},
 		{name: "time passed", req: schedule.Request{Name: "late", At: "2020-01-01 10:00", Prompt: "x"}},
 		{name: "unknown user", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", As: "nobody"}},
-		{name: "no chat on the channel", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", Deliver: "telegram"}},
+		{name: "no chat on the channel", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", Chat: "telegram"}},
 		{name: "invalid cron", req: schedule.Request{Name: "x", Cron: "every day", Prompt: "x"}},
 	}
 	for _, tc := range tests {
@@ -135,7 +135,7 @@ func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Schedule(mine) error = %v", err)
 	}
-	if mine.UserID != "pair:anna" || mine.Conversation != schedule.ConversationSame || mine.ContextID == "" {
+	if mine.UserID != "pair:anna" || mine.Conversation != schedule.ThreadSame || mine.ContextID == "" {
 		t.Fatalf("Schedule(mine) = %+v, want it to run as anna in her conversation", mine)
 	}
 	if _, err := ts.srv.store.Schedule(ctx, "brief"); err != nil {
@@ -167,7 +167,7 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 	}
 	missed := time.Now().Add(-time.Hour)
 	if err := st.AddSchedule(context.Background(), store.Schedule{
-		Name: "hourly", Cron: "@hourly", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ConversationNew,
+		Name: "hourly", Cron: "@hourly", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
 		CreatedBy: auth.OwnerID, NextRun: missed,
 	}); err != nil {
 		t.Fatal(err)

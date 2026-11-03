@@ -66,7 +66,7 @@ func TestRequestValidate(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "cron", req: Request{Name: "morning-brief", Cron: "0 7 * * 1-5", TZ: "Europe/Zurich", Prompt: "Summarize today's meetings."}},
-		{name: "at", req: Request{Name: "friday", At: "2026-11-06 17:00", Prompt: "Remind me.", Conversation: ConversationSame}},
+		{name: "at", req: Request{Name: "friday", At: "2026-11-06 17:00", Prompt: "Remind me.", Thread: ThreadSame}},
 		{name: "at in RFC 3339", req: Request{Name: "friday", At: "2026-11-06T17:00:00+01:00", Prompt: "Remind me."}},
 		{name: "invalid name", req: Request{Name: "Morning Brief", Cron: "@daily", Prompt: "x"}, wantErr: true},
 		{name: "no prompt", req: Request{Name: "x", Cron: "@daily"}, wantErr: true},
@@ -76,7 +76,7 @@ func TestRequestValidate(t *testing.T) {
 		{name: "time zone in cron", req: Request{Name: "x", Cron: "CRON_TZ=UTC 0 7 * * *", Prompt: "x"}, wantErr: true},
 		{name: "invalid at", req: Request{Name: "x", At: "friday at 5", Prompt: "x"}, wantErr: true},
 		{name: "unknown time zone", req: Request{Name: "x", Cron: "@daily", TZ: "Mars/Olympus", Prompt: "x"}, wantErr: true},
-		{name: "invalid conversation", req: Request{Name: "x", Cron: "@daily", Prompt: "x", Conversation: "old"}, wantErr: true},
+		{name: "invalid thread", req: Request{Name: "x", Cron: "@daily", Prompt: "x", Thread: "old"}, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

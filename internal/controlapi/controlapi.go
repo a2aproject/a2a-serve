@@ -58,6 +58,9 @@ type Status struct {
 	Owners      []string        `json:"owners,omitempty"`
 	Contacts    int             `json:"contacts"`
 	Nodes       int             `json:"nodes"`
+	// Approvals counts the approvals waiting for an answer, which owners can
+	// give in the inspector.
+	Approvals int `json:"approvals"`
 	// MCPServers and Skills are what the project brings for the harness.
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`
@@ -101,12 +104,12 @@ func (s *Status) URL(scope string) (string, error) {
 		return s.Local, nil
 	case ScopePrivate:
 		if s.Private == "" {
-			return "", fmt.Errorf("%s has no private URL; add one with `a2a serve config set --private tailscale` (or lan), then `a2a serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`", s.Name)
 		}
 		return s.Private, nil
 	case ScopePublic:
 		if s.Public == "" {
-			return "", fmt.Errorf("%s has no public URL; add one with `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`", s.Name)
 		}
 		return s.Public, nil
 	}
@@ -134,10 +137,11 @@ type ChannelStatus struct {
 	Error string `json:"error,omitempty"`
 }
 
-// PairCodeRequest asks for a pairing code.
+// PairCodeRequest asks for a pairing code, for a new pairing or another
+// device or account of an existing one.
 //
-// With Webhook, Name is a webhook node, created or updated. A Name which
-// already is a node gets a new node code.
+// With Webhook, Name is a new webhook node. A Name which already is a node
+// gets a new node code.
 type PairCodeRequest struct {
 	Name        string            `json:"name"`
 	Role        string            `json:"role,omitempty"`
@@ -167,6 +171,70 @@ type PairCodeResponse struct {
 	Instructions string `json:"instructions,omitempty"`
 }
 
+// Pairing describes a caller or a webhook node paired with the agent.
+type Pairing struct {
+	Name string `json:"name"`
+	// Kind is [pairapi.KindCaller] or [pairapi.KindNode].
+	Kind string `json:"kind"`
+	// Role is member or owner, for callers.
+	Role      string          `json:"role,omitempty"`
+	Principal string          `json:"principal"`
+	Created   time.Time       `json:"created,omitzero"`
+	LastUsed  time.Time       `json:"lastUsed,omitzero"`
+	Tokens    []PairingToken  `json:"tokens"`
+	Accounts  []LinkedAccount `json:"accounts"`
+	// PendingCodes are the expiry times of the codes not used yet. Codes
+	// are stored hashed, so they can't be shown again.
+	PendingCodes []time.Time  `json:"pendingCodes"`
+	Node         *NodeDetails `json:"node,omitempty"`
+}
+
+// PairingToken describes a token issued to a pairing.
+type PairingToken struct {
+	URL      string    `json:"url"`
+	Created  time.Time `json:"created"`
+	LastUsed time.Time `json:"lastUsed,omitzero"`
+}
+
+// LinkedAccount is a messenger account linked to a pairing.
+type LinkedAccount struct {
+	Channel string `json:"channel"`
+	Account string `json:"account"`
+}
+
+// NodeDetails describe the webhook of a node pairing and its mailbox.
+type NodeDetails struct {
+	URL         string `json:"url"`
+	Webhook     string `json:"webhook"`
+	Description string `json:"description,omitempty"`
+	// HeaderNames are the names of the headers sent with every wake.
+	HeaderNames []string `json:"headerNames,omitempty"`
+	Advertised  bool     `json:"advertised"`
+	Paired      bool     `json:"paired"`
+	// Waiting counts the wakes not delivered yet, and Open the tasks
+	// waiting for a reply. Both are zero while the agent is stopped.
+	Waiting int `json:"waiting"`
+	Open    int `json:"open"`
+}
+
+// PairingUpdate changes a pairing in place. Unset fields are kept.
+type PairingUpdate struct {
+	Role        string            `json:"role,omitempty"`
+	Webhook     string            `json:"webhook,omitempty"`
+	Headers     map[string]string `json:"headers,omitempty"`
+	Description *string           `json:"description,omitempty"`
+	Advertised  *bool             `json:"advertised,omitempty"`
+	// Rotate revokes every token of the pairing and issues a new code.
+	Rotate bool `json:"rotate,omitempty"`
+}
+
+// PairingUpdateResponse is the changed pairing, and the new code of a
+// rotation.
+type PairingUpdateResponse struct {
+	Pairing Pairing           `json:"pairing"`
+	Code    *PairCodeResponse `json:"code,omitempty"`
+}
+
 // RevokeResponse tells what `pair rm` removed.
 type RevokeResponse struct {
 	// Kind is [pairapi.KindCaller] or [pairapi.KindNode].
@@ -179,16 +247,6 @@ type Peer struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Online      bool   `json:"online"`
-}
-
-// TokenInfo describes an issued token.
-type TokenInfo struct {
-	Name      string    `json:"name"`
-	Principal string    `json:"principal"`
-	Roles     []string  `json:"roles"`
-	URL       string    `json:"url"`
-	Created   time.Time `json:"created"`
-	LastUsed  time.Time `json:"lastUsed,omitzero"`
 }
 
 // ContactRequest adds a contact. Without URL, the contact is looked up by
@@ -232,7 +290,7 @@ type NodeInfo struct {
 
 // PairCommand is the command a caller or a node runs to pair with code.
 func PairCommand(agentURL, code string) string {
-	return fmt.Sprintf("a2a serve tokens add %s %s", agentURL, code)
+	return fmt.Sprintf("a2a-serve pair join %s %s", agentURL, code)
 }
 
 // NodeInstructions is the message which tells the agent behind webhook node
@@ -257,7 +315,7 @@ func NotRunning(name string) error { return &notRunningError{name: name} }
 type notRunningError struct{ name string }
 
 func (e *notRunningError) Error() string {
-	return e.name + " is not running; start it with `a2a serve --detach`"
+	return e.name + " is not running; start it with `a2a-serve start --detach`"
 }
 
 func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
@@ -265,9 +323,18 @@ func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning
 // NotRunning marks the error for the CLI's exit code.
 func (e *notRunningError) NotRunning() bool { return true }
 
+// requestError is a request the server refused because of what it names,
+// such as a pairing which doesn't exist.
+type requestError struct{ msg string }
+
+func (e *requestError) Error() string { return e.msg }
+
+// UsageError marks the error for the CLI's exit code.
+func (e *requestError) UsageError() bool { return true }
+
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
-var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a serve restart`")
+var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a-serve restart`")
 
 // ReloadResponse lists the settings a server applied from config.yaml.
 type ReloadResponse struct {
@@ -355,7 +422,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return ErrUnsupported
 	}
 	if resp.StatusCode/100 != 2 {
-		return errors.New(jsonhttp.ErrorMessage(resp.Status, data))
+		msg := jsonhttp.ErrorMessage(resp.Status, data)
+		switch resp.StatusCode {
+		case http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
+			return &requestError{msg: msg}
+		}
+		return errors.New(msg)
 	}
 	if out == nil {
 		return nil
@@ -394,17 +466,29 @@ func (c *Client) Pair(ctx context.Context, req PairCodeRequest) (*PairCodeRespon
 	return &out, c.do(ctx, http.MethodPost, "/pair", req, &out)
 }
 
-// Tokens lists issued tokens.
-func (c *Client) Tokens(ctx context.Context) ([]TokenInfo, error) {
-	var out []TokenInfo
-	return out, c.do(ctx, http.MethodGet, "/tokens", nil, &out)
-}
-
 // Revoke removes the webhook node called name, or revokes the tokens and
 // links issued under it.
 func (c *Client) Revoke(ctx context.Context, name string) (*RevokeResponse, error) {
 	var out RevokeResponse
 	return &out, c.do(ctx, http.MethodDelete, "/pair/"+url.PathEscape(name), nil, &out)
+}
+
+// Pairings lists the callers and webhook nodes paired with the agent.
+func (c *Client) Pairings(ctx context.Context) ([]Pairing, error) {
+	var out []Pairing
+	return out, c.do(ctx, http.MethodGet, "/pairings", nil, &out)
+}
+
+// Pairing describes the pairing called name.
+func (c *Client) Pairing(ctx context.Context, name string) (*Pairing, error) {
+	var out Pairing
+	return &out, c.do(ctx, http.MethodGet, "/pairings/"+url.PathEscape(name), nil, &out)
+}
+
+// UpdatePairing changes the pairing called name.
+func (c *Client) UpdatePairing(ctx context.Context, name string, req PairingUpdate) (*PairingUpdateResponse, error) {
+	var out PairingUpdateResponse
+	return &out, c.do(ctx, http.MethodPatch, "/pairings/"+url.PathEscape(name), req, &out)
 }
 
 // Peers lists agents found on the private network.
@@ -441,12 +525,6 @@ func (c *Client) DeleteChannel(ctx context.Context, kind string) error {
 	return c.do(ctx, http.MethodDelete, "/channels/"+url.PathEscape(kind), nil, nil)
 }
 
-// Nodes lists webhook nodes.
-func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
-	var out []NodeInfo
-	return out, c.do(ctx, http.MethodGet, "/nodes", nil, &out)
-}
-
 // ScheduleInfo describes a schedule.
 type ScheduleInfo struct {
 	Name   string    `json:"name"`
@@ -456,13 +534,13 @@ type ScheduleInfo struct {
 	Prompt string    `json:"prompt"`
 	// User is the principal the runs are for.
 	User string `json:"user"`
-	// Deliver is the chat the runs are shown in, <channel>:<who>.
-	Deliver      string    `json:"deliver,omitempty"`
-	Conversation string    `json:"conversation"`
-	CreatedBy    string    `json:"createdBy"`
-	NextRun      time.Time `json:"nextRun,omitzero"`
-	LastRun      time.Time `json:"lastRun,omitzero"`
-	LastError    string    `json:"lastError,omitempty"`
+	// Chat is the chat the runs are shown in, <channel>:<who>.
+	Chat      string    `json:"chat,omitempty"`
+	Thread    string    `json:"thread"`
+	CreatedBy string    `json:"createdBy"`
+	NextRun   time.Time `json:"nextRun,omitzero"`
+	LastRun   time.Time `json:"lastRun,omitzero"`
+	LastError string    `json:"lastError,omitempty"`
 }
 
 // Schedules lists the schedules.

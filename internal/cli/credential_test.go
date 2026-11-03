@@ -38,7 +38,7 @@ func credentialGet(t *testing.T, creds *credstore.Store, stdin string) (credenti
 	root := newRootCmd(cfg)
 	root.SetIn(strings.NewReader(stdin))
 	root.SetOut(&out)
-	root.SetArgs([]string{pluginName, "credential", "get"})
+	root.SetArgs([]string{"credential", "get"})
 	if err := root.Execute(); err != nil {
 		return credentialResponse{}, err
 	}
@@ -92,10 +92,10 @@ func TestCredentialGet(t *testing.T) {
 			t.Parallel()
 			got, err := credentialGet(t, creds, tc.stdin)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("a2a serve credential get error = %v, want error %v", err, tc.wantErr)
+				t.Fatalf("a2a-serve credential get error = %v, want error %v", err, tc.wantErr)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("a2a serve credential get wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("a2a-serve credential get wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -109,21 +109,19 @@ func TestCredentialGetNodeTokenFromEnv(t *testing.T) {
 		token string
 	}{
 		{name: "node token", env: mailboxapi.EnvNodeToken, token: mailboxapi.NewNodeToken(mailboxapi.APIBase("https://agent.example.com"), "grok", "secret")},
-		{name: "legacy relay token", env: mailboxapi.LegacyEnvNodeToken, token: mailboxapi.NewNodeToken("https://agent.example.com/relay", "grok", "secret")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(mailboxapi.EnvNodeToken, "")
-			t.Setenv(mailboxapi.LegacyEnvNodeToken, "")
 			t.Setenv(tc.env, tc.token)
 			creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 			got, err := credentialGet(t, creds, `{"uri": "https://agent.example.com"}`)
 			if err != nil {
-				t.Fatalf("a2a serve credential get error = %v", err)
+				t.Fatalf("a2a-serve credential get error = %v", err)
 			}
 			want := credentialResponse{Headers: map[string][]string{"Authorization": {"Bearer " + tc.token}}}
 			if diff := cmp.Diff(want, got); diff != "" {
-				t.Fatalf("a2a serve credential get wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("a2a-serve credential get wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

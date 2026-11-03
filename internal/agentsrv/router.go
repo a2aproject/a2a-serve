@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -43,6 +44,8 @@ type Router struct {
 	approvals *approvals.Service
 	bus       *eventBus
 	agentName func() string
+	// ownerChat returns the --owner-chat setting.
+	ownerChat func() string
 	logf      func(format string, args ...any)
 	// handler is the agent's A2A handler. It is set before the router starts.
 	handler a2asrv.RequestHandler
@@ -54,6 +57,9 @@ type Router struct {
 	mu    sync.Mutex
 	chans map[string]*runningChannel
 	convs map[string][]*convTicket
+	// unattended are the contexts of turns posted with no conversation,
+	// whose tasks nobody watches.
+	unattended map[string]bool
 }
 
 type runningChannel struct {
@@ -369,7 +375,7 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	}
 	if !ok {
 		if in.Direct && in.Authentic {
-			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a serve pair invite <you>`), then send: link <code>")
+			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a-serve pair invite <you>`), then send: join <code>")
 		}
 		return
 	}
@@ -529,25 +535,6 @@ func (r *Router) restorePending(ctx context.Context, in channel.Inbound, questio
 	}
 }
 
-// follow renders the rest of a task which continues after someone else
-// answered its question.
-func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID) {
-	events, unsubscribe := r.bus.subscribe(taskID)
-	go func() {
-		defer unsubscribe()
-		rd := newRenderer(r, ch, conv, channel.Ref{}, p)
-		rd.following = true
-		timeout := time.NewTimer(25 * time.Hour)
-		defer timeout.Stop()
-		for {
-			ev, ok := events.next(ctx, timeout.C)
-			if !ok || rd.onEvent(ctx, ev) {
-				return
-			}
-		}
-	}()
-}
-
 // handleAction answers a question from a button click.
 func (r *Router) handleAction(ctx context.Context, ch channel.Channel, in channel.Inbound) {
 	rec, err := r.store.QuestionByID(ctx, in.Action.QuestionID)
@@ -599,8 +586,8 @@ func (r *Router) typedAnswer(ctx context.Context, in channel.Inbound) (store.Que
 // answerIn answers a question from a conversation. If the question belongs
 // to the task of this conversation, the rest of the task is rendered here.
 func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.Inbound, p auth.Principal, rec store.Question, q *approvals.Question, opt approvals.Option) {
-	if q.Type == approvals.TypePermission && !r.approvals.CanApprove(ctx, p) {
-		r.reply(ctx, ch, in, "Only the owner or an approver can answer this.")
+	if q.Type == approvals.TypePermission && !r.approvals.MayAnswer(ctx, p, rec.User) {
+		r.reply(ctx, ch, in, "Only the person who started the task or an owner can answer this.")
 		return
 	}
 	if err := r.store.ClearPendingQuestion(ctx, in.Channel, string(in.Conv)); err != nil {
@@ -613,6 +600,14 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 	own, err := r.store.ContextOf(ctx, in.Channel, string(in.Conv))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("resolving conversation context", "error", err)
+	}
+	if rec.Contact == "" && rec.ContextID == own && r.convBusy(in.Channel, in.Conv) {
+		// A turn queued behind the task holds the conversation, so the rest
+		// of the task is rendered without it.
+		r.follow(ctx, ch, in.Conv, p, a2a.TaskID(rec.TaskID), func() error { return r.approvals.Answer(ctx, rec, p, opt) }, func(err error) {
+			r.answered(ctx, ch, in, rec, opt, who, err)
+		})
+		return
 	}
 	if rec.Contact == "" && rec.ContextID == own {
 		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
@@ -633,7 +628,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 		unlock := r.lockConv(in.Channel, in.Conv)
 		defer unlock()
 		answered := false
-		r.streamThen(ctx, ch, in.Conv, channel.Ref{}, r.approvals.AnswerAs(ctx, p), &a2a.SendMessageRequest{Message: msg}, func(err error) {
+		r.streamThen(ctx, ch, in.Conv, channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg}, func(err error) {
 			if err == nil {
 				answered = true
 				r.MarkAnswered(ctx, rec.ID, opt.Label, who)
@@ -648,16 +643,51 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 		}
 		return
 	}
-	if err := r.approvals.Answer(ctx, rec, p, opt); err != nil {
-		if errors.Is(err, store.ErrAnswered) {
-			r.reply(ctx, ch, in, "Already answered.")
-			return
-		}
+	r.answered(ctx, ch, in, rec, opt, who, r.approvals.Answer(ctx, rec, p, opt))
+}
+
+// answered reports the result of answering a question in a conversation.
+func (r *Router) answered(ctx context.Context, ch channel.Channel, in channel.Inbound, rec store.Question, opt approvals.Option, who string, err error) {
+	switch {
+	case errors.Is(err, store.ErrAnswered):
+		r.reply(ctx, ch, in, "Already answered.")
+	case err != nil:
 		r.restorePending(ctx, in, rec.ID)
 		r.reply(ctx, ch, in, "Couldn't send the answer: "+err.Error())
+	default:
+		r.MarkAnswered(ctx, rec.ID, opt.Label, who)
+	}
+}
+
+// convBusy reports whether a turn holds or waits for the conversation.
+func (r *Router) convBusy(ch string, conv channel.ConvKey) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return len(r.convs[ch+"\x00"+string(conv)]) > 0
+}
+
+// follow renders the rest of a task in a conversation after answer
+// delivers an answer to it, and calls done with answer's result.
+func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID, answer func() error, done func(error)) {
+	events, unsubscribe := r.bus.subscribe(taskID)
+	err := answer()
+	done(err)
+	if err != nil {
+		unsubscribe()
 		return
 	}
-	r.MarkAnswered(ctx, rec.ID, opt.Label, who)
+	go func() {
+		defer unsubscribe()
+		rd := newRenderer(r, ch, conv, channel.Ref{}, p)
+		timeout := time.NewTimer(25 * time.Hour)
+		defer timeout.Stop()
+		for {
+			ev, ok := events.next(ctx, timeout.C)
+			if !ok || rd.onEvent(ctx, ev) {
+				return
+			}
+		}
+	}()
 }
 
 // MarkAnswered replaces the buttons of a question with who answered it.
@@ -680,46 +710,97 @@ func (r *Router) MarkAnswered(ctx context.Context, questionID, label, who string
 	}
 }
 
-// Ask sends a question to users on their direct conversations, or to one
-// preferred conversation if given.
-func (r *Router) Ask(ctx context.Context, userIDs []string, prefChannel string, prefConv channel.ConvKey, header string, rec store.Question) {
+// Ask sends a question to a chat.
+func (r *Router) Ask(ctx context.Context, to approvals.Chat, header string, rec store.Question) {
+	ch := r.channel(to.Channel)
+	if ch == nil || to.Conv == "" {
+		slog.Warn("sending question: no such chat", "channel", to.Channel, "question", rec.ID)
+		return
+	}
 	q := approvals.FromRecord(rec)
 	text := header + ":\n" + q.Display()
-	type target struct {
-		ch   channel.Channel
-		conv channel.ConvKey
-	}
-	var targets []target
-	if ch := r.channel(prefChannel); ch != nil && prefConv != "" {
-		targets = append(targets, target{ch, prefConv})
+	out := channel.Outbound{Conv: to.Conv, Text: text, Subject: header}
+	if ch.Caps().Buttons {
+		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		for _, id := range userIDs {
-			links, err := r.store.LinksOf(ctx, id)
-			if err != nil {
-				slog.Error("listing links", "error", err)
-				continue
-			}
-			for _, l := range links {
-				if ch := r.channel(l.Channel); ch != nil && l.Conv != "" {
-					targets = append(targets, target{ch, channel.ConvKey(l.Conv)})
-				}
-			}
-		}
+		out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), r.approvals.PageURL(rec))
 	}
-	for _, t := range targets {
-		out := channel.Outbound{Conv: t.conv, Text: text, Subject: header}
-		if t.ch.Caps().Buttons {
-			out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
-		} else {
-			out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), r.approvals.PageURL(rec))
-		}
-		ref, err := t.ch.Send(ctx, out)
+	ref, err := ch.Send(ctx, out)
+	if err != nil {
+		slog.Warn("sending question", "channel", ch.Name(), "error", err)
+		return
+	}
+	r.remember(ctx, rec.ID, ch.Name(), to.Conv, ref, text)
+}
+
+// ownerChatOrder is the order in which, without --owner-chat, the
+// messengers are tried for the owner chat.
+var ownerChatOrder = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
+
+// OwnerChat returns the chat of --owner-chat, or else the direct chat of an
+// owner on the first running messenger, in ownerChatOrder.
+func (r *Router) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
+	if v := r.ownerChat(); v != "" {
+		chName, who, _ := strings.Cut(v, ":")
+		c, err := r.directChat(ctx, chName, who)
 		if err != nil {
-			slog.Warn("sending question", "channel", t.ch.Name(), "error", err)
-			continue
+			slog.Warn("the owner chat is unavailable", "owner-chat", v, "error", err)
+			return approvals.Chat{}, false
 		}
-		r.remember(ctx, rec.ID, t.ch.Name(), t.conv, ref, text)
+		return c, true
 	}
+	for _, chName := range ownerChatOrder {
+		if c, err := r.directChat(ctx, chName, ""); err == nil {
+			return c, true
+		}
+	}
+	return approvals.Chat{}, false
+}
+
+// directChat returns the direct chat on a running channel of an owner: the
+// owner pairing who, or any owner if who is empty or "owner". Only owners
+// can answer the questions sent there.
+func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.Chat, error) {
+	if r.channel(chName) == nil {
+		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
+	}
+	if who == "" || who == "owner" || who == auth.OwnerID {
+		conv, err := manage.DirectConv(ctx, r.store, chName, auth.OwnerID)
+		if err != nil {
+			return approvals.Chat{}, err
+		}
+		return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
+	}
+	named, err := r.store.NamedLinks(ctx)
+	if err != nil {
+		return approvals.Chat{}, err
+	}
+	for _, l := range named[who] {
+		if l.UserID != auth.OwnerID {
+			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a-serve pair set %s --role owner`", who, who)
+		}
+		if l.Channel == chName && l.Conv != "" {
+			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(l.Conv)}, nil
+		}
+	}
+	return approvals.Chat{}, fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite %s`", who, chName, who)
+}
+
+// Unattended reports whether a turn was posted to the context with no
+// conversation, so that nobody watches its tasks.
+func (r *Router) Unattended(contextID string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.unattended[contextID]
+}
+
+func (r *Router) setUnattended(contextID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.unattended == nil {
+		r.unattended = map[string]bool{}
+	}
+	r.unattended[contextID] = true
 }
 
 // remember records a message which shows a question, so that it can be
@@ -755,6 +836,7 @@ func (r *Router) injectTurn(ctx context.Context, contextID string, p auth.Princi
 					}
 					continue
 				}
+				r.setUnattended(contextID)
 				if _, err := r.handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}}); err != nil {
 					slog.Error("posting a turn", "context", contextID, "error", err)
 				}

@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -24,17 +25,18 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List contacts",
 		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			cs, err := c.Contacts(cmd.Context())
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(cs)
+				return output.PrintList(cfg.Printer, cs)
 			}
 			rows := make([][]string, 0, len(cs))
 			for _, x := range cs {
@@ -44,7 +46,7 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{x.Name, x.URL, x.Via, auth})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a serve contact add <name>`")
+			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`")
 		},
 	}
 }

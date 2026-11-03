@@ -16,7 +16,6 @@ package cli
 
 import (
 	"fmt"
-	"io"
 	"os"
 	"slices"
 	"strings"
@@ -24,127 +23,136 @@ import (
 	"github.com/google/shlex"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
-	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
-// settingsFlags are the agent settings shared by `a2a serve <harness>` and
-// `a2a serve config set`, so both speak one vocabulary.
+// settingsFlags are the agent settings shared by `a2a-serve start <harness>` and
+// `a2a-serve config set`, so both speak one vocabulary.
 type settingsFlags struct {
 	s       agentdir.Settings
-	email   agentdir.EmailSettings
 	command string
 }
 
-// stdinSecret is the value of a secret-valued flag which reads the secret
-// from a prompt or stdin, keeping it out of the shell history.
-const stdinSecret = "-"
+// settingsSet selects the settings flags a command takes.
+type settingsSet int
 
-func (sf *settingsFlags) register(cmd *cobra.Command, withHarness bool) {
+const (
+	// coreSettings are the flags of `start <harness>` and `config set`.
+	coreSettings settingsSet = 1 << iota
+	// operationalSettings are the flags of `config set` only: limits,
+	// network-provider options, backups and Google sign-in.
+	operationalSettings
+	// harnessSetting is --harness, which `start` takes as its argument.
+	harnessSetting
+)
+
+// secretUsage is the help of a flag which takes a secret value.
+func secretUsage(usage string) string {
+	return usage + " (" + secretref.Syntax + ")"
+}
+
+// listUsage labels the help of a list flag. split says whether commas also
+// separate values.
+func listUsage(usage string, split bool) string {
+	if split {
+		return usage + " (repeatable; commas also separate values)"
+	}
+	return usage + " (repeatable)"
+}
+
+func (sf *settingsFlags) register(cmd *cobra.Command, sets settingsSet) {
 	f := cmd.Flags()
 	s := &sf.s
-	if withHarness {
+	if sets&harnessSetting != 0 {
 		f.StringVar(&s.Harness, "harness", "", "Harness: claude, opencode, or acp with --command")
 		must(cmd.RegisterFlagCompletionFunc("harness", fixedCompletions(append(slices.Clone(agentdir.Harnesses), agentdir.HarnessACP)...)))
+		setSection(f, sectionGeneral, "harness")
+	}
+	if sets&coreSettings != 0 {
+		sf.registerCore(cmd)
+	}
+	if sets&operationalSettings != 0 {
+		sf.registerOperational(cmd)
+	}
+}
+
+func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
+	f := cmd.Flags()
+	s := &sf.s
+	commandUsage := "Command line of the harness, as shell `words`, such as \"cloudcode acp\"; replaces the harness's default command"
+	if cmd.Name() == agentdir.HarnessACP {
+		commandUsage = "Command line of the ACP agent, as shell `words`, such as \"gemini --experimental-acp\""
 	}
 	f.StringVar(&s.Name, "name", "", "Agent name, also its tailnet machine name (default: the directory name)")
 	f.StringVar(&s.Description, "description", "", "Agent description for its card")
-	f.StringArrayVar(&s.Secrets, "secret", nil, "Environment variable passed to the harness, such as an API key; its value is stored in .a2a/state/secrets (repeatable)")
-	f.StringVar(&s.Workspace, "workspace", "", "Workspace directory: src[:dst][:ro] (default: the directory holding .a2a)")
-	f.StringArrayVar(&s.Mounts, "mount", nil, "Extra directory to mount: src[:dst][:ro], keyed by dst (repeatable)")
-	f.StringArrayVar(&s.Env, "env", nil, "Extra NAME=value for the harness, keyed by NAME (repeatable)")
-	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan, the URL of an Agent Mesh relay, or none")
-	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok, the URL of an Agent Mesh relay, or none")
-	f.StringVar(&s.Telegram, "telegram", "", "Telegram bot token: env:VAR, - to read it, or the token")
-	f.StringVar(&s.Discord, "discord", "", "Discord bot token: env:VAR, - to read it, or the token")
-	registerEmailFlags(f, &sf.email, "password, env:VAR, - to read it, or the value")
+	f.StringVar(&s.Workspace, "workspace", "", "Workspace directory: `src[:dst][:ro]`, such as ~/src/app (default: the directory holding .a2a)")
+	f.StringArrayVar(&s.Mounts, "mount", nil, listUsage("Extra directory to mount: `src[:dst][:ro]`, such as ~/docs:/docs:ro; keyed by dst", false))
+	f.StringArrayVar(&s.Env, "env", nil, listUsage("Extra variable for the harness: `NAME=value`, such as DEBUG=1; keyed by NAME", false))
+	f.StringArrayVar(&s.Secrets, "secret", nil, listUsage("Name of an environment variable to pass to the harness, such as an API key (`NAME`); its value is read from your environment (or prompted) and stored in .a2a/state/secrets", false))
 	f.StringVar(&s.Sandbox, "sandbox", "", "Where the harness runs: docker (default) or local")
-	f.StringVar(&s.Image, "image", "", "Container image of the harness")
-	f.StringVar(&sf.command, "command", "", "Command line of the ACP agent, replacing the profile's")
-	f.IntVar(&s.Port, "port", 0, "Localhost port (default: a free port, kept across runs)")
-	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, "ACP tool kinds approved without asking, such as read,search")
-	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, "ACP tool kinds denied without asking")
-	f.StringSliceVar(&s.Approvers, "approver", nil, "Principals besides the owner who may approve tool calls, such as pair:anna")
-	f.StringArrayVar(&s.Identities, "identity", nil, "Role of another user's network login: login=member or login=owner (repeatable)")
-	f.StringVar(&s.Memory, "memory", "", "Container memory limit, such as 4g (default 4g)")
-	f.StringVar(&s.CPUs, "cpus", "", "Container CPU limit, such as 2 or 1.5 (default 2)")
-	f.IntVar(&s.PIDs, "pids", 0, "Container process limit (default 512)")
-	f.StringVar(&s.TailscaleControlURL, "tailscale-control-url", "", "Headscale URL, instead of Tailscale's control server")
-	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", "Tailscale auth key, env:VAR, - to read it, or the key, to join without the login link")
-	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
-	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", "ngrok authtoken, env:VAR, - to read it, or the token")
-	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, "People who may call the agent after signing in with Google: emails, or *@domain for a Google Workspace domain")
-	f.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of your own Google app for sign-in (optional)")
-	f.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of your own Google app: env:VAR, - to read it, or the value")
-	f.StringVar(&s.RelayToken, "relay-token", "", "Join token of an Agent Mesh relay, env:VAR, - to read it, or the token, to join without the sign-in link")
-	f.StringVar(&s.Backup, "backup", "", "Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix")
-	f.StringVar(&s.BackupKey, "backup-key", "", "Passphrase the snapshots are encrypted with: env:VAR, - to read it, or the value; keep a copy away from the backups")
-	f.StringVar(&s.BackupInterval, "backup-interval", "", "Time between snapshots, such as 1h (default 24h)")
-	f.StringVar(&s.BackupRetention, "backup-retention", "", "How long snapshots are kept, such as 7d; the latest is always kept (default 7d)")
+	f.StringVar(&s.Image, "image", "", "Container image of the harness; only applies to --sandbox docker")
+	f.StringVar(&sf.command, "command", "", commandUsage)
+	f.IntVar(&s.Port, "port", 0, "Localhost port, 1-65535 (default: a free port, kept across runs)")
+	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com")
+	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay")
+	f.StringArrayVar(&s.Identities, "identity", nil, listUsage("Role of another user's network login: `login=member|owner`, such as anna@github=owner", false))
+	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
+	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, listUsage("ACP tool `kinds` denied without asking, like --allow-tools", true))
+	f.StringVar(&s.OwnerChat, "owner-chat", "", "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)")
 	must(cmd.RegisterFlagCompletionFunc("private", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkLAN, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNgrok, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("sandbox", fixedCompletions(agentdir.SandboxDocker, agentdir.SandboxLocal)))
+	must(cmd.RegisterFlagCompletionFunc("allow-tools", fixedCompletions(agentdir.ToolKinds...)))
+	must(cmd.RegisterFlagCompletionFunc("deny-tools", fixedCompletions(agentdir.ToolKinds...)))
+	setSection(f, sectionGeneral, "name", "description")
+	setSection(f, sectionWorkspace, "workspace", "mount", "env", "secret")
+	setSection(f, sectionSandbox, "sandbox", "image", "command")
+	setSection(f, sectionNetwork, "port", "private", "public", "identity")
+	setSection(f, sectionApprovals, "allow-tools", "deny-tools", "owner-chat")
+	must(cmd.RegisterFlagCompletionFunc("owner-chat", fixedCompletions(agentdir.ChannelKinds...)))
 }
 
-// registerEmailFlags adds the --email-* flags of the email channel, shared
-// by `a2a serve <harness>`, `config set` and `channel add email`.
-func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings, password string) {
+func (sf *settingsFlags) registerOperational(cmd *cobra.Command) {
+	f := cmd.Flags()
+	s := &sf.s
+	f.StringVar(&s.Memory, "memory", "", "Container memory limit, such as 4g or 512m (default 4g)")
+	f.StringVar(&s.CPUs, "cpus", "", "Container CPU limit, such as 2 or 1.5 (default 2)")
+	f.IntVar(&s.PIDs, "pids", 0, "Container process limit (default 512)")
+	f.StringVar(&s.TailscaleControlURL, "tailscale-control-url", "", "Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server")
+	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", secretUsage("Tailscale auth key, to join without the login link"))
+	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
+	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", secretUsage("ngrok authtoken"))
+	f.StringVar(&s.RelayToken, "relay-token", "", secretUsage("Join token of an Agent Mesh relay, to join without the sign-in link"))
+	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent after signing in with Google: an `email`, or *@domain for a Google Workspace domain", true))
+	f.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of your own Google app for sign-in (optional)")
+	f.StringVar(&s.GoogleClientSecret, "google-client-secret", "", secretUsage("Client secret of your own Google app"))
+	f.StringVar(&s.Backup, "backup", "", "Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix")
+	f.StringVar(&s.BackupKey, "backup-key", "", secretUsage("Passphrase the snapshots are encrypted with; keep a copy away from the backups"))
+	f.StringVar(&s.BackupInterval, "backup-interval", "", "Time between snapshots, a `duration` such as 30m or 1h (default 24h)")
+	f.StringVar(&s.BackupRetention, "backup-retention", "", "How long snapshots are kept, a `duration` in hours or days such as 48h or 7d; the latest is always kept (default 7d)")
+	setSection(f, sectionGeneral, "backup", "backup-key", "backup-interval", "backup-retention")
+	setSection(f, sectionSandbox, "memory", "cpus", "pids")
+	setSection(f, sectionNetwork, "tailscale-control-url", "tailscale-authkey", "ngrok-url", "ngrok-authtoken", "relay-token", "allow-email", "google-client-id", "google-client-secret")
+}
+
+// registerEmailFlags adds the --email-* flags of `channel add email`.
+func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings) {
 	f.StringVar(&email.Address, "email-address", "", "Email channel: the agent's address")
-	f.StringVar(&email.IMAP, "email-imap", "", "Email channel: IMAP host:port")
-	f.StringVar(&email.SMTP, "email-smtp", "", "Email channel: SMTP host:port")
+	f.StringVar(&email.IMAP, "email-imap", "", "Email channel: IMAP host:port, such as imap.example.com:993")
+	f.StringVar(&email.SMTP, "email-smtp", "", "Email channel: SMTP host:port, such as smtp.example.com:465")
 	f.StringVar(&email.Username, "email-username", "", "Email channel: login (default: the address)")
-	f.StringVar(&email.Password, "email-password", "", "Email channel: "+password)
+	f.StringVar(&email.Password, "email-password", "", secretUsage("Email channel: password"))
 	f.StringVar(&email.Mailbox, "email-mailbox", "", "Email channel: mailbox to watch (default INBOX)")
 	f.StringVar(&email.TrustedAuthServ, "email-trusted-authserv", "", "Email channel: authserv-id of your mail server's Authentication-Results")
-}
-
-// secretReader reads secret values typed on a terminal without echo, or
-// piped to stdin.
-type secretReader struct {
-	in       *os.File
-	prompt   io.Writer
-	consumed bool
-}
-
-func newSecretReader(prompt io.Writer) *secretReader {
-	return &secretReader{in: os.Stdin, prompt: prompt}
-}
-
-func (r *secretReader) terminal() bool { return term.IsTerminal(int(r.in.Fd())) }
-
-// read returns a secret: from a prompt on a terminal, or else all of stdin,
-// which only one flag may take.
-func (r *secretReader) read(label string) (string, error) {
-	if r.terminal() {
-		if _, err := fmt.Fprintf(r.prompt, "%s: ", label); err != nil {
-			return "", err
-		}
-		b, err := term.ReadPassword(int(r.in.Fd()))
-		if _, perr := fmt.Fprintln(r.prompt); perr != nil {
-			return "", perr
-		}
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(string(b)), nil
-	}
-	if r.consumed {
-		return "", clierr.Usage("only one flag can read its secret from stdin; pass the others as env:VAR")
-	}
-	r.consumed = true
-	b, err := io.ReadAll(r.in)
-	if err != nil {
-		return "", err
-	}
-	return strings.TrimRight(string(b), "\r\n"), nil
 }
 
 // settings returns the parsed settings. Secret-valued flags set to - are
 // read with r, and so are --secret values missing from the environment
 // when a terminal can prompt for them.
-func (sf *settingsFlags) settings(r *secretReader) (agentdir.Settings, error) {
+func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error) {
 	s := sf.s
 	if sf.command != "" {
 		argv, err := shlex.Split(sf.command)
@@ -153,40 +161,34 @@ func (sf *settingsFlags) settings(r *secretReader) (agentdir.Settings, error) {
 		}
 		s.Command = argv
 	}
-	email := sf.email
 	for _, v := range []struct {
 		flag string
 		dst  *string
 	}{
-		{"telegram", &s.Telegram},
-		{"discord", &s.Discord},
-		{"email-password", &email.Password},
 		{"tailscale-authkey", &s.TailscaleAuthKey},
 		{"ngrok-authtoken", &s.NgrokAuthToken},
 		{"google-client-secret", &s.GoogleClientSecret},
 		{"relay-token", &s.RelayToken},
 		{"backup-key", &s.BackupKey},
 	} {
-		if *v.dst != stdinSecret {
+		if *v.dst == "" {
 			continue
 		}
-		val, err := r.read("--" + v.flag)
+		ref, err := secretref.Parse(v.flag, *v.dst, r)
 		if err != nil {
 			return s, err
 		}
-		if val == "" {
-			return s, clierr.Usage(fmt.Sprintf("--%s: empty secret", v.flag))
+		// Env and stored references stay references, which the settings
+		// store under their names.
+		if ref.Kind == secretref.Literal || ref.Kind == secretref.Prompted {
+			*v.dst = ref.Value
 		}
-		*v.dst = val
-	}
-	if email != (agentdir.EmailSettings{}) {
-		s.Email = &email
 	}
 	for _, name := range s.Secrets {
-		if os.Getenv(name) != "" || !r.terminal() {
+		if os.Getenv(name) != "" || !r.Terminal() {
 			continue
 		}
-		val, err := r.read(name)
+		val, err := r.Read(name)
 		if err != nil {
 			return s, err
 		}

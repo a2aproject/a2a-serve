@@ -12,13 +12,13 @@ digraph readme_overview {
     label="Callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
     { rank=same;
       Client    [label="A2A clients\na2a CLI, other agents", shape=ellipse, fillcolor="#dbe8ff"];
-      Owner     [label="Owner\na2a serve ...", shape=ellipse, fillcolor="#dbe8ff"];
+      Owner     [label="Owner\na2a-serve ...", shape=ellipse, fillcolor="#dbe8ff"];
       Messenger [label="Messengers\nTelegram, Discord, email", shape=ellipse, fillcolor="#dbe8ff"];
     }
   }
 
   subgraph cluster_server {
-    label="a2a serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    label="a2a-serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
     { rank=same;
       Listeners [label="Listeners\nlocalhost, tailnet or LAN,\nFunnel or ngrok"];
       Control   [label="Control socket"];

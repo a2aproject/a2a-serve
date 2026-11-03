@@ -137,6 +137,37 @@ func TestPrintRemoved(t *testing.T) {
 	}
 }
 
+func TestPrintList(t *testing.T) {
+	t.Parallel()
+	type item struct {
+		Name string `json:"name"`
+	}
+	tests := []struct {
+		name  string
+		mode  Mode
+		items []item
+		want  string
+	}{
+		{name: "json", mode: ModeJson, items: []item{{"a"}, {"b"}}, want: "[\n  {\n    \"name\": \"a\"\n  },\n  {\n    \"name\": \"b\"\n  }\n]\n"},
+		{name: "json empty", mode: ModeJson, want: "[]\n"},
+		{name: "jsonl", mode: ModeJSONL, items: []item{{"a"}, {"b"}}, want: `{"name":"a"}` + "\n" + `{"name":"b"}` + "\n"},
+		{name: "jsonl empty", mode: ModeJSONL},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var buf bytes.Buffer
+			if err := PrintList(NewPrinter(&buf, tt.mode), tt.items); err != nil {
+				t.Fatalf("PrintList() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(tt.want, buf.String()); diff != "" {
+				t.Fatalf("PrintList() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestMessageTextFileParts(t *testing.T) {
 	t.Parallel()
 

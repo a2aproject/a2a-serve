@@ -37,10 +37,10 @@ func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reply <task-id>",
 		Short: "Post progress, a question or the result of a task",
-		Example: `  a2a serve mailbox reply <task> --status working --text "on it"
-  a2a serve mailbox reply <task> --input-required "Which branch?"
-  a2a serve mailbox reply <task> --final "Done" --artifact report.pdf
-  a2a serve mailbox reply <task> --fail "Could not reach the repo"`,
+		Example: `  a2a-serve mailbox reply <task> --status working --text "on it"
+  a2a-serve mailbox reply <task> --input-required "Which branch?"
+  a2a-serve mailbox reply <task> --final "Done" --artifact report.pdf
+  a2a-serve mailbox reply <task> --fail "Could not reach the repo"`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			taskID := args[0]

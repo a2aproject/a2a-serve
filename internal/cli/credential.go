@@ -22,11 +22,12 @@ import (
 
 func newCredentialCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "credential",
-		Short: "Credential helper that gives the a2a CLI the saved agent tokens",
+		Use:    "credential",
+		Hidden: true,
+		Short:  "Credential helper that gives the a2a CLI the saved agent tokens",
 		Long: `A credential helper for the a2a CLI, following the Bazel credential helper
 protocol (https://github.com/EngFlow/credential-helper-spec). It returns the
-token saved by "a2a serve tokens add" for an agent URL, or the node token in
+token saved by "a2a-serve pair join" for an agent URL, or the node token in
 $` + mailboxapi.EnvNodeToken + ` for requests to its agent.
 
 Enable it for the a2a CLI with a2a-serve doctor --fix, or in

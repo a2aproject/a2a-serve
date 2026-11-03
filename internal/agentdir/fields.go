@@ -23,11 +23,24 @@ import (
 	"strings"
 )
 
+// placement is the command whose flags change a setting.
+type placement int
+
+const (
+	// placeCore settings are flags of `start <harness>` and `config set`.
+	placeCore placement = iota
+	// placeOperational settings are flags of `config set` only.
+	placeOperational
+	// placeChannel settings are flags of `channel add` only.
+	placeChannel
+)
+
 // field is a setting of config.yaml, named by its flag. A scalar has at
 // most one entry.
 type field struct {
-	flag string
-	list bool
+	flag  string
+	place placement
+	list  bool
 	// live settings are applied by a running server without a restart.
 	live bool
 	get  func(*Config) []string
@@ -72,9 +85,15 @@ func list(flag string, live bool, p func(*Config) *[]string, key func(string) st
 	}
 }
 
+// operational marks f as a flag of `config set` only.
+func operational(f field) field {
+	f.place = placeOperational
+	return f
+}
+
 func emailField(flag string, p func(*EmailConfig) *string) field {
 	return field{
-		flag: flag, live: true,
+		flag: flag, live: true, place: placeChannel,
 		get: func(c *Config) []string {
 			if c.Channels.Email == nil {
 				return nil
@@ -92,7 +111,7 @@ func emailField(flag string, p func(*EmailConfig) *string) field {
 
 func tokenField(kind string, set func(*Config, string)) field {
 	return field{
-		flag: kind, live: true,
+		flag: kind, live: true, place: placeChannel,
 		get: func(c *Config) []string { return nonEmpty(c.ChannelToken(kind)) },
 		put: func(c *Config, v []string) { set(c, first(v)) },
 	}
@@ -144,8 +163,8 @@ var fields = []field{
 	intField("port", func(c *Config) *int { return &c.Port }),
 	scalar("private", false, func(c *Config) *string { return &c.Network.Private }),
 	scalar("public", false, func(c *Config) *string { return &c.Network.Public }),
-	scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL }),
-	scalar("ngrok-url", false, func(c *Config) *string { return &c.Network.NgrokURL }),
+	operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL })),
+	operational(scalar("ngrok-url", false, func(c *Config) *string { return &c.Network.NgrokURL })),
 	{
 		flag: "identity", list: true, key: loginKey,
 		get: func(c *Config) []string {
@@ -187,23 +206,22 @@ var fields = []field{
 	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
 	list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity),
 	list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity),
-	list("approver", true, func(c *Config) *[]string { return &c.Approvals.Approvers }, identity),
-	scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }),
-	scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }),
-	intField("pids", func(c *Config) *int { return &c.Limits.PIDs }),
-	list("allow-email", true, func(c *Config) *[]string { return &c.Auth.AllowEmails }, strings.ToLower),
-	scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID }),
-	scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret }),
-	scalar("backup", false, func(c *Config) *string { return &c.Backup.To }),
-	scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key }),
-	scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval }),
-	scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention }),
+	scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat }),
+	operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory })),
+	operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs })),
+	operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs })),
+	operational(list("allow-email", true, func(c *Config) *[]string { return &c.Auth.AllowEmails }, strings.ToLower)),
+	operational(scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID })),
+	operational(scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret })),
+	operational(scalar("backup", false, func(c *Config) *string { return &c.Backup.To })),
+	operational(scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key })),
+	operational(scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval })),
+	operational(scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention })),
 }
 
 // unsetOnly are settings which `config unset` accepts besides the fields:
-// the email channel as a whole and the stored network secrets.
+// the stored network secrets.
 var unsetOnly = map[string]string{
-	ChannelEmail:        "",
 	"tailscale-authkey": SecretTailscaleKey,
 	"relay-token":       SecretRelayToken,
 	"ngrok-authtoken":   SecretNgrokToken,
@@ -221,7 +239,9 @@ func lookupField(flag string) (field, bool) {
 func SettingNames() []string {
 	out := slices.Collect(maps.Keys(unsetOnly))
 	for _, f := range fields {
-		out = append(out, f.flag)
+		if f.place != placeChannel {
+			out = append(out, f.flag)
+		}
 	}
 	slices.Sort(out)
 	return out
@@ -284,17 +304,18 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	secret, extra := unsetOnly[setting]
 	switch {
 	case extra && len(entries) > 0:
-		return nil, fmt.Errorf("%s takes no entries: run `a2a serve config unset %s`", setting, setting)
-	case extra && secret != "":
-		deleted = append(deleted, secret)
+		return nil, fmt.Errorf("%s takes no entries: run `a2a-serve config unset %s`", setting, setting)
 	case extra:
-		cfg.Channels.Email = nil
+		deleted = append(deleted, secret)
+	case ok && f.place == placeChannel:
+		kind, _, _ := strings.Cut(setting, "-")
+		return nil, fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)
 	case !ok:
 		return nil, fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))
 	case setting == "harness":
-		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a serve config set --harness <name>`")
+		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a-serve config set --harness <name>`")
 	case !f.list && len(entries) > 0:
-		return nil, fmt.Errorf("%s is not a list: run `a2a serve config unset %s` to reset it", setting, setting)
+		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
 	case setting == "name":
 		cfg.Name = d.DefaultName()
 	case f.list && len(entries) > 0:
@@ -324,34 +345,60 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	return deleted, nil
 }
 
-// AsCommand returns the arguments of `a2a serve` which recreate the agent
-// in an empty directory. Secrets are passed as env:NAME; stored is used to
-// tell which network secrets are set.
-func (c *Config) AsCommand(stored Secrets) []string {
+// Commands returns the commands which recreate the agent in an empty
+// directory: `a2a-serve start`, then `config set` for the settings only it
+// takes, then `channel add` for each channel. Secrets are passed as
+// env:NAME; stored is used to tell which network secrets are set.
+func (c *Config) Commands(stored Secrets) [][]string {
 	h := c.Harness
 	if !slices.Contains(Harnesses, h) {
 		h = HarnessACP
 	}
-	args := []string{"a2a", "serve", h}
-	add := func(flag string, values ...string) {
-		for _, v := range values {
-			if v, ok := strings.CutPrefix(v, SecretPrefix); ok {
-				args = append(args, "--"+flag, "env:"+v)
-				continue
-			}
-			args = append(args, "--"+flag, v)
-		}
-	}
+	start := []string{"a2a-serve", "start", h}
+	set := []string{"a2a-serve", "config", "set"}
+	channels := map[string][]string{}
 	for _, f := range fields {
 		if f.flag == "harness" || (f.flag == "name" && c.Name == "") {
 			continue
 		}
-		add(f.flag, f.get(c)...)
+		switch f.place {
+		case placeCore:
+			start = appendFlag(start, f.flag, f.get(c)...)
+		case placeOperational:
+			set = appendFlag(set, f.flag, f.get(c)...)
+		case placeChannel:
+			kind, _, _ := strings.Cut(f.flag, "-")
+			flag := f.flag
+			if kind != ChannelEmail {
+				flag = "token"
+			}
+			channels[kind] = appendFlag(channels[kind], flag, f.get(c)...)
+		}
 	}
 	for _, flag := range slices.Sorted(maps.Keys(unsetOnly)) {
-		if name := unsetOnly[flag]; name != "" && stored[name] != "" {
-			add(flag, SecretPrefix+name)
+		if name := unsetOnly[flag]; stored[name] != "" {
+			set = appendFlag(set, flag, SecretPrefix+name)
 		}
+	}
+	out := [][]string{start}
+	if len(set) > 3 {
+		out = append(out, set)
+	}
+	for _, kind := range ChannelKinds {
+		if args := channels[kind]; len(args) > 0 {
+			out = append(out, append([]string{"a2a-serve", "channel", "add", kind}, args...))
+		}
+	}
+	return out
+}
+
+// appendFlag appends --flag for each value, with stored secrets as env:NAME.
+func appendFlag(args []string, flag string, values ...string) []string {
+	for _, v := range values {
+		if name, ok := strings.CutPrefix(v, SecretPrefix); ok {
+			v = "env:" + name
+		}
+		args = append(args, "--"+flag, v)
 	}
 	return args
 }
@@ -378,7 +425,7 @@ func shellQuote(s string) string {
 // other than channels, from src to dst.
 func CopyLive(dst, src *Config) {
 	dst.Description = src.Description
-	dst.Approvals.Approvers = slices.Clone(src.Approvals.Approvers)
+	dst.Approvals.OwnerChat = src.Approvals.OwnerChat
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
 	dst.Auth.AllowEmails = slices.Clone(src.Auth.AllowEmails)

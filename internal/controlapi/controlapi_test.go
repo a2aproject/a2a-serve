@@ -270,8 +270,8 @@ func TestStatusURL(t *testing.T) {
 		{name: "local", status: all, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
 		{name: "private", status: all, scope: ScopePrivate, want: "http://coder.tail.ts.net"},
 		{name: "public", status: all, scope: ScopePublic, want: "https://coder.example.com"},
-		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a serve config set --private tailscale` (or lan), then `a2a serve restart`"},
-		{name: "no public URL", status: localOnly, scope: ScopePublic, wantErr: "coder has no public URL; add one with `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`"},
+		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`"},
+		{name: "no public URL", status: localOnly, scope: ScopePublic, wantErr: "coder has no public URL; add one with `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

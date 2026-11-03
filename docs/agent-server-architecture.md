@@ -8,7 +8,7 @@ about how it works.
 
 ## Summary
 
-`a2a serve <harness>` turns a coding agent that speaks the
+`a2a-serve start <harness>` turns a coding agent that speaks the
 [Agent Client Protocol](https://agentclientprotocol.com) (opencode, Claude
 Code, or any `--command`) into an A2A agent:
 
@@ -25,7 +25,8 @@ Code, or any `--command`) into an A2A agent:
   becomes a token, a messenger link, a contact or a webhook node. On the
   tailnet your own machines need no code.
 - **Approvals stay with people.** A tool call pauses the task in
-  `input-required`; the owner or an approver answers, from any messenger.
+  `input-required`; whoever started the task answers where it came from, and
+  owners can answer any.
 - **Agents call agents through the server.** The harness uses the `a2a` CLI
   against `http://a2a/<handle>/<agent>`. The server makes the call with its
   own identity, relays the other agent's approvals to the user, and posts late
@@ -51,9 +52,9 @@ Code, or any `--command`) into an A2A agent:
 | Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
 | Schedules | Run a prompt as a user on a cron expression or once, posted into a conversation as a new turn. The harness manages its own through the built-in `schedules` agent at its agents URL. | `agentsrv/schedules.go`, `agentsrv/schedules_agent.go`, `internal/schedule` |
 | Advertised pairings | A gossiped table of the webhook nodes agents advertise to the private network, kept in `state/ads.json`; `contact add <node>@<agent>` calls one through its host. | `internal/gossip`, `agentsrv/ads.go` |
-| Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a serve restore`. | `internal/backup`, `agentsrv/backups.go` |
-| Inspector | A read-only web page of conversations, tasks and state, where the owner also answers approvals. `a2a serve open` mints a one-time login code over the control socket; the session is a cookie with a CSRF token. Served on the local and private listeners only. | `agentsrv/inspector.go`, `agentsrv/inspector_pages.go` |
-| CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
+| Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a-serve backup restore`. | `internal/backup`, `agentsrv/backups.go` |
+| Inspector | A read-only web page of conversations, tasks and state, where the owner also answers approvals. `a2a-serve inspect` mints a one-time login code over the control socket; the session is a cookie with a CSRF token. Served on the local and private listeners only. | `agentsrv/inspector.go`, `agentsrv/inspector_pages.go` |
+| CLI | `a2a-serve ...` on the server side, `a2a-serve pair join` and `a2a-serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:
 
@@ -74,33 +75,33 @@ The state is all in the agent directory:
 ![B. Pairing and identity](graphs/agent-server-pairing.png)
 
 Every way in starts with a code minted over the control socket
-(`a2a serve pair invite`), so only someone with access to the agent
+(`a2a-serve pair invite`), so only someone with access to the agent
 directory can hand out access. The one exception is the user running the
 server: on start, it saves an owner token named `local` for its local URL in
 that user's `~/.config/a2a-serve/credentials.json`. Loopback connections aren't
 trusted instead, because tunnels such as ngrok reach the server from
 loopback too.
 
-- **Callers** run `a2a serve tokens add <agent-url> <code>`. The token (`a2p_...`) is
+- **Callers** run `a2a-serve pair join <agent-url> <code>`. The token (`a2p_...`) is
   saved in `~/.config/a2a-serve/credentials.json`. The `a2a` CLI asks the
   credential helper `a2a-serve credential` for the headers of each agent URL
   ([Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)),
   so later `a2a send`, `a2a task` and `a2a card` commands attach the token for
   that URL only.
-- **Messenger accounts** send `link <code>` to the bot. The server links the
+- **Messenger accounts** send `join <code>` to the bot. The server links the
   channel identity to the principal; only verified senders can link (for
   email, DMARC or aligned DKIM from the trusted server).
-- **Other agents** redeem a code with `a2a serve contact add --url --code`
+- **Other agents** redeem a code with `a2a-serve contact add --url --code`
   and keep the token in their own database. On the same tailnet no code is
   needed: the callee identifies the caller with `WhoIs`.
-- **Webhook nodes** redeem a node code with the same `a2a serve tokens add`. Their
+- **Webhook nodes** redeem a node code with the same `a2a-serve pair join`. Their
   token (`a2rn.<api url>.<id>.<secret>`) carries the agent's URL, opens the
   `/mailbox/api`, and authenticates the node's own A2A calls to the agent as a
   member.
 
 Principals are `user:owner`, `pair:<name>` (member or owner role),
 `user:<login>` for other tailnet users allowed in `config.yaml`, and
-`node:<id>`. `a2a serve pair rm <name>` revokes a name's tokens and the
+`node:<id>`. `a2a-serve pair rm <name>` revokes a name's tokens and the
 messenger links made with its codes, including links with the owner role, or
 removes a node.
 
@@ -118,9 +119,10 @@ removes a node.
    something. `--allow-tools` and `--deny-tools` answer by ACP tool kind;
    anything else pauses the task in `input-required` with a structured input
    request.
-4. The owner and approvers get the question with buttons on their
-   messengers, or the `/hitl/<token>` page. A member who started the task sees
-   `input-required` but can't answer it.
+4. Whoever started the task answers: an A2A caller on the task itself, a
+   messenger user in the same conversation, with buttons or the
+   `/hitl/<token>` page. Questions of tasks nobody watches, such as the runs
+   of a schedule without a chat, go to the owner chat (`--owner-chat`).
 
 ## D. Agent to agent
 
@@ -163,7 +165,7 @@ makes the call trustworthy happens in the server:
 Webhook nodes are the other direction: the server wakes the node with a POST
 signed with `X-A2A-Serve-Signature: t=<time>,v1=<HMAC-SHA256 of "<t>.<body>">`
 (`mailboxapi.Verify` checks it), and
-the node answers with `a2a serve mailbox reply`, which posts events to the task. A
+the node answers with `a2a-serve mailbox reply`, which posts events to the task. A
 task with no event for 10 minutes fails.
 
 ## Design notes
@@ -184,7 +186,7 @@ task with no event for 10 minutes fails.
   idempotency keys are kept in memory only, because none would be valid after
   a restart. The database schema is versioned with `PRAGMA user_version`.
 - **Why one code for everything.** `/pair` redeems caller and node codes
-  alike, and `a2a serve tokens add` stores whichever token it gets, so there is one
+  alike, and `a2a-serve pair join` stores whichever token it gets, so there is one
   command to learn on each side.
 
 Not in this version: an egress proxy and credential injection for the

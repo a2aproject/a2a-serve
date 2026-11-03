@@ -48,14 +48,16 @@ func newVersionCmd(cfg *globalConfig) *cobra.Command {
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
-			_, err := fmt.Fprintf(
-				cfg.Out,
-				"a2a-serve %s\ncommit:  %s\nbuilt:   %s\ngo:      %s\nos/arch: %s\n",
-				info.Version, info.Commit, info.Date, info.GoVersion, info.Platform,
-			)
+			_, err := fmt.Fprint(cfg.Out, info.text())
 			return err
 		},
 	}
+}
+
+// text is the version information as `version` and --version print it.
+func (v versionInfo) text() string {
+	return fmt.Sprintf("a2a-serve %s\ncommit:  %s\nbuilt:   %s\ngo:      %s\nos/arch: %s\n",
+		v.Version, v.Commit, v.Date, v.GoVersion, v.Platform)
 }
 
 func buildVersionInfo() versionInfo {

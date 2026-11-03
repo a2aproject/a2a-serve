@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/doctor"
 	"github.com/a2aproject/a2a-serve/internal/launch"
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -71,7 +72,7 @@ private. It never installs software and never touches a running agent.
 				}
 			}
 			if cfg.IsJSON() {
-				err = cfg.PrintJSON(results)
+				err = output.PrintList(cfg.Printer, results)
 			} else {
 				err = doctor.Render(cfg.Out, results)
 			}
@@ -99,7 +100,7 @@ func doctorEnv(cfg *globalConfig) (doctor.Env, error) {
 		env.Credentials = cfg.credentials
 	}
 	env.ServiceUnit = func(d agentdir.Dir) (string, error) {
-		name := launch.ServiceName(d, nil)
+		name := launch.ServiceName(d)
 		if !service.Installed(name) {
 			return "", nil
 		}

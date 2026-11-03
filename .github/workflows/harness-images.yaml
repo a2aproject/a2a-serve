@@ -1,4 +1,4 @@
-# Publishes the harness images that `a2a serve <harness>` pulls by default,
+# Publishes the harness images that `a2a-serve start <harness>` pulls by default,
 # ghcr.io/a2aproject/harness-<name>:a2a-<A2A_CLI_VERSION of the Dockerfile>.
 # Without them every first run builds the image locally.
 name: Harness images

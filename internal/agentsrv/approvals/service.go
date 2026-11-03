@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -32,11 +33,19 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
+// Chat is a conversation on a channel.
+type Chat struct {
+	Channel string
+	Conv    channel.ConvKey
+}
+
 // Notifier shows questions to people and updates them once answered.
 type Notifier interface {
-	// Ask sends a question to users on their direct conversations, or to
-	// one preferred conversation if given.
-	Ask(ctx context.Context, userIDs []string, prefChannel string, prefConv channel.ConvKey, header string, rec store.Question)
+	// Ask sends a question to a chat.
+	Ask(ctx context.Context, to Chat, header string, rec store.Question)
+	// OwnerChat returns the chat where an owner answers the questions of
+	// tasks nobody watches, or false if there is none.
+	OwnerChat(ctx context.Context) (Chat, bool)
 	// MarkAnswered shows who answered a question where it was asked.
 	MarkAnswered(ctx context.Context, questionID, label, who string)
 }
@@ -58,8 +67,10 @@ type Service struct {
 	Handler  a2asrv.RequestHandler
 	Notifier Notifier
 	Remote   RemoteAnswerer
-	// Approvers returns the users who may approve besides owners.
-	Approvers func() []string
+	// Unattended reports whether nobody watches the tasks of a context,
+	// such as the runs of a schedule without a chat. Their questions go to
+	// the owner chat.
+	Unattended func(contextID string) bool
 	// BaseURL returns the URL people reach the agent at.
 	BaseURL func() string
 	// AgentName returns the name of the agent.
@@ -67,12 +78,13 @@ type Service struct {
 }
 
 // ErrNotApprover is returned when someone who may not approve answers an approval.
-var ErrNotApprover = errors.New("only the owner or an approver can answer this")
+var ErrNotApprover = errors.New("only the person who started the task or an owner can answer this")
 
 // NewRecord stores a question so that buttons and pages can answer it.
-// contact is the agent whose task asked, or empty for this agent. It
-// returns [store.ErrExists] for a remote question stored before.
-func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact string, q *Question) (store.Question, error) {
+// contact is the agent whose task asked, or empty for this agent; user is
+// who may answer it besides owners. It returns [store.ErrExists] for a
+// remote question stored before.
+func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact, user string, q *Question) (store.Question, error) {
 	rec := store.Question{
 		ID:        cryptoutil.RandomString(8, cryptoutil.Alphanumeric),
 		Token:     cryptoutil.RandomString(32, cryptoutil.Alphanumeric),
@@ -80,6 +92,7 @@ func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 		ContextID: contextID,
 		Contact:   contact,
 		HitlID:    q.ID,
+		User:      user,
 		Data:      q.Data,
 	}
 	if q.Text != "" {
@@ -89,66 +102,65 @@ func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 	return rec, s.Store.PutQuestion(ctx, rec)
 }
 
-// CanApprove reports whether p may answer permission requests.
-func (s *Service) CanApprove(ctx context.Context, p auth.Principal) bool {
-	if p.ID == auth.OwnerID || auth.CanApprove(p, s.Approvers()) {
+// IsOwner reports whether p is an owner.
+func (s *Service) IsOwner(ctx context.Context, p auth.Principal) bool {
+	if p.ID == auth.OwnerID || p.Has(auth.RoleOwner) {
 		return true
 	}
 	u, err := s.Store.User(ctx, p.ID)
-	return err == nil && auth.CanApprove(auth.Principal{ID: u.ID, Roles: u.Roles}, nil)
+	return err == nil && slices.Contains(u.Roles, auth.RoleOwner)
 }
 
-// ApproverIDs are the users who receive approval requests.
-func (s *Service) ApproverIDs() []string {
-	return append([]string{auth.OwnerID}, s.Approvers()...)
+// MayAnswer reports whether p may answer a permission question of a task
+// user started: user themselves, or an owner.
+func (s *Service) MayAnswer(ctx context.Context, p auth.Principal, user string) bool {
+	return (user != "" && (p.ID == user || p.User() == user)) || s.IsOwner(ctx, p)
 }
 
-// AnswerAs is the principal p's answers are sent to the agent as. The task
-// store shows tasks only to their starter and to owners, so an approver who
-// isn't an owner answers as the owner, on their own behalf.
-func (s *Service) AnswerAs(ctx context.Context, p auth.Principal) auth.Principal {
-	if p.Has(auth.RoleOwner) || !s.CanApprove(ctx, p) {
-		return p
-	}
-	return auth.Principal{ID: auth.OwnerID, Roles: []string{auth.RoleOwner}, OnBehalfOf: p.ID, Hops: p.Hops}
-}
-
-// PageURL is the page where an approver can answer a question.
+// PageURL is the page where a question can be answered.
 func (s *Service) PageURL(rec store.Question) string {
 	return s.BaseURL() + "/hitl/" + rec.Token
 }
 
-// OnQuestion relays a permission question of the agent to the approvers
-// when the caller who started the task can't answer it.
+// OnQuestion sends a permission question of a task nobody watches to the
+// owner chat. Whoever started any other task answers in the place it came
+// from: inline in an A2A task, or in its conversation.
 func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *Question) {
-	if q.Type != TypePermission {
+	if q.Type != TypePermission || s.Unattended == nil || !s.Unattended(execCtx.ContextID) {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
-	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), execCtx.TaskID)
-	starter := ""
-	if err == nil {
-		starter = stored.User
-	} else if p, ok := auth.Caller(ctx); ok {
-		starter = p.ID
-	}
-	if starter != "" && s.CanApprove(ctx, auth.Principal{ID: starter}) {
-		return
-	}
+	starter := s.starter(ctx, execCtx.TaskID)
 	go func() {
-		rec, err := s.NewRecord(ctx, execCtx.TaskID, execCtx.ContextID, "", q)
+		rec, err := s.NewRecord(ctx, execCtx.TaskID, execCtx.ContextID, "", starter, q)
 		if err != nil {
 			slog.Error("storing question", "error", err)
 			return
 		}
-		slog.Info("approval needed", "task", execCtx.TaskID, "from", starter, "question", rec.ID)
-		header := fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter))
-		s.Notifier.Ask(ctx, s.ApproverIDs(), "", "", header, rec)
+		to, ok := s.Notifier.OwnerChat(ctx)
+		if !ok {
+			slog.Info("approval waits in the inspector: no owner chat", "task", execCtx.TaskID, "question", rec.ID)
+			return
+		}
+		slog.Info("approval sent to the owner chat", "task", execCtx.TaskID, "from", starter, "question", rec.ID, "channel", to.Channel)
+		s.Notifier.Ask(ctx, to, fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter)), rec)
 	}()
 }
 
+// starter returns the user who started the task.
+func (s *Service) starter(ctx context.Context, taskID a2a.TaskID) string {
+	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	if err == nil {
+		return stored.User
+	}
+	if p, ok := auth.Caller(ctx); ok {
+		return p.User()
+	}
+	return ""
+}
+
 // CheckAnswer rejects a reply to the agent's pending permission question
-// from a caller who may not approve.
+// from a caller other than the task's starter or an owner.
 func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.TaskID) error {
 	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
@@ -165,10 +177,10 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 	if q == nil || q.Type != TypePermission {
 		return nil
 	}
-	if s.CanApprove(ctx, p) {
+	if s.MayAnswer(ctx, p, stored.User) {
 		return nil
 	}
-	return fmt.Errorf("%w: only the owner or an approver can answer this approval; it was sent to them", a2a.ErrUnauthorized)
+	return fmt.Errorf("%w: only the person who started the task or an owner can answer this approval", a2a.ErrUnauthorized)
 }
 
 // Answer answers a stored question with option on behalf of p. Questions of
@@ -176,7 +188,7 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 // isn't kept, so that the question can be answered again.
 func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option) error {
 	q := FromRecord(rec)
-	if q.Type == TypePermission && !s.CanApprove(ctx, p) {
+	if q.Type == TypePermission && !s.MayAnswer(ctx, p, rec.User) {
 		return ErrNotApprover
 	}
 	if err := s.Store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
@@ -200,7 +212,7 @@ func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, 
 	if err != nil {
 		return err
 	}
-	_, err = s.Handler.SendMessage(auth.InProcess(ctx, s.AnswerAs(ctx, p)), &a2a.SendMessageRequest{
+	_, err = s.Handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
 		Message: msg,
 		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
 	})
@@ -220,7 +232,7 @@ button{font-size:1rem;margin:.25rem;padding:.5rem 1rem}</style></head>
 </body></html>`))
 
 // HandlePage serves the page of a question at /hitl/{token}. Its token is the credential:
-// it is sent only to approvers, who answer as the owner.
+// it is sent only to the chat which may answer, and the answer is sent as the owner.
 func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.Store.QuestionByToken(r.Context(), r.PathValue("token"))
 	if err != nil {

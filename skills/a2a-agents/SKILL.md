@@ -27,7 +27,7 @@ Continue a task or a conversation with the other agent:
   their chat. You can't answer approvals: end your turn, and the result is
   posted into this conversation once the user decides.
 - Only the agents in the `[a2a agents]` line are reachable. The owner adds
-  more with `a2a serve contact add`.
+  more with `a2a-serve contact add`.
 
 ## Schedules
 

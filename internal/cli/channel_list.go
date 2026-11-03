@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func newChannelListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -36,7 +37,7 @@ func newChannelListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(channels)
+				return output.PrintList(cfg.Printer, channels)
 			}
 			rows := make([][]string, 0, len(channels))
 			for _, c := range channels {
@@ -46,7 +47,7 @@ func newChannelListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{c.Name, c.Account, state})
 			}
-			return cfg.PrintTableOrEmpty([]string{"CHANNEL", "ACCOUNT", "STATE"}, rows, "no channels; add one with `a2a serve channel add <telegram|discord|email>`")
+			return cfg.PrintTableOrEmpty([]string{"CHANNEL", "ACCOUNT", "STATE"}, rows, "no channels; add one with `a2a-serve channel add <telegram|discord|email>`")
 		},
 	}
 }

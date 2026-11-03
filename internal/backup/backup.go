@@ -187,7 +187,7 @@ func ForAgent(cfg *agentdir.Config, secrets agentdir.Secrets, run Runner) (Dest,
 		return nil, Config{}, err
 	}
 	if cfg.Backup.Key == "" {
-		return nil, Config{}, errors.New("no backup key: set one with `a2a serve config set --backup-key env:VAR`")
+		return nil, Config{}, errors.New("no backup key: set one with `a2a-serve config set --backup-key env:VAR`")
 	}
 	key, err := secrets.Resolve(cfg.Backup.Key)
 	if err != nil {

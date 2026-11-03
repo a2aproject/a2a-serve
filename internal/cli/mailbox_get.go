@@ -15,30 +15,35 @@
 package cli
 
 import (
-	"fmt"
-
 	"github.com/spf13/cobra"
 )
 
-func newTokensRmCmd(cfg *globalConfig) *cobra.Command {
-	return &cobra.Command{
-		Use:               "rm <agent-url>",
-		Short:             "Delete the token saved for an agent",
-		Args:              cobra.ExactArgs(1),
-		ValidArgsFunction: savedTokenCompletions(cfg),
+func newMailboxGetCmd(cfg *globalConfig) *cobra.Command {
+	var rf nodeClientFlags
+	cmd := &cobra.Command{
+		Use:   "get <task-id>",
+		Short: "Show a task addressed to the node, with history and artifacts",
+		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			store, err := cfg.credentialStore()
+			ctx, cancel := nodeContext(cmd, cfg)
+			defer cancel()
+			c, err := rf.nodeClient(cfg)
 			if err != nil {
 				return err
 			}
-			ok, err := store.Delete(args[0])
+			task, err := c.Task(ctx, args[0])
 			if err != nil {
 				return err
 			}
-			if !ok {
-				return fmt.Errorf("no saved token for %s", args[0])
+			if cfg.IsJSON() {
+				return cfg.PrintJSON(task)
 			}
-			return cfg.PrintRemoved("token", args[0], "✓ deleted the token for "+args[0])
+			if err := cfg.PrintEvent(task); err != nil {
+				return err
+			}
+			return cfg.Flush()
 		},
 	}
+	rf.register(cmd.Flags())
+	return cmd
 }

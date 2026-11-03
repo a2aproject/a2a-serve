@@ -22,12 +22,13 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // localOwnerName names the owner token the server keeps in the credentials
 // of the user running it.
-const localOwnerName = "local"
+const localOwnerName = pairings.LocalOwner
 
 // saveLocalOwnerToken makes sure the user running the server has an owner
 // token for its local URL, so `a2a send` from this machine works without

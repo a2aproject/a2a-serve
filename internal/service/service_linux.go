@@ -111,16 +111,6 @@ func Installed(name string) bool {
 	return err == nil
 }
 
-// Glob returns the names of the installed services matching pattern, in
-// the syntax of [filepath.Match].
-func Glob(pattern string) ([]string, error) {
-	path, err := unitPath(pattern)
-	if err != nil {
-		return nil, err
-	}
-	return globNames(path, "", ".service")
-}
-
 // Uninstall stops and removes the service.
 func Uninstall(name string) error {
 	path, err := unitPath(name)

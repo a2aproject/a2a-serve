@@ -52,12 +52,12 @@ func TestCompletion(t *testing.T) {
 		want []string
 	}{
 		{name: "private", args: []string{"config", "set", "--private", ""}, want: []string{"tailscale", "lan", "none"}},
-		{name: "public", args: []string{"opencode", "--public", ""}, want: []string{"tailscale", "ngrok", "none"}},
-		{name: "sandbox", args: []string{"claude", "--sandbox", ""}, want: []string{"docker", "local"}},
+		{name: "public", args: []string{"start", "opencode", "--public", ""}, want: []string{"tailscale", "ngrok", "none"}},
+		{name: "sandbox", args: []string{"start", "claude", "--sandbox", ""}, want: []string{"docker", "local"}},
 		{name: "harness", args: []string{"config", "set", "--harness", ""}, want: []string{"claude", "opencode", "acp"}},
 		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},
 		{name: "role", args: []string{"pair", "invite", "anna", "--role", ""}, want: []string{"member", "owner"}},
-		{name: "saved tokens", args: []string{"tokens", "rm", ""}, want: []string{agentURL}},
+		{name: "joined agents", args: []string{"pair", "rm", "--dir", "/nonexistent-a2a-agent", ""}, want: []string{agentURL}},
 		{name: "contacts of a stopped agent", args: []string{"contact", "rm", "--dir", "/nonexistent-a2a-agent", ""}},
 	}
 	for _, tc := range tests {
@@ -83,14 +83,15 @@ func TestCompletionCommands(t *testing.T) {
 
 	got := completions(t, creds, "")
 
-	for _, want := range []string{"opencode", "echo", "proxy", "script", "tokens", "channel"} {
+	for _, want := range []string{"start", "pair", "channel"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("a2a-serve __complete \"\" = %v, want %q among them", got, want)
 		}
 	}
-	for _, hidden := range []string{"add", "forget"} {
-		if pair := completions(t, creds, "pair", ""); slices.Contains(pair, hidden) {
-			t.Fatalf("a2a-serve __complete pair \"\" = %v, want no hidden %q", pair, hidden)
+	run := completions(t, creds, "start", "")
+	for _, want := range []string{"opencode", "claude", "acp", "echo", "proxy", "exec"} {
+		if !slices.Contains(run, want) {
+			t.Fatalf("a2a-serve __complete run \"\" = %v, want %q among them", run, want)
 		}
 	}
 }
@@ -102,10 +103,10 @@ func TestCompletionScript(t *testing.T) {
 			t.Parallel()
 			out, err := runCMD(t, "completion", shell)
 			if err != nil {
-				t.Fatalf("a2a serve completion %s error = %v", shell, err)
+				t.Fatalf("a2a-serve completion %s error = %v", shell, err)
 			}
 			if !strings.Contains(out, scriptProgram) {
-				t.Fatalf("a2a serve completion %s = %q, want a script for %s", shell, out, scriptProgram)
+				t.Fatalf("a2a-serve completion %s = %q, want a script for %s", shell, out, scriptProgram)
 			}
 		})
 	}

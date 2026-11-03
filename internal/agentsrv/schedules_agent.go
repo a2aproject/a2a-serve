@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -38,7 +39,7 @@ import (
 // removes schedules with, through the agents URL of a conversation. A
 // schedule made there runs as the conversation's user and reports back in
 // the same conversation.
-const schedulesAgent = "schedules"
+const schedulesAgent = pairings.SchedulesAgent
 
 const schedulesUsage = `Commands (one per message):
   add <name> (--cron "<expr>" | --at "<YYYY-MM-DD HH:MM>") [--tz <zone>] --prompt "<prompt>"

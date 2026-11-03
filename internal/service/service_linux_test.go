@@ -17,8 +17,6 @@
 package service
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -27,7 +25,7 @@ import (
 func TestSystemdUnitEscaping(t *testing.T) {
 	t.Parallel()
 	got, err := SystemdUnit(Unit{
-		Description: "a2a serve coder (/home/u/100%$x)",
+		Description: "a2a-serve coder (/home/u/100%$x)",
 		Exe:         "/usr/local/bin/a2a-serve",
 		Args:        []string{"--dir", "/home/u/100%$x"},
 		Dir:         "/home/u/100%$x",
@@ -37,7 +35,7 @@ func TestSystemdUnitEscaping(t *testing.T) {
 		t.Fatalf("SystemdUnit() error = %v", err)
 	}
 	want := `[Unit]
-Description=a2a serve coder (/home/u/100%%$x)
+Description=a2a-serve coder (/home/u/100%%$x)
 After=network-online.target
 
 [Service]
@@ -66,7 +64,7 @@ func TestSystemdUnitRejectsNewlines(t *testing.T) {
 func TestSystemdUnit(t *testing.T) {
 	t.Parallel()
 	got, err := SystemdUnit(Unit{
-		Description: "a2a serve coder (/home/u/my app)",
+		Description: "a2a-serve coder (/home/u/my app)",
 		Exe:         "/usr/local/bin/a2a-serve",
 		Args:        []string{"--dir", "/home/u/my app"},
 		Dir:         "/home/u/my app",
@@ -77,7 +75,7 @@ func TestSystemdUnit(t *testing.T) {
 		t.Fatalf("SystemdUnit() error = %v", err)
 	}
 	want := `[Unit]
-Description=a2a serve coder (/home/u/my app)
+Description=a2a-serve coder (/home/u/my app)
 After=network-online.target
 
 [Service]
@@ -94,27 +92,5 @@ WantedBy=default.target
 `
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("SystemdUnit() wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestGlob(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	units := filepath.Join(home, ".config", "systemd", "user")
-	if err := os.MkdirAll(units, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"a2a-coder-abc.service", "a2a-my-bot-abc.service", "a2a-abc.service", "a2a-coder-def.service", "a2a-x-abc.timer"} {
-		if err := os.WriteFile(filepath.Join(units, f), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := Glob("a2a-*-abc")
-	if err != nil {
-		t.Fatalf("Glob() error = %v", err)
-	}
-	want := []string{"a2a-coder-abc", "a2a-my-bot-abc"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("Glob() wrong result (-want +got) diff = %s", diff)
 	}
 }

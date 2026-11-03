@@ -177,14 +177,6 @@ func postJSON(ctx context.Context, hc *http.Client, url string, in, out any) err
 	return json.Unmarshal(data, out)
 }
 
-// setAdvertised advertises a node of this agent, or stops advertising it.
-func (s *Server) setAdvertised(name, description string, advertised bool) error {
-	if advertised {
-		return s.ads.Advertise(name, description)
-	}
-	return s.ads.Withdraw(name)
-}
-
 func (s *Server) ctlAds(w http.ResponseWriter, _ *http.Request) {
 	out := []controlapi.Advertisement{}
 	for _, e := range s.ads.Live() {

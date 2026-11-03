@@ -94,9 +94,9 @@ func TestAdvertisedPairing(t *testing.T) {
 	addNode(t, ben, "grok", 0)
 	advertise := func(on bool) {
 		t.Helper()
-		resp, err := controlapi.NewClient(ben.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "grok", Advertised: &on})
-		if err != nil || resp.Advertised != on {
-			t.Fatalf("Pair(advertised=%v) = %+v, %v", on, resp, err)
+		resp, err := controlapi.NewClient(ben.dir).UpdatePairing(ctx, "grok", controlapi.PairingUpdate{Advertised: &on})
+		if err != nil || resp.Pairing.Node.Advertised != on {
+			t.Fatalf("UpdatePairing(advertised=%v) = %+v, %v", on, resp, err)
 		}
 	}
 	advertise(true)

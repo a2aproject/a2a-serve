@@ -99,7 +99,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		t.Funnel = true
 		s.public = t
 	case cfg.Network.Public == ProviderNgrok:
-		s.public = &network.Ngrok{AuthToken: s.secrets[SecretNgrokAuthToken], URL: cfg.Network.NgrokURL, Description: "a2a serve " + cfg.Name}
+		s.public = &network.Ngrok{AuthToken: s.secrets[SecretNgrokAuthToken], URL: cfg.Network.NgrokURL, Description: "a2a-serve " + cfg.Name}
 	default:
 		return fmt.Errorf("unknown public network %q: want tailscale, ngrok or a relay URL", cfg.Network.Public)
 	}

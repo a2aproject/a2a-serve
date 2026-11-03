@@ -92,7 +92,7 @@ func Exit(code int, msg string) *Error {
 func (e *Error) Silent() bool { return e.silent }
 
 // UsageHint is remediation advice attached to every usage error.
-const UsageHint = "run `a2a serve --help` for the current commands and flags"
+const UsageHint = "run `a2a-serve --help` for the current commands and flags"
 
 // Usage builds a usage error for invalid arguments, flags, or flag combinations.
 func Usage(msg string) *Error {

@@ -24,9 +24,10 @@ import (
 
 func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rm <name>",
-		Short: "Remove a contact",
-		Args:  cobra.ExactArgs(1),
+		Use:     "rm <name>",
+		Aliases: []string{"delete"},
+		Short:   "Remove a contact",
+		Args:    cobra.ExactArgs(1),
 		ValidArgsFunction: controlCompletions(sf, func(ctx context.Context, c *controlapi.Client) ([]string, error) {
 			cs, err := c.Contacts(ctx)
 			if err != nil {
@@ -38,11 +39,12 @@ func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			}
 			return names, nil
 		}),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			if err := c.DeleteContact(cmd.Context(), args[0]); err != nil {
 				return err
 			}

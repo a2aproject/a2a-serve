@@ -1,7 +1,7 @@
 # Upgrades
 
 Upgrade `a2a-serve` like any binary, then restart each agent with
-`a2a serve restart` (or `a2a serve` in its directory). An agent picks up the
+`a2a-serve restart` (or `a2a-serve start` in its directory). An agent picks up the
 new version on its next start.
 
 ## Stored state migrates forward
@@ -11,14 +11,10 @@ new version on its next start.
   version to the current one, each in its own transaction, so a failed
   migration leaves the database as it was. Released migrations never change;
   new versions add new ones.
-- **`config.yaml`** written by an earlier version is read by later ones.
-  Settings that were renamed or moved are read from their old place and
-  written back in the new one the next time a command saves the config, such
-  as configs in which the first of `mounts` was the workspace.
-- **Renamed commands, routes and variables** keep working for at least one
-  release, hidden from help, or fail with a message that names the new
-  command. The webhook node commands under `a2a serve relay`, the `/relay/…`
-  routes and `A2A_RELAY_TOKEN` are the current example.
+- **`config.yaml`** settings that are renamed or removed are listed in the
+  release notes, and old ones are not read.
+- **Renamed commands, routes and variables** are replaced without aliases:
+  the release notes name the new form.
 
 ## Going back isn't supported
 
@@ -28,7 +24,7 @@ this a2a supports". To be able to go back, take a snapshot before upgrading,
 and restore it into the agent directory after downgrading:
 
 ```sh
-a2a serve backup now                 # with --backup set, or copy .a2a/ while the agent is stopped
+a2a-serve backup now                 # with --backup set, or copy .a2a/ while the agent is stopped
 ```
 
 ## Harness images
@@ -40,6 +36,6 @@ home in `state/home` is kept, with its sessions and config.
 
 ## The a2a CLI
 
-Callers and nodes use the `a2a` CLI. `a2a serve doctor` checks that the
+Callers and nodes use the `a2a` CLI. `a2a-serve doctor` checks that the
 installed version has what this `a2a-serve` needs and prints the command to
 upgrade it.

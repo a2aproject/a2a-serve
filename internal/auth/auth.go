@@ -38,9 +38,9 @@ import (
 
 // Roles.
 const (
-	// RoleOwner mints codes and answers approvals by default.
+	// RoleOwner sees every task and answers any approval.
 	RoleOwner = "owner"
-	// RoleMember can talk to the agent but can't approve unless listed as an approver.
+	// RoleMember can talk to the agent and answer the approvals of their own tasks.
 	RoleMember = "member"
 )
 
@@ -350,9 +350,10 @@ func IssueToken(ctx context.Context, s *store.Store, c store.Code, agentURL stri
 	return tok, p, nil
 }
 
-var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
+var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:join|link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
 
-// LinkCode returns the code of a "link <code>" or "/start <code>" message.
+// LinkCode returns the code of a "join <code>", "link <code>" or "/start
+// <code>" message.
 func LinkCode(text string) (string, bool) {
 	m := linkCommand.FindStringSubmatch(text)
 	if m == nil {
@@ -383,9 +384,4 @@ func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string)
 		l.Conv = string(in.Conv)
 	}
 	return p, s.PutLink(ctx, l)
-}
-
-// CanApprove reports whether p may answer tool permission requests.
-func CanApprove(p Principal, approvers []string) bool {
-	return p.Has(RoleOwner) || slices.Contains(approvers, p.ID)
 }

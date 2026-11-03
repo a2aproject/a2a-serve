@@ -47,12 +47,9 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 				return err
 			}
-			services := launch.InstalledServices(d)
-			installed := len(services) > 0
-			for _, name := range services {
-				if !uninstall {
-					break
-				}
+			name := launch.ServiceName(d)
+			installed := service.Installed(name)
+			if installed && uninstall {
 				if err := service.Uninstall(name); err != nil {
 					return err
 				}
@@ -76,7 +73,7 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			case uninstall:
 				sb.WriteString("  no service was installed\n")
 			case installed:
-				sb.WriteString("  it starts again at login; remove the service with `a2a serve stop --uninstall`\n")
+				sb.WriteString("  it starts again at login; remove the service with `a2a-serve stop --uninstall`\n")
 			}
 			_, err = fmt.Fprint(cfg.Out, sb.String())
 			return err

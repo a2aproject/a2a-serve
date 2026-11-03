@@ -116,7 +116,7 @@ func checkPlugins(env Env, path string, values map[string]any) Result {
 		return r
 	}
 	r.Status, r.Message = StatusFail, "command plugins not enabled"
-	r.Detail = `a2a serve fails with unknown command "serve" for "a2a"`
+	r.Detail = `a2a-serve fails with unknown command "serve" for "a2a"`
 	// `a2a serve` doesn't run until the fix is applied.
 	r.Fix = fixCommand
 	r.apply = func() (string, error) {
@@ -138,22 +138,22 @@ func checkServeBinary(env Env) Result {
 	}
 	self, err := env.Executable()
 	if err != nil {
-		r.Status, r.Message = StatusWarn, fmt.Sprintf("a2a serve runs %s; can't tell whether it is this binary: %v", found, err)
+		r.Status, r.Message = StatusWarn, fmt.Sprintf("a2a-serve runs %s; can't tell whether it is this binary: %v", found, err)
 		return r
 	}
 	foundReal, selfReal := resolve(found), resolve(self)
 	if foundReal == selfReal {
-		r.Status, r.Message = StatusOK, "a2a serve runs "+found
+		r.Status, r.Message = StatusOK, "a2a-serve runs "+found
 		return r
 	}
 	pathDirs := filepath.SplitList(getenv(env, "PATH"))
 	if slices.ContainsFunc(pathDirs, func(d string) bool { return d != "" && resolve(d) == resolve(filepath.Dir(self)) }) {
 		r.Status = StatusFail
-		r.Message = fmt.Sprintf("a2a serve runs %s, a copy earlier on PATH than this binary (%s)", found, self)
+		r.Message = fmt.Sprintf("a2a-serve runs %s, a copy earlier on PATH than this binary (%s)", found, self)
 		r.Fix = fmt.Sprintf("remove %s, or put %s earlier on PATH", found, filepath.Dir(self))
 		return r
 	}
-	r.Status, r.Message = StatusWarn, fmt.Sprintf("a2a serve runs %s, not this binary (%s)", found, self)
+	r.Status, r.Message = StatusWarn, fmt.Sprintf("a2a-serve runs %s, not this binary (%s)", found, self)
 	return r
 }
 

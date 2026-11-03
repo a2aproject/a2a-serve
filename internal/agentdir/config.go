@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -235,8 +236,13 @@ type ApprovalsConfig struct {
 	// Allow and Deny are ACP tool kind globs answered without asking.
 	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
 	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
-	// Approvers are principal IDs, besides owners, who may answer approvals.
-	Approvers []string `yaml:"approvers,omitempty" json:"approvers,omitempty"`
+	// OwnerChat is the chat, <channel>[:<who>], where an owner answers the
+	// questions of tasks nobody watches. Empty picks the first messenger
+	// with a linked owner.
+	OwnerChat string `yaml:"owner_chat,omitempty" json:"ownerChat,omitempty"`
+	// RemovedApprovers holds an approvers key, which Validate rejects: who
+	// started a task answers its questions now.
+	RemovedApprovers []string `yaml:"approvers,omitempty" json:"-"`
 }
 
 // LimitsConfig are container resource limits.
@@ -249,10 +255,17 @@ type LimitsConfig struct {
 // DefaultLimits are the limits of a container when the config sets none.
 var DefaultLimits = LimitsConfig{Memory: "4g", CPUs: "2", PIDs: 512}
 
-// defaultWorkspace is how config.yaml spells the default workspace when it
-// also lists mounts, which tells it apart from a config in which the first
-// mount was the workspace.
+// defaultWorkspace is how config.yaml may spell the default workspace.
 const defaultWorkspace = "."
+
+// LocalURL is the agent's URL on this machine, empty before the first start
+// picked its port.
+func (c *Config) LocalURL() string {
+	if c.Port == 0 {
+		return ""
+	}
+	return "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(c.Port))
+}
 
 // LoadConfig reads and validates config.yaml.
 func (d Dir) LoadConfig() (*Config, error) {
@@ -261,7 +274,7 @@ func (d Dir) LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a serve config set` or `a2a serve config edit`", d.ConfigPath(), err)}
+		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a-serve config set` or `a2a-serve config edit`", d.ConfigPath(), err)}
 	}
 	return cfg, nil
 }
@@ -283,15 +296,11 @@ func (d Dir) ReadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// ParseConfig parses the content of config.yaml. A config in which the first
-// mount is the workspace is migrated to the workspace setting.
+// ParseConfig parses the content of config.yaml.
 func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
-	}
-	if cfg.Workspace == "" && len(cfg.Mounts) > 0 {
-		cfg.Workspace, cfg.Mounts = cfg.Mounts[0], cfg.Mounts[1:]
 	}
 	if cfg.Workspace == defaultWorkspace {
 		cfg.Workspace = ""
@@ -304,18 +313,14 @@ func ParseConfig(data []byte) (*Config, error) {
 
 // MarshalConfig returns the content of config.yaml for cfg.
 func MarshalConfig(cfg *Config) ([]byte, error) {
-	out := *cfg
-	if out.Workspace == "" && len(out.Mounts) > 0 {
-		out.Workspace = defaultWorkspace
-	}
-	data, err := yaml.Marshal(&out)
+	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return nil, err
 	}
 	return append([]byte(configHeader), data...), nil
 }
 
-const configHeader = "# Agent definition for `a2a serve`. Secrets are kept in state/secrets, never here.\n"
+const configHeader = "# Agent definition for `a2a-serve`. Secrets are kept in state/secrets, never here.\n"
 
 // SaveConfig writes config.yaml.
 func (d Dir) SaveConfig(cfg *Config) error {
@@ -339,7 +344,6 @@ func (c *Config) Clone() *Config {
 	out.Network.Identities = maps.Clone(c.Network.Identities)
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
-	out.Approvals.Approvers = slices.Clone(c.Approvals.Approvers)
 	out.Auth.AllowEmails = slices.Clone(c.Auth.AllowEmails)
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}

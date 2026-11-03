@@ -15,9 +15,13 @@
 package cli
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -25,34 +29,40 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		flags   settingsFlags
 		dryRun  bool
 		restart bool
-		quiet   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
-		Short: "Change settings with the flags of `a2a serve <harness>`",
-		Long: `Change settings with the flags of ` + "`a2a serve <harness>`" + `. Scalars are
+		Short: "Change settings with the flags of `a2a-serve start <harness>`, and the settings only it takes",
+		Long: `Change settings with the flags of ` + "`a2a-serve start <harness>`" + `, and the
+operational settings only config set takes: limits, network-provider
+options, backups and Google sign-in. Messengers are set with
+` + "`a2a-serve channel add`" + `. With --harness, config set also creates an
+agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
-and --allow-tools, --deny-tools and --approver by value. Remove entries with
-` + "`a2a serve config unset`" + `.
+and --allow-tools and --deny-tools by value. Remove entries with
+` + "`a2a-serve config unset`" + `.
 
-Secret-valued flags (--telegram, --discord, --email-password,
---tailscale-authkey, --ngrok-authtoken) take - to read the value from a
-prompt without echo, or from stdin, keeping it out of the shell history.`,
-		Example: `  a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
-  a2a serve config set --telegram - --restart
-  a2a serve config set --mount ~/docs:/docs:ro --dry-run`,
+` + secretref.Help,
+		Example: `  a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
+  a2a-serve config set --tailscale-authkey - --restart
+  a2a-serve config set --mount ~/docs:/docs:ro --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
+			// With --harness, a new agent is configured before its first
+			// start, such as with the credentials a headless start needs.
+			if errors.Is(err, agentdir.ErrNotFound) && flags.s.Harness != "" {
+				d, err = harnessDir(sf.dir)
+			}
 			if err != nil {
 				return err
 			}
-			s, err := flags.settings(newSecretReader(cfg.stderr()))
+			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Set(cmd.Context(), d, s, dryRun)
+			res, err := agentctl.Set(sf.controlContext(cmd.Context()), d, s, dryRun)
 			if err != nil {
 				return err
 			}
@@ -62,13 +72,14 @@ prompt without echo, or from stdin, keeping it out of the shell history.`,
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(cmd.Context(), d, quiet, cfg.Out)
+			return agentctl.Restart(sf.controlContext(cmd.Context()), d, false, cfg.Out)
 		},
 	}
-	flags.register(cmd, true)
+	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
+	cmd.SetUsageFunc(sectionedUsage)
+	hideImageForLocalSandbox(cmd, sf.agentDir)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, "Restart the running agent if a change needs it")
-	f.BoolVar(&quiet, "quiet", false, "With --restart, keep the harness image output in the log")
 	return cmd
 }

@@ -112,7 +112,7 @@ func (in *inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	in.mu.Unlock()
 	if token == "" {
-		http.Error(w, "This login link is invalid or was used already. Run `a2a serve open` for a new one.", http.StatusUnauthorized)
+		http.Error(w, "This login link is invalid or was used already. Run `a2a-serve inspect` for a new one.", http.StatusUnauthorized)
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
@@ -128,7 +128,7 @@ func (in *inspector) page(h func(http.ResponseWriter, *http.Request, inspectorSe
 		setInspectorHeaders(w)
 		c, err := r.Cookie(inspectorCookie)
 		if err != nil {
-			http.Error(w, "Open the inspector with `a2a serve open`.", http.StatusUnauthorized)
+			http.Error(w, "Open the inspector with `a2a-serve inspect`.", http.StatusUnauthorized)
 			return
 		}
 		in.mu.Lock()
@@ -139,7 +139,7 @@ func (in *inspector) page(h func(http.ResponseWriter, *http.Request, inspectorSe
 		}
 		in.mu.Unlock()
 		if !ok {
-			http.Error(w, "Your session ended. Open the inspector again with `a2a serve open`.", http.StatusUnauthorized)
+			http.Error(w, "Your session ended. Open the inspector again with `a2a-serve inspect`.", http.StatusUnauthorized)
 			return
 		}
 		if r.Method == http.MethodPost && subtle.ConstantTimeCompare([]byte(r.FormValue("csrf")), []byte(sess.csrf)) != 1 {

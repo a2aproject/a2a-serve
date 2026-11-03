@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-// Settings are the flags of `a2a serve <harness>` and `a2a serve config
+// Settings are the flags of `a2a-serve start <harness>` and `a2a-serve config
 // set`. Set scalars override the config; list entries are added, replacing
 // the entry with the same key; unset fields keep what earlier runs saved.
 type Settings struct {
@@ -57,7 +57,8 @@ type Settings struct {
 
 	AllowTools []string
 	DenyTools  []string
-	Approvers  []string
+	// OwnerChat is <channel>[:<who>].
+	OwnerChat string
 
 	TailscaleControlURL string
 	NgrokURL            string
@@ -167,8 +168,8 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	for _, v := range s.DenyTools {
 		cfg.Approvals.Deny = putKeyed(cfg.Approvals.Deny, v, nil)
 	}
-	for _, v := range s.Approvers {
-		cfg.Approvals.Approvers = putKeyed(cfg.Approvals.Approvers, v, nil)
+	if s.OwnerChat != "" {
+		cfg.Approvals.OwnerChat = s.OwnerChat
 	}
 	for _, v := range s.AllowEmails {
 		cfg.Auth.AllowEmails = putKeyed(cfg.Auth.AllowEmails, strings.TrimSpace(v), strings.ToLower)
@@ -211,14 +212,14 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	if s.Telegram != "" {
 		ref, err := resolve(s.Telegram, SecretTelegram)
 		if err != nil {
-			return nil, fmt.Errorf("--telegram: %w", err)
+			return nil, fmt.Errorf("telegram token: %w", err)
 		}
 		cfg.Channels.Telegram = &TelegramConfig{Token: ref}
 	}
 	if s.Discord != "" {
 		ref, err := resolve(s.Discord, SecretDiscord)
 		if err != nil {
-			return nil, fmt.Errorf("--discord: %w", err)
+			return nil, fmt.Errorf("discord token: %w", err)
 		}
 		cfg.Channels.Discord = &DiscordConfig{Token: ref}
 	}

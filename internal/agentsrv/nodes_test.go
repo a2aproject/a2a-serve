@@ -93,7 +93,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
-	if resp.Node == nil || resp.PairCommand != "a2a serve tokens add "+ts.srv.bestURL()+" "+resp.Code {
+	if resp.Node == nil || resp.PairCommand != "a2a-serve pair join "+ts.srv.bestURL()+" "+resp.Code {
 		t.Fatalf("Pair() = %+v, want a node code and its pair command", resp)
 	}
 	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", id, ts.srv.bestURL(), ts.srv.bestURL(), resp.Code)
@@ -166,37 +166,46 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 	}
 }
 
-func TestNodeAPIAtLegacyRelayPath(t *testing.T) {
+func TestNodeAnswersOwnApproval(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant"})
+	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("telegram")})
+	linkOwner(t, ts, "tg:1", "dm1")
 	node := addNode(t, ts, "grok", 0)
 	node.mu.Lock()
 	token := node.client.Token
 	node.mu.Unlock()
+	c := ts.client(token)
 
-	legacy := &mailboxapi.Client{BaseURL: ts.localURL() + mailboxapi.LegacyPrefix, Token: token}
-	info, err := legacy.Node(context.Background())
+	task := send(t, c, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want input-required", task.Status.State)
+	}
+	answer := send(t, c, userText("approve", string(task.ID), task.ContextID))
+
+	wantResult(t, answer, a2a.TaskStateCompleted, "Pushed (allow).")
+	if got := ts.ch.questions(); got != 0 {
+		t.Fatalf("questions sent to messengers = %d, want none: the node answers its own task", got)
+	}
+}
+
+func TestNodeSkill(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	path := mailboxapi.Prefix + "/skill.md"
+
+	resp, err := http.Get(ts.localURL() + path)
 	if err != nil {
-		t.Fatalf("Client.Node() at %s error = %v", mailboxapi.LegacyPrefix, err)
+		t.Fatalf("GET %s error = %v", path, err)
 	}
-	if info.ID != "grok" {
-		t.Fatalf("Client.Node() at %s = %+v, want grok", mailboxapi.LegacyPrefix, info)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
 	}
-	for _, path := range []string{mailboxapi.Prefix + "/skill.md", mailboxapi.LegacyPrefix + "/skill.md"} {
-		resp, err := http.Get(ts.localURL() + path)
-		if err != nil {
-			t.Fatalf("GET %s error = %v", path, err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
-		}
-		if err := resp.Body.Close(); err != nil {
-			t.Fatalf("closing %s: %v", path, err)
-		}
-		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "name: a2a-mailbox") {
-			t.Fatalf("GET %s = %d %q, want the a2a-mailbox skill", path, resp.StatusCode, body)
-		}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("closing %s: %v", path, err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "name: a2a-mailbox") {
+		t.Fatalf("GET %s = %d %q, want the a2a-mailbox skill", path, resp.StatusCode, body)
 	}
 }
 
@@ -227,7 +236,7 @@ func TestPairNodeOrCaller(t *testing.T) {
 	}{
 		{name: "new caller", req: controlapi.PairCodeRequest{Name: "bob"}},
 		{name: "existing node gets a node code", req: controlapi.PairCodeRequest{Name: "grok"}, wantNode: true},
-		{name: "existing node with a new webhook", req: controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/new"}, wantNode: true},
+		{name: "existing node with a new webhook", req: controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/new"}, wantErr: true},
 		{name: "role for a node", req: controlapi.PairCodeRequest{Name: "grok", Role: auth.RoleOwner}, wantErr: true},
 		{name: "webhook for a caller's name", req: controlapi.PairCodeRequest{Name: "anna", Webhook: "https://example.com/hook"}, wantErr: true},
 	}

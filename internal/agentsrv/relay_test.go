@@ -41,7 +41,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
@@ -93,7 +95,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	wantPeers := []controlapi.Peer{{
 		Name:        "reviewer",
 		URL:         "http://agentmesh.local/mesh/peer-reviewer/a2a/reviewer",
-		Description: "reviewer is a fake coding agent reached through `a2a serve`.",
+		Description: "reviewer is a fake coding agent reached through `a2a-serve`.",
 		Online:      true,
 	}}
 	if diff := cmp.Diff(wantPeers, peers); diff != "" {
@@ -275,15 +277,7 @@ func TestRelayTokenJoinRequiresPairingAndServesPublicIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credstore.Pair() error = %v, want nil", err)
 	}
-	u, err := url.Parse(pubURL)
-	if err != nil {
-		t.Fatalf("url.Parse() error = %v, want nil", err)
-	}
-	extHTTP := &http.Client{Transport: &headerTransport{
-		base:   http.DefaultTransport,
-		host:   u.Host,
-		header: http.Header{"Authorization": {"Bearer " + extCred.Token}},
-	}}
+	extHTTP := manage.TokenClient(http.DefaultClient, store.Contact{URL: pubURL, Token: extCred.Token})
 	card, err := agentcard.NewResolver(extHTTP).Resolve(ctx, pubURL)
 	if err != nil {
 		t.Fatalf("agentcard.Resolve(public) error = %v, want nil", err)

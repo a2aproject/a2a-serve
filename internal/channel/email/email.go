@@ -100,7 +100,7 @@ func (c *Channel) Describe() string { return c.cfg.Address }
 
 // LinkHint implements [channel.Describer].
 func (c *Channel) LinkHint(code string) string {
-	return fmt.Sprintf("email %s with the text: link %s", c.cfg.Address, code)
+	return fmt.Sprintf("email %s with the text: join %s", c.cfg.Address, code)
 }
 
 // Run implements [channel.Channel]. It reconnects with backoff.

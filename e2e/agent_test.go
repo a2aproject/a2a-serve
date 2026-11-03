@@ -29,7 +29,7 @@ func TestOwnerServesAndCallsAgent(t *testing.T) {
 	coder := owner.startAgent("coder")
 
 	if !coder.running() {
-		t.Fatalf("a2a serve status running = false after start, want true")
+		t.Fatalf("a2a-serve status running = false after start, want true")
 	}
 	got := resultOf(owner.mustSend(coder.url, "hello"))
 	want := taskResult{State: a2a.TaskStateCompleted, Text: "Hello from fakeacp."}
@@ -39,7 +39,7 @@ func TestOwnerServesAndCallsAgent(t *testing.T) {
 
 	coder.stop()
 	if coder.running() {
-		t.Fatalf("a2a serve status running = true after stop, want false")
+		t.Fatalf("a2a-serve status running = true after stop, want false")
 	}
 }
 

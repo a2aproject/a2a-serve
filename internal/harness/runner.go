@@ -240,11 +240,11 @@ func (r *DockerRunner) Stop(ctx context.Context) error {
 // runs rootless.
 func CheckDocker(ctx context.Context) (rootless bool, err error) {
 	if _, err := exec.LookPath("docker"); err != nil {
-		return false, fmt.Errorf("docker is not installed; install Docker or run a2a serve config set --sandbox local, or run a2a serve doctor: %w", err)
+		return false, fmt.Errorf("docker is not installed; install Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", err)
 	}
 	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.SecurityOptions}}").Output()
 	if err != nil {
-		return false, fmt.Errorf("docker is not running; start Docker or run a2a serve config set --sandbox local, or run a2a serve doctor: %w", exitErr(err))
+		return false, fmt.Errorf("docker is not running; start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", exitErr(err))
 	}
 	return bytes.Contains(out, []byte("rootless")), nil
 }

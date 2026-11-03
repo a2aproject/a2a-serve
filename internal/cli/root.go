@@ -26,10 +26,12 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // pluginName is the name the a2a CLI runs this binary under: a2a-<name>
@@ -42,12 +44,14 @@ const infoSubcommand = "info"
 type globalConfig struct {
 	output  string
 	verbose bool
-	// timeout bounds the HTTP requests of tokens add and the mailbox commands.
+	// timeout bounds the HTTP requests of the mailbox commands.
 	timeout time.Duration
 
-	errOut        io.Writer
+	errOut io.Writer
+	// stdin overrides os.Stdin for secret values read with -, for tests.
+	stdin         *os.File
 	httpTransport http.RoundTripper
-	// credentials overrides the store of `a2a serve tokens add` tokens, for tests.
+	// credentials overrides the store of `a2a-serve pair join` tokens, for tests.
 	credentials *credstore.Store
 
 	*output.Printer
@@ -58,6 +62,15 @@ func (g *globalConfig) stderr() io.Writer {
 		return g.errOut
 	}
 	return os.Stderr
+}
+
+// secretReader returns a reader of secret values which prompts on prompt.
+func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
+	in := os.Stdin
+	if g.stdin != nil {
+		in = g.stdin
+	}
+	return secretref.NewReader(in, prompt)
 }
 
 func (g *globalConfig) logf(format string, args ...any) {
@@ -78,16 +91,23 @@ func (g *globalConfig) credentialStore() (*credstore.Store, error) {
 // Execute runs the CLI with args, the command line without the program
 // name, and returns the exit code.
 func Execute(args []string) int {
-	if len(args) == 1 && args[0] == infoSubcommand {
+	if isPluginInfoCall(args, os.Stdout) {
 		return printPluginInfo(os.Stdout)
 	}
 	cfg := &globalConfig{Printer: &output.Printer{Out: os.Stdout}}
 	root := newRootCmd(cfg)
-	root.SetArgs(rootArgs(args))
+	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		return cfg.renderError(err)
 	}
 	return 0
+}
+
+// isPluginInfoCall reports whether args are the a2a CLI asking for the
+// plugin's metadata. The CLI reads it through a pipe; on a terminal, info is
+// an unknown command like any other.
+func isPluginInfoCall(args []string, stdout *os.File) bool {
+	return len(args) == 1 && args[0] == infoSubcommand && !term.IsTerminal(int(stdout.Fd()))
 }
 
 // pluginInfo is the document the a2a CLI reads from `a2a-serve info`.
@@ -124,50 +144,59 @@ func (g *globalConfig) renderError(err error) int {
 	return ce.Exit
 }
 
-// rootArgs returns the arguments of the `a2a` root command for args, the
-// command line of `a2a serve`. Shell completion asks `a2a-serve __complete
-// <args>`, which completes `a2a serve <args>`.
-func rootArgs(args []string) []string {
-	if len(args) > 0 && (args[0] == cobra.ShellCompRequestCmd || args[0] == cobra.ShellCompNoDescRequestCmd) {
-		return append([]string{args[0], pluginName}, args[1:]...)
-	}
-	return append([]string{pluginName}, args...)
-}
-
-// newRootCmd returns the `a2a` command with `serve` as its only subcommand,
-// so that help and errors name commands the way users type them through
-// the a2a CLI.
+// newRootCmd returns the `a2a-serve` command. The a2a CLI runs it as
+// `a2a serve` with the same arguments, including those of shell completion.
 func newRootCmd(cfg *globalConfig) *cobra.Command {
-	root := &cobra.Command{
-		Use:               "a2a",
-		SilenceUsage:      true,
-		SilenceErrors:     true,
-		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
-	}
-	serve := newServeCmd(cfg)
-	serve.SetVersionTemplate("a2a-serve {{.Version}}\n")
-	pf := serve.PersistentFlags()
+	root := newServeCmd(cfg)
+	root.SilenceUsage, root.SilenceErrors = true, true
+	root.CompletionOptions = cobra.CompletionOptions{DisableDefaultCmd: true}
+	root.SetVersionTemplate(buildVersionInfo().text())
+	pf := root.PersistentFlags()
 	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line)")
 	pf.BoolVarP(&cfg.verbose, "verbose", "v", false, "Verbose output to stderr")
-	serve.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		switch output.Mode(cfg.output) {
 		case output.ModeText, output.ModeJson, output.ModeJSONL:
 			cfg.Mode = output.Mode(cfg.output)
 		default:
 			return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json or jsonl)", cfg.output))
 		}
-		return nil
+		return checkTextOnly(cmd, cfg)
 	}
-	must(serve.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
-	serve.AddCommand(newHelpCmd(serve))
-	addGroups(serve)
-	root.AddCommand(serve)
+	must(root.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
+	help := newHelpCmd(root)
+	markTextOnly(help)
+	root.SetHelpCommand(help)
+	addGroups(root)
+	root.SetHelpCommandGroupID(groupSetup)
 	markUsageErrors(root)
 	return root
 }
 
-// newHelpCmd returns `a2a serve help [command]`. Cobra only adds a help
-// command to the root, which here is the `a2a` wrapper.
+// textOnlyAnnotation marks a command which only prints text, so -o is an
+// error there rather than ignored.
+const textOnlyAnnotation = "a2a-serve-text-only"
+
+// markTextOnly marks cmd and its subcommands as printing only text.
+func markTextOnly(cmd *cobra.Command) {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[textOnlyAnnotation] = "true"
+	for _, sub := range cmd.Commands() {
+		markTextOnly(sub)
+	}
+}
+
+func checkTextOnly(cmd *cobra.Command, cfg *globalConfig) error {
+	if cfg.output == string(output.ModeText) || cmd.Annotations[textOnlyAnnotation] == "" {
+		return nil
+	}
+	return clierr.Usage(fmt.Sprintf("-o %s doesn't apply to `%s`, which prints text", cfg.output, cmd.CommandPath()))
+}
+
+// newHelpCmd returns `a2a-serve help [command]`, which reports an unknown
+// topic as a usage error.
 func newHelpCmd(serve *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:   "help [command]",

@@ -174,73 +174,13 @@ func TestRotateLog(t *testing.T) {
 	}
 }
 
-func TestServiceNameIgnoresAgentName(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+func TestServiceName(t *testing.T) {
+	t.Parallel()
 	dir, err := agentdir.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("agentdir.Open() error = %v", err)
 	}
-	want := "a2a-" + dir.ID()
-	for _, name := range []string{"coder", "renamed"} {
-		if got := ServiceName(dir, &agentdir.Config{Name: name}); got != want {
-			t.Fatalf("ServiceName(%q) = %q, want %q", name, got, want)
-		}
-	}
-}
-
-func TestServiceNameFindsLegacyUnit(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("writes a systemd user unit")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
-	}
-	legacy := "a2a-old-name-" + dir.ID()
-	units := filepath.Join(home, ".config", "systemd", "user")
-	if err := os.MkdirAll(units, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(units, legacy+".service"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got := ServiceName(dir, &agentdir.Config{Name: "coder"}); got != legacy {
-		t.Fatalf("ServiceName() = %q, want %q", got, legacy)
-	}
-	if err := os.WriteFile(filepath.Join(units, "a2a-"+dir.ID()+".service"), nil, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if got, want := ServiceName(dir, &agentdir.Config{Name: "coder"}), "a2a-"+dir.ID(); got != want {
+	if got, want := ServiceName(dir), "a2a-"+dir.ID(); got != want {
 		t.Fatalf("ServiceName() = %q, want %q", got, want)
-	}
-}
-
-func TestInstalledServicesListsLegacyUnits(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skip("writes systemd user units")
-	}
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	dir, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
-	}
-	units := filepath.Join(home, ".config", "systemd", "user")
-	if err := os.MkdirAll(units, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	want := []string{"a2a-" + dir.ID(), "a2a-first-" + dir.ID(), "a2a-second-" + dir.ID()}
-	for _, name := range want {
-		if err := os.WriteFile(filepath.Join(units, name+".service"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	got := InstalledServices(dir)
-
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("InstalledServices() wrong result (-want +got) diff = %s", diff)
 	}
 }

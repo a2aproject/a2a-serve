@@ -19,9 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"maps"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,18 +34,17 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Contact routes.
 const (
-	ViaPrivate = "private"
-	ViaHTTPS   = "https"
+	ViaPrivate = manage.ViaPrivate
+	ViaHTTPS   = manage.ViaHTTPS
 )
 
 // watchInterval is the first delay between checks of a watched task; it
@@ -172,7 +169,7 @@ func (p *Peers) claimsOf(ctx context.Context, name string) (callClaims, bool) {
 // discover lists agents on the private network, cached briefly.
 func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	if p.private == nil {
-		return nil, errors.New("this agent has no private network; add one with `a2a serve config set --private tailscale` (or lan) and `a2a serve restart`")
+		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or lan) and `a2a-serve restart`")
 	}
 	p.mu.Lock()
 	if time.Since(p.cachedAt) < 30*time.Second {
@@ -191,60 +188,35 @@ func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	return peers, nil
 }
 
-// addContact stores a contact, pairing with it if a code is given.
-func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (store.Contact, error) {
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
-		return store.Contact{}, errors.New("contact name must be non-empty, without spaces or slashes")
-	}
-	if req.Name == schedulesAgent {
-		return store.Contact{}, fmt.Errorf("%q is the agent the harness manages schedules with; pick another name", schedulesAgent)
-	}
-	if node, err := p.isNode(ctx, req.Name); err != nil || node {
-		if err != nil {
-			return store.Contact{}, err
+// contacts manages the contacts, found by name on the private network.
+func (p *Peers) contacts() manage.Contacts {
+	return manage.Contacts{Store: p.store, Locate: p.locate, HTTPClient: p.httpClient}
+}
+
+// locate returns the URL of the contact name, an advertised pairing or an
+// agent found by name on the private network, when u is empty, and the
+// route to it.
+func (p *Peers) locate(ctx context.Context, name, u string) (string, string, error) {
+	if u != "" {
+		if p.private != nil && p.onPrivateNetwork(ctx, u) {
+			return u, ViaPrivate, nil
 		}
-		return store.Contact{}, fmt.Errorf("%q is the name of a webhook node; pick another name", req.Name)
+		return u, ViaHTTPS, nil
 	}
-	c := store.Contact{Name: req.Name, URL: trimSlash(req.URL), Token: req.Token, Via: ViaHTTPS}
-	if name, host, ok := gossip.ParseKey(req.Name); ok && c.URL == "" {
-		u, err := p.advertisedURL(ctx, req.Name, name, host)
-		if err != nil {
-			return store.Contact{}, err
-		}
-		c.URL, c.Via = u, ViaPrivate
-	} else if c.URL == "" {
-		peers, err := p.discover(ctx)
-		if err != nil {
-			return store.Contact{}, err
-		}
-		for _, pi := range peers {
-			if strings.EqualFold(pi.Name, req.Name) {
-				c.URL = pi.URL
-			}
-		}
-		if c.URL == "" {
-			return store.Contact{}, fmt.Errorf("no agent named %q on the private network; pass its URL with --url", req.Name)
-		}
-		c.Via = ViaPrivate
-	} else if p.private != nil && p.onPrivateNetwork(ctx, c.URL) {
-		c.Via = ViaPrivate
+	if node, host, ok := gossip.ParseKey(name); ok {
+		u, err := p.advertisedURL(ctx, name, node, host)
+		return u, ViaPrivate, err
 	}
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	hc := p.httpClient(c)
-	if req.Code != "" {
-		tok, err := pairWith(ctx, hc, c.URL, req.Code)
-		if err != nil {
-			return store.Contact{}, err
+	peers, err := p.discover(ctx)
+	if err != nil {
+		return "", "", err
+	}
+	for _, pi := range peers {
+		if strings.EqualFold(pi.Name, name) {
+			return pi.URL, ViaPrivate, nil
 		}
-		c.Token = tok
-		hc = p.httpClient(c)
 	}
-	if _, err := network.FetchCard(ctx, hc, c.URL); err != nil {
-		return store.Contact{}, fmt.Errorf("can't reach %s: %w", c.URL, err)
-	}
-	return c, p.store.PutContact(ctx, c)
+	return "", "", fmt.Errorf("no agent named %q on the private network; pass its URL with --url", name)
 }
 
 // advertisedURL returns the URL of a pairing advertised as key: the node
@@ -252,7 +224,7 @@ func (p *Peers) addContact(ctx context.Context, req controlapi.ContactRequest) (
 // advertisement only says it exists, so it can't send calls elsewhere.
 func (p *Peers) advertisedURL(ctx context.Context, key, name, host string) (string, error) {
 	if _, ok := p.ads.Lookup(key); !ok {
-		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a serve peers` lists the advertised pairings", key)
+		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a-serve peers` lists the advertised pairings", key)
 	}
 	peers, err := p.discover(ctx)
 	if err != nil {
@@ -279,36 +251,6 @@ func (p *Peers) onPrivateNetwork(ctx context.Context, u string) bool {
 	return false
 }
 
-// pairWith exchanges a pairing code at an agent for a caller token.
-func pairWith(ctx context.Context, hc *http.Client, agentURL, code string) (string, error) {
-	resp, err := pairapi.Pair(ctx, hc, agentURL, code)
-	if err != nil {
-		return "", err
-	}
-	if resp.Kind == pairapi.KindNode {
-		return "", fmt.Errorf("pairing with %s: the code is for a webhook node, not a caller", agentURL)
-	}
-	return resp.Token, nil
-}
-
-// headerTransport adds the caller's headers to requests for the contact's
-// host. Requests redirected elsewhere go without them, so that the token
-// doesn't leak to another host.
-type headerTransport struct {
-	base   http.RoundTripper
-	host   string
-	header http.Header
-}
-
-func (t *headerTransport) RoundTrip(r *http.Request) (*http.Response, error) {
-	if !strings.EqualFold(r.URL.Host, t.host) {
-		return t.base.RoundTrip(r)
-	}
-	r = r.Clone(r.Context())
-	maps.Copy(r.Header, t.header)
-	return t.base.RoundTrip(r)
-}
-
 // httpClient returns the HTTP client for a contact, which sends its token
 // to the contact's host only. It has no overall timeout, because streams to
 // the contact last as long as its task; callers bound requests with their
@@ -318,19 +260,7 @@ func (p *Peers) httpClient(c store.Contact) *http.Client {
 	if c.Via == ViaPrivate && p.private != nil {
 		base = p.private.HTTPClient()
 	}
-	rt := base.Transport
-	if rt == nil {
-		rt = http.DefaultTransport
-	}
-	h := http.Header{}
-	if c.Token != "" {
-		h.Set("Authorization", "Bearer "+c.Token)
-	}
-	host := ""
-	if u, err := url.Parse(c.URL); err == nil {
-		host = u.Host
-	}
-	return &http.Client{Transport: &headerTransport{base: rt, host: host, header: h}}
+	return manage.TokenClient(base, c)
 }
 
 // onBehalfOf returns ctx for calling another agent on behalf of a user, at
@@ -495,9 +425,15 @@ func destroyClient(c *a2aclient.Client) {
 }
 
 // relay asks the user on whose behalf a remote task runs to answer its
-// permission question, once per question, also across restarts.
+// permission question, once per question, also across restarts: in the
+// conversation the call came from, or else in the user's direct chat, or
+// else in the owner chat.
 func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task *a2a.Task, q *approvals.Question) {
-	rec, err := p.approvals.NewRecord(ctx, task.ID, task.ContextID, agent, q)
+	user := claims.OnBehalfOf
+	if user == "" {
+		user = auth.OwnerID
+	}
+	rec, err := p.approvals.NewRecord(ctx, task.ID, task.ContextID, agent, user, q)
 	if errors.Is(err, store.ErrExists) {
 		return
 	}
@@ -509,30 +445,39 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("finding the conversation of a relayed question", "context", claims.ContextID, "error", err)
 	}
-	user := claims.OnBehalfOf
-	if user == "" {
-		user = auth.OwnerID
-	}
 	header := fmt.Sprintf("%s wants to", agent)
 	if q.Title != "" {
 		header = fmt.Sprintf("%s wants to run %s", agent, q.Title)
 	}
-	if p.approvals.CanApprove(ctx, auth.Principal{ID: user}) && (chName != "" || p.hasLinks(ctx, user)) {
-		p.chat.Ask(ctx, []string{user}, chName, channel.ConvKey(conv), header, rec)
+	if chName != "" {
+		p.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
 		return
 	}
-	header += fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user))
-	p.chat.Ask(ctx, p.approvals.ApproverIDs(), "", "", header, rec)
+	if to, ok := p.directChat(ctx, user); ok {
+		p.chat.Ask(ctx, to, header, rec)
+		return
+	}
+	to, ok := p.chat.OwnerChat(ctx)
+	if !ok {
+		slog.Info("remote approval waits in the inspector: no chat", "agent", agent, "user", user, "question", rec.ID)
+		return
+	}
+	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user)), rec)
 }
 
-// hasLinks reports whether user can be asked in a messenger.
-func (p *Peers) hasLinks(ctx context.Context, user string) bool {
+// directChat returns the first direct chat of user in a messenger.
+func (p *Peers) directChat(ctx context.Context, user string) (approvals.Chat, bool) {
 	links, err := p.store.LinksOf(ctx, user)
 	if err != nil {
 		slog.Warn("listing links", "user", user, "error", err)
-		return false
+		return approvals.Chat{}, false
 	}
-	return len(links) > 0
+	for _, l := range links {
+		if l.Conv != "" {
+			return approvals.Chat{Channel: l.Channel, Conv: channel.ConvKey(l.Conv)}, true
+		}
+	}
+	return approvals.Chat{}, false
 }
 
 // AnswerRemote forwards an answer to a remote agent's question.

@@ -38,7 +38,7 @@ var inspectorPages = template.Must(template.New("").Funcs(template.FuncMap{
 }).Parse(`
 {{define "head"}}<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{.}} · a2a serve</title>
+<title>{{.}} · a2a-serve</title>
 <style>
 body{font-family:system-ui,sans-serif;max-width:64rem;margin:1.5rem auto;padding:0 1rem;color:#222}
 h1{font-size:1.4rem}h2{font-size:1.1rem;margin-top:2rem;border-bottom:1px solid #ddd;padding-bottom:.25rem}
@@ -79,7 +79,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 <h2>Messengers</h2>
 {{if .Status.Channels}}<table><tr><th>Channel</th><th>Account</th><th></th></tr>
 {{range .Status.Channels}}<tr><td>{{.Name}}</td><td>{{.Account}}</td><td>{{if .Error}}<span class="err">failing: {{.Error}}</span>{{end}}</td></tr>{{end}}
-</table>{{else}}<p class="muted">None; add one with <code>a2a serve channel add</code>.</p>{{end}}
+</table>{{else}}<p class="muted">None; add one with <code>a2a-serve channel add</code>.</p>{{end}}
 
 <h2>MCP servers and skills</h2>
 {{if .Status.ProjectError}}<p class="err">{{.Status.ProjectError}}</p>{{end}}
@@ -91,7 +91,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 <h2>Pairings</h2>
 {{if .Tokens}}<table><tr><th>Name</th><th>Principal</th><th>Roles</th><th>Created</th><th>Last used</th></tr>
 {{range .Tokens}}<tr><td>{{.Name}}</td><td>{{.Principal}}</td><td>{{range .Roles}}{{.}} {{end}}</td><td>{{when .Created}}</td><td>{{when .LastUsed}}</td></tr>{{end}}
-</table>{{else}}<p class="muted">None; invite someone with <code>a2a serve pair invite</code>.</p>{{end}}
+</table>{{else}}<p class="muted">None; invite someone with <code>a2a-serve pair invite</code>.</p>{{end}}
 
 <h2>Webhook nodes</h2>
 {{if .Nodes}}<table><tr><th>Node</th><th>URL</th><th>Webhook</th><th>Paired</th></tr>
@@ -101,7 +101,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 <h2>Contacts</h2>
 {{if .Contacts}}<table><tr><th>Name</th><th>URL</th><th>Via</th></tr>
 {{range .Contacts}}<tr><td>{{.Name}}</td><td>{{.URL}}</td><td>{{.Via}}</td></tr>{{end}}
-</table>{{else}}<p class="muted">None; add one with <code>a2a serve contact add</code>.</p>{{end}}
+</table>{{else}}<p class="muted">None; add one with <code>a2a-serve contact add</code>.</p>{{end}}
 {{template "foot"}}{{end}}
 
 {{define "conversation"}}{{template "head" .Agent}}

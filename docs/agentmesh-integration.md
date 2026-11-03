@@ -25,7 +25,7 @@ with no relay to run.
 | Relay for agents behind NAT | | router | DERP |
 | Public URL | | router ingress | Funnel |
 | Directory of agents | | router directory | tailnet peers |
-| Who runs the hub | | the team (`a2a serve relay`) | Tailscale |
+| Who runs the hub | | the team (proposed `a2a-serve relay`) | Tailscale |
 
 ## A. Components
 
@@ -57,7 +57,7 @@ depend on the network mode.
 |---|---|---|
 | For | one person or one tailnet | teams and outside callers |
 | Infrastructure | none; Tailscale hosts the hub | agentmesh-one on Cloud Run, a VM or Kubernetes |
-| Start | `a2a serve opencode --private tailscale` | `a2a serve opencode --relay <url>` |
+| Start | `a2a-serve start opencode --private tailscale` | `a2a-serve start opencode --private <relay-url>` |
 | Public URL | Funnel, after tailnet policy setup | router ingress, per agent |
 | Private network callers | trusted by tailnet identity (`WhoIs`) | trusted by mesh identity (`WhoIs`) |
 | Public URL callers | pairing tokens, Google sign-in | the same; the relay forwards requests unchanged |
@@ -72,9 +72,11 @@ traffic over the tailnet, and a public URL from the relay.
 ![B. Relay mode](graphs/agentmesh-relay.png)
 
 ```sh
-a2a serve relay deploy --cloud-run --project my-proj   # 1. the relay owner
-a2a serve relay invite anna                            #    a bootstrap token
-a2a serve opencode --relay https://relay.example.com --relay-token env:RELAY_TOKEN   # Anna
+# 1. the relay owner deploys agentmesh-one and gives Anna a join token
+#    (proposed: `a2a-serve relay deploy` and `a2a-serve relay invite`, not implemented)
+a2a-serve config set --harness opencode --private https://relay.example.com \
+  --relay-token env:RELAY_TOKEN                        # Anna
+a2a-serve start
 ```
 
 1. The relay is agentmesh-one at the version this a2a-serve pins. a2a-serve
@@ -139,9 +141,9 @@ advertisement records with their tailnet peers until every server has them.
 ## Steps
 
 1. **Prototype.** An `agentmesh-node` sidecar (`type: a2a`,
-   `ingress.auth_mode: passthrough`) in front of `a2a serve`, on a local
+   `ingress.auth_mode: passthrough`) in front of `a2a-serve`, on a local
    agentmesh-one. Check pairing and `a2a send` through the ingress URL.
-2. **Agent Mesh provider and `a2a serve relay`.** `meshnet` behind a build tag,
+2. **Agent Mesh provider and a proposed `a2a-serve relay`.** `meshnet` behind a build tag,
    bootstrap tokens, the public URL used everywhere a2a-serve prints or embeds
    one.
 3. **Advertised pairings** through the directory, and OAuth through `edge`
@@ -156,7 +158,7 @@ advertisement records with their tailnet peers until every server has them.
 2. **`meshnet` as its own Go module.** Embedding it today pulls libp2p, envoy
    and biscuit-go into every a2a-serve build.
 3. **An exported hub package.** agentmesh-one lives under `internal/`, so
-   `a2a serve relay` can only run the binary or image.
+   `a2a-serve relay` can only run the binary or image.
 4. **A custom dialer for `meshnet`.** It would let `meshnet` run over tsnet,
    putting a relay inside a tailnet.
 5. **Version compatibility** between `meshnet` and agentmesh-one before 1.0.

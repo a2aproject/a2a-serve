@@ -45,7 +45,7 @@ func xmlEscape(s string) string {
 }
 
 // LaunchdPlist renders the launchd agent of u. It restarts the server only
-// when it fails, so `a2a serve stop` keeps it stopped.
+// when it fails, so `a2a-serve stop` keeps it stopped.
 func LaunchdPlist(u Unit) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>
@@ -99,16 +99,6 @@ func Installed(name string) bool {
 	}
 	_, err = os.Stat(path)
 	return err == nil
-}
-
-// Glob returns the names of the installed services matching pattern, in
-// the syntax of [filepath.Match].
-func Glob(pattern string) ([]string, error) {
-	path, err := plistPath(pattern)
-	if err != nil {
-		return nil, err
-	}
-	return globNames(path, label(""), ".plist")
 }
 
 // Uninstall unloads and removes the service.

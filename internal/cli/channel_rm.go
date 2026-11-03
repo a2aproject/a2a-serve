@@ -28,6 +28,7 @@ import (
 func newChannelRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:       "rm <telegram|discord|email>",
+		Aliases:   []string{"delete"},
 		Short:     "Remove a messenger",
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: agentdir.ChannelKinds,

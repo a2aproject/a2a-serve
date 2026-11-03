@@ -156,13 +156,13 @@ func (u *user) mustSend(url string, args ...string) *a2a.Task {
 	return task
 }
 
-// tokensAdd redeems a pairing code for a token to the agent at url.
-func (u *user) tokensAdd(url, code string) {
+// pairJoin redeems a pairing code for a token to the agent at url.
+func (u *user) pairJoin(url, code string) {
 	u.t.Helper()
-	u.run(u.home, "a2a", "serve", "tokens", "add", url, code)
+	u.run(u.home, "a2a", "serve", "pair", "join", url, code)
 }
 
-// agent is an `a2a serve acp` agent of a user, running fakeacp in the
+// agent is an `a2a-serve start acp` agent of a user, running fakeacp in the
 // background without a sandbox.
 type agent struct {
 	u       *user
@@ -180,12 +180,12 @@ func (u *user) startAgent(name string) *agent {
 	}
 	a := &agent{u: u, name: name, dir: dir}
 	u.t.Cleanup(a.cleanup)
-	a.serve("acp", "--name", name, "--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp"), "--detach")
-	a.url = strings.TrimSpace(a.serve("url", "--local"))
+	a.serve("start", "acp", "--name", name, "--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp"), "--detach")
+	a.url = strings.TrimSpace(a.serve("status", "--url=local"))
 	return a
 }
 
-// serve runs `a2a serve <args>` in the agent's directory.
+// serve runs `a2a-serve <args>` in the agent's directory.
 func (a *agent) serve(args ...string) string {
 	a.u.t.Helper()
 	return a.u.run(a.dir, append([]string{"a2a", "serve"}, args...)...)
@@ -202,7 +202,7 @@ func (a *agent) stop() {
 	a.stopped = true
 }
 
-// invite creates a pairing code with `a2a serve pair invite`.
+// invite creates a pairing code with `a2a-serve pair invite`.
 func (a *agent) invite(args ...string) string {
 	a.u.t.Helper()
 	var resp struct {
@@ -210,7 +210,7 @@ func (a *agent) invite(args ...string) string {
 	}
 	a.serveJSON(&resp, append([]string{"pair", "invite"}, args...)...)
 	if resp.Code == "" {
-		a.u.t.Fatalf("a2a serve pair invite %v returned no code", args)
+		a.u.t.Fatalf("a2a-serve pair invite %v returned no code", args)
 	}
 	return resp.Code
 }

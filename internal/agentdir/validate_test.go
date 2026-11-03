@@ -50,7 +50,14 @@ func TestValidate(t *testing.T) {
 		{name: "identity role", modify: func(c *Config) { c.Network.Identities = map[string]string{"anna": "admin"} }, wantErr: "invalid --identity anna=admin"},
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
 		{name: "cpus", modify: func(c *Config) { c.Limits.CPUs = "-1" }, wantErr: "invalid --cpus"},
-		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "needs --telegram"},
+		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
+		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
+		{name: "unknown denied tool kind", modify: func(c *Config) { c.Approvals.Deny = []string{"shell"} }, wantErr: `invalid --deny-tools "shell"`},
+		{name: "owner chat", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:anna" }},
+		{name: "owner chat channel", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
+		{name: "owner chat without who", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:" }, wantErr: `invalid --owner-chat "telegram:"`},
+		{name: "removed approvers", modify: func(c *Config) { c.Approvals.RemovedApprovers = []string{"pair:anna"} }, wantErr: "approvals.approvers was removed"},
+		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "the telegram channel needs a token"},
 		{name: "sign-in", modify: func(c *Config) {
 			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
 		}},
@@ -129,7 +136,7 @@ func TestCheckConfig(t *testing.T) {
 		{
 			name:    "missing channel secret",
 			cfg:     Config{Name: "coder", Harness: "opencode", Channels: ChannelsConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
-			wantErr: "--discord: secret BOT is not set",
+			wantErr: "discord token (a2a-serve channel add discord --token): secret BOT is not set",
 		},
 	}
 	for _, tc := range tests {
@@ -224,8 +231,7 @@ func TestParseConfigWorkspace(t *testing.T) {
 		wantMounts    []string
 	}{
 		{name: "default", yaml: "harness: opencode\n"},
-		{name: "first mount is the workspace", yaml: "mounts: [/src/app, /docs:/docs:ro]\n", wantWorkspace: "/src/app", wantMounts: []string{"/docs:/docs:ro"}},
-		{name: "only the workspace mount", yaml: "mounts: [/src/app]\n", wantWorkspace: "/src/app"},
+		{name: "mounts without workspace", yaml: "mounts: [/src/app, /docs:/docs:ro]\n", wantMounts: []string{"/src/app", "/docs:/docs:ro"}},
 		{name: "default workspace with mounts", yaml: "workspace: .\nmounts: [/docs]\n", wantMounts: []string{"/docs"}},
 		{name: "workspace", yaml: "workspace: /src/app\nmounts: [/docs]\n", wantWorkspace: "/src/app", wantMounts: []string{"/docs"}},
 	}
@@ -276,7 +282,7 @@ func TestCheckHarness(t *testing.T) {
 	if err := cfg.CheckHarness("opencode"); err != nil {
 		t.Fatalf("CheckHarness(opencode) error = %v, want nil", err)
 	}
-	want := "this agent runs opencode; switch with `a2a serve config set --harness claude`"
+	want := "this agent runs opencode; switch with `a2a-serve config set --harness claude`"
 	if err := cfg.CheckHarness("claude"); err == nil || err.Error() != want {
 		t.Fatalf("CheckHarness(claude) error = %v, want %q", err, want)
 	}

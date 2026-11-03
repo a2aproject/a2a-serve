@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
-// newHarnessCmd builds `a2a serve <harness>`, which creates the agent on
+// newHarnessCmd builds `a2a-serve start <harness>`, which creates the agent on
 // the first run and starts it. In an existing agent the flags go through
 // the `config set` path first. "acp" starts any ACP agent given with
 // --command.
@@ -41,16 +41,18 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 	cmd := &cobra.Command{
 		Use:   name,
 		Short: short,
-		Example: fmt.Sprintf(`  a2a serve %[1]s --name coder --secret OPENROUTER_API_KEY
-  a2a serve %[1]s --private tailscale --telegram env:CODER_BOT_TOKEN --detach
-  a2a serve %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
+		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
+existing agent, the flags change them like ` + "`a2a-serve config set`" + `.`,
+		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY
+  a2a-serve start %[1]s --private tailscale --allow-tools read,search --detach
+  a2a-serve start %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := harnessDir(sf.dir)
 			if err != nil {
 				return err
 			}
-			s, err := flags.settings(newSecretReader(cfg.stderr()))
+			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
@@ -74,18 +76,20 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 				}
 			}
 			if res.Running {
-				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a serve status)\n", res.Name)
+				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
 				return err
 			}
+			mode.created = res.Created
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}
-	flags.register(cmd, false)
+	flags.register(cmd, coreSettings)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
-	f.BoolVar(&mode.detach, "detach", false, "Run the agent in the background")
-	f.BoolVar(&mode.service, "service", false, "Install and start the agent as a launchd or systemd user service")
-	f.BoolVar(&mode.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
+	mode.addRunFlags(f)
+	setSection(f, sectionRun, "dir")
+	cmd.SetUsageFunc(sectionedUsage)
+	hideImageForLocalSandbox(cmd, func() (agentdir.Dir, error) { return harnessDir(sf.dir) })
 	return cmd
 }
 

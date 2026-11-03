@@ -10,7 +10,7 @@ digraph agent_server_turn {
 
   { rank=same;
     User     [label="Member or owner\nin a chat, or an A2A client", shape=ellipse, fillcolor="#dbe8ff"];
-    Approver [label="Owner or --approver\non their messengers,\nor the /hitl/<token> page", shape=ellipse, fillcolor="#dbe8ff"];
+    Approver [label="Whoever started the task,\nwhere it came from,\nor an owner (owner chat, inspector)", shape=ellipse, fillcolor="#dbe8ff"];
   }
 
   subgraph cluster_server {
@@ -43,8 +43,8 @@ digraph agent_server_turn {
   Harness -> Exec  [label="6. session/request_permission"];
   Exec -> Rules    [label="7. allowed or denied\nby kind?"];
   Rules -> Hitl    [label="8. otherwise ask"];
-  Hitl -> Router   [label="9. buttons to approvers;\nmembers see input-required", constraint=false];
+  Hitl -> Router   [label="9. owner chat, for tasks\nnobody watches; others\nanswer where they asked", constraint=false];
   Router -> Approver [constraint=false];
   Approver -> Handler [label="10. answer on the same task:\noption, approve/deny or structured input", color="#2e7d32", fontcolor="#2e7d32"];
-  Handler -> Exec  [label="11. only owners and approvers\nmay answer", style=dashed, color="#2e7d32", fontcolor="#2e7d32"];
+  Handler -> Exec  [label="11. only the starter\nor an owner may answer", style=dashed, color="#2e7d32", fontcolor="#2e7d32"];
 }

@@ -55,7 +55,6 @@ func TestAgentURL(t *testing.T) {
 		wantOK bool
 	}{
 		{name: "mailbox token", token: NewNodeToken(APIBase("https://agent.example.com/"), "grok", "s"), want: "https://agent.example.com", wantOK: true},
-		{name: "legacy relay token", token: NewNodeToken("https://agent.example.com/relay", "grok", "s"), want: "https://agent.example.com", wantOK: true},
 		{name: "not a node token", token: "a2p_secret"},
 	}
 	for _, tc := range tests {
@@ -78,7 +77,6 @@ func TestAPIBase(t *testing.T) {
 		{url: "https://agent.example.com", want: "https://agent.example.com/mailbox"},
 		{url: "https://agent.example.com/", want: "https://agent.example.com/mailbox"},
 		{url: "https://agent.example.com/mailbox", want: "https://agent.example.com/mailbox"},
-		{url: "https://agent.example.com/relay", want: "https://agent.example.com/relay"},
 	}
 	for _, tc := range tests {
 		if got := APIBase(tc.url); got != tc.want {
@@ -89,20 +87,16 @@ func TestAPIBase(t *testing.T) {
 
 func TestEnvToken(t *testing.T) {
 	tests := []struct {
-		name   string
-		node   string
-		legacy string
-		want   string
+		name string
+		node string
+		want string
 	}{
 		{name: "node token", node: "new", want: "new"},
-		{name: "legacy relay token", legacy: "old", want: "old"},
-		{name: "node token wins", node: "new", legacy: "old", want: "new"},
 		{name: "none"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(EnvNodeToken, tc.node)
-			t.Setenv(LegacyEnvNodeToken, tc.legacy)
 			if got := EnvToken(); got != tc.want {
 				t.Fatalf("EnvToken() = %q, want %q", got, tc.want)
 			}

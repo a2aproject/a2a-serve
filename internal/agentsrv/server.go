@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package agentsrv is the agent server behind `a2a serve`: one coding agent
+// Package agentsrv is the agent server behind `a2a-serve`: one coding agent
 // per process, started from its project directory, reachable over A2A on
 // localhost, a private network and the internet, and from messengers.
 package agentsrv
@@ -44,6 +44,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -116,6 +117,7 @@ type Server struct {
 	peers     *Peers
 	schedules *schedules
 	nodes     *nodes.Host
+	pairings  *pairings.Service
 	approvals *approvals.Service
 	oauth     *oauthServer
 	// ads are the advertised pairings of the private network.
@@ -217,7 +219,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	}
 	release, err := fsutil.TryLock(s.dir.LockPath())
 	if errors.Is(err, fsutil.ErrLocked) {
-		return nil, fmt.Errorf("an agent server is already running in %s (a2a serve status)", s.dir.Root)
+		return nil, fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("locking the agent directory: %w", err)
@@ -269,7 +271,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.approvals = &approvals.Service{
 		Store:     s.store,
 		Tasks:     s.tasks,
-		Approvers: func() []string { return s.config().Approvals.Approvers },
 		BaseURL:   s.bestURL,
 		AgentName: agentName,
 	}
@@ -280,10 +281,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		BaseURL:        s.bestURL,
 		Authenticate:   s.authenticate,
 		WebhookRetries: nodeWebhookRetries,
-		Advertised: func(id string) bool {
-			_, ok := s.ads.Own()[id]
-			return ok
-		},
+		Advertised:     s.ads.Advertised,
 	})
 	s.router = &Router{
 		store:     s.store,
@@ -292,7 +290,16 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		approvals: s.approvals,
 		bus:       s.bus,
 		agentName: agentName,
+		ownerChat: func() string { return s.config().Approvals.OwnerChat },
 		logf:      s.logf,
+	}
+	s.pairings = &pairings.Service{
+		Store:     s.store,
+		BaseURL:   s.bestURL,
+		Ads:       s.ads,
+		LinkHints: s.router.linkHints,
+		Mailbox:   s.nodes.Mailbox,
+		Changed:   s.refreshInstructions,
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router)
 	s.inspector = newInspector(s)
@@ -338,6 +345,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.router.handler = s.handler
 	s.approvals.Handler = s.handler
 	s.approvals.Notifier = s.router
+	s.approvals.Unattended = s.router.Unattended
 	s.approvals.Remote = s.peers
 	return nil
 }

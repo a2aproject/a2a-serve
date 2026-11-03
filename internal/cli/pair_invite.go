@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -37,40 +37,43 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "invite <name>",
 		Short: "Create a one-time code that lets someone call or message the agent, or host a webhook node",
-		Long: `Create an 8-character code, valid once for 15 minutes, for <name>. The caller
-redeems it for a token with ` + "`a2a serve tokens add <agent-url> <code>`" + `, or links a
-messenger account by sending "link <code>" to the agent's bot.
+		Long: `Create a pairing called <name> and print its code: 8 characters, valid once
+for 15 minutes. The caller redeems it for a token with
+` + "`a2a-serve pair join <agent-url> <code>`" + `, or links a messenger account by
+sending "join <code>" to the agent's bot. Inviting an existing name issues
+another code, for another device or account; its tokens keep working.
+` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
 it as <name> with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with
-` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. Inviting a node
-again issues a new code, for example after it lost its token; with --webhook
-it also updates the node, and its previous token stops working. Header
-values may be env:VAR.
+` + "`a2a-serve mailbox reply`" + `, and can call the agent with its token. A header
+value may end in a secret value, env:VAR or -, as in
+"Authorization: Bearer env:TOKEN".
+
+` + secretref.Help + `
 
 --advertised tells every agent on the private network about the node: they
-list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
-` + "`a2a serve contact add <name>@<this agent>`" + `, with no code. Their calls go
+list it in ` + "`a2a-serve peers`" + ` as <name>@<this agent> and can add it with
+` + "`a2a-serve contact add <name>@<this agent>`" + `, with no code. Their calls go
 through this agent, which keeps the webhook's credentials, and it treats
-them like any other caller from the private network. --advertised=false
-stops advertising it, and so does ` + "`pair rm`" + `.`,
-		Example: `  a2a serve pair invite grok
-  a2a serve pair invite anna --role owner
-  a2a serve pair invite grok --webhook https://example.com/hooks/123 \
+them like any other caller from the private network.`,
+		Example: `  a2a-serve pair invite grok
+  a2a-serve pair invite anna --role owner
+  a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
-  a2a serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
+  a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
 			if !cmd.Flags().Changed("role") {
 				req.Role = ""
 			}
-			if req.Webhook == "" && (len(headers) > 0 || req.Description != "") {
-				return clierr.Usage("--webhook-header and --description go with --webhook")
+			if req.Webhook == "" && (len(headers) > 0 || req.Description != "" || cmd.Flags().Changed("advertised")) {
+				return clierr.Usage("--webhook-header, --description and --advertised go with --webhook")
 			}
-			hdrs, err := parseWebhookHeaders(headers)
+			hdrs, err := parseWebhookHeaders(headers, cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
@@ -78,16 +81,17 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
 			}
-			c, err := sf.control()
+			c, offline, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			resp, err := c.Pair(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				if err := warnLocalOnly(cfg.stderr(), resp); err != nil {
+				if err := warnPairCode(cfg.stderr(), resp, offline); err != nil {
 					return err
 				}
 				return cfg.PrintJSON(resp)
@@ -95,36 +99,29 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 			if err := printPairCode(cfg, resp); err != nil {
 				return err
 			}
-			return warnLocalOnly(cfg.Out, resp)
+			return warnPairCode(cfg.Out, resp, offline)
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "member", "Role: member (can talk) or owner (can also approve)")
+	f.StringVar(&req.Role, "role", "member", "`Role`: member (can talk) or owner (can also approve)")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
-	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\" (repeatable)")
+	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
-	sf.addControlFlags(f)
 	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
 	return cmd
 }
 
-func parseWebhookHeaders(headers []string) (map[string]string, error) {
+// parseWebhookHeaders parses "Name: value" headers, whose values may end in
+// a secret value.
+func parseWebhookHeaders(headers []string, r *secretref.Reader) (map[string]string, error) {
 	out := map[string]string{}
 	for _, h := range headers {
-		k, v, ok := strings.Cut(h, ":")
-		if !ok || strings.TrimSpace(k) == "" {
-			return nil, clierr.Usage(fmt.Sprintf("--webhook-header must be \"Name: value\", got %q", h))
+		k, v, err := secretref.ResolveHeader("webhook-header", h, r)
+		if err != nil {
+			return nil, err
 		}
-		v = strings.TrimSpace(v)
-		if i := strings.Index(v, "env:"); i >= 0 {
-			secret, err := mailboxapi.Secret(v[i:])
-			if err != nil {
-				return nil, clierr.Usage(fmt.Sprintf("--webhook-header %s: %v", strings.TrimSpace(k), err))
-			}
-			v = v[:i] + secret
-		}
-		out[strings.TrimSpace(k)] = v
+		out[k] = v
 	}
 	return out, nil
 }
@@ -140,10 +137,10 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 		}
 		fmt.Fprintf(&sb, "\n  you can call it yourself at %s\n", resp.Node.URL)
 		if resp.Advertised {
-			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a serve contact add %s@<this agent>`\n", resp.Node.ID)
+			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a-serve contact add %s@<this agent>`\n", resp.Node.ID)
 		}
 	} else {
-		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller: %s\n", resp.Code, mins, resp.PairCommand)
+		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller:    %s\n  messenger: send \"join %s\" to the agent's bot\n", resp.Code, mins, resp.PairCommand, resp.Code)
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")
@@ -152,13 +149,19 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 	return err
 }
 
-// warnLocalOnly warns when the code is redeemed at a URL which only works
-// on this machine, which is useless to invite someone else.
-func warnLocalOnly(w io.Writer, resp *controlapi.PairCodeResponse) error {
+// warnPairCode warns when the code can't be redeemed now, because the agent
+// is stopped, or only on this machine.
+func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) error {
+	if offline {
+		if _, err := fmt.Fprint(w, "! the agent is stopped: the code works once it runs, within its expiry; start it with `a2a-serve start --detach`,\n"+
+			"  and `a2a-serve status --url` prints the URL to redeem it at\n"); err != nil {
+			return err
+		}
+	}
 	if !controlapi.LocalOnly(resp.URL) {
 		return nil
 	}
 	_, err := fmt.Fprint(w, "! this URL only works on this machine; to invite someone on another one, add a private or public URL with\n"+
-		"  `a2a serve config set --private tailscale` (or lan) or `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`\n")
+		"  `a2a-serve config set --private tailscale` (or lan) or `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`\n")
 	return err
 }

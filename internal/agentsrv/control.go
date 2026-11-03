@@ -18,14 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -37,8 +35,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairapi"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -51,7 +50,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		return err
 	}
 	if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
-		return errors.Join(fmt.Errorf("an agent server is already running in %s (a2a serve status)", s.dir.Root), c.Close())
+		return errors.Join(fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root), c.Close())
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -73,7 +72,9 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		go s.Stop()
 	})
 	mux.HandleFunc("POST /pair", s.ctlPair)
-	mux.HandleFunc("GET /tokens", s.ctlTokens)
+	mux.HandleFunc("GET /pairings", s.ctlPairings)
+	mux.HandleFunc("GET /pairings/{name}", s.ctlPairing)
+	mux.HandleFunc("PATCH /pairings/{name}", s.ctlUpdatePairing)
 	mux.HandleFunc("DELETE /pair/{name}", s.ctlRevoke)
 	mux.HandleFunc("GET /peers", s.ctlPeers)
 	mux.HandleFunc("GET /contacts", s.ctlContacts)
@@ -81,7 +82,6 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("DELETE /contacts/{name}", s.ctlDeleteContact)
 	mux.HandleFunc("POST /channels", s.ctlAddChannel)
 	mux.HandleFunc("DELETE /channels/{kind}", s.ctlDeleteChannel)
-	mux.HandleFunc("GET /nodes", s.ctlNodes)
 	mux.HandleFunc("GET /schedules", s.ctlSchedules)
 	mux.HandleFunc("POST /schedules", s.ctlAddSchedule)
 	mux.HandleFunc("POST /schedules/{name}/run", s.ctlRunSchedule)
@@ -121,7 +121,7 @@ func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
 	jsonhttp.Write(w, http.StatusOK, st)
 }
 
-// status describes the running server, as `a2a serve status` shows it.
+// status describes the running server, as `a2a-serve status` shows it.
 func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	cfg := s.config()
 	local, private, public := s.URLs()
@@ -156,6 +156,11 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
+	approvals, err := s.inspector.pendingApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.Approvals = len(approvals)
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
 		st.ProjectError = err.Error()
 	}
@@ -172,136 +177,70 @@ func (s *Server) ctlPair(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	req.Name = strings.TrimSpace(req.Name)
-	if req.Name == "" || strings.ContainsAny(req.Name, " /:") {
-		jsonhttp.Error(w, http.StatusBadRequest, "the name must be non-empty, without spaces, slashes or colons")
-		return
-	}
-	if req.Name == localOwnerName {
-		jsonhttp.Error(w, http.StatusBadRequest, fmt.Sprintf("%q is reserved for the owner token of this machine; pick another name", localOwnerName))
-		return
-	}
-	_, err := s.store.Node(r.Context(), req.Name)
-	isNode := err == nil
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	if req.Webhook != "" && req.Name == schedulesAgent {
-		jsonhttp.Error(w, http.StatusBadRequest, fmt.Sprintf("%q is the agent the harness manages schedules with; pick another name", schedulesAgent))
-		return
-	}
-	if req.Advertised != nil && req.Webhook == "" && !isNode {
-		jsonhttp.Error(w, http.StatusBadRequest, "--advertised applies to webhook nodes; add --webhook")
-		return
-	}
-	if (req.Webhook != "" || isNode) && req.Role != "" {
-		jsonhttp.Error(w, http.StatusBadRequest, "--role doesn't apply to webhook nodes")
-		return
-	}
-	if req.Webhook != "" || isNode {
-		s.pairNode(w, r, req, isNode)
-		return
-	}
-	if req.Role == "" {
-		req.Role = auth.RoleMember
-	}
-	if req.Role != auth.RoleMember && req.Role != auth.RoleOwner {
-		jsonhttp.Error(w, http.StatusBadRequest, "--role must be member or owner")
-		return
-	}
-	code, expires, err := auth.MintCode(r.Context(), s.store, auth.PurposePair, req.Name, req.Role)
+	resp, err := s.pairings.Invite(r.Context(), req)
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
+		writePairingError(w, err)
 		return
-	}
-	resp := controlapi.PairCodeResponse{Code: code, Expires: expires, URL: s.bestURL(), PairCommand: controlapi.PairCommand(s.bestURL(), code), Hints: s.router.linkHints(code)}
-	jsonhttp.Write(w, http.StatusOK, resp)
-}
-
-// pairNode creates or updates a webhook node and mints a node code for it.
-func (s *Server) pairNode(w http.ResponseWriter, r *http.Request, req controlapi.PairCodeRequest, exists bool) {
-	if req.Webhook != "" && !exists {
-		toks, err := s.store.Tokens(r.Context())
-		if err != nil {
-			jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		if slices.ContainsFunc(toks, func(t store.Token) bool { return t.Name == req.Name }) {
-			jsonhttp.Error(w, http.StatusConflict, req.Name+" is already paired as a caller; pick another name, or run `a2a serve pair rm "+req.Name+"` first")
-			return
-		}
-	}
-	var (
-		resp *controlapi.PairCodeResponse
-		err  error
-	)
-	if req.Webhook != "" {
-		resp, err = s.nodes.Put(r.Context(), req)
-	} else {
-		resp, err = s.nodes.NewCode(r.Context(), req.Name)
-	}
-	if err != nil {
-		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	if req.Advertised != nil {
-		node, err := s.store.Node(r.Context(), req.Name)
-		if err == nil {
-			err = s.setAdvertised(node.ID, node.Description, *req.Advertised)
-		}
-		if err != nil {
-			jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-			return
-		}
-		resp.Advertised = *req.Advertised
-	}
-	if !exists {
-		s.refreshInstructions(r.Context())
 	}
 	jsonhttp.Write(w, http.StatusOK, resp)
 }
 
-func (s *Server) ctlTokens(w http.ResponseWriter, r *http.Request) {
-	toks, err := s.store.Tokens(r.Context())
+func (s *Server) ctlPairings(w http.ResponseWriter, r *http.Request) {
+	out, err := s.pairings.List(r.Context())
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
+		writePairingError(w, err)
 		return
-	}
-	out := []controlapi.TokenInfo{}
-	for _, t := range toks {
-		out = append(out, controlapi.TokenInfo{Name: t.Name, Principal: t.Principal, Roles: t.Roles, URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
 
-// ctlRevoke removes the webhook node called name, or revokes the tokens and
-// links issued to it.
-func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
-	name := r.PathValue("name")
-	err := s.store.DeleteNode(r.Context(), name)
-	if err == nil {
-		if err := s.ads.Withdraw(name); err != nil {
-			slog.Warn("withdrawing the advertisement of a removed node", "node", name, "error", err)
-		}
-		s.refreshInstructions(r.Context())
-		jsonhttp.Write(w, http.StatusOK, controlapi.RevokeResponse{Kind: pairapi.KindNode})
-		return
-	}
-	if !errors.Is(err, store.ErrNotFound) {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	n, err := s.store.RevokeTokens(r.Context(), name, auth.PrincipalForCode(name, auth.RoleMember))
+func (s *Server) ctlPairing(w http.ResponseWriter, r *http.Request) {
+	p, err := s.pairings.Get(r.Context(), r.PathValue("name"))
 	if err != nil {
+		writePairingError(w, err)
+		return
+	}
+	jsonhttp.Write(w, http.StatusOK, p)
+}
+
+func (s *Server) ctlUpdatePairing(w http.ResponseWriter, r *http.Request) {
+	var req controlapi.PairingUpdate
+	if !jsonhttp.Read(w, r, &req) {
+		return
+	}
+	resp, err := s.pairings.Update(r.Context(), r.PathValue("name"), req)
+	if err != nil {
+		writePairingError(w, err)
+		return
+	}
+	jsonhttp.Write(w, http.StatusOK, resp)
+}
+
+// ctlRevoke removes the webhook node called name, or revokes the tokens,
+// links and codes issued to it.
+func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
+	kind, err := s.pairings.Remove(r.Context(), r.PathValue("name"))
+	if err != nil {
+		writePairingError(w, err)
+		return
+	}
+	jsonhttp.Write(w, http.StatusOK, controlapi.RevokeResponse{Kind: kind})
+}
+
+func writePairingError(w http.ResponseWriter, err error) {
+	var pe *pairings.Error
+	if !errors.As(err, &pe) {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	if n == 0 {
-		jsonhttp.Error(w, http.StatusNotFound, "no token or link named "+name)
-		return
+	status := http.StatusUnprocessableEntity
+	switch pe.Kind {
+	case pairings.Conflict:
+		status = http.StatusConflict
+	case pairings.NotFound:
+		status = http.StatusNotFound
 	}
-	jsonhttp.Write(w, http.StatusOK, controlapi.RevokeResponse{Kind: pairapi.KindCaller})
+	jsonhttp.Error(w, status, pe.Msg)
 }
 
 func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
@@ -317,15 +256,19 @@ func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
 	jsonhttp.Write(w, http.StatusOK, out)
 }
 
+// contacts manages the contacts, refreshing the harness instructions
+// which list them.
+func (s *Server) contacts() manage.Contacts {
+	m := s.peers.contacts()
+	m.Changed = s.refreshInstructions
+	return m
+}
+
 func (s *Server) ctlContacts(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.store.Contacts(r.Context())
+	out, err := s.contacts().List(r.Context())
 	if err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	out := []controlapi.ContactInfo{}
-	for _, c := range cs {
-		out = append(out, controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""})
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
@@ -335,17 +278,16 @@ func (s *Server) ctlAddContact(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	c, err := s.peers.addContact(r.Context(), req)
+	c, err := s.contacts().Add(r.Context(), req)
 	if err != nil {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.refreshInstructions(r.Context())
-	jsonhttp.Write(w, http.StatusOK, controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""})
+	jsonhttp.Write(w, http.StatusOK, manage.ContactInfo(c))
 }
 
 func (s *Server) ctlDeleteContact(w http.ResponseWriter, r *http.Request) {
-	err := s.store.DeleteContact(r.Context(), r.PathValue("name"))
+	err := s.contacts().Remove(r.Context(), r.PathValue("name"))
 	if errors.Is(err, store.ErrNotFound) {
 		jsonhttp.Error(w, http.StatusNotFound, "no contact "+r.PathValue("name"))
 		return
@@ -354,7 +296,6 @@ func (s *Server) ctlDeleteContact(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.refreshInstructions(r.Context())
 	jsonhttp.Write(w, http.StatusOK, map[string]string{"deleted": r.PathValue("name")})
 }
 
@@ -427,20 +368,7 @@ func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	agentdir.CopyLive(s.cfg, saved)
 	s.cfgMu.Unlock()
-	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "approver", "allow-tools", "deny-tools"}})
-}
-
-func (s *Server) ctlNodes(w http.ResponseWriter, r *http.Request) {
-	nodes, err := s.store.Nodes(r.Context())
-	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	out := []controlapi.NodeInfo{}
-	for _, n := range nodes {
-		out = append(out, s.nodes.Info(n))
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
+	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat"}})
 }
 
 func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {
@@ -451,7 +379,7 @@ func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []controlapi.ScheduleInfo{}
 	for _, sc := range all {
-		out = append(out, scheduleInfo(sc))
+		out = append(out, manage.ScheduleInfo(sc))
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
@@ -466,7 +394,7 @@ func (s *Server) ctlAddSchedule(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, scheduleInfo(sc))
+	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
 }
 
 func (s *Server) ctlRunSchedule(w http.ResponseWriter, r *http.Request) {
@@ -477,7 +405,7 @@ func (s *Server) ctlRunSchedule(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 	default:
-		jsonhttp.Write(w, http.StatusOK, scheduleInfo(sc))
+		jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
 	}
 }
 

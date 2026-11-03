@@ -17,6 +17,7 @@ package cli
 import (
 	"cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -26,17 +27,18 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List schedules, with their last and next runs",
 		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			all, err := c.Schedules(cmd.Context())
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(all)
+				return output.PrintList(cfg.Printer, all)
 			}
 			rows := make([][]string, 0, len(all))
 			for _, s := range all {
@@ -51,10 +53,10 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if s.LastError != "" {
 					last += " ! " + s.LastError
 				}
-				rows = append(rows, []string{s.Name, when, s.User, cmp.Or(s.Deliver, "-"), formatScheduleTime(s.NextRun), last, oneLine(s.Prompt, 40)})
+				rows = append(rows, []string{s.Name, when, s.User, cmp.Or(s.Chat, "-"), formatScheduleTime(s.NextRun), last, oneLine(s.Prompt, 40)})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "WHEN", "AS", "DELIVER", "NEXT", "LAST", "PROMPT"}, rows,
-				"no schedules; add one with `a2a serve schedule add <name> --cron <expr> --prompt <prompt>`")
+			return cfg.PrintTableOrEmpty([]string{"NAME", "WHEN", "AS", "CHAT", "NEXT", "LAST", "PROMPT"}, rows,
+				"no schedules; add one with `a2a-serve schedule add <name> --cron <expr> --prompt <prompt>`")
 		},
 	}
 }

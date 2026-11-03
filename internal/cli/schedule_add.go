@@ -28,20 +28,21 @@ func newScheduleAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add a schedule",
-		Example: `  a2a serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
-    --prompt "Summarize today's meetings." --deliver telegram:owner
-  a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --conversation same
-  a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --deliver telegram`,
+		Example: `  a2a-serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
+    --prompt "Summarize today's meetings." --chat telegram:owner
+  a2a-serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
+  a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
 			if err := req.Validate(); err != nil {
 				return clierr.Usage(err.Error())
 			}
-			c, err := sf.control()
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			info, err := c.AddSchedule(cmd.Context(), req)
 			if err != nil {
 				return err

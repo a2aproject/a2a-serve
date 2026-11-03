@@ -16,7 +16,6 @@ package agentsrv
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -222,9 +221,9 @@ func TestUnauthenticatedCallerIsRejected(t *testing.T) {
 	}
 }
 
-func TestMemberCannotApproveAndOwnerIsAsked(t *testing.T) {
+func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	t.Parallel()
-	ch := newFakeChannel("fake")
+	ch := newFakeChannel("telegram")
 	ts := startServer(t, serverOpts{channel: ch})
 	ctx := context.Background()
 	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "owner", Role: auth.RoleOwner})
@@ -235,19 +234,20 @@ func TestMemberCannotApproveAndOwnerIsAsked(t *testing.T) {
 	ch.waitFor(t, "dm1", hasText("Linked as owner"))
 
 	member := ts.client(ts.pair("grok", auth.RoleMember))
+	other := ts.client(ts.pair("bob", auth.RoleMember))
 	task := send(t, member, userText("ask", "", ""))
 	if task.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state = %s, want input-required", task.Status.State)
 	}
-	_, err = member.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
-	if !errors.Is(err, a2a.ErrUnauthorized) {
-		t.Fatalf("SendMessage() by member error = %v, want %v", err, a2a.ErrUnauthorized)
+	if _, err := other.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)}); err == nil {
+		t.Fatalf("SendMessage() answering another member's approval error = nil, want error")
 	}
+	answer := send(t, member, userText("approve", string(task.ID), task.ContextID))
 
-	ref, q := ch.waitFor(t, "dm1", hasQuestion)
-	ch.click("tg:1", "dm1", ref, q.Question, 0)
-	ch.waitFor(t, "dm1", hasText("✓ Allow"))
-	wantResult(t, waitState(t, member, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
+	wantResult(t, answer, a2a.TaskStateCompleted, "Pushed (allow).")
+	if got := ch.questions(); got != 0 {
+		t.Fatalf("questions sent to messengers = %d, want none: the caller answers inline", got)
+	}
 }
 
 func TestConformanceAnswerFollowsQuestionInHistory(t *testing.T) {
