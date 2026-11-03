@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -197,6 +198,23 @@ func TestServerPairAndSend(t *testing.T) {
 	}
 	if _, err := runCMDWithCreds(t, creds, "schedule", "rm", "brief", "--dir", dir); err == nil {
 		t.Fatalf("a2a serve schedule rm of a removed schedule error = nil, want error")
+	}
+	out, err = runCMDWithCreds(t, creds, "-o", "json", "open", "--dir", dir)
+	var inspector struct {
+		URL string `json:"url"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &inspector) != nil || !strings.HasPrefix(inspector.URL, status.Local+"/inspect/login?code=") {
+		t.Fatalf("a2a serve open -o json = %q, %v, want a login link on the local URL", out, err)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if resp, err := noRedirect.Get(inspector.URL); err != nil || resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 || resp.Body.Close() != nil {
+		t.Fatalf("GET the inspector login link = %v, %v, want a session and a redirect to the inspector", resp, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "open", "--no-browser", "--dir", dir); err != nil || !strings.Contains(out, "open this link once") {
+		t.Fatalf("a2a serve open --no-browser = %q, %v, want the link", out, err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "open", "--private", "--no-browser", "--dir", dir); err == nil || !strings.Contains(err.Error(), "has no private URL") {
+		t.Fatalf("a2a serve open --private error = %v, want no private URL", err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "pair"); err != nil || !strings.Contains(out, "invite") {
 		t.Fatalf("a2a serve pair = %q, %v, want help listing invite", out, err)

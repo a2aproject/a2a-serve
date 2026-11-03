@@ -87,6 +87,9 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("POST /schedules/{name}/run", s.ctlRunSchedule)
 	mux.HandleFunc("DELETE /schedules/{name}", s.ctlDeleteSchedule)
 	mux.HandleFunc("GET /advertisements", s.ctlAds)
+	mux.HandleFunc("POST /inspector/login", func(w http.ResponseWriter, r *http.Request) {
+		jsonhttp.Write(w, http.StatusOK, controlapi.InspectorLogin{Path: InspectorPath + "/login?code=" + s.inspector.loginCode()})
+	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { jsonhttp.Write(w, http.StatusOK, s.config()) })
 	mux.HandleFunc("POST /config/reload", s.ctlReloadConfig)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
@@ -110,9 +113,19 @@ func removeIfExists(path string) error {
 }
 
 func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
+	st, err := s.status(r.Context())
+	if err != nil {
+		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	jsonhttp.Write(w, http.StatusOK, st)
+}
+
+// status describes the running server, as `a2a serve status` shows it.
+func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	cfg := s.config()
 	local, private, public := s.URLs()
-	st := controlapi.Status{
+	st := &controlapi.Status{
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
 		Local: local, Private: private, Public: public, Tasks: map[string]int{},
 	}
@@ -120,38 +133,34 @@ func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
 	st.Channels = s.router.status()
-	counts, err := s.tasks.TaskCounts(r.Context())
+	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	for state, n := range counts {
 		st.Tasks[stateName(state)] = n
 	}
-	links, err := s.store.LinksOf(r.Context(), auth.OwnerID)
+	links, err := s.store.LinksOf(ctx, auth.OwnerID)
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	for _, l := range links {
 		st.Owners = append(st.Owners, l.Channel+":"+l.Identity)
 	}
-	contacts, err := s.store.Contacts(r.Context())
+	contacts, err := s.store.Contacts(ctx)
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
-	nodes, err := s.store.Nodes(r.Context())
+	nodes, err := s.store.Nodes(ctx)
 	if err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
+		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
-	jsonhttp.Write(w, http.StatusOK, st)
+	return st, nil
 }
 
 func stateName(s a2a.TaskState) string {

@@ -363,6 +363,31 @@ func TestRemoteQuestionStoredOnce(t *testing.T) {
 	}
 }
 
+func TestUnansweredQuestions(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for _, id := range []string{"q1", "q2", "q3"} {
+		if err := s.PutQuestion(ctx, Question{ID: id, Token: "tok-" + id, TaskID: "t", ContextID: "c", Data: map[string]any{"id": id}}); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", id, err)
+		}
+	}
+	if err := s.AnswerQuestion(ctx, "q2", "user:owner", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+	got, err := s.UnansweredQuestions(ctx)
+	if err != nil {
+		t.Fatalf("UnansweredQuestions() error = %v", err)
+	}
+	ids := make([]string, len(got))
+	for i, q := range got {
+		ids[i] = q.ID
+	}
+	if diff := cmp.Diff([]string{"q3", "q1"}, ids); diff != "" {
+		t.Fatalf("UnansweredQuestions() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestQuestionMessages(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

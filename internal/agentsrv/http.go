@@ -74,6 +74,11 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 	if kind == network.ListenerPrivate {
 		s.registerGossip(mux)
 	}
+	// The inspector is for the owner, who reaches it on this machine or the
+	// private network, not from the internet.
+	if kind == network.ListenerLocal || kind == network.ListenerPrivate {
+		s.inspector.register(mux)
+	}
 	s.nodes.Register(mux, kind, func(r *http.Request) string { return base(baseURL, r) })
 	mux.Handle("POST /{$}", s.authenticate(kind, jsonrpc))
 	mux.Handle("/", s.authenticate(kind, rest))

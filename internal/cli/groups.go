@@ -40,6 +40,7 @@ var commandGroups = map[string]string{
 	"script":     groupTestServers,
 	"status":     groupManage,
 	"url":        groupManage,
+	"open":       groupManage,
 	"logs":       groupManage,
 	"stop":       groupManage,
 	"restart":    groupManage,
