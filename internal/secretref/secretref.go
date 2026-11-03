@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 // Package secretref parses the values of flags which take a secret: a
 // reference to an environment variable, a prompt or stdin, a secret already
 // stored with the agent, or the value itself.

@@ -294,12 +294,12 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		logf:      s.logf,
 	}
 	s.pairings = &pairings.Service{
-		Store:         s.store,
-		BaseURL:       s.bestURL,
-		Ads:           s.ads,
-		LinkHints:     s.router.linkHints,
-		Mailbox:       s.nodes.Mailbox,
-		Changed:       s.refreshInstructions,
+		Store:     s.store,
+		BaseURL:   s.bestURL,
+		Ads:       s.ads,
+		LinkHints: s.router.linkHints,
+		Mailbox:   s.nodes.Mailbox,
+		Changed:   s.refreshInstructions,
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router)
 	s.inspector = newInspector(s)

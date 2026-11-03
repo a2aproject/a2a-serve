@@ -31,7 +31,9 @@ func TestRun(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"OPENROUTER_API_KEY": "x", "NGROK_AUTHTOKEN": "y"}
 	getenv := func(k string) string { return env[k] }
-	command := func(s agentdir.Settings) (string, error) { return "a2a serve run " + s.Harness + " --name " + s.Name, nil }
+	command := func(s agentdir.Settings) (string, error) {
+		return "a2a serve run " + s.Harness + " --name " + s.Name, nil
+	}
 	tests := []struct {
 		name       string
 		input      string

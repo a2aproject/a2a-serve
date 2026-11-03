@@ -21,8 +21,8 @@ import (
 	"html/template"
 	"log/slog"
 	"maps"
-	"slices"
 	"net/http"
+	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
