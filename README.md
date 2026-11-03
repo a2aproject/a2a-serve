@@ -35,14 +35,29 @@ A coding agent runs in a terminal on one machine, and only the person at that te
 
 ## Installation
 
-Install `a2a-serve` and the `a2a` CLI: callers use `a2a` to send tasks, and harnesses use it to call other agents. Until an `a2a` release has `--unix-socket` and credential helpers, install this version:
+One step installs both `a2a-serve` and the `a2a` CLI: callers use `a2a` to send tasks, and harnesses use it to call other agents.
+
+```bash
+brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux; brings the a2a formula too
+a2a-serve doctor --fix                       # enable the plugin and the credential helper, check Docker
+```
+
+Without Homebrew, the install script downloads both release binaries to `~/.local/bin`, checks their checksums, runs `a2a-serve doctor --fix`, and offers to set up an agent in the current directory:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
+```
+
+`INSTALL_DIR`, `A2A_SERVE_VERSION` and `A2A_CLI_VERSION` change where and what it installs. Windows builds are attached to each release but untested, so there is no winget package yet.
+
+From source, until an `a2a` release has `--unix-socket` and credential helpers:
 
 ```bash
 go install github.com/a2aproject/a2a-serve@latest
 go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261030153310-f90e4eb628cd
 # go install names the binary `a2a-cli`; rename it to `a2a`
 mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
-a2a-serve doctor --fix   # enable the plugin and the credential helper, check Docker
+a2a-serve doctor --fix
 ```
 
 <details>
