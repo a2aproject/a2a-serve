@@ -191,7 +191,7 @@ $ a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHRO
 | Command | What it does |
 | --- | --- |
 | `a2a-serve config` | The same as `config show`. |
-| `a2a-serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the commands which recreate the agent (`run <harness>`, then `config set` and `channel add` for the settings only they take), with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
+| `a2a-serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the commands which recreate the agent (`start <harness>`, then `config set` and `channel add` for the settings only they take), with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
 | `a2a-serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
 | `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`. Messengers are removed with `channel rm`. |
 | `a2a-serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
@@ -392,7 +392,7 @@ from. Owners can answer any approval.
 The command mints a one-time login link over the control socket, so only
 someone with access to the agent directory can open it. The link works once,
 for 5 minutes, and the session lasts 12 hours or until the agent restarts.
-The page is served on the local URL, and with `open --private` on the private
+The page is served on the local URL, and with `inspect --private` on the private
 network; never on the public URL. `--no-browser` prints the link instead of
 opening it.
 
@@ -551,7 +551,7 @@ it. A messenger that fails while running is restarted with backoff, and
 - **Telegram:** long polling. Answers are streamed by editing a message about
   once a second; approvals are inline buttons. In groups the bot answers when
   mentioned or replied to.
-- **Discord:** gateway WebSocket with the Message Content intent; `/link`,
+- **Discord:** gateway WebSocket with the Message Content intent; `/join`,
   `/new` and `/stop` commands; buttons; one thread per conversation in guild
   channels; missed messages are fetched on reconnect.
 - **Email:** IMAP IDLE and SMTP. Only mail with `dmarc=pass` for the sender's
@@ -864,12 +864,9 @@ backup:                          # --backup, --backup-key, --backup-interval, --
   retention: 7d
 ```
 
-Configs from earlier versions, in which the first of `mounts` is the
-workspace, are read as `workspace` and the remaining mounts.
-
 ## Test servers
 
-`run echo`, `run proxy` and `run exec` start a local A2A server without an
+`start echo`, `start proxy` and `start exec` run a local A2A server without an
 agent directory, for trying out clients:
 
 ```sh

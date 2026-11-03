@@ -11,10 +11,8 @@ new version on its next start.
   version to the current one, each in its own transaction, so a failed
   migration leaves the database as it was. Released migrations never change;
   new versions add new ones.
-- **`config.yaml`** written by an earlier version is read by later ones.
-  Settings that were renamed or moved are read from their old place and
-  written back in the new one the next time a command saves the config, such
-  as configs in which the first of `mounts` was the workspace.
+- **`config.yaml`** settings that are renamed or removed are listed in the
+  release notes, and old ones are not read.
 - **Renamed commands, routes and variables** are replaced without aliases:
   the release notes name the new form.
 

@@ -58,7 +58,7 @@ func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) err
 	if err != nil {
 		return err
 	}
-	asService := service.Installed(launch.ServiceName(d, cfg))
+	asService := service.Installed(launch.ServiceName(d))
 	if !asService {
 		leader, err := sessionLeader(st.PID)
 		if err != nil {

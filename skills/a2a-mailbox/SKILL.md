@@ -32,7 +32,7 @@ install that binary another way, then use `a2a-serve` and `a2a` instead of
   helpers yet.
 
 With both on your PATH, `a2a-serve <command>` is the same as
-`a2a-serve <command>`. If you can't run either, every command below has an
+`a2a serve <command>`. If you can't run either, every command below has an
 HTTP equivalent (see "Without the CLI").
 
 ## Pair (once)

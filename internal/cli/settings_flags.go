@@ -40,12 +40,12 @@ type settingsFlags struct {
 type settingsSet int
 
 const (
-	// coreSettings are the flags of `run <harness>` and `config set`.
+	// coreSettings are the flags of `start <harness>` and `config set`.
 	coreSettings settingsSet = 1 << iota
 	// operationalSettings are the flags of `config set` only: limits,
 	// network-provider options, backups and Google sign-in.
 	operationalSettings
-	// harnessSetting is --harness, which `run` takes as its argument.
+	// harnessSetting is --harness, which `start` takes as its argument.
 	harnessSetting
 )
 

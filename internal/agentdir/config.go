@@ -255,9 +255,7 @@ type LimitsConfig struct {
 // DefaultLimits are the limits of a container when the config sets none.
 var DefaultLimits = LimitsConfig{Memory: "4g", CPUs: "2", PIDs: 512}
 
-// defaultWorkspace is how config.yaml spells the default workspace when it
-// also lists mounts, which tells it apart from a config in which the first
-// mount was the workspace.
+// defaultWorkspace is how config.yaml may spell the default workspace.
 const defaultWorkspace = "."
 
 // LocalURL is the agent's URL on this machine, empty before the first start
@@ -298,15 +296,11 @@ func (d Dir) ReadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// ParseConfig parses the content of config.yaml. A config in which the first
-// mount is the workspace is migrated to the workspace setting.
+// ParseConfig parses the content of config.yaml.
 func ParseConfig(data []byte) (*Config, error) {
 	var cfg Config
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
-	}
-	if cfg.Workspace == "" && len(cfg.Mounts) > 0 {
-		cfg.Workspace, cfg.Mounts = cfg.Mounts[0], cfg.Mounts[1:]
 	}
 	if cfg.Workspace == defaultWorkspace {
 		cfg.Workspace = ""
@@ -319,11 +313,7 @@ func ParseConfig(data []byte) (*Config, error) {
 
 // MarshalConfig returns the content of config.yaml for cfg.
 func MarshalConfig(cfg *Config) ([]byte, error) {
-	out := *cfg
-	if out.Workspace == "" && len(out.Mounts) > 0 {
-		out.Workspace = defaultWorkspace
-	}
-	data, err := yaml.Marshal(&out)
+	data, err := yaml.Marshal(cfg)
 	if err != nil {
 		return nil, err
 	}

@@ -27,7 +27,7 @@ import (
 type placement int
 
 const (
-	// placeCore settings are flags of `run <harness>` and `config set`.
+	// placeCore settings are flags of `start <harness>` and `config set`.
 	placeCore placement = iota
 	// placeOperational settings are flags of `config set` only.
 	placeOperational

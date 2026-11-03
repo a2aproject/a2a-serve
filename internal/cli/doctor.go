@@ -100,7 +100,7 @@ func doctorEnv(cfg *globalConfig) (doctor.Env, error) {
 		env.Credentials = cfg.credentials
 	}
 	env.ServiceUnit = func(d agentdir.Dir) (string, error) {
-		name := launch.ServiceName(d, nil)
+		name := launch.ServiceName(d)
 		if !service.Installed(name) {
 			return "", nil
 		}

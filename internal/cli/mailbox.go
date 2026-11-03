@@ -49,7 +49,7 @@ The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the toke
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Timeout of each request to the agent server")
+	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Timeout of each request to the agent server, a `duration` such as 30s or 2m")
 	cmd.AddCommand(
 		newMailboxListCmd(cfg),
 		newMailboxGetCmd(cfg),

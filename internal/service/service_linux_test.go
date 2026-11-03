@@ -17,8 +17,6 @@
 package service
 
 import (
-	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -94,27 +92,5 @@ WantedBy=default.target
 `
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("SystemdUnit() wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestGlob(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	units := filepath.Join(home, ".config", "systemd", "user")
-	if err := os.MkdirAll(units, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range []string{"a2a-coder-abc.service", "a2a-my-bot-abc.service", "a2a-abc.service", "a2a-coder-def.service", "a2a-x-abc.timer"} {
-		if err := os.WriteFile(filepath.Join(units, f), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	got, err := Glob("a2a-*-abc")
-	if err != nil {
-		t.Fatalf("Glob() error = %v", err)
-	}
-	want := []string{"a2a-coder-abc", "a2a-my-bot-abc"}
-	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("Glob() wrong result (-want +got) diff = %s", diff)
 	}
 }

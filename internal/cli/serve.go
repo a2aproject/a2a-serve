@@ -58,7 +58,7 @@ func (f *serverFlags) addDirFlag(fs *pflag.FlagSet) {
 // running agent.
 func (f *serverFlags) addControlFlags(fs *pflag.FlagSet) {
 	f.addDirFlag(fs)
-	fs.DurationVar(&f.timeout, "timeout", controlapi.DefaultTimeout, "Timeout of each call to the running agent")
+	fs.DurationVar(&f.timeout, "timeout", controlapi.DefaultTimeout, "Timeout of each call to the running agent, a `duration` such as 30s or 2m")
 }
 
 // serveShort describes the command in its help and in `a2a plugin list`.

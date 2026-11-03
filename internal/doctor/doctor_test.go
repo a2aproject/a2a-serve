@@ -647,9 +647,18 @@ func TestAgentChecks(t *testing.T) {
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
-				m.unit = writeFile(t, "ExecStart=/usr/bin/a2a-serve --dir "+d.Root+"\n")
+				m.unit = writeFile(t, "ExecStart=/usr/bin/a2a-serve start --dir "+d.Root+"\n")
 			},
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusOK}},
+		},
+		{
+			name: "service without start",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				m.unit = writeFile(t, "ExecStart=/usr/bin/a2a-serve --dir "+d.Root+"\n")
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"service", StatusFail}},
 		},
 		{
 			name: "network",

@@ -22,9 +22,6 @@ func Install(Unit) (string, error) { return "", ErrUnsupported }
 // Installed reports false on this platform.
 func Installed(string) bool { return false }
 
-// Glob finds no services on this platform.
-func Glob(string) ([]string, error) { return nil, nil }
-
 // Uninstall is not supported on this platform.
 func Uninstall(string) error { return ErrUnsupported }
 

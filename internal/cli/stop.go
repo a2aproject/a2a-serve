@@ -47,12 +47,9 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 				return err
 			}
-			services := launch.InstalledServices(d)
-			installed := len(services) > 0
-			for _, name := range services {
-				if !uninstall {
-					break
-				}
+			name := launch.ServiceName(d)
+			installed := service.Installed(name)
+			if installed && uninstall {
 				if err := service.Uninstall(name); err != nil {
 					return err
 				}

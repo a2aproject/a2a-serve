@@ -231,8 +231,7 @@ func TestParseConfigWorkspace(t *testing.T) {
 		wantMounts    []string
 	}{
 		{name: "default", yaml: "harness: opencode\n"},
-		{name: "first mount is the workspace", yaml: "mounts: [/src/app, /docs:/docs:ro]\n", wantWorkspace: "/src/app", wantMounts: []string{"/docs:/docs:ro"}},
-		{name: "only the workspace mount", yaml: "mounts: [/src/app]\n", wantWorkspace: "/src/app"},
+		{name: "mounts without workspace", yaml: "mounts: [/src/app, /docs:/docs:ro]\n", wantMounts: []string{"/src/app", "/docs:/docs:ro"}},
 		{name: "default workspace with mounts", yaml: "workspace: .\nmounts: [/docs]\n", wantMounts: []string{"/docs"}},
 		{name: "workspace", yaml: "workspace: /src/app\nmounts: [/docs]\n", wantWorkspace: "/src/app", wantMounts: []string{"/docs"}},
 	}

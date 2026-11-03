@@ -47,7 +47,7 @@ Recreate the agent on another host with "a2a-serve backup restore".`,
 		},
 	}
 	sf.addDirFlag(cmd.PersistentFlags())
-	cmd.PersistentFlags().DurationVar(&sf.timeout, "timeout", 10*time.Minute, "Timeout of the command, which writes to or lists the backup destination")
+	cmd.PersistentFlags().DurationVar(&sf.timeout, "timeout", 10*time.Minute, "Timeout of the command, which writes to or lists the backup destination, a `duration` such as 30s or 15m")
 	cmd.AddCommand(
 		newBackupNowCmd(cfg, sf),
 		newBackupListCmd(cfg, sf),

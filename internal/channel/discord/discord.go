@@ -400,7 +400,7 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	case discordgo.InteractionApplicationCommand:
 		data := i.ApplicationCommandData()
 		in.Text = "/" + data.Name
-		if (data.Name == "join" || data.Name == "link") && len(data.Options) > 0 {
+		if data.Name == "join" && len(data.Options) > 0 {
 			in.Text = "join " + data.Options[0].StringValue()
 		}
 		respond(s, i, &discordgo.InteractionResponse{

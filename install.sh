@@ -111,7 +111,7 @@ main() {
     read -r answer </dev/tty || answer=
     case "$answer" in
       y | Y | yes)
-        exec "$INSTALL_DIR/a2a-serve" run </dev/tty >/dev/tty 2>&1
+        exec "$INSTALL_DIR/a2a-serve" start </dev/tty >/dev/tty 2>&1
         ;;
     esac
   fi

@@ -415,9 +415,11 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 	}
 	content := string(unit)
 	runsSelf := strings.Contains(content, exe) || strings.Contains(content, resolve(exe))
-	if !runsSelf || !strings.Contains(content, d.Root) {
-		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary or directory", "a2a-serve start --service"
-		r.Detail = fmt.Sprintf("%s doesn't run %s --dir %s", path, exe, d.Root)
+	// systemd units separate arguments with spaces, launchd plists put each in a <string>.
+	runsStart := strings.Contains(content, " start ") || strings.Contains(content, "<string>start</string>")
+	if !runsSelf || !runsStart || !strings.Contains(content, d.Root) {
+		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary, command or directory", "a2a-serve start --service"
+		r.Detail = fmt.Sprintf("%s doesn't run %s start --dir %s", path, exe, d.Root)
 		return r, true
 	}
 	r.Status, r.Message = StatusOK, "service "+filepath.Base(path)+" runs this binary"
