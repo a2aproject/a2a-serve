@@ -37,7 +37,7 @@ func TestExitCodes(t *testing.T) {
 		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "restart of a stopped agent", args: []string{"restart", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "status without an agent", args: []string{"status", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
-		{name: "start without an agent", args: []string{"run", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
+		{name: "start without an agent", args: []string{"start", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -45,10 +45,10 @@ func TestExitCodes(t *testing.T) {
 			_, err := runCMD(t, tc.args...)
 			got := clierr.Classify(err)
 			if got == nil {
-				t.Fatalf("a2a serve %s error = nil, want %s", strings.Join(tc.args, " "), tc.wantCode)
+				t.Fatalf("a2a-serve %s error = nil, want %s", strings.Join(tc.args, " "), tc.wantCode)
 			}
 			if got.Code != tc.wantCode || got.Exit != tc.wantExit {
-				t.Fatalf("a2a serve %s error = %s (exit %d), want %s (exit %d)", strings.Join(tc.args, " "), got.Code, got.Exit, tc.wantCode, tc.wantExit)
+				t.Fatalf("a2a-serve %s error = %s (exit %d), want %s (exit %d)", strings.Join(tc.args, " "), got.Code, got.Exit, tc.wantCode, tc.wantExit)
 			}
 		})
 	}
@@ -60,7 +60,7 @@ func TestNotRunningSuggestsDetach(t *testing.T) {
 
 	_, err := runCMD(t, "contact", "add", "grok", "--dir", d.Root)
 
-	if err == nil || !strings.Contains(err.Error(), "a2a serve run --detach") {
-		t.Fatalf("a2a serve contact add error = %v, want a hint to start it with `a2a serve run --detach`", err)
+	if err == nil || !strings.Contains(err.Error(), "a2a-serve start --detach") {
+		t.Fatalf("a2a-serve contact add error = %v, want a hint to start it with `a2a-serve start --detach`", err)
 	}
 }

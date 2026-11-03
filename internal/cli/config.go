@@ -37,9 +37,9 @@ func newConfigCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "config",
 		Short: "Show and change the agent's settings",
 		Long: `Show and change the settings in .a2a/config.yaml with the flags of
-` + "`a2a serve run <harness>`" + `. Every change is validated and printed as a diff. A
+` + "`a2a-serve start <harness>`" + `. Every change is validated and printed as a diff. A
 running agent applies the description and the approval settings at once;
-other settings wait for ` + "`a2a serve restart`" + `.
+other settings wait for ` + "`a2a-serve restart`" + `.
 
 Without a subcommand, shows the settings.`,
 		Args: cobra.NoArgs,
@@ -50,7 +50,7 @@ Without a subcommand, shows the settings.`,
 				cfg.Mode = output.Mode(cfg.output)
 			case outputYAML:
 				if cmd.Name() != "config" && cmd.Name() != "show" {
-					return clierr.Usage("-o yaml only applies to `a2a serve config show`")
+					return clierr.Usage("-o yaml only applies to `a2a-serve config show`")
 				}
 			default:
 				return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json, jsonl or yaml)", cfg.output))
@@ -111,7 +111,7 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 		fmt.Fprintf(&sb, "✓ applied to the running agent: %s\n", strings.Join(res.Applied, ", "))
 	}
 	if len(res.Restart) > 0 {
-		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a serve restart\n", res.Name, strings.Join(res.Restart, ", "))
+		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err

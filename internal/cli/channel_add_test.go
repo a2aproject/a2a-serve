@@ -55,11 +55,11 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 		{name: "channel add", args: []string{"channel", "add", "telegram", "--token", "-"}, wantErr: "--token: empty secret"},
 		{name: "contact add", args: []string{"contact", "add", "grok", "--url", "https://grok.example.com", "--token", "-"}, wantErr: "--token: empty secret"},
 		{name: "mailbox list", args: []string{"mailbox", "list", "--token", "-"}, wantErr: "--token: empty secret"},
-		{name: "restore", args: []string{"restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
+		{name: "backup restore", args: []string{"backup", "restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
 		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
 		{name: "channel add email", args: []string{"channel", "add", "email", "--email-password", "-"}, wantErr: "--email-password: empty secret"},
 		{name: "config set", args: []string{"config", "set", "--ngrok-authtoken", "-"}, wantErr: "--ngrok-authtoken: empty secret"},
-		{name: "proxy auth", args: []string{"run", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
+		{name: "proxy auth", args: []string{"start", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -73,7 +73,7 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 			_, err := runCMDWithStdin(t, pipeWith(t, ""), args...)
 
 			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("a2a serve %s with empty stdin error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+				t.Fatalf("a2a-serve %s with empty stdin error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
 			}
 		})
 	}

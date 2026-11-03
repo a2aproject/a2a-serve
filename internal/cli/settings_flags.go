@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
-// settingsFlags are the agent settings shared by `a2a serve run <harness>` and
-// `a2a serve config set`, so both speak one vocabulary.
+// settingsFlags are the agent settings shared by `a2a-serve start <harness>` and
+// `a2a-serve config set`, so both speak one vocabulary.
 type settingsFlags struct {
 	s       agentdir.Settings
 	command string

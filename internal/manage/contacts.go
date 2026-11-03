@@ -44,7 +44,7 @@ var ErrNeedsNetwork error = needsNetworkError{}
 type needsNetworkError struct{}
 
 func (needsNetworkError) Error() string {
-	return "finding an agent by name needs its private network: start it with `a2a serve run --detach`, or pass the agent's URL with --url"
+	return "finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"
 }
 
 // NotRunning marks the error for the CLI's exit code.

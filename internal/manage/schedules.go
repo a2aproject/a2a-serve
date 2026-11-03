@@ -169,7 +169,7 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 			return l.Conv, nil
 		}
 	}
-	return "", fmt.Errorf("%s has no chat on %s: link it with a code from `a2a serve pair invite`", approvals.DisplayPrincipal(user), ch)
+	return "", fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", approvals.DisplayPrincipal(user), ch)
 }
 
 // ResolveUser turns owner or a pairing name into a principal ID which has
@@ -183,7 +183,7 @@ func ResolveUser(ctx context.Context, st *store.Store, who string) (string, erro
 	}
 	if _, err := st.User(ctx, who); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "", fmt.Errorf("unknown user %s: pair them first with `a2a serve pair invite`", approvals.DisplayPrincipal(who))
+			return "", fmt.Errorf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
 		}
 		return "", err
 	}

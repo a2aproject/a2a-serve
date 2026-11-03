@@ -38,7 +38,7 @@ func newScheduleRunCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ started a run of %s; see it with `a2a serve logs`\n", info.Name)
+			_, err = fmt.Fprintf(cfg.Out, "✓ started a run of %s; see it with `a2a-serve logs`\n", info.Name)
 			return err
 		},
 	}

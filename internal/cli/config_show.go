@@ -35,7 +35,7 @@ type showFlags struct {
 
 func (f *showFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.defaults, "defaults", false, "Also show the settings left at their defaults, with the default values")
-	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a serve commands which recreate the agent, with secrets as env:NAME")
+	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a-serve commands which recreate the agent, with secrets as env:NAME")
 }
 
 func newConfigShowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -43,9 +43,9 @@ func newConfigShowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "show",
 		Short: "Show the effective settings, and those waiting for a restart",
-		Example: `  a2a serve config show
-  a2a serve config show --defaults -o yaml
-  a2a serve config show --as-command`,
+		Example: `  a2a-serve config show
+  a2a-serve config show --defaults -o yaml
+  a2a-serve config show --as-command`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigShow(cmd, cfg, sf, show)
@@ -89,7 +89,7 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	return err
 }
 
-// renderConfig formats the settings grouped like the flags of `a2a serve
+// renderConfig formats the settings grouped like the flags of `a2a-serve
 // <harness>`. all also lists settings left unset.
 func renderConfig(v *agentctl.View, all bool) string {
 	c, def := v.Config, v.Defaults
@@ -188,7 +188,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 		fmt.Fprintf(&sb, "✗ invalid: %s\n", strings.ReplaceAll(v.Invalid, "\n", "; "))
 	}
 	if len(v.Pending) > 0 {
-		fmt.Fprintf(&sb, "! restart to apply %s: a2a serve restart\n", strings.Join(v.Pending, ", "))
+		fmt.Fprintf(&sb, "! restart to apply %s: a2a-serve restart\n", strings.Join(v.Pending, ", "))
 	}
 	return sb.String()
 }

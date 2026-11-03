@@ -45,7 +45,7 @@ func xmlEscape(s string) string {
 }
 
 // LaunchdPlist renders the launchd agent of u. It restarts the server only
-// when it fails, so `a2a serve stop` keeps it stopped.
+// when it fails, so `a2a-serve stop` keeps it stopped.
 func LaunchdPlist(u Unit) string {
 	var sb strings.Builder
 	sb.WriteString(`<?xml version="1.0" encoding="UTF-8"?>

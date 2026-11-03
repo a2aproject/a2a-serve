@@ -67,7 +67,7 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			for _, a := range ads {
 				adRows = append(adRows, []string{a.Key, a.Description})
 			}
-			if _, err := fmt.Fprintln(cfg.Out, "\nAdvertised pairings (add one with `a2a serve contact add <name>@<agent>`):"); err != nil {
+			if _, err := fmt.Fprintln(cfg.Out, "\nAdvertised pairings (add one with `a2a-serve contact add <name>@<agent>`):"); err != nil {
 				return err
 			}
 			return cfg.PrintTableOrEmpty([]string{"PAIRING", "DESCRIPTION"}, adRows, "")

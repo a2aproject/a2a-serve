@@ -136,7 +136,7 @@ func TestCheckConfig(t *testing.T) {
 		{
 			name:    "missing channel secret",
 			cfg:     Config{Name: "coder", Harness: "opencode", Channels: ChannelsConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
-			wantErr: "discord token (a2a serve channel add discord --token): secret BOT is not set",
+			wantErr: "discord token (a2a-serve channel add discord --token): secret BOT is not set",
 		},
 	}
 	for _, tc := range tests {
@@ -283,7 +283,7 @@ func TestCheckHarness(t *testing.T) {
 	if err := cfg.CheckHarness("opencode"); err != nil {
 		t.Fatalf("CheckHarness(opencode) error = %v, want nil", err)
 	}
-	want := "this agent runs opencode; switch with `a2a serve config set --harness claude`"
+	want := "this agent runs opencode; switch with `a2a-serve config set --harness claude`"
 	if err := cfg.CheckHarness("claude"); err == nil || err.Error() != want {
 		t.Fatalf("CheckHarness(claude) error = %v, want %q", err, want)
 	}

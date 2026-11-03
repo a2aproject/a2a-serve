@@ -1,7 +1,7 @@
 # Upgrades
 
 Upgrade `a2a-serve` like any binary, then restart each agent with
-`a2a serve restart` (or `a2a serve run` in its directory). An agent picks up the
+`a2a-serve restart` (or `a2a-serve start` in its directory). An agent picks up the
 new version on its next start.
 
 ## Stored state migrates forward
@@ -26,7 +26,7 @@ this a2a supports". To be able to go back, take a snapshot before upgrading,
 and restore it into the agent directory after downgrading:
 
 ```sh
-a2a serve backup now                 # with --backup set, or copy .a2a/ while the agent is stopped
+a2a-serve backup now                 # with --backup set, or copy .a2a/ while the agent is stopped
 ```
 
 ## Harness images
@@ -38,6 +38,6 @@ home in `state/home` is kept, with its sessions and config.
 
 ## The a2a CLI
 
-Callers and nodes use the `a2a` CLI. `a2a serve doctor` checks that the
+Callers and nodes use the `a2a` CLI. `a2a-serve doctor` checks that the
 installed version has what this `a2a-serve` needs and prints the command to
 upgrade it.

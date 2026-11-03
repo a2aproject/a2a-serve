@@ -106,7 +106,7 @@ func TestConfigCommands(t *testing.T) {
 		{name: "unset harness", args: []string{"config", "unset", "harness"}, wantUsage: true},
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
 		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
-		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a serve run opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
+		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
 	}
 	for _, tc := range tests {
@@ -116,14 +116,14 @@ func TestConfigCommands(t *testing.T) {
 			out, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
 			if tc.wantUsage {
 				if !isUsage(err) {
-					t.Fatalf("a2a serve %s error = %v, want a usage error", strings.Join(tc.args, " "), err)
+					t.Fatalf("a2a-serve %s error = %v, want a usage error", strings.Join(tc.args, " "), err)
 				}
 			} else if err != nil {
-				t.Fatalf("a2a serve %s error = %v", strings.Join(tc.args, " "), err)
+				t.Fatalf("a2a-serve %s error = %v", strings.Join(tc.args, " "), err)
 			}
 			for _, want := range tc.wantOut {
 				if !strings.Contains(out, want) {
-					t.Fatalf("a2a serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
+					t.Fatalf("a2a-serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
 				}
 			}
 			want := base()
@@ -135,7 +135,7 @@ func TestConfigCommands(t *testing.T) {
 				t.Fatalf("ReadConfig() error = %v", err)
 			}
 			if diff := cmp.Diff(want, got); diff != "" {
-				t.Fatalf("a2a serve %s wrong config (-want +got) diff = %s", strings.Join(tc.args, " "), diff)
+				t.Fatalf("a2a-serve %s wrong config (-want +got) diff = %s", strings.Join(tc.args, " "), diff)
 			}
 		})
 	}
@@ -156,17 +156,17 @@ func TestConfigShowMachineReadable(t *testing.T) {
 			t.Parallel()
 			out, err := runCMD(t, "-o", tc.format, "config", "show", "--defaults", "--dir", d.Root)
 			if err != nil {
-				t.Fatalf("a2a serve config show -o %s error = %v", tc.format, err)
+				t.Fatalf("a2a-serve config show -o %s error = %v", tc.format, err)
 			}
 			var got agentctl.View
 			if err := tc.unmarshal([]byte(out), &got); err != nil {
 				t.Fatalf("parsing %q error = %v", out, err)
 			}
 			if got.Config.Name != "coder" || got.Secrets["KEY"] != agentctl.SecretStateMissing || got.Defaults == nil || got.Defaults.Sandbox != "docker" {
-				t.Fatalf("a2a serve config show -o %s = %+v, want coder with KEY missing and the default sandbox", tc.format, got)
+				t.Fatalf("a2a-serve config show -o %s = %+v, want coder with KEY missing and the default sandbox", tc.format, got)
 			}
 			if !strings.Contains(got.Invalid, "secret KEY is not stored") {
-				t.Fatalf("a2a serve config show -o %s invalid = %q, want the missing secret", tc.format, got.Invalid)
+				t.Fatalf("a2a-serve config show -o %s invalid = %q, want the missing secret", tc.format, got.Invalid)
 			}
 		})
 	}
@@ -180,19 +180,19 @@ func TestHarnessCommandValidation(t *testing.T) {
 		args     []string
 		wantErr  string
 	}{
-		{name: "invalid setting on the first run", args: []string{"run", "opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
-		{name: "acp without a command", args: []string{"run", "acp"}, wantErr: "harness acp needs a command"},
+		{name: "invalid setting on the first run", args: []string{"start", "opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
+		{name: "acp without a command", args: []string{"start", "acp"}, wantErr: "harness acp needs a command"},
 		{
 			name:     "acp command from the config",
 			existing: &agentdir.Config{Name: "coder", Harness: "acp", Command: []string{"fakeacp"}},
-			args:     []string{"run", "acp", "--private", "tailscal"},
+			args:     []string{"start", "acp", "--private", "tailscal"},
 			wantErr:  `invalid --private "tailscal"`,
 		},
 		{
 			name:     "other harness",
 			existing: &agentdir.Config{Name: "coder", Harness: "opencode"},
-			args:     []string{"run", "claude"},
-			wantErr:  "this agent runs opencode; switch with `a2a serve config set --harness claude`",
+			args:     []string{"start", "claude"},
+			wantErr:  "this agent runs opencode; switch with `a2a-serve config set --harness claude`",
 		},
 	}
 	for _, tc := range tests {
@@ -201,13 +201,13 @@ func TestHarnessCommandValidation(t *testing.T) {
 			d := newTestAgent(t, tc.existing)
 			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
 			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("a2a serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+				t.Fatalf("a2a-serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
 			}
 			if tc.existing != nil {
 				return
 			}
 			if d.Exists() {
-				t.Fatalf("a2a serve %s saved an invalid config", strings.Join(tc.args, " "))
+				t.Fatalf("a2a-serve %s saved an invalid config", strings.Join(tc.args, " "))
 			}
 		})
 	}
@@ -284,7 +284,7 @@ func TestConfigRunningAgent(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := runCMD(t, "run", "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
+		_, err := runCMD(t, "start", "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
 		done <- err
 	}()
 	client := controlapi.NewClient(d)
@@ -295,7 +295,7 @@ func TestConfigRunningAgent(t *testing.T) {
 		}
 		select {
 		case err := <-done:
-			t.Fatalf("a2a serve run acp error = %v", err)
+			t.Fatalf("a2a-serve start acp error = %v", err)
 		default:
 		}
 		if time.Now().After(deadline) {
@@ -304,13 +304,13 @@ func TestConfigRunningAgent(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	out, err := runCMD(t, "run", "acp", "--dir", dir, "--description", "reviews code")
+	out, err := runCMD(t, "start", "acp", "--dir", dir, "--description", "reviews code")
 	if err != nil {
-		t.Fatalf("a2a serve run acp on the running agent error = %v", err)
+		t.Fatalf("a2a-serve start acp on the running agent error = %v", err)
 	}
 	for _, want := range []string{"description  (default) → reviews code", "✓ applied to the running agent: description", "✓ coder is already running"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("a2a serve run acp on the running agent = %q, want %q", out, want)
+			t.Fatalf("a2a-serve start acp on the running agent = %q, want %q", out, want)
 		}
 	}
 	running, err := client.Config(t.Context())
@@ -322,28 +322,28 @@ func TestConfigRunningAgent(t *testing.T) {
 	}
 
 	out, err = runCMD(t, "config", "set", "--dir", dir, "--env", "DEBUG=1")
-	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: a2a serve restart") {
-		t.Fatalf("a2a serve config set --env = %q, %v, want a restart notice", out, err)
+	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: a2a-serve restart") {
+		t.Fatalf("a2a-serve config set --env = %q, %v, want a restart notice", out, err)
 	}
 	out, err = runCMD(t, "config", "--dir", dir)
-	if err != nil || !strings.Contains(out, "! restart to apply env: a2a serve restart") {
-		t.Fatalf("a2a serve config = %q, %v, want env pending", out, err)
+	if err != nil || !strings.Contains(out, "! restart to apply env: a2a-serve restart") {
+		t.Fatalf("a2a-serve config = %q, %v, want env pending", out, err)
 	}
 	out, err = runCMD(t, "status", "--dir", dir)
-	if err != nil || !strings.Contains(out, "pending  env (a2a serve restart)") {
-		t.Fatalf("a2a serve status = %q, %v, want env pending", out, err)
+	if err != nil || !strings.Contains(out, "pending  env (a2a-serve restart)") {
+		t.Fatalf("a2a-serve status = %q, %v, want env pending", out, err)
 	}
 	if _, err := runCMD(t, "restart", "--dir", dir); err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
-		t.Fatalf("a2a serve restart of a foreground agent error = %v, want a refusal", err)
+		t.Fatalf("a2a-serve restart of a foreground agent error = %v, want a refusal", err)
 	}
 
 	if _, err := runCMD(t, "stop", "--dir", dir); err != nil {
-		t.Fatalf("a2a serve stop error = %v", err)
+		t.Fatalf("a2a-serve stop error = %v", err)
 	}
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("a2a serve run acp error = %v", err)
+			t.Fatalf("a2a-serve start acp error = %v", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatalf("agent did not stop")
@@ -361,10 +361,10 @@ func TestConfigShowAsCommandHelp(t *testing.T) {
 	t.Parallel()
 	out, err := runCMD(t, "config", "show", "--help")
 	if err != nil {
-		t.Fatalf("a2a serve config show --help error = %v", err)
+		t.Fatalf("a2a-serve config show --help error = %v", err)
 	}
-	if !regexp.MustCompile(`--as-command\s+Print the a2a serve commands which`).MatchString(out) {
-		t.Fatalf("a2a serve config show --help = %q, want --as-command without a value name", out)
+	if !regexp.MustCompile(`--as-command\s+Print the a2a-serve commands which`).MatchString(out) {
+		t.Fatalf("a2a-serve config show --help = %q, want --as-command without a value name", out)
 	}
 }
 
@@ -372,7 +372,7 @@ func TestConfigInvalidOutput(t *testing.T) {
 	t.Parallel()
 	_, err := runCMD(t, "-o", "xml", "config")
 	if !isUsage(err) || !strings.Contains(err.Error(), "want text, json, jsonl or yaml") {
-		t.Fatalf("a2a serve -o xml config error = %v, want a usage error listing jsonl", err)
+		t.Fatalf("a2a-serve -o xml config error = %v, want a usage error listing jsonl", err)
 	}
 }
 
@@ -383,12 +383,12 @@ func TestSettingsFlagPlacement(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "operational on run", args: []string{"run", "opencode", "--memory", "8g"}, wantErr: "unknown flag: --memory"},
-		{name: "channel on run", args: []string{"run", "opencode", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
+		{name: "operational on run", args: []string{"start", "opencode", "--memory", "8g"}, wantErr: "unknown flag: --memory"},
+		{name: "channel on run", args: []string{"start", "opencode", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
 		{name: "channel on config set", args: []string{"config", "set", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
 		{name: "email on config set", args: []string{"config", "set", "--email-address", "a@example.com"}, wantErr: "unknown flag: --email-address"},
 		{name: "quiet on config set", args: []string{"config", "set", "--quiet"}, wantErr: "unknown flag: --quiet"},
-		{name: "unset a channel", args: []string{"config", "unset", "telegram"}, wantErr: "a2a serve channel rm telegram"},
+		{name: "unset a channel", args: []string{"config", "unset", "telegram"}, wantErr: "a2a-serve channel rm telegram"},
 		{name: "unknown tool kind", args: []string{"config", "set", "--allow-tools", "reed"}, wantErr: `invalid --allow-tools "reed"`},
 	}
 	for _, tc := range tests {
@@ -397,7 +397,7 @@ func TestSettingsFlagPlacement(t *testing.T) {
 			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
 			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("a2a serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+				t.Fatalf("a2a-serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
 			}
 		})
 	}
@@ -407,7 +407,7 @@ func TestToolKindsAreRepeatable(t *testing.T) {
 	t.Parallel()
 	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 	if _, err := runCMD(t, "config", "set", "--allow-tools", "read,search", "--allow-tools", "fetch", "--deny-tools", "exec*", "--dir", d.Root); err != nil {
-		t.Fatalf("a2a serve config set --allow-tools error = %v", err)
+		t.Fatalf("a2a-serve config set --allow-tools error = %v", err)
 	}
 	got, err := d.ReadConfig()
 	if err != nil {
@@ -415,7 +415,7 @@ func TestToolKindsAreRepeatable(t *testing.T) {
 	}
 	want := agentdir.ApprovalsConfig{Allow: []string{"read", "search", "fetch"}, Deny: []string{"exec*"}}
 	if diff := cmp.Diff(want, got.Approvals); diff != "" {
-		t.Fatalf("a2a serve config set --allow-tools wrong approvals (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve config set --allow-tools wrong approvals (-want +got) diff = %s", diff)
 	}
 }
 
@@ -429,7 +429,7 @@ func TestSettingsHelpSections(t *testing.T) {
 	}{
 		{
 			name:   "run harness",
-			args:   []string{"run", "opencode", "--help"},
+			args:   []string{"start", "opencode", "--help"},
 			want:   []string{"General:", "Workspace:", "Sandbox:", "Network:", "Approvals:", "Run (not saved):", "--detach", "--image", "(repeatable)"},
 			absent: []string{"--memory", "--telegram", "--harness"},
 		},
@@ -452,16 +452,16 @@ func TestSettingsHelpSections(t *testing.T) {
 			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 			out, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
 			if err != nil {
-				t.Fatalf("a2a serve %s error = %v", strings.Join(tc.args, " "), err)
+				t.Fatalf("a2a-serve %s error = %v", strings.Join(tc.args, " "), err)
 			}
 			for _, want := range tc.want {
 				if !strings.Contains(out, want) {
-					t.Fatalf("a2a serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
+					t.Fatalf("a2a-serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
 				}
 			}
 			for _, absent := range tc.absent {
 				if strings.Contains(out, absent) {
-					t.Fatalf("a2a serve %s = %q, want no %q", strings.Join(tc.args, " "), out, absent)
+					t.Fatalf("a2a-serve %s = %q, want no %q", strings.Join(tc.args, " "), out, absent)
 				}
 			}
 		})
@@ -473,7 +473,7 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	d := newTestAgent(t, nil)
 
 	if _, err := runCMD(t, "config", "set", "--dir", d.Root, "--harness", "opencode", "--name", "coder", "--memory", "8g"); err != nil {
-		t.Fatalf("a2a serve config set --harness in a new directory error = %v", err)
+		t.Fatalf("a2a-serve config set --harness in a new directory error = %v", err)
 	}
 
 	got, err := d.ReadConfig()
@@ -482,9 +482,9 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	}
 	want := &agentdir.Config{Name: "coder", Harness: "opencode", Limits: agentdir.LimitsConfig{Memory: "8g"}}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("a2a serve config set --harness wrong config (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve config set --harness wrong config (-want +got) diff = %s", diff)
 	}
 	if _, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g"); !errors.Is(err, agentdir.ErrNotFound) {
-		t.Fatalf("a2a serve config set without --harness in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
+		t.Fatalf("a2a-serve config set without --harness in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
 	}
 }

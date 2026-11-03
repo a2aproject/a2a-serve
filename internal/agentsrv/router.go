@@ -375,7 +375,7 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	}
 	if !ok {
 		if in.Direct && in.Authentic {
-			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a serve pair invite <you>`), then send: join <code>")
+			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a-serve pair invite <you>`), then send: join <code>")
 		}
 		return
 	}
@@ -777,13 +777,13 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 	}
 	for _, l := range named[who] {
 		if l.UserID != auth.OwnerID {
-			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a serve pair set %s --role owner`", who, who)
+			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a-serve pair set %s --role owner`", who, who)
 		}
 		if l.Channel == chName && l.Conv != "" {
 			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(l.Conv)}, nil
 		}
 	}
-	return approvals.Chat{}, fmt.Errorf("%s has no chat on %s: link it with a code from `a2a serve pair invite %s`", who, chName, who)
+	return approvals.Chat{}, fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite %s`", who, chName, who)
 }
 
 // Unattended reports whether a turn was posted to the context with no

@@ -276,7 +276,7 @@ func (d Dir) LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a serve config set` or `a2a serve config edit`", d.ConfigPath(), err)}
+		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a-serve config set` or `a2a-serve config edit`", d.ConfigPath(), err)}
 	}
 	return cfg, nil
 }
@@ -330,7 +330,7 @@ func MarshalConfig(cfg *Config) ([]byte, error) {
 	return append([]byte(configHeader), data...), nil
 }
 
-const configHeader = "# Agent definition for `a2a serve`. Secrets are kept in state/secrets, never here.\n"
+const configHeader = "# Agent definition for `a2a-serve`. Secrets are kept in state/secrets, never here.\n"
 
 // SaveConfig writes config.yaml.
 func (d Dir) SaveConfig(cfg *Config) error {

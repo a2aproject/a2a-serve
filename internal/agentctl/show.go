@@ -41,7 +41,7 @@ type View struct {
 	Pending []string `json:"pending,omitempty" yaml:"pending,omitempty"`
 	// Invalid is why the config is invalid.
 	Invalid string `json:"invalid,omitempty" yaml:"invalid,omitempty"`
-	// Commands are the `a2a serve` commands which recreate the agent.
+	// Commands are the `a2a-serve` commands which recreate the agent.
 	Commands [][]string `json:"commands" yaml:"commands"`
 }
 

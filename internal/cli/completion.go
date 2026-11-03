@@ -41,16 +41,13 @@ func newCompletionCmd() *cobra.Command {
 as ` + "`a2a serve`" + `. It completes commands, harness names, channel kinds, enum
 flags, and the contacts and pairings of a running agent.
 
-  source <(a2a serve completion bash)
-  a2a serve completion zsh > "${fpath[1]}/_` + scriptProgram + `"
-  a2a serve completion fish > ~/.config/fish/completions/` + scriptProgram + `.fish`,
+  source <(a2a-serve completion bash)
+  a2a-serve completion zsh > "${fpath[1]}/_` + scriptProgram + `"
+  a2a-serve completion fish > ~/.config/fish/completions/` + scriptProgram + `.fish`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := cmd.Root()
-			use := root.Use
-			root.Use = scriptProgram
-			defer func() { root.Use = use }()
 			out := cmd.OutOrStdout()
 			switch args[0] {
 			case "bash":

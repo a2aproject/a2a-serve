@@ -134,9 +134,9 @@ func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil
 	switch {
 	case nodeFlags && isNode:
-		return nil, invalid("%s already exists; change it with `a2a serve pair set %s`", req.Name, req.Name)
+		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
 	case nodeFlags && caller != nil:
-		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired as a caller; pick another name, or run `a2a serve pair rm " + req.Name + "` first"}
+		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired as a caller; pick another name, or run `a2a-serve pair rm " + req.Name + "` first"}
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
 	case nodeFlags && req.Role != "":
@@ -151,7 +151,7 @@ func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	role := req.Role
 	switch {
 	case caller != nil && role != "" && role != caller.Role:
-		return nil, invalid("%s is %s %s; change the role with `a2a serve pair set %s --role %s`", req.Name, article(caller.Role), caller.Role, req.Name, role)
+		return nil, invalid("%s is %s %s; change the role with `a2a-serve pair set %s --role %s`", req.Name, article(caller.Role), caller.Role, req.Name, role)
 	case caller != nil:
 		role = caller.Role
 	case role == "":

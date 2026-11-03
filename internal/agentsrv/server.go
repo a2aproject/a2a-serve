@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package agentsrv is the agent server behind `a2a serve`: one coding agent
+// Package agentsrv is the agent server behind `a2a-serve`: one coding agent
 // per process, started from its project directory, reachable over A2A on
 // localhost, a private network and the internet, and from messengers.
 package agentsrv
@@ -219,7 +219,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	}
 	release, err := fsutil.TryLock(s.dir.LockPath())
 	if errors.Is(err, fsutil.ErrLocked) {
-		return nil, fmt.Errorf("an agent server is already running in %s (a2a serve status)", s.dir.Root)
+		return nil, fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
 	if err != nil {
 		return nil, fmt.Errorf("locking the agent directory: %w", err)

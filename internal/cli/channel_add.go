@@ -39,8 +39,8 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "add <telegram|discord|email>",
 		Short: "Add a messenger, or replace its settings",
 		Long:  "Add a messenger, or replace its settings.\n\n" + secretref.Help,
-		Example: `  a2a serve channel add telegram --token env:CODER_BOT_TOKEN
-  a2a serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
+		Example: `  a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
+  a2a-serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: agentdir.ChannelKinds,
@@ -126,6 +126,6 @@ func addChannelOffline(ctx context.Context, cfg *globalConfig, d agentdir.Dir, c
 	if err := d.SaveConfig(conf); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a serve run)\n", kind)
+	_, err = fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", kind)
 	return err
 }

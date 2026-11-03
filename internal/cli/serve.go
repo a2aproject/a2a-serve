@@ -67,15 +67,15 @@ const serveShort = "Run a coding agent as an A2A server, or a local test server"
 func newServeCmd(cfg *globalConfig) *cobra.Command {
 	var f serverFlags
 	cmd := &cobra.Command{
-		Use:   "serve",
+		Use:   "a2a-serve",
 		Short: serveShort,
 		Long: `Run a coding agent as an A2A server: one agent per process, started from its
 project directory, sandboxed in Docker, reachable over A2A on localhost, a
 private network (Tailscale, LAN) and the internet (Funnel, ngrok), and from
 Telegram, Discord and email.
 
-  a2a serve run opencode --name coder     first run in a project: saves .a2a/config.yaml
-  a2a serve run                           later runs, from the project or a subdirectory
+  a2a-serve start opencode --name coder     first run in a project: saves .a2a/config.yaml
+  a2a-serve start                           later runs, from the project or a subdirectory
 
 Management commands (pair, status, contact, ...) find the agent the way
 git finds a repository, or take --dir.`,
@@ -86,10 +86,9 @@ git finds a repository, or take --dir.`,
 		},
 	}
 	cmd.AddCommand(
-		newRunCmd(cfg, &f),
+		newStartCmd(cfg, &f),
 		newStatusCmd(cfg, &f),
-		newURLCmd(cfg, &f),
-		newOpenCmd(cfg, &f),
+		newInspectCmd(cfg, &f),
 		newLogsCmd(cfg, &f),
 		newStopCmd(cfg, &f),
 		newRestartCmd(cfg, &f),
@@ -100,7 +99,6 @@ git finds a repository, or take --dir.`,
 		newScheduleCmd(cfg, &f),
 		newChannelCmd(cfg, &f),
 		newBackupCmd(cfg, &f),
-		newRestoreCmd(cfg),
 		newMailboxCmd(cfg),
 		newDoctorCmd(cfg, &f),
 		newCredentialCmd(cfg),
@@ -199,7 +197,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	d, err := f.agentDir()
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return clierr.Usage("no agent here: start one with `a2a serve run <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a serve run echo`, `proxy` or `exec`")
+			return clierr.Usage("no agent here: start one with `a2a-serve start <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`")
 		}
 		return runWizard(cmd, cfg, m.quiet)
 	}

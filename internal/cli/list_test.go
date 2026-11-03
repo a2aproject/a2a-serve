@@ -31,11 +31,11 @@ func TestPairListJoinedEmpty(t *testing.T) {
 
 	out, err := runCMD(t, "pair", "list", "--joined")
 	if err != nil {
-		t.Fatalf("a2a serve pair list --joined error = %v", err)
+		t.Fatalf("a2a-serve pair list --joined error = %v", err)
 	}
 
-	if want := "no joined agents; join one with `a2a serve pair join <agent-url> <code>`\n"; out != want {
-		t.Fatalf("a2a serve pair list --joined = %q, want %q", out, want)
+	if want := "no joined agents; join one with `a2a-serve pair join <agent-url> <code>`\n"; out != want {
+		t.Fatalf("a2a-serve pair list --joined = %q, want %q", out, want)
 	}
 }
 
@@ -48,7 +48,7 @@ func TestPairListJoined(t *testing.T) {
 
 	out, err := runCMDWithCreds(t, creds, "-o", "json", "pair", "list", "--joined")
 	if err != nil {
-		t.Fatalf("a2a serve pair list --joined error = %v", err)
+		t.Fatalf("a2a-serve pair list --joined error = %v", err)
 	}
 	var got []joinedAgent
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
@@ -56,15 +56,15 @@ func TestPairListJoined(t *testing.T) {
 	}
 	want := []joinedAgent{{URL: "https://coder.example.com", Kind: "caller", Agent: "coder", Principal: "pair:anna"}}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
-		t.Fatalf("a2a serve pair list --joined wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve pair list --joined wrong result (-want +got) diff = %s", diff)
 	}
 	for _, u := range []string{"HTTPS://Coder.example.com/", "https://coder.example.com/.well-known/agent-card.json"} {
 		if out, err := runCMDWithCreds(t, creds, "pair", "get", u); err != nil || !strings.Contains(out, "agent        coder") {
-			t.Fatalf("a2a serve pair get %s = %q, %v, want the agent joined at the same URL", u, out, err)
+			t.Fatalf("a2a-serve pair get %s = %q, %v, want the agent joined at the same URL", u, out, err)
 		}
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "get", "https://other.example.com"); err == nil || !strings.Contains(err.Error(), "you haven't joined") {
-		t.Fatalf("a2a serve pair get of an agent not joined error = %v, want a hint to join", err)
+		t.Fatalf("a2a-serve pair get of an agent not joined error = %v, want a hint to join", err)
 	}
 }
 
@@ -78,7 +78,7 @@ func TestPairGetJoinedNode(t *testing.T) {
 
 	out, err := runCMDWithCreds(t, creds, "-o", "json", "pair", "get", node.URL)
 	if err != nil {
-		t.Fatalf("a2a serve pair get %s error = %v", node.URL, err)
+		t.Fatalf("a2a-serve pair get %s error = %v", node.URL, err)
 	}
 	var got joinedAgent
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
@@ -86,6 +86,6 @@ func TestPairGetJoinedNode(t *testing.T) {
 	}
 	want := joinedAgent{URL: node.URL, Kind: credstore.KindNode, Agent: "grok", Principal: "node:grok"}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
-		t.Fatalf("a2a serve pair get of a joined node wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve pair get of a joined node wrong result (-want +got) diff = %s", diff)
 	}
 }

@@ -26,20 +26,18 @@ const (
 	groupSetup     = "setup"
 )
 
-// commandGroups maps the subcommands of `a2a serve` to their help group.
+// commandGroups maps the subcommands of `a2a-serve` to their help group.
 var commandGroups = map[string]string{
-	"run":        groupRun,
+	"start":      groupRun,
 	"status":     groupRun,
-	"url":        groupRun,
 	"logs":       groupRun,
 	"stop":       groupRun,
 	"restart":    groupRun,
-	"open":       groupRun,
+	"inspect":    groupRun,
 	"config":     groupConfigure,
 	"channel":    groupConfigure,
 	"schedule":   groupConfigure,
 	"backup":     groupConfigure,
-	"restore":    groupConfigure,
 	"pair":       groupPairing,
 	"contact":    groupPairing,
 	"peers":      groupPairing,

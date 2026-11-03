@@ -76,7 +76,7 @@ func Open(to string, run Runner) (Dest, error) {
 	case strings.Contains(to, "://"):
 		return nil, fmt.Errorf("unsupported backup destination %q: want a directory, gs:// or s3://", to)
 	case to == "":
-		return nil, errors.New("no backup destination: set one with `a2a serve config set --backup <dir|gs://…|s3://…>`")
+		return nil, errors.New("no backup destination: set one with `a2a-serve config set --backup <dir|gs://…|s3://…>`")
 	}
 	return dirDest(to), nil
 }

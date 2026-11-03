@@ -46,7 +46,7 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{x.Name, x.URL, x.Via, auth})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a serve contact add <name>`")
+			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`")
 		},
 	}
 }

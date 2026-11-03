@@ -26,10 +26,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
-func newOpenCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
+func newInspectCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var private, noBrowser bool
 	cmd := &cobra.Command{
-		Use:   "open",
+		Use:   "inspect",
 		Short: "Open the web inspector of the agent",
 		Long: `Open a page where the owner sees what the agent is doing: its conversations
 and tasks, pending approvals with Approve and Deny, and the state of its
@@ -57,7 +57,7 @@ network, never on the public URL.`,
 				return err
 			}
 			if private && st.PrivateNote != "" {
-				if _, err := fmt.Fprintf(cfg.stderr(), "note: a browser can't open this private URL (%s); run a2a serve open without --private\n", st.Private); err != nil {
+				if _, err := fmt.Fprintf(cfg.stderr(), "note: a browser can't open this private URL (%s); run a2a-serve inspect without --private\n", st.Private); err != nil {
 					return err
 				}
 			}

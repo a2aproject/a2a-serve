@@ -35,13 +35,13 @@ func newMailboxCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "mailbox",
 		Short: "Answer tasks as a webhook node hosted by an agent server",
 		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
-Grok Bot routine, hosted by an agent server ("a2a serve pair invite --webhook" on its side).
+Grok Bot routine, hosted by an agent server ("a2a-serve pair invite --webhook" on its side).
 The agent server holds the node's tasks in a mailbox until the node wakes. The node
-pairs once with "a2a serve pair join <agent-url> <code>", then answers each wake
+pairs once with "a2a-serve pair join <agent-url> <code>", then answers each wake
 with reply.
 
 The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the token
-"a2a serve pair join" saved. It includes the agent's URL.
+"a2a-serve pair join" saved. It includes the agent's URL.
 
 ` + secretref.Help,
 		Args: cobra.NoArgs,
@@ -64,7 +64,7 @@ type nodeClientFlags struct {
 }
 
 func (r *nodeClientFlags) register(f *pflag.FlagSet) {
-	f.StringVar(&r.token, "token", "", secretUsage("Node token (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve pair join)"))
+	f.StringVar(&r.token, "token", "", secretUsage("Node token (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a-serve pair join)"))
 }
 
 func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, error) {
@@ -88,7 +88,7 @@ func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	}
 	c, err := store.Node()
 	if errors.Is(err, credstore.ErrNoNode) {
-		return "", fmt.Errorf("no node token: run `a2a serve pair join <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
+		return "", fmt.Errorf("no node token: run `a2a-serve pair join <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
 	}
 	if err != nil {
 		return "", err

@@ -95,7 +95,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	wantPeers := []controlapi.Peer{{
 		Name:        "reviewer",
 		URL:         "http://agentmesh.local/mesh/peer-reviewer/a2a/reviewer",
-		Description: "reviewer is a fake coding agent reached through `a2a serve`.",
+		Description: "reviewer is a fake coding agent reached through `a2a-serve`.",
 		Online:      true,
 	}}
 	if diff := cmp.Diff(wantPeers, peers); diff != "" {

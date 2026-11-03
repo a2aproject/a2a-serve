@@ -3,7 +3,7 @@
 Last updated: 2026.10.22
 
 This lesson serves a real coding agent, opencode or Claude Code, from its project directory with
-`a2a serve run <harness>`, and talks to it like any other A2A agent.
+`a2a-serve start <harness>`, and talks to it like any other A2A agent.
 
 ## What you'll learn
 
@@ -36,20 +36,20 @@ EOF
 In **terminal A**, from the workspace:
 
 ```bash
-a2a serve run opencode --name coder --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name coder --secret OPENROUTER_API_KEY
 ```
 
-For Claude Code, use `a2a serve run claude` instead.
+For Claude Code, use `a2a-serve start claude` instead.
 
 The first run saves the flags to `.a2a/config.yaml` and the key to
 `.a2a/state/secrets`, pulls or builds the harness image, and stays in the
-foreground. Later runs from this directory are just `a2a serve run`.
+foreground. Later runs from this directory are just `a2a-serve start`.
 
 In **terminal B**, check that it runs and note its local URL:
 
 ```bash
 cd ~/a2a-lesson1/coder
-a2a serve status
+a2a-serve status
 ```
 
 ```
@@ -77,8 +77,8 @@ Terminal A shows:
 ```
 
 Other people and other machines need an invitation:
-`a2a serve pair invite <name>` prints a one-time code, which they redeem
-with `a2a serve pair join <agent-url> <code>`. Step 7 does the same for another
+`a2a-serve pair invite <name>` prints a one-time code, which they redeem
+with `a2a-serve pair join <agent-url> <code>`. Step 7 does the same for another
 agent.
 
 Set the agent card once so the commands below stay short, and give the agent
@@ -134,7 +134,7 @@ Start a second agent in **terminal C**:
 
 ```bash
 mkdir -p ~/a2a-lesson1/reviewer && cd ~/a2a-lesson1/reviewer
-a2a serve run opencode --name reviewer --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name reviewer --secret OPENROUTER_API_KEY
 ```
 
 In **terminal B**, let `coder` call it: mint a code on the reviewer's side
@@ -142,11 +142,11 @@ and redeem it as a contact on coder's side.
 
 ```bash
 cd ~/a2a-lesson1/reviewer
-a2a serve status                  # note reviewer's local URL
-a2a serve pair invite coder       # prints a code
+a2a-serve status                  # note reviewer's local URL
+a2a-serve pair invite coder       # prints a code
 
 cd ~/a2a-lesson1/coder
-a2a serve contact add reviewer --url <reviewer-url> --code <code>
+a2a-serve contact add reviewer --url <reviewer-url> --code <code>
 ```
 
 Now ask coder to delegate:
@@ -162,9 +162,9 @@ the sandbox. If reviewer needs an approval, the request reaches you, not coder.
 ## 8. Clean up
 
 ```bash
-cd ~/a2a-lesson1/coder && a2a serve stop
-cd ~/a2a-lesson1/reviewer && a2a serve stop
-a2a serve pair rm http://127.0.0.1:46757      # the owner token of this machine
+cd ~/a2a-lesson1/coder && a2a-serve stop
+cd ~/a2a-lesson1/reviewer && a2a-serve stop
+a2a-serve pair rm http://127.0.0.1:46757      # the owner token of this machine
 ```
 
 Everything an agent keeps is in `.a2a/` in its workspace; delete the

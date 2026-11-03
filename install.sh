@@ -116,7 +116,7 @@ main() {
     esac
   fi
   say "Set up an agent from a project directory with:"
-  say "    cd ~/src/app && a2a serve run"
+  say "    cd ~/src/app && a2a-serve start"
 }
 
 main "$@"

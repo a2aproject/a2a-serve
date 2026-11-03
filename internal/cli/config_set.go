@@ -32,21 +32,21 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
-		Short: "Change settings with the flags of `a2a serve run <harness>`, and the settings only it takes",
-		Long: `Change settings with the flags of ` + "`a2a serve run <harness>`" + `, and the
+		Short: "Change settings with the flags of `a2a-serve start <harness>`, and the settings only it takes",
+		Long: `Change settings with the flags of ` + "`a2a-serve start <harness>`" + `, and the
 operational settings only config set takes: limits, network-provider
 options, backups and Google sign-in. Messengers are set with
-` + "`a2a serve channel add`" + `. With --harness, config set also creates an
-agent, to be started with ` + "`a2a serve run`" + `. Scalars are
+` + "`a2a-serve channel add`" + `. With --harness, config set also creates an
+agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
 and --allow-tools and --deny-tools by value. Remove entries with
-` + "`a2a serve config unset`" + `.
+` + "`a2a-serve config unset`" + `.
 
 ` + secretref.Help,
-		Example: `  a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
-  a2a serve config set --tailscale-authkey - --restart
-  a2a serve config set --mount ~/docs:/docs:ro --dry-run`,
+		Example: `  a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
+  a2a-serve config set --tailscale-authkey - --restart
+  a2a-serve config set --mount ~/docs:/docs:ro --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()

@@ -1,6 +1,6 @@
 ---
 name: a2a-mailbox
-description: Receive and answer A2A tasks as a webhook node hosted by an `a2a serve` agent, and send tasks to that agent. Use when a webhook wakes you with JSON that has kind, taskId and replyUrl fields, when asked to pair as a webhook node using a code, to reply to, check or list A2A tasks, or to ask the hosting agent for something.
+description: Receive and answer A2A tasks as a webhook node hosted by an `a2a-serve` agent, and send tasks to that agent. Use when a webhook wakes you with JSON that has kind, taskId and replyUrl fields, when asked to pair as a webhook node using a code, to reply to, check or list A2A tasks, or to ask the hosting agent for something.
 ---
 
 # A2A webhook node
@@ -31,7 +31,7 @@ install that binary another way, then use `a2a-serve` and `a2a` instead of
   then rename the installed `a2a-cli` to `a2a`. Releases don't have credential
   helpers yet.
 
-With both on your PATH, `a2a serve <command>` is the same as
+With both on your PATH, `a2a-serve <command>` is the same as
 `a2a-serve <command>`. If you can't run either, every command below has an
 HTTP equivalent (see "Without the CLI").
 

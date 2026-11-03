@@ -104,12 +104,12 @@ func (s *Status) URL(scope string) (string, error) {
 		return s.Local, nil
 	case ScopePrivate:
 		if s.Private == "" {
-			return "", fmt.Errorf("%s has no private URL; add one with `a2a serve config set --private tailscale` (or lan), then `a2a serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`", s.Name)
 		}
 		return s.Private, nil
 	case ScopePublic:
 		if s.Public == "" {
-			return "", fmt.Errorf("%s has no public URL; add one with `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`", s.Name)
 		}
 		return s.Public, nil
 	}
@@ -290,7 +290,7 @@ type NodeInfo struct {
 
 // PairCommand is the command a caller or a node runs to pair with code.
 func PairCommand(agentURL, code string) string {
-	return fmt.Sprintf("a2a serve pair join %s %s", agentURL, code)
+	return fmt.Sprintf("a2a-serve pair join %s %s", agentURL, code)
 }
 
 // NodeInstructions is the message which tells the agent behind webhook node
@@ -315,7 +315,7 @@ func NotRunning(name string) error { return &notRunningError{name: name} }
 type notRunningError struct{ name string }
 
 func (e *notRunningError) Error() string {
-	return e.name + " is not running; start it with `a2a serve run --detach`"
+	return e.name + " is not running; start it with `a2a-serve start --detach`"
 }
 
 func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
@@ -334,7 +334,7 @@ func (e *requestError) UsageError() bool { return true }
 
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
-var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a serve restart`")
+var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a-serve restart`")
 
 // ReloadResponse lists the settings a server applied from config.yaml.
 type ReloadResponse struct {

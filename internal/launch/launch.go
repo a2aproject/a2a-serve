@@ -106,7 +106,7 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 func checkNotRunning(dir agentdir.Dir) error {
 	release, err := fsutil.TryLock(dir.LockPath())
 	if errors.Is(err, fsutil.ErrLocked) {
-		return fmt.Errorf("an agent server is already running in %s (a2a serve status)", dir.Root)
+		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", dir.Root)
 	}
 	if err != nil {
 		return fmt.Errorf("locking the agent directory: %w", err)
@@ -165,7 +165,7 @@ func copyTruncate(src, dst string) (err error) {
 // ServiceName is the name of the agent's background service. Services
 // installed before the name was derived from the directory alone also had
 // the agent name in it; while only such a unit is installed, its name is
-// returned, so that `a2a serve stop --uninstall` removes it.
+// returned, so that `a2a-serve stop --uninstall` removes it.
 func ServiceName(dir agentdir.Dir, _ *agentdir.Config) string {
 	name := serviceName(dir)
 	if service.Installed(name) {
@@ -223,7 +223,7 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		return err
 	}
 	if _, err := controlapi.NewClient(dir).Status(ctx); err == nil {
-		return fmt.Errorf("the agent is already running (a2a serve status); stop it first with `a2a serve stop`")
+		return fmt.Errorf("the agent is already running (a2a-serve status); stop it first with `a2a-serve stop`")
 	}
 	if err := checkNotRunning(dir); err != nil {
 		return err
@@ -236,13 +236,13 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	if info, err := os.Stat(dir.LogPath()); err == nil {
 		offset = info.Size()
 	}
-	args := []string{"run", "--dir", dir.Root}
+	args := []string{"start", "--dir", dir.Root}
 	if quiet {
 		args = append(args, "--quiet")
 	}
 	u := service.Unit{
 		Name:        serviceName(dir),
-		Description: fmt.Sprintf("a2a serve %s (%s)", cfg.Name, dir.Root),
+		Description: fmt.Sprintf("a2a-serve %s (%s)", cfg.Name, dir.Root),
 		Exe:         exe,
 		Args:        args,
 		Dir:         dir.Root,
@@ -279,9 +279,9 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	if err := waitReady(ctx, dir, offset, alive, out); err != nil {
 		return err
 	}
-	msg := "✓ running in the background (a2a serve logs, a2a serve stop)\n"
+	msg := "✓ running in the background (a2a-serve logs, a2a-serve stop)\n"
 	if asService {
-		msg = "✓ running as a user service (a2a serve logs)\n"
+		msg = "✓ running as a user service (a2a-serve logs)\n"
 		if note != "" {
 			msg += "  " + note + "\n"
 		}

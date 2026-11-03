@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package credstore keeps the pairing tokens `a2a serve pair join` obtained:
-// caller tokens, which `a2a serve credential get` gives the a2a CLI for
-// requests to the same agent, and node tokens, which the `a2a serve mailbox`
+// Package credstore keeps the pairing tokens `a2a-serve pair join` obtained:
+// caller tokens, which `a2a-serve credential get` gives the a2a CLI for
+// requests to the same agent, and node tokens, which the `a2a-serve mailbox`
 // commands use.
 package credstore
 

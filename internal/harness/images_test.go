@@ -99,7 +99,7 @@ func TestEnsureImage(t *testing.T) {
 func TestCheckDockerNotRunning(t *testing.T) {
 	fakeDocker(t, noImagesDocker)
 	_, err := CheckDocker(context.Background())
-	want := "start Docker or run a2a serve config set --sandbox local, or run a2a serve doctor"
+	want := "start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("CheckDocker() error = %v, want %q", err, want)
 	}

@@ -34,9 +34,9 @@ func newConfigEditCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "edit",
 		Short: "Edit config.yaml in $EDITOR, validating it on save",
 		Long: `Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
-it is validated and applied like ` + "`a2a serve config set`" + `; if it is invalid,
+it is validated and applied like ` + "`a2a-serve config set`" + `; if it is invalid,
 the file reopens with the errors on top, like crontab -e. Secret values
-aren't in config.yaml: store them with ` + "`a2a serve config set --secret NAME`" + `.`,
+aren't in config.yaml: store them with ` + "`a2a-serve config set --secret NAME`" + `.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()

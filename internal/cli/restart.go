@@ -29,7 +29,7 @@ func newRestartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 user service, to apply settings which wait for a restart. The settings are
 checked first, so an agent which couldn't start again isn't stopped. An
 agent running in the foreground of a terminal is restarted there: press
-Ctrl-C and run ` + "`a2a serve run`" + ` again.`,
+Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()

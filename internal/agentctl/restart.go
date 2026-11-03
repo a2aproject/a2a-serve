@@ -33,7 +33,7 @@ const stopTimeout = 2 * time.Minute
 
 // ErrForeground is returned by [Restart] for an agent which runs in the
 // foreground of a terminal, which can't be restarted from another one.
-var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a serve run` again")
+var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a-serve start` again")
 
 // Restart stops the running agent and starts it again in the same mode,
 // detached or as a user service. The config is checked first, so that an

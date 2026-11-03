@@ -314,7 +314,7 @@ func TestRestart(t *testing.T) {
 		wantErr string
 	}{
 		{name: "not running", wantErr: "coder is not running"},
-		{name: "foreground", running: true, wantErr: "press Ctrl-C there and run `a2a serve run` again"},
+		{name: "foreground", running: true, wantErr: "press Ctrl-C there and run `a2a-serve start` again"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

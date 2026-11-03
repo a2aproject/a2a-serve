@@ -133,9 +133,9 @@ func TestCommands(t *testing.T) {
 		got = append(got, ShellJoin(args))
 	}
 	want := []string{
-		"a2a serve run acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok",
-		"a2a serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN",
-		"a2a serve channel add telegram --token env:BOT",
+		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok",
+		"a2a-serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN",
+		"a2a-serve channel add telegram --token env:BOT",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Commands() wrong result (-want +got) diff = %s", diff)

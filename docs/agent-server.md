@@ -1,12 +1,13 @@
-# Agent server: `a2a serve run <harness>`
+# Agent server: `a2a-serve start <harness>`
 
 > [!WARNING]
 > Pre-1.0. Commands, flags and `config.yaml` keys may change; stored state
 > always migrates forward ([upgrades](upgrades.md)). See the
 > [security page](security.md) for what the sandbox protects.
 
-`a2a serve` runs one coding agent per process, started from its project
-directory. The agent runs in Docker, is reachable over A2A, from Telegram,
+`a2a-serve` runs one coding agent per process, started from its project
+directory. With command plugins enabled in the `a2a` CLI, every `a2a-serve`
+command also runs as `a2a serve`; this page writes `a2a-serve`. The agent runs in Docker, is reachable over A2A, from Telegram,
 Discord and email, and joins a private network with your other agents. Each
 agent can also have a public URL.
 
@@ -47,7 +48,7 @@ Harnesses in Docker call other agents with the `a2a` of their image, which
 carries the version this `a2a-serve` needs; only `--sandbox local` uses the
 `a2a` on your `PATH`.
 
-Run `a2a serve doctor` whenever something looks wrong: it checks the `a2a`
+Run `a2a-serve doctor` whenever something looks wrong: it checks the `a2a`
 CLI and its config, Docker, and the agent of the current directory, and prints
 the command which fixes each failure. If `a2a serve` fails with
 `unknown command "serve" for "a2a"`, command plugins are disabled or
@@ -57,15 +58,15 @@ the command which fixes each failure. If `a2a serve` fails with
 
 ```sh
 cd ~/src/app
-a2a serve run opencode --name coder --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name coder --secret OPENROUTER_API_KEY
 ```
 
 The first run saves the flags to `.a2a/config.yaml` and starts the agent in
 the foreground. Later runs, from the project or a subdirectory, are just
-`a2a serve run`. Run `a2a serve run` without arguments in a new directory and
+`a2a-serve start`. Run `a2a-serve start` without arguments in a new directory and
 it asks a few questions instead. Each run prints which agent directory it uses,
 and says when it creates one. Change settings later with the same flags, through
-`a2a serve config set` (see [Changing settings](#changing-settings)).
+`a2a-serve config set` (see [Changing settings](#changing-settings)).
 
 On start, the server saves an owner token for its local URL in your
 `~/.config/a2a-serve/credentials.json` and prints how to call it. The `a2a`
@@ -80,24 +81,24 @@ credential-helper:
 Then, from another terminal on the same machine:
 
 ```sh
-a2a send -a "$(a2a serve url --local)" "What does this project do?"
+a2a send -a "$(a2a-serve status --url=local)" "What does this project do?"
 ```
 
 Anyone else needs an invitation:
 
 ```sh
-a2a serve pair invite anna                    # in ~/src/app: prints a one-time code
-a2a serve pair join <agent-url> <code>       # on anna's side: saves a token for that URL
+a2a-serve pair invite anna                    # in ~/src/app: prints a one-time code
+a2a-serve pair join <agent-url> <code>       # on anna's side: saves a token for that URL
 ```
 
 `a2a send`, `a2a task …` and `a2a card get` attach the saved token
 automatically.
 
 Harnesses: `opencode` (`opencode acp`) and `claude` (Zed's
-`claude-agent-acp`). `a2a serve run acp --command "<cmd>"` runs any agent that
+`claude-agent-acp`). `a2a-serve start acp --command "<cmd>"` runs any agent that
 speaks the [Agent Client Protocol](https://agentclientprotocol.com), and
 `--command` also replaces a profile's command, such as
-`a2a serve run opencode --command "cloudcode acp"`.
+`a2a-serve start opencode --command "cloudcode acp"`.
 
 ## The agent directory
 
@@ -128,7 +129,7 @@ or service process doesn't depend on your shell's environment.
 
 > [!WARNING]
 > `config.yaml` decides what runs on your machine: `sandbox: local`,
-> `command`, `image`, `mounts`, `env` and `secrets`. Running `a2a serve run` in a
+> `command`, `image`, `mounts`, `env` and `secrets`. Running `a2a-serve start` in a
 > cloned repository runs whatever its `config.yaml` says, with access to the
 > mounts and secrets it names. Read a `config.yaml` you didn't write before you
 > start an agent from it, as you would a Makefile or a CI config.
@@ -137,14 +138,14 @@ or service process doesn't depend on your shell's environment.
 
 | Command | What it does |
 | --- | --- |
-| `a2a serve run` | Starts the agent in the foreground. `--quiet` keeps the harness image output in the log. |
-| `a2a serve run --detach` | Starts it in the background. |
-| `a2a serve run --service` | Installs and starts a systemd (Linux) or launchd (macOS) user service. |
-| `a2a serve status` | URLs, channels, owner links, task counts. |
-| `a2a serve url [--local\|--private\|--public]` | The agent's URL which reaches furthest: public, then private, then local. |
-| `a2a serve logs [-f]` | The server and harness log. |
-| `a2a serve stop [--uninstall]` | Stops it, detached or as a service; `--uninstall` also removes the service. |
-| `a2a serve restart` | Stops it and starts it again in the same mode, detached or as a service. |
+| `a2a-serve start` | Starts the agent in the foreground. `--quiet` keeps the harness image output in the log. |
+| `a2a-serve start --detach` | Starts it in the background. |
+| `a2a-serve start --service` | Installs and starts a systemd (Linux) or launchd (macOS) user service. |
+| `a2a-serve status` | URLs, channels, owner links, task counts. |
+| `a2a-serve status --url[=local\|private\|public]` | Only the agent's URL which reaches furthest: public, then private, then local; or the one named. |
+| `a2a-serve logs [-f]` | The server and harness log. |
+| `a2a-serve stop [--uninstall]` | Stops it, detached or as a service; `--uninstall` also removes the service. |
+| `a2a-serve restart` | Stops it and starts it again in the same mode, detached or as a service. |
 
 Commands which change what the agent keeps, `pair invite|list|get|set|rm`,
 `contact add --url …|list|rm` and `schedule add|list|rm`, also work while it
@@ -152,48 +153,48 @@ is stopped: they open `.a2a/state` directly, and the agent picks the changes
 up when it starts. A code issued while the agent is stopped works once it
 runs, until it expires. Commands which need live data still need it
 running: `peers`, `contact add <name>` (found on the private network),
-`schedule run`, `open`, `url --private|--public` and the details of
-`status`. `url --local` answers from the saved port.
+`schedule run`, `inspect`, `status --url=private|public` and the details
+of `status`. `status --url=local` answers from the saved port.
 
 `restart` checks the settings first, so an agent which couldn't start again
 isn't stopped. An agent running in the foreground of another terminal can't
-be restarted from here: press Ctrl-C there and run `a2a serve run` again.
+be restarted from here: press Ctrl-C there and run `a2a-serve start` again.
 
 ## Changing settings
 
-`a2a serve config set` takes the flags of `a2a serve run <harness>`, so the first
+`a2a-serve config set` takes the flags of `a2a-serve start <harness>`, so the first
 run teaches the vocabulary for later changes. It also takes the operational
-settings, which `run` doesn't: `--harness`, the container limits (`--memory`,
+settings, which `start` doesn't: `--harness`, the container limits (`--memory`,
 `--cpus`, `--pids`), the network-provider options (`--tailscale-control-url`,
 `--tailscale-authkey`, `--ngrok-url`, `--ngrok-authtoken`, `--relay-token`),
 backups (`--backup`, `--backup-key`, `--backup-interval`,
 `--backup-retention`) and Google sign-in (`--allow-email`,
 `--google-client-id`, `--google-client-secret`). Messengers are set with
-`a2a serve channel add` (see [Messengers](#messengers)). With `--harness`,
+`a2a-serve channel add` (see [Messengers](#messengers)). With `--harness`,
 `config set` also creates an agent without starting it, for the settings a
-headless first start needs, such as `--tailscale-authkey`; `a2a serve run`
-starts it. The help of `run <harness>` and `config set` groups the flags in
+headless first start needs, such as `--tailscale-authkey`; `a2a-serve start`
+starts it. The help of `start <harness>` and `config set` groups the flags in
 sections: General, Workspace, Sandbox, Network, Approvals, and Run (not
 saved). Every change is validated
 before it is saved, printed as a diff, and says whether it applies now or
 after a restart:
 
 ```console
-$ a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
+$ a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
   sandbox      (default) → local
   secret       + ANTHROPIC_API_KEY (stored)
   allow-tools  + read, + search
 ✓ saved .a2a/config.yaml
-! coder is running; restart to apply sandbox, secret: a2a serve restart
+! coder is running; restart to apply sandbox, secret: a2a-serve restart
 ```
 
 | Command | What it does |
 | --- | --- |
-| `a2a serve config` | The same as `config show`. |
-| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the commands which recreate the agent (`run <harness>`, then `config set` and `channel add` for the settings only they take), with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
-| `a2a serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
-| `a2a serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`. Messengers are removed with `channel rm`. |
-| `a2a serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
+| `a2a-serve config` | The same as `config show`. |
+| `a2a-serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the commands which recreate the agent (`run <harness>`, then `config set` and `channel add` for the settings only they take), with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
+| `a2a-serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
+| `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`. Messengers are removed with `channel rm`. |
+| `a2a-serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
 
 Scalars such as `--name`, `--sandbox`, `--private` or `--port` are
 overwritten by `set` and reset by `unset`; `--private none` is the same as
@@ -236,8 +237,8 @@ The flags are `--tailscale-authkey`, `--ngrok-authtoken`,
 --backup-key`, `contact add --token` and `mailbox --token`. `-` keeps tokens out of the shell history:
 
 ```sh
-a2a serve channel add telegram --token -
-pass show coder/bot | a2a serve channel add discord --token -
+a2a-serve channel add telegram --token -
+pass show coder/bot | a2a-serve channel add discord --token -
 ```
 
 Header values are the one exception: `pair invite --webhook-header` and
@@ -247,13 +248,13 @@ as in `"Authorization: Bearer env:TOKEN"`.
 A running agent applies the description, the owner chat and the allowed and
 denied tools at once, through its control socket, and `channel add` and
 `channel rm` start and stop messengers there; other settings are saved and wait for
-`a2a serve restart`, and `config show` and `status` list them.
+`a2a-serve restart`, and `config show` and `status` list them.
 
-`a2a serve run <harness>` in an existing agent goes through the same path, then
+`a2a-serve start <harness>` in an existing agent goes through the same path, then
 starts the agent unless it already runs. It refuses another harness:
-`this agent runs opencode; switch with a2a serve config set --harness claude`.
+`this agent runs opencode; switch with a2a-serve config set --harness claude`.
 
-An invalid `config.yaml` written by hand stops `a2a serve run` with an error
+An invalid `config.yaml` written by hand stops `a2a-serve start` with an error
 naming the setting; fix it with `config set`, `config unset` or `config edit`.
 
 ## Sandbox
@@ -316,7 +317,7 @@ when you run it in that directory.
 
   `${VAR}` and `${VAR:-default}` take their values from the agent's `--secret`
   and `--env` values, so tokens stay out of the file:
-  `a2a serve config set --secret GITHUB_TOKEN`. Other secrets, such as bot
+  `a2a-serve config set --secret GITHUB_TOKEN`. Other secrets, such as bot
   tokens, can't be referenced. A server with a variable that has no value is
   left out; `status` and `doctor` name the variables.
 - **Where they run.** Servers that start a command run inside the sandbox, as
@@ -329,7 +330,7 @@ when you run it in that directory.
   `.claude/skills` wins over one with the same name elsewhere. With
   `--sandbox local` the harness uses your own home, which the server doesn't
   change, so only the folders the harness reads itself work.
-- `a2a serve status` lists the MCP servers and skills the agent found.
+- `a2a-serve status` lists the MCP servers and skills the agent found.
 
 Like `config.yaml`, a project's `.mcp.json` decides what runs inside the
 sandbox. The harness can edit it, and the change applies to the next
@@ -369,7 +370,7 @@ from. Owners can answer any approval.
   `<who>` names an owner pairing, since only owners answer there.
   Without it, the server picks the first of telegram, discord and email where
   an owner pairing has a linked account. Without one, the question waits in
-  the inspector (`a2a serve open`), and `a2a serve status` reports it.
+  the inspector (`a2a-serve inspect`), and `a2a-serve status` reports it.
 - In a group chat, only the person who started the task, or an owner, can
   answer.
 - A **member** answers the approvals of their own tasks, so `--deny-tools` is
@@ -381,12 +382,12 @@ from. Owners can answer any approval.
 
 ## Inspector
 
-`a2a serve open` opens a page where the owner sees what the agent is doing:
+`a2a-serve inspect` opens a page where the owner sees what the agent is doing:
 
 - conversations and their tasks, with messages and artifacts, read-only;
 - pending approvals, with a button for each option;
 - the agent's URLs, task counts, messengers, pairings, webhook nodes and
-  contacts, as `a2a serve status` shows them.
+  contacts, as `a2a-serve status` shows them.
 
 The command mints a one-time login link over the control socket, so only
 someone with access to the agent directory can open it. The link works once,
@@ -411,23 +412,23 @@ page.
 | [Webhook nodes](#webhook-nodes) | Their node token, as members | `node:<name>` |
 
 ```sh
-a2a serve pair invite grok                 # member: can talk to the agent
-a2a serve pair invite anna --role owner    # owner: can also approve
-a2a serve pair invite anna                 # another code: a second device or account
-a2a serve pair list                        # the pairings
-a2a serve pair get anna                    # role, tokens, linked accounts, pending codes
-a2a serve pair set anna --role member      # change the role in place
-a2a serve pair set anna --rotate           # revoke her tokens and print a new code
-a2a serve pair rm grok                     # revoke its tokens and messenger links
+a2a-serve pair invite grok                 # member: can talk to the agent
+a2a-serve pair invite anna --role owner    # owner: can also approve
+a2a-serve pair invite anna                 # another code: a second device or account
+a2a-serve pair list                        # the pairings
+a2a-serve pair get anna                    # role, tokens, linked accounts, pending codes
+a2a-serve pair set anna --role member      # change the role in place
+a2a-serve pair set anna --rotate           # revoke her tokens and print a new code
+a2a-serve pair rm grok                     # revoke its tokens and messenger links
 ```
 
 A code works once, for 15 minutes. The caller exchanges it with
-`a2a serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot.
-`a2a serve pair list --joined` and `pair rm <agent-url>` manage the agents you joined.
+`a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot.
+`a2a-serve pair list --joined` and `pair rm <agent-url>` manage the agents you joined.
 The agent card and `/pair` are public; every A2A request needs a principal.
 
 The owner token the server saves for this machine is listed as `local`.
-`a2a serve pair rm local` revokes it, and the next start issues a new one;
+`a2a-serve pair rm local` revokes it, and the next start issues a new one;
 the name `local` can't be invited.
 
 ## Google sign-in
@@ -436,8 +437,8 @@ People can call the agent after signing in with Google, limited to an email
 allowlist, with no pairing command:
 
 ```sh
-a2a serve config set --allow-email mom@example.com,'*@example.com'
-a2a serve config set --google-client-id env:GOOGLE_CLIENT_ID \
+a2a-serve config set --allow-email mom@example.com,'*@example.com'
+a2a-serve config set --google-client-id env:GOOGLE_CLIENT_ID \
   --google-client-secret env:GOOGLE_CLIENT_SECRET
 a2a send -a https://coder.example.com "hi"      # signs in once
 ```
@@ -462,8 +463,8 @@ a2a send -a https://coder.example.com "hi"      # signs in once
   `*@example.com` matches only accounts of the example.com Google Workspace:
   anyone can create a personal Google account with an @example.com address.
 - People who sign in are members. Removing an email from the allowlist
-  (`a2a serve config unset allow-email <entry>`) cuts them off at their next
-  request; `a2a serve pair rm google:<email>` revokes their tokens.
+  (`a2a-serve config unset allow-email <entry>`) cuts them off at their next
+  request; `a2a-serve pair rm google:<email>` revokes their tokens.
 - The allowlist belongs to the agent's auth, so it works the same on Funnel,
   ngrok or your own domain.
 
@@ -498,9 +499,9 @@ anywhere, including from behind NAT, and each can get a public URL on the
 relay:
 
 ```sh
-a2a serve run opencode --private https://relay.example.com --public https://relay.example.com
+a2a-serve start opencode --private https://relay.example.com --public https://relay.example.com
 # first run: → sign in to the relay https://relay.example.com: https://…
-a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without the link
+a2a-serve config set --relay-token env:RELAY_TOKEN    # servers: join without the link
 ```
 
 - Name the relay by its URL; there are no other relay flags. The agent runs
@@ -515,7 +516,7 @@ a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without th
 - The public URL forwards requests unchanged, so pairing codes and Google
   sign-in work there.
 - The private URL (`http://agentmesh.local/mesh/<peer>/a2a/<name>`) works only
-  from other a2a-serve agents on the relay; `url` and `status` say so. Give
+  from other a2a-serve agents on the relay; `status` says so. Give
   people the public URL.
 - Source builds need `-tags agentmesh`
   (`go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`). It
@@ -531,13 +532,13 @@ a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without th
 ## Messengers
 
 ```sh
-a2a serve channel add telegram --token env:CODER_BOT_TOKEN
-a2a serve channel add discord --token env:CODER_DISCORD_TOKEN
-a2a serve channel add email --email-address coder@example.com \
+a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
+a2a-serve channel add discord --token env:CODER_DISCORD_TOKEN
+a2a-serve channel add email --email-address coder@example.com \
   --email-imap imap.example.com:993 --email-smtp smtp.example.com:465 \
   --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com
-a2a serve channel list                                 # and whether they run
-a2a serve channel rm discord
+a2a-serve channel list                                 # and whether they run
+a2a-serve channel rm discord
 ```
 
 A bot token can be polled by only one process, so each agent gets its own bot.
@@ -545,7 +546,7 @@ On start, the server prints a link for linking yourself as the owner (for
 Telegram, a `t.me` deep link). Unknown senders get a pairing hint; their
 attachments aren't downloaded. `channel add` checks a bot token before saving
 it. A messenger that fails while running is restarted with backoff, and
-`a2a serve status` shows its error in the meantime.
+`a2a-serve status` shows its error in the meantime.
 
 - **Telegram:** long polling. Answers are streamed by editing a message about
   once a second; approvals are inline buttons. In groups the bot answers when
@@ -584,11 +585,11 @@ tokens, which never enter the sandbox:
   home, so it only gets the `[a2a agents]` line.
 
 ```sh
-a2a serve peers                     # agents found on the private network
-a2a serve contact add coder         # a peer on the tailnet: no code needed
-a2a serve contact add grok --url https://grok.example.com --code K7Q2-9XF4
-a2a serve contact list
-a2a serve contact rm coder
+a2a-serve peers                     # agents found on the private network
+a2a-serve contact add coder         # a peer on the tailnet: no code needed
+a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4
+a2a-serve contact list
+a2a-serve contact rm coder
 ```
 
 - `a2a send` waits for the answer. With `--async` it returns the task ID at
@@ -610,13 +611,13 @@ A schedule runs a prompt with no person on the other side: a weekday
 briefing, triage every two hours, a reminder on Friday at 5.
 
 ```sh
-a2a serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
+a2a-serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
   --prompt "Summarize today's meetings." --chat telegram:owner
-a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
-a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
-a2a serve schedule list
-a2a serve schedule run morning-brief   # run it now
-a2a serve schedule rm morning-brief
+a2a-serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
+a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
+a2a-serve schedule list
+a2a-serve schedule run morning-brief   # run it now
+a2a-serve schedule rm morning-brief
 ```
 
 - Each run is an ordinary A2A task, run as `--as` (the owner by default, or a
@@ -637,7 +638,7 @@ The harness creates schedules too. When a user asks "remind me on Friday at
 skill describes). That schedule runs as the user who asked and reports back
 in the same conversation. A user's conversation can list and remove only the
 schedules they made or run as; the owner sees all of them with
-`a2a serve schedule list`. Calls that came through another agent can't
+`a2a-serve schedule list`. Calls that came through another agent can't
 manage schedules.
 
 Not in this version: schedules in `config.yaml`, and editing a schedule in
@@ -649,14 +650,14 @@ An agent can host agents that only run when woken, such as a Grok Bot
 routine. A node is a pairing with a webhook:
 
 ```sh
-a2a serve pair invite grok --webhook https://<grok routine webhook URL> \
+a2a-serve pair invite grok --webhook https://<grok routine webhook URL> \
   --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
 # → a message for the agent behind the webhook: its skill URL and a pairing code
-a2a serve pair invite grok          # a new code, if the node lost its token
-a2a serve pair set grok --webhook https://<new URL>   # change the node in place
-a2a serve pair set grok --rotate    # revoke its token, change the wake secret, new code
-a2a serve pair get grok             # webhook, headers, mailbox counts
-a2a serve pair rm grok
+a2a-serve pair invite grok          # a new code, if the node lost its token
+a2a-serve pair set grok --webhook https://<new URL>   # change the node in place
+a2a-serve pair set grok --rotate    # revoke its token, change the wake secret, new code
+a2a-serve pair get grok             # webhook, headers, mailbox counts
+a2a-serve pair rm grok
 ```
 
 `pair invite --webhook` for an existing node fails and names `pair set`,
@@ -675,7 +676,7 @@ for 10 minutes fails. The node's instructions are served at
 
 The node token also authenticates A2A calls to the agent, as the member
 `node:grok`, so the node can send the agent tasks of its own:
-`a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve pair join`, or
+`a2a send -a <agent-url> "…"` attaches the token saved by `a2a-serve pair join`, or
 `$A2A_NODE_TOKEN`. `pair rm grok` revokes both directions.
 
 ### Advertised pairings
@@ -685,9 +686,9 @@ agent on the private network learns about a webhook node and can call it
 through its host:
 
 ```sh
-a2a serve pair invite grok --webhook https://… --advertised   # on Ben's agent
-a2a serve peers                                               # on Anna's agent: lists grok@ben
-a2a serve contact add grok@ben                                # no code needed
+a2a-serve pair invite grok --webhook https://… --advertised   # on Ben's agent
+a2a-serve peers                                               # on Anna's agent: lists grok@ben
+a2a-serve contact add grok@ben                                # no code needed
 ```
 
 - Each agent keeps a table of advertisements in `state/ads.json`: its own and
@@ -720,7 +721,7 @@ only while it runs. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
 `{"removed": true, "kind": …, "name": …}`, and `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. Commands that
-only print text, `run`, `logs` and `config edit`, reject `-o`.
+only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 
 Commands that call the running agent take `--timeout`, the timeout of each
 call (default 60s); `backup now` and `backup list` take it as the timeout of
@@ -738,7 +739,7 @@ with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
 | 4 | `A2ACLI_ERR_CARD_INVALID` | An agent card couldn't be used |
 | 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` expired |
-| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a serve run --detach` |
+| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a-serve start --detach` |
 | 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
 
 ## HTTP routes
@@ -753,9 +754,9 @@ Served on every listener:
 | `POST /pair` | exchange a pairing code for a caller or node token |
 | `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
-| `/inspect/…` | the owner's web inspector (`a2a serve open`); local and private listeners only |
+| `/inspect/…` | the owner's web inspector (`a2a-serve inspect`); local and private listeners only |
 | `/n/<node>/…` | webhook nodes |
-| `/mailbox/api/…` | the node API used by `a2a serve mailbox` |
+| `/mailbox/api/…` | the node API used by `a2a-serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
 
@@ -766,10 +767,10 @@ one machine. Backups keep encrypted snapshots of them elsewhere, so the agent
 survives the loss of the machine and moves to another host.
 
 ```sh
-a2a serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
-a2a serve backup now
-a2a serve backup list
-a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
+a2a-serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
+a2a-serve backup now
+a2a-serve backup list
+a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
 ```
 
 - A snapshot holds a consistent copy of `server.db` (made with SQLite's
@@ -789,7 +790,7 @@ a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:B
   the first one an interval after the latest stored snapshot. Snapshots older
   than `--backup-retention` (default 7d) are removed, and the latest one is
   always kept. `status` shows the last and the next snapshot.
-- `a2a serve restore` recreates the `.a2a` directory from the latest snapshot,
+- `a2a-serve backup restore` recreates the `.a2a` directory from the latest snapshot,
   or `--snapshot <name>`. The network identity is restored only with
   `--take-over`, so the old and the new host don't run as the same tailnet
   machine; stop the agent on the old host first. Without it, the agent joins
@@ -803,33 +804,33 @@ Storage and S3 clients.
 
 | Command | Description |
 |---|---|
-| `serve run <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`, `--quiet`. |
-| `serve run` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
-| `serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
-| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies the description and the approval settings at once. `--dry-run`, `--restart`. |
-| `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
-| `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
-| `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
-| `serve pair invite <name> [--role owner]` | Create a pairing and print its one-time code, for a caller or a messenger account; for an existing name, another code for another device or account. The user running the server needs none: the server saves an owner token for its local URL. |
-| `serve pair invite <name> --webhook <url>` | Host a webhook node and create its code. |
-| `serve pair list` / `get <name>` | List the pairings, or show one: role, tokens, linked accounts, pending codes, and the webhook and mailbox of a node. |
-| `serve pair set <name> [--role] [--webhook …] [--rotate]` | Change a pairing in place; `--rotate` revokes its tokens and prints a new code. |
-| `serve pair rm <name>` | Revoke a caller, or remove a node. |
-| `serve pair join <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the credential helper. Outside an agent directory (or with `--joined`), `pair list` shows the agents you joined, and `pair get` and `pair rm` take their URL. |
-| `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper the `a2a` CLI calls (`a2a-serve credential get`, hidden from help) and makes state files private. `-o json`. |
-| `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
-| `serve peers` | Agents found on the private network, and the webhook nodes they advertise (`pair invite --advertised`), which `contact add <node>@<agent>` adds without a code. |
-| `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
-| `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
-| `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
-| `serve backup now\|list` / `serve restore <dest>` | Encrypted snapshots of the agent's state to a directory, `gs://` or `s3://`, taken every `--backup-interval`; restore recreates the agent on another host. |
-| `serve mailbox list\|get\|reply` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
-| `serve run echo` / `run proxy <agent-url>` / `run exec '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
+| `a2a-serve start <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`, `--quiet`. |
+| `a2a-serve start` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
+| `a2a-serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
+| `a2a-serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `start <harness>`, validated and printed as a diff. A running agent applies the description and the approval settings at once. `--dry-run`, `--restart`. |
+| `a2a-serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
+| `a2a-serve status --url[=local\|private\|public]` | Only the agent's URL: public, then private, then local. `a2a send -a "$(a2a-serve status --url)" …` |
+| `a2a-serve inspect [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
+| `a2a-serve pair invite <name> [--role owner]` | Create a pairing and print its one-time code, for a caller or a messenger account; for an existing name, another code for another device or account. The user running the server needs none: the server saves an owner token for its local URL. |
+| `a2a-serve pair invite <name> --webhook <url>` | Host a webhook node and create its code. |
+| `a2a-serve pair list` / `get <name>` | List the pairings, or show one: role, tokens, linked accounts, pending codes, and the webhook and mailbox of a node. |
+| `a2a-serve pair set <name> [--role] [--webhook …] [--rotate]` | Change a pairing in place; `--rotate` revokes its tokens and prints a new code. |
+| `a2a-serve pair rm <name>` | Revoke a caller, or remove a node. |
+| `a2a-serve pair join <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the credential helper. Outside an agent directory (or with `--joined`), `pair list` shows the agents you joined, and `pair get` and `pair rm` take their URL. |
+| `a2a-serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper the `a2a` CLI calls (`a2a-serve credential get`, hidden from help) and makes state files private. `-o json`. |
+| `a2a-serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
+| `a2a-serve peers` | Agents found on the private network, and the webhook nodes they advertise (`pair invite --advertised`), which `contact add <node>@<agent>` adds without a code. |
+| `a2a-serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
+| `a2a-serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
+| `a2a-serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
+| `a2a-serve backup now\|list\|restore <dest>` | Encrypted snapshots of the agent's state to a directory, `gs://` or `s3://`, taken every `--backup-interval`; restore recreates the agent on another host. |
+| `a2a-serve mailbox list\|get\|reply` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
+| `a2a-serve start echo` / `start proxy <agent-url>` / `start exec '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
 ## Configuration reference
 
 `config.yaml` holds what the flags set; each key is changed with the flag of
-the same name through `a2a serve config set`. Secret values are references
+the same name through `a2a-serve config set`. Secret values are references
 such as `secret:TELEGRAM_BOT_TOKEN`.
 
 ```yaml
@@ -872,9 +873,9 @@ workspace, are read as `workspace` and the remaining mounts.
 agent directory, for trying out clients:
 
 ```sh
-a2a serve run echo                              # reply with the message
-a2a serve run proxy https://agent.example.com   # forward to another agent, logging the traffic
-a2a serve run exec 'tr a-z A-Z'                 # run a shell command per message
+a2a-serve start echo                              # reply with the message
+a2a-serve start proxy https://agent.example.com   # forward to another agent, logging the traffic
+a2a-serve start exec 'tr a-z A-Z'                 # run a shell command per message
 ```
 
 All three take `--host`, `--port` (default 8080), `--name`, `--description`,
@@ -892,7 +893,7 @@ a delimiter. A non-zero exit fails the task with stderr as the message.
 ## Shell completion
 
 ```sh
-source <(a2a serve completion bash)    # also zsh, fish, powershell
+source <(a2a-serve completion bash)    # also zsh, fish, powershell
 ```
 
 The script completes `a2a-serve` commands, harness names, channel kinds,
@@ -910,7 +911,7 @@ agent crash, and a queued concurrent task. To try a real harness without
 Docker:
 
 ```sh
-a2a serve run opencode --sandbox local --command "opencode acp"
+a2a-serve start opencode --sandbox local --command "opencode acp"
 ```
 
 ## What it needs from the a2a CLI
@@ -921,7 +922,7 @@ a2a serve run opencode --sandbox local --command "opencode acp"
   server's Unix socket.
 - Credential helpers (`credential-helper`, the
   [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)):
-  `a2a-serve credential` returns the token `a2a serve pair join` saved in
+  `a2a-serve credential` returns the token `a2a-serve pair join` saved in
   `~/.config/a2a-serve/credentials.json` for the longest matching agent URL,
   or `$A2A_NODE_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once
   under `credential-helper` in `~/.config/a2a-cli/config.yaml` as
@@ -929,4 +930,4 @@ a2a serve run opencode --sandbox local --command "opencode acp"
   key from a helper script scoped to the bridge host
   (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
 - `a2a skill` and `a2a version -o json`, which the server serves at
-  `/skill.md` and `a2a serve doctor` uses to check the installed version.
+  `/skill.md` and `a2a-serve doctor` uses to check the installed version.

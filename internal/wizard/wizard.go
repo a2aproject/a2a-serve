@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package wizard asks the questions of the interactive first run of
-// `a2a serve run`, for people who start it without arguments.
+// `a2a-serve start`, for people who start it without arguments.
 package wizard
 
 import (
@@ -103,7 +103,7 @@ type Options struct {
 	// reads it like any other answer.
 	ReadSecret func(prompt string) (string, error)
 	// Command validates the settings and returns the commands which create
-	// the same agent, `a2a serve run <harness>` first, shown before saving.
+	// the same agent, `a2a-serve start <harness>` first, shown before saving.
 	Command func(agentdir.Settings) ([]string, error)
 	// Workspace is the project directory, whose MCP servers and skills are
 	// shown. Empty skips them.
@@ -293,7 +293,7 @@ func (p *prompter) sandbox(dockerErr error) (string, error) {
 	def := agentdir.SandboxDocker
 	if dockerErr != nil {
 		def = agentdir.SandboxLocal
-		if _, err := fmt.Fprintf(p.out, "  Docker is not available (%v).\n  local runs the agent on this machine, unsandboxed, with your permissions; `a2a serve doctor` helps set up Docker.\n", dockerErr); err != nil {
+		if _, err := fmt.Fprintf(p.out, "  Docker is not available (%v).\n  local runs the agent on this machine, unsandboxed, with your permissions; `a2a-serve doctor` helps set up Docker.\n", dockerErr); err != nil {
 			return "", err
 		}
 	}

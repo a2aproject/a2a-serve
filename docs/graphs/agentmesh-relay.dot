@@ -26,7 +26,7 @@ digraph agentmesh_relay {
   }
 
   subgraph cluster_laptop {
-    label="Anna's laptop:\na2a serve run opencode --private <relay-url>"; labelloc=b; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    label="Anna's laptop:\na2a-serve start opencode --private <relay-url>"; labelloc=b; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
     Mesh [label="meshnet\nkey, credential,\nin-memory listeners"];
     Core [label="auth chain + A2A handler\npairing token or WhoIs\n-> principal"];
     subgraph cluster_sb {

@@ -44,9 +44,9 @@ prints a new code; for a webhook node, it also changes the secret its wakes
 are signed with. Linked messenger accounts stay linked.
 
 ` + secretref.Help,
-		Example: `  a2a serve pair set anna --role owner
-  a2a serve pair set anna --rotate
-  a2a serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
+		Example: `  a2a-serve pair set anna --role owner
+  a2a-serve pair set anna --rotate
+  a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {

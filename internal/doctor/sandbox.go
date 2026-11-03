@@ -23,7 +23,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
-const useLocalSandbox = "a2a serve config set --sandbox local"
+const useLocalSandbox = "a2a-serve config set --sandbox local"
 
 // sandboxChecks checks Docker and the harness image, or the harness command
 // of an agent without a sandbox. cfg is nil outside an agent or when its
@@ -82,7 +82,7 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		image = profile.Image()
 	}
 	if image == "" {
-		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("harness %s has no container image", cfg.Harness), "a2a serve config set --image IMAGE, or "+useLocalSandbox
+		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("harness %s has no container image", cfg.Harness), "a2a-serve config set --image IMAGE, or "+useLocalSandbox
 		return r, true
 	}
 	present := func(img string) bool {
@@ -113,7 +113,7 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		r.Status, r.Message = StatusWarn, "image "+image+" can't be pulled; the first start builds it"
 		return r, true
 	}
-	r.Status, r.Message, r.Fix = StatusFail, "image "+image+" can't be pulled", "a2a serve config set --image IMAGE"
+	r.Status, r.Message, r.Fix = StatusFail, "image "+image+" can't be pulled", "a2a-serve config set --image IMAGE"
 	return r, true
 }
 
@@ -129,7 +129,7 @@ func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Resul
 			ID:      "harness-command",
 			Status:  StatusFail,
 			Message: name + " not on PATH (sandbox local)",
-			Fix:     "install " + name + ", or a2a serve config set --sandbox docker",
+			Fix:     "install " + name + ", or a2a-serve config set --sandbox docker",
 		}, true
 	}
 	return Result{ID: "harness-command", Status: StatusOK, Message: fmt.Sprintf("%s at %s (sandbox local)", name, path)}, true

@@ -304,18 +304,18 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	secret, extra := unsetOnly[setting]
 	switch {
 	case extra && len(entries) > 0:
-		return nil, fmt.Errorf("%s takes no entries: run `a2a serve config unset %s`", setting, setting)
+		return nil, fmt.Errorf("%s takes no entries: run `a2a-serve config unset %s`", setting, setting)
 	case extra:
 		deleted = append(deleted, secret)
 	case ok && f.place == placeChannel:
 		kind, _, _ := strings.Cut(setting, "-")
-		return nil, fmt.Errorf("%s is a channel setting: change it with `a2a serve channel add %s`, or remove the channel with `a2a serve channel rm %s`", setting, kind, kind)
+		return nil, fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)
 	case !ok:
 		return nil, fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))
 	case setting == "harness":
-		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a serve config set --harness <name>`")
+		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a-serve config set --harness <name>`")
 	case !f.list && len(entries) > 0:
-		return nil, fmt.Errorf("%s is not a list: run `a2a serve config unset %s` to reset it", setting, setting)
+		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
 	case setting == "name":
 		cfg.Name = d.DefaultName()
 	case f.list && len(entries) > 0:
@@ -346,7 +346,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 }
 
 // Commands returns the commands which recreate the agent in an empty
-// directory: `a2a serve run`, then `config set` for the settings only it
+// directory: `a2a-serve start`, then `config set` for the settings only it
 // takes, then `channel add` for each channel. Secrets are passed as
 // env:NAME; stored is used to tell which network secrets are set.
 func (c *Config) Commands(stored Secrets) [][]string {
@@ -354,8 +354,8 @@ func (c *Config) Commands(stored Secrets) [][]string {
 	if !slices.Contains(Harnesses, h) {
 		h = HarnessACP
 	}
-	run := []string{"a2a", "serve", "run", h}
-	set := []string{"a2a", "serve", "config", "set"}
+	run := []string{"a2a-serve", "start", h}
+	set := []string{"a2a-serve", "config", "set"}
 	channels := map[string][]string{}
 	for _, f := range fields {
 		if f.flag == "harness" || (f.flag == "name" && c.Name == "") {
@@ -381,12 +381,12 @@ func (c *Config) Commands(stored Secrets) [][]string {
 		}
 	}
 	out := [][]string{run}
-	if len(set) > 4 {
+	if len(set) > 3 {
 		out = append(out, set)
 	}
 	for _, kind := range ChannelKinds {
 		if args := channels[kind]; len(args) > 0 {
-			out = append(out, append([]string{"a2a", "serve", "channel", "add", kind}, args...))
+			out = append(out, append([]string{"a2a-serve", "channel", "add", kind}, args...))
 		}
 	}
 	return out

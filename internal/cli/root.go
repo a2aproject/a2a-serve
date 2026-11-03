@@ -51,7 +51,7 @@ type globalConfig struct {
 	// stdin overrides os.Stdin for secret values read with -, for tests.
 	stdin         *os.File
 	httpTransport http.RoundTripper
-	// credentials overrides the store of `a2a serve pair join` tokens, for tests.
+	// credentials overrides the store of `a2a-serve pair join` tokens, for tests.
 	credentials *credstore.Store
 
 	*output.Printer
@@ -96,7 +96,7 @@ func Execute(args []string) int {
 	}
 	cfg := &globalConfig{Printer: &output.Printer{Out: os.Stdout}}
 	root := newRootCmd(cfg)
-	root.SetArgs(rootArgs(args))
+	root.SetArgs(args)
 	if err := root.Execute(); err != nil {
 		return cfg.renderError(err)
 	}
@@ -144,32 +144,17 @@ func (g *globalConfig) renderError(err error) int {
 	return ce.Exit
 }
 
-// rootArgs returns the arguments of the `a2a` root command for args, the
-// command line of `a2a serve`. Shell completion asks `a2a-serve __complete
-// <args>`, which completes `a2a serve <args>`.
-func rootArgs(args []string) []string {
-	if len(args) > 0 && (args[0] == cobra.ShellCompRequestCmd || args[0] == cobra.ShellCompNoDescRequestCmd) {
-		return append([]string{args[0], pluginName}, args[1:]...)
-	}
-	return append([]string{pluginName}, args...)
-}
-
-// newRootCmd returns the `a2a` command with `serve` as its only subcommand,
-// so that help and errors name commands the way users type them through
-// the a2a CLI.
+// newRootCmd returns the `a2a-serve` command. The a2a CLI runs it as
+// `a2a serve` with the same arguments, including those of shell completion.
 func newRootCmd(cfg *globalConfig) *cobra.Command {
-	root := &cobra.Command{
-		Use:               "a2a",
-		SilenceUsage:      true,
-		SilenceErrors:     true,
-		CompletionOptions: cobra.CompletionOptions{DisableDefaultCmd: true},
-	}
-	serve := newServeCmd(cfg)
-	serve.SetVersionTemplate(buildVersionInfo().text())
-	pf := serve.PersistentFlags()
+	root := newServeCmd(cfg)
+	root.SilenceUsage, root.SilenceErrors = true, true
+	root.CompletionOptions = cobra.CompletionOptions{DisableDefaultCmd: true}
+	root.SetVersionTemplate(buildVersionInfo().text())
+	pf := root.PersistentFlags()
 	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line)")
 	pf.BoolVarP(&cfg.verbose, "verbose", "v", false, "Verbose output to stderr")
-	serve.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
 		switch output.Mode(cfg.output) {
 		case output.ModeText, output.ModeJson, output.ModeJSONL:
 			cfg.Mode = output.Mode(cfg.output)
@@ -178,12 +163,12 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 		}
 		return checkTextOnly(cmd, cfg)
 	}
-	must(serve.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
-	help := newHelpCmd(serve)
+	must(root.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
+	help := newHelpCmd(root)
 	markTextOnly(help)
-	serve.AddCommand(help)
-	addGroups(serve)
-	root.AddCommand(serve)
+	root.SetHelpCommand(help)
+	addGroups(root)
+	root.SetHelpCommandGroupID(groupSetup)
 	markUsageErrors(root)
 	return root
 }
@@ -210,8 +195,8 @@ func checkTextOnly(cmd *cobra.Command, cfg *globalConfig) error {
 	return clierr.Usage(fmt.Sprintf("-o %s doesn't apply to `%s`, which prints text", cfg.output, cmd.CommandPath()))
 }
 
-// newHelpCmd returns `a2a serve help [command]`. Cobra only adds a help
-// command to the root, which here is the `a2a` wrapper.
+// newHelpCmd returns `a2a-serve help [command]`, which reports an unknown
+// topic as a usage error.
 func newHelpCmd(serve *cobra.Command) *cobra.Command {
 	return &cobra.Command{
 		Use:   "help [command]",

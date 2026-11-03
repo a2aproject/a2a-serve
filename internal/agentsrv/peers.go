@@ -169,7 +169,7 @@ func (p *Peers) claimsOf(ctx context.Context, name string) (callClaims, bool) {
 // discover lists agents on the private network, cached briefly.
 func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	if p.private == nil {
-		return nil, errors.New("this agent has no private network; add one with `a2a serve config set --private tailscale` (or lan) and `a2a serve restart`")
+		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or lan) and `a2a-serve restart`")
 	}
 	p.mu.Lock()
 	if time.Since(p.cachedAt) < 30*time.Second {
@@ -224,7 +224,7 @@ func (p *Peers) locate(ctx context.Context, name, u string) (string, string, err
 // advertisement only says it exists, so it can't send calls elsewhere.
 func (p *Peers) advertisedURL(ctx context.Context, key, name, host string) (string, error) {
 	if _, ok := p.ads.Lookup(key); !ok {
-		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a serve peers` lists the advertised pairings", key)
+		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a-serve peers` lists the advertised pairings", key)
 	}
 	peers, err := p.discover(ctx)
 	if err != nil {

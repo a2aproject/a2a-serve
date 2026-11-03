@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
-// newHarnessCmd builds `a2a serve run <harness>`, which creates the agent on
+// newHarnessCmd builds `a2a-serve start <harness>`, which creates the agent on
 // the first run and starts it. In an existing agent the flags go through
 // the `config set` path first. "acp" starts any ACP agent given with
 // --command.
@@ -42,10 +42,10 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 		Use:   name,
 		Short: short,
 		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like ` + "`a2a serve config set`" + `.`,
-		Example: fmt.Sprintf(`  a2a serve run %[1]s --name coder --secret OPENROUTER_API_KEY
-  a2a serve run %[1]s --private tailscale --allow-tools read,search --detach
-  a2a serve run %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
+existing agent, the flags change them like ` + "`a2a-serve config set`" + `.`,
+		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY
+  a2a-serve start %[1]s --private tailscale --allow-tools read,search --detach
+  a2a-serve start %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := harnessDir(sf.dir)
@@ -76,7 +76,7 @@ existing agent, the flags change them like ` + "`a2a serve config set`" + `.`,
 				}
 			}
 			if res.Running {
-				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a serve status)\n", res.Name)
+				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
 				return err
 			}
 			mode.created = res.Created

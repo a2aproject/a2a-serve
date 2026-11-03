@@ -65,7 +65,7 @@ func (a *agent) mustFail(want string, args ...string) {
 	a.u.t.Helper()
 	out, err := a.u.exec(a.dir, append([]string{"a2a", "serve"}, args...)...)
 	if err == nil || !strings.Contains(err.Error(), want) {
-		a.u.t.Fatalf("a2a serve %s = %q, %v, want an error containing %q", strings.Join(args, " "), out, err, want)
+		a.u.t.Fatalf("a2a-serve %s = %q, %v, want an error containing %q", strings.Join(args, " "), out, err, want)
 	}
 }
 
@@ -78,12 +78,12 @@ func TestPairingsOnBothSides(t *testing.T) {
 
 	anna.pairJoin(coder.url, coder.invite("anna"))
 	coder.invite("anna")
-	coder.mustFail("a2a serve pair set anna --role owner", "pair", "invite", "anna", "--role", "owner")
+	coder.mustFail("a2a-serve pair set anna --role owner", "pair", "invite", "anna", "--role", "owner")
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "anna")
 	if got.Kind != "caller" || got.Role != "member" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
-		t.Fatalf("a2a serve pair get anna = %+v, want a member with the token of the first code and the second code pending", got)
+		t.Fatalf("a2a-serve pair get anna = %+v, want a member with the token of the first code and the second code pending", got)
 	}
 
 	coder.serve("pair", "set", "anna", "--role", "owner")
@@ -93,7 +93,7 @@ func TestPairingsOnBothSides(t *testing.T) {
 		kinds[p.Name] = p.Kind + "/" + p.Role
 	}
 	if diff := cmp.Diff(map[string]string{"anna": "caller/owner", "local": "caller/owner"}, kinds); diff != "" {
-		t.Fatalf("a2a serve pair list -o jsonl wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve pair list -o jsonl wrong result (-want +got) diff = %s", diff)
 	}
 
 	var joined []struct {
@@ -102,7 +102,7 @@ func TestPairingsOnBothSides(t *testing.T) {
 	}
 	anna.runJSON(anna.home, &joined, "a2a", "serve", "pair", "list")
 	if len(joined) != 1 || joined[0].URL != coder.url || joined[0].Agent != "coder" {
-		t.Fatalf("a2a serve pair list outside an agent directory = %+v, want coder at %s", joined, coder.url)
+		t.Fatalf("a2a-serve pair list outside an agent directory = %+v, want coder at %s", joined, coder.url)
 	}
 	if out := resultOf(anna.mustSend(coder.url, "hello")); out.Text != "Hello from fakeacp." {
 		t.Fatalf("a2a send by anna = %+v, want the agent's answer", out)
@@ -128,14 +128,14 @@ func TestWebhookNodeChangedInPlace(t *testing.T) {
 	t.Cleanup(webhook.Close)
 
 	grok.pairJoin(coder.url, coder.invite("grok", "--webhook", webhook.URL+"/hook"))
-	coder.mustFail("a2a serve pair set grok", "pair", "invite", "grok", "--webhook", webhook.URL+"/other")
+	coder.mustFail("a2a-serve pair set grok", "pair", "invite", "grok", "--webhook", webhook.URL+"/other")
 	coder.serve("pair", "set", "grok", "--webhook", webhook.URL+"/new", "--webhook-header", "X-Key: v1", "--description", "web search")
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "grok")
 	if got.Kind != "node" || got.Node == nil || got.Node.Webhook != webhook.URL+"/new" || got.Node.Description != "web search" ||
 		!cmp.Equal(got.Node.HeaderNames, []string{"X-Key"}) || !got.Node.Paired {
-		t.Fatalf("a2a serve pair get grok = %+v, want the changed node, still paired", got)
+		t.Fatalf("a2a-serve pair get grok = %+v, want the changed node, still paired", got)
 	}
 
 	task := owner.mustSend(coder.url+"/n/grok", "--async", "summarize")
@@ -146,16 +146,16 @@ func TestWebhookNodeChangedInPlace(t *testing.T) {
 		} `json:"envelope"`
 	}](t, grok.run(grok.home, "a2a", "serve", "mailbox", "list", "-o", "jsonl"))
 	if len(entries) != 1 || entries[0].Envelope.TaskID != string(task.ID) || entries[0].Envelope.Text != "summarize" {
-		t.Fatalf("a2a serve mailbox list -o jsonl = %+v, want the task %s", entries, task.ID)
+		t.Fatalf("a2a-serve mailbox list -o jsonl = %+v, want the task %s", entries, task.ID)
 	}
 	if out := grok.run(grok.home, "a2a", "serve", "mailbox", "get", string(task.ID)); !strings.Contains(out, "summarize") {
-		t.Fatalf("a2a serve mailbox get = %q, want the task", out)
+		t.Fatalf("a2a-serve mailbox get = %q, want the task", out)
 	}
 	grok.run(grok.home, "a2a", "serve", "mailbox", "reply", string(task.ID), "--final", "summary")
 
 	coder.serve("pair", "set", "grok", "--rotate")
 	if out, err := grok.exec(grok.home, "a2a", "serve", "mailbox", "list"); err == nil || !strings.Contains(err.Error(), "invalid node token") {
-		t.Fatalf("a2a serve mailbox list with a rotated token = %q, %v, want it refused", out, err)
+		t.Fatalf("a2a-serve mailbox list with a rotated token = %q, %v, want it refused", out, err)
 	}
 }
 
@@ -172,12 +172,12 @@ func TestScheduleChatVocabulary(t *testing.T) {
 		Thread string `json:"thread"`
 	}](t, coder.serve("schedule", "list", "-o", "jsonl"))
 	if len(all) != 1 || all[0].Name != "brief" || all[0].Thread != "same" {
-		t.Fatalf("a2a serve schedule list -o jsonl = %+v, want brief in the same thread", all)
+		t.Fatalf("a2a-serve schedule list -o jsonl = %+v, want brief in the same thread", all)
 	}
 	coder.mustFail("owner has no chat on telegram", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--chat", "telegram:owner")
 	coder.mustFail("unknown flag: --deliver", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--deliver", "telegram")
 	if out := coder.serve("config", "set", "--owner-chat", "discord"); !strings.Contains(out, "applied to the running agent: owner-chat") {
-		t.Fatalf("a2a serve config set --owner-chat = %q, want it applied at once", out)
+		t.Fatalf("a2a-serve config set --owner-chat = %q, want it applied at once", out)
 	}
 }
 
@@ -192,38 +192,43 @@ func TestManageStoppedAgent(t *testing.T) {
 	code := coder.invite("bob")
 	coder.serve("schedule", "add", "nightly", "--cron", "@daily", "--prompt", "x")
 	coder.mustFail("is not running", "peers")
-	if got := strings.TrimSpace(coder.serve("url", "--local")); got != coder.url {
-		t.Fatalf("a2a serve url --local of a stopped agent = %q, want %q", got, coder.url)
+	if got := strings.TrimSpace(coder.serve("status", "--url=local")); got != coder.url {
+		t.Fatalf("a2a-serve status --url=local of a stopped agent = %q, want %q", got, coder.url)
 	}
 
-	coder.serve("run", "--detach")
+	coder.serve("start", "--detach")
 	coder.stopped = false
 	bob.pairJoin(coder.url, code)
 	if out := resultOf(bob.mustSend(coder.url, "hello")); out.Text != "Hello from fakeacp." {
 		t.Fatalf("a2a send with a code issued while stopped = %+v, want the agent's answer", out)
 	}
 	if out := coder.serve("schedule", "list"); !strings.Contains(out, "nightly") {
-		t.Fatalf("a2a serve schedule list after the start = %q, want nightly", out)
+		t.Fatalf("a2a-serve schedule list after the start = %q, want nightly", out)
 	}
 }
 
-// TestCommandSurface covers §2 and PR 3: bare serve prints help, agents and
-// test servers start with run, and removed commands and flags are gone.
+// TestCommandSurface covers §2 and PR 3: bare a2a-serve prints help which
+// names a2a-serve, agents and test servers start with start, and removed
+// commands and flags are gone.
 func TestCommandSurface(t *testing.T) {
 	t.Parallel()
 	u := newUser(t)
 	help := u.run(u.home, "a2a", "serve")
 	for _, group := range []string{"Run the agent:", "Configure the agent:", "Pairing and contacts:", "Webhook node:", "Setup:"} {
 		if !strings.Contains(help, group) {
-			t.Fatalf("a2a serve = %q, want the group %q", help, group)
+			t.Fatalf("a2a-serve = %q, want the group %q", help, group)
 		}
 	}
-	for _, args := range [][]string{{"tokens", "list"}, {"opencode"}, {"script", "cat"}, {"relay", "inbox"}, {"mailbox", "task", "x"}} {
+	standalone := u.run(u.home, "a2a-serve", "--help")
+	if !strings.Contains(standalone, "a2a-serve [command]") || !strings.Contains(standalone, "a2a-serve start opencode") {
+		t.Fatalf("a2a-serve --help = %q, want help which names a2a-serve", standalone)
+	}
+	for _, args := range [][]string{{"tokens", "list"}, {"opencode"}, {"script", "cat"}, {"relay", "inbox"}, {"mailbox", "task", "x"}, {"run"}, {"url"}, {"open"}, {"restore", "x"}} {
 		if out, err := u.exec(u.home, append([]string{"a2a", "serve"}, args...)...); err == nil || !strings.Contains(err.Error(), "unknown command") {
-			t.Fatalf("a2a serve %s = %q, %v, want an unknown command", strings.Join(args, " "), out, err)
+			t.Fatalf("a2a-serve %s = %q, %v, want an unknown command", strings.Join(args, " "), out, err)
 		}
 	}
-	if out, err := u.exec(u.home, "a2a", "serve", "run", "opencode", "--memory", "8g"); err == nil || !strings.Contains(err.Error(), "unknown flag: --memory") {
-		t.Fatalf("a2a serve run opencode --memory = %q, %v, want it to be a config set setting", out, err)
+	if out, err := u.exec(u.home, "a2a", "serve", "start", "opencode", "--memory", "8g"); err == nil || !strings.Contains(err.Error(), "unknown flag: --memory") {
+		t.Fatalf("a2a-serve start opencode --memory = %q, %v, want it to be a config set setting", out, err)
 	}
 }

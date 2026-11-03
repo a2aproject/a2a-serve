@@ -14,27 +14,27 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. a2a serve run acp --sandbox local --command fakeacp --detach
-        2. a2a send -a "$(a2a serve url)" ask
+        1. a2a-serve start acp --sandbox local --command fakeacp --detach
+        2. a2a send -a "$(a2a-serve status --url)" ask
     validations:
       required: true
   - type: textarea
     id: versions
     attributes:
       label: Versions
-      description: Output of `a2a serve version`, `a2a version`, and your OS.
+      description: Output of `a2a-serve version`, `a2a version`, and your OS.
       render: text
     validations:
       required: true
   - type: textarea
     id: doctor
     attributes:
-      label: a2a serve doctor
-      description: Output of `a2a serve doctor`, run in the agent directory.
+      label: a2a-serve doctor
+      description: Output of `a2a-serve doctor`, run in the agent directory.
       render: text
   - type: textarea
     id: logs
     attributes:
       label: Logs
-      description: Relevant lines of `a2a serve logs`. Remove tokens and other secrets.
+      description: Relevant lines of `a2a-serve logs`. Remove tokens and other secrets.
       render: text

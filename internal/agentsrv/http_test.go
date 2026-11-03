@@ -36,7 +36,7 @@ func TestUnauthorizedHint(t *testing.T) {
 			t.Parallel()
 			got := unauthorizedHint(tc.kind)
 			first, _, _ := strings.Cut(got, ";")
-			if !strings.Contains(first, tc.wantFirst) || !strings.Contains(got, "credential helper") || !strings.Contains(got, "`a2a serve pair join <agent-url> <code>`") {
+			if !strings.Contains(first, tc.wantFirst) || !strings.Contains(got, "credential helper") || !strings.Contains(got, "`a2a-serve pair join <agent-url> <code>`") {
 				t.Fatalf("unauthorizedHint(%q) = %q, want both cases, %q first", tc.kind, got, tc.wantFirst)
 			}
 		})
@@ -49,9 +49,9 @@ func TestCardDescription(t *testing.T) {
 		harness string
 		want    string
 	}{
-		{harness: "acp", want: "coder is an acp coding agent reached through `a2a serve`."},
-		{harness: "opencode", want: "coder is an opencode coding agent reached through `a2a serve`."},
-		{harness: "claude", want: "coder is a claude coding agent reached through `a2a serve`."},
+		{harness: "acp", want: "coder is an acp coding agent reached through `a2a-serve`."},
+		{harness: "opencode", want: "coder is an opencode coding agent reached through `a2a-serve`."},
+		{harness: "claude", want: "coder is a claude coding agent reached through `a2a-serve`."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {

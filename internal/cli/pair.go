@@ -30,18 +30,18 @@ func newPairCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Pair callers and webhook nodes with the agent, or join another agent",
 		Long: `On the agent's side, "invite" creates a pairing and prints its one-time code;
 "list", "get", "set" and "rm" manage the pairings. The caller redeems the code
-with ` + "`a2a serve pair join <agent-url> <code>`" + `, or by sending "join <code>"
+with ` + "`a2a-serve pair join <agent-url> <code>`" + `, or by sending "join <code>"
 to the agent's bot.
 
 On the caller's side, "join" saves the agent's token to
 ~/.config/a2a-serve/credentials.json, which the a2a CLI sends with requests to
 that agent. Outside an agent directory, or with --joined, "list" shows the
 agents you joined, and "get" and "rm" take an agent URL.`,
-		Example: `  a2a serve pair invite anna
-  a2a serve pair join https://coder.tail1234.ts.net 3MZ8-LQ0D
-  a2a serve pair list
-  a2a serve pair set anna --role owner
-  a2a serve pair rm anna`,
+		Example: `  a2a-serve pair invite anna
+  a2a-serve pair join https://coder.tail1234.ts.net 3MZ8-LQ0D
+  a2a-serve pair list
+  a2a-serve pair set anna --role owner
+  a2a-serve pair rm anna`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
@@ -90,7 +90,7 @@ func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, erro
 			return c, nil
 		}
 	}
-	return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a serve pair join <agent-url> <code>`")
+	return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a-serve pair join <agent-url> <code>`")
 }
 
 // joinedCompletions completes the agent URLs of the saved tokens.

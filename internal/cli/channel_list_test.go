@@ -32,7 +32,7 @@ func TestChannelListOffline(t *testing.T) {
 		want     string
 	}{
 		{name: "configured", channels: []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord}, want: "CHANNEL   ACCOUNT  STATE\ntelegram           stopped\ndiscord            stopped\n"},
-		{name: "none", want: "no channels; add one with `a2a serve channel add <telegram|discord|email>`\n"},
+		{name: "none", want: "no channels; add one with `a2a-serve channel add <telegram|discord|email>`\n"},
 		{name: "jsonl", output: "jsonl", channels: []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord}, want: `{"name":"telegram","state":"stopped"}` + "\n" + `{"name":"discord","state":"stopped"}` + "\n"},
 		{name: "json none", output: "json", want: "[]\n"},
 	}
@@ -49,10 +49,10 @@ func TestChannelListOffline(t *testing.T) {
 
 			got, err := runCMD(t, "-o", cmp.Or(tc.output, "text"), "channel", "list", "--dir", d.Root)
 			if err != nil {
-				t.Fatalf("a2a serve channel list error = %v", err)
+				t.Fatalf("a2a-serve channel list error = %v", err)
 			}
 			if diff := gocmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("a2a serve channel list wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("a2a-serve channel list wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

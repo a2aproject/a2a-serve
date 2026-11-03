@@ -34,7 +34,7 @@ func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:   "List the pairings of the agent, or the agents you joined",
 		Long: `In an agent directory, list the callers and webhook nodes paired with the
 agent. Outside one, or with --joined, list the agents you joined with
-` + "`a2a serve pair join`" + `.`,
+` + "`a2a-serve pair join`" + `.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			caller, err := sf.callerView(joined)
@@ -60,7 +60,7 @@ agent. Outside one, or with --joined, list the agents you joined with
 			for _, p := range all {
 				rows = append(rows, []string{p.Name, p.Kind, orDash(p.Role), linkedChannels(p), lastUsed(p)})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a serve pair invite <name>`")
+			return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a-serve pair invite <name>`")
 		},
 	}
 	cmd.Flags().BoolVar(&joined, "joined", false, "List the agents you joined, also in an agent directory")
@@ -103,7 +103,7 @@ func listJoined(cfg *globalConfig) error {
 	if cfg.IsJSON() {
 		return output.PrintList(cfg.Printer, out)
 	}
-	return cfg.PrintTableOrEmpty([]string{"URL", "AGENT", "AS", "JOINED"}, rows, "no joined agents; join one with `a2a serve pair join <agent-url> <code>`")
+	return cfg.PrintTableOrEmpty([]string{"URL", "AGENT", "AS", "JOINED"}, rows, "no joined agents; join one with `a2a-serve pair join <agent-url> <code>`")
 }
 
 // linkedChannels names the messengers of the accounts linked to p.

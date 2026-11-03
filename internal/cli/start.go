@@ -62,23 +62,23 @@ func sandboxIsLocal(c *cobra.Command, dir func() (agentdir.Dir, error)) bool {
 	return conf.Sandbox == agentdir.SandboxLocal
 }
 
-func newRunCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
+func newStartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var mode runMode
 	cmd := &cobra.Command{
-		Use:   "run [<harness>|echo|proxy|exec]",
+		Use:   "start [<harness>|echo|proxy|exec]",
 		Short: "Start the agent, or a local test server",
 		Long: `Without an argument, start the agent saved in the nearest .a2a directory
 (or --dir). On a first run in a terminal, it asks a few questions instead.
 
 With a harness, create the agent in this directory on the first run, or apply
-the flags to the existing agent like ` + "`a2a serve config set`" + `, then start it.
+the flags to the existing agent like ` + "`a2a-serve config set`" + `, then start it.
 
 echo, proxy and exec run a local test server instead, without an agent
 directory.`,
-		Example: `  a2a serve run opencode --name coder
-  a2a serve run
-  a2a serve run --detach
-  a2a serve run echo --port 9000`,
+		Example: `  a2a-serve start opencode --name coder
+  a2a-serve start
+  a2a-serve start --detach
+  a2a-serve start echo --port 9000`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfiguredAgent(cmd, cfg, sf, mode)

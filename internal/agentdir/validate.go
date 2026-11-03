@@ -34,7 +34,7 @@ const HarnessACP = "acp"
 // mirror the profiles of the harness package, which imports this one.
 var Harnesses = []string{"claude", "opencode"}
 
-// ReservedHarnesses are the names of the test servers, `a2a serve <name>`,
+// ReservedHarnesses are the names of the test servers, `a2a-serve <name>`,
 // which no harness may take.
 var ReservedHarnesses = []string{"echo", "proxy", "script"}
 
@@ -63,7 +63,7 @@ func (c *Config) Validate() error {
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 	switch {
 	case c.Harness == "":
-		add("no harness: run `a2a serve run <harness>`")
+		add("no harness: run `a2a-serve start <harness>`")
 	case slices.Contains(ReservedHarnesses, c.Harness):
 		add("invalid harness %q: %s are test servers, not harnesses", c.Harness, strings.Join(ReservedHarnesses, ", "))
 	case c.Harness == HarnessACP && len(c.Command) == 0:
@@ -143,10 +143,10 @@ func (c *Config) Validate() error {
 		add("invalid --pids %d: want a positive number", c.Limits.PIDs)
 	}
 	if t := c.Channels.Telegram; t != nil && t.Token == "" {
-		add("the telegram channel needs a token: a2a serve channel add telegram --token <token>")
+		add("the telegram channel needs a token: a2a-serve channel add telegram --token <token>")
 	}
 	if dc := c.Channels.Discord; dc != nil && dc.Token == "" {
-		add("the discord channel needs a token: a2a serve channel add discord --token <token>")
+		add("the discord channel needs a token: a2a-serve channel add discord --token <token>")
 	}
 	if e := c.Channels.Email; e != nil {
 		var missing []string
@@ -265,14 +265,14 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 	}
 	for _, name := range cfg.Secrets {
 		if secrets[name] == "" {
-			errs = append(errs, fmt.Errorf("secret %s is not stored: run `a2a serve config set --secret %s` with the variable set", name, name))
+			errs = append(errs, fmt.Errorf("secret %s is not stored: run `a2a-serve config set --secret %s` with the variable set", name, name))
 		}
 	}
 	for _, ref := range cfg.secretRefs() {
 		if _, err := secrets.Resolve(ref.value); err != nil {
 			label := "--" + ref.flag
 			if ref.flag == ChannelTelegram || ref.flag == ChannelDiscord {
-				label = ref.flag + " token (a2a serve channel add " + ref.flag + " --token)"
+				label = ref.flag + " token (a2a-serve channel add " + ref.flag + " --token)"
 			}
 			errs = append(errs, fmt.Errorf("%s: %w", label, err))
 		}
@@ -320,5 +320,5 @@ func (c *Config) CheckHarness(name string) error {
 	if c.Harness == "" || c.Harness == name {
 		return nil
 	}
-	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a serve config set --harness %s`", c.Harness, name)}
+	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --harness %s`", c.Harness, name)}
 }

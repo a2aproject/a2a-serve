@@ -33,8 +33,8 @@ import (
 )
 
 const (
-	fixRestart = "a2a serve restart"
-	fixEdit    = "a2a serve config edit"
+	fixRestart = "a2a-serve restart"
+	fixEdit    = "a2a-serve config edit"
 )
 
 // agentChecks checks the agent's config, secrets, mounts, state, server
@@ -107,14 +107,14 @@ type secretRef struct{ what, value, fix string }
 
 func secretRefs(cfg *agentdir.Config) []secretRef {
 	refs := []secretRef{
-		{"telegram token", cfg.ChannelToken(agentdir.ChannelTelegram), "a2a serve channel add telegram --token -"},
-		{"discord token", cfg.ChannelToken(agentdir.ChannelDiscord), "a2a serve channel add discord --token -"},
+		{"telegram token", cfg.ChannelToken(agentdir.ChannelTelegram), "a2a-serve channel add telegram --token -"},
+		{"discord token", cfg.ChannelToken(agentdir.ChannelDiscord), "a2a-serve channel add discord --token -"},
 	}
 	if e := cfg.Channels.Email; e != nil {
-		refs = append(refs, secretRef{"email password", e.Password, "a2a serve channel add email --email-password -"})
+		refs = append(refs, secretRef{"email password", e.Password, "a2a-serve channel add email --email-password -"})
 	}
-	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a serve config set --google-client-secret -"})
-	refs = append(refs, secretRef{"--backup-key", cfg.Backup.Key, "a2a serve config set --backup-key -"})
+	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a-serve config set --google-client-secret -"})
+	refs = append(refs, secretRef{"--backup-key", cfg.Backup.Key, "a2a-serve config set --backup-key -"})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {
@@ -133,7 +133,7 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 				Status:  StatusFail,
 				Message: "secret " + name + " not stored",
 				Detail:  "the harness gets it as an environment variable",
-				Fix:     "a2a serve config set --secret " + name,
+				Fix:     "a2a-serve config set --secret " + name,
 			})
 		}
 	}
@@ -185,7 +185,7 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 			Status:  StatusWarn,
 			Message: fmt.Sprintf("MCP server %s needs %s", srv.Name, strings.Join(missing, ", ")),
 			Detail:  "the harness doesn't get it until they have a value",
-			Fix:     "a2a serve config set " + strings.Join(fix, " "),
+			Fix:     "a2a-serve config set " + strings.Join(fix, " "),
 		})
 	}
 	if len(results) == 0 {
@@ -257,10 +257,10 @@ func checkMounts(d agentdir.Dir, cfg *agentdir.Config) []Result {
 		if _, err := os.Stat(m.Src); err == nil {
 			continue
 		}
-		r := Result{ID: "mounts", Status: StatusFail, Message: fmt.Sprintf("mount source %s does not exist", m.Src), Fix: "a2a serve config unset mount " + m.Dst}
+		r := Result{ID: "mounts", Status: StatusFail, Message: fmt.Sprintf("mount source %s does not exist", m.Src), Fix: "a2a-serve config unset mount " + m.Dst}
 		if i == 0 {
 			r.Message = fmt.Sprintf("workspace %s does not exist", m.Src)
-			r.Fix = "a2a serve config set --workspace DIR"
+			r.Fix = "a2a-serve config set --workspace DIR"
 		}
 		results = append(results, r)
 	}
@@ -313,13 +313,13 @@ func checkState(d agentdir.Dir) (Result, bool) {
 func checkServer(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Config) []Result {
 	st, err := env.Status(ctx, d)
 	if errors.Is(err, controlapi.ErrNotRunning) {
-		results := []Result{{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve run --detach"}}
+		results := []Result{{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a-serve start --detach"}}
 		if cfg.Port > 0 && !env.PortFree(cfg.Port) {
 			results = append(results, Result{
 				ID:      "port",
 				Status:  StatusFail,
 				Message: fmt.Sprintf("port %d is in use by another process", cfg.Port),
-				Fix:     "a2a serve config unset port",
+				Fix:     "a2a-serve config unset port",
 			})
 		}
 		return results
@@ -405,7 +405,7 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 	}
 	unit, err := os.ReadFile(path)
 	if err != nil {
-		r.Status, r.Message, r.Fix = StatusFail, err.Error(), "a2a serve run --service"
+		r.Status, r.Message, r.Fix = StatusFail, err.Error(), "a2a-serve start --service"
 		return r, true
 	}
 	exe, err := env.Executable()
@@ -416,7 +416,7 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 	content := string(unit)
 	runsSelf := strings.Contains(content, exe) || strings.Contains(content, resolve(exe))
 	if !runsSelf || !strings.Contains(content, d.Root) {
-		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary or directory", "a2a serve run --service"
+		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary or directory", "a2a-serve start --service"
 		r.Detail = fmt.Sprintf("%s doesn't run %s --dir %s", path, exe, d.Root)
 		return r, true
 	}
@@ -443,14 +443,14 @@ func networkChecks(d agentdir.Dir, cfg *agentdir.Config) []Result {
 		case secrets[agentdir.SecretTailscaleKey] != "":
 			r.Status, r.Message = StatusOK, "Tailscale auth key stored"
 		default:
-			r.Status, r.Message, r.Fix = StatusWarn, "no Tailscale identity yet; the first start prints a login link", "a2a serve config set --tailscale-authkey -"
+			r.Status, r.Message, r.Fix = StatusWarn, "no Tailscale identity yet; the first start prints a login link", "a2a-serve config set --tailscale-authkey -"
 		}
 		results = append(results, r)
 	}
 	if n.Public == agentdir.NetworkNgrok {
 		r := Result{ID: "ngrok", Status: StatusOK, Message: "ngrok authtoken stored"}
 		if secrets[agentdir.SecretNgrokToken] == "" {
-			r.Status, r.Message, r.Fix = StatusFail, "ngrok authtoken not stored", "a2a serve config set --ngrok-authtoken -"
+			r.Status, r.Message, r.Fix = StatusFail, "ngrok authtoken not stored", "a2a-serve config set --ngrok-authtoken -"
 		}
 		results = append(results, r)
 	}
@@ -471,9 +471,9 @@ func channelChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.C
 		if !cfg.HasChannel(kind) {
 			continue
 		}
-		what, fix := kind+" bot token", fmt.Sprintf("a2a serve channel add %s --token -", kind)
+		what, fix := kind+" bot token", fmt.Sprintf("a2a-serve channel add %s --token -", kind)
 		if kind == agentdir.ChannelEmail {
-			what, fix = "email IMAP and SMTP login", "a2a serve channel add email --email-username <user> --email-password -"
+			what, fix = "email IMAP and SMTP login", "a2a-serve channel add email --email-username <user> --email-password -"
 		}
 		r := Result{ID: kind}
 		if env.ValidateChannel == nil {

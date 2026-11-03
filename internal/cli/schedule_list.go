@@ -56,7 +56,7 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				rows = append(rows, []string{s.Name, when, s.User, cmp.Or(s.Chat, "-"), formatScheduleTime(s.NextRun), last, oneLine(s.Prompt, 40)})
 			}
 			return cfg.PrintTableOrEmpty([]string{"NAME", "WHEN", "AS", "CHAT", "NEXT", "LAST", "PROMPT"}, rows,
-				"no schedules; add one with `a2a serve schedule add <name> --cron <expr> --prompt <prompt>`")
+				"no schedules; add one with `a2a-serve schedule add <name> --cron <expr> --prompt <prompt>`")
 		},
 	}
 }

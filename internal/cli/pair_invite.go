@@ -39,31 +39,31 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Create a one-time code that lets someone call or message the agent, or host a webhook node",
 		Long: `Create a pairing called <name> and print its code: 8 characters, valid once
 for 15 minutes. The caller redeems it for a token with
-` + "`a2a serve pair join <agent-url> <code>`" + `, or links a messenger account by
+` + "`a2a-serve pair join <agent-url> <code>`" + `, or links a messenger account by
 sending "join <code>" to the agent's bot. Inviting an existing name issues
 another code, for another device or account; its tokens keep working.
-` + "`a2a serve pair set`" + ` changes a pairing, and rotates its credentials.
+` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
 it as <name> with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with
-` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. A header
+` + "`a2a-serve mailbox reply`" + `, and can call the agent with its token. A header
 value may end in a secret value, env:VAR or -, as in
 "Authorization: Bearer env:TOKEN".
 
 ` + secretref.Help + `
 
 --advertised tells every agent on the private network about the node: they
-list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
-` + "`a2a serve contact add <name>@<this agent>`" + `, with no code. Their calls go
+list it in ` + "`a2a-serve peers`" + ` as <name>@<this agent> and can add it with
+` + "`a2a-serve contact add <name>@<this agent>`" + `, with no code. Their calls go
 through this agent, which keeps the webhook's credentials, and it treats
 them like any other caller from the private network.`,
-		Example: `  a2a serve pair invite grok
-  a2a serve pair invite anna --role owner
-  a2a serve pair invite grok --webhook https://example.com/hooks/123 \
+		Example: `  a2a-serve pair invite grok
+  a2a-serve pair invite anna --role owner
+  a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
-  a2a serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
+  a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
@@ -137,7 +137,7 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 		}
 		fmt.Fprintf(&sb, "\n  you can call it yourself at %s\n", resp.Node.URL)
 		if resp.Advertised {
-			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a serve contact add %s@<this agent>`\n", resp.Node.ID)
+			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a-serve contact add %s@<this agent>`\n", resp.Node.ID)
 		}
 	} else {
 		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller:    %s\n  messenger: send \"join %s\" to the agent's bot\n", resp.Code, mins, resp.PairCommand, resp.Code)
@@ -153,8 +153,8 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 // is stopped, or only on this machine.
 func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) error {
 	if offline {
-		if _, err := fmt.Fprint(w, "! the agent is stopped: the code works once it runs, within its expiry; start it with `a2a serve run --detach`,\n"+
-			"  and `a2a serve url` prints the URL to redeem it at\n"); err != nil {
+		if _, err := fmt.Fprint(w, "! the agent is stopped: the code works once it runs, within its expiry; start it with `a2a-serve start --detach`,\n"+
+			"  and `a2a-serve status --url` prints the URL to redeem it at\n"); err != nil {
 			return err
 		}
 	}
@@ -162,6 +162,6 @@ func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) 
 		return nil
 	}
 	_, err := fmt.Fprint(w, "! this URL only works on this machine; to invite someone on another one, add a private or public URL with\n"+
-		"  `a2a serve config set --private tailscale` (or lan) or `a2a serve config set --public tailscale` (or ngrok), then `a2a serve restart`\n")
+		"  `a2a-serve config set --private tailscale` (or lan) or `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`\n")
 	return err
 }

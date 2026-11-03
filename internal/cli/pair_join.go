@@ -29,14 +29,14 @@ func newPairJoinCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "join <agent-url> <code>",
 		Short: "Join another agent with a pairing code from its owner",
-		Long: `Exchange a pairing code from an agent's owner (a2a serve pair invite) for a token.
+		Long: `Exchange a pairing code from an agent's owner (a2a-serve pair invite) for a token.
 The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
 sends it with later requests to the same agent, such as a2a send, through the
 credential helper that a2a-serve doctor --fix configures.
 
-A code for a webhook node (a2a serve pair invite --webhook) returns a node token
-instead, which the a2a serve mailbox commands use.`,
-		Example: "  a2a serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
+A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
+instead, which the a2a-serve mailbox commands use.`,
+		Example: "  a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)

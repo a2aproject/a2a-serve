@@ -29,7 +29,7 @@ import (
 func newBackupCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backup",
-		Short: "Take and list encrypted backup snapshots of the agent",
+		Short: "Take, list and restore encrypted backup snapshots of the agent",
 		Long: `Snapshots hold a consistent copy of the database (conversations, pairings,
 contacts, schedules), config.yaml, the secrets, the harness home and the
 network identity, encrypted with --backup-key. A running agent takes one every
@@ -38,9 +38,9 @@ latest. The workspace isn't included: it is usually in git.
 
 Set them up with:
 
-  a2a serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
+  a2a-serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
 
-Restore an agent on another host with "a2a serve restore".`,
+Recreate the agent on another host with "a2a-serve backup restore".`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
@@ -51,6 +51,7 @@ Restore an agent on another host with "a2a serve restore".`,
 	cmd.AddCommand(
 		newBackupNowCmd(cfg, sf),
 		newBackupListCmd(cfg, sf),
+		newBackupRestoreCmd(cfg, sf),
 	)
 	return cmd
 }
@@ -123,7 +124,7 @@ func newBackupListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			for _, s := range snaps {
 				rows = append(rows, []string{s.Name, s.Taken.Local().Format("2006-01-02 15:04 MST")})
 			}
-			return cfg.PrintTableOrEmpty([]string{"SNAPSHOT", "TAKEN"}, rows, "no snapshots yet; take one with `a2a serve backup now`")
+			return cfg.PrintTableOrEmpty([]string{"SNAPSHOT", "TAKEN"}, rows, "no snapshots yet; take one with `a2a-serve backup now`")
 		},
 	}
 }

@@ -30,7 +30,7 @@ func TestDoctorJSON(t *testing.T) {
 	out, err := runCMD(t, "-o", "json", "doctor", "--dir", d.Root)
 	var ce *clierr.Error
 	if !errors.As(err, &ce) || !ce.Silent() || ce.Exit != 1 {
-		t.Fatalf("a2a serve doctor -o json error = %v, want a silent exit 1 for the missing secret", err)
+		t.Fatalf("a2a-serve doctor -o json error = %v, want a silent exit 1 for the missing secret", err)
 	}
 	var results []struct {
 		ID, Status, Message, Fix string
@@ -44,7 +44,7 @@ func TestDoctorJSON(t *testing.T) {
 	}
 	for _, want := range []string{"config:ok", "secrets:fail", "running:warn"} {
 		if !slices.Contains(ids, want) {
-			t.Fatalf("a2a serve doctor -o json = %v, want %s", ids, want)
+			t.Fatalf("a2a-serve doctor -o json = %v, want %s", ids, want)
 		}
 	}
 }
@@ -53,6 +53,6 @@ func TestDoctorDirWithoutAgent(t *testing.T) {
 	t.Parallel()
 	_, err := runCMD(t, "doctor", "--dir", t.TempDir())
 	if !errors.Is(err, agentdir.ErrNotFound) {
-		t.Fatalf("a2a serve doctor --dir <empty> error = %v, want %v", err, agentdir.ErrNotFound)
+		t.Fatalf("a2a-serve doctor --dir <empty> error = %v, want %v", err, agentdir.ErrNotFound)
 	}
 }

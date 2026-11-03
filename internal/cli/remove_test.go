@@ -73,7 +73,7 @@ func TestRemoveCommandsJSON(t *testing.T) {
 			}
 			out, err := runCMDWithCreds(t, creds, args...)
 			if err != nil {
-				t.Fatalf("a2a serve %v error = %v", tc.args, err)
+				t.Fatalf("a2a-serve %v error = %v", tc.args, err)
 			}
 
 			var got map[string]any
@@ -81,7 +81,7 @@ func TestRemoveCommandsJSON(t *testing.T) {
 				t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("a2a serve %v wrong result (-want +got) diff = %s", tc.args, diff)
+				t.Fatalf("a2a-serve %v wrong result (-want +got) diff = %s", tc.args, diff)
 			}
 		})
 	}
@@ -91,9 +91,9 @@ func TestRemoveCommandsHaveDeleteAlias(t *testing.T) {
 	t.Parallel()
 	root := newRootCmd(&globalConfig{Printer: output.NewPrinter(&strings.Builder{}, output.ModeText)})
 	for _, group := range []string{"channel", "contact", "pair", "schedule"} {
-		cmd, _, err := root.Find([]string{pluginName, group, "delete"})
+		cmd, _, err := root.Find([]string{group, "delete"})
 		if err != nil || cmd.Name() != "rm" {
-			t.Fatalf("a2a serve %s delete = %v, %v, want the rm command", group, cmd, err)
+			t.Fatalf("a2a-serve %s delete = %v, %v, want the rm command", group, cmd, err)
 		}
 	}
 }

@@ -47,7 +47,7 @@ func newChannelListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{c.Name, c.Account, state})
 			}
-			return cfg.PrintTableOrEmpty([]string{"CHANNEL", "ACCOUNT", "STATE"}, rows, "no channels; add one with `a2a serve channel add <telegram|discord|email>`")
+			return cfg.PrintTableOrEmpty([]string{"CHANNEL", "ACCOUNT", "STATE"}, rows, "no channels; add one with `a2a-serve channel add <telegram|discord|email>`")
 		},
 	}
 }

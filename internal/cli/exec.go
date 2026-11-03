@@ -37,9 +37,9 @@ func newExecCmd(cfg *globalConfig) *cobra.Command {
   - its stdout is the reply artifact, sent when it exits, or streamed with
     --stream (line by line) or --chunk (split at a delimiter);
   - a non-zero exit fails the task, with stderr as the message.`,
-		Example: `  a2a serve run exec 'tr a-z A-Z'
-  a2a serve run exec --stream 'for i in 1 2 3; do echo "step $i"; sleep 1; done'
-  a2a serve run exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTEXT_ID/log"'`,
+		Example: `  a2a-serve start exec 'tr a-z A-Z'
+  a2a-serve start exec --stream 'for i in 1 2 3; do echo "step $i"; sleep 1; done'
+  a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTEXT_ID/log"'`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if s.Stream && s.Chunk != "" {

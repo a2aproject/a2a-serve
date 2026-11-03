@@ -27,7 +27,7 @@ import (
 func TestSystemdUnitEscaping(t *testing.T) {
 	t.Parallel()
 	got, err := SystemdUnit(Unit{
-		Description: "a2a serve coder (/home/u/100%$x)",
+		Description: "a2a-serve coder (/home/u/100%$x)",
 		Exe:         "/usr/local/bin/a2a-serve",
 		Args:        []string{"--dir", "/home/u/100%$x"},
 		Dir:         "/home/u/100%$x",
@@ -37,7 +37,7 @@ func TestSystemdUnitEscaping(t *testing.T) {
 		t.Fatalf("SystemdUnit() error = %v", err)
 	}
 	want := `[Unit]
-Description=a2a serve coder (/home/u/100%%$x)
+Description=a2a-serve coder (/home/u/100%%$x)
 After=network-online.target
 
 [Service]
@@ -66,7 +66,7 @@ func TestSystemdUnitRejectsNewlines(t *testing.T) {
 func TestSystemdUnit(t *testing.T) {
 	t.Parallel()
 	got, err := SystemdUnit(Unit{
-		Description: "a2a serve coder (/home/u/my app)",
+		Description: "a2a-serve coder (/home/u/my app)",
 		Exe:         "/usr/local/bin/a2a-serve",
 		Args:        []string{"--dir", "/home/u/my app"},
 		Dir:         "/home/u/my app",
@@ -77,7 +77,7 @@ func TestSystemdUnit(t *testing.T) {
 		t.Fatalf("SystemdUnit() error = %v", err)
 	}
 	want := `[Unit]
-Description=a2a serve coder (/home/u/my app)
+Description=a2a-serve coder (/home/u/my app)
 After=network-online.target
 
 [Service]

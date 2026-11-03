@@ -24,13 +24,9 @@ import (
 func TestServeCommandsHaveGroups(t *testing.T) {
 	t.Parallel()
 	root := newRootCmd(&globalConfig{Printer: output.NewPrinter(&strings.Builder{}, output.ModeText)})
-	serve, _, err := root.Find([]string{pluginName})
-	if err != nil {
-		t.Fatalf("root.Find(serve) error = %v", err)
-	}
-	for _, c := range serve.Commands() {
+	for _, c := range root.Commands() {
 		if c.IsAvailableCommand() && c.GroupID == "" {
-			t.Fatalf("a2a serve %s has no help group, want one of %v", c.Name(), serve.Groups())
+			t.Fatalf("a2a-serve %s has no help group, want one of %v", c.Name(), root.Groups())
 		}
 	}
 }
@@ -39,16 +35,16 @@ func TestServeHelp(t *testing.T) {
 	t.Parallel()
 	out, err := runCMD(t, "--help")
 	if err != nil {
-		t.Fatalf("a2a serve --help error = %v", err)
+		t.Fatalf("a2a-serve --help error = %v", err)
 	}
 	for _, want := range []string{"Run the agent:", "Configure the agent:", "Pairing and contacts:", "Webhook node:", "Setup:"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("a2a serve --help = %q, want %q", out, want)
+			t.Fatalf("a2a-serve --help = %q, want %q", out, want)
 		}
 	}
 	for _, flag := range []string{"--port", "--detach", "--quiet", "--chunk", "--timeout"} {
 		if strings.Contains(out, flag) {
-			t.Fatalf("a2a serve --help = %q, want no %s", out, flag)
+			t.Fatalf("a2a-serve --help = %q, want no %s", out, flag)
 		}
 	}
 }

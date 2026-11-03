@@ -237,7 +237,7 @@ func TestCLIChecks(t *testing.T) {
 			want: []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusFail}, {"credential-helper", StatusOK}},
 		},
 		{
-			name:  "a2a-serve run from elsewhere",
+			name:  "a2a-serve start from elsewhere",
 			setup: func(_ *testing.T, m *fakeMachine) { m.self = "/tmp/build/a2a-serve" },
 			want:  []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusWarn}, {"credential-helper", StatusOK}},
 		},
@@ -776,7 +776,7 @@ func TestRender(t *testing.T) {
 		{ID: "a2a", Status: StatusOK, Message: "a2a v0.4.0 at /usr/bin/a2a", Group: GroupCLI},
 		{ID: "credential-helper", Status: StatusFail, Message: "credential helper not configured", Detail: "calls get 401", Fix: fixCommand, Group: GroupCLI},
 		{ID: "config", Status: StatusOK, Message: "config valid", Group: "Agent coder (/src/app)"},
-		{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve run --detach", Group: "Agent coder (/src/app)"},
+		{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a-serve start --detach", Group: "Agent coder (/src/app)"},
 	}
 	var buf bytes.Buffer
 	if err := Render(&buf, results); err != nil {
@@ -789,7 +789,7 @@ func TestRender(t *testing.T) {
       fix: a2a-serve doctor --fix
 Agent coder (/src/app)
   ✓ config valid
-  ! not running: a2a serve run --detach
+  ! not running: a2a-serve start --detach
 1 failed, 1 warning
 `
 	if diff := cmp.Diff(want, buf.String()); diff != "" {
@@ -810,9 +810,9 @@ func TestCheckSecretsFixes(t *testing.T) {
 		got = append(got, r.Message+" | "+r.Fix)
 	}
 	want := []string{
-		"secret TELEGRAM_TOKEN (telegram token) not stored | a2a serve channel add telegram --token -",
-		"secret DISCORD_TOKEN (discord token) not stored | a2a serve channel add discord --token -",
-		"secret BACKUP_KEY (--backup-key) not stored | a2a serve config set --backup-key -",
+		"secret TELEGRAM_TOKEN (telegram token) not stored | a2a-serve channel add telegram --token -",
+		"secret DISCORD_TOKEN (discord token) not stored | a2a-serve channel add discord --token -",
+		"secret BACKUP_KEY (--backup-key) not stored | a2a-serve config set --backup-key -",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("checkSecrets() wrong result (-want +got) diff = %s", diff)
