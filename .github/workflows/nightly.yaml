@@ -1,0 +1,27 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2 AM UTC daily
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Race Detector
+      run: go test -race -mod=readonly -v -count=1 -shuffle=on ./...
+
+    # A run of the agentsrv package takes about 4s on a hosted runner, so 200
+    # runs need more than the default 10m timeout.
+    - name: Test Loop
+      run: go test -mod=readonly -count=200 -shuffle=on -timeout=60m ./...

@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"bytes"
 	"context"
+	"iter"
 	"log/slog"
 	"strings"
 	"sync"
@@ -24,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
@@ -53,6 +55,56 @@ func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
 	}
 	if got := last.(*a2a.TaskStatusUpdateEvent).Status.State; got != a2a.TaskStateCompleted {
 		t.Fatalf("last event state = %v, want %v", got, a2a.TaskStateCompleted)
+	}
+}
+
+// turnExecutor cancels like a2aacp: it stops the turn, which ends the
+// running Execute, and only then yields the canceled event.
+type turnExecutor struct {
+	mu       sync.Mutex
+	canceled bool
+}
+
+func (e *turnExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {}
+}
+
+func (e *turnExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		e.mu.Lock()
+		e.canceled = true
+		e.mu.Unlock()
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
+	}
+}
+
+func (e *turnExecutor) turnCanceled() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.canceled
+}
+
+func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
+	t.Parallel()
+	inner := &turnExecutor{}
+	exec := &observedExecutor{inner: inner, bus: newEventBus()}
+	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
+
+	var states []a2a.TaskState
+	for ev, err := range exec.Cancel(context.Background(), execCtx) {
+		if err != nil {
+			t.Fatalf("Cancel() error = %v", err)
+		}
+		if len(states) == 0 && inner.turnCanceled() {
+			t.Fatalf("Cancel() first event after the turn was canceled, want it before, while the execution's queue is open")
+		}
+		states = append(states, ev.(*a2a.TaskStatusUpdateEvent).Status.State)
+	}
+	if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateCanceled}, states); diff != "" {
+		t.Fatalf("Cancel() wrong states (-want +got) diff = %s", diff)
+	}
+	if !inner.turnCanceled() {
+		t.Fatalf("Cancel() didn't cancel the turn")
 	}
 }
 

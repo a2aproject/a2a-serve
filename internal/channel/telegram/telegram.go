@@ -83,6 +83,9 @@ func (c *Channel) connect(ctx context.Context) error {
 	}
 	opts := []bot.Option{
 		bot.WithDefaultHandler(c.handle),
+		// Handlers run in a goroutine per update otherwise, so that messages
+		// of a conversation could reach the router out of order.
+		bot.WithNotAsyncHandlers(),
 		bot.WithAllowedUpdates(bot.AllowedUpdates{"message", "callback_query"}),
 		bot.WithHTTPClient(50*time.Second, &http.Client{Timeout: 70 * time.Second}),
 		bot.WithSkipGetMe(),

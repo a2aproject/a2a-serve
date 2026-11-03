@@ -28,6 +28,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -378,9 +379,7 @@ func TestWriteHarnessHelper(t *testing.T) {
 	if want := "A2ACLI_CREDENTIAL_HELPER=host.docker.internal=/home/agent/" + harnessHelperPath; env != want {
 		t.Fatalf("writeHarnessHelper() = %q, want %q", env, want)
 	}
-	cmd := exec.Command(filepath.Join(home, filepath.FromSlash(harnessHelperPath)), "get")
-	cmd.Stdin = strings.NewReader(`{"uri":"http://host.docker.internal:4000/k3/coder"}`)
-	out, err := cmd.Output()
+	out, err := runHelper(filepath.Join(home, filepath.FromSlash(harnessHelperPath)), `{"uri":"http://host.docker.internal:4000/k3/coder"}`)
 	if err != nil {
 		t.Fatalf("credential helper error = %v", err)
 	}
@@ -392,6 +391,22 @@ func TestWriteHarnessHelper(t *testing.T) {
 	}
 	if diff := cmp.Diff(map[string][]string{"Authorization": {"Bearer k3y"}}, got.Headers); diff != "" {
 		t.Fatalf("credential helper wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+// runHelper runs a just-written executable. A child forked meanwhile by a
+// parallel test holds its write descriptor until exec, failing the run with
+// ETXTBSY (golang.org/issue/22315), so the run is retried.
+func runHelper(path, stdin string) ([]byte, error) {
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		cmd := exec.Command(path, "get")
+		cmd.Stdin = strings.NewReader(stdin)
+		out, err := cmd.Output()
+		if !errors.Is(err, syscall.ETXTBSY) || time.Now().After(deadline) {
+			return out, err
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
