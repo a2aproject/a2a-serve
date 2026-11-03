@@ -21,13 +21,13 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
 )
 
-func newScriptCmd(cfg *globalConfig) *cobra.Command {
+func newExecCmd(cfg *globalConfig) *cobra.Command {
 	var (
 		tf testServerFlags
 		s  localsrv.ScriptOptions
 	)
 	cmd := &cobra.Command{
-		Use:   "script <command>",
+		Use:   "exec <command>",
 		Short: "Run a test server which runs a shell command per message",
 		Long: `Run a test server, an agent driven by a script. For each message:
 
@@ -37,9 +37,9 @@ func newScriptCmd(cfg *globalConfig) *cobra.Command {
   - its stdout is the reply artifact, sent when it exits, or streamed with
     --stream (line by line) or --chunk (split at a delimiter);
   - a non-zero exit fails the task, with stderr as the message.`,
-		Example: `  a2a serve script 'tr a-z A-Z'
-  a2a serve script --stream 'for i in 1 2 3; do echo "step $i"; sleep 1; done'
-  a2a serve script 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTEXT_ID/log"'`,
+		Example: `  a2a serve run exec 'tr a-z A-Z'
+  a2a serve run exec --stream 'for i in 1 2 3; do echo "step $i"; sleep 1; done'
+  a2a serve run exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTEXT_ID/log"'`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if s.Stream && s.Chunk != "" {

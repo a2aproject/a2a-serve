@@ -25,7 +25,7 @@ func newEchoCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "echo",
 		Short:   "Run a test server which replies with the message",
-		Example: "  a2a serve echo --port 9000\n  a2a send -a http://127.0.0.1:9000 hello",
+		Example: "  a2a serve run echo --port 9000\n  a2a send -a http://127.0.0.1:9000 hello",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, stop := signalContext(cmd.Context())

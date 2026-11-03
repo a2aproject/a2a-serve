@@ -26,12 +26,11 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		flags   settingsFlags
 		dryRun  bool
 		restart bool
-		quiet   bool
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
-		Short: "Change settings with the flags of `a2a serve <harness>`",
-		Long: `Change settings with the flags of ` + "`a2a serve <harness>`" + `. Scalars are
+		Short: "Change settings with the flags of `a2a serve run <harness>`",
+		Long: `Change settings with the flags of ` + "`a2a serve run <harness>`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
 and --allow-tools, --deny-tools and --approver by value. Remove entries with
@@ -61,13 +60,12 @@ and --allow-tools, --deny-tools and --approver by value. Remove entries with
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(cmd.Context(), d, quiet, cfg.Out)
+			return agentctl.Restart(cmd.Context(), d, false, cfg.Out)
 		},
 	}
 	flags.register(cmd, true)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, "Restart the running agent if a change needs it")
-	f.BoolVar(&quiet, "quiet", false, "With --restart, keep the harness image output in the log")
 	return cmd
 }

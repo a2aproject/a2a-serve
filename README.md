@@ -22,7 +22,7 @@
 
 ```bash
 cd ~/src/app
-a2a serve opencode --secret OPENROUTER_API_KEY --private tailscale --telegram env:BOT_TOKEN
+a2a serve run opencode --secret OPENROUTER_API_KEY --private tailscale --telegram env:BOT_TOKEN
 ```
 
 This starts opencode in a Docker sandbox with the project mounted, gives it an HTTPS address on your tailnet, and connects a Telegram bot to it. Open the link it prints to make the chat yours, and edits and shell commands wait for your approval there. Send it work from a terminal, or invite someone else:
@@ -32,11 +32,11 @@ a2a send -a "$(a2a serve url --local)" "What does this project do?"
 a2a serve pair invite anna   # a one-time code; anna runs: a2a serve tokens add <agent-url> <code>
 ```
 
-The flags are saved to `.a2a/config.yaml`, so the next start is `a2a serve`.
+The flags are saved to `.a2a/config.yaml`, so the next start is `a2a serve run`.
 
 ## ✨ Features
 
-- **Any ACP agent:** opencode, Claude Code, or your own with `a2a serve acp --command`.
+- **Any ACP agent:** opencode, Claude Code, or your own with `a2a serve run acp --command`.
 - **Sandbox and approvals:** the agent runs in Docker, and its edits and commands wait for your approval.
 - **Reachable anywhere:** your tailnet, a public URL, Telegram, Discord or email, with access by one-time pairing codes.
 - **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
@@ -104,7 +104,7 @@ Both images are Debian with Node.js 22, `git`, `ripgrep`, `python3`, and the `a2
 
 - **API keys are accessible inside the sandbox.** Values passed with `--secret` are environment variables of the harness, so a tricked agent can read them and send them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
 - **The sandbox can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
-- **A cloned repository can configure the agent you start in it.** `a2a serve` takes the command, image, mounts, environment variables and MCP servers from the project's `.a2a/config.yaml` and `.mcp.json`. Read both before you start an agent in a repository you didn't write.
+- **A cloned repository can configure the agent you start in it.** `a2a serve run` takes the command, image, mounts, environment variables and MCP servers from the project's `.a2a/config.yaml` and `.mcp.json`. Read both before you start an agent in a repository you didn't write.
 - **Harness images follow the latest harness releases** at the time they were published, so the same tag can carry different harness versions over time.
 
 ## 🤝 Contributing

@@ -41,12 +41,12 @@ func TestServeHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a serve --help error = %v", err)
 	}
-	for _, want := range []string{"Agents:", "Test servers:", "Manage the agent:", "Pairing:", "Webhook node:", "Helpers:"} {
+	for _, want := range []string{"Run the agent:", "Configure the agent:", "Pairing and contacts:", "Webhook node:", "Setup:"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("a2a serve --help = %q, want %q", out, want)
 		}
 	}
-	for _, flag := range []string{"--port", "--serve-transport", "--echo", "--exec", "--chunk", "--timeout"} {
+	for _, flag := range []string{"--port", "--detach", "--quiet", "--chunk", "--timeout"} {
 		if strings.Contains(out, flag) {
 			t.Fatalf("a2a serve --help = %q, want no %s", out, flag)
 		}

@@ -128,7 +128,7 @@ func TestAsCommand(t *testing.T) {
 		Backup:   BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
 	}
 	got := ShellJoin(cfg.AsCommand(Secrets{SecretNgrokToken: "n"}))
-	want := "a2a serve acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok --telegram env:BOT " +
+	want := "a2a serve run acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok --telegram env:BOT " +
 		"--backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN"
 	if got != want {
 		t.Fatalf("AsCommand() = %q, want %q", got, want)

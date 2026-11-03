@@ -57,7 +57,7 @@ depend on the network mode.
 |---|---|---|
 | For | one person or one tailnet | teams and outside callers |
 | Infrastructure | none; Tailscale hosts the hub | agentmesh-one on Cloud Run, a VM or Kubernetes |
-| Start | `a2a serve opencode --private tailscale` | `a2a serve opencode --relay <url>` |
+| Start | `a2a serve run opencode --private tailscale` | `a2a serve run opencode --relay <url>` |
 | Public URL | Funnel, after tailnet policy setup | router ingress, per agent |
 | Private network callers | trusted by tailnet identity (`WhoIs`) | trusted by mesh identity (`WhoIs`) |
 | Public URL callers | pairing tokens, Google sign-in | the same; the relay forwards requests unchanged |
@@ -74,7 +74,7 @@ traffic over the tailnet, and a public URL from the relay.
 ```sh
 a2a serve relay deploy --cloud-run --project my-proj   # 1. the relay owner
 a2a serve relay invite anna                            #    a bootstrap token
-a2a serve opencode --relay https://relay.example.com --relay-token env:RELAY_TOKEN   # Anna
+a2a serve run opencode --relay https://relay.example.com --relay-token env:RELAY_TOKEN   # Anna
 ```
 
 1. The relay is agentmesh-one at the version this a2a-serve pins. a2a-serve

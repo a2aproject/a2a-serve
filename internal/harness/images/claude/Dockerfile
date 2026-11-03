@@ -1,4 +1,4 @@
-# Harness image for `a2a serve claude`. The server runs it as the host
+# Harness image for `a2a serve run claude`. The server runs it as the host
 # user with the workspace mounted at its host path and HOME=/home/agent.
 # The harness calls other agents with the a2a CLI of this image, so
 # A2A_CLI_VERSION must match a2acli.PinnedVersion; the published tag is

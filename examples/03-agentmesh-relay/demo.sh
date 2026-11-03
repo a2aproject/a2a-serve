@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# End-to-end validation of `a2a serve opencode` running Docker-sandboxed coding
+# End-to-end validation of `a2a serve run opencode` running Docker-sandboxed coding
 # agents backed by a live LLM on an Agent Mesh relay (`agentmesh-one` v0.2.0 +
 # embedded Go SDK `github.com/google/agentmesh/sdk/meshnet`, no sidecar):
 #
@@ -21,7 +21,7 @@
 #     1. Starts `agentmesh-one` v0.2.0 (optionally exposed to the internet via
 #        `--tunnel cloudflare`).
 #     2. Builds `a2a-serve -tags agentmesh`, runs `a2a-serve doctor --fix`, and
-#        starts two Docker-sandboxed `a2a serve opencode` agents (`coder` and
+#        starts two Docker-sandboxed `a2a serve run opencode` agents (`coder` and
 #        `reviewer`) with `--private "$RELAY" --public "$RELAY" --relay-token`.
 #     3. Verifies `a2a serve doctor --online`, discovers `reviewer` over the
 #        mesh DHT (`a2a serve peers`), pairs with an invite code, and delegates
@@ -33,7 +33,7 @@
 #   Stage 2 (OIDC Device Sign-In + Same-Owner Zero-Code Recognition):
 #     5. Starts a local RS256 OIDC Device-Flow Identity Provider and an
 #        `agentmesh-one --issuer <idp> --no-join-token` relay.
-#     6. Starts two Docker-sandboxed `a2a serve opencode` agents (`oidc-coder`
+#     6. Starts two Docker-sandboxed `a2a serve run opencode` agents (`oidc-coder`
 #        and `oidc-reviewer`) without `--relay-token`, follows the printed
 #        device sign-in link as `Ben@example.com`, verifies `owner.json`, adds
 #        `oidc-reviewer` without `--code`, delegates a live LLM task authorized
@@ -375,7 +375,7 @@ export RELAY RELAY_TOKEN
 echo "Agent Mesh relay ready at: ${RELAY}"
 
 banner "2. Starting two Docker-sandboxed opencode agents (coder & reviewer) with --private/--public ${RELAY}"
-a2a serve opencode --dir "$WORK/coder" \
+a2a serve run opencode --dir "$WORK/coder" \
   --name coder \
   --description "Primary coding agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \
@@ -387,7 +387,7 @@ a2a serve opencode --dir "$WORK/coder" \
   --quiet \
   --detach
 
-a2a serve opencode --dir "$WORK/reviewer" \
+a2a serve run opencode --dir "$WORK/reviewer" \
   --name reviewer \
   --description "Code review agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \
@@ -685,7 +685,7 @@ approve_device_signin() {
 banner "6. Signing in oidc-coder & oidc-reviewer as Ben@example.com (no --relay-token) & delegating without pairing code"
 approve_device_signin "$WORK/oidc-coder" &
 SIGNIN_PID=$!
-a2a serve opencode --dir "$WORK/oidc-coder" \
+a2a serve run opencode --dir "$WORK/oidc-coder" \
   --name oidc-coder \
   --description "OIDC-authenticated coding agent" \
   "${IMAGE_ARGS[@]}" \
@@ -700,7 +700,7 @@ unset SIGNIN_PID
 
 approve_device_signin "$WORK/oidc-reviewer" &
 SIGNIN_PID=$!
-a2a serve opencode --dir "$WORK/oidc-reviewer" \
+a2a serve run opencode --dir "$WORK/oidc-reviewer" \
   --name oidc-reviewer \
   --description "OIDC-authenticated review agent" \
   "${IMAGE_ARGS[@]}" \

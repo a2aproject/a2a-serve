@@ -31,12 +31,12 @@ import (
 const Name = ".a2a"
 
 // ErrNotFound is returned by [Find] when no agent directory is found.
-var ErrNotFound error = &notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a serve <harness>` or pass --dir"}
+var ErrNotFound error = &notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a serve run <harness>` or pass --dir"}
 
 // NotFoundIn returns an error, matching [ErrNotFound], for a root without
 // an agent.
 func NotFoundIn(root string) error {
-	return &notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a serve <harness>`"}
+	return &notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a serve run <harness>`"}
 }
 
 type notFoundError struct{ msg string }

@@ -15,69 +15,55 @@
 package cli
 
 import (
-	"slices"
-
 	"github.com/spf13/cobra"
-
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 const (
-	groupAgents      = "agents"
-	groupTestServers = "test-servers"
-	groupManage      = "manage"
-	groupPairing     = "pairing"
-	groupNode        = "node"
-	groupHelpers     = "helpers"
+	groupRun       = "run"
+	groupConfigure = "configure"
+	groupPairing   = "pairing"
+	groupNode      = "node"
+	groupSetup     = "setup"
 )
 
 // commandGroups maps the subcommands of `a2a serve` to their help group.
-// Harness commands are agents.
 var commandGroups = map[string]string{
-	"acp":        groupAgents,
-	"echo":       groupTestServers,
-	"proxy":      groupTestServers,
-	"script":     groupTestServers,
-	"status":     groupManage,
-	"url":        groupManage,
-	"open":       groupManage,
-	"logs":       groupManage,
-	"stop":       groupManage,
-	"restart":    groupManage,
-	"config":     groupManage,
-	"channel":    groupManage,
-	"contact":    groupManage,
-	"peers":      groupManage,
-	"schedule":   groupManage,
-	"backup":     groupManage,
-	"restore":    groupManage,
+	"run":        groupRun,
+	"status":     groupRun,
+	"url":        groupRun,
+	"logs":       groupRun,
+	"stop":       groupRun,
+	"restart":    groupRun,
+	"open":       groupRun,
+	"config":     groupConfigure,
+	"channel":    groupConfigure,
+	"schedule":   groupConfigure,
+	"backup":     groupConfigure,
+	"restore":    groupConfigure,
 	"pair":       groupPairing,
 	"tokens":     groupPairing,
+	"contact":    groupPairing,
+	"peers":      groupPairing,
 	"mailbox":    groupNode,
-	"doctor":     groupHelpers,
-	"credential": groupHelpers,
-	"version":    groupHelpers,
-	"completion": groupHelpers,
-	"help":       groupHelpers,
+	"doctor":     groupSetup,
+	"credential": groupSetup,
+	"completion": groupSetup,
+	"version":    groupSetup,
+	"help":       groupSetup,
 }
 
 // addGroups lists the subcommands of serve in groups in its help.
 func addGroups(serve *cobra.Command) {
 	serve.AddGroup(
-		&cobra.Group{ID: groupAgents, Title: "Agents:"},
-		&cobra.Group{ID: groupTestServers, Title: "Test servers:"},
-		&cobra.Group{ID: groupManage, Title: "Manage the agent:"},
-		&cobra.Group{ID: groupPairing, Title: "Pairing:"},
+		&cobra.Group{ID: groupRun, Title: "Run the agent:"},
+		&cobra.Group{ID: groupConfigure, Title: "Configure the agent:"},
+		&cobra.Group{ID: groupPairing, Title: "Pairing and contacts:"},
 		&cobra.Group{ID: groupNode, Title: "Webhook node:"},
-		&cobra.Group{ID: groupHelpers, Title: "Helpers:"},
+		&cobra.Group{ID: groupSetup, Title: "Setup:"},
 	)
 	for _, c := range serve.Commands() {
-		if c.GroupID != "" {
-			continue
-		}
-		c.GroupID = commandGroups[c.Name()]
-		if slices.Contains(harness.ProfileNames(), c.Name()) {
-			c.GroupID = groupAgents
+		if c.GroupID == "" {
+			c.GroupID = commandGroups[c.Name()]
 		}
 	}
 }

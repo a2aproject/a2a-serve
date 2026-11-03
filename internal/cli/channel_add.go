@@ -120,6 +120,6 @@ func addChannelOffline(ctx context.Context, cfg *globalConfig, d agentdir.Dir, c
 	if err := d.SaveConfig(conf); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a serve)\n", kind)
+	_, err = fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a serve run)\n", kind)
 	return err
 }

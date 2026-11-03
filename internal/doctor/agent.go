@@ -313,7 +313,7 @@ func checkState(d agentdir.Dir) (Result, bool) {
 func checkServer(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Config) []Result {
 	st, err := env.Status(ctx, d)
 	if errors.Is(err, controlapi.ErrNotRunning) {
-		results := []Result{{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve --detach"}}
+		results := []Result{{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve run --detach"}}
 		if cfg.Port > 0 && !env.PortFree(cfg.Port) {
 			results = append(results, Result{
 				ID:      "port",
@@ -405,7 +405,7 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 	}
 	unit, err := os.ReadFile(path)
 	if err != nil {
-		r.Status, r.Message, r.Fix = StatusFail, err.Error(), "a2a serve --service"
+		r.Status, r.Message, r.Fix = StatusFail, err.Error(), "a2a serve run --service"
 		return r, true
 	}
 	exe, err := env.Executable()
@@ -416,7 +416,7 @@ func checkService(env Env, d agentdir.Dir) (Result, bool) {
 	content := string(unit)
 	runsSelf := strings.Contains(content, exe) || strings.Contains(content, resolve(exe))
 	if !runsSelf || !strings.Contains(content, d.Root) {
-		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary or directory", "a2a serve --service"
+		r.Status, r.Message, r.Fix = StatusFail, "the service runs another binary or directory", "a2a serve run --service"
 		r.Detail = fmt.Sprintf("%s doesn't run %s --dir %s", path, exe, d.Root)
 		return r, true
 	}

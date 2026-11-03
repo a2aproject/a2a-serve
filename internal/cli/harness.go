@@ -26,7 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
-// newHarnessCmd builds `a2a serve <harness>`, which creates the agent on
+// newHarnessCmd builds `a2a serve run <harness>`, which creates the agent on
 // the first run and starts it. In an existing agent the flags go through
 // the `config set` path first. "acp" starts any ACP agent given with
 // --command.
@@ -86,9 +86,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 	flags.register(cmd, false)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
-	f.BoolVar(&mode.detach, "detach", false, "Run the agent in the background")
-	f.BoolVar(&mode.service, "service", false, "Install and start the agent as a launchd or systemd user service")
-	f.BoolVar(&mode.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
+	mode.addRunFlags(f)
 	return cmd
 }
 

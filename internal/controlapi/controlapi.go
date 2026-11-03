@@ -257,7 +257,7 @@ func NotRunning(name string) error { return &notRunningError{name: name} }
 type notRunningError struct{ name string }
 
 func (e *notRunningError) Error() string {
-	return e.name + " is not running; start it with `a2a serve --detach`"
+	return e.name + " is not running; start it with `a2a serve run --detach`"
 }
 
 func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }

@@ -47,7 +47,7 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if cfg.IsJSON() {
 					return cfg.PrintJSON(statusJSON{Name: conf.Name, Harness: conf.Harness, Dir: d.Root})
 				}
-				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a serve --detach`\n", conf.Name, conf.Harness, d.Root)
+				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a serve run --detach`\n", conf.Name, conf.Harness, d.Root)
 				return err
 			}
 			if err != nil {

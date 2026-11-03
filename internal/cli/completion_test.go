@@ -52,8 +52,8 @@ func TestCompletion(t *testing.T) {
 		want []string
 	}{
 		{name: "private", args: []string{"config", "set", "--private", ""}, want: []string{"tailscale", "lan", "none"}},
-		{name: "public", args: []string{"opencode", "--public", ""}, want: []string{"tailscale", "ngrok", "none"}},
-		{name: "sandbox", args: []string{"claude", "--sandbox", ""}, want: []string{"docker", "local"}},
+		{name: "public", args: []string{"run", "opencode", "--public", ""}, want: []string{"tailscale", "ngrok", "none"}},
+		{name: "sandbox", args: []string{"run", "claude", "--sandbox", ""}, want: []string{"docker", "local"}},
 		{name: "harness", args: []string{"config", "set", "--harness", ""}, want: []string{"claude", "opencode", "acp"}},
 		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},
 		{name: "role", args: []string{"pair", "invite", "anna", "--role", ""}, want: []string{"member", "owner"}},
@@ -83,14 +83,15 @@ func TestCompletionCommands(t *testing.T) {
 
 	got := completions(t, creds, "")
 
-	for _, want := range []string{"opencode", "echo", "proxy", "script", "tokens", "channel"} {
+	for _, want := range []string{"run", "tokens", "channel"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("a2a-serve __complete \"\" = %v, want %q among them", got, want)
 		}
 	}
-	for _, hidden := range []string{"add", "forget"} {
-		if pair := completions(t, creds, "pair", ""); slices.Contains(pair, hidden) {
-			t.Fatalf("a2a-serve __complete pair \"\" = %v, want no hidden %q", pair, hidden)
+	run := completions(t, creds, "run", "")
+	for _, want := range []string{"opencode", "claude", "acp", "echo", "proxy", "exec"} {
+		if !slices.Contains(run, want) {
+			t.Fatalf("a2a-serve __complete run \"\" = %v, want %q among them", run, want)
 		}
 	}
 }

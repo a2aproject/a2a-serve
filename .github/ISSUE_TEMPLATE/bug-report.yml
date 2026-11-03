@@ -14,7 +14,7 @@ body:
     attributes:
       label: Steps to reproduce
       placeholder: |
-        1. a2a serve acp --sandbox local --command fakeacp --detach
+        1. a2a serve run acp --sandbox local --command fakeacp --detach
         2. a2a send -a "$(a2a serve url)" ask
     validations:
       required: true

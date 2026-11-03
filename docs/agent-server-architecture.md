@@ -8,7 +8,7 @@ about how it works.
 
 ## Summary
 
-`a2a serve <harness>` turns a coding agent that speaks the
+`a2a serve run <harness>` turns a coding agent that speaks the
 [Agent Client Protocol](https://agentclientprotocol.com) (opencode, Claude
 Code, or any `--command`) into an A2A agent:
 

@@ -36,7 +36,7 @@ func TestExitCodes(t *testing.T) {
 		{name: "pair invite on a stopped agent", args: []string{"pair", "invite", "anna", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "restart of a stopped agent", args: []string{"restart", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "status without an agent", args: []string{"status", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
-		{name: "start without an agent", args: []string{"--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
+		{name: "start without an agent", args: []string{"run", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -59,7 +59,7 @@ func TestNotRunningSuggestsDetach(t *testing.T) {
 
 	_, err := runCMD(t, "contact", "add", "grok", "--dir", d.Root)
 
-	if err == nil || !strings.Contains(err.Error(), "a2a serve --detach") {
-		t.Fatalf("a2a serve contact add error = %v, want a hint to start it with `a2a serve --detach`", err)
+	if err == nil || !strings.Contains(err.Error(), "a2a serve run --detach") {
+		t.Fatalf("a2a serve contact add error = %v, want a hint to start it with `a2a serve run --detach`", err)
 	}
 }

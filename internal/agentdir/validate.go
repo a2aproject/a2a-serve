@@ -62,7 +62,7 @@ func (c *Config) Validate() error {
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 	switch {
 	case c.Harness == "":
-		add("no harness: run `a2a serve <harness>`")
+		add("no harness: run `a2a serve run <harness>`")
 	case slices.Contains(ReservedHarnesses, c.Harness):
 		add("invalid harness %q: %s are test servers, not harnesses", c.Harness, strings.Join(ReservedHarnesses, ", "))
 	case c.Harness == HarnessACP && len(c.Command) == 0:

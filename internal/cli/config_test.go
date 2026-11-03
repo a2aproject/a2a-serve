@@ -98,7 +98,7 @@ func TestConfigCommands(t *testing.T) {
 		{name: "unset harness", args: []string{"config", "unset", "harness"}, wantUsage: true},
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
 		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
-		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a serve opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
+		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a serve run opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
 	}
 	for _, tc := range tests {
@@ -172,18 +172,18 @@ func TestHarnessCommandValidation(t *testing.T) {
 		args     []string
 		wantErr  string
 	}{
-		{name: "invalid setting on the first run", args: []string{"opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
-		{name: "acp without a command", args: []string{"acp"}, wantErr: "harness acp needs a command"},
+		{name: "invalid setting on the first run", args: []string{"run", "opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
+		{name: "acp without a command", args: []string{"run", "acp"}, wantErr: "harness acp needs a command"},
 		{
 			name:     "acp command from the config",
 			existing: &agentdir.Config{Name: "coder", Harness: "acp", Command: []string{"fakeacp"}},
-			args:     []string{"acp", "--private", "tailscal"},
+			args:     []string{"run", "acp", "--private", "tailscal"},
 			wantErr:  `invalid --private "tailscal"`,
 		},
 		{
 			name:     "other harness",
 			existing: &agentdir.Config{Name: "coder", Harness: "opencode"},
-			args:     []string{"claude"},
+			args:     []string{"run", "claude"},
 			wantErr:  "this agent runs opencode; switch with `a2a serve config set --harness claude`",
 		},
 	}
@@ -279,7 +279,7 @@ func TestConfigRunningAgent(t *testing.T) {
 	}
 	done := make(chan error, 1)
 	go func() {
-		_, err := runCMD(t, "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
+		_, err := runCMD(t, "run", "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
 		done <- err
 	}()
 	client := controlapi.NewClient(d)
@@ -290,7 +290,7 @@ func TestConfigRunningAgent(t *testing.T) {
 		}
 		select {
 		case err := <-done:
-			t.Fatalf("a2a serve acp error = %v", err)
+			t.Fatalf("a2a serve run acp error = %v", err)
 		default:
 		}
 		if time.Now().After(deadline) {
@@ -299,13 +299,13 @@ func TestConfigRunningAgent(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	out, err := runCMD(t, "acp", "--dir", dir, "--description", "reviews code")
+	out, err := runCMD(t, "run", "acp", "--dir", dir, "--description", "reviews code")
 	if err != nil {
-		t.Fatalf("a2a serve acp on the running agent error = %v", err)
+		t.Fatalf("a2a serve run acp on the running agent error = %v", err)
 	}
 	for _, want := range []string{"description  (default) → reviews code", "✓ applied to the running agent: description", "✓ coder is already running"} {
 		if !strings.Contains(out, want) {
-			t.Fatalf("a2a serve acp on the running agent = %q, want %q", out, want)
+			t.Fatalf("a2a serve run acp on the running agent = %q, want %q", out, want)
 		}
 	}
 	running, err := client.Config(t.Context())
@@ -338,7 +338,7 @@ func TestConfigRunningAgent(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("a2a serve acp error = %v", err)
+			t.Fatalf("a2a serve run acp error = %v", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatalf("agent did not stop")
@@ -358,7 +358,7 @@ func TestConfigShowAsCommandHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a serve config show --help error = %v", err)
 	}
-	if !regexp.MustCompile(`--as-command\s+Print the a2a serve <harness> command`).MatchString(out) {
+	if !regexp.MustCompile(`--as-command\s+Print the a2a serve run <harness> command`).MatchString(out) {
 		t.Fatalf("a2a serve config show --help = %q, want --as-command without a value name", out)
 	}
 }

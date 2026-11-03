@@ -3,7 +3,7 @@
 Last updated: 2026.10.22
 
 This lesson serves a real coding agent, opencode or Claude Code, from its project directory with
-`a2a serve <harness>`, and talks to it like any other A2A agent.
+`a2a serve run <harness>`, and talks to it like any other A2A agent.
 
 ## What you'll learn
 
@@ -36,14 +36,14 @@ EOF
 In **terminal A**, from the workspace:
 
 ```bash
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY
+a2a serve run opencode --name coder --secret OPENROUTER_API_KEY
 ```
 
-For Claude Code, use `a2a serve claude` instead.
+For Claude Code, use `a2a serve run claude` instead.
 
 The first run saves the flags to `.a2a/config.yaml` and the key to
 `.a2a/state/secrets`, pulls or builds the harness image, and stays in the
-foreground. Later runs from this directory are just `a2a serve`.
+foreground. Later runs from this directory are just `a2a serve run`.
 
 In **terminal B**, check that it runs and note its local URL:
 
@@ -134,7 +134,7 @@ Start a second agent in **terminal C**:
 
 ```bash
 mkdir -p ~/a2a-lesson1/reviewer && cd ~/a2a-lesson1/reviewer
-a2a serve opencode --name reviewer --secret OPENROUTER_API_KEY
+a2a serve run opencode --name reviewer --secret OPENROUTER_API_KEY
 ```
 
 In **terminal B**, let `coder` call it: mint a code on the reviewer's side

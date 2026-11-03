@@ -1,4 +1,4 @@
-# Agent server: `a2a serve <harness>`
+# Agent server: `a2a serve run <harness>`
 
 > [!WARNING]
 > Pre-1.0. Commands, flags and `config.yaml` keys may change; stored state
@@ -57,13 +57,14 @@ the command which fixes each failure. If `a2a serve` fails with
 
 ```sh
 cd ~/src/app
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY
+a2a serve run opencode --name coder --secret OPENROUTER_API_KEY
 ```
 
 The first run saves the flags to `.a2a/config.yaml` and starts the agent in
 the foreground. Later runs, from the project or a subdirectory, are just
-`a2a serve`. Run `a2a serve` without flags in a new directory and it asks
-a few questions instead. Change settings later with the same flags, through
+`a2a serve run`. Run `a2a serve run` without arguments in a new directory and
+it asks a few questions instead. Each run prints which agent directory it uses,
+and says when it creates one. Change settings later with the same flags, through
 `a2a serve config set` (see [Changing settings](#changing-settings)).
 
 On start, the server saves an owner token for its local URL in your
@@ -93,10 +94,10 @@ a2a serve tokens add <agent-url> <code>       # on anna's side: saves a token fo
 automatically.
 
 Harnesses: `opencode` (`opencode acp`) and `claude` (Zed's
-`claude-agent-acp`). `a2a serve acp --command "<cmd>"` runs any agent that
+`claude-agent-acp`). `a2a serve run acp --command "<cmd>"` runs any agent that
 speaks the [Agent Client Protocol](https://agentclientprotocol.com), and
 `--command` also replaces a profile's command, such as
-`a2a serve opencode --command "cloudcode acp"`.
+`a2a serve run opencode --command "cloudcode acp"`.
 
 ## The agent directory
 
@@ -126,7 +127,7 @@ or service process doesn't depend on your shell's environment.
 
 > [!WARNING]
 > `config.yaml` decides what runs on your machine: `sandbox: local`,
-> `command`, `image`, `mounts`, `env` and `secrets`. Running `a2a serve` in a
+> `command`, `image`, `mounts`, `env` and `secrets`. Running `a2a serve run` in a
 > cloned repository runs whatever its `config.yaml` says, with access to the
 > mounts and secrets it names. Read a `config.yaml` you didn't write before you
 > start an agent from it, as you would a Makefile or a CI config.
@@ -135,9 +136,9 @@ or service process doesn't depend on your shell's environment.
 
 | Command | What it does |
 | --- | --- |
-| `a2a serve` | Starts the agent in the foreground. |
-| `a2a serve --detach` | Starts it in the background. |
-| `a2a serve --service` | Installs and starts a systemd (Linux) or launchd (macOS) user service. |
+| `a2a serve run` | Starts the agent in the foreground. `--quiet` keeps the harness image output in the log. |
+| `a2a serve run --detach` | Starts it in the background. |
+| `a2a serve run --service` | Installs and starts a systemd (Linux) or launchd (macOS) user service. |
 | `a2a serve status` | URLs, channels, owner links, task counts. |
 | `a2a serve url [--local\|--private\|--public]` | The agent's URL which reaches furthest: public, then private, then local. |
 | `a2a serve logs [-f]` | The server and harness log. |
@@ -146,11 +147,11 @@ or service process doesn't depend on your shell's environment.
 
 `restart` checks the settings first, so an agent which couldn't start again
 isn't stopped. An agent running in the foreground of another terminal can't
-be restarted from here: press Ctrl-C there and run `a2a serve` again.
+be restarted from here: press Ctrl-C there and run `a2a serve run` again.
 
 ## Changing settings
 
-`a2a serve config set` takes the flags of `a2a serve <harness>`, so the first
+`a2a serve config set` takes the flags of `a2a serve run <harness>`, so the first
 run teaches the vocabulary for later changes. Every change is validated
 before it is saved, printed as a diff, and says whether it applies now or
 after a restart:
@@ -167,7 +168,7 @@ $ a2a serve config set --sandbox local --allow-tools read,search --secret ANTHRO
 | Command | What it does |
 | --- | --- |
 | `a2a serve config` | The same as `config show`. |
-| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the `a2a serve <harness> …` command which recreates the agent, with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
+| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the `a2a serve run <harness> …` command which recreates the agent, with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
 | `a2a serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
 | `a2a serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`; `email` removes the email channel. |
 | `a2a serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
@@ -219,11 +220,11 @@ A running agent applies channels, the description, approvers and the
 allowed and denied tools at once, through its control socket; other settings are saved and wait for
 `a2a serve restart`, and `config show` and `status` list them.
 
-`a2a serve <harness>` in an existing agent goes through the same path, then
+`a2a serve run <harness>` in an existing agent goes through the same path, then
 starts the agent unless it already runs. It refuses another harness:
 `this agent runs opencode; switch with a2a serve config set --harness claude`.
 
-An invalid `config.yaml` written by hand stops `a2a serve` with an error
+An invalid `config.yaml` written by hand stops `a2a serve run` with an error
 naming the setting; fix it with `config set`, `config unset` or `config edit`.
 
 ## Sandbox
@@ -445,7 +446,7 @@ anywhere, including from behind NAT, and each can get a public URL on the
 relay:
 
 ```sh
-a2a serve opencode --private https://relay.example.com --public https://relay.example.com
+a2a serve run opencode --private https://relay.example.com --public https://relay.example.com
 # first run: → sign in to the relay https://relay.example.com: https://…
 a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without the link
 ```
@@ -478,7 +479,7 @@ a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without th
 ## Messengers
 
 ```sh
-a2a serve opencode --telegram env:CODER_BOT_TOKEN      # or later:
+a2a serve run opencode --telegram env:CODER_BOT_TOKEN      # or later:
 a2a serve channel add telegram --token env:CODER_BOT_TOKEN
 a2a serve channel add discord --token env:CODER_DISCORD_TOKEN
 a2a serve channel add email --email-address coder@example.com \
@@ -671,7 +672,7 @@ with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
 | 4 | `A2ACLI_ERR_CARD_INVALID` | An agent card couldn't be used |
 | 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` expired |
-| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a serve --detach` |
+| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a serve run --detach` |
 | 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
 
 ## HTTP routes
@@ -736,10 +737,10 @@ Storage and S3 clients.
 
 | Command | Description |
 |---|---|
-| `serve <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`. |
-| `serve` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
+| `serve run <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`, `--quiet`. |
+| `serve run` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
 | `serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
-| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
+| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
 | `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
@@ -756,7 +757,7 @@ Storage and S3 clients.
 | `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
 | `serve backup now\|list` / `serve restore <dest>` | Encrypted snapshots of the agent's state to a directory, `gs://` or `s3://`, taken every `--backup-interval`; restore recreates the agent on another host. |
 | `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
-| `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
+| `serve run echo` / `run proxy <agent-url>` / `run exec '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
 ## Configuration reference
 
@@ -800,21 +801,22 @@ workspace, are read as `workspace` and the remaining mounts.
 
 ## Test servers
 
-`echo`, `proxy` and `script` run a local A2A server without an agent
-directory, for trying out clients:
+`run echo`, `run proxy` and `run exec` start a local A2A server without an
+agent directory, for trying out clients:
 
 ```sh
-a2a serve echo                                  # reply with the message
-a2a serve proxy https://agent.example.com       # forward to another agent, logging the traffic
-a2a serve script 'tr a-z A-Z'                   # run a shell command per message
+a2a serve run echo                              # reply with the message
+a2a serve run proxy https://agent.example.com   # forward to another agent, logging the traffic
+a2a serve run exec 'tr a-z A-Z'                 # run a shell command per message
 ```
 
 All three take `--host`, `--port` (default 8080), `--name`, `--description`,
 `--card`, `--card-compat`, `--protocol`, `--transport` (`rest`, `jsonrpc` or
-`grpc`), `--advertise-address` and `--quiet`. `proxy` also takes
-`--svc-param`, `--auth`, `--tenant` and `--insecure` for the proxied agent.
+`grpc`), `--advertise-address` and `--quiet`, which stops the traffic log.
+`proxy` also takes `--svc-param`, `--auth`, `--tenant` and `--insecure` for
+the proxied agent.
 
-`script` runs the command with `sh -c` for each message, with the message
+`exec` runs the command with `sh -c` for each message, with the message
 text on stdin and `A2A_TASK_ID` and `A2A_CONTEXT_ID` in its environment, so
 a script can keep state per conversation. Its stdout is the reply artifact;
 `--stream` streams it line by line and `--chunk <delim>` in chunks split at
@@ -841,7 +843,7 @@ agent crash, and a queued concurrent task. To try a real harness without
 Docker:
 
 ```sh
-a2a serve opencode --sandbox local --command "opencode acp"
+a2a serve run opencode --sandbox local --command "opencode acp"
 ```
 
 ## What it needs from the a2a CLI

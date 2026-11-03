@@ -5,7 +5,7 @@
 digraph agent_server_overview {
   rankdir=TB;
   graph [fontname="Helvetica", nodesep=0.3, ranksep=0.45, pad=0.3, compound=true, newrank=true,
-         label="A. a2a serve <harness>: one coding agent per process,\nstarted from its project directory", labelloc=t, fontsize=20];
+         label="A. a2a serve run <harness>: one coding agent per process,\nstarted from its project directory", labelloc=t, fontsize=20];
   node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
   edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
 

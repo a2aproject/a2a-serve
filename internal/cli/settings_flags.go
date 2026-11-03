@@ -28,7 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
-// settingsFlags are the agent settings shared by `a2a serve <harness>` and
+// settingsFlags are the agent settings shared by `a2a serve run <harness>` and
 // `a2a serve config set`, so both speak one vocabulary.
 type settingsFlags struct {
 	s       agentdir.Settings
@@ -88,7 +88,7 @@ func (sf *settingsFlags) register(cmd *cobra.Command, withHarness bool) {
 }
 
 // registerEmailFlags adds the --email-* flags of the email channel, shared
-// by `a2a serve <harness>`, `config set` and `channel add email`.
+// by `a2a serve run <harness>`, `config set` and `channel add email`.
 func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings) {
 	f.StringVar(&email.Address, "email-address", "", "Email channel: the agent's address")
 	f.StringVar(&email.IMAP, "email-imap", "", "Email channel: IMAP host:port")

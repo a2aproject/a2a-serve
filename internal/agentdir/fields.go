@@ -324,7 +324,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	return deleted, nil
 }
 
-// AsCommand returns the arguments of `a2a serve` which recreate the agent
+// AsCommand returns the arguments of `a2a serve run` which recreate the agent
 // in an empty directory. Secrets are passed as env:NAME; stored is used to
 // tell which network secrets are set.
 func (c *Config) AsCommand(stored Secrets) []string {
@@ -332,7 +332,7 @@ func (c *Config) AsCommand(stored Secrets) []string {
 	if !slices.Contains(Harnesses, h) {
 		h = HarnessACP
 	}
-	args := []string{"a2a", "serve", h}
+	args := []string{"a2a", "serve", "run", h}
 	add := func(flag string, values ...string) {
 		for _, v := range values {
 			if v, ok := strings.CutPrefix(v, SecretPrefix); ok {

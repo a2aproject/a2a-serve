@@ -156,7 +156,7 @@ func TestServerPairAndSend(t *testing.T) {
 	var serveOut string
 	go func() {
 		var err error
-		serveOut, err = runCMDWithCreds(t, creds, "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
+		serveOut, err = runCMDWithCreds(t, creds, "run", "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
 		done <- err
 	}()
 	var status struct {
@@ -171,7 +171,7 @@ func TestServerPairAndSend(t *testing.T) {
 		}
 		select {
 		case err := <-done:
-			t.Fatalf("a2a serve acp error = %v", err)
+			t.Fatalf("a2a serve run acp error = %v", err)
 		default:
 		}
 		if time.Now().After(deadline) {
@@ -295,19 +295,19 @@ func TestServerPairAndSend(t *testing.T) {
 	select {
 	case err := <-done:
 		if err != nil {
-			t.Fatalf("a2a serve acp error = %v", err)
+			t.Fatalf("a2a serve run acp error = %v", err)
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatalf("agent did not stop")
 	}
 	if want := "agent coder (acp) in " + filepath.Join(dir, ".a2a") + " (created)\n"; !strings.HasPrefix(serveOut, want) {
-		t.Fatalf("a2a serve acp output = %q, want it to start with %q", serveOut, want)
+		t.Fatalf("a2a serve run acp output = %q, want it to start with %q", serveOut, want)
 	}
 }
 
 func TestServeNoAgent(t *testing.T) {
 	t.Parallel()
-	_, err := runCMD(t, "--dir", "/nonexistent-a2a-agent")
+	_, err := runCMD(t, "run", "--dir", "/nonexistent-a2a-agent")
 	if err == nil || !strings.Contains(err.Error(), "has no .a2a/config.yaml") {
 		t.Fatalf("a2a serve --dir /nonexistent-a2a-agent error = %v, want %q", err, "has no .a2a/config.yaml")
 	}
@@ -320,8 +320,10 @@ func TestServeUsageErrors(t *testing.T) {
 		args    []string
 		wantErr string
 	}{
-		{name: "test server flag on serve", args: []string{"--port", "9000"}, wantErr: "unknown flag: --port"},
-		{name: "script stream and chunk", args: []string{"script", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
+		{name: "test server flag on run", args: []string{"run", "--port", "9000"}, wantErr: "unknown flag: --port"},
+		{name: "agent flag on serve", args: []string{"--detach"}, wantErr: "unknown flag: --detach"},
+		{name: "unknown run target", args: []string{"run", "gemini"}, wantErr: "unknown command \"gemini\""},
+		{name: "exec stream and chunk", args: []string{"run", "exec", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
 		{name: "dir on a command without an agent", args: []string{"tokens", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
 		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
 		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},

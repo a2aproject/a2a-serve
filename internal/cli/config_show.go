@@ -35,7 +35,7 @@ type showFlags struct {
 
 func (f *showFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.defaults, "defaults", false, "Also show the settings left at their defaults, with the default values")
-	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a serve <harness> command which recreates the agent, with secrets as env:NAME")
+	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a serve run <harness> command which recreates the agent, with secrets as env:NAME")
 }
 
 func newConfigShowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {

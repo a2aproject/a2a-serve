@@ -64,7 +64,7 @@ From the agent's project directory:
 
 ```bash
 mkdir -p ~/a2a-lesson2/coder && cd ~/a2a-lesson2/coder
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY \
+a2a serve run opencode --name coder --secret OPENROUTER_API_KEY \
   --private tailscale --public tailscale \
   --telegram env:CODER_BOT_TOKEN
 ```
@@ -219,7 +219,7 @@ Stop the foreground process with Ctrl-C, then install the agent as a user
 service (systemd on Linux, launchd on macOS):
 
 ```bash
-a2a serve --service
+a2a serve run --service
 a2a serve status
 a2a serve logs -f
 ```

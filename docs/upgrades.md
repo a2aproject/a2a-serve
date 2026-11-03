@@ -1,7 +1,7 @@
 # Upgrades
 
 Upgrade `a2a-serve` like any binary, then restart each agent with
-`a2a serve restart` (or `a2a serve` in its directory). An agent picks up the
+`a2a serve restart` (or `a2a serve run` in its directory). An agent picks up the
 new version on its next start.
 
 ## Stored state migrates forward

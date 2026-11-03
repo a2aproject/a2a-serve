@@ -22,7 +22,7 @@ import (
 	"strings"
 )
 
-// Settings are the flags of `a2a serve <harness>` and `a2a serve config
+// Settings are the flags of `a2a serve run <harness>` and `a2a serve config
 // set`. Set scalars override the config; list entries are added, replacing
 // the entry with the same key; unset fields keep what earlier runs saved.
 type Settings struct {

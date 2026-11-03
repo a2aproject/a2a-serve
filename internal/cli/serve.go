@@ -38,14 +38,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
-// serverFlags holds the flags of `a2a serve` itself, and the agent
-// directory and control timeout of the commands which manage an agent.
+// serverFlags holds the agent directory and control timeout of the commands
+// which manage an agent.
 type serverFlags struct {
 	dir     string
 	timeout time.Duration
-	detach  bool
-	service bool
-	quiet   bool
 }
 
 const dirUsage = "Agent directory (default: the nearest directory with .a2a, walking up from the current one)"
@@ -75,33 +72,19 @@ project directory, sandboxed in Docker, reachable over A2A on localhost, a
 private network (Tailscale, LAN) and the internet (Funnel, ngrok), and from
 Telegram, Discord and email.
 
-  a2a serve opencode --name coder     first run in a project: saves .a2a/config.yaml
-  a2a serve                           later runs, from the project or a subdirectory
+  a2a serve run opencode --name coder     first run in a project: saves .a2a/config.yaml
+  a2a serve run                           later runs, from the project or a subdirectory
 
 Management commands (pair, status, contact, ...) find the agent the way
-git finds a repository, or take --dir.
-
-echo, proxy and script run a local test server instead.`,
+git finds a repository, or take --dir.`,
 		Version: buildVersionInfo().Version,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfiguredAgent(cmd, cfg, &f)
+			return cmd.Help()
 		},
 	}
-	fl := cmd.Flags()
-	f.addDirFlag(fl)
-	fl.BoolVar(&f.detach, "detach", false, "Run the agent in the background")
-	fl.BoolVar(&f.service, "service", false, "Install and start the agent as a launchd or systemd user service")
-	fl.BoolVar(&f.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
-
-	for _, name := range harness.ProfileNames() {
-		cmd.AddCommand(newHarnessCmd(cfg, &f, name))
-	}
 	cmd.AddCommand(
-		newHarnessCmd(cfg, &f, "acp"),
-		newEchoCmd(cfg),
-		newProxyCmd(cfg),
-		newScriptCmd(cfg),
+		newRunCmd(cfg, &f),
 		newStatusCmd(cfg, &f),
 		newURLCmd(cfg, &f),
 		newOpenCmd(cfg, &f),
@@ -161,21 +144,21 @@ func (f *serverFlags) controlClient(d agentdir.Dir) *controlapi.Client {
 
 // runConfiguredAgent starts the agent saved in .a2a/config.yaml, or asks
 // for its settings on the first run in a terminal.
-func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags) error {
+func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m runMode) error {
 	d, err := f.agentDir()
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return clierr.Usage("no agent here: start one with `a2a serve <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a serve echo`, `proxy` or `script`")
+			return clierr.Usage("no agent here: start one with `a2a serve run <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a serve run echo`, `proxy` or `exec`")
 		}
-		return runWizard(cmd, cfg)
+		return runWizard(cmd, cfg, m.quiet)
 	}
 	if err != nil {
 		return err
 	}
-	return runAgent(cmd.Context(), cfg, d, runMode{detach: f.detach, service: f.service, quiet: f.quiet})
+	return runAgent(cmd.Context(), cfg, d, m)
 }
 
-func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
+func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 	wd, err := os.Getwd()
 	if err != nil {
 		return err
@@ -208,7 +191,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
 	if err := saveSettings(d, res.Settings); err != nil {
 		return err
 	}
-	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService, created: true})
+	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService, quiet: quiet, created: true})
 }
 
 // saveSettings saves start flags, reporting invalid ones as usage errors.

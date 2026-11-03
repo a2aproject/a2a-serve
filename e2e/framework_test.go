@@ -162,7 +162,7 @@ func (u *user) tokensAdd(url, code string) {
 	u.run(u.home, "a2a", "serve", "tokens", "add", url, code)
 }
 
-// agent is an `a2a serve acp` agent of a user, running fakeacp in the
+// agent is an `a2a serve run acp` agent of a user, running fakeacp in the
 // background without a sandbox.
 type agent struct {
 	u       *user
@@ -180,7 +180,7 @@ func (u *user) startAgent(name string) *agent {
 	}
 	a := &agent{u: u, name: name, dir: dir}
 	u.t.Cleanup(a.cleanup)
-	a.serve("acp", "--name", name, "--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp"), "--detach")
+	a.serve("run", "acp", "--name", name, "--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp"), "--detach")
 	a.url = strings.TrimSpace(a.serve("url", "--local"))
 	return a
 }

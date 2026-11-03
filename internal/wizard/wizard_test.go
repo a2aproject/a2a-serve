@@ -31,7 +31,7 @@ func TestRun(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"OPENROUTER_API_KEY": "x", "NGROK_AUTHTOKEN": "y"}
 	getenv := func(k string) string { return env[k] }
-	command := func(s agentdir.Settings) (string, error) { return "a2a serve " + s.Harness + " --name " + s.Name, nil }
+	command := func(s agentdir.Settings) (string, error) { return "a2a serve run " + s.Harness + " --name " + s.Name, nil }
 	tests := []struct {
 		name       string
 		input      string
@@ -47,7 +47,7 @@ func TestRun(t *testing.T) {
 			want: Result{Mode: ModeForeground, Settings: agentdir.Settings{
 				Harness: "opencode", Name: "app", Secrets: []string{"OPENROUTER_API_KEY"}, Private: "none", Public: "none",
 			}},
-			wantOut: []string{"Sandbox (docker, local) [docker]", "  a2a serve opencode --name app\n"},
+			wantOut: []string{"Sandbox (docker, local) [docker]", "  a2a serve run opencode --name app\n"},
 		},
 		{
 			name:      "choices with retries without Docker",
@@ -58,7 +58,7 @@ func TestRun(t *testing.T) {
 				Harness: "claude", Name: "coder", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}, Private: "tailscale", Public: "ngrok",
 				NgrokAuthToken: "env:NGROK_AUTHTOKEN", Telegram: "123:telegram-token",
 			}},
-			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a serve claude --name coder --service\n"},
+			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a serve run claude --name coder --service\n"},
 			wantNotOut: "123:telegram-token",
 		},
 	}
@@ -106,7 +106,7 @@ func TestRunNotSaved(t *testing.T) {
 		{
 			name:    "declined",
 			input:   "\n\n\n\n\n\n\n\nn\n",
-			command: func(agentdir.Settings) (string, error) { return "a2a serve opencode", nil },
+			command: func(agentdir.Settings) (string, error) { return "a2a serve run opencode", nil },
 			wantErr: ErrCanceled,
 		},
 		{

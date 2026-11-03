@@ -72,11 +72,11 @@ provider, so the agents join with the token.
 
 ```bash
 mkdir -p ~/a2a-lesson3/coder && cd ~/a2a-lesson3/coder
-a2a serve opencode --name coder --secret OPENROUTER_API_KEY \
+a2a serve run opencode --name coder --secret OPENROUTER_API_KEY \
   --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN --detach
 
 mkdir -p ~/a2a-lesson3/reviewer && cd ~/a2a-lesson3/reviewer
-a2a serve opencode --name reviewer --secret OPENROUTER_API_KEY \
+a2a serve run opencode --name reviewer --secret OPENROUTER_API_KEY \
   --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN --detach
 ```
 

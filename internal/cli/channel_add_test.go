@@ -58,8 +58,8 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 		{name: "restore", args: []string{"restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
 		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
 		{name: "config set", args: []string{"config", "set", "--telegram", "-"}, wantErr: "--telegram: empty secret"},
-		{name: "harness", args: []string{"opencode", "--discord", "-"}, wantErr: "--discord: empty secret"},
-		{name: "proxy auth", args: []string{"proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
+		{name: "harness", args: []string{"run", "opencode", "--discord", "-"}, wantErr: "--discord: empty secret"},
+		{name: "proxy auth", args: []string{"run", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -67,7 +67,7 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 
 			args := tc.args
-			if tc.args[0] != "mailbox" && tc.args[0] != "proxy" {
+			if tc.args[0] != "mailbox" && tc.args[1] != "proxy" {
 				args = append(args, "--dir", d.Root)
 			}
 			_, err := runCMDWithStdin(t, pipeWith(t, ""), args...)

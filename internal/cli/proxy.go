@@ -31,7 +31,7 @@ func newProxyCmd(cfg *globalConfig) *cobra.Command {
 		Use:     "proxy <agent-url>",
 		Short:   "Run a test server which forwards each request to another agent",
 		Long:    "Run a test server which forwards each request to the agent with the agent card URL <agent-url>, logging the traffic.",
-		Example: "  a2a serve proxy https://agent.example.com --auth \"Bearer env:AGENT_TOKEN\"",
+		Example: "  a2a serve run proxy https://agent.example.com --auth \"Bearer env:AGENT_TOKEN\"",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p.URL = args[0]

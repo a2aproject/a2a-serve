@@ -236,7 +236,7 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	if info, err := os.Stat(dir.LogPath()); err == nil {
 		offset = info.Size()
 	}
-	args := []string{"--dir", dir.Root}
+	args := []string{"run", "--dir", dir.Root}
 	if quiet {
 		args = append(args, "--quiet")
 	}

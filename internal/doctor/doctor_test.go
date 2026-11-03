@@ -776,7 +776,7 @@ func TestRender(t *testing.T) {
 		{ID: "a2a", Status: StatusOK, Message: "a2a v0.4.0 at /usr/bin/a2a", Group: GroupCLI},
 		{ID: "credential-helper", Status: StatusFail, Message: "credential helper not configured", Detail: "calls get 401", Fix: fixCommand, Group: GroupCLI},
 		{ID: "config", Status: StatusOK, Message: "config valid", Group: "Agent coder (/src/app)"},
-		{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve --detach", Group: "Agent coder (/src/app)"},
+		{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a serve run --detach", Group: "Agent coder (/src/app)"},
 	}
 	var buf bytes.Buffer
 	if err := Render(&buf, results); err != nil {
@@ -789,7 +789,7 @@ func TestRender(t *testing.T) {
       fix: a2a-serve doctor --fix
 Agent coder (/src/app)
   ✓ config valid
-  ! not running: a2a serve --detach
+  ! not running: a2a serve run --detach
 1 failed, 1 warning
 `
 	if diff := cmp.Diff(want, buf.String()); diff != "" {

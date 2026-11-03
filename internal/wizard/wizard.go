@@ -102,7 +102,7 @@ type Options struct {
 	// ReadSecret prints prompt and reads an answer without echoing it; nil
 	// reads it like any other answer.
 	ReadSecret func(prompt string) (string, error)
-	// Command validates the settings and returns the `a2a serve <harness>`
+	// Command validates the settings and returns the `a2a serve run <harness>`
 	// command which creates the same agent, shown before saving.
 	Command func(agentdir.Settings) (string, error)
 	// Workspace is the project directory, whose MCP servers and skills are

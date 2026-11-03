@@ -78,7 +78,7 @@ on the old host before taking over.
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver})
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ restored %s into %s\n  check it with `a2a serve doctor`, then start it with `a2a serve`\n", snapshot, dir)
+			_, err = fmt.Fprintf(cfg.Out, "✓ restored %s into %s\n  check it with `a2a serve doctor`, then start it with `a2a serve run`\n", snapshot, dir)
 			return err
 		},
 	}
