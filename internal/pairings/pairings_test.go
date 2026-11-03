@@ -156,6 +156,11 @@ func TestGetAndList(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
 	}
+	invite(t, s, controlapi.PairCodeRequest{Name: "bob"})
+	pending, err := s.Get(context.Background(), "bob")
+	if err != nil || pending.Created.IsZero() || len(pending.Tokens) != 0 {
+		t.Fatalf("Get(grok) = %+v, %v, want the creation time of a pairing whose code isn't used yet", pending, err)
+	}
 	if _, err := s.Get(context.Background(), "nobody"); kindOf(err) != NotFound {
 		t.Fatalf("Get(nobody) error = %v, want not found", err)
 	}

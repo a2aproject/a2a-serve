@@ -757,21 +757,33 @@ func (r *Router) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
 	return approvals.Chat{}, false
 }
 
-// directChat returns the direct chat of who, owner if empty, on a running
-// channel.
+// directChat returns the direct chat on a running channel of an owner: the
+// owner pairing who, or any owner if who is empty or "owner". Only owners
+// can answer the questions sent there.
 func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.Chat, error) {
 	if r.channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
-	user, err := manage.ResolveUser(ctx, r.store, who)
+	if who == "" || who == "owner" || who == auth.OwnerID {
+		conv, err := manage.DirectConv(ctx, r.store, chName, auth.OwnerID)
+		if err != nil {
+			return approvals.Chat{}, err
+		}
+		return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
+	}
+	named, err := r.store.NamedLinks(ctx)
 	if err != nil {
 		return approvals.Chat{}, err
 	}
-	conv, err := manage.DirectConv(ctx, r.store, chName, user)
-	if err != nil {
-		return approvals.Chat{}, err
+	for _, l := range named[who] {
+		if l.UserID != auth.OwnerID {
+			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a serve pair set %s --role owner`", who, who)
+		}
+		if l.Channel == chName && l.Conv != "" {
+			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(l.Conv)}, nil
+		}
 	}
-	return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
+	return approvals.Chat{}, fmt.Errorf("%s has no chat on %s: link it with a code from `a2a serve pair invite %s`", who, chName, who)
 }
 
 // Unattended reports whether a turn was posted to the context with no

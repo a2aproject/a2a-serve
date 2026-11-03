@@ -11,7 +11,7 @@ digraph agentmesh_relay {
   subgraph cluster_callers {
     label="Relay owner and callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
     { rank=same;
-      Owner  [label="Relay owner\na2a serve relay deploy\na2a serve relay invite anna", shape=ellipse, fillcolor="#fdf1e6"];
+      Owner  [label="Relay owner\ndeploys agentmesh-one,\nissues join tokens", shape=ellipse, fillcolor="#fdf1e6"];
       Caller [label="Outside caller\na2a send + pairing token", shape=ellipse, fillcolor="#dbe8ff"];
       Peer   [label="Teammate's agent\nanother a2a-serve\non the mesh", shape=ellipse, fillcolor="#dbe8ff"];
     }
@@ -26,7 +26,7 @@ digraph agentmesh_relay {
   }
 
   subgraph cluster_laptop {
-    label="Anna's laptop:\na2a serve opencode --relay <url>"; labelloc=b; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    label="Anna's laptop:\na2a serve run opencode --private <relay-url>"; labelloc=b; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
     Mesh [label="meshnet\nkey, credential,\nin-memory listeners"];
     Core [label="auth chain + A2A handler\npairing token or WhoIs\n-> principal"];
     subgraph cluster_sb {

@@ -52,6 +52,8 @@ webhook. The node pairs with the code the same way, answers with
 value may end in a secret value, env:VAR or -, as in
 "Authorization: Bearer env:TOKEN".
 
+` + secretref.Help + `
+
 --advertised tells every agent on the private network about the node: they
 list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
 ` + "`a2a serve contact add <name>@<this agent>`" + `, with no code. Their calls go

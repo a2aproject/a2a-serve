@@ -212,6 +212,31 @@ func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
 
+func TestRouterOwnerChatOrder(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("discord")})
+	linkOwner(t, ts, "dc:1", "dm1")
+	ctx := context.Background()
+	if got, ok := ts.srv.router.OwnerChat(ctx); !ok || got.Channel != "discord" {
+		t.Fatalf("OwnerChat() with discord only = %+v, %v, want discord", got, ok)
+	}
+
+	tg := newFakeChannel("telegram")
+	ts.srv.router.add(tg)
+	tg.waitReady(t)
+	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "owner", Role: auth.RoleOwner})
+	if err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	tg.write("tg:1", "tgdm1", "join "+code.Code)
+	tg.waitFor(t, "tgdm1", hasText("Linked as owner"))
+
+	got, ok := ts.srv.router.OwnerChat(ctx)
+	if want := (approvals.Chat{Channel: "telegram", Conv: "tgdm1"}); !ok || got != want {
+		t.Fatalf("OwnerChat() with discord and telegram = %+v, %v, want %+v: telegram comes first", got, ok, want)
+	}
+}
+
 func TestRouterOwnerChat(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -219,11 +244,13 @@ func TestRouterOwnerChat(t *testing.T) {
 		channel   string
 		ownerChat string
 		link      bool
+		linkBen   bool
 		want      approvals.Chat
 		wantOK    bool
 	}{
 		{name: "first messenger with a linked owner", channel: "discord", link: true, want: approvals.Chat{Channel: "discord", Conv: "dm1"}, wantOK: true},
-		{name: "setting", channel: "telegram", ownerChat: "telegram:anna", link: true, want: approvals.Chat{Channel: "telegram", Conv: "dm2"}, wantOK: true},
+		{name: "setting naming an owner", channel: "telegram", ownerChat: "telegram:ben", link: true, linkBen: true, want: approvals.Chat{Channel: "telegram", Conv: "dm3"}, wantOK: true},
+		{name: "setting naming a member", channel: "telegram", ownerChat: "telegram:anna", link: true},
 		{name: "messenger outside the order", channel: "fake", link: true},
 		{name: "no linked owner", channel: "telegram"},
 		{name: "setting of a stopped messenger", channel: "telegram", ownerChat: "email", link: true},
@@ -233,6 +260,9 @@ func TestRouterOwnerChat(t *testing.T) {
 			t.Parallel()
 			ts := startServer(t, serverOpts{channel: newFakeChannel(tc.channel), configure: func(c *agentdir.Config) { c.Approvals.OwnerChat = tc.ownerChat }})
 			linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+			if tc.linkBen {
+				linkAs(t, ts, "ben", auth.RoleOwner, "tg:3", "dm3")
+			}
 			if tc.link {
 				linkOwner(t, ts, "tg:1", "dm1")
 			}

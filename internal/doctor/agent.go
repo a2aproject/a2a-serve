@@ -101,20 +101,20 @@ func unjoin(err error) []error {
 	return []error{err}
 }
 
-// secretRef is a config value which references a stored secret, and the
-// flag which sets it.
-type secretRef struct{ flag, value string }
+// secretRef is a config value which references a stored secret, what sets
+// it, and the command which stores it again.
+type secretRef struct{ what, value, fix string }
 
 func secretRefs(cfg *agentdir.Config) []secretRef {
 	refs := []secretRef{
-		{agentdir.ChannelTelegram, cfg.ChannelToken(agentdir.ChannelTelegram)},
-		{agentdir.ChannelDiscord, cfg.ChannelToken(agentdir.ChannelDiscord)},
+		{"telegram token", cfg.ChannelToken(agentdir.ChannelTelegram), "a2a serve channel add telegram --token -"},
+		{"discord token", cfg.ChannelToken(agentdir.ChannelDiscord), "a2a serve channel add discord --token -"},
 	}
 	if e := cfg.Channels.Email; e != nil {
-		refs = append(refs, secretRef{"email-password", e.Password})
+		refs = append(refs, secretRef{"email password", e.Password, "a2a serve channel add email --email-password -"})
 	}
-	refs = append(refs, secretRef{"google-client-secret", cfg.Auth.GoogleClientSecret})
-	refs = append(refs, secretRef{"backup-key", cfg.Backup.Key})
+	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a serve config set --google-client-secret -"})
+	refs = append(refs, secretRef{"--backup-key", cfg.Backup.Key, "a2a serve config set --backup-key -"})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {
@@ -143,8 +143,8 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 			results = append(results, Result{
 				ID:      "secrets",
 				Status:  StatusFail,
-				Message: fmt.Sprintf("secret %s (--%s) not stored", name, ref.flag),
-				Fix:     fmt.Sprintf("a2a serve config set --%s -", ref.flag),
+				Message: fmt.Sprintf("secret %s (%s) not stored", name, ref.what),
+				Fix:     ref.fix,
 			})
 		}
 	}
@@ -471,7 +471,7 @@ func channelChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.C
 		if !cfg.HasChannel(kind) {
 			continue
 		}
-		what, fix := kind+" bot token", fmt.Sprintf("a2a serve config set --%s -", kind)
+		what, fix := kind+" bot token", fmt.Sprintf("a2a serve channel add %s --token -", kind)
 		if kind == agentdir.ChannelEmail {
 			what, fix = "email IMAP and SMTP login", "a2a serve channel add email --email-username <user> --email-password -"
 		}

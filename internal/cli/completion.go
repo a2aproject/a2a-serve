@@ -34,7 +34,7 @@ const scriptProgram = "a2a-serve"
 const completionTimeout = 2 * time.Second
 
 func newCompletionCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "completion <bash|zsh|fish|powershell>",
 		Short: "Print a shell completion script",
 		Long: `Print a completion script for ` + scriptProgram + `, the binary the a2a CLI runs
@@ -65,6 +65,8 @@ flags, and the contacts and pairings of a running agent.
 			return clierr.Usage(fmt.Sprintf("unknown shell %q: want bash, zsh, fish or powershell", args[0]))
 		},
 	}
+	markTextOnly(cmd)
+	return cmd
 }
 
 // must panics on errors which only a programming mistake causes, such as

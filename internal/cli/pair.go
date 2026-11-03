@@ -81,14 +81,16 @@ func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, erro
 	if err != nil {
 		return credstore.Credential{}, err
 	}
-	c, ok, err := store.Lookup(url)
+	creds, err := store.List()
 	if err != nil {
 		return credstore.Credential{}, err
 	}
-	if !ok {
-		return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a serve pair join <agent-url> <code>`")
+	for _, c := range creds {
+		if strings.TrimSuffix(c.URL, "/") == strings.TrimSuffix(url, "/") {
+			return c, nil
+		}
 	}
-	return c, nil
+	return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a serve pair join <agent-url> <code>`")
 }
 
 // joinedCompletions completes the agent URLs of the saved tokens.

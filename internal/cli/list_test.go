@@ -62,3 +62,25 @@ func TestPairListJoined(t *testing.T) {
 		t.Fatalf("a2a serve pair get of an agent not joined error = %v, want a hint to join", err)
 	}
 }
+
+func TestPairGetJoinedNode(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	node := credstore.Credential{URL: "https://coder.example.com/n/grok", Kind: credstore.KindNode, Token: "a2rn.x.grok.s", Agent: "grok", Principal: "node:grok"}
+	if err := creds.Put(node); err != nil {
+		t.Fatalf("creds.Put() error = %v", err)
+	}
+
+	out, err := runCMDWithCreds(t, creds, "-o", "json", "pair", "get", node.URL)
+	if err != nil {
+		t.Fatalf("a2a serve pair get %s error = %v", node.URL, err)
+	}
+	var got joinedAgent
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
+	}
+	want := joinedAgent{URL: node.URL, Kind: credstore.KindNode, Agent: "grok", Principal: "node:grok"}
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
+		t.Fatalf("a2a serve pair get of a joined node wrong result (-want +got) diff = %s", diff)
+	}
+}

@@ -179,7 +179,9 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 		return checkTextOnly(cmd, cfg)
 	}
 	must(serve.RegisterFlagCompletionFunc("output", fixedCompletions(string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL))))
-	serve.AddCommand(newHelpCmd(serve))
+	help := newHelpCmd(serve)
+	markTextOnly(help)
+	serve.AddCommand(help)
 	addGroups(serve)
 	root.AddCommand(serve)
 	markUsageErrors(root)

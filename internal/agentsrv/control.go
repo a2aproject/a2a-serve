@@ -233,7 +233,7 @@ func writePairingError(w http.ResponseWriter, err error) {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	status := http.StatusBadRequest
+	status := http.StatusUnprocessableEntity
 	switch pe.Kind {
 	case pairings.Conflict:
 		status = http.StatusConflict

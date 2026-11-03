@@ -21,6 +21,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -124,7 +125,7 @@ func (o *Offline) AddContact(ctx context.Context, req controlapi.ContactRequest)
 func (o *Offline) DeleteContact(ctx context.Context, name string) error {
 	err := o.contacts.Remove(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
-		return errors.New("no contact " + name)
+		return clierr.Usage("no contact " + name)
 	}
 	return err
 }
@@ -156,7 +157,7 @@ func (o *Offline) AddSchedule(ctx context.Context, req schedule.Request) (*contr
 func (o *Offline) DeleteSchedule(ctx context.Context, name string) error {
 	err := o.schedules.Remove(ctx, name, auth.Owner())
 	if errors.Is(err, store.ErrNotFound) {
-		return errors.New("no schedule " + name)
+		return clierr.Usage("no schedule " + name)
 	}
 	return err
 }

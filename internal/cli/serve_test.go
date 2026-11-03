@@ -343,6 +343,8 @@ func TestServeUsageErrors(t *testing.T) {
 		{name: "pair set without changes", args: []string{"pair", "set", "anna"}, wantErr: "nothing to change"},
 		{name: "json output of logs", args: []string{"-o", "json", "logs"}, wantErr: "-o json doesn't apply to `a2a serve logs`"},
 		{name: "json output of a test server", args: []string{"-o", "jsonl", "run", "echo"}, wantErr: "-o jsonl doesn't apply to `a2a serve run echo`"},
+		{name: "json output of completion", args: []string{"-o", "jsonl", "completion", "bash"}, wantErr: "doesn't apply to `a2a serve completion`"},
+		{name: "json output of help", args: []string{"-o", "json", "help"}, wantErr: "doesn't apply to `a2a serve help`"},
 		{name: "json output of config edit", args: []string{"-o", "json", "config", "edit"}, wantErr: "doesn't apply to `a2a serve config edit`"},
 		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
 		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},

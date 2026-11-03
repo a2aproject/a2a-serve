@@ -43,8 +43,8 @@ digraph agent_server_turn {
   Harness -> Exec  [label="6. session/request_permission"];
   Exec -> Rules    [label="7. allowed or denied\nby kind?"];
   Rules -> Hitl    [label="8. otherwise ask"];
-  Hitl -> Router   [label="9. buttons to approvers;\nmembers see input-required", constraint=false];
+  Hitl -> Router   [label="9. owner chat, for tasks\nnobody watches; others\nanswer where they asked", constraint=false];
   Router -> Approver [constraint=false];
   Approver -> Handler [label="10. answer on the same task:\noption, approve/deny or structured input", color="#2e7d32", fontcolor="#2e7d32"];
-  Handler -> Exec  [label="11. only owners and approvers\nmay answer", style=dashed, color="#2e7d32", fontcolor="#2e7d32"];
+  Handler -> Exec  [label="11. only the starter\nor an owner may answer", style=dashed, color="#2e7d32", fontcolor="#2e7d32"];
 }

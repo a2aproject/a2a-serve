@@ -23,7 +23,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // newHarnessCmd builds `a2a serve run <harness>`, which creates the agent on
@@ -43,9 +42,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 		Use:   name,
 		Short: short,
 		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like ` + "`a2a serve config set`" + `.
-
-` + secretref.Help,
+existing agent, the flags change them like ` + "`a2a serve config set`" + `.`,
 		Example: fmt.Sprintf(`  a2a serve run %[1]s --name coder --secret OPENROUTER_API_KEY
   a2a serve run %[1]s --private tailscale --allow-tools read,search --detach
   a2a serve run %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),

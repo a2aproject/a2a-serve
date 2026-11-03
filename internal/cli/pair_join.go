@@ -26,7 +26,7 @@ import (
 )
 
 func newPairJoinCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "join <agent-url> <code>",
 		Short: "Join another agent with a pairing code from its owner",
 		Long: `Exchange a pairing code from an agent's owner (a2a serve pair invite) for a token.
@@ -62,6 +62,11 @@ instead, which the a2a serve mailbox commands use.`,
 			return err
 		},
 	}
+	// Joining another agent uses no agent directory of this one.
+	var dir string
+	cmd.Flags().StringVar(&dir, "dir", "", "")
+	must(cmd.Flags().MarkHidden("dir"))
+	return cmd
 }
 
 func printNodePaired(cfg *globalConfig, c credstore.Credential, saved string) error {

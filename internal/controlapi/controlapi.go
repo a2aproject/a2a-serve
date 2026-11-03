@@ -323,6 +323,15 @@ func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning
 // NotRunning marks the error for the CLI's exit code.
 func (e *notRunningError) NotRunning() bool { return true }
 
+// requestError is a request the server refused because of what it names,
+// such as a pairing which doesn't exist.
+type requestError struct{ msg string }
+
+func (e *requestError) Error() string { return e.msg }
+
+// UsageError marks the error for the CLI's exit code.
+func (e *requestError) UsageError() bool { return true }
+
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
 var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a serve restart`")
@@ -413,7 +422,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return ErrUnsupported
 	}
 	if resp.StatusCode/100 != 2 {
-		return errors.New(jsonhttp.ErrorMessage(resp.Status, data))
+		msg := jsonhttp.ErrorMessage(resp.Status, data)
+		switch resp.StatusCode {
+		case http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
+			return &requestError{msg: msg}
+		}
+		return errors.New(msg)
 	}
 	if out == nil {
 		return nil

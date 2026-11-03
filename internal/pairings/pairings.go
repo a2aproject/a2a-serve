@@ -85,8 +85,9 @@ type Error struct {
 
 func (e *Error) Error() string { return e.Msg }
 
-// UsageError marks invalid requests for the CLI's exit code.
-func (e *Error) UsageError() bool { return e.Kind != NotFound }
+// UsageError marks the error for the CLI's exit code: every refused request
+// names something invalid or missing.
+func (e *Error) UsageError() bool { return true }
 
 func invalid(format string, args ...any) error {
 	return &Error{Kind: Invalid, Msg: fmt.Sprintf(format, args...)}
@@ -503,6 +504,9 @@ func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, 
 			}
 			p := get(name, c.Role)
 			p.PendingCodes = append(p.PendingCodes, c.Expires)
+			if issued := c.Expires.Add(-auth.CodeTTL); p.Created.IsZero() || issued.Before(p.Created) {
+				p.Created = issued
+			}
 		}
 	}
 	return out, nil

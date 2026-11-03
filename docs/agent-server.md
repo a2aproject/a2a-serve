@@ -121,8 +121,9 @@ Management commands find the agent the way git finds a repository, or take
 `server.sock`, so changes apply without a restart; `--timeout` bounds each
 call (default 60s).
 
-`--secret VAR`, `--telegram env:VAR` and similar flags read values from your
-shell when you run the command and store them in `state/secrets`. A detached
+`--secret VAR`, `channel add telegram --token env:VAR` and the other
+secret-valued flags read values from your shell when you run the command and
+store them in `state/secrets`. A detached
 or service process doesn't depend on your shell's environment.
 
 > [!WARNING]
@@ -229,11 +230,10 @@ Every flag which takes a secret value accepts the same forms:
 | `secret:NAME` | A value already stored in `.a2a/state/secrets`, in agent settings only. |
 | anything else | The value itself. |
 
-The flags are `--telegram`, `--discord`, `--email-password`,
-`--tailscale-authkey`, `--ngrok-authtoken`, `--google-client-secret`,
-`--relay-token` and `--backup-key` of the agent settings, `restore
---backup-key`, `channel add --token`, `contact add --token` and `mailbox
---token`. `-` keeps tokens out of the shell history:
+The flags are `--tailscale-authkey`, `--ngrok-authtoken`,
+`--google-client-secret`, `--relay-token` and `--backup-key` of
+`config set`, `channel add --token` and `--email-password`, `restore
+--backup-key`, `contact add --token` and `mailbox --token`. `-` keeps tokens out of the shell history:
 
 ```sh
 a2a serve channel add telegram --token -
@@ -244,8 +244,9 @@ Header values are the one exception: `pair invite --webhook-header` and
 `proxy --auth` take a whole header value, which may end in `env:VAR` or `-`,
 as in `"Authorization: Bearer env:TOKEN"`.
 
-A running agent applies channels, the description, the owner chat and the
-allowed and denied tools at once, through its control socket; other settings are saved and wait for
+A running agent applies the description, the owner chat and the allowed and
+denied tools at once, through its control socket, and `channel add` and
+`channel rm` start and stop messengers there; other settings are saved and wait for
 `a2a serve restart`, and `config show` and `status` list them.
 
 `a2a serve run <harness>` in an existing agent goes through the same path, then
@@ -358,13 +359,14 @@ from. Owners can answer any approval.
 | --- | --- | --- |
 | An A2A caller (CLI, web, Google sign-in, the owner on this machine) | that caller | inline, as `input-required` in the task |
 | A messenger user | that user | the same conversation, direct or group |
-| Another agent (a contact) | the calling agent, which asks its own user | relayed by the calling agent's server |
+| Another agent (a contact) | the calling agent, which asks its own user | relayed by the calling agent's server: to the conversation the call came from, or else the user's direct chat, or else the owner chat |
 | A webhook node | the node | its task, as `input-required` |
 | A schedule with `--chat <channel>[:<who>]` | the schedule's `--as` user | that chat |
 | A schedule without `--chat`, or a turn the server posts with no conversation | an owner | the owner chat |
 
 - The **owner chat** is set with `--owner-chat <channel>[:<who>]`, on `run
-  <harness>` and `config set`, with the syntax of `schedule add --chat`.
+  <harness>` and `config set`, with the syntax of `schedule add --chat`;
+  `<who>` names an owner pairing, since only owners answer there.
   Without it, the server picks the first of telegram, discord and email where
   an owner pairing has a linked account. Without one, the question waits in
   the inspector (`a2a serve open`), and `a2a serve status` reports it.
@@ -804,7 +806,7 @@ Storage and S3 clients.
 | `serve run <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`, `--quiet`. |
 | `serve run` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
 | `serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
-| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies channels, the description and the approval settings at once. `--dry-run`, `--restart`. |
+| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies the description and the approval settings at once. `--dry-run`, `--restart`. |
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
 | `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |

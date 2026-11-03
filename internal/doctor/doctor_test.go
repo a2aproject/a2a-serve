@@ -796,3 +796,25 @@ Agent coder (/src/app)
 		t.Fatalf("Render() wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestCheckSecretsFixes(t *testing.T) {
+	t.Parallel()
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Backup: agentdir.BackupConfig{To: "/tmp/b", Key: "secret:BACKUP_KEY"}}
+	for _, kind := range []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord} {
+		if err := cfg.SetChannel(kind, "secret:"+strings.ToUpper(kind)+"_TOKEN", nil); err != nil {
+			t.Fatalf("SetChannel(%s) error = %v", kind, err)
+		}
+	}
+	var got []string
+	for _, r := range checkSecrets(cfg, agentdir.Secrets{}) {
+		got = append(got, r.Message+" | "+r.Fix)
+	}
+	want := []string{
+		"secret TELEGRAM_TOKEN (telegram token) not stored | a2a serve channel add telegram --token -",
+		"secret DISCORD_TOKEN (discord token) not stored | a2a serve channel add discord --token -",
+		"secret BACKUP_KEY (--backup-key) not stored | a2a serve config set --backup-key -",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("checkSecrets() wrong result (-want +got) diff = %s", diff)
+	}
+}
