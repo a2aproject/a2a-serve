@@ -30,8 +30,13 @@ func applyEvents(t *testing.T, ts *TaskStore, user string, task *a2a.Task, event
 	if _, err := ts.Create(ctx, task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
+	m := ts.UpdateMaterializer()
 	for i, ev := range events {
-		req := &taskstore.UpdateRequest{Task: task, Event: ev, PrevVersion: taskstore.TaskVersion(i + 1)}
+		partial, err := m.ApplyUpdate(ctx, task, ev)
+		if err != nil {
+			t.Fatalf("ApplyUpdate(%T) error = %v", ev, err)
+		}
+		req := &taskstore.UpdateRequest{Task: partial, Event: ev, PrevVersion: taskstore.TaskVersion(i + 1)}
 		if _, err := ts.Update(ctx, req); err != nil {
 			t.Fatalf("Update(%T) error = %v", ev, err)
 		}

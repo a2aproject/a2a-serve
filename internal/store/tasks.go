@@ -50,6 +50,13 @@ func (s *Store) Tasks(scope string, viewer Viewer) *TaskStore {
 	return &TaskStore{s: s, scope: scope, viewer: viewer}
 }
 
+// UpdateMaterializer returns the [taskstore.UpdateMaterializer] for handlers
+// using ts. The store derives tasks from [taskstore.UpdateRequest.Event], so
+// executions don't need to keep full tasks in memory.
+func (ts *TaskStore) UpdateMaterializer() taskstore.UpdateMaterializer {
+	return taskstore.NewNoOpUpdateMaterializer()
+}
+
 func statusTime(t *a2a.Task) int64 {
 	if t.Status.Timestamp != nil {
 		return t.Status.Timestamp.UnixNano()
