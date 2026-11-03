@@ -57,6 +57,13 @@ func TestValidate(t *testing.T) {
 		{name: "allow-email domain without star", modify: func(c *Config) { c.Auth.AllowEmails = []string{"example.com"} }, wantErr: `invalid --allow-email "example.com"`},
 		{name: "allow-email wildcard domain", modify: func(c *Config) { c.Auth.AllowEmails = []string{"*@*.com"} }, wantErr: `invalid --allow-email "*@*.com"`},
 		{name: "google client without secret", modify: func(c *Config) { c.Auth.GoogleClientID = "id" }, wantErr: "go together"},
+		{name: "relay", modify: func(c *Config) {
+			c.Network = NetworkConfig{Private: "https://relay.example.com", Public: "https://relay.example.com/"}
+		}},
+		{name: "relay with a path", modify: func(c *Config) { c.Network.Private = "https://relay.example.com/x" }, wantErr: `invalid --private "https://relay.example.com/x"`},
+		{name: "two relays", modify: func(c *Config) {
+			c.Network = NetworkConfig{Private: "https://a.example.com", Public: "https://b.example.com"}
+		}, wantErr: "different relays"},
 		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },

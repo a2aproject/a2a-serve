@@ -21,6 +21,7 @@ import (
 	"maps"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -35,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -111,6 +113,9 @@ func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
 	st := controlapi.Status{
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
 		Local: local, Private: private, Public: public, Tasks: map[string]int{},
+	}
+	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
+		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
 	st.Channels = s.router.status()
 	counts, err := s.tasks.TaskCounts(r.Context())

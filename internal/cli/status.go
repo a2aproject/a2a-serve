@@ -85,6 +85,9 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	fmt.Fprintf(&sb, "  dir      %s\n  local    %s\n", st.Dir, st.Local)
 	if st.Private != "" {
 		fmt.Fprintf(&sb, "  private  %s\n", st.Private)
+		if st.PrivateNote != "" {
+			fmt.Fprintf(&sb, "  %-8s (%s)\n", "", st.PrivateNote)
+		}
 	}
 	if st.Public != "" {
 		fmt.Fprintf(&sb, "  public   %s\n", st.Public)

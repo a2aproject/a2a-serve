@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
@@ -434,6 +435,10 @@ func newAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
 	return d
 }
 
+// relayStatus is how doctor sees a relay offline: fine when the build can
+// join one.
+var relayStatus = map[bool]Status{true: StatusOK, false: StatusFail}[network.AgentMeshBuilt]
+
 func TestAgentChecks(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -574,6 +579,14 @@ func TestAgentChecks(t *testing.T) {
 				}
 			},
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusFail}, {"running", StatusWarn}},
+		},
+		{
+			name: "relay without Agent Mesh in the build",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"relay", relayStatus}, {"running", StatusWarn}},
 		},
 		{
 			name: "state readable by others",
