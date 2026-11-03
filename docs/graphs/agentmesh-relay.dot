@@ -1,0 +1,46 @@
+// B. Relay mode: how an agent on a laptop behind NAT joins an Agent Mesh relay
+// and how calls reach it. Top to bottom: setup, callers, the relay, the laptop.
+// Render: dot -Tpng -Gdpi=110 agentmesh-relay.dot -o agentmesh-relay.png
+digraph agentmesh_relay {
+  rankdir=TB;
+  graph [fontname="Helvetica", nodesep=0.5, ranksep=0.55, pad=0.3, newrank=true,
+         label="B. Relay mode: an agent on a laptop behind NAT,\nreached through an Agent Mesh relay", labelloc=t, fontsize=20];
+  node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
+
+  subgraph cluster_callers {
+    label="Relay owner and callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
+    { rank=same;
+      Owner  [label="Relay owner\na2a serve relay deploy\na2a serve relay invite anna", shape=ellipse, fillcolor="#fdf1e6"];
+      Caller [label="Outside caller\na2a send + pairing token", shape=ellipse, fillcolor="#dbe8ff"];
+      Peer   [label="Teammate's agent\nanother a2a-serve\non the mesh", shape=ellipse, fillcolor="#dbe8ff"];
+    }
+  }
+
+  subgraph cluster_hub {
+    label="agentmesh-one\n(Cloud Run or a VM)"; style="rounded,filled"; fillcolor="#fdf1e6"; color="#e0b48a";
+    { rank=same;
+      CP     [label="control plane\nbootstrap tokens,\ncredentials, policy"];
+      Router [label="router\nrelay, directory,\n/ingress/<peer>/a2a/coder"];
+    }
+  }
+
+  subgraph cluster_laptop {
+    label="Anna's laptop:\na2a serve opencode --relay <url>"; labelloc=b; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    Mesh [label="meshnet\nkey, credential,\nin-memory listeners"];
+    Core [label="auth chain + A2A handler\npairing token or WhoIs\n-> principal"];
+    subgraph cluster_sb {
+      label="Sandbox"; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
+      Harness [label="opencode (ACP)"];
+    }
+  }
+
+  Owner -> CP [label="1. deploy,\nmint a token"];
+  CP -> Mesh [dir=back, label="2. enroll\nwith the token"];
+  Router -> Mesh [dir=back, label="3. outbound connection,\nannounce a2a://coder"];
+  Caller -> Router [label="4a. POST /ingress/...\npairing token"];
+  Peer -> Router [label="4b. discover", style=dashed];
+  Router -> Mesh [label="5. forward over\nthe connection"];
+  Mesh -> Core [label="6. HTTP request"];
+  Core -> Harness [label="7. ACP prompt"];
+}

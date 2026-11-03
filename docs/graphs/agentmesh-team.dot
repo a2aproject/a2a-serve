@@ -1,0 +1,51 @@
+// C. Advertised pairings: Ben's server advertises the Grok webhook node it hosts,
+// and Anna's agent finds and calls it through Ben's server. Top to bottom: the
+// directory, the two servers, Anna's sandbox and the webhook.
+// Render: dot -Tpng -Gdpi=110 agentmesh-team.dot -o agentmesh-team.png
+digraph agentmesh_team {
+  rankdir=TB;
+  graph [fontname="Helvetica", nodesep=0.5, ranksep=0.55, pad=0.3, newrank=true,
+         label="C. Advertised pairings: Anna's agent calls\nthe Grok node that Ben's server hosts", labelloc=t, fontsize=20];
+  node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
+
+  subgraph cluster_hub {
+    label="Agent Mesh relay"; style="rounded,filled"; fillcolor="#fdf1e6"; color="#e0b48a";
+    { rank=same;
+      Dir  [label="router directory\na2a://coder, a2a://ben,\na2a://grok@ben"];
+      Note [label="Tailscale mode: servers\ngossip the same records\nover the tailnet", shape=note, fillcolor="#fff7d6"];
+    }
+  }
+
+  subgraph cluster_a {
+    label="coder\n(Anna)"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    MeshA  [label="meshnet"];
+    PeersA [label="Peers proxy\nholds no Grok credential"];
+  }
+
+  subgraph cluster_b {
+    label="ben\n(Ben)"; labeljust=r; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    MeshB [label="meshnet\nauthorizes Anna"];
+    NodeB [label="webhook node grok\npair invite --advertised"];
+  }
+
+  subgraph cluster_sb {
+    label="Anna's sandbox"; labelloc=b; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
+    Harness [label="Harness\na2a send -a\nhttp://a2a/k3/grok@ben"];
+  }
+
+  Grok [label="Grok routine\nwebhook", shape=ellipse, fillcolor="#dbe8ff"];
+
+  { rank=same; MeshA; MeshB; }
+  { rank=same; PeersA; NodeB; }
+  { rank=same; Harness; Grok; }
+
+  Dir -> Note [style=dotted, dir=none];
+  Dir -> MeshB [dir=back, label="1. ListenA2A(grok@ben)"];
+  Dir -> MeshA [label="2. Discover(a2a)"];
+  PeersA -> Harness [dir=back, label="3. a2a send"];
+  MeshA -> PeersA [dir=back, label="4. call grok@ben"];
+  MeshA -> MeshB [label="5. libp2p stream,\ndirect or relayed"];
+  MeshB -> NodeB [label="6. task"];
+  NodeB -> Grok [label="7. signed POST\nwakes it"];
+}

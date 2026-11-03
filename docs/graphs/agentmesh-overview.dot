@@ -1,0 +1,77 @@
+// A. Overview: a2a-serve keeps the agent runtime; Tailscale or an Agent Mesh
+// relay reaches it through a network provider. Top to bottom: callers, hubs,
+// the a2a-serve process, the sandbox.
+// Render: dot -Tpng -Gdpi=110 agentmesh-overview.dot -o agentmesh-overview.png
+digraph agentmesh_overview {
+  rankdir=TB;
+  graph [fontname="Helvetica", nodesep=0.4, ranksep=0.5, pad=0.3, newrank=true,
+         label="A. a2a-serve with two network modes:\nTailscale without a relay, or an Agent Mesh relay", labelloc=t, fontsize=20];
+  node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
+
+  subgraph cluster_callers {
+    label="Callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
+    { rank=same;
+      Team    [label="Owner and team\na2a CLI, their agents", shape=ellipse, fillcolor="#dbe8ff"];
+      Outside [label="Outside callers\nhosted assistants, bots,\npaired CLIs", shape=ellipse, fillcolor="#dbe8ff"];
+      Msg     [label="Messengers\nTelegram, Discord, email", shape=ellipse, fillcolor="#dbe8ff"];
+    }
+  }
+
+  subgraph cluster_ts {
+    label="Tailscale (run by Tailscale)"; style="rounded,filled"; fillcolor="#f4f4f4"; color="#bbbbbb";
+    TS [label="coordination, DERP relays,\nFunnel"];
+  }
+
+  subgraph cluster_hub {
+    label="Agent Mesh relay: agentmesh-one\non Cloud Run, a VM or Kubernetes"; style="rounded,filled"; fillcolor="#fdf1e6"; color="#e0b48a";
+    { rank=same;
+      Router [label="router\nrelay, directory,\n/ingress/<peer>/a2a/<name>"];
+      CP     [label="control plane\nenrollment, credentials,\npolicy"];
+    }
+  }
+
+  subgraph cluster_srv {
+    label="a2a-serve process: one agent"; labelloc=b; labeljust=r; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    { rank=same;
+      Tsnet [label="Tailscale provider\ntsnet", fillcolor="#e3f4e3"];
+      Mesh  [label="Agent Mesh provider\nmeshnet", fillcolor="#e3f4e3"];
+    }
+    { rank=same;
+      Auth     [label="Auth chain\npairing, WhoIs, OAuth\n-> principal"];
+      Peers    [label="Peers proxy\nagent-to-agent calls,\nadvertised pairings"];
+      Channels [label="Channels\nmessengers, webhooks"];
+    }
+    Handler [label="A2A handler and executor\ntasks, approvals, schedules,\nbackup, inspector"];
+  }
+
+  subgraph cluster_sandbox {
+    label="Sandbox"; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
+    { rank=same;
+      Harness  [label="Harness over ACP\nopencode, Claude Code"];
+      Boundary [label="egress boundary\nallowlist, credentials", style="rounded,filled,dashed"];
+    }
+  }
+
+  { rank=same; TS; Router; CP; }
+
+  Team -> TS [label="tailnet"];
+  Team -> Router [label="mesh"];
+  Outside -> TS [label="Funnel", style=dashed];
+  Outside -> Router [label="ingress"];
+  Msg -> Channels [label="polled"];
+
+  TS -> Tsnet;
+  Router -> Mesh [label="over meshnet's\noutbound connection"];
+  CP -> Mesh [dir=back, label="enroll"];
+
+  Tsnet -> Auth;
+  Mesh -> Auth;
+  Mesh -> Peers [dir=back, label="calls to\nother agents"];
+  Channels -> Handler;
+  Auth -> Handler;
+
+  Handler -> Harness [label="ACP"];
+  Peers -> Harness [dir=back, label="a2a CLI"];
+  Harness -> Boundary [label="only way out"];
+}

@@ -8,23 +8,9 @@ name: Go
 on:
   push:
     branches: [ "main", "release/**" ]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - '.golangci.yml'
-      - '.github/workflows/go.yaml'
-      - '.github/actions/**'
 
   pull_request:
     branches: [ "main", "release/**" ]
-    paths:
-      - '**.go'
-      - 'go.mod'
-      - 'go.sum'
-      - '.golangci.yml'
-      - '.github/workflows/go.yaml'
-      - '.github/actions/**'
 
   workflow_dispatch:
 
@@ -49,6 +35,9 @@ jobs:
 
     - name: Test
       run: go test -race -mod=readonly -v -count=1 -shuffle=on ./...
+
+    - name: Test Deflake
+      run: go test -mod=readonly -count=100 -shuffle=on ./...
 
   lint:
     runs-on: ubuntu-latest

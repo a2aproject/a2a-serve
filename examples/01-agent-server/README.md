@@ -14,7 +14,7 @@ This lesson serves a real coding agent, opencode or Claude Code, from its projec
 
 ## Prerequisites
 
-- The `a2a` CLI and `a2a-serve` installed (see the [repo README](../../README.md)).
+- The `a2a` CLI and `a2a-serve` installed (see [Installation](../../docs/agent-server.md#installation)).
 - Docker. Without it, add `--sandbox local` to the start commands below; the
   harness then runs on your machine and needs to be installed there.
 - An API key for the model, such as `OPENROUTER_API_KEY`, exported in your shell.

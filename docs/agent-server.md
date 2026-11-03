@@ -18,6 +18,39 @@ pairings. Several agents on one machine are several directories and processes.
 They find each other over the private network the same way agents on different
 machines do.
 
+## Installation
+
+Install `a2a-serve` and the `a2a` CLI: callers use `a2a` to send tasks, and
+harnesses use it to call other agents. Until an `a2a` release has
+`--unix-socket` and credential helpers, install this version:
+
+```sh
+go install github.com/a2aproject/a2a-serve@latest
+go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261030153310-f90e4eb628cd
+# go install names the binary `a2a-cli`; rename it to `a2a`
+mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
+a2a-serve doctor --fix   # enable the plugin and the credential helper, check Docker
+```
+
+Without `doctor --fix`:
+
+```sh
+a2a plugin set-enabled true   # let `a2a` run a2a-serve as `a2a serve`
+mkdir -p ~/.config/a2a-cli
+grep -q '^credential-helper:' ~/.config/a2a-cli/config.yaml 2>/dev/null ||
+  printf 'credential-helper:\n  - command: [a2a-serve, credential]\n' >> ~/.config/a2a-cli/config.yaml
+```
+
+Harnesses in Docker call other agents with the `a2a` of their image, which
+carries the version this `a2a-serve` needs; only `--sandbox local` uses the
+`a2a` on your `PATH`.
+
+Run `a2a serve doctor` whenever something looks wrong: it checks the `a2a`
+CLI and its config, Docker, and the agent of the current directory, and prints
+the command which fixes each failure. If `a2a serve` fails with
+`unknown command "serve" for "a2a"`, command plugins are disabled or
+`a2a-serve` is not on `PATH`; run `a2a-serve doctor --fix`.
+
 ## Quick start
 
 ```sh
@@ -430,6 +463,29 @@ Served on every listener:
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
 
+## Command reference
+
+| Command | Description |
+|---|---|
+| `serve <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`. |
+| `serve` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
+| `serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
+| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
+| `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
+| `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
+| `serve pair invite <who> [--role owner]` | Create a one-time code for a caller or a messenger account. The user running the server needs none: the server saves an owner token for its local URL. |
+| `serve pair invite <id> --webhook <url>` | Host a webhook node and create its code; without `--webhook`, a new code for an existing node. |
+| `serve pair list` / `pair rm <name>` | List callers and nodes, or revoke a caller / remove a node. |
+| `serve tokens add <agent-url> <code>` | On the caller's side: exchange a code for a token, which `a2a` attaches to requests for that agent through the `serve credential` helper. `tokens list` / `tokens rm <agent-url>` manage the saved tokens. |
+| `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper and makes state files private. `-o json`. |
+| `serve credential get` | The credential helper for the `a2a` CLI. |
+| `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
+| `serve peers` | Agents found on the private network. |
+| `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
+| `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
+| `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
+| `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
+
 ## Configuration reference
 
 `config.yaml` holds what the flags set; each key is changed with the flag of
@@ -506,3 +562,21 @@ Docker:
 ```sh
 a2a serve opencode --sandbox local --command "opencode acp"
 ```
+
+## What it needs from the a2a CLI
+
+- Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
+- `--unix-socket` (`A2ACLI_UNIX_SOCKET=<path>`): on Linux and with
+  `--sandbox local`, the harness's `a2a` sends every request through the
+  server's Unix socket.
+- Credential helpers (`credential-helper`, the
+  [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)):
+  `a2a-serve credential` returns the token `a2a serve tokens add` saved in
+  `~/.config/a2a-serve/credentials.json` for the longest matching agent URL,
+  or `$A2A_NODE_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once
+  under `credential-helper` in `~/.config/a2a-cli/config.yaml` as
+  `{command: [a2a-serve, credential]}`. On Docker Desktop the harness gets its
+  key from a helper script scoped to the bridge host
+  (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
+- `a2a skill` and `a2a version -o json`, which the server serves at
+  `/skill.md` and `a2a serve doctor` uses to check the installed version.

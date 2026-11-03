@@ -74,3 +74,13 @@ a2a serve stop
 ```
 
 `internal/agentsrv/testdata/fakeacp/main.go` lists the prompts it understands.
+
+### End-to-end tests
+
+`./e2e` drives the core user journeys the same way: serving and calling an agent, approvals, restarts, pairing callers, agent contacts and webhook nodes. Each test user gets its own `HOME`, set up with `a2a-serve doctor --fix`. The tests build `a2a-serve` and `fakeacp` and install the pinned `a2a` CLI; set `E2E_A2A_CLI` to the path of an `a2a` binary to skip the install:
+
+```sh
+go test -tags e2e ./e2e/...
+```
+
+Add a test there when a change affects a journey across commands or processes.

@@ -1,0 +1,31 @@
+# Runs the end-to-end tests of the core user journeys in ./e2e: a2a-serve,
+# the pinned a2a CLI and the scripted fakeacp agent as separate processes.
+name: E2E
+
+on:
+  push:
+    branches: [ "main", "release/**" ]
+
+  pull_request:
+    branches: [ "main", "release/**" ]
+
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: E2E
+      run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
