@@ -117,6 +117,10 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 		}
 		rest := "/" + r.PathValue("rest")
 		base := "http://" + r.Host + "/" + handle + "/" + name
+		if name == schedulesAgent {
+			p.serveSchedules(w, r, claims, base, rest)
+			return
+		}
 		ok, err := p.callable(r.Context(), name)
 		if err != nil {
 			slog.Error("looking up a callable agent", "agent", name, "error", err)
@@ -148,6 +152,25 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 		}
 		inner.ServeHTTP(w, r2)
 	})
+}
+
+// serveSchedules serves the built-in schedules agent for the conversation
+// of claims.
+func (p *Peers) serveSchedules(w http.ResponseWriter, r *http.Request, claims callClaims, base, rest string) {
+	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
+		card := proxyCard(schedulesAgent, base)
+		card.Description = "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."
+		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
+		return
+	}
+	h := a2asrv.NewHandler(&schedulesExecutor{sc: p.schedules, claims: claims})
+	r2 := r.Clone(r.Context())
+	r2.URL.Path, r2.URL.RawPath = rest, ""
+	inner := a2asrv.NewRESTHandler(h)
+	if r.Method == http.MethodPost && rest == "/" {
+		inner = a2asrv.NewJSONRPCHandler(h)
+	}
+	inner.ServeHTTP(w, r2)
 }
 
 // callable reports whether name is a contact or a hosted node.

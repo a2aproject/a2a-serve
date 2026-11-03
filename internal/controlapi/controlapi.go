@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/schedule"
 )
 
 // Status describes a running agent server.
@@ -427,4 +428,45 @@ func (c *Client) DeleteChannel(ctx context.Context, kind string) error {
 func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	var out []NodeInfo
 	return out, c.do(ctx, http.MethodGet, "/nodes", nil, &out)
+}
+
+// ScheduleInfo describes a schedule.
+type ScheduleInfo struct {
+	Name   string    `json:"name"`
+	Cron   string    `json:"cron,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+	TZ     string    `json:"tz,omitempty"`
+	Prompt string    `json:"prompt"`
+	// User is the principal the runs are for.
+	User string `json:"user"`
+	// Deliver is the chat the runs are shown in, <channel>:<who>.
+	Deliver      string    `json:"deliver,omitempty"`
+	Conversation string    `json:"conversation"`
+	CreatedBy    string    `json:"createdBy"`
+	NextRun      time.Time `json:"nextRun,omitzero"`
+	LastRun      time.Time `json:"lastRun,omitzero"`
+	LastError    string    `json:"lastError,omitempty"`
+}
+
+// Schedules lists the schedules.
+func (c *Client) Schedules(ctx context.Context) ([]ScheduleInfo, error) {
+	var out []ScheduleInfo
+	return out, c.do(ctx, http.MethodGet, "/schedules", nil, &out)
+}
+
+// AddSchedule adds a schedule.
+func (c *Client) AddSchedule(ctx context.Context, req schedule.Request) (*ScheduleInfo, error) {
+	var out ScheduleInfo
+	return &out, c.do(ctx, http.MethodPost, "/schedules", req, &out)
+}
+
+// RunSchedule starts a run of a schedule now.
+func (c *Client) RunSchedule(ctx context.Context, name string) (*ScheduleInfo, error) {
+	var out ScheduleInfo
+	return &out, c.do(ctx, http.MethodPost, "/schedules/"+url.PathEscape(name)+"/run", nil, &out)
+}
+
+// DeleteSchedule removes a schedule.
+func (c *Client) DeleteSchedule(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/schedules/"+url.PathEscape(name), nil, nil)
 }

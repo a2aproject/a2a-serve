@@ -107,6 +107,7 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve peers` | Agents found on the private network. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
 | `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
+| `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
 | `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
 | `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 

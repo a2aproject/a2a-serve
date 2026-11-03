@@ -54,7 +54,8 @@ type AgentRef struct {
 	Description string
 }
 
-// callableAgents returns the contacts and hosted nodes.
+// callableAgents returns the built-in schedules agent, the contacts and the
+// hosted nodes.
 func (p *Peers) callableAgents(ctx context.Context) ([]AgentRef, error) {
 	contacts, err := p.store.Contacts(ctx)
 	if err != nil {
@@ -64,7 +65,8 @@ func (p *Peers) callableAgents(ctx context.Context) ([]AgentRef, error) {
 	if err != nil {
 		return nil, err
 	}
-	out := make([]AgentRef, 0, len(contacts)+len(nodes))
+	out := make([]AgentRef, 0, len(contacts)+len(nodes)+1)
+	out = append(out, AgentRef{Name: schedulesAgent, Kind: "built-in", Description: "schedule prompts for later in this conversation, such as reminders; send it help"})
 	for _, c := range contacts {
 		out = append(out, AgentRef{Name: c.Name, Kind: "contact"})
 	}
