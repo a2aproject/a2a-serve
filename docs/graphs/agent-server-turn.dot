@@ -10,7 +10,7 @@ digraph agent_server_turn {
 
   { rank=same;
     User     [label="Member or owner\nin a chat, or an A2A client", shape=ellipse, fillcolor="#dbe8ff"];
-    Approver [label="Owner or --approver\non their messengers,\nor the /hitl/<token> page", shape=ellipse, fillcolor="#dbe8ff"];
+    Approver [label="Whoever started the task,\nwhere it came from,\nor an owner (owner chat, inspector)", shape=ellipse, fillcolor="#dbe8ff"];
   }
 
   subgraph cluster_server {

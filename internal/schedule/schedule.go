@@ -157,7 +157,7 @@ func (r *Request) RegisterFlags(fs *pflag.FlagSet, owner bool) {
 	}
 	fs.StringVar(&r.As, "as", "", "Run as the owner or a pairing name (default: owner)")
 	fs.StringVar(&r.Chat, "chat", "", "Show the runs, and ask their approvals, in a chat: `channel[:who]`, such as telegram:owner (default: no chat; approvals go to the owner chat)")
-	fs.StringVar(&r.Thread, "thread", ThreadNew, "Run in a new conversation each time, or continue the same one: new or same")
+	fs.StringVar(&r.Thread, "thread", ThreadNew, "Run in a new conversation each time, or continue the same one: `new|same`")
 }
 
 // When returns when r runs.

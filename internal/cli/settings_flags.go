@@ -82,7 +82,7 @@ func (sf *settingsFlags) register(cmd *cobra.Command, sets settingsSet) {
 func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f := cmd.Flags()
 	s := &sf.s
-	commandUsage := "Command line of the harness, as shell `words`, such as \"opencode acp\"; replaces the harness's default command"
+	commandUsage := "Command line of the harness, as shell `words`, such as \"cloudcode acp\"; replaces the harness's default command"
 	if cmd.Name() == agentdir.HarnessACP {
 		commandUsage = "Command line of the ACP agent, as shell `words`, such as \"gemini --experimental-acp\""
 	}
