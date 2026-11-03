@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package wizard asks the questions of the interactive first run of
-// `a2a serve`, for people who start it without flags.
+// `a2a serve run`, for people who start it without arguments.
 package wizard
 
 import (

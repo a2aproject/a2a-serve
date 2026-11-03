@@ -111,12 +111,12 @@ main() {
     read -r answer </dev/tty || answer=
     case "$answer" in
       y | Y | yes)
-        exec "$INSTALL_DIR/a2a-serve" </dev/tty >/dev/tty 2>&1
+        exec "$INSTALL_DIR/a2a-serve" run </dev/tty >/dev/tty 2>&1
         ;;
     esac
   fi
   say "Set up an agent from a project directory with:"
-  say "    cd ~/src/app && a2a serve"
+  say "    cd ~/src/app && a2a serve run"
 }
 
 main "$@"

@@ -73,7 +73,7 @@ brews:
       Enable the a2a CLI plugin and credential helper, and check Docker:
         a2a-serve doctor --fix
       Then set up an agent in a project directory:
-        cd ~/src/app && a2a serve
+        cd ~/src/app && a2a serve run
     test: |
       system "#{bin}/a2a-serve", "version"
     repository:
