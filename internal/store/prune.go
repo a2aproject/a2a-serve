@@ -19,22 +19,24 @@ import (
 	"database/sql"
 	"errors"
 	"time"
-
-	"github.com/a2aproject/a2a-go/v2/a2a"
 )
 
-// taskRetention is how long finished tasks are kept after their last update.
-const taskRetention = 30 * 24 * time.Hour
+// DefaultTaskTTL is how long tasks are kept after their last update unless
+// [Store.SetTaskTTL] sets another time.
+const DefaultTaskTTL = 30 * 24 * time.Hour
 
 // pruneInterval is how often [Store.FirstSeen] prunes the database.
 const pruneInterval = time.Hour
 
-// Prune deletes expired codes; finished tasks not updated for 30 days with
-// their questions and attachments; answered questions of remote agents as
-// old; and the handles of contexts left without tasks.
+// SetTaskTTL sets how long tasks are kept after their last update.
+func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
+
+// Prune deletes expired codes; tasks not updated for the task TTL with their
+// events, snapshots, questions and attachments; answered questions of remote
+// agents as old; and the handles of contexts left without tasks.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
-	cutoff := now.Add(-taskRetention).UnixNano()
+	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE expires < ?`, now.UnixNano()); err != nil {
 			return err
@@ -72,8 +74,7 @@ func (s *Store) Prune(ctx context.Context) error {
 type prunedTask struct{ scope, id, contextID string }
 
 func pruneTasks(ctx context.Context, tx *sql.Tx, cutoff int64) ([]prunedTask, error) {
-	rows, err := tx.QueryContext(ctx, `DELETE FROM tasks WHERE state IN (?, ?, ?, ?) AND updated < ? RETURNING scope, id, context_id`,
-		string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected), cutoff)
+	rows, err := tx.QueryContext(ctx, `DELETE FROM tasks WHERE updated < ? RETURNING scope, id, context_id`, cutoff)
 	if err != nil {
 		return nil, err
 	}

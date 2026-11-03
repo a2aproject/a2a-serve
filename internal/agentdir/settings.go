@@ -80,6 +80,8 @@ type Settings struct {
 	BackupKey       string
 	BackupInterval  string
 	BackupRetention string
+
+	TaskTTL string
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
@@ -131,6 +133,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	set(&cfg.Backup.To, s.Backup)
 	set(&cfg.Backup.Interval, s.BackupInterval)
 	set(&cfg.Backup.Retention, s.BackupRetention)
+	set(&cfg.TaskTTL, s.TaskTTL)
 	set(&cfg.Limits.Memory, s.Memory)
 	set(&cfg.Limits.CPUs, s.CPUs)
 	if s.PIDs != 0 {

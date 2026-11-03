@@ -40,6 +40,8 @@ type Store struct {
 	now func() time.Time
 	// pruned is when FirstSeen last pruned the database, in Unix nanoseconds.
 	pruned atomic.Int64
+	// taskTTL is how long tasks are kept after their last update.
+	taskTTL atomic.Int64
 }
 
 // Open opens or creates the database at path. ":memory:" opens a private
@@ -58,6 +60,7 @@ func Open(path string) (*Store, error) {
 	// database alive and shared.
 	db.SetMaxOpenConns(1)
 	s := &Store{db: db, now: time.Now}
+	s.SetTaskTTL(DefaultTaskTTL)
 	if err := s.migrate(context.Background()); err != nil {
 		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), db.Close())
 	}
@@ -112,6 +115,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	// 7: questions record the user who may answer them besides owners.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, `ALTER TABLE questions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
+	// 8: tasks keep an append-only log of events, and the tasks row only a
+	// header without history and artifacts. Existing tasks become a log of
+	// one full task event.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV8)
 		return err
 	},
 }
@@ -203,6 +213,23 @@ CREATE TABLE schedules (
 	deliver_user TEXT NOT NULL DEFAULT '', conversation TEXT NOT NULL, context_id TEXT NOT NULL DEFAULT '',
 	created_by TEXT NOT NULL, created INTEGER NOT NULL, next_run INTEGER NOT NULL DEFAULT 0,
 	last_run INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '');
+`
+
+const schemaV8 = `
+CREATE TABLE task_events (
+	scope TEXT NOT NULL, task_id TEXT NOT NULL, version INTEGER NOT NULL, kind TEXT NOT NULL,
+	created INTEGER NOT NULL, data TEXT NOT NULL,
+	PRIMARY KEY (scope, task_id, version),
+	FOREIGN KEY (scope, task_id) REFERENCES tasks (scope, id) ON DELETE CASCADE);
+CREATE TABLE task_snapshots (
+	scope TEXT NOT NULL, task_id TEXT NOT NULL, version INTEGER NOT NULL, data TEXT NOT NULL,
+	PRIMARY KEY (scope, task_id),
+	FOREIGN KEY (scope, task_id) REFERENCES tasks (scope, id) ON DELETE CASCADE);
+INSERT INTO task_events (scope, task_id, version, kind, created, data)
+	SELECT scope, id, version, 'task', updated, data FROM tasks;
+UPDATE tasks SET data = json_remove(data, '$.history', '$.artifacts');
+DROP INDEX tasks_state_updated;
+CREATE INDEX tasks_updated_any_scope ON tasks (updated);
 `
 
 func (s *Store) migrate(ctx context.Context) error {

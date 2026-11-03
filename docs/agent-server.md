@@ -168,7 +168,8 @@ settings, which `start` doesn't: `--harness`, the container limits (`--memory`,
 `--cpus`, `--pids`), the network-provider options (`--tailscale-control-url`,
 `--tailscale-authkey`, `--ngrok-url`, `--ngrok-authtoken`, `--relay-token`),
 backups (`--backup`, `--backup-key`, `--backup-interval`,
-`--backup-retention`) and Google sign-in (`--allow-email`,
+`--backup-retention`), how long tasks are kept after their last update
+(`--task-ttl`, default 30d) and Google sign-in (`--allow-email`,
 `--google-client-id`, `--google-client-secret`). Messengers are set with
 `a2a-serve channel add` (see [Messengers](#messengers)). With `--harness`,
 `config set` also creates an agent without starting it, for the settings a
@@ -853,6 +854,7 @@ approvals:
   allow: [read, search]
   owner_chat: telegram:anna      # --owner-chat
 limits: {memory: 8g, cpus: "4", pids: 1024}
+task_ttl: 30d                    # --task-ttl: tasks idle this long are deleted
 auth:                            # --allow-email, --google-client-id, --google-client-secret
   allow_emails: [mom@example.com, "*@example.com"]
   google_client_id: 1234.apps.googleusercontent.com

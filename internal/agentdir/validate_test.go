@@ -78,6 +78,8 @@ func TestValidate(t *testing.T) {
 		{name: "backup to an unknown scheme", modify: func(c *Config) { c.Backup = BackupConfig{To: "ftp://x", Key: "k"} }, wantErr: `invalid --backup "ftp://x"`},
 		{name: "backup interval", modify: func(c *Config) { c.Backup.Interval = "10s" }, wantErr: "--backup-interval 10s: want at least 1m"},
 		{name: "backup retention", modify: func(c *Config) { c.Backup.Retention = "a week" }, wantErr: "--backup-retention: invalid duration"},
+		{name: "task ttl", modify: func(c *Config) { c.TaskTTL = "a month" }, wantErr: "--task-ttl: invalid duration"},
+		{name: "task ttl too short", modify: func(c *Config) { c.TaskTTL = "10m" }, wantErr: "--task-ttl 10m: want at least 1h"},
 		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },

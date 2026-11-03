@@ -231,6 +231,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	}
 	closers.push(func(context.Context) error { return st.Close() })
 	s.store = st
+	st.SetTaskTTL(s.config().TaskTTLDuration())
 	s.tasks = st.Tasks("", s.viewer)
 	n, err := s.tasks.FailUnfinished(ctx, "The agent server restarted before this task finished. Send the message again.")
 	if err != nil {

@@ -217,6 +217,7 @@ var fields = []field{
 	operational(scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key })),
 	operational(scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval })),
 	operational(scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention })),
+	operational(scalar("task-ttl", false, func(c *Config) *string { return &c.TaskTTL })),
 }
 
 // unsetOnly are settings which `config unset` accepts besides the fields:

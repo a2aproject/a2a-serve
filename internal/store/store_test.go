@@ -547,16 +547,24 @@ func TestPrune(t *testing.T) {
 	start := time.Now()
 	now := start
 	s.now = func() time.Time { return now }
+	s.SetTaskTTL(24 * time.Hour)
 	ts := s.Tasks("", testViewer)
 	owner := asUser("owner")
 
-	finished := newTask("old", "c-old")
-	finished.Status.State = a2a.TaskStateCompleted
-	finished.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
-	for _, task := range []*a2a.Task{finished, newTask("running", "c-running")} {
-		if _, err := ts.Create(owner, task); err != nil {
-			t.Fatalf("Create() error = %v", err)
-		}
+	old := newTask("old", "c-old")
+	old.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
+	if _, err := ts.Create(owner, old); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := ts.Create(owner, newTask("running", "c-running")); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	now = start.Add(2 * time.Hour)
+	if _, err := ts.Update(owner, &taskstore.UpdateRequest{
+		Task:  newTask("running", "c-running"),
+		Event: a2a.NewStatusUpdateEvent(newTask("running", "c-running"), a2a.TaskStateInputRequired, nil),
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
 	}
 	for _, q := range []Question{
 		{ID: "q-old", Token: "t-old", TaskID: "old", ContextID: "c-old"},
@@ -578,7 +586,7 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("PutCode() error = %v", err)
 	}
 
-	now = start.Add(taskRetention + time.Hour)
+	now = start.Add(25 * time.Hour)
 	if err := s.PutCode(ctx, "FRESH", Code{Purpose: "pair", Expires: now.Add(time.Minute)}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
@@ -590,13 +598,13 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("Get() of a pruned task error = %v, want %v", err, a2a.ErrTaskNotFound)
 	}
 	if _, err := ts.Get(owner, "running"); err != nil {
-		t.Fatalf("Get() of an unfinished task error = %v", err)
+		t.Fatalf("Get() of a recently updated task error = %v", err)
 	}
 	if _, err := s.QuestionByID(ctx, "q-old"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("QuestionByID() of a pruned task error = %v, want %v", err, ErrNotFound)
 	}
 	if _, err := s.QuestionByID(ctx, "q-running"); err != nil {
-		t.Fatalf("QuestionByID() of an unfinished task error = %v", err)
+		t.Fatalf("QuestionByID() of a recently updated task error = %v", err)
 	}
 	if _, err := s.PendingQuestion(ctx, "telegram", "1"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("PendingQuestion() of a pruned question error = %v, want %v", err, ErrNotFound)

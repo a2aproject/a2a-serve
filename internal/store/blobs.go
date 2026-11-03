@@ -19,7 +19,6 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -36,56 +35,60 @@ type blob struct {
 	data []byte
 }
 
-// externalize returns a copy of task whose raw parts refer to blobs, and the
-// blobs. It doesn't change task.
-func externalize(task *a2a.Task) (*a2a.Task, []blob) {
-	var blobs []blob
-	part := func(p *a2a.Part) *a2a.Part {
-		raw := p.Raw()
-		if len(raw) == 0 {
-			return p
-		}
-		sum := sha256.Sum256(raw)
-		h := hex.EncodeToString(sum[:])
-		blobs = append(blobs, blob{hash: h, data: raw})
-		ref := *p
-		ref.Content = a2a.Raw{}
-		ref.Metadata = maps.Clone(p.Metadata)
-		if ref.Metadata == nil {
-			ref.Metadata = map[string]any{}
-		}
-		ref.Metadata[blobKey] = h
-		return &ref
+// externalizer replaces the raw parts of messages, artifacts and tasks with
+// references to blobs, collecting the blobs. It doesn't change its inputs.
+type externalizer struct{ blobs []blob }
+
+func (x *externalizer) part(p *a2a.Part) *a2a.Part {
+	raw := p.Raw()
+	if len(raw) == 0 {
+		return p
 	}
-	message := func(m *a2a.Message) *a2a.Message {
-		if m == nil {
-			return nil
-		}
-		parts, changed := replaceEach(m.Parts, part)
-		if !changed {
-			return m
-		}
-		ref := *m
-		ref.Parts = parts
-		return &ref
+	sum := sha256.Sum256(raw)
+	h := hex.EncodeToString(sum[:])
+	x.blobs = append(x.blobs, blob{hash: h, data: raw})
+	ref := *p
+	ref.Content = a2a.Raw{}
+	ref.Metadata = maps.Clone(p.Metadata)
+	if ref.Metadata == nil {
+		ref.Metadata = map[string]any{}
 	}
-	artifact := func(a *a2a.Artifact) *a2a.Artifact {
-		if a == nil {
-			return nil
-		}
-		parts, changed := replaceEach(a.Parts, part)
-		if !changed {
-			return a
-		}
-		ref := *a
-		ref.Parts = parts
-		return &ref
+	ref.Metadata[blobKey] = h
+	return &ref
+}
+
+func (x *externalizer) message(m *a2a.Message) *a2a.Message {
+	if m == nil {
+		return nil
 	}
+	parts, changed := replaceEach(m.Parts, x.part)
+	if !changed {
+		return m
+	}
+	ref := *m
+	ref.Parts = parts
+	return &ref
+}
+
+func (x *externalizer) artifact(a *a2a.Artifact) *a2a.Artifact {
+	if a == nil {
+		return nil
+	}
+	parts, changed := replaceEach(a.Parts, x.part)
+	if !changed {
+		return a
+	}
+	ref := *a
+	ref.Parts = parts
+	return &ref
+}
+
+func (x *externalizer) task(task *a2a.Task) *a2a.Task {
 	out := *task
-	out.Status.Message = message(task.Status.Message)
-	out.History, _ = replaceEach(task.History, message)
-	out.Artifacts, _ = replaceEach(task.Artifacts, artifact)
-	return &out, blobs
+	out.Status.Message = x.message(task.Status.Message)
+	out.History, _ = replaceEach(task.History, x.message)
+	out.Artifacts, _ = replaceEach(task.Artifacts, x.artifact)
+	return &out
 }
 
 // replaceEach maps the elements of in with f, cloning in on the first
@@ -105,44 +108,20 @@ func replaceEach[T comparable](in []T, f func(T) T) ([]T, bool) {
 	return out, changed
 }
 
-// saveBlobs stores the blobs of a task and drops its references to blobs
-// it no longer has. Blobs it already refers to aren't written again.
-func saveBlobs(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID, blobs []blob) error {
-	rows, err := tx.QueryContext(ctx, `SELECT hash FROM task_blobs WHERE scope = ? AND task_id = ?`, scope, string(taskID))
-	if err != nil {
-		return err
-	}
-	stale := map[string]bool{}
-	for rows.Next() {
-		var h string
-		if err := rows.Scan(&h); err != nil {
-			return errors.Join(err, rows.Close())
-		}
-		stale[h] = true
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return err
-	}
+// addBlobs stores the blobs of a task. Blobs stay referenced by the task
+// until it is pruned, because its events keep referring to them.
+func addBlobs(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID, blobs []blob) error {
 	saved := map[string]bool{}
 	for _, b := range blobs {
 		if saved[b.hash] {
 			continue
 		}
 		saved[b.hash] = true
-		if stale[b.hash] {
-			delete(stale, b.hash)
-			continue
-		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO blobs (hash, data) VALUES (?, ?) ON CONFLICT DO NOTHING`, b.hash, b.data); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `INSERT INTO task_blobs (scope, task_id, hash) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
 			scope, string(taskID), b.hash); err != nil {
-			return err
-		}
-	}
-	for h := range stale {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM task_blobs WHERE scope = ? AND task_id = ? AND hash = ?`, scope, string(taskID), h); err != nil {
 			return err
 		}
 	}

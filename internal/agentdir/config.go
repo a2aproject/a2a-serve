@@ -55,6 +55,9 @@ type Config struct {
 	Env []string `yaml:"env,omitempty" json:"env,omitempty"`
 	// Port is the localhost port. Zero picks a free port on first run.
 	Port int `yaml:"port,omitempty" json:"port,omitempty"`
+	// TaskTTL is how long tasks are kept after their last update, such as
+	// 30d. Default 30d.
+	TaskTTL string `yaml:"task_ttl,omitempty" json:"taskTTL,omitempty"`
 
 	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
 	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
@@ -92,6 +95,21 @@ const (
 	DefaultBackupInterval  = 24 * time.Hour
 	DefaultBackupRetention = 7 * 24 * time.Hour
 )
+
+// DefaultTaskTTL is how long tasks are kept after their last update.
+const DefaultTaskTTL = 30 * 24 * time.Hour
+
+// MinTaskTTL is the shortest task TTL, so that tasks waiting for input or
+// still running don't expire.
+const MinTaskTTL = time.Hour
+
+// TaskTTLDuration returns how long tasks are kept after their last update.
+func (c *Config) TaskTTLDuration() time.Duration {
+	if d, err := ParseDays(c.TaskTTL); err == nil {
+		return d
+	}
+	return DefaultTaskTTL
+}
 
 // ParseDays parses a Go duration, or a number of days such as 7d.
 func ParseDays(v string) (time.Duration, error) {
