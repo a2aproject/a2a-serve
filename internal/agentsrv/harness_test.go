@@ -57,7 +57,10 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "building fakeacp:", err)
 		os.Exit(1)
 	}
-	watchInterval, watchMaxInterval = 200*time.Millisecond, time.Second
+	watchInterval, watchMaxInterval = 50*time.Millisecond, 200*time.Millisecond
+	injectRetry = 50 * time.Millisecond
+	editInterval = 50 * time.Millisecond
+	scheduleMinWait = 10 * time.Millisecond
 	nodeWebhookRetries = []time.Duration{0, 100 * time.Millisecond}
 	channelRetryMin = 10 * time.Millisecond
 	googleauth.SharedClientID = "shared-app"
@@ -279,7 +282,6 @@ type fakeChannel struct {
 
 	mu    sync.Mutex
 	in    chan<- channel.Inbound
-	seq   int
 	msgs  map[string]channel.Outbound
 	order []string
 	ready chan struct{}
@@ -320,8 +322,10 @@ func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound) error 
 func (f *fakeChannel) Send(_ context.Context, m channel.Outbound) (channel.Ref, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.seq++
-	id := strconv.Itoa(f.seq)
+	msgSeq.Lock()
+	msgSeq.n++
+	id := strconv.Itoa(msgSeq.n)
+	msgSeq.Unlock()
 	f.msgs[id] = m
 	f.order = append(f.order, id)
 	return channel.Ref{Conv: m.Conv, ID: id}, nil

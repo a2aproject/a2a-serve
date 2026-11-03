@@ -31,7 +31,7 @@ import (
 )
 
 // editInterval throttles streaming edits; messengers rate-limit them.
-const editInterval = time.Second
+var editInterval = time.Second
 
 // renderer shows one task in a conversation. Channels which stream get one
 // message edited as the agent writes; others get questions and the result.

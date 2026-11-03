@@ -173,7 +173,7 @@ func TestRouterHandlesConversationInOrder(t *testing.T) {
 
 	slow := ts.ch.message("tg:1", "dm1", "remember red")
 	slow.Prepare = func(context.Context, *channel.Inbound) error {
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(200 * time.Millisecond)
 		return nil
 	}
 	ts.ch.deliver(slow)
@@ -197,7 +197,7 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
-	time.Sleep(500 * time.Millisecond)
+	time.Sleep(3 * injectRetry)
 	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))

@@ -94,7 +94,7 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
 	linkOwner(t, ts, "tg:1", "dm1")
-	at := time.Now().Add(2 * time.Second).Format(time.RFC3339)
+	at := time.Now().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
 
 	ts.ch.write("tg:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
 	ts.ch.waitFor(t, "dm1", hasText("Scheduled soon"))
