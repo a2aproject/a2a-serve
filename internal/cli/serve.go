@@ -182,7 +182,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 			if err != nil {
 				return "", err
 			}
-			return agentdir.ShellJoin(conf.AsCommand(secrets)), nil
+			return joinCommands(conf.Commands(secrets), "\n  "), nil
 		},
 	})
 	if err != nil {

@@ -148,15 +148,15 @@ type Request struct {
 // RegisterFlags adds the flags of a schedule to fs. owner adds the flags
 // only the owner can set.
 func (r *Request) RegisterFlags(fs *pflag.FlagSet, owner bool) {
-	fs.StringVar(&r.Cron, "cron", "", `Run on a cron expression, such as "0 7 * * 1-5", or @daily, @every 2h`)
-	fs.StringVar(&r.At, "at", "", `Run once, at a time such as "2026-11-06 17:00" or RFC 3339`)
-	fs.StringVar(&r.TZ, "tz", "", "Time zone of --cron and --at, such as Europe/Zurich (default: the server's)")
+	fs.StringVar(&r.Cron, "cron", "", "Run on a cron `expression` of five fields, such as \"0 7 * * 1-5\", or a descriptor such as @daily or @every 2h")
+	fs.StringVar(&r.At, "at", "", "Run once, at a `time` such as \"2026-11-06 17:00\" or RFC 3339")
+	fs.StringVar(&r.TZ, "tz", "", "Time `zone` of --cron and --at, such as Europe/Zurich (default: the server's)")
 	fs.StringVar(&r.Prompt, "prompt", "", "The prompt each run sends to the agent")
 	if !owner {
 		return
 	}
 	fs.StringVar(&r.As, "as", "", "Run as the owner or a pairing name (default: owner)")
-	fs.StringVar(&r.Deliver, "deliver", "", "Show the runs in a chat: <channel>[:<who>], such as telegram:owner (default: no chat)")
+	fs.StringVar(&r.Deliver, "deliver", "", "Show the runs in a chat: `channel[:who]`, such as telegram:owner (default: no chat)")
 	fs.StringVar(&r.Conversation, "conversation", ConversationNew, "Run in a new conversation each time, or continue the same one: new or same")
 }
 

@@ -41,8 +41,8 @@ type View struct {
 	Pending []string `json:"pending,omitempty" yaml:"pending,omitempty"`
 	// Invalid is why the config is invalid.
 	Invalid string `json:"invalid,omitempty" yaml:"invalid,omitempty"`
-	// Command is the `a2a serve` command which recreates the agent.
-	Command []string `json:"command" yaml:"command"`
+	// Commands are the `a2a serve` commands which recreate the agent.
+	Commands [][]string `json:"commands" yaml:"commands"`
 }
 
 // Show returns the effective config of the agent in d.
@@ -55,7 +55,7 @@ func Show(ctx context.Context, d agentdir.Dir) (*View, error) {
 	if err != nil {
 		return nil, err
 	}
-	v := &View{Dir: d.Root, Path: d.ConfigPath(), Config: cfg, Secrets: map[string]string{}, Command: cfg.AsCommand(stored)}
+	v := &View{Dir: d.Root, Path: d.ConfigPath(), Config: cfg, Secrets: map[string]string{}, Commands: cfg.Commands(stored)}
 	if err := d.CheckConfig(cfg, stored); err != nil {
 		v.Invalid = err.Error()
 	}

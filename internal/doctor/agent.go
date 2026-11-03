@@ -473,7 +473,7 @@ func channelChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.C
 		}
 		what, fix := kind+" bot token", fmt.Sprintf("a2a serve config set --%s -", kind)
 		if kind == agentdir.ChannelEmail {
-			what, fix = "email IMAP and SMTP login", "a2a serve config set --email-username <user> --email-password -"
+			what, fix = "email IMAP and SMTP login", "a2a serve channel add email --email-username <user> --email-password -"
 		}
 		r := Result{ID: kind}
 		if env.ValidateChannel == nil {

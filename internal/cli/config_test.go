@@ -233,9 +233,6 @@ func TestSecretReader(t *testing.T) {
 		flags settingsFlags
 		got   func(agentdir.Settings) string
 	}{
-		{name: "telegram", flags: settingsFlags{s: agentdir.Settings{Telegram: "-"}}, got: func(s agentdir.Settings) string { return s.Telegram }},
-		{name: "discord", flags: settingsFlags{s: agentdir.Settings{Discord: "-"}}, got: func(s agentdir.Settings) string { return s.Discord }},
-		{name: "email-password", flags: settingsFlags{email: agentdir.EmailSettings{Password: "-"}}, got: func(s agentdir.Settings) string { return s.Email.Password }},
 		{name: "tailscale-authkey", flags: settingsFlags{s: agentdir.Settings{TailscaleAuthKey: "-"}}, got: func(s agentdir.Settings) string { return s.TailscaleAuthKey }},
 		{name: "ngrok-authtoken", flags: settingsFlags{s: agentdir.Settings{NgrokAuthToken: "-"}}, got: func(s agentdir.Settings) string { return s.NgrokAuthToken }},
 		{name: "google-client-secret", flags: settingsFlags{s: agentdir.Settings{GoogleClientSecret: "-"}}, got: func(s agentdir.Settings) string { return s.GoogleClientSecret }},
@@ -358,7 +355,7 @@ func TestConfigShowAsCommandHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a serve config show --help error = %v", err)
 	}
-	if !regexp.MustCompile(`--as-command\s+Print the a2a serve run <harness> command`).MatchString(out) {
+	if !regexp.MustCompile(`--as-command\s+Print the a2a serve commands which`).MatchString(out) {
 		t.Fatalf("a2a serve config show --help = %q, want --as-command without a value name", out)
 	}
 }
@@ -368,5 +365,118 @@ func TestConfigInvalidOutput(t *testing.T) {
 	_, err := runCMD(t, "-o", "xml", "config")
 	if !isUsage(err) || !strings.Contains(err.Error(), "want text, json, jsonl or yaml") {
 		t.Fatalf("a2a serve -o xml config error = %v, want a usage error listing jsonl", err)
+	}
+}
+
+func TestSettingsFlagPlacement(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "operational on run", args: []string{"run", "opencode", "--memory", "8g"}, wantErr: "unknown flag: --memory"},
+		{name: "channel on run", args: []string{"run", "opencode", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
+		{name: "channel on config set", args: []string{"config", "set", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
+		{name: "email on config set", args: []string{"config", "set", "--email-address", "a@example.com"}, wantErr: "unknown flag: --email-address"},
+		{name: "quiet on config set", args: []string{"config", "set", "--quiet"}, wantErr: "unknown flag: --quiet"},
+		{name: "unset a channel", args: []string{"config", "unset", "telegram"}, wantErr: "a2a serve channel rm telegram"},
+		{name: "unknown tool kind", args: []string{"config", "set", "--allow-tools", "reed"}, wantErr: `invalid --allow-tools "reed"`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestToolKindsAreRepeatable(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if _, err := runCMD(t, "config", "set", "--allow-tools", "read,search", "--allow-tools", "fetch", "--deny-tools", "exec*", "--dir", d.Root); err != nil {
+		t.Fatalf("a2a serve config set --allow-tools error = %v", err)
+	}
+	got, err := d.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	want := agentdir.ApprovalsConfig{Allow: []string{"read", "search", "fetch"}, Deny: []string{"exec*"}}
+	if diff := cmp.Diff(want, got.Approvals); diff != "" {
+		t.Fatalf("a2a serve config set --allow-tools wrong approvals (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSettingsHelpSections(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		args   []string
+		want   []string
+		absent []string
+	}{
+		{
+			name:   "run harness",
+			args:   []string{"run", "opencode", "--help"},
+			want:   []string{"General:", "Workspace:", "Sandbox:", "Network:", "Approvals:", "Run (not saved):", "--detach", "--image", "(repeatable)"},
+			absent: []string{"--memory", "--telegram", "--harness"},
+		},
+		{
+			name:   "config set",
+			args:   []string{"config", "set", "--help"},
+			want:   []string{"General:", "--harness", "--memory", "--backup-key", "Flags:", "--dry-run"},
+			absent: []string{"Run (not saved):", "--telegram", "--quiet"},
+		},
+		{
+			name:   "local sandbox",
+			args:   []string{"config", "set", "--sandbox", "local", "--help"},
+			want:   []string{"--sandbox"},
+			absent: []string{"--image"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			out, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if err != nil {
+				t.Fatalf("a2a serve %s error = %v", strings.Join(tc.args, " "), err)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(out, want) {
+					t.Fatalf("a2a serve %s = %q, want %q", strings.Join(tc.args, " "), out, want)
+				}
+			}
+			for _, absent := range tc.absent {
+				if strings.Contains(out, absent) {
+					t.Fatalf("a2a serve %s = %q, want no %q", strings.Join(tc.args, " "), out, absent)
+				}
+			}
+		})
+	}
+}
+
+func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, nil)
+
+	if _, err := runCMD(t, "config", "set", "--dir", d.Root, "--harness", "opencode", "--name", "coder", "--memory", "8g"); err != nil {
+		t.Fatalf("a2a serve config set --harness in a new directory error = %v", err)
+	}
+
+	got, err := d.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	want := &agentdir.Config{Name: "coder", Harness: "opencode", Limits: agentdir.LimitsConfig{Memory: "8g"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("a2a serve config set --harness wrong config (-want +got) diff = %s", diff)
+	}
+	if _, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g"); !errors.Is(err, agentdir.ErrNotFound) {
+		t.Fatalf("a2a serve config set without --harness in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
 	}
 }

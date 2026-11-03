@@ -50,6 +50,9 @@ func TestValidate(t *testing.T) {
 		{name: "identity role", modify: func(c *Config) { c.Network.Identities = map[string]string{"anna": "admin"} }, wantErr: "invalid --identity anna=admin"},
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
 		{name: "cpus", modify: func(c *Config) { c.Limits.CPUs = "-1" }, wantErr: "invalid --cpus"},
+		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
+		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
+		{name: "unknown denied tool kind", modify: func(c *Config) { c.Approvals.Deny = []string{"shell"} }, wantErr: `invalid --deny-tools "shell"`},
 		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "needs --telegram"},
 		{name: "sign-in", modify: func(c *Config) {
 			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}

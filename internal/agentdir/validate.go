@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"path"
 	"os"
 	"regexp"
 	"slices"
@@ -164,11 +165,30 @@ func (c *Config) Validate() error {
 			errs = append(errs, err)
 		}
 	}
+	for flag, patterns := range map[string][]string{"allow-tools": c.Approvals.Allow, "deny-tools": c.Approvals.Deny} {
+		for _, p := range patterns {
+			if !matchesToolKind(p) {
+				add("invalid --%s %q: want ACP tool kinds (%s), or a glob such as *", flag, p, strings.Join(ToolKinds, ", "))
+			}
+		}
+	}
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
 		add("--google-client-id and --google-client-secret go together: they are your Google app")
 	}
 	errs = append(errs, c.Backup.validate()...)
 	return errors.Join(errs...)
+}
+
+// ToolKinds are the ACP tool kinds which --allow-tools and --deny-tools
+// match.
+var ToolKinds = []string{"read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"}
+
+// matchesToolKind reports whether the glob p matches an ACP tool kind.
+func matchesToolKind(p string) bool {
+	return slices.ContainsFunc(ToolKinds, func(kind string) bool {
+		ok, err := path.Match(p, kind)
+		return err == nil && ok
+	})
 }
 
 // validEmailEntry checks an --allow-email entry: an email or *@domain.

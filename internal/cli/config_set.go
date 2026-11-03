@@ -15,9 +15,12 @@
 package cli
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
@@ -29,8 +32,12 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
-		Short: "Change settings with the flags of `a2a serve run <harness>`",
-		Long: `Change settings with the flags of ` + "`a2a serve run <harness>`" + `. Scalars are
+		Short: "Change settings with the flags of `a2a serve run <harness>`, and the settings only it takes",
+		Long: `Change settings with the flags of ` + "`a2a serve run <harness>`" + `, and the
+operational settings only config set takes: limits, network-provider
+options, backups and Google sign-in. Messengers are set with
+` + "`a2a serve channel add`" + `. With --harness, config set also creates an
+agent, to be started with ` + "`a2a serve run`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
 and --allow-tools, --deny-tools and --approver by value. Remove entries with
@@ -38,11 +45,16 @@ and --allow-tools, --deny-tools and --approver by value. Remove entries with
 
 ` + secretref.Help,
 		Example: `  a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
-  a2a serve config set --telegram - --restart
+  a2a serve config set --tailscale-authkey - --restart
   a2a serve config set --mount ~/docs:/docs:ro --dry-run`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
+			// With --harness, a new agent is configured before its first
+			// start, such as with the credentials a headless start needs.
+			if errors.Is(err, agentdir.ErrNotFound) && flags.s.Harness != "" {
+				d, err = harnessDir(sf.dir)
+			}
 			if err != nil {
 				return err
 			}
@@ -63,7 +75,9 @@ and --allow-tools, --deny-tools and --approver by value. Remove entries with
 			return agentctl.Restart(cmd.Context(), d, false, cfg.Out)
 		},
 	}
-	flags.register(cmd, true)
+	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
+	cmd.SetUsageFunc(sectionedUsage)
+	hideImageForLocalSandbox(cmd, sf.agentDir)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, "Restart the running agent if a change needs it")

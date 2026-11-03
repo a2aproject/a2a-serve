@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 package cli
 
 import (
+	"log/slog"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -30,6 +31,35 @@ func (m *runMode) addRunFlags(f *pflag.FlagSet) {
 	f.BoolVar(&m.detach, "detach", false, "Run the agent in the background")
 	f.BoolVar(&m.service, "service", false, "Install and start the agent as a launchd or systemd user service")
 	f.BoolVar(&m.quiet, "quiet", false, quietUsage)
+	setSection(f, sectionRun, "detach", "service", "quiet")
+}
+
+// hideImageForLocalSandbox hides --image from the help of cmd when the
+// sandbox is local, given with --sandbox or saved in the agent of dir.
+func hideImageForLocalSandbox(cmd *cobra.Command, dir func() (agentdir.Dir, error)) {
+	help := cmd.HelpFunc()
+	cmd.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if sandboxIsLocal(c, dir) {
+			c.Flags().Lookup("image").Hidden = true
+		}
+		help(c, args)
+	})
+}
+
+func sandboxIsLocal(c *cobra.Command, dir func() (agentdir.Dir, error)) bool {
+	if v := c.Flags().Lookup("sandbox").Value.String(); v != "" {
+		return v == agentdir.SandboxLocal
+	}
+	d, err := dir()
+	if err != nil || !d.Exists() {
+		return false
+	}
+	conf, err := d.ReadConfig()
+	if err != nil {
+		slog.Debug("reading the config for help", "error", err)
+		return false
+	}
+	return conf.Sandbox == agentdir.SandboxLocal
 }
 
 func newRunCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {

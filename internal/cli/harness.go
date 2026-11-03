@@ -42,10 +42,13 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 	cmd := &cobra.Command{
 		Use:   name,
 		Short: short,
-		Long:  short + ". On the first run, saves the settings to .a2a/config.yaml; in an existing agent, changes them like `a2a serve config set`.\n\n" + secretref.Help,
-		Example: fmt.Sprintf(`  a2a serve %[1]s --name coder --secret OPENROUTER_API_KEY
-  a2a serve %[1]s --private tailscale --telegram env:CODER_BOT_TOKEN --detach
-  a2a serve %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
+		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
+existing agent, the flags change them like ` + "`a2a serve config set`" + `.
+
+` + secretref.Help,
+		Example: fmt.Sprintf(`  a2a serve run %[1]s --name coder --secret OPENROUTER_API_KEY
+  a2a serve run %[1]s --private tailscale --allow-tools read,search --detach
+  a2a serve run %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := harnessDir(sf.dir)
@@ -83,10 +86,13 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}
-	flags.register(cmd, false)
+	flags.register(cmd, coreSettings)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
 	mode.addRunFlags(f)
+	setSection(f, sectionRun, "dir")
+	cmd.SetUsageFunc(sectionedUsage)
+	hideImageForLocalSandbox(cmd, func() (agentdir.Dir, error) { return harnessDir(sf.dir) })
 	return cmd
 }
 

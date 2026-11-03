@@ -56,13 +56,19 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if args[0] != agentdir.ChannelEmail && token == "" {
 				return clierr.Usage("--token is required")
 			}
-			if token != "" {
-				ref, err := secretref.Parse("token", token, cfg.secretReader(cfg.stderr()))
+			r := cfg.secretReader(cfg.stderr())
+			for flag, dst := range map[string]*string{"token": &token, "email-password": &email.Password} {
+				if *dst == "" {
+					continue
+				}
+				ref, err := secretref.Parse(flag, *dst, r)
 				if err != nil {
 					return err
 				}
+				// Env and stored references stay references, which the
+				// settings store under their names.
 				if ref.Kind == secretref.Literal || ref.Kind == secretref.Prompted {
-					token = ref.Value
+					*dst = ref.Value
 				}
 			}
 			switch args[0] {

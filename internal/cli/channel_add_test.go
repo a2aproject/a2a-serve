@@ -57,8 +57,8 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 		{name: "mailbox list", args: []string{"mailbox", "list", "--token", "-"}, wantErr: "--token: empty secret"},
 		{name: "restore", args: []string{"restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
 		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
-		{name: "config set", args: []string{"config", "set", "--telegram", "-"}, wantErr: "--telegram: empty secret"},
-		{name: "harness", args: []string{"run", "opencode", "--discord", "-"}, wantErr: "--discord: empty secret"},
+		{name: "channel add email", args: []string{"channel", "add", "email", "--email-password", "-"}, wantErr: "--email-password: empty secret"},
+		{name: "config set", args: []string{"config", "set", "--ngrok-authtoken", "-"}, wantErr: "--ngrok-authtoken: empty secret"},
 		{name: "proxy auth", args: []string{"run", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
 	}
 	for _, tc := range tests {

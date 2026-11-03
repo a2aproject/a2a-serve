@@ -38,7 +38,7 @@ func newConfigCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Show and change the agent's settings",
 		Long: `Show and change the settings in .a2a/config.yaml with the flags of
 ` + "`a2a serve run <harness>`" + `. Every change is validated and printed as a diff. A
-running agent applies channels, the description and approvers at once;
+running agent applies the description and the approval settings at once;
 other settings wait for ` + "`a2a serve restart`" + `.
 
 Without a subcommand, shows the settings.`,

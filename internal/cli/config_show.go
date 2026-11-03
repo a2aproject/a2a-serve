@@ -35,7 +35,7 @@ type showFlags struct {
 
 func (f *showFlags) register(cmd *cobra.Command) {
 	cmd.Flags().BoolVar(&f.defaults, "defaults", false, "Also show the settings left at their defaults, with the default values")
-	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a serve run <harness> command which recreates the agent, with secrets as env:NAME")
+	cmd.Flags().BoolVar(&f.asCommand, "as-command", false, "Print the a2a serve commands which recreate the agent, with secrets as env:NAME")
 }
 
 func newConfigShowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -70,9 +70,9 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	}
 	switch {
 	case f.asCommand && cfg.IsJSON():
-		return cfg.PrintJSON(map[string][]string{"command": v.Command})
+		return cfg.PrintJSON(map[string][][]string{"commands": v.Commands})
 	case f.asCommand:
-		_, err := fmt.Fprintln(cfg.Out, agentdir.ShellJoin(v.Command))
+		_, err := fmt.Fprintln(cfg.Out, joinCommands(v.Commands, "\n"))
 		return err
 	case cfg.output == outputYAML:
 		data, err := yaml.Marshal(v)
@@ -191,6 +191,15 @@ func renderConfig(v *agentctl.View, all bool) string {
 		fmt.Fprintf(&sb, "! restart to apply %s: a2a serve restart\n", strings.Join(v.Pending, ", "))
 	}
 	return sb.String()
+}
+
+// joinCommands formats commands for a shell, one per line, separated by sep.
+func joinCommands(commands [][]string, sep string) string {
+	lines := make([]string, 0, len(commands))
+	for _, args := range commands {
+		lines = append(lines, agentdir.ShellJoin(args))
+	}
+	return strings.Join(lines, sep)
 }
 
 func formatMount(spec string) string {

@@ -100,9 +100,9 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "member", "Role: member (can talk) or owner (can also approve)")
+	f.StringVar(&req.Role, "role", "member", "`Role`: member (can talk) or owner (can also approve)")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
-	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\"; the value may end in env:VAR or - (repeatable)")
+	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	sf.addControlFlags(f)

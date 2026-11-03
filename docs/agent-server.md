@@ -152,7 +152,19 @@ be restarted from here: press Ctrl-C there and run `a2a serve run` again.
 ## Changing settings
 
 `a2a serve config set` takes the flags of `a2a serve run <harness>`, so the first
-run teaches the vocabulary for later changes. Every change is validated
+run teaches the vocabulary for later changes. It also takes the operational
+settings, which `run` doesn't: `--harness`, the container limits (`--memory`,
+`--cpus`, `--pids`), the network-provider options (`--tailscale-control-url`,
+`--tailscale-authkey`, `--ngrok-url`, `--ngrok-authtoken`, `--relay-token`),
+backups (`--backup`, `--backup-key`, `--backup-interval`,
+`--backup-retention`) and Google sign-in (`--allow-email`,
+`--google-client-id`, `--google-client-secret`). Messengers are set with
+`a2a serve channel add` (see [Messengers](#messengers)). With `--harness`,
+`config set` also creates an agent without starting it, for the settings a
+headless first start needs, such as `--tailscale-authkey`; `a2a serve run`
+starts it. The help of `run <harness>` and `config set` groups the flags in
+sections: General, Workspace, Sandbox, Network, Approvals, and Run (not
+saved). Every change is validated
 before it is saved, printed as a diff, and says whether it applies now or
 after a restart:
 
@@ -168,9 +180,9 @@ $ a2a serve config set --sandbox local --allow-tools read,search --secret ANTHRO
 | Command | What it does |
 | --- | --- |
 | `a2a serve config` | The same as `config show`. |
-| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the `a2a serve run <harness> …` command which recreates the agent, with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
+| `a2a serve config show [--defaults] [--as-command]` | The effective settings, with secrets as names and their state (`stored`, `missing`), and the settings changed since the running server started. `--defaults` also lists unset settings; `--as-command` prints the commands which recreate the agent (`run <harness>`, then `config set` and `channel add` for the settings only they take), with secrets as `env:NAME`. `-o json` and `-o yaml` for scripts. |
 | `a2a serve config set <flags> [--dry-run] [--restart]` | Validates, saves and prints the diff. `--dry-run` prints the diff only; `--restart` restarts a running agent when a change needs it. |
-| `a2a serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`; `email` removes the email channel. |
+| `a2a serve config unset <setting> [<entry>…]` | Removes entries from a list setting, the whole list without entries, or resets a setting to its default. `<setting>` is the flag name without `--`. Messengers are removed with `channel rm`. |
 | `a2a serve config edit` | Opens a copy of `config.yaml` in `$VISUAL` or `$EDITOR`. On save it is validated and applied; if it's invalid, it reopens with the errors on top, like `crontab -e`. |
 
 Scalars such as `--name`, `--sandbox`, `--private` or `--port` are
@@ -184,6 +196,13 @@ overwritten by `set` and reset by `unset`; `--private none` is the same as
 | `--mount src[:dst][:ro]` | destination | `config unset mount /docs` |
 | `--identity login=role` | login | `config unset identity anna@example.com` |
 | `--allow-tools`, `--deny-tools`, `--approver` | the value | `config unset allow-tools search` |
+
+Every list flag can be repeated. `--allow-tools`, `--deny-tools`,
+`--approver` and `--allow-email` also split values at commas; `--secret`,
+`--env`, `--mount` and `--identity` don't, since their values may contain
+commas. `--allow-tools` and `--deny-tools` take the ACP tool kinds `read`,
+`edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
+`switch_mode` and `other`, or a glob such as `*`.
 
 `unset secret NAME`, and unsetting a channel, also delete the value from
 `state/secrets`. `--secret NAME` is the name of an environment variable: it
@@ -208,8 +227,8 @@ The flags are `--telegram`, `--discord`, `--email-password`,
 --token`. `-` keeps tokens out of the shell history:
 
 ```sh
-a2a serve config set --telegram -
-pass show coder/bot | a2a serve config set --discord -
+a2a serve channel add telegram --token -
+pass show coder/bot | a2a serve channel add discord --token -
 ```
 
 Header values are the one exception: `pair invite --webhook-header` and
@@ -479,7 +498,6 @@ a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without th
 ## Messengers
 
 ```sh
-a2a serve run opencode --telegram env:CODER_BOT_TOKEN      # or later:
 a2a serve channel add telegram --token env:CODER_BOT_TOKEN
 a2a serve channel add discord --token env:CODER_DISCORD_TOKEN
 a2a serve channel add email --email-address coder@example.com \

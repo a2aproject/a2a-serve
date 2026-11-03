@@ -64,13 +64,16 @@ From the agent's project directory:
 
 ```bash
 mkdir -p ~/a2a-lesson2/coder && cd ~/a2a-lesson2/coder
-a2a serve run opencode --name coder --secret OPENROUTER_API_KEY \
-  --private tailscale --public tailscale \
-  --telegram env:CODER_BOT_TOKEN
+a2a serve config set --harness opencode --name coder --secret OPENROUTER_API_KEY \
+  --private tailscale --public tailscale
+a2a serve channel add telegram --token env:CODER_BOT_TOKEN
+a2a serve run
 ```
 
-`env:CODER_BOT_TOKEN` reads the token from your shell now and stores it in
-`.a2a/state/secrets`, so later runs don't need the variable.
+`config set --harness` creates the agent without starting it, and
+`channel add` connects the bot. `env:CODER_BOT_TOKEN` reads the token from
+your shell now and stores it in `.a2a/state/secrets`, so later runs don't
+need the variable.
 
 On the first run, the agent asks to join your tailnet:
 

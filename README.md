@@ -22,7 +22,8 @@
 
 ```bash
 cd ~/src/app
-a2a serve run opencode --secret OPENROUTER_API_KEY --private tailscale --telegram env:BOT_TOKEN
+a2a serve run opencode --secret OPENROUTER_API_KEY --private tailscale --detach
+a2a serve channel add telegram --token env:BOT_TOKEN
 ```
 
 This starts opencode in a Docker sandbox with the project mounted, gives it an HTTPS address on your tailnet, and connects a Telegram bot to it. Open the link it prints to make the chat yours, and edits and shell commands wait for your approval there. Send it work from a terminal, or invite someone else:

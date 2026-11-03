@@ -61,8 +61,9 @@ func TestUnset(t *testing.T) {
 		{setting: "allow-tools", entries: []string{"search"}, modify: func(c *Config) { c.Approvals.Allow = []string{"read"} }},
 		{setting: "identity", entries: []string{"anna"}, modify: func(c *Config) { c.Network.Identities = nil }},
 		{setting: "secret", entries: []string{"KEY"}, modify: func(c *Config) { c.Secrets = []string{"OTHER"} }, wantDeleted: []string{"KEY"}},
-		{setting: "telegram", modify: func(c *Config) { c.Channels.Telegram = nil }, wantDeleted: []string{SecretTelegram}},
-		{setting: "email", modify: func(c *Config) { c.Channels.Email = nil }, wantDeleted: []string{SecretEmailPassword}},
+		{setting: "telegram", wantErr: true},
+		{setting: "email", wantErr: true},
+		{setting: "email-password", wantErr: true},
 		{setting: "tailscale-authkey", modify: func(*Config) {}, wantDeleted: []string{SecretTailscaleKey}},
 		{setting: "env", entries: []string{"MISSING"}, wantErr: true},
 		{setting: "port", entries: []string{"1"}, wantErr: true},
@@ -116,7 +117,7 @@ func TestDiff(t *testing.T) {
 	}
 }
 
-func TestAsCommand(t *testing.T) {
+func TestCommands(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{
 		Name:     "coder",
@@ -127,11 +128,17 @@ func TestAsCommand(t *testing.T) {
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 		Backup:   BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
 	}
-	got := ShellJoin(cfg.AsCommand(Secrets{SecretNgrokToken: "n"}))
-	want := "a2a serve run acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok --telegram env:BOT " +
-		"--backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN"
-	if got != want {
-		t.Fatalf("AsCommand() = %q, want %q", got, want)
+	var got []string
+	for _, args := range cfg.Commands(Secrets{SecretNgrokToken: "n"}) {
+		got = append(got, ShellJoin(args))
+	}
+	want := []string{
+		"a2a serve run acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok",
+		"a2a serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN",
+		"a2a serve channel add telegram --token env:BOT",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Commands() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
