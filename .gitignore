@@ -62,3 +62,5 @@ Temporary Items
 # gitignore temporary AI worktree directories
 aiwt-*
 
+# Local builds
+bin/
