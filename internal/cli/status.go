@@ -85,6 +85,9 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	fmt.Fprintf(&sb, "  dir      %s\n  local    %s\n", st.Dir, st.Local)
 	if st.Private != "" {
 		fmt.Fprintf(&sb, "  private  %s\n", st.Private)
+		if st.PrivateNote != "" {
+			fmt.Fprintf(&sb, "  %-8s (%s)\n", "", st.PrivateNote)
+		}
 	}
 	if st.Public != "" {
 		fmt.Fprintf(&sb, "  public   %s\n", st.Public)
@@ -106,6 +109,33 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 		fmt.Fprintf(&sb, "  tasks    %s\n", strings.Join(states, ", "))
 	}
 	fmt.Fprintf(&sb, "  contacts %d, webhook nodes %d\n", st.Contacts, st.Nodes)
+	for _, m := range st.MCPServers {
+		line := m.Name + ": " + m.Summary
+		if len(m.Missing) > 0 {
+			line += fmt.Sprintf(" ! not passed to the harness, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
+		}
+		fmt.Fprintf(&sb, "  mcp      %s\n", line)
+	}
+	if len(st.Skills) > 0 {
+		names := make([]string, len(st.Skills))
+		for i, sk := range st.Skills {
+			names[i] = sk.Name
+		}
+		fmt.Fprintf(&sb, "  skills   %s\n", strings.Join(names, ", "))
+	}
+	if st.ProjectError != "" {
+		fmt.Fprintf(&sb, "  project  ! %s\n", st.ProjectError)
+	}
+	if b := st.Backup; b != nil {
+		last := "none yet"
+		if !b.Last.IsZero() {
+			last = "last " + b.Last.Local().Format("2006-01-02 15:04")
+		}
+		fmt.Fprintf(&sb, "  backup   %s, %s, next %s\n", b.To, last, b.Next.Local().Format("2006-01-02 15:04"))
+		if b.LastError != "" {
+			fmt.Fprintf(&sb, "  %-8s ! the last snapshot failed: %s\n", "", b.LastError)
+		}
+	}
 	if len(pending) > 0 {
 		fmt.Fprintf(&sb, "  pending  %s (a2a serve restart)\n", strings.Join(pending, ", "))
 	}

@@ -30,8 +30,9 @@ import (
 
 func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var (
-		req     controlapi.PairCodeRequest
-		headers []string
+		req        controlapi.PairCodeRequest
+		headers    []string
+		advertised bool
 	)
 	cmd := &cobra.Command{
 		Use:   "invite <name>",
@@ -47,11 +48,19 @@ webhook. The node pairs with the code the same way, answers with
 ` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. Inviting a node
 again issues a new code, for example after it lost its token; with --webhook
 it also updates the node, and its previous token stops working. Header
-values may be env:VAR.`,
+values may be env:VAR.
+
+--advertised tells every agent on the private network about the node: they
+list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
+` + "`a2a serve contact add <name>@<this agent>`" + `, with no code. Their calls go
+through this agent, which keeps the webhook's credentials, and it treats
+them like any other caller from the private network. --advertised=false
+stops advertising it, and so does ` + "`pair rm`" + `.`,
 		Example: `  a2a serve pair invite grok
   a2a serve pair invite anna --role owner
   a2a serve pair invite grok --webhook https://example.com/hooks/123 \
-    --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"`,
+    --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
+  a2a serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			req.Name = args[0]
@@ -66,6 +75,9 @@ values may be env:VAR.`,
 				return err
 			}
 			req.Headers = hdrs
+			if cmd.Flags().Changed("advertised") {
+				req.Advertised = &advertised
+			}
 			c, err := sf.control()
 			if err != nil {
 				return err
@@ -91,6 +103,7 @@ values may be env:VAR.`,
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\" (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
+	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	sf.addControlFlags(f)
 	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
 	return cmd
@@ -126,6 +139,9 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 			sb.WriteString("    " + l + "\n")
 		}
 		fmt.Fprintf(&sb, "\n  you can call it yourself at %s\n", resp.Node.URL)
+		if resp.Advertised {
+			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a serve contact add %s@<this agent>`\n", resp.Node.ID)
+		}
 	} else {
 		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller: %s\n", resp.Code, mins, resp.PairCommand)
 	}

@@ -64,6 +64,21 @@ type Settings struct {
 	// TailscaleAuthKey and NgrokAuthToken are env:VAR, secret:NAME or the value.
 	TailscaleAuthKey string
 	NgrokAuthToken   string
+	// RelayToken joins an Agent Mesh relay without signing in: env:VAR,
+	// secret:NAME or the value.
+	RelayToken string
+
+	// AllowEmails are added to the people who may sign in with Google.
+	AllowEmails    []string
+	GoogleClientID string
+	// GoogleClientSecret is env:VAR, secret:NAME or the value.
+	GoogleClientSecret string
+
+	Backup string
+	// BackupKey is env:VAR, secret:NAME or the value.
+	BackupKey       string
+	BackupInterval  string
+	BackupRetention string
 }
 
 // EmailSettings configure the email channel. Password is env:VAR,
@@ -85,6 +100,9 @@ const (
 	SecretEmailPassword = "EMAIL_PASSWORD"
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretNgrokToken    = "NGROK_AUTHTOKEN"
+	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
+	SecretRelayToken    = "RELAY_TOKEN"
+	SecretBackupKey     = "BACKUP_KEY"
 )
 
 // Apply merges the settings into cfg, an agent's config in d, and returns
@@ -109,6 +127,9 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	setNetwork(&cfg.Network.Public, s.Public)
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
 	set(&cfg.Network.NgrokURL, s.NgrokURL)
+	set(&cfg.Backup.To, s.Backup)
+	set(&cfg.Backup.Interval, s.BackupInterval)
+	set(&cfg.Backup.Retention, s.BackupRetention)
 	set(&cfg.Limits.Memory, s.Memory)
 	set(&cfg.Limits.CPUs, s.CPUs)
 	if s.PIDs != 0 {
@@ -149,6 +170,15 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	for _, v := range s.Approvers {
 		cfg.Approvals.Approvers = putKeyed(cfg.Approvals.Approvers, v, nil)
 	}
+	for _, v := range s.AllowEmails {
+		cfg.Auth.AllowEmails = putKeyed(cfg.Auth.AllowEmails, strings.TrimSpace(v), strings.ToLower)
+	}
+	if name, ok := strings.CutPrefix(s.GoogleClientID, "env:"); ok {
+		if s.GoogleClientID = os.Getenv(name); s.GoogleClientID == "" {
+			return nil, fmt.Errorf("--google-client-id: environment variable %s is empty", name)
+		}
+	}
+	set(&cfg.Auth.GoogleClientID, s.GoogleClientID)
 	for _, kv := range s.Identities {
 		login, role, ok := strings.Cut(kv, "=")
 		if !ok || login == "" {
@@ -192,6 +222,20 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		}
 		cfg.Channels.Discord = &DiscordConfig{Token: ref}
 	}
+	if s.GoogleClientSecret != "" {
+		ref, err := resolve(s.GoogleClientSecret, SecretGoogleClient)
+		if err != nil {
+			return nil, fmt.Errorf("--google-client-secret: %w", err)
+		}
+		cfg.Auth.GoogleClientSecret = ref
+	}
+	if s.BackupKey != "" {
+		ref, err := resolve(s.BackupKey, SecretBackupKey)
+		if err != nil {
+			return nil, fmt.Errorf("--backup-key: %w", err)
+		}
+		cfg.Backup.Key = ref
+	}
 	if e := s.Email; e != nil && *e != (EmailSettings{}) {
 		next := EmailConfig{}
 		if cfg.Channels.Email != nil {
@@ -213,7 +257,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		cfg.Channels.Email = &next
 	}
 	// Network providers read their secrets by well-known names.
-	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken} {
+	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken, SecretRelayToken: s.RelayToken} {
 		if v == "" {
 			continue
 		}

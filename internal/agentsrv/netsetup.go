@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -33,6 +34,7 @@ const (
 const (
 	SecretTailscaleAuthKey = "TS_AUTHKEY"
 	SecretNgrokAuthToken   = "NGROK_AUTHTOKEN"
+	SecretRelayToken       = "RELAY_TOKEN"
 )
 
 // setupNetwork creates the private and public providers from the config.
@@ -52,25 +54,50 @@ func (s *Server) setupNetwork(closers *stack) error {
 		}
 		return ts
 	}
-	switch cfg.Network.Private {
-	case "":
-	case ProviderTailscale:
+	// One relay serves both URLs when --private and --public name it.
+	var relay network.Provider
+	relayAt := func(u string) (network.Provider, error) {
+		if relay != nil {
+			return relay, nil
+		}
+		var err error
+		relay, err = network.NewRelay(network.RelayConfig{
+			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
+			StateDir: s.dir.AgentMeshDir(), Token: s.secrets[SecretRelayToken],
+			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),
+			Logf: s.logf,
+		})
+		return relay, err
+	}
+	var err error
+	switch {
+	case s.private != nil:
+	case cfg.Network.Private == "":
+	case network.IsRelayURL(cfg.Network.Private):
+		if s.private, err = relayAt(cfg.Network.Private); err != nil {
+			return err
+		}
+	case cfg.Network.Private == ProviderTailscale:
 		s.private = tailscale()
-	case ProviderLAN:
+	case cfg.Network.Private == ProviderLAN:
 		s.private = &network.LAN{AgentName: cfg.Name, Port: cfg.Network.LANPort}
 	default:
-		return fmt.Errorf("unknown private network %q: want tailscale or lan", cfg.Network.Private)
+		return fmt.Errorf("unknown private network %q: want tailscale, lan or a relay URL", cfg.Network.Private)
 	}
-	switch cfg.Network.Public {
-	case "":
-	case ProviderTailscale:
+	switch {
+	case cfg.Network.Public == "":
+	case network.IsRelayURL(cfg.Network.Public):
+		if s.public, err = relayAt(cfg.Network.Public); err != nil {
+			return err
+		}
+	case cfg.Network.Public == ProviderTailscale:
 		t := tailscale()
 		t.Funnel = true
 		s.public = t
-	case ProviderNgrok:
+	case cfg.Network.Public == ProviderNgrok:
 		s.public = &network.Ngrok{AuthToken: s.secrets[SecretNgrokAuthToken], URL: cfg.Network.NgrokURL, Description: "a2a serve " + cfg.Name}
 	default:
-		return fmt.Errorf("unknown public network %q: want tailscale or ngrok", cfg.Network.Public)
+		return fmt.Errorf("unknown public network %q: want tailscale, ngrok or a relay URL", cfg.Network.Public)
 	}
 	if s.private != nil {
 		closers.push(func(context.Context) error { return s.private.Close() })

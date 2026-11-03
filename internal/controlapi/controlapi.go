@@ -36,23 +36,52 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/schedule"
 )
 
 // Status describes a running agent server.
 type Status struct {
-	Name     string          `json:"name"`
-	Harness  string          `json:"harness"`
-	Dir      string          `json:"dir"`
-	PID      int             `json:"pid"`
-	Started  time.Time       `json:"started"`
-	Local    string          `json:"local"`
-	Private  string          `json:"private,omitempty"`
-	Public   string          `json:"public,omitempty"`
-	Channels []ChannelStatus `json:"channels,omitempty"`
-	Tasks    map[string]int  `json:"tasks"`
-	Owners   []string        `json:"owners,omitempty"`
-	Contacts int             `json:"contacts"`
-	Nodes    int             `json:"nodes"`
+	Name    string    `json:"name"`
+	Harness string    `json:"harness"`
+	Dir     string    `json:"dir"`
+	PID     int       `json:"pid"`
+	Started time.Time `json:"started"`
+	Local   string    `json:"local"`
+	Private string    `json:"private,omitempty"`
+	// PrivateNote explains a private URL people can't open, such as one on
+	// an Agent Mesh relay.
+	PrivateNote string          `json:"privateNote,omitempty"`
+	Public      string          `json:"public,omitempty"`
+	Channels    []ChannelStatus `json:"channels,omitempty"`
+	Tasks       map[string]int  `json:"tasks"`
+	Owners      []string        `json:"owners,omitempty"`
+	Contacts    int             `json:"contacts"`
+	Nodes       int             `json:"nodes"`
+	// MCPServers and Skills are what the project brings for the harness.
+	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
+	Skills     []project.Skill   `json:"skills,omitempty"`
+	// ProjectError is why the project's MCP servers or skills couldn't be read.
+	ProjectError string        `json:"projectError,omitempty"`
+	Backup       *BackupStatus `json:"backup,omitempty"`
+}
+
+// MCPServerStatus describes an MCP server of the project's .mcp.json.
+type MCPServerStatus struct {
+	Name    string `json:"name"`
+	Type    string `json:"type"`
+	Summary string `json:"summary"`
+	// Missing are the variables it references which have no value, so the
+	// harness doesn't get it.
+	Missing []string `json:"missing,omitempty"`
+}
+
+// BackupStatus describes the agent's backup snapshots.
+type BackupStatus struct {
+	To        string    `json:"to"`
+	Last      time.Time `json:"last,omitzero"`
+	LastError string    `json:"lastError,omitempty"`
+	Next      time.Time `json:"next,omitzero"`
 }
 
 // URL scopes of an agent.
@@ -115,6 +144,9 @@ type PairCodeRequest struct {
 	Webhook     string            `json:"webhook,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Description string            `json:"description,omitempty"`
+	// Advertised, when set, advertises the webhook node to the agents of the
+	// private network, or stops advertising it.
+	Advertised *bool `json:"advertised,omitempty"`
 }
 
 // PairCodeResponse carries a pairing code and how to use it.
@@ -124,6 +156,8 @@ type PairCodeResponse struct {
 	URL     string    `json:"url"`
 	// PairCommand is what the caller or the node runs to pair.
 	PairCommand string `json:"pairCommand"`
+	// Advertised is set when the request advertised the node.
+	Advertised bool `json:"advertised,omitempty"`
 	// Hints tell a person how to link a channel identity with the code.
 	Hints []string `json:"hints,omitempty"`
 	// Node is set for node codes.
@@ -411,4 +445,73 @@ func (c *Client) DeleteChannel(ctx context.Context, kind string) error {
 func (c *Client) Nodes(ctx context.Context) ([]NodeInfo, error) {
 	var out []NodeInfo
 	return out, c.do(ctx, http.MethodGet, "/nodes", nil, &out)
+}
+
+// ScheduleInfo describes a schedule.
+type ScheduleInfo struct {
+	Name   string    `json:"name"`
+	Cron   string    `json:"cron,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+	TZ     string    `json:"tz,omitempty"`
+	Prompt string    `json:"prompt"`
+	// User is the principal the runs are for.
+	User string `json:"user"`
+	// Deliver is the chat the runs are shown in, <channel>:<who>.
+	Deliver      string    `json:"deliver,omitempty"`
+	Conversation string    `json:"conversation"`
+	CreatedBy    string    `json:"createdBy"`
+	NextRun      time.Time `json:"nextRun,omitzero"`
+	LastRun      time.Time `json:"lastRun,omitzero"`
+	LastError    string    `json:"lastError,omitempty"`
+}
+
+// Schedules lists the schedules.
+func (c *Client) Schedules(ctx context.Context) ([]ScheduleInfo, error) {
+	var out []ScheduleInfo
+	return out, c.do(ctx, http.MethodGet, "/schedules", nil, &out)
+}
+
+// AddSchedule adds a schedule.
+func (c *Client) AddSchedule(ctx context.Context, req schedule.Request) (*ScheduleInfo, error) {
+	var out ScheduleInfo
+	return &out, c.do(ctx, http.MethodPost, "/schedules", req, &out)
+}
+
+// RunSchedule starts a run of a schedule now.
+func (c *Client) RunSchedule(ctx context.Context, name string) (*ScheduleInfo, error) {
+	var out ScheduleInfo
+	return &out, c.do(ctx, http.MethodPost, "/schedules/"+url.PathEscape(name)+"/run", nil, &out)
+}
+
+// DeleteSchedule removes a schedule.
+func (c *Client) DeleteSchedule(ctx context.Context, name string) error {
+	return c.do(ctx, http.MethodDelete, "/schedules/"+url.PathEscape(name), nil, nil)
+}
+
+// Advertisement is a pairing another agent of the private network
+// advertises, which this agent can add as the contact Key.
+type Advertisement struct {
+	Key         string    `json:"key"`
+	Name        string    `json:"name"`
+	Host        string    `json:"host"`
+	Description string    `json:"description,omitempty"`
+	Expires     time.Time `json:"expires"`
+}
+
+// Advertisements lists the pairings other agents advertise.
+func (c *Client) Advertisements(ctx context.Context) ([]Advertisement, error) {
+	var out []Advertisement
+	return out, c.do(ctx, http.MethodGet, "/advertisements", nil, &out)
+}
+
+// InspectorLogin opens the web inspector once: Path is relative to the
+// agent's local or private URL.
+type InspectorLogin struct {
+	Path string `json:"path"`
+}
+
+// InspectorLogin mints a one-time login link of the web inspector.
+func (c *Client) InspectorLogin(ctx context.Context) (*InspectorLogin, error) {
+	var out InspectorLogin
+	return &out, c.do(ctx, http.MethodPost, "/inspector/login", nil, &out)
 }

@@ -1,0 +1,105 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package cli
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/backup"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
+)
+
+func newRestoreCmd(cfg *globalConfig) *cobra.Command {
+	var (
+		dir, snapshot, key string
+		takeOver           bool
+	)
+	cmd := &cobra.Command{
+		Use:   "restore <backup-destination>",
+		Short: "Recreate an agent from a backup snapshot",
+		Long: `Recreate an agent's .a2a directory from a snapshot taken by
+"a2a serve backup": its database, config, secrets and harness home. The
+latest snapshot is used unless --snapshot names one.
+
+The network identity (the tailnet machine or the Agent Mesh node) is restored
+only with --take-over, so the old and the new host don't run as the same
+machine. Without it, the agent joins the network as a new machine on its
+first start. Stop the agent
+on the old host before taking over.`,
+		Example: "  a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if dir == "" {
+				wd, err := os.Getwd()
+				if err != nil {
+					return err
+				}
+				dir = wd
+			}
+			passphrase, err := restoreKey(cfg, key)
+			if err != nil {
+				return err
+			}
+			dest, err := backup.Open(args[0], nil)
+			if err != nil {
+				return clierr.Usage(err.Error())
+			}
+			if snapshot == "" {
+				latest, err := backup.Latest(cmd.Context(), dest)
+				if err != nil {
+					return fmt.Errorf("%s: %w", args[0], err)
+				}
+				snapshot = latest.Name
+			}
+			if err := backup.Restore(cmd.Context(), dest, snapshot, passphrase, dir, takeOver); err != nil {
+				return err
+			}
+			if cfg.IsJSON() {
+				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver})
+			}
+			_, err = fmt.Fprintf(cfg.Out, "✓ restored %s into %s\n  check it with `a2a serve doctor`, then start it with `a2a serve`\n", snapshot, dir)
+			return err
+		},
+	}
+	f := cmd.Flags()
+	f.StringVar(&dir, "dir", "", "Directory of the restored agent (default: the current directory)")
+	f.StringVar(&snapshot, "snapshot", "", "Snapshot to restore (default: the latest)")
+	f.StringVar(&key, "backup-key", "", "The backup key: env:VAR, - to read it, or the value")
+	f.BoolVar(&takeOver, "take-over", false, "Also restore the network identity; stop the agent on the old host first")
+	return cmd
+}
+
+func restoreKey(cfg *globalConfig, v string) (string, error) {
+	switch {
+	case v == "":
+		return "", clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
+	case v == stdinSecret:
+		return newSecretReader(cfg.stderr()).read("--backup-key")
+	case strings.HasPrefix(v, "env:"):
+		name := strings.TrimPrefix(v, "env:")
+		if val := os.Getenv(name); val != "" {
+			return val, nil
+		}
+		return "", clierr.Usage(fmt.Sprintf("--backup-key: environment variable %s is empty", name))
+	case strings.HasPrefix(v, agentdir.SecretPrefix):
+		return "", clierr.Usage("--backup-key: a restore has no stored secrets yet; pass env:VAR, - or the value")
+	}
+	return v, nil
+}

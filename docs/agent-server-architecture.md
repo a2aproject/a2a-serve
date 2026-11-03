@@ -1,7 +1,7 @@
 # Agent server: summary and architecture
 
 > [!WARNING]
-> Alpha. This describes the current design; it may change.
+> Pre-1.0. This describes the current design; it may change.
 
 How to use it is in the [agent server guide](agent-server.md). This page is
 about how it works.
@@ -40,15 +40,19 @@ Code, or any `--command`) into an A2A agent:
 
 | Component | What it does | Code |
 | --- | --- | --- |
-| Listeners | localhost, private (tsnet or LAN with mDNS), public (Funnel or ngrok), the control socket, and the harness listener. | `internal/network`, `agentsrv/netsetup.go`, `agentsrv/control.go`; the control API is `internal/controlapi` |
-| Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token. | `internal/auth` |
+| Listeners | localhost, private (tsnet, LAN with mDNS, or an Agent Mesh relay), public (Funnel, ngrok, or a relay), the control socket, and the harness listener. | `internal/network`, `agentsrv/netsetup.go`, `agentsrv/control.go`; the control API is `internal/controlapi` |
+| Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token, including the tokens the agent issues after a Google sign-in, which it checks against the allowlist on every use. | `internal/auth`, `agentsrv/oauth.go`, `internal/googleauth` |
 | A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/mailbox/api`. Tasks are stored in SQLite. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
 | Router | Runs the messenger channels, maps a conversation to an A2A context, renders streaming answers and approval buttons. | `agentsrv/router.go`, `internal/channel/*` |
-| Executor | `a2aacp` from a2a-go: one ACP session per A2A context, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go` |
+| Executor | `a2aacp` from a2a-go: one ACP session per A2A context, created with the MCP servers of the project's `.mcp.json`, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go`, `agentsrv/project.go`, `internal/project` |
 | Approvals | Stores questions, decides who may answer, sends answers to the task here or at another agent, serves `/hitl/<token>`. | `agentsrv/approvals` |
 | Sandbox | `docker run` with the workspace, `state/home` as `/home/agent`, dropped capabilities and limits; or the host with `--sandbox local`. Images are pulled, or built from Dockerfiles in the binary. `harness.Prepare` turns a spec into the command to start. | `internal/harness` |
 | Peers proxy | Serves contacts and nodes to the harness as A2A agents under `/<handle>/<agent>`, guards approvals, watches tasks. Keeps one A2A client per contact. | `agentsrv/agents.go`, `agentsrv/peers.go` |
 | Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
+| Schedules | Run a prompt as a user on a cron expression or once, posted into a conversation as a new turn. The harness manages its own through the built-in `schedules` agent at its agents URL. | `agentsrv/schedules.go`, `agentsrv/schedules_agent.go`, `internal/schedule` |
+| Advertised pairings | A gossiped table of the webhook nodes agents advertise to the private network, kept in `state/ads.json`; `contact add <node>@<agent>` calls one through its host. | `internal/gossip`, `agentsrv/ads.go` |
+| Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a serve restore`. | `internal/backup`, `agentsrv/backups.go` |
+| Inspector | A read-only web page of conversations, tasks and state, where the owner also answers approvals. `a2a serve open` mints a one-time login code over the control socket; the session is a cookie with a CSRF token. Served on the local and private listeners only. | `agentsrv/inspector.go`, `agentsrv/inspector_pages.go` |
 | CLI | `a2a serve ...` on the server side, `a2a serve tokens` and `a2a serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
 
 The state is all in the agent directory:
@@ -57,7 +61,7 @@ The state is all in the agent directory:
 .a2a/
 ├── config.yaml        # flags of the first run; secrets as secret:NAME references
 └── state/
-    ├── server.db      # tasks, ACP sessions, tokens, links, contacts, nodes, questions, handles, watches
+    ├── server.db      # tasks, ACP sessions, tokens, links, contacts, nodes, questions, handles, watches, schedules
     ├── secrets        # mode 0600
     ├── tsnet/         # the agent's tailnet machine
     ├── home/          # the harness's /home/agent

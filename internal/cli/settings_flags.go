@@ -55,8 +55,8 @@ func (sf *settingsFlags) register(cmd *cobra.Command, withHarness bool) {
 	f.StringVar(&s.Workspace, "workspace", "", "Workspace directory: src[:dst][:ro] (default: the directory holding .a2a)")
 	f.StringArrayVar(&s.Mounts, "mount", nil, "Extra directory to mount: src[:dst][:ro], keyed by dst (repeatable)")
 	f.StringArrayVar(&s.Env, "env", nil, "Extra NAME=value for the harness, keyed by NAME (repeatable)")
-	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan or none")
-	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok or none")
+	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan, the URL of an Agent Mesh relay, or none")
+	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok, the URL of an Agent Mesh relay, or none")
 	f.StringVar(&s.Telegram, "telegram", "", "Telegram bot token: env:VAR, - to read it, or the token")
 	f.StringVar(&s.Discord, "discord", "", "Discord bot token: env:VAR, - to read it, or the token")
 	registerEmailFlags(f, &sf.email, "password, env:VAR, - to read it, or the value")
@@ -75,6 +75,14 @@ func (sf *settingsFlags) register(cmd *cobra.Command, withHarness bool) {
 	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", "Tailscale auth key, env:VAR, - to read it, or the key, to join without the login link")
 	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
 	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", "ngrok authtoken, env:VAR, - to read it, or the token")
+	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, "People who may call the agent after signing in with Google: emails, or *@domain for a Google Workspace domain")
+	f.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of your own Google app for sign-in (optional)")
+	f.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of your own Google app: env:VAR, - to read it, or the value")
+	f.StringVar(&s.RelayToken, "relay-token", "", "Join token of an Agent Mesh relay, env:VAR, - to read it, or the token, to join without the sign-in link")
+	f.StringVar(&s.Backup, "backup", "", "Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix")
+	f.StringVar(&s.BackupKey, "backup-key", "", "Passphrase the snapshots are encrypted with: env:VAR, - to read it, or the value; keep a copy away from the backups")
+	f.StringVar(&s.BackupInterval, "backup-interval", "", "Time between snapshots, such as 1h (default 24h)")
+	f.StringVar(&s.BackupRetention, "backup-retention", "", "How long snapshots are kept, such as 7d; the latest is always kept (default 7d)")
 	must(cmd.RegisterFlagCompletionFunc("private", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkLAN, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNgrok, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("sandbox", fixedCompletions(agentdir.SandboxDocker, agentdir.SandboxLocal)))
@@ -155,6 +163,9 @@ func (sf *settingsFlags) settings(r *secretReader) (agentdir.Settings, error) {
 		{"email-password", &email.Password},
 		{"tailscale-authkey", &s.TailscaleAuthKey},
 		{"ngrok-authtoken", &s.NgrokAuthToken},
+		{"google-client-secret", &s.GoogleClientSecret},
+		{"relay-token", &s.RelayToken},
+		{"backup-key", &s.BackupKey},
 	} {
 		if *v.dst != stdinSecret {
 			continue

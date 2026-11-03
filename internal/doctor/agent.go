@@ -23,9 +23,13 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 const (
@@ -49,8 +53,13 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 			results = append(results, Result{ID: "secrets", Status: StatusFail, Message: err.Error(), Fix: fixEdit})
 		} else {
 			results = append(results, checkSecrets(cfg, secrets)...)
+			results = append(results, checkMCP(d, cfg, secrets)...)
 		}
 		results = append(results, checkMounts(d, cfg)...)
+		results = append(results, checkRelay(ctx, env, cfg, online)...)
+		if r, ok := checkBackupCLI(env, cfg); ok {
+			results = append(results, r)
+		}
 	}
 	state, stateOpen := checkState(d)
 	if stateOpen {
@@ -104,6 +113,8 @@ func secretRefs(cfg *agentdir.Config) []secretRef {
 	if e := cfg.Channels.Email; e != nil {
 		refs = append(refs, secretRef{"email-password", e.Password})
 	}
+	refs = append(refs, secretRef{"google-client-secret", cfg.Auth.GoogleClientSecret})
+	refs = append(refs, secretRef{"backup-key", cfg.Backup.Key})
 	var out []secretRef
 	for _, r := range refs {
 		if strings.HasPrefix(r.value, agentdir.SecretPrefix) {
@@ -142,6 +153,97 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 		results = append(results, Result{ID: "secrets", Status: StatusOK, Message: fmt.Sprintf("%d %s stored", n, plural(n, "secret", "secrets"))})
 	}
 	return results
+}
+
+// checkMCP reports the MCP servers of the project's .mcp.json which reference
+// variables without a value, since the harness doesn't get them.
+func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
+	ws, err := d.WorkspaceMount(cfg)
+	if err != nil {
+		return nil
+	}
+	servers, err := project.LoadMCP(ws.Src)
+	if err != nil {
+		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the harness gets none of the project's MCP servers"}}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	vars := project.Vars(cfg, secrets)
+	var results []Result
+	for _, srv := range servers {
+		_, missing := srv.Resolve(vars)
+		if len(missing) == 0 {
+			continue
+		}
+		fix := make([]string, len(missing))
+		for i, name := range missing {
+			fix[i] = "--secret " + name
+		}
+		results = append(results, Result{
+			ID:      "mcp",
+			Status:  StatusWarn,
+			Message: fmt.Sprintf("MCP server %s needs %s", srv.Name, strings.Join(missing, ", ")),
+			Detail:  "the harness doesn't get it until they have a value",
+			Fix:     "a2a serve config set " + strings.Join(fix, " "),
+		})
+	}
+	if len(results) == 0 {
+		return []Result{{ID: "mcp", Status: StatusOK, Message: fmt.Sprintf("%d MCP servers in %s", len(servers), project.MCPFile)}}
+	}
+	return results
+}
+
+// checkRelay checks an Agent Mesh relay the agent joins: that this
+// a2a-serve can join one, and with --online that the relay answers.
+func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool) []Result {
+	relay := cfg.Network.Private
+	if !network.IsRelayURL(relay) {
+		relay = cfg.Network.Public
+	}
+	if !network.IsRelayURL(relay) {
+		return nil
+	}
+	if !network.AgentMeshBuilt {
+		return []Result{{ID: "relay", Status: StatusFail, Message: "this a2a-serve was built without Agent Mesh, so it can't join " + relay,
+			Fix: "go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"}}
+	}
+	version := Result{ID: "relay", Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", relay, network.AgentMeshVersion),
+		Detail: "relays don't report their Agent Mesh version yet; run " + network.AgentMeshVersion + " there"}
+	if !online || env.HTTP == nil {
+		return []Result{version}
+	}
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(relay, "/")+"/healthz", nil)
+	if err != nil {
+		return []Result{{ID: "relay", Status: StatusFail, Message: err.Error()}}
+	}
+	resp, err := env.HTTP.Do(req)
+	if err != nil {
+		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s is unreachable: %v", relay, err)}}
+	}
+	if err := resp.Body.Close(); err != nil {
+		slog.Debug("closing the relay's health response", "error", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s answers %s", relay, resp.Status)}}
+	}
+	return []Result{version}
+}
+
+// checkBackupCLI checks that the CLI the backup destination needs is
+// installed.
+func checkBackupCLI(env Env, cfg *agentdir.Config) (Result, bool) {
+	cli := backup.CLI(cfg.Backup.To)
+	if cli == "" {
+		return Result{}, false
+	}
+	if _, err := env.LookPath(cli); err != nil {
+		return Result{ID: "backup", Status: StatusFail, Message: fmt.Sprintf("backups to %s need the %s CLI, which is not on PATH", cfg.Backup.To, cli),
+			Detail: "install it and sign in, so it finds credentials the usual way"}, true
+	}
+	return Result{ID: "backup", Status: StatusOK, Message: fmt.Sprintf("backups to %s use %s", cfg.Backup.To, cli)}, true
 }
 
 // checkMounts reports mounts whose source doesn't exist.

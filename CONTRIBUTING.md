@@ -84,3 +84,14 @@ go test -tags e2e ./e2e/...
 ```
 
 Add a test there when a change affects a journey across commands or processes.
+
+## Releases
+
+Releases are cut by [release-please](https://github.com/googleapis/release-please)
+from the Conventional Commits on `main`: it keeps a release pull request up to
+date, and merging it tags the release. [GoReleaser](https://goreleaser.com)
+(`.goreleaser.yaml`) then attaches the binaries for Linux, macOS and Windows
+with their checksums, and opens a pull request with the Homebrew formula in the
+`a2aproject/a2a-cli` tap. The winget manifest is generated but not published
+until Windows is supported. Try the build locally with
+`goreleaser release --snapshot --clean --skip=publish`.

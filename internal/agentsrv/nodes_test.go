@@ -93,26 +93,26 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
-	if resp.Node == nil || resp.PairCommand != "a2a serve tokens add "+ts.localURL()+" "+resp.Code {
+	if resp.Node == nil || resp.PairCommand != "a2a serve tokens add "+ts.srv.bestURL()+" "+resp.Code {
 		t.Fatalf("Pair() = %+v, want a node code and its pair command", resp)
 	}
-	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", id, ts.localURL(), ts.localURL(), resp.Code)
+	wantInstructions := fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", id, ts.srv.bestURL(), ts.srv.bestURL(), resp.Code)
 	if diff := cmp.Diff(wantInstructions, resp.Instructions); diff != "" {
 		t.Fatalf("Pair() wrong instructions (-want +got) diff = %s", diff)
 	}
-	paired, err := credstore.Pair(ctx, http.DefaultClient, ts.localURL(), resp.Code)
+	paired, err := credstore.Pair(ctx, http.DefaultClient, ts.srv.bestURL(), resp.Code)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
-	if paired.Kind != credstore.KindNode || paired.URL != ts.localURL()+"/n/"+id {
-		t.Fatalf("Pair() = %+v, want a node token for %s/n/%s", paired, ts.localURL(), id)
+	if paired.Kind != credstore.KindNode || paired.URL != ts.srv.bestURL()+"/n/"+id {
+		t.Fatalf("Pair() = %+v, want a node token for %s/n/%s", paired, ts.srv.bestURL(), id)
 	}
 	client, err := mailboxapi.NodeClient(paired.Token)
 	if err != nil {
 		t.Fatalf("NodeClient() error = %v", err)
 	}
-	if base, nodeID, _ := mailboxapi.ParseNodeToken(paired.Token); nodeID != id || base != mailboxapi.APIBase(ts.localURL()) {
-		t.Fatalf("ParseNodeToken() = %q, %q, want %q, %q", base, nodeID, mailboxapi.APIBase(ts.localURL()), id)
+	if base, nodeID, _ := mailboxapi.ParseNodeToken(paired.Token); nodeID != id || base != mailboxapi.APIBase(ts.srv.bestURL()) {
+		t.Fatalf("ParseNodeToken() = %q, %q, want %q, %q", base, nodeID, mailboxapi.APIBase(ts.srv.bestURL()), id)
 	}
 	node.mu.Lock()
 	node.client = client

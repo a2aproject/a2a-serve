@@ -33,6 +33,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // fakeMachine is a machine on which every tool works and is configured.
@@ -433,6 +435,10 @@ func newAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
 	return d
 }
 
+// relayStatus is how doctor sees a relay offline: fine when the build can
+// join one.
+var relayStatus = map[bool]Status{true: StatusOK, false: StatusFail}[network.AgentMeshBuilt]
+
 func TestAgentChecks(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -535,6 +541,74 @@ func TestAgentChecks(t *testing.T) {
 				}
 			},
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusFail}, {"secrets", StatusFail}, {"mounts", StatusFail}, {"running", StatusWarn}},
+		},
+		{
+			name: "project MCP servers",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Secrets: []string{"GH_TOKEN"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := d.SaveSecrets(agentdir.Secrets{"GH_TOKEN": "x"}); err != nil {
+					t.Fatalf("SaveSecrets() error = %v", err)
+				}
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusOK}, {"mcp", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "project MCP servers without values",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}, "api": {"url": "https://x/${KEY}"}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"mcp", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
+			name: "invalid project MCP file",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte("{"), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusFail}, {"running", StatusWarn}},
+		},
+		{
+			name: "relay without Agent Mesh in the build",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"relay", relayStatus}, {"running", StatusWarn}},
+		},
+		{
+			name: "backups to GCS",
+			cfg: agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
+				Backup: agentdir.BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				m.paths["gcloud"] = "/usr/bin/gcloud"
+				if err := d.SaveSecrets(agentdir.Secrets{"BACKUP_KEY": "k"}); err != nil {
+					t.Fatalf("SaveSecrets() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusOK}, {"backup", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "backups to S3 without the aws CLI or the key",
+			cfg: agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
+				Backup: agentdir.BackupConfig{To: "s3://bucket/coder", Key: "secret:BACKUP_KEY"}},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"secrets", StatusFail}, {"backup", StatusFail}, {"running", StatusWarn}},
 		},
 		{
 			name: "state readable by others",

@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Run modes.
@@ -104,6 +105,9 @@ type Options struct {
 	// Command validates the settings and returns the `a2a serve <harness>`
 	// command which creates the same agent, shown before saving.
 	Command func(agentdir.Settings) (string, error)
+	// Workspace is the project directory, whose MCP servers and skills are
+	// shown. Empty skips them.
+	Workspace string
 }
 
 // Run asks for the settings of a new agent.
@@ -164,6 +168,10 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 		}
 	}
 
+	if err := p.project(opts, s); err != nil {
+		return res, err
+	}
+
 	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale", "lan"}, "none"); err != nil {
 		return res, err
 	}
@@ -195,6 +203,89 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 		return res, nil
 	}
 	return res, p.confirm(res, opts.Command)
+}
+
+// project shows the MCP servers and skills of the project, and asks for the
+// variables its MCP servers need which aren't passed to the agent yet.
+func (p *prompter) project(opts Options, s *agentdir.Settings) error {
+	if opts.Workspace == "" {
+		return nil
+	}
+	servers, err := project.LoadMCP(opts.Workspace)
+	if err != nil {
+		_, err = fmt.Fprintf(p.out, "  ! %v; the agent gets none of its MCP servers until it is fixed\n", err)
+		return err
+	}
+	skills, err := project.Skills(opts.Workspace)
+	if err != nil {
+		return err
+	}
+	if len(skills) > 0 {
+		names := make([]string, len(skills))
+		for i, sk := range skills {
+			names[i] = sk.Name
+		}
+		if _, err := fmt.Fprintf(p.out, "  The project's skills work with every harness: %s\n", strings.Join(names, ", ")); err != nil {
+			return err
+		}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(p.out, "  The project's %s has MCP servers, which run in the sandbox:\n", project.MCPFile); err != nil {
+		return err
+	}
+	passed := func(name string) (string, bool) {
+		if slices.Contains(s.Secrets, name) {
+			return "", true
+		}
+		return "", false
+	}
+	for _, srv := range servers {
+		if _, err := fmt.Fprintf(p.out, "    %s: %s\n", srv.Name, srv.Summary()); err != nil {
+			return err
+		}
+		_, missing := srv.Resolve(passed)
+		for _, name := range missing {
+			if slices.Contains(s.Secrets, name) {
+				continue
+			}
+			if err := p.mcpVar(opts, s, srv.Name, name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// mcpVar asks for the value of a variable an MCP server needs: from this
+// shell if it is set there, or typed in.
+func (p *prompter) mcpVar(opts Options, s *agentdir.Settings, server, name string) error {
+	if opts.Getenv(name) != "" {
+		v, err := p.choose(fmt.Sprintf("  Pass %s from this shell for %s", name, server), []string{"y", "n"}, "y")
+		if err != nil || v != "y" {
+			return err
+		}
+		s.Secrets = append(s.Secrets, name)
+		return nil
+	}
+	question := fmt.Sprintf("  %s for %s (empty to skip)", name, server)
+	var v string
+	var err error
+	if opts.ReadSecret != nil {
+		v, err = opts.ReadSecret(question)
+	} else {
+		v, err = p.ask(question, "")
+	}
+	if err != nil || v == "" {
+		return err
+	}
+	if s.SecretValues == nil {
+		s.SecretValues = agentdir.Secrets{}
+	}
+	s.SecretValues[name] = v
+	s.Secrets = append(s.Secrets, name)
+	return nil
 }
 
 // sandbox asks where the agent runs, defaulting to local without Docker.

@@ -1,7 +1,9 @@
 # Agent server: `a2a serve <harness>`
 
 > [!WARNING]
-> Alpha. Commands, flags and stored state may change.
+> Pre-1.0. Commands, flags and `config.yaml` keys may change; stored state
+> always migrates forward ([upgrades](upgrades.md)). See the
+> [security page](security.md) for what the sandbox protects.
 
 `a2a serve` runs one coding agent per process, started from its project
 directory. The agent runs in Docker, is reachable over A2A, from Telegram,
@@ -245,6 +247,49 @@ change it.
 Not in this version: an egress proxy and credential injection. The container
 can reach the network, and API keys passed with `--secret` are visible inside it.
 
+## Project MCP servers and skills
+
+The agent gets the MCP servers and skills of its project, as the harness does
+when you run it in that directory.
+
+- **MCP servers.** The server reads `.mcp.json` from the workspace and passes
+  its servers to the harness over ACP when a conversation starts, so every
+  ACP harness gets them. Edits apply to the next conversation.
+
+  ```json
+  {"mcpServers": {
+    "github": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-github"],
+               "env": {"GITHUB_PERSONAL_ACCESS_TOKEN": "${GITHUB_TOKEN}"}},
+    "docs":   {"type": "http", "url": "https://docs.example.com/mcp",
+               "headers": {"Authorization": "Bearer ${DOCS_TOKEN}"}}
+  }}
+  ```
+
+  `${VAR}` and `${VAR:-default}` take their values from the agent's `--secret`
+  and `--env` values, so tokens stay out of the file:
+  `a2a serve config set --secret GITHUB_TOKEN`. Other secrets, such as bot
+  tokens, can't be referenced. A server with a variable that has no value is
+  left out; `status` and `doctor` name the variables.
+- **Where they run.** Servers that start a command run inside the sandbox, as
+  children of the harness. The harness images have `npx`, `python3` and
+  `uvx`.
+- **Skills.** Skills in `.claude/skills`, `.opencode/skills` and
+  `.agents/skills` work with every harness profile. opencode reads all three;
+  for Claude Code, the server links the skills of the other two folders into
+  `~/.claude/skills` in the harness home when it starts. A skill in
+  `.claude/skills` wins over one with the same name elsewhere. With
+  `--sandbox local` the harness uses your own home, which the server doesn't
+  change, so only the folders the harness reads itself work.
+- `a2a serve status` lists the MCP servers and skills the agent found.
+
+Like `config.yaml`, a project's `.mcp.json` decides what runs inside the
+sandbox. The harness can edit it, and the change applies to the next
+conversation.
+
+Not in this version: limiting a server to the conversations of chosen roles,
+adding the tokens of HTTP servers outside the sandbox, and the MCP servers and
+skills in your home directory on the host.
+
 ## Approvals
 
 The harness is configured so that every tool call that changes something asks
@@ -266,6 +311,25 @@ Answer with a message on the same task: the option ID or label, `approve`,
   without asking.
 - Every question also has a page, `/hitl/<token>`, linked from email approvals.
 
+## Inspector
+
+`a2a serve open` opens a page where the owner sees what the agent is doing:
+
+- conversations and their tasks, with messages and artifacts, read-only;
+- pending approvals, with a button for each option;
+- the agent's URLs, task counts, messengers, pairings, webhook nodes and
+  contacts, as `a2a serve status` shows them.
+
+The command mints a one-time login link over the control socket, so only
+someone with access to the agent directory can open it. The link works once,
+for 5 minutes, and the session lasts 12 hours or until the agent restarts.
+The page is served on the local URL, and with `open --private` on the private
+network; never on the public URL. `--no-browser` prints the link instead of
+opening it.
+
+Not in this version: files, live logs, backups, and changing settings from the
+page.
+
 ## Who can call the agent
 
 | Caller | How it is recognized | Principal |
@@ -275,6 +339,7 @@ Answer with a message on the same task: the option ID or label, `approve`,
 | Your machines on the tailnet | Tailscale `WhoIs`: the same user as the agent | `user:owner` |
 | Other tailnet users | `--identity login=role` (`network.identities` in `config.yaml`), or the `a2aproject.org/cap/a2a` app capability | `user:<login>` |
 | Anyone else, on any listener | Bearer token from pairing | `pair:<name>` |
+| People on the allowlist | Signed in with Google, see [Google sign-in](#google-sign-in) | `google:<email>` |
 | [Webhook nodes](#webhook-nodes) | Their node token, as members | `node:<name>` |
 
 ```sh
@@ -293,6 +358,46 @@ The owner token the server saves for this machine is listed as `local`.
 `a2a serve pair rm local` revokes it, and the next start issues a new one;
 the name `local` can't be invited.
 
+## Google sign-in
+
+People can call the agent after signing in with Google, limited to an email
+allowlist, with no pairing command:
+
+```sh
+a2a serve config set --allow-email mom@example.com,'*@example.com'
+a2a serve config set --google-client-id env:GOOGLE_CLIENT_ID \
+  --google-client-secret env:GOOGLE_CLIENT_SECRET
+a2a send -a https://coder.example.com "hi"      # signs in once
+```
+
+- The agent is its own OAuth authorization server and issues its own access
+  tokens, which work only at this agent. A request without a token gets a
+  `401` whose `WWW-Authenticate` header points to
+  `/.well-known/oauth-protected-resource`, and from there to the agent's
+  authorization server metadata. A client follows it, signs the user in and
+  retries ([a2aproject/a2a-cli#98](https://github.com/a2aproject/a2a-cli/issues/98)).
+- With your own Google app (`--google-client-id` and
+  `--google-client-secret`), clients use `/oauth/authorize` with PKCE and a
+  loopback redirect; Google sends the user back to `<agent-url>/oauth/callback`,
+  which must be an authorized redirect URI of the app. Use the URL people call
+  the agent at, usually the public one.
+- Without your own app, clients sign in with the A2A project's shared app and
+  trade the Google ID token at `/oauth/token` (token exchange). The token's
+  nonce must be a hash of the agent's URL, so an agent of the same app can't
+  reuse a caller's token elsewhere. This works once the shared app exists and
+  clients support it.
+- The agent checks that the email is verified and on the allowlist.
+  `*@example.com` matches only accounts of the example.com Google Workspace:
+  anyone can create a personal Google account with an @example.com address.
+- People who sign in are members. Removing an email from the allowlist
+  (`a2a serve config unset allow-email <entry>`) cuts them off at their next
+  request; `a2a serve pair rm google:<email>` revokes their tokens.
+- The allowlist belongs to the agent's auth, so it works the same on Funnel,
+  ngrok or your own domain.
+
+Not in this version: providers other than Google, and browser sign-in with
+the shared app.
+
 ## Networks
 
 | Flag | Reachable from | Identity |
@@ -302,6 +407,8 @@ the name `local` can't be invited.
 | `--private lan` | the local network, over plain HTTP; peers found with mDNS | pairing tokens |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public ngrok` | the internet, `--ngrok-url` for a reserved domain | pairing tokens |
+| `--private https://relay…` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's verified identity |
+| `--public https://relay…` | the internet, at a URL on the relay | pairing tokens |
 
 Each agent joins the tailnet as its own machine with
 [tsnet](https://tailscale.com/kb/1244/tsnet), even when the computer already
@@ -310,6 +417,44 @@ runs Tailscale. On the first run it prints a login link, or use
 admin console. HTTPS must be enabled in the tailnet, and Funnel needs the
 `funnel` node attribute in the tailnet policy. `--tailscale-control-url` points
 at Headscale.
+
+### Agent Mesh relays (experimental)
+
+An agent can join an [Agent Mesh](https://github.com/google/agentmesh) relay
+and needs no Tailscale account. Agents on the relay call each other from
+anywhere, including from behind NAT, and each can get a public URL on the
+relay:
+
+```sh
+a2a serve opencode --private https://relay.example.com --public https://relay.example.com
+# first run: → sign in to the relay https://relay.example.com: https://…
+a2a serve config set --relay-token env:RELAY_TOKEN    # servers: join without the link
+```
+
+- Name the relay by its URL; there are no other relay flags. The agent runs
+  Agent Mesh's `meshnet` library in-process and keeps its identity in
+  `state/agentmesh`, so it keeps its URLs across restarts.
+- The first run prints a sign-in link to the relay's identity provider, as
+  with Tailscale. `--relay-token` joins with a token instead.
+- Agents signed in as the same person treat each other as the owner, as on a
+  tailnet. Other agents on the relay are members, recognized like other
+  callers of a private network (`--identity <email>=member`). Agents which
+  joined with a token don't say who owns them.
+- The public URL forwards requests unchanged, so pairing codes and Google
+  sign-in work there.
+- The private URL (`http://agentmesh.local/mesh/<peer>/a2a/<name>`) works only
+  from other a2a-serve agents on the relay; `url` and `status` say so. Give
+  people the public URL.
+- Source builds need `-tags agentmesh`
+  (`go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`). It
+  adds about 36 MB to the binary and many Go modules, so release binaries
+  leave it out until `meshnet` is a separate Go module. Without it, a relay
+  URL fails with that hint.
+- This build joins relays with Agent Mesh v0.2.0. `doctor` checks that the
+  build supports relays and, with `--online`, that the relay answers; relays
+  don't report their version yet.
+
+[Lesson 3](../examples/03-agentmesh-relay/) runs two agents on a relay.
 
 ## Messengers
 
@@ -388,6 +533,44 @@ a2a serve contact rm coder
   with buttons. The answer goes back to the remote task, and its result is
   posted into the conversation. The harness itself can't answer approvals.
 
+## Schedules
+
+A schedule runs a prompt with no person on the other side: a weekday
+briefing, triage every two hours, a reminder on Friday at 5.
+
+```sh
+a2a serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
+  --prompt "Summarize today's meetings." --deliver telegram:owner
+a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --conversation same
+a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --deliver telegram
+a2a serve schedule list
+a2a serve schedule run morning-brief   # run it now
+a2a serve schedule rm morning-brief
+```
+
+- Each run is an ordinary A2A task, run as `--as` (the owner by default, or a
+  pairing name). `--cron` takes five fields or a descriptor such as `@daily`
+  or `@every 2h`; `--at` runs once and then removes the schedule. `--tz`
+  defaults to the server's time zone.
+- `--deliver <channel>[:<who>]` shows each run in that user's direct chat on
+  the channel, with its approval requests. The run becomes the chat's
+  conversation, so replying continues it. With `--conversation new` (the
+  default) every run starts a new conversation; with `same` it continues the
+  chat's current one.
+- A run missed while the agent was stopped runs once when it starts.
+
+The harness creates schedules too. When a user asks "remind me on Friday at
+5", the harness calls the built-in `schedules` agent at its agents URL
+(`a2a send -a http://a2a/<handle>/schedules 'add …'`, as the `a2a-agents`
+skill describes). That schedule runs as the user who asked and reports back
+in the same conversation. A user's conversation can list and remove only the
+schedules they made or run as; the owner sees all of them with
+`a2a serve schedule list`. Calls that came through another agent can't
+manage schedules.
+
+Not in this version: schedules in `config.yaml`, and editing a schedule in
+place (remove it and add it again).
+
 ## Webhook nodes
 
 An agent can host agents that only run when woken, such as a Grok Bot
@@ -423,6 +606,35 @@ Nodes set up before mailboxes were called that keep working: `a2a-serve relay
 reply|task|inbox`, the `/relay/…` routes and `$A2A_RELAY_TOKEN` are still
 accepted, and will be removed in a later release.
 
+### Advertised pairings
+
+Only the agent that made a pairing can use it. With `--advertised`, every
+agent on the private network learns about a webhook node and can call it
+through its host:
+
+```sh
+a2a serve pair invite grok --webhook https://… --advertised   # on Ben's agent
+a2a serve peers                                               # on Anna's agent: lists grok@ben
+a2a serve contact add grok@ben                                # no code needed
+```
+
+- Each agent keeps a table of advertisements in `state/ads.json`: its own and
+  the ones it heard of. Every minute it swaps the names and versions it knows
+  with up to three random agents on the private network (`POST /gossip` on
+  the private listener), and each downloads the entries the other has newer.
+  After a few rounds every agent has every entry, including agents which
+  were offline or can't reach the host.
+- The host renews its entries every hour, and an entry nobody renews
+  disappears after a day, so the entries of a deleted agent go away.
+  `pair rm grok` or `pair invite grok --advertised=false` marks the entry as
+  removed, and the removal spreads the same way.
+- Anna's calls go to Ben's agent at `/n/grok`, found by Ben's name on the
+  private network, never at an address taken from the advertisement. Ben's
+  agent forwards them to the node and keeps the webhook's credentials. It
+  treats Anna's agent like any other caller from the private network: Anna's
+  login needs a role there (`--identity` or the Tailscale app capability),
+  and an advertised node takes members as well as owners.
+
 ## Output and exit codes
 
 Management commands take `-o json` or `-o jsonl`. `status -o json` has the same
@@ -457,11 +669,53 @@ Served on every listener:
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
+| `/inspect/…` | the owner's web inspector (`a2a serve open`); local and private listeners only |
 | `/n/<node>/…` | webhook nodes |
 | `/mailbox/api/…` | the node API used by `a2a serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
+
+## Backups
+
+An agent's conversations, pairings and harness sessions live in `.a2a/` on
+one machine. Backups keep encrypted snapshots of them elsewhere, so the agent
+survives the loss of the machine and moves to another host.
+
+```sh
+a2a serve config set --backup gs://my-bucket/agents/coder --backup-key env:BACKUP_KEY --backup-interval 1h
+a2a serve backup now
+a2a serve backup list
+a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY
+```
+
+- A snapshot holds a consistent copy of `server.db` (made with SQLite's
+  `VACUUM INTO`), `config.yaml`, `state/secrets`, the advertised pairings in
+  `state/ads.json`, `state/home` without its caches (`.cache`, `.npm`), and the
+  network identity in `state/tsnet` and `state/agentmesh`. The workspace isn't
+  included: it is usually in git.
+- `--backup` is a directory, `gs://bucket/prefix` or `s3://bucket/prefix`.
+  Google Cloud Storage and S3 go through the `gcloud` and `aws` CLIs, which
+  find credentials the usual way (`gcloud auth application-default login`,
+  `AWS_PROFILE`, instance metadata); `doctor` checks that the CLI is
+  installed.
+- Snapshots are always encrypted with `--backup-key`, using a key derived with
+  scrypt and AES-256-GCM. The key is stored with the agent's secrets; keep a
+  copy somewhere other than the backups, since a restore needs it.
+- A running agent takes a snapshot every `--backup-interval` (default 24h),
+  the first one an interval after the latest stored snapshot. Snapshots older
+  than `--backup-retention` (default 7d) are removed, and the latest one is
+  always kept. `status` shows the last and the next snapshot.
+- `a2a serve restore` recreates the `.a2a` directory from the latest snapshot,
+  or `--snapshot <name>`. The network identity is restored only with
+  `--take-over`, so the old and the new host don't run as the same tailnet
+  machine; stop the agent on the old host first. Without it, the agent joins
+  the network as a new machine.
+
+Not in this version: continuous replication (snapshots are periodic, so the
+changes since the last one are lost with the machine), and native Cloud
+Storage and S3 clients.
 
 ## Command reference
 
@@ -473,6 +727,7 @@ Served on every listener:
 | `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
+| `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
 | `serve pair invite <who> [--role owner]` | Create a one-time code for a caller or a messenger account. The user running the server needs none: the server saves an owner token for its local URL. |
 | `serve pair invite <id> --webhook <url>` | Host a webhook node and create its code; without `--webhook`, a new code for an existing node. |
 | `serve pair list` / `pair rm <name>` | List callers and nodes, or revoke a caller / remove a node. |
@@ -480,9 +735,11 @@ Served on every listener:
 | `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper and makes state files private. `-o json`. |
 | `serve credential get` | The credential helper for the `a2a` CLI. |
 | `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
-| `serve peers` | Agents found on the private network. |
+| `serve peers` | Agents found on the private network, and the webhook nodes they advertise (`pair invite --advertised`), which `contact add <node>@<agent>` adds without a code. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
 | `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
+| `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |
+| `serve backup now\|list` / `serve restore <dest>` | Encrypted snapshots of the agent's state to a directory, `gs://` or `s3://`, taken every `--backup-interval`; restore recreates the agent on another host. |
 | `serve mailbox reply\|task\|list` | Commands a webhook node runs: the agent holds its tasks in a mailbox until it wakes. |
 | `serve echo` / `proxy <agent-url>` / `script '<command>'` | A local test server: echo the message, forward to another agent, or run a shell command per message (stdin is the message, stdout the reply; `--stream`, `--chunk <delim>`). |
 
@@ -512,6 +769,15 @@ approvals:
   allow: [read, search]
   approvers: [pair:anna]
 limits: {memory: 8g, cpus: "4", pids: 1024}
+auth:                            # --allow-email, --google-client-id, --google-client-secret
+  allow_emails: [mom@example.com, "*@example.com"]
+  google_client_id: 1234.apps.googleusercontent.com
+  google_client_secret: secret:GOOGLE_CLIENT_SECRET
+backup:                          # --backup, --backup-key, --backup-interval, --backup-retention
+  to: gs://my-bucket/agents/coder
+  key: secret:BACKUP_KEY
+  interval: 1h
+  retention: 7d
 ```
 
 Configs from earlier versions, in which the first of `mounts` is the

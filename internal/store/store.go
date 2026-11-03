@@ -104,6 +104,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, `ALTER TABLE watches ADD COLUMN failing_since INTEGER NOT NULL DEFAULT 0`)
 		return err
 	},
+	// 6: schedules, which run a prompt on a cron expression or once.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV6)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -184,6 +189,15 @@ CREATE TABLE task_blobs (
 CREATE INDEX task_blobs_hash ON task_blobs (hash);
 CREATE INDEX tasks_state_updated ON tasks (state, updated);
 CREATE INDEX tasks_context_any_scope ON tasks (context_id);
+`
+
+const schemaV6 = `
+CREATE TABLE schedules (
+	name TEXT PRIMARY KEY, cron TEXT NOT NULL DEFAULT '', at INTEGER NOT NULL DEFAULT 0, tz TEXT NOT NULL DEFAULT '',
+	prompt TEXT NOT NULL, user_id TEXT NOT NULL, deliver_channel TEXT NOT NULL DEFAULT '',
+	deliver_user TEXT NOT NULL DEFAULT '', conversation TEXT NOT NULL, context_id TEXT NOT NULL DEFAULT '',
+	created_by TEXT NOT NULL, created INTEGER NOT NULL, next_run INTEGER NOT NULL DEFAULT 0,
+	last_run INTEGER NOT NULL DEFAULT 0, last_error TEXT NOT NULL DEFAULT '');
 `
 
 func (s *Store) migrate(ctx context.Context) error {

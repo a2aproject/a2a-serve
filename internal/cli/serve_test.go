@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +184,38 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "contact", "list", "--dir", dir); err != nil || !strings.Contains(out, "no contacts; add one with") {
 		t.Fatalf("a2a serve contact list = %q, %v, want a hint to add one", out, err)
 	}
+	if out, err := runCMDWithCreds(t, creds, "schedule", "add", "brief", "--cron", "0 7 * * 1-5", "--tz", "Europe/Zurich", "--prompt", "hello", "--dir", dir); err != nil || !strings.Contains(out, "added schedule brief; next run") {
+		t.Fatalf("a2a serve schedule add = %q, %v, want the schedule added", out, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "schedule", "list", "--dir", dir); err != nil || !strings.Contains(out, "0 7 * * 1-5 (Europe/Zurich)") {
+		t.Fatalf("a2a serve schedule list = %q, %v, want brief", out, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "schedule", "run", "brief", "--dir", dir); err != nil || !strings.Contains(out, "started a run of brief") {
+		t.Fatalf("a2a serve schedule run = %q, %v, want a run started", out, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "schedule", "rm", "brief", "--dir", dir); err != nil || out != `{"kind":"schedule","name":"brief","removed":true}`+"\n" {
+		t.Fatalf("a2a serve -o jsonl schedule rm = %q, %v, want brief removed", out, err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "schedule", "rm", "brief", "--dir", dir); err == nil {
+		t.Fatalf("a2a serve schedule rm of a removed schedule error = nil, want error")
+	}
+	out, err = runCMDWithCreds(t, creds, "-o", "json", "open", "--dir", dir)
+	var inspector struct {
+		URL string `json:"url"`
+	}
+	if err != nil || json.Unmarshal([]byte(out), &inspector) != nil || !strings.HasPrefix(inspector.URL, status.Local+"/inspect/login?code=") {
+		t.Fatalf("a2a serve open -o json = %q, %v, want a login link on the local URL", out, err)
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	if resp, err := noRedirect.Get(inspector.URL); err != nil || resp.StatusCode != http.StatusSeeOther || len(resp.Cookies()) != 1 || resp.Body.Close() != nil {
+		t.Fatalf("GET the inspector login link = %v, %v, want a session and a redirect to the inspector", resp, err)
+	}
+	if out, err := runCMDWithCreds(t, creds, "open", "--no-browser", "--dir", dir); err != nil || !strings.Contains(out, "open this link once") {
+		t.Fatalf("a2a serve open --no-browser = %q, %v, want the link", out, err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "open", "--private", "--no-browser", "--dir", dir); err == nil || !strings.Contains(err.Error(), "has no private URL") {
+		t.Fatalf("a2a serve open --private error = %v, want no private URL", err)
+	}
 	if out, err := runCMDWithCreds(t, creds, "pair"); err != nil || !strings.Contains(out, "invite") {
 		t.Fatalf("a2a serve pair = %q, %v, want help listing invite", out, err)
 	}
@@ -286,6 +319,8 @@ func TestServeUsageErrors(t *testing.T) {
 		{name: "pair tokens", args: []string{"pair", "tokens"}, wantErr: "run `a2a serve tokens list`"},
 		{name: "pair forget", args: []string{"pair", "forget", agentURL}, wantErr: "run `a2a serve tokens rm " + agentURL + "`"},
 		{name: "dir on a command without an agent", args: []string{"tokens", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
+		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
+		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},
 		{name: "timeout on a command without requests", args: []string{"logs", "--timeout", "1s"}, wantErr: "unknown flag: --timeout"},
 	}
 	for _, tc := range tests {
