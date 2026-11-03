@@ -50,7 +50,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 			if err != nil {
 				return err
 			}
-			s, err := flags.settings(newSecretReader(cfg.stderr()))
+			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
@@ -77,6 +77,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a serve status)\n", res.Name)
 				return err
 			}
+			mode.created = res.Created
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}

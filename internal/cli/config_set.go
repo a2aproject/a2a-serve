@@ -48,7 +48,7 @@ prompt without echo, or from stdin, keeping it out of the shell history.`,
 			if err != nil {
 				return err
 			}
-			s, err := flags.settings(newSecretReader(cfg.stderr()))
+			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}

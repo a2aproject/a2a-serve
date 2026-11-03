@@ -166,37 +166,24 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 	}
 }
 
-func TestNodeAPIAtLegacyRelayPath(t *testing.T) {
+func TestNodeSkill(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
-	node := addNode(t, ts, "grok", 0)
-	node.mu.Lock()
-	token := node.client.Token
-	node.mu.Unlock()
+	path := mailboxapi.Prefix + "/skill.md"
 
-	legacy := &mailboxapi.Client{BaseURL: ts.localURL() + mailboxapi.LegacyPrefix, Token: token}
-	info, err := legacy.Node(context.Background())
+	resp, err := http.Get(ts.localURL() + path)
 	if err != nil {
-		t.Fatalf("Client.Node() at %s error = %v", mailboxapi.LegacyPrefix, err)
+		t.Fatalf("GET %s error = %v", path, err)
 	}
-	if info.ID != "grok" {
-		t.Fatalf("Client.Node() at %s = %+v, want grok", mailboxapi.LegacyPrefix, info)
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
 	}
-	for _, path := range []string{mailboxapi.Prefix + "/skill.md", mailboxapi.LegacyPrefix + "/skill.md"} {
-		resp, err := http.Get(ts.localURL() + path)
-		if err != nil {
-			t.Fatalf("GET %s error = %v", path, err)
-		}
-		body, err := io.ReadAll(resp.Body)
-		if err != nil {
-			t.Fatalf("reading %s: %v", path, err)
-		}
-		if err := resp.Body.Close(); err != nil {
-			t.Fatalf("closing %s: %v", path, err)
-		}
-		if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "name: a2a-mailbox") {
-			t.Fatalf("GET %s = %d %q, want the a2a-mailbox skill", path, resp.StatusCode, body)
-		}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("closing %s: %v", path, err)
+	}
+	if resp.StatusCode != http.StatusOK || !strings.Contains(string(body), "name: a2a-mailbox") {
+		t.Fatalf("GET %s = %d %q, want the a2a-mailbox skill", path, resp.StatusCode, body)
 	}
 }
 

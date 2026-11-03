@@ -602,10 +602,6 @@ The node token also authenticates A2A calls to the agent, as the member
 `a2a send -a <agent-url> "…"` attaches the token saved by `a2a serve tokens add`, or
 `$A2A_NODE_TOKEN`. `pair rm grok` revokes both directions.
 
-Nodes set up before mailboxes were called that keep working: `a2a-serve relay
-reply|task|inbox`, the `/relay/…` routes and `$A2A_RELAY_TOKEN` are still
-accepted, and will be removed in a later release.
-
 ### Advertised pairings
 
 Only the agent that made a pairing can use it. With `--advertised`, every

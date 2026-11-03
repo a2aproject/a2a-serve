@@ -109,12 +109,10 @@ func TestCredentialGetNodeTokenFromEnv(t *testing.T) {
 		token string
 	}{
 		{name: "node token", env: mailboxapi.EnvNodeToken, token: mailboxapi.NewNodeToken(mailboxapi.APIBase("https://agent.example.com"), "grok", "secret")},
-		{name: "legacy relay token", env: mailboxapi.LegacyEnvNodeToken, token: mailboxapi.NewNodeToken("https://agent.example.com/relay", "grok", "secret")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(mailboxapi.EnvNodeToken, "")
-			t.Setenv(mailboxapi.LegacyEnvNodeToken, "")
 			t.Setenv(tc.env, tc.token)
 			creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 			got, err := credentialGet(t, creds, `{"uri": "https://agent.example.com"}`)

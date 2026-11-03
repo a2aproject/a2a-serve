@@ -45,7 +45,9 @@ type globalConfig struct {
 	// timeout bounds the HTTP requests of tokens add and the mailbox commands.
 	timeout time.Duration
 
-	errOut        io.Writer
+	errOut io.Writer
+	// stdin overrides os.Stdin for secret values read with -, for tests.
+	stdin         *os.File
 	httpTransport http.RoundTripper
 	// credentials overrides the store of `a2a serve tokens add` tokens, for tests.
 	credentials *credstore.Store
@@ -58,6 +60,15 @@ func (g *globalConfig) stderr() io.Writer {
 		return g.errOut
 	}
 	return os.Stderr
+}
+
+// secretReader returns a reader of secret values which prompts on prompt.
+func (g *globalConfig) secretReader(prompt io.Writer) *secretReader {
+	in := os.Stdin
+	if g.stdin != nil {
+		in = g.stdin
+	}
+	return &secretReader{in: in, prompt: prompt}
 }
 
 func (g *globalConfig) logf(format string, args ...any) {

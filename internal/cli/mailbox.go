@@ -54,22 +54,6 @@ The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the toke
 	return cmd
 }
 
-// newLegacyRelayCmd keeps `a2a serve relay reply|task|inbox`, the names of
-// the mailbox commands before `relay` was kept for the team server, working for
-// nodes set up with them.
-func newLegacyRelayCmd(cfg *globalConfig) *cobra.Command {
-	cmd := newMailboxCmd(cfg)
-	cmd.Use = "relay"
-	cmd.Hidden = true
-	for _, c := range cmd.Commands() {
-		c.Hidden = true
-		if c.Name() == "list" {
-			c.Use = "inbox"
-		}
-	}
-	return cmd
-}
-
 // nodeClientFlags select the node token of a node command.
 type nodeClientFlags struct {
 	token string

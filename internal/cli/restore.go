@@ -91,7 +91,7 @@ func restoreKey(cfg *globalConfig, v string) (string, error) {
 	case v == "":
 		return "", clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
 	case v == stdinSecret:
-		return newSecretReader(cfg.stderr()).read("--backup-key")
+		return cfg.secretReader(cfg.stderr()).read("--backup-key")
 	case strings.HasPrefix(v, "env:"):
 		name := strings.TrimPrefix(v, "env:")
 		if val := os.Getenv(name); val != "" {

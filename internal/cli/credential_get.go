@@ -62,7 +62,7 @@ func newCredentialGetCmd(cfg *globalConfig) *cobra.Command {
 }
 
 // lookupCredential returns the saved token for uri, or the node token in
-// $A2A_NODE_TOKEN (or the legacy $A2A_RELAY_TOKEN) when uri is its agent.
+// $A2A_NODE_TOKEN when uri is its agent.
 func lookupCredential(cfg *globalConfig, uri string) (credstore.Credential, bool, error) {
 	store, err := cfg.credentialStore()
 	if err != nil {

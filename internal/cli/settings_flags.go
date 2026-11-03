@@ -108,10 +108,6 @@ type secretReader struct {
 	consumed bool
 }
 
-func newSecretReader(prompt io.Writer) *secretReader {
-	return &secretReader{in: os.Stdin, prompt: prompt}
-}
-
 func (r *secretReader) terminal() bool { return term.IsTerminal(int(r.in.Fd())) }
 
 // read returns a secret: from a prompt on a terminal, or else all of stdin,

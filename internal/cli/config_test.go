@@ -18,6 +18,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -346,5 +347,24 @@ func TestConfigRunningAgent(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"DEBUG=1"}, saved.Env); diff != "" {
 		t.Fatalf("saved env wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestConfigShowAsCommandHelp(t *testing.T) {
+	t.Parallel()
+	out, err := runCMD(t, "config", "show", "--help")
+	if err != nil {
+		t.Fatalf("a2a serve config show --help error = %v", err)
+	}
+	if !regexp.MustCompile(`--as-command\s+Print the a2a serve <harness> command`).MatchString(out) {
+		t.Fatalf("a2a serve config show --help = %q, want --as-command without a value name", out)
+	}
+}
+
+func TestConfigInvalidOutput(t *testing.T) {
+	t.Parallel()
+	_, err := runCMD(t, "-o", "xml", "config")
+	if !isUsage(err) || !strings.Contains(err.Error(), "want text, json, jsonl or yaml") {
+		t.Fatalf("a2a serve -o xml config error = %v, want a usage error listing jsonl", err)
 	}
 }

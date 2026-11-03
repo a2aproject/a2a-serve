@@ -38,9 +38,6 @@ with ` + "`a2a serve tokens add <agent-url> <code>`" + `, or by sending
 		newPairInviteCmd(cfg, sf),
 		newPairListCmd(cfg, sf),
 		newPairRmCmd(cfg, sf),
-		newPairMovedCmd("add", "add", "<agent-url> <code>"),
-		newPairMovedCmd("tokens", "list", ""),
-		newPairMovedCmd("forget", "rm", "<agent-url>"),
 	)
 	return cmd
 }

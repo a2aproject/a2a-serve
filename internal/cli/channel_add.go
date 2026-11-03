@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/spf13/cobra"
 
@@ -47,6 +48,22 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			var s agentdir.Settings
+			if !slices.Contains(agentdir.ChannelKinds, args[0]) {
+				return clierr.Usage("unknown channel " + args[0] + ": want telegram, discord or email")
+			}
+			if args[0] != agentdir.ChannelEmail && token == "" {
+				return clierr.Usage("--token is required")
+			}
+			if token == stdinSecret {
+				v, err := cfg.secretReader(cfg.stderr()).read("--token")
+				if err != nil {
+					return err
+				}
+				if v == "" {
+					return clierr.Usage("--token: empty secret")
+				}
+				token = v
+			}
 			switch args[0] {
 			case agentdir.ChannelTelegram:
 				s.Telegram = token
@@ -54,11 +71,6 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				s.Discord = token
 			case agentdir.ChannelEmail:
 				s.Email = &email
-			default:
-				return clierr.Usage("unknown channel " + args[0] + ": want telegram, discord or email")
-			}
-			if args[0] != agentdir.ChannelEmail && token == "" {
-				return clierr.Usage("--token is required")
 			}
 			conf, secrets, err := d.ApplySettings(s)
 			var se *agentdir.SettingsError
@@ -87,18 +99,6 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&token, "token", "", "Bot token: env:VAR or the token")
 	registerEmailFlags(f, &email, "password, env:VAR or the value")
-	for name, dst := range map[string]*string{
-		"address":          &email.Address,
-		"imap":             &email.IMAP,
-		"smtp":             &email.SMTP,
-		"username":         &email.Username,
-		"password":         &email.Password,
-		"mailbox":          &email.Mailbox,
-		"trusted-authserv": &email.TrustedAuthServ,
-	} {
-		f.StringVar(dst, name, "", "")
-		must(f.MarkDeprecated(name, "use --email-"+name))
-	}
 	return cmd
 }
 

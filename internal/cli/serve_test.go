@@ -70,11 +70,21 @@ func buildFakeACP(t *testing.T) string {
 
 func runCMDWithCreds(t *testing.T, creds *credstore.Store, args ...string) (string, error) {
 	t.Helper()
+	return runCMDWith(t, &globalConfig{credentials: creds}, args...)
+}
+
+func runCMDWithStdin(t *testing.T, stdin *os.File, args ...string) (string, error) {
+	t.Helper()
+	return runCMDWith(t, &globalConfig{
+		credentials: &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")},
+		stdin:       stdin,
+	}, args...)
+}
+
+func runCMDWith(t *testing.T, cfg *globalConfig, args ...string) (string, error) {
+	t.Helper()
 	var buf bytes.Buffer
-	cfg := &globalConfig{
-		Printer:     output.NewPrinter(&buf, output.ModeText),
-		credentials: creds,
-	}
+	cfg.Printer = output.NewPrinter(&buf, output.ModeText)
 	root := newRootCmd(cfg)
 	root.SetOut(&buf)
 	root.SetArgs(rootArgs(args))
@@ -143,8 +153,10 @@ func TestServerPairAndSend(t *testing.T) {
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 
 	done := make(chan error, 1)
+	var serveOut string
 	go func() {
-		_, err := runCMDWithCreds(t, creds, "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
+		var err error
+		serveOut, err = runCMDWithCreds(t, creds, "acp", "--dir", dir, "--name", "coder", "--command", fake, "--sandbox", "local")
 		done <- err
 	}()
 	var status struct {
@@ -259,9 +271,6 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "mailbox", "list"); err != nil || !strings.Contains(out, "grok (node grok)") {
 		t.Fatalf("a2a serve mailbox list = %q, %v, want the node", out, err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "relay", "inbox"); err != nil || !strings.Contains(out, "grok (node grok)") {
-		t.Fatalf("a2a serve relay inbox = %q, %v, want the node", out, err)
-	}
 	if _, err := send(t, creds, status.Local, "hello"); err != nil {
 		t.Fatalf("send after pairing a node error = %v", err)
 	}
@@ -291,6 +300,9 @@ func TestServerPairAndSend(t *testing.T) {
 	case <-time.After(30 * time.Second):
 		t.Fatalf("agent did not stop")
 	}
+	if want := "agent coder (acp) in " + filepath.Join(dir, ".a2a") + " (created)\n"; !strings.HasPrefix(serveOut, want) {
+		t.Fatalf("a2a serve acp output = %q, want it to start with %q", serveOut, want)
+	}
 }
 
 func TestServeNoAgent(t *testing.T) {
@@ -303,21 +315,13 @@ func TestServeNoAgent(t *testing.T) {
 
 func TestServeUsageErrors(t *testing.T) {
 	t.Parallel()
-	const agentURL = "https://agent.example.com"
 	tests := []struct {
 		name    string
 		args    []string
 		wantErr string
 	}{
-		{name: "legacy echo", args: []string{"--echo"}, wantErr: "run `a2a serve echo`"},
-		{name: "legacy proxy", args: []string{"--proxy", agentURL}, wantErr: "run `a2a serve proxy " + agentURL + "`"},
-		{name: "legacy exec", args: []string{"--exec", "tr a-z A-Z"}, wantErr: "run `a2a serve script 'tr a-z A-Z'`"},
 		{name: "test server flag on serve", args: []string{"--port", "9000"}, wantErr: "unknown flag: --port"},
 		{name: "script stream and chunk", args: []string{"script", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
-		{name: "pair add", args: []string{"pair", "add", agentURL, "3MZ8-LQ0D"}, wantErr: "run `a2a serve tokens add " + agentURL + " 3MZ8-LQ0D`"},
-		{name: "pair add without arguments", args: []string{"pair", "add"}, wantErr: "run `a2a serve tokens add <agent-url> <code>`"},
-		{name: "pair tokens", args: []string{"pair", "tokens"}, wantErr: "run `a2a serve tokens list`"},
-		{name: "pair forget", args: []string{"pair", "forget", agentURL}, wantErr: "run `a2a serve tokens rm " + agentURL + "`"},
 		{name: "dir on a command without an agent", args: []string{"tokens", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
 		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
 		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},

@@ -218,12 +218,10 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	}
 	mux.HandleFunc("/n/{node}", serveNode)
 	mux.HandleFunc("/n/{node}/{rest...}", serveNode)
-	for _, prefix := range []string{mailboxapi.Prefix, mailboxapi.LegacyPrefix} {
-		mux.HandleFunc("GET "+prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))
-		mux.HandleFunc("POST "+prefix+"/api/tasks/{id}/events", n.nodeAPI(base, n.handleEvent))
-		mux.HandleFunc("GET "+prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
-		mux.HandleFunc("GET "+prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
-	}
+	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))
+	mux.HandleFunc("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", n.nodeAPI(base, n.handleEvent))
+	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
+	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
 }
 
 func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {

@@ -53,7 +53,7 @@ Without a subcommand, shows the settings.`,
 					return clierr.Usage("-o yaml only applies to `a2a serve config show`")
 				}
 			default:
-				return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json or yaml)", cfg.output))
+				return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json, jsonl or yaml)", cfg.output))
 			}
 			return nil
 		},

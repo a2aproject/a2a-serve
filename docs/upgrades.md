@@ -15,10 +15,8 @@ new version on its next start.
   Settings that were renamed or moved are read from their old place and
   written back in the new one the next time a command saves the config, such
   as configs in which the first of `mounts` was the workspace.
-- **Renamed commands, routes and variables** keep working for at least one
-  release, hidden from help, or fail with a message that names the new
-  command. The webhook node commands under `a2a serve relay`, the `/relay/…`
-  routes and `A2A_RELAY_TOKEN` are the current example.
+- **Renamed commands, routes and variables** are replaced without aliases:
+  the release notes name the new form.
 
 ## Going back isn't supported
 

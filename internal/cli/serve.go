@@ -46,12 +46,6 @@ type serverFlags struct {
 	detach  bool
 	service bool
 	quiet   bool
-
-	// legacyEcho, legacyProxy and legacyExec are the flags which the echo,
-	// proxy and script commands replaced.
-	legacyEcho  bool
-	legacyProxy string
-	legacyExec  string
 }
 
 const dirUsage = "Agent directory (default: the nearest directory with .a2a, walking up from the current one)"
@@ -91,9 +85,6 @@ echo, proxy and script run a local test server instead.`,
 		Version: buildVersionInfo().Version,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := f.checkLegacyTestServer(); err != nil {
-				return err
-			}
 			return runConfiguredAgent(cmd, cfg, &f)
 		},
 	}
@@ -102,12 +93,6 @@ echo, proxy and script run a local test server instead.`,
 	fl.BoolVar(&f.detach, "detach", false, "Run the agent in the background")
 	fl.BoolVar(&f.service, "service", false, "Install and start the agent as a launchd or systemd user service")
 	fl.BoolVar(&f.quiet, "quiet", false, "Keep the harness image pull and build output in the log instead of printing it")
-	fl.BoolVar(&f.legacyEcho, "echo", false, "Replaced by `a2a serve echo`")
-	fl.StringVar(&f.legacyProxy, "proxy", "", "Replaced by `a2a serve proxy <agent-url>`")
-	fl.StringVar(&f.legacyExec, "exec", "", "Replaced by `a2a serve script <command>`")
-	for _, name := range []string{"echo", "proxy", "exec"} {
-		must(fl.MarkHidden(name))
-	}
 
 	for _, name := range harness.ProfileNames() {
 		cmd.AddCommand(newHarnessCmd(cfg, &f, name))
@@ -133,7 +118,6 @@ echo, proxy and script run a local test server instead.`,
 		newBackupCmd(cfg, &f),
 		newRestoreCmd(cfg),
 		newMailboxCmd(cfg),
-		newLegacyRelayCmd(cfg),
 		newDoctorCmd(cfg, &f),
 		newCredentialCmd(cfg),
 		newVersionCmd(cfg),
@@ -208,7 +192,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
 		Harnesses:   harness.ProfileNames(),
 		Getenv:      os.Getenv,
 		DockerErr:   dockerErr,
-		ReadSecret:  newSecretReader(cfg.Out).read,
+		ReadSecret:  cfg.secretReader(cfg.Out).read,
 		Workspace:   d.Root,
 		Command: func(s agentdir.Settings) (string, error) {
 			conf, secrets, err := d.ApplySettings(s)
@@ -224,7 +208,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
 	if err := saveSettings(d, res.Settings); err != nil {
 		return err
 	}
-	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService})
+	return runAgent(cmd.Context(), cfg, d, runMode{detach: res.Mode == wizard.ModeDetach, service: res.Mode == wizard.ModeService, created: true})
 }
 
 // saveSettings saves start flags, reporting invalid ones as usage errors.
@@ -237,13 +221,17 @@ func saveSettings(d agentdir.Dir, s agentdir.Settings) error {
 	return err
 }
 
-// runMode is how runAgent starts the agent.
+// runMode is how runAgent starts the agent. created reports that this run
+// created the agent.
 type runMode struct {
-	detach, service, quiet bool
+	detach, service, quiet, created bool
 }
 
 // runAgent runs the agent in the foreground, or starts it in the background.
 func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode) error {
+	if err := printAgentLine(cfg.Out, d, m.created); err != nil {
+		return err
+	}
 	if m.detach || m.service {
 		return launch.Background(ctx, d, m.service, m.quiet, cfg.Out)
 	}
@@ -254,6 +242,40 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 		slog.Warn("no credential store for the owner token of this machine", "error", err)
 	}
 	return launch.Foreground(ctx, d, cfg.Out, cfg.verbose, m.quiet, creds, func() { printForegroundHint(cfg.Out) })
+}
+
+// printAgentLine names the agent and the directory it runs from, since a
+// run finds the nearest agent up from the current directory. A detached or
+// service child writes to the log, which its parent relays: there the line
+// would repeat the parent's.
+func printAgentLine(out io.Writer, d agentdir.Dir, created bool) error {
+	if writesTo(out, d.LogPath()) {
+		return nil
+	}
+	conf, err := d.ReadConfig()
+	if err != nil {
+		return err
+	}
+	line := fmt.Sprintf("agent %s (%s) in %s", conf.Name, conf.Harness, d.Path())
+	if created {
+		line += " (created)"
+	}
+	_, err = fmt.Fprintln(out, line)
+	return err
+}
+
+// writesTo reports whether out is the file at path.
+func writesTo(out io.Writer, path string) bool {
+	f, ok := out.(*os.File)
+	if !ok {
+		return false
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		return false
+	}
+	pi, err := os.Stat(path)
+	return err == nil && os.SameFile(fi, pi)
 }
 
 // printForegroundHint tells someone watching the terminal how to stop the
@@ -270,21 +292,4 @@ func printForegroundHint(out io.Writer) {
 
 func signalContext(ctx context.Context) (context.Context, context.CancelFunc) {
 	return signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
-}
-
-// checkLegacyTestServer rejects --echo, --proxy and --exec, naming the
-// command which replaced them.
-func (f *serverFlags) checkLegacyTestServer() error {
-	var flag, replacement string
-	switch {
-	case f.legacyEcho:
-		flag, replacement = "--echo", "a2a serve echo"
-	case f.legacyProxy != "":
-		flag, replacement = "--proxy", "a2a serve proxy "+agentdir.ShellJoin([]string{f.legacyProxy})
-	case f.legacyExec != "":
-		flag, replacement = "--exec", "a2a serve script "+agentdir.ShellJoin([]string{f.legacyExec})
-	default:
-		return nil
-	}
-	return clierr.Usage(fmt.Sprintf("%s was replaced by a command: run `%s`", flag, replacement))
 }
