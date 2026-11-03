@@ -443,7 +443,7 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 	}
 }
 
-func TestRemoteApprovalOfMemberGoesToApprovers(t *testing.T) {
+func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
@@ -452,12 +452,12 @@ func TestRemoteApprovalOfMemberGoesToApprovers(t *testing.T) {
 	linkAs(t, assistant, "anna", auth.RoleMember, "tg:2", "dm2")
 
 	assistant.ch.write("tg:2", "dm2", "call coder ask")
-	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
-	if !strings.Contains(q.Text, "coder wants to run git push for anna") {
-		t.Fatalf("question text = %q, want it to name coder, the tool and anna", q.Text)
+	ref, q := assistant.ch.waitFor(t, "dm2", hasQuestion)
+	if !strings.Contains(q.Text, "coder wants to run git push") {
+		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
-	assistant.ch.click("tg:1", "dm1", ref, q.Question, 0)
-	assistant.ch.waitEdited(t, ref, "✓ Allow by owner")
+	assistant.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	assistant.ch.waitEdited(t, ref, "✓ Allow by")
 }
 
 // streamingHandler streams one working status update of a task.

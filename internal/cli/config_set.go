@@ -40,7 +40,7 @@ options, backups and Google sign-in. Messengers are set with
 agent, to be started with ` + "`a2a serve run`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
-and --allow-tools, --deny-tools and --approver by value. Remove entries with
+and --allow-tools and --deny-tools by value. Remove entries with
 ` + "`a2a serve config unset`" + `.
 
 ` + secretref.Help,

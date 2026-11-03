@@ -167,7 +167,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 	for _, a := range []struct {
 		label  string
 		values []string
-	}{{"allow", c.Approvals.Allow}, {"deny", c.Approvals.Deny}, {"approvers", c.Approvals.Approvers}} {
+	}{{"allow", c.Approvals.Allow}, {"deny", c.Approvals.Deny}, {"owner chat", nonEmpty(c.Approvals.OwnerChat)}} {
 		if len(a.values) > 0 {
 			approvals = append(approvals, a.label+" "+strings.Join(a.values, ", "))
 		}
@@ -249,6 +249,13 @@ func formatLimits(l, def agentdir.LimitsConfig) string {
 		out += " (unset ones are defaults)"
 	}
 	return out
+}
+
+func nonEmpty(v string) []string {
+	if v == "" {
+		return nil
+	}
+	return []string{v}
 }
 
 func orNone(v string) string {

@@ -89,7 +89,6 @@ type serverOpts struct {
 	name        string
 	dir         string
 	channel     *fakeChannel
-	approver    string
 	credentials *credstore.Store
 	telegramAPI string
 	secrets     agentdir.Secrets
@@ -128,9 +127,6 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		if cfg, err = dir.LoadConfig(); err != nil {
 			t.Fatal(err)
 		}
-	}
-	if o.approver != "" {
-		cfg.Approvals.Approvers = []string{o.approver}
 	}
 	if o.configure != nil {
 		o.configure(cfg)

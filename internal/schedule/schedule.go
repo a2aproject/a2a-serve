@@ -27,12 +27,12 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// Conversations a run can happen in.
+// Threads a run can happen in.
 const (
-	// ConversationNew starts a new conversation for every run.
-	ConversationNew = "new"
-	// ConversationSame continues one conversation from run to run.
-	ConversationSame = "same"
+	// ThreadNew starts a new conversation for every run.
+	ThreadNew = "new"
+	// ThreadSame continues one conversation from run to run.
+	ThreadSame = "same"
 )
 
 var nameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -138,11 +138,11 @@ type Request struct {
 	Prompt string `json:"prompt"`
 	// As is who the runs are for: owner or a pairing name. Default owner.
 	As string `json:"as,omitempty"`
-	// Deliver is <channel>[:<who>]: the runs are rendered in who's direct
+	// Chat is <channel>[:<who>]: the runs are rendered in who's direct
 	// chat on the channel. who defaults to As.
-	Deliver string `json:"deliver,omitempty"`
-	// Conversation is ConversationNew (the default) or ConversationSame.
-	Conversation string `json:"conversation,omitempty"`
+	Chat string `json:"chat,omitempty"`
+	// Thread is ThreadNew (the default) or ThreadSame.
+	Thread string `json:"thread,omitempty"`
 }
 
 // RegisterFlags adds the flags of a schedule to fs. owner adds the flags
@@ -156,8 +156,8 @@ func (r *Request) RegisterFlags(fs *pflag.FlagSet, owner bool) {
 		return
 	}
 	fs.StringVar(&r.As, "as", "", "Run as the owner or a pairing name (default: owner)")
-	fs.StringVar(&r.Deliver, "deliver", "", "Show the runs in a chat: `channel[:who]`, such as telegram:owner (default: no chat)")
-	fs.StringVar(&r.Conversation, "conversation", ConversationNew, "Run in a new conversation each time, or continue the same one: new or same")
+	fs.StringVar(&r.Chat, "chat", "", "Show the runs, and ask their approvals, in a chat: `channel[:who]`, such as telegram:owner (default: no chat; approvals go to the owner chat)")
+	fs.StringVar(&r.Thread, "thread", ThreadNew, "Run in a new conversation each time, or continue the same one: new or same")
 }
 
 // When returns when r runs.
@@ -183,10 +183,10 @@ func (r Request) Validate() error {
 	if strings.TrimSpace(r.Prompt) == "" {
 		return errors.New("--prompt is required")
 	}
-	switch r.Conversation {
-	case "", ConversationNew, ConversationSame:
+	switch r.Thread {
+	case "", ThreadNew, ThreadSame:
 	default:
-		return fmt.Errorf("invalid --conversation %q: want new or same", r.Conversation)
+		return fmt.Errorf("invalid --thread %q: want new or same", r.Thread)
 	}
 	_, err := r.When()
 	return err

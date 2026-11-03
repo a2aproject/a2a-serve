@@ -18,8 +18,8 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
-	"path"
 	"os"
+	"path"
 	"regexp"
 	"slices"
 	"strconv"
@@ -170,6 +170,14 @@ func (c *Config) Validate() error {
 			if !matchesToolKind(p) {
 				add("invalid --%s %q: want ACP tool kinds (%s), or a glob such as *", flag, p, strings.Join(ToolKinds, ", "))
 			}
+		}
+	}
+	if len(c.Approvals.RemovedApprovers) > 0 {
+		add("approvals.approvers was removed: whoever starts a task answers its approvals, and owners can answer any; delete it from config.yaml")
+	}
+	if v := c.Approvals.OwnerChat; v != "" {
+		if kind, who, hasWho := strings.Cut(v, ":"); !slices.Contains(ChannelKinds, kind) || (hasWho && who == "") {
+			add("invalid --owner-chat %q: want channel[:who], such as telegram or telegram:anna, with channel one of %s", v, strings.Join(ChannelKinds, ", "))
 		}
 	}
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {

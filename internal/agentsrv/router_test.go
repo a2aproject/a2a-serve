@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -23,6 +24,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -153,17 +156,72 @@ func linkAs(t *testing.T, ts *testServer, name, role, identity, conv string) {
 	ts.ch.waitFor(t, conv, hasText("Linked as "+role))
 }
 
-func TestRouterApproverAnswersMembersApproval(t *testing.T) {
+func TestRouterMemberAnswersOwnApprovalInChat(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), approver: "pair:bob"})
-	linkAs(t, ts, "bob", auth.RoleMember, "tg:2", "dm2")
-	c := ts.client(ts.pair("grok", auth.RoleMember))
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
 
-	task := sendAsync(t, c, userText("ask", "", ""))
+	ts.ch.write("tg:2", "dm2", "ask")
 	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
+	if got := ts.ch.questions(); got != 1 {
+		t.Fatalf("questions sent = %d, want only anna's: she answers her own task", got)
+	}
 	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
 
-	wantResult(t, waitState(t, c, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
+	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
+}
+
+func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	ctx := context.Background()
+
+	if err := ts.srv.router.injectTurn(ctx, a2a.NewContextID(), auth.Principal{ID: "pair:anna", Roles: []string{auth.RoleMember}}, "ask"); err != nil {
+		t.Fatalf("injectTurn() error = %v", err)
+	}
+	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+	if !strings.Contains(q.Text, "anna needs your approval") {
+		t.Fatalf("question text = %q, want it to name anna", q.Text)
+	}
+	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	ts.ch.waitEdited(t, ref, "✓ Allow by owner")
+}
+
+func TestRouterOwnerChat(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		channel   string
+		ownerChat string
+		link      bool
+		want      approvals.Chat
+		wantOK    bool
+	}{
+		{name: "first messenger with a linked owner", channel: "discord", link: true, want: approvals.Chat{Channel: "discord", Conv: "dm1"}, wantOK: true},
+		{name: "setting", channel: "telegram", ownerChat: "telegram:anna", link: true, want: approvals.Chat{Channel: "telegram", Conv: "dm2"}, wantOK: true},
+		{name: "messenger outside the order", channel: "fake", link: true},
+		{name: "no linked owner", channel: "telegram"},
+		{name: "setting of a stopped messenger", channel: "telegram", ownerChat: "email", link: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{channel: newFakeChannel(tc.channel), configure: func(c *agentdir.Config) { c.Approvals.OwnerChat = tc.ownerChat }})
+			linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+			if tc.link {
+				linkOwner(t, ts, "tg:1", "dm1")
+			}
+
+			got, ok := ts.srv.router.OwnerChat(context.Background())
+
+			if ok != tc.wantOK || got != tc.want {
+				t.Fatalf("OwnerChat() = %+v, %v, want %+v, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
 }
 
 func TestRouterHandlesConversationInOrder(t *testing.T) {
@@ -217,10 +275,12 @@ func TestRouterGroupMessageDoesNotJoinOthersPendingTask(t *testing.T) {
 	}
 
 	inGroup("tg:2", "ask")
-	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+	ref, q := ts.ch.waitFor(t, "grp", hasQuestion)
 	inGroup("tg:3", "hello")
 	ts.ch.waitFor(t, "grp", hasText("yours starts after it"))
-	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	ts.ch.click("tg:3", "grp", ref, q.Question, 0)
+	ts.ch.waitFor(t, "grp", hasText("Only the person who started the task or an owner can answer this."))
+	ts.ch.click("tg:2", "grp", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "grp", hasText("Hello from fakeacp."))
 }

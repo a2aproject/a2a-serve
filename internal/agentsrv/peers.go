@@ -495,9 +495,15 @@ func destroyClient(c *a2aclient.Client) {
 }
 
 // relay asks the user on whose behalf a remote task runs to answer its
-// permission question, once per question, also across restarts.
+// permission question, once per question, also across restarts: in the
+// conversation the call came from, or else in the user's direct chat, or
+// else in the owner chat.
 func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task *a2a.Task, q *approvals.Question) {
-	rec, err := p.approvals.NewRecord(ctx, task.ID, task.ContextID, agent, q)
+	user := claims.OnBehalfOf
+	if user == "" {
+		user = auth.OwnerID
+	}
+	rec, err := p.approvals.NewRecord(ctx, task.ID, task.ContextID, agent, user, q)
 	if errors.Is(err, store.ErrExists) {
 		return
 	}
@@ -509,30 +515,39 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("finding the conversation of a relayed question", "context", claims.ContextID, "error", err)
 	}
-	user := claims.OnBehalfOf
-	if user == "" {
-		user = auth.OwnerID
-	}
 	header := fmt.Sprintf("%s wants to", agent)
 	if q.Title != "" {
 		header = fmt.Sprintf("%s wants to run %s", agent, q.Title)
 	}
-	if p.approvals.CanApprove(ctx, auth.Principal{ID: user}) && (chName != "" || p.hasLinks(ctx, user)) {
-		p.chat.Ask(ctx, []string{user}, chName, channel.ConvKey(conv), header, rec)
+	if chName != "" {
+		p.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
 		return
 	}
-	header += fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user))
-	p.chat.Ask(ctx, p.approvals.ApproverIDs(), "", "", header, rec)
+	if to, ok := p.directChat(ctx, user); ok {
+		p.chat.Ask(ctx, to, header, rec)
+		return
+	}
+	to, ok := p.chat.OwnerChat(ctx)
+	if !ok {
+		slog.Info("remote approval waits in the inspector: no chat", "agent", agent, "user", user, "question", rec.ID)
+		return
+	}
+	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user)), rec)
 }
 
-// hasLinks reports whether user can be asked in a messenger.
-func (p *Peers) hasLinks(ctx context.Context, user string) bool {
+// directChat returns the first direct chat of user in a messenger.
+func (p *Peers) directChat(ctx context.Context, user string) (approvals.Chat, bool) {
 	links, err := p.store.LinksOf(ctx, user)
 	if err != nil {
 		slog.Warn("listing links", "user", user, "error", err)
-		return false
+		return approvals.Chat{}, false
 	}
-	return len(links) > 0
+	for _, l := range links {
+		if l.Conv != "" {
+			return approvals.Chat{Channel: l.Channel, Conv: channel.ConvKey(l.Conv)}, true
+		}
+	}
+	return approvals.Chat{}, false
 }
 
 // AnswerRemote forwards an answer to a remote agent's question.

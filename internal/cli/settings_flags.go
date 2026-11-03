@@ -101,7 +101,7 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.StringArrayVar(&s.Identities, "identity", nil, listUsage("Role of another user's network login: `login=member|owner`, such as anna@github=owner", false))
 	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
 	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, listUsage("ACP tool `kinds` denied without asking, like --allow-tools", true))
-	f.StringSliceVar(&s.Approvers, "approver", nil, listUsage("Other `principals` who may approve tool calls, such as pair:anna", true))
+	f.StringVar(&s.OwnerChat, "owner-chat", "", "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)")
 	must(cmd.RegisterFlagCompletionFunc("private", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkLAN, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNgrok, agentdir.NetworkNone)))
 	must(cmd.RegisterFlagCompletionFunc("sandbox", fixedCompletions(agentdir.SandboxDocker, agentdir.SandboxLocal)))
@@ -111,7 +111,8 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	setSection(f, sectionWorkspace, "workspace", "mount", "env", "secret")
 	setSection(f, sectionSandbox, "sandbox", "image", "command")
 	setSection(f, sectionNetwork, "port", "private", "public", "identity")
-	setSection(f, sectionApprovals, "allow-tools", "deny-tools", "approver")
+	setSection(f, sectionApprovals, "allow-tools", "deny-tools", "owner-chat")
+	must(cmd.RegisterFlagCompletionFunc("owner-chat", fixedCompletions(agentdir.ChannelKinds...)))
 }
 
 func (sf *settingsFlags) registerOperational(cmd *cobra.Command) {

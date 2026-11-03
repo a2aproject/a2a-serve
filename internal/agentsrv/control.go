@@ -155,6 +155,11 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
+	approvals, err := s.inspector.pendingApprovals(ctx)
+	if err != nil {
+		return nil, err
+	}
+	st.Approvals = len(approvals)
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
 		st.ProjectError = err.Error()
 	}
@@ -360,7 +365,7 @@ func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	agentdir.CopyLive(s.cfg, saved)
 	s.cfgMu.Unlock()
-	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "approver", "allow-tools", "deny-tools"}})
+	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat"}})
 }
 
 func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {

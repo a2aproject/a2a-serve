@@ -25,7 +25,8 @@ Code, or any `--command`) into an A2A agent:
   becomes a token, a messenger link, a contact or a webhook node. On the
   tailnet your own machines need no code.
 - **Approvals stay with people.** A tool call pauses the task in
-  `input-required`; the owner or an approver answers, from any messenger.
+  `input-required`; whoever started the task answers where it came from, and
+  owners can answer any.
 - **Agents call agents through the server.** The harness uses the `a2a` CLI
   against `http://a2a/<handle>/<agent>`. The server makes the call with its
   own identity, relays the other agent's approvals to the user, and posts late
@@ -118,9 +119,10 @@ removes a node.
    something. `--allow-tools` and `--deny-tools` answer by ACP tool kind;
    anything else pauses the task in `input-required` with a structured input
    request.
-4. The owner and approvers get the question with buttons on their
-   messengers, or the `/hitl/<token>` page. A member who started the task sees
-   `input-required` but can't answer it.
+4. Whoever started the task answers: an A2A caller on the task itself, a
+   messenger user in the same conversation, with buttons or the
+   `/hitl/<token>` page. Questions of tasks nobody watches, such as the runs
+   of a schedule without a chat, go to the owner chat (`--owner-chat`).
 
 ## D. Agent to agent
 

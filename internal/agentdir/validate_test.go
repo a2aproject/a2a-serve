@@ -53,6 +53,10 @@ func TestValidate(t *testing.T) {
 		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
 		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
 		{name: "unknown denied tool kind", modify: func(c *Config) { c.Approvals.Deny = []string{"shell"} }, wantErr: `invalid --deny-tools "shell"`},
+		{name: "owner chat", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:anna" }},
+		{name: "owner chat channel", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
+		{name: "owner chat without who", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:" }, wantErr: `invalid --owner-chat "telegram:"`},
+		{name: "removed approvers", modify: func(c *Config) { c.Approvals.RemovedApprovers = []string{"pair:anna"} }, wantErr: "approvals.approvers was removed"},
 		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "needs --telegram"},
 		{name: "sign-in", modify: func(c *Config) {
 			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}

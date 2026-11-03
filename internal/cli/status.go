@@ -109,6 +109,9 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 		fmt.Fprintf(&sb, "  tasks    %s\n", strings.Join(states, ", "))
 	}
 	fmt.Fprintf(&sb, "  contacts %d, webhook nodes %d\n", st.Contacts, st.Nodes)
+	if st.Approvals > 0 {
+		fmt.Fprintf(&sb, "  ! %d approval(s) waiting for an answer: a2a serve open\n", st.Approvals)
+	}
 	for _, m := range st.MCPServers {
 		line := m.Name + ": " + m.Summary
 		if len(m.Missing) > 0 {

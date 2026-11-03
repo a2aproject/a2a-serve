@@ -35,7 +35,7 @@ func fullConfig() *Config {
 			Telegram: &TelegramConfig{Token: "secret:TELEGRAM_BOT_TOKEN"},
 			Email:    &EmailConfig{Address: "a@x", IMAP: "i:993", SMTP: "s:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx"},
 		},
-		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, Approvers: []string{"pair:anna"}},
+		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "telegram"},
 		Limits:    LimitsConfig{Memory: "8g"},
 	}
 }

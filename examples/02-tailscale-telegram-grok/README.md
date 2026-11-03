@@ -244,6 +244,6 @@ a2a serve logs -f
 ## Next steps
 
 The [agent server guide](../../docs/agent-server.md) covers Discord and email,
-approvers besides you, and contacts between agents on the same tailnet. The
+who answers approvals, and contacts between agents on the same tailnet. The
 [architecture](../../docs/agent-server-architecture.md) shows how the pieces
 fit together.

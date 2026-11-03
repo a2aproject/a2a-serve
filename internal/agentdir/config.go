@@ -235,8 +235,13 @@ type ApprovalsConfig struct {
 	// Allow and Deny are ACP tool kind globs answered without asking.
 	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
 	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
-	// Approvers are principal IDs, besides owners, who may answer approvals.
-	Approvers []string `yaml:"approvers,omitempty" json:"approvers,omitempty"`
+	// OwnerChat is the chat, <channel>[:<who>], where an owner answers the
+	// questions of tasks nobody watches. Empty picks the first messenger
+	// with a linked owner.
+	OwnerChat string `yaml:"owner_chat,omitempty" json:"ownerChat,omitempty"`
+	// RemovedApprovers holds an approvers key, which Validate rejects: who
+	// started a task answers its questions now.
+	RemovedApprovers []string `yaml:"approvers,omitempty" json:"-"`
 }
 
 // LimitsConfig are container resource limits.
@@ -339,7 +344,6 @@ func (c *Config) Clone() *Config {
 	out.Network.Identities = maps.Clone(c.Network.Identities)
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
-	out.Approvals.Approvers = slices.Clone(c.Approvals.Approvers)
 	out.Auth.AllowEmails = slices.Clone(c.Auth.AllowEmails)
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}

@@ -38,9 +38,9 @@ import (
 
 // Roles.
 const (
-	// RoleOwner mints codes and answers approvals by default.
+	// RoleOwner sees every task and answers any approval.
 	RoleOwner = "owner"
-	// RoleMember can talk to the agent but can't approve unless listed as an approver.
+	// RoleMember can talk to the agent and answer the approvals of their own tasks.
 	RoleMember = "member"
 )
 
@@ -384,9 +384,4 @@ func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string)
 		l.Conv = string(in.Conv)
 	}
 	return p, s.PutLink(ctx, l)
-}
-
-// CanApprove reports whether p may answer tool permission requests.
-func CanApprove(p Principal, approvers []string) bool {
-	return p.Has(RoleOwner) || slices.Contains(approvers, p.ID)
 }

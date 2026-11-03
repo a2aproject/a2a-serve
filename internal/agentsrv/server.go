@@ -271,7 +271,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.approvals = &approvals.Service{
 		Store:     s.store,
 		Tasks:     s.tasks,
-		Approvers: func() []string { return s.config().Approvals.Approvers },
 		BaseURL:   s.bestURL,
 		AgentName: agentName,
 	}
@@ -291,6 +290,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		approvals: s.approvals,
 		bus:       s.bus,
 		agentName: agentName,
+		ownerChat: func() string { return s.config().Approvals.OwnerChat },
 		logf:      s.logf,
 	}
 	s.pairings = &pairings.Service{
@@ -346,6 +346,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.router.handler = s.handler
 	s.approvals.Handler = s.handler
 	s.approvals.Notifier = s.router
+	s.approvals.Unattended = s.router.Unattended
 	s.approvals.Remote = s.peers
 	return nil
 }

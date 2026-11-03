@@ -195,10 +195,10 @@ overwritten by `set` and reset by `unset`; `--private none` is the same as
 | `--env NAME=value` | `NAME` | `config unset env DEBUG` |
 | `--mount src[:dst][:ro]` | destination | `config unset mount /docs` |
 | `--identity login=role` | login | `config unset identity anna@example.com` |
-| `--allow-tools`, `--deny-tools`, `--approver` | the value | `config unset allow-tools search` |
+| `--allow-tools`, `--deny-tools` | the value | `config unset allow-tools search` |
 
-Every list flag can be repeated. `--allow-tools`, `--deny-tools`,
-`--approver` and `--allow-email` also split values at commas; `--secret`,
+Every list flag can be repeated. `--allow-tools`, `--deny-tools` and
+`--allow-email` also split values at commas; `--secret`,
 `--env`, `--mount` and `--identity` don't, since their values may contain
 commas. `--allow-tools` and `--deny-tools` take the ACP tool kinds `read`,
 `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`,
@@ -235,7 +235,7 @@ Header values are the one exception: `pair invite --webhook-header` and
 `proxy --auth` take a whole header value, which may end in `env:VAR` or `-`,
 as in `"Authorization: Bearer env:TOKEN"`.
 
-A running agent applies channels, the description, approvers and the
+A running agent applies channels, the description, the owner chat and the
 allowed and denied tools at once, through its control socket; other settings are saved and wait for
 `a2a serve restart`, and `config show` and `status` list them.
 
@@ -342,13 +342,31 @@ Answer with a message on the same task: the option ID or label, `approve`,
 `deny`, or structured input `{"option": "once"}` tagged with the request ID
 (`structuredinput.NewResponse` in a2a-go).
 
-- The **owner** answers approvals. `--approver pair:anna` adds approvers.
-- A **member** can talk to the agent, but can't approve. When a member's task
-  needs an approval, the owner gets it on their messengers with buttons, and the
-  member sees `input-required` until the owner decides.
+Whoever started a task answers its approvals, in the place the task came
+from. Owners can answer any approval.
+
+| Task started by | Who answers | Where the question appears |
+| --- | --- | --- |
+| An A2A caller (CLI, web, Google sign-in, the owner on this machine) | that caller | inline, as `input-required` in the task |
+| A messenger user | that user | the same conversation, direct or group |
+| Another agent (a contact) | the calling agent, which asks its own user | relayed by the calling agent's server |
+| A webhook node | the node | its task, as `input-required` |
+| A schedule with `--chat <channel>[:<who>]` | the schedule's `--as` user | that chat |
+| A schedule without `--chat`, or a turn the server posts with no conversation | an owner | the owner chat |
+
+- The **owner chat** is set with `--owner-chat <channel>[:<who>]`, on `run
+  <harness>` and `config set`, with the syntax of `schedule add --chat`.
+  Without it, the server picks the first of telegram, discord and email where
+  an owner pairing has a linked account. Without one, the question waits in
+  the inspector (`a2a serve open`), and `a2a serve status` reports it.
+- In a group chat, only the person who started the task, or an owner, can
+  answer.
+- A **member** answers the approvals of their own tasks, so `--deny-tools` is
+  the limit of what a member can run.
 - `--allow-tools read,search` and `--deny-tools delete` answer by ACP tool kind
   without asking.
-- Every question also has a page, `/hitl/<token>`, linked from email approvals.
+- Every question in a chat also has a page, `/hitl/<token>`, linked from email
+  approvals.
 
 ## Inspector
 
@@ -582,9 +600,9 @@ briefing, triage every two hours, a reminder on Friday at 5.
 
 ```sh
 a2a serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
-  --prompt "Summarize today's meetings." --deliver telegram:owner
-a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --conversation same
-a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --deliver telegram
+  --prompt "Summarize today's meetings." --chat telegram:owner
+a2a serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
+a2a serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
 a2a serve schedule list
 a2a serve schedule run morning-brief   # run it now
 a2a serve schedule rm morning-brief
@@ -594,11 +612,12 @@ a2a serve schedule rm morning-brief
   pairing name). `--cron` takes five fields or a descriptor such as `@daily`
   or `@every 2h`; `--at` runs once and then removes the schedule. `--tz`
   defaults to the server's time zone.
-- `--deliver <channel>[:<who>]` shows each run in that user's direct chat on
-  the channel, with its approval requests. The run becomes the chat's
-  conversation, so replying continues it. With `--conversation new` (the
-  default) every run starts a new conversation; with `same` it continues the
-  chat's current one.
+- `--chat <channel>[:<who>]` shows each run in that user's direct chat on
+  the channel, with its approval requests, which the `--as` user answers. The
+  run becomes the chat's conversation, so replying continues it. With
+  `--thread new` (the default) every run starts a new conversation; with
+  `same` it continues the chat's current one. Without `--chat`, nobody watches
+  the runs, and their approvals go to the owner chat.
 - A run missed while the agent was stopped runs once when it starts.
 
 The harness creates schedules too. When a user asks "remind me on Friday at
@@ -766,7 +785,7 @@ Storage and S3 clients.
 | `serve run <harness>` | Create the agent with the flags and start it; in an existing agent, apply the flags like `config set`, then start it. `--detach`, `--service`, `--quiet`. |
 | `serve run` | Start the agent of the nearest `.a2a/` directory (or `--dir`). Asks a few questions on a first run in a terminal. |
 | `serve config [show]` | The effective settings, secrets as names with their state, and changes waiting for a restart. `--defaults`, `--as-command`, `-o json\|yaml`. |
-| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies channels, the description and approvers at once. `--dry-run`, `--restart`. |
+| `serve config set <flags>` / `unset <setting> [<entry>…]` / `edit` | Change settings with the flags of `serve run <harness>`, validated and printed as a diff. A running agent applies channels, the description and the approval settings at once. `--dry-run`, `--restart`. |
 | `serve status` / `logs [-f]` / `stop [--uninstall]` / `restart` | Manage the running agent; `stop --uninstall` also removes its service, `restart` starts it again in the same mode. |
 | `serve url [--local\|--private\|--public]` | The agent's URL: public, then private, then local. `a2a send -a "$(a2a serve url)" …` |
 | `serve open [--private]` | Open the web inspector with a one-time login link: conversations and tasks, pending approvals with Approve and Deny, messengers, MCP servers and skills, pairings, nodes and contacts. Owner only. |
@@ -810,7 +829,7 @@ channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:
   allow: [read, search]
-  approvers: [pair:anna]
+  owner_chat: telegram:anna      # --owner-chat
 limits: {memory: 8g, cpus: "4", pids: 1024}
 auth:                            # --allow-email, --google-client-id, --google-client-secret
   allow_emails: [mom@example.com, "*@example.com"]

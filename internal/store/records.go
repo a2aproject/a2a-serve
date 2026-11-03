@@ -515,6 +515,8 @@ type Question struct {
 	// HitlID is the ID the agent gave the question; with Contact and
 	// TaskID it identifies a remote agent's question.
 	HitlID string
+	// User may answer the question besides owners: whoever started the task.
+	User string
 	// Data describes the question: its ID, type, title, options and text.
 	Data       map[string]any
 	Created    time.Time
@@ -529,9 +531,9 @@ func (s *Store) PutQuestion(ctx context.Context, q Question) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO questions (id, token, task_id, context_id, contact, hitl_id, data, created)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id, hitl_id) WHERE contact != '' DO NOTHING`,
-		q.ID, q.Token, q.TaskID, q.ContextID, q.Contact, q.HitlID, string(data), s.now().UnixNano())
+	res, err := s.db.ExecContext(ctx, `INSERT INTO questions (id, token, task_id, context_id, contact, hitl_id, user_id, data, created)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id, hitl_id) WHERE contact != '' DO NOTHING`,
+		q.ID, q.Token, q.TaskID, q.ContextID, q.Contact, q.HitlID, q.User, string(data), s.now().UnixNano())
 	if err != nil {
 		return err
 	}
@@ -555,7 +557,7 @@ func (s *Store) QuestionByToken(ctx context.Context, token string) (Question, er
 	return s.question(ctx, `token = ?`, token)
 }
 
-const questionColumns = `id, token, task_id, context_id, contact, hitl_id, data, created, answered_by, answer`
+const questionColumns = `id, token, task_id, context_id, contact, hitl_id, user_id, data, created, answered_by, answer`
 
 func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 	var (
@@ -563,7 +565,7 @@ func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 		data    string
 		created int64
 	)
-	err := row.Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &data, &created, &q.AnsweredBy, &q.Answer)
+	err := row.Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &q.User, &data, &created, &q.AnsweredBy, &q.Answer)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Question{}, ErrNotFound
 	}

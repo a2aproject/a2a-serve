@@ -80,6 +80,14 @@ func TestConfigCommands(t *testing.T) {
 			wantOut: []string{"sandbox      (default) → local", "(dry run: nothing saved)"},
 		},
 		{name: "set invalid", args: []string{"config", "set", "--private", "tailscal"}, wantUsage: true},
+		{
+			name:       "set owner chat",
+			args:       []string{"config", "set", "--owner-chat", "telegram:anna"},
+			wantOut:    []string{"owner-chat   (default) → telegram:anna"},
+			wantConfig: func(c *agentdir.Config) { c.Approvals.OwnerChat = "telegram:anna" },
+		},
+		{name: "set invalid owner chat", args: []string{"config", "set", "--owner-chat", "fax"}, wantUsage: true},
+		{name: "approver removed", args: []string{"config", "set", "--approver", "pair:anna"}, wantUsage: true},
 		{name: "set missing mount", args: []string{"config", "set", "--mount", "/nonexistent-a2a:/x"}, wantUsage: true},
 		{
 			name:       "set harness",

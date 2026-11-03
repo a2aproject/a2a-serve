@@ -109,6 +109,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV6)
 		return err
 	},
+	// 7: questions record the user who may answer them besides owners.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE questions ADD COLUMN user_id TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
 }
 
 const schemaV1 = `

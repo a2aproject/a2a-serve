@@ -206,7 +206,7 @@ var fields = []field{
 	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
 	list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity),
 	list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity),
-	list("approver", true, func(c *Config) *[]string { return &c.Approvals.Approvers }, identity),
+	scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat }),
 	operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory })),
 	operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs })),
 	operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs })),
@@ -425,7 +425,7 @@ func shellQuote(s string) string {
 // other than channels, from src to dst.
 func CopyLive(dst, src *Config) {
 	dst.Description = src.Description
-	dst.Approvals.Approvers = slices.Clone(src.Approvals.Approvers)
+	dst.Approvals.OwnerChat = src.Approvals.OwnerChat
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
 	dst.Auth.AllowEmails = slices.Clone(src.Auth.AllowEmails)

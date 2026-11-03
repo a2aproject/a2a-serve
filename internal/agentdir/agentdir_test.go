@@ -270,14 +270,14 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Harness:   "opencode",
 		Mounts:    []string{"/a:/docs", "/b:/data"},
 		Env:       []string{"DEBUG=1", "MODE=fast"},
-		Approvals: ApprovalsConfig{Allow: []string{"read"}, Approvers: []string{"pair:anna"}},
+		Approvals: ApprovalsConfig{Allow: []string{"read"}, OwnerChat: "telegram"},
 		Network:   NetworkConfig{Identities: map[string]string{"anna": "member"}},
 	}
 	_, err = Settings{
 		Mounts:     []string{"/c:/docs:ro", "/e:/extra"},
 		Env:        []string{"DEBUG=0"},
 		AllowTools: []string{"read", "search"},
-		Approvers:  []string{"pair:bob"},
+		OwnerChat:  "discord:anna",
 		Identities: []string{"anna=owner"},
 		Workspace:  d.Root,
 	}.Apply(cfg, d)
@@ -289,7 +289,7 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Harness:   "opencode",
 		Mounts:    []string{"/c:/docs:ro", "/b:/data", "/e:/extra"},
 		Env:       []string{"DEBUG=0", "MODE=fast"},
-		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, Approvers: []string{"pair:anna", "pair:bob"}},
+		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "discord:anna"},
 		Network:   NetworkConfig{Identities: map[string]string{"anna": "owner"}},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {

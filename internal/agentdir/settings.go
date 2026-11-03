@@ -57,7 +57,8 @@ type Settings struct {
 
 	AllowTools []string
 	DenyTools  []string
-	Approvers  []string
+	// OwnerChat is <channel>[:<who>].
+	OwnerChat string
 
 	TailscaleControlURL string
 	NgrokURL            string
@@ -167,8 +168,8 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	for _, v := range s.DenyTools {
 		cfg.Approvals.Deny = putKeyed(cfg.Approvals.Deny, v, nil)
 	}
-	for _, v := range s.Approvers {
-		cfg.Approvals.Approvers = putKeyed(cfg.Approvals.Approvers, v, nil)
+	if s.OwnerChat != "" {
+		cfg.Approvals.OwnerChat = s.OwnerChat
 	}
 	for _, v := range s.AllowEmails {
 		cfg.Auth.AllowEmails = putKeyed(cfg.Auth.AllowEmails, strings.TrimSpace(v), strings.ToLower)

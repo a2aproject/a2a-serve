@@ -95,7 +95,7 @@ func Replace(ctx context.Context, d agentdir.Dir, data []byte, dryRun bool) (*Re
 
 // Apply changes the agent's config with mutate, validates the result and
 // saves it. A running server applies channels, the description and
-// approvers at once; the result lists the settings which wait for a
+// approval settings at once; the result lists the settings which wait for a
 // restart. Invalid settings are a [agentdir.SettingsError] and nothing is
 // saved.
 func Apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool) (*Result, error) {

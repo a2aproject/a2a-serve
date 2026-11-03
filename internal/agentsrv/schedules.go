@@ -140,7 +140,7 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 // a chat becomes the chat's conversation, so replying there continues it.
 func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, error) {
 	if s.DeliverChannel == "" {
-		if s.Conversation == schedule.ConversationSame && s.ContextID != "" {
+		if s.Conversation == schedule.ThreadSame && s.ContextID != "" {
 			return s.ContextID, nil
 		}
 		return a2a.NewContextID(), nil
@@ -152,7 +152,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	if err != nil {
 		return "", err
 	}
-	if s.Conversation == schedule.ConversationSame {
+	if s.Conversation == schedule.ThreadSame {
 		return sc.router.contextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
 	}
 	id := a2a.NewContextID()
@@ -227,18 +227,18 @@ func (sc *schedules) add(ctx context.Context, req schedule.Request, by, contextI
 	}
 	s := store.Schedule{
 		Name: req.Name, Cron: when.Cron, At: when.At, TZ: when.TZ, Prompt: req.Prompt,
-		Conversation: req.Conversation, ContextID: contextID, CreatedBy: by, NextRun: next,
+		Conversation: req.Thread, ContextID: contextID, CreatedBy: by, NextRun: next,
 	}
 	if s.Conversation == "" {
-		s.Conversation = schedule.ConversationNew
+		s.Conversation = schedule.ThreadNew
 	}
 	if contextID != "" {
-		s.UserID, s.Conversation = by, schedule.ConversationSame
+		s.UserID, s.Conversation = by, schedule.ThreadSame
 	} else if s.UserID, err = resolveUser(ctx, sc.store, req.As); err != nil {
 		return store.Schedule{}, err
 	}
-	if req.Deliver != "" {
-		ch, who, _ := strings.Cut(req.Deliver, ":")
+	if req.Chat != "" {
+		ch, who, _ := strings.Cut(req.Chat, ":")
 		s.DeliverChannel, s.DeliverUser = ch, s.UserID
 		if who != "" {
 			if s.DeliverUser, err = resolveUser(ctx, sc.store, who); err != nil {
@@ -249,7 +249,7 @@ func (sc *schedules) add(ctx context.Context, req schedule.Request, by, contextI
 			return store.Schedule{}, err
 		}
 	}
-	if s.Conversation == schedule.ConversationSame && s.ContextID == "" && s.DeliverChannel == "" {
+	if s.Conversation == schedule.ThreadSame && s.ContextID == "" && s.DeliverChannel == "" {
 		s.ContextID = a2a.NewContextID()
 	}
 	if err := sc.store.AddSchedule(ctx, s); err != nil {
@@ -317,10 +317,10 @@ func canManage(s store.Schedule, by auth.Principal) bool {
 func scheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
 	info := controlapi.ScheduleInfo{
 		Name: s.Name, Cron: s.Cron, At: s.At, TZ: s.TZ, Prompt: s.Prompt, User: s.UserID,
-		Conversation: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,
+		Thread: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,
 	}
 	if s.DeliverChannel != "" {
-		info.Deliver = s.DeliverChannel + ":" + approvals.DisplayPrincipal(s.DeliverUser)
+		info.Chat = s.DeliverChannel + ":" + approvals.DisplayPrincipal(s.DeliverUser)
 	}
 	return info
 }

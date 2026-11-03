@@ -204,7 +204,7 @@ func TestInspectorAnswersMembersApproval(t *testing.T) {
 
 	c := newInspectorClient(t, ts)
 	var overview string
-	action := regexp.MustCompile(`action="(` + InspectorPath + `/questions/[^"]+)"`)
+	action := regexp.MustCompile(`action="(` + InspectorPath + `/tasks/[^"]+)"`)
 	for range 100 {
 		if overview = c.login(); action.MatchString(overview) {
 			break

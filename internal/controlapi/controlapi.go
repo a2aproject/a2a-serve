@@ -58,6 +58,9 @@ type Status struct {
 	Owners      []string        `json:"owners,omitempty"`
 	Contacts    int             `json:"contacts"`
 	Nodes       int             `json:"nodes"`
+	// Approvals counts the approvals waiting for an answer, which owners can
+	// give in the inspector.
+	Approvals int `json:"approvals"`
 	// MCPServers and Skills are what the project brings for the harness.
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`
@@ -517,13 +520,13 @@ type ScheduleInfo struct {
 	Prompt string    `json:"prompt"`
 	// User is the principal the runs are for.
 	User string `json:"user"`
-	// Deliver is the chat the runs are shown in, <channel>:<who>.
-	Deliver      string    `json:"deliver,omitempty"`
-	Conversation string    `json:"conversation"`
-	CreatedBy    string    `json:"createdBy"`
-	NextRun      time.Time `json:"nextRun,omitzero"`
-	LastRun      time.Time `json:"lastRun,omitzero"`
-	LastError    string    `json:"lastError,omitempty"`
+	// Chat is the chat the runs are shown in, <channel>:<who>.
+	Chat      string    `json:"chat,omitempty"`
+	Thread    string    `json:"thread"`
+	CreatedBy string    `json:"createdBy"`
+	NextRun   time.Time `json:"nextRun,omitzero"`
+	LastRun   time.Time `json:"lastRun,omitzero"`
+	LastError string    `json:"lastError,omitempty"`
 }
 
 // Schedules lists the schedules.

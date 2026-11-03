@@ -29,8 +29,8 @@ By default the harness runs in Docker with:
   loopback, and the harness sends a key that a helper script in its home
   returns.
 
-Every tool call that changes something asks first, and the owner or an
-approver answers (see [Approvals](agent-server.md#approvals)). The harness
+Every tool call that changes something asks first, and whoever started the
+task, or an owner, answers (see [Approvals](agent-server.md#approvals)). The harness
 can't answer approvals of the agents it calls; the server relays them to the
 user.
 
@@ -85,7 +85,7 @@ What a role allows:
 | --- | --- | --- |
 | Talk to the agent and start tasks | yes | yes |
 | See tasks | all | their own |
-| Answer tool approvals | yes | only if listed with `--approver` |
+| Answer tool approvals | all | of their own tasks; `--deny-tools` limits what they can run |
 | Continue another user's waiting task in a shared chat | yes | no |
 
 Only someone with access to the agent directory, through the control socket

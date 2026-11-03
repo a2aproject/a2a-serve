@@ -162,7 +162,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 		Skills: []a2a.AgentSkill{{
 			ID:          "coding",
 			Name:        "Coding agent",
-			Description: "Works in its project workspace with " + cfg.Harness + ". Tool calls may pause the task in input-required until an approver answers.",
+			Description: "Works in its project workspace with " + cfg.Harness + ". Tool calls may pause the task in input-required until whoever started it answers.",
 			Tags:        []string{"coding", cfg.Harness},
 		}},
 	}
