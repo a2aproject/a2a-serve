@@ -106,6 +106,23 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 		fmt.Fprintf(&sb, "  tasks    %s\n", strings.Join(states, ", "))
 	}
 	fmt.Fprintf(&sb, "  contacts %d, webhook nodes %d\n", st.Contacts, st.Nodes)
+	for _, m := range st.MCPServers {
+		line := m.Name + ": " + m.Summary
+		if len(m.Missing) > 0 {
+			line += fmt.Sprintf(" ! not passed to the harness, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
+		}
+		fmt.Fprintf(&sb, "  mcp      %s\n", line)
+	}
+	if len(st.Skills) > 0 {
+		names := make([]string, len(st.Skills))
+		for i, sk := range st.Skills {
+			names[i] = sk.Name
+		}
+		fmt.Fprintf(&sb, "  skills   %s\n", strings.Join(names, ", "))
+	}
+	if st.ProjectError != "" {
+		fmt.Fprintf(&sb, "  project  ! %s\n", st.ProjectError)
+	}
 	if len(pending) > 0 {
 		fmt.Fprintf(&sb, "  pending  %s (a2a serve restart)\n", strings.Join(pending, ", "))
 	}

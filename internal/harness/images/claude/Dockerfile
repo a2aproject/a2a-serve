@@ -9,6 +9,8 @@ RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/a2aproject/a2a-cli@
 
 FROM node:22-bookworm-slim
 COPY --from=a2a /out/a2a-cli /usr/local/bin/a2a
+# Many MCP servers of a project's .mcp.json start with uvx.
+COPY --from=ghcr.io/astral-sh/uv:0.13 /uv /uvx /usr/local/bin/
 RUN apt-get update \
  && apt-get install -y --no-install-recommends git ca-certificates curl ripgrep openssh-client python3 \
  && rm -rf /var/lib/apt/lists/*

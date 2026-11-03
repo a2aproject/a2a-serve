@@ -16,12 +16,15 @@ package wizard
 
 import (
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 func TestRun(t *testing.T) {
@@ -124,5 +127,61 @@ func TestRunNotSaved(t *testing.T) {
 				t.Fatalf("Run() error = %v, want %v", err, tc.wantErr)
 			}
 		})
+	}
+}
+
+func TestRunAsksForMCPVariables(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	mcp := `{"mcpServers": {
+		"github": {"command": "npx", "args": ["-y", "server-github"], "env": {"TOKEN": "${GITHUB_TOKEN}"}},
+		"docs": {"type": "http", "url": "https://docs.example.com/mcp", "headers": {"Authorization": "Bearer ${DOCS_TOKEN}", "X-Region": "${REGION:-eu}"}},
+		"skipped": {"command": "x", "env": {"K": "${SKIPPED_KEY}"}}
+	}}`
+	if err := os.WriteFile(filepath.Join(dir, project.MCPFile), []byte(mcp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, ".agents", "skills", "deploy"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".agents", "skills", "deploy", "SKILL.md"), []byte("---\nname: deploy\n---\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"OPENROUTER_API_KEY": "x", "GITHUB_TOKEN": "gh"}
+	secrets := map[string]string{"DOCS_TOKEN": "docs-secret", "SKIPPED_KEY": ""}
+	var out strings.Builder
+	opts := Options{
+		DefaultName: "app", Harnesses: []string{"opencode"}, Getenv: func(k string) string { return env[k] }, Workspace: dir,
+		ReadSecret: func(prompt string) (string, error) {
+			out.WriteString(prompt + ": ")
+			for name, v := range secrets {
+				if strings.Contains(prompt, name) {
+					return v, nil
+				}
+			}
+			return "", nil
+		},
+	}
+
+	// harness, name, sandbox, API keys, pass GITHUB_TOKEN, private, public, mode
+	got, err := Run(strings.NewReader("\n\n\n\n\n\n\n\n"), &out, opts)
+	if err != nil {
+		t.Fatalf("Run() error = %v", err)
+	}
+	want := agentdir.Settings{
+		Harness: "opencode", Name: "app", Private: "none", Public: "none",
+		Secrets:      []string{"OPENROUTER_API_KEY", "DOCS_TOKEN", "GITHUB_TOKEN"},
+		SecretValues: agentdir.Secrets{"DOCS_TOKEN": "docs-secret"},
+	}
+	if diff := cmp.Diff(want, got.Settings); diff != "" {
+		t.Fatalf("Run() wrong settings (-want +got) diff = %s", diff)
+	}
+	for _, s := range []string{"skills work with every harness: deploy", "docs: http https://docs.example.com/mcp", "github: npx -y server-github", "Pass GITHUB_TOKEN from this shell for github"} {
+		if !strings.Contains(out.String(), s) {
+			t.Fatalf("Run() printed %q, want it to contain %q", out.String(), s)
+		}
+	}
+	if strings.Contains(out.String(), "docs-secret") || strings.Contains(out.String(), "REGION") {
+		t.Fatalf("Run() printed %q, want neither the secret nor variables with defaults", out.String())
 	}
 }
