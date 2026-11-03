@@ -245,7 +245,7 @@ instead of the CLI's 30s default); set `--env A2ACLI_TIMEOUT=<duration>` to
 change it.
 
 Not in this version: an egress proxy and credential injection. The container
-can reach the network, and API keys passed with `--secret` are visible inside it.
+can reach the network, and API keys passed with `--secret` are accessible inside it.
 
 ## Project MCP servers and skills
 

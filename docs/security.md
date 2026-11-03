@@ -36,7 +36,7 @@ user.
 
 What the sandbox doesn't protect yet:
 
-- **API keys are visible inside it.** Values passed with `--secret` are
+- **API keys are accessible inside it.** Values passed with `--secret` are
   environment variables of the harness, so a tricked agent can read and send
   them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
 - **It can reach any host.** The container has normal network access, so a
