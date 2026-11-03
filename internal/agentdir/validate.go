@@ -139,6 +139,13 @@ func (c *Config) Validate() error {
 			add("invalid --cpus %q: want a positive number such as 2 or 1.5", v)
 		}
 	}
+	if c.TaskTTL != "" {
+		if d, err := ParseDays(c.TaskTTL); err != nil {
+			add("--task-ttl: %v", err)
+		} else if d < MinTaskTTL {
+			add("--task-ttl %s: want at least %s", c.TaskTTL, MinTaskTTL)
+		}
+	}
 	if c.Limits.PIDs < 0 {
 		add("invalid --pids %d: want a positive number", c.Limits.PIDs)
 	}

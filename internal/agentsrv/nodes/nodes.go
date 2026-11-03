@@ -159,8 +159,10 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	if ok {
 		return h
 	}
+	ts := n.tasks(context.Background(), id)
 	h = a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
-		a2asrv.WithTaskStore(n.tasks(context.Background(), id)),
+		a2asrv.WithTaskStore(ts),
+		a2asrv.WithUpdateMaterializer(ts.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),

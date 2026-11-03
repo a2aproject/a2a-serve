@@ -17,12 +17,17 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 )
 
 // prototypeSchema is the schema of databases created before user_version
@@ -142,5 +147,60 @@ func TestReopenKeepsData(t *testing.T) {
 	})
 	if _, err := s.HandleByName(ctx, "ab"); err != nil {
 		t.Fatalf("HandleByName() after reopening error = %v", err)
+	}
+}
+
+func TestMigrateTasksToEvents(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 7 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
+	task.Artifacts = []*a2a.Artifact{{ID: "a1", Parts: []*a2a.Part{a2a.NewTextPart("result")}}}
+	data, err := json.Marshal(task)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO tasks (id, scope, context_id, owner, version, state, status_time, updated, data)
+		VALUES ('t1', '', 'c1', 'alice', 3, 'TASK_STATE_WORKING', 0, 1, ?)`, string(data)); err != nil {
+		t.Fatalf("inserting a task: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	got, err := s.Tasks("", testViewer).Get(asUser("alice"), "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	want := &taskstore.StoredTask{Task: task, Version: 3, User: "alice"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+	}
+	var header string
+	if err := s.db.QueryRow(`SELECT data FROM tasks WHERE id = 't1'`).Scan(&header); err != nil {
+		t.Fatalf("reading the task row: %v", err)
+	}
+	if strings.Contains(header, "history") || strings.Contains(header, "artifacts") {
+		t.Fatalf("task row = %s, want no history and artifacts", header)
 	}
 }

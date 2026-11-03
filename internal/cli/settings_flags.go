@@ -133,7 +133,8 @@ func (sf *settingsFlags) registerOperational(cmd *cobra.Command) {
 	f.StringVar(&s.BackupKey, "backup-key", "", secretUsage("Passphrase the snapshots are encrypted with; keep a copy away from the backups"))
 	f.StringVar(&s.BackupInterval, "backup-interval", "", "Time between snapshots, a `duration` such as 30m or 1h (default 24h)")
 	f.StringVar(&s.BackupRetention, "backup-retention", "", "How long snapshots are kept, a `duration` in hours or days such as 48h or 7d; the latest is always kept (default 7d)")
-	setSection(f, sectionGeneral, "backup", "backup-key", "backup-interval", "backup-retention")
+	f.StringVar(&s.TaskTTL, "task-ttl", "", "How long tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d)")
+	setSection(f, sectionGeneral, "backup", "backup-key", "backup-interval", "backup-retention", "task-ttl")
 	setSection(f, sectionSandbox, "memory", "cpus", "pids")
 	setSection(f, sectionNetwork, "tailscale-control-url", "tailscale-authkey", "ngrok-url", "ngrok-authtoken", "relay-token", "allow-email", "google-client-id", "google-client-secret")
 }

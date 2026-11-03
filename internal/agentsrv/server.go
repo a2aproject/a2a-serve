@@ -231,6 +231,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	}
 	closers.push(func(context.Context) error { return st.Close() })
 	s.store = st
+	st.SetTaskTTL(s.config().TaskTTLDuration())
 	s.tasks = st.Tasks("", s.viewer)
 	n, err := s.tasks.FailUnfinished(ctx, "The agent server restarted before this task finished. Send the message again.")
 	if err != nil {
@@ -335,6 +336,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	}
 	s.handler = a2asrv.NewHandler(&observedExecutor{inner: exec, bus: s.bus, peers: s.peers, approvals: s.approvals},
 		a2asrv.WithTaskStore(s.tasks),
+		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),
