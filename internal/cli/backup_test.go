@@ -73,7 +73,7 @@ func TestRestoreUsageErrors(t *testing.T) {
 		wantErr string
 	}{
 		{name: "no key", args: []string{"restore", t.TempDir()}, wantErr: "--backup-key is required"},
-		{name: "stored secret", args: []string{"restore", t.TempDir(), "--backup-key", "secret:BACKUP_KEY"}, wantErr: "a restore has no stored secrets"},
+		{name: "stored secret", args: []string{"restore", t.TempDir(), "--backup-key", "secret:BACKUP_KEY"}, wantErr: "secret:NAME only applies to agent settings"},
 		{name: "unknown destination", args: []string{"restore", "ftp://host/dir", "--backup-key", "k"}, wantErr: "unsupported backup destination"},
 	}
 	for _, tc := range tests {

@@ -44,3 +44,37 @@ func TestChannelAddEmail(t *testing.T) {
 		t.Fatalf("channel add email error = %v, want the IMAP login of the given server to fail", err)
 	}
 }
+
+func TestSecretFlagsReadStdin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		args    []string
+		wantErr string
+	}{
+		{name: "channel add", args: []string{"channel", "add", "telegram", "--token", "-"}, wantErr: "--token: empty secret"},
+		{name: "contact add", args: []string{"contact", "add", "grok", "--url", "https://grok.example.com", "--token", "-"}, wantErr: "--token: empty secret"},
+		{name: "mailbox list", args: []string{"mailbox", "list", "--token", "-"}, wantErr: "--token: empty secret"},
+		{name: "restore", args: []string{"restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
+		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
+		{name: "config set", args: []string{"config", "set", "--telegram", "-"}, wantErr: "--telegram: empty secret"},
+		{name: "harness", args: []string{"opencode", "--discord", "-"}, wantErr: "--discord: empty secret"},
+		{name: "proxy auth", args: []string{"proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+
+			args := tc.args
+			if tc.args[0] != "mailbox" && tc.args[0] != "proxy" {
+				args = append(args, "--dir", d.Root)
+			}
+			_, err := runCMDWithStdin(t, pipeWith(t, ""), args...)
+
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a serve %s with empty stdin error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+		})
+	}
+}

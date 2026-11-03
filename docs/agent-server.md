@@ -185,16 +185,35 @@ overwritten by `set` and reset by `unset`; `--private none` is the same as
 | `--allow-tools`, `--deny-tools`, `--approver` | the value | `config unset allow-tools search` |
 
 `unset secret NAME`, and unsetting a channel, also delete the value from
-`state/secrets`. `--secret NAME` reads `$NAME`, or prompts for it on a
-terminal when it isn't set. The secret-valued flags (`--telegram`,
-`--discord`, `--email-password`, `--tailscale-authkey`, `--ngrok-authtoken`)
-take `-`: on a terminal it prompts without echo, otherwise it reads stdin,
-which keeps tokens out of the shell history:
+`state/secrets`. `--secret NAME` is the name of an environment variable: it
+reads `$NAME`, or prompts for it on a terminal when it isn't set, and stores
+the value in `state/secrets`.
+
+### Values
+
+Every flag which takes a secret value accepts the same forms:
+
+| Form | Meaning |
+| --- | --- |
+| `env:VAR` | The value of the environment variable `VAR`; an empty variable is an error. In agent settings, the value is stored under the name `VAR`. |
+| `-` | On a terminal, a prompt without echo; otherwise all of stdin. One flag per command can read stdin. |
+| `secret:NAME` | A value already stored in `.a2a/state/secrets`, in agent settings only. |
+| anything else | The value itself. |
+
+The flags are `--telegram`, `--discord`, `--email-password`,
+`--tailscale-authkey`, `--ngrok-authtoken`, `--google-client-secret`,
+`--relay-token` and `--backup-key` of the agent settings, `restore
+--backup-key`, `channel add --token`, `contact add --token` and `mailbox
+--token`. `-` keeps tokens out of the shell history:
 
 ```sh
 a2a serve config set --telegram -
 pass show coder/bot | a2a serve config set --discord -
 ```
+
+Header values are the one exception: `pair invite --webhook-header` and
+`proxy --auth` take a whole header value, which may end in `env:VAR` or `-`,
+as in `"Authorization: Bearer env:TOKEN"`.
 
 A running agent applies channels, the description, approvers and the
 allowed and denied tools at once, through its control socket; other settings are saved and wait for

@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // pluginName is the name the a2a CLI runs this binary under: a2a-<name>
@@ -63,12 +64,12 @@ func (g *globalConfig) stderr() io.Writer {
 }
 
 // secretReader returns a reader of secret values which prompts on prompt.
-func (g *globalConfig) secretReader(prompt io.Writer) *secretReader {
+func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
 	in := os.Stdin
 	if g.stdin != nil {
 		in = g.stdin
 	}
-	return &secretReader{in: in, prompt: prompt}
+	return secretref.NewReader(in, prompt)
 }
 
 func (g *globalConfig) logf(format string, args ...any) {

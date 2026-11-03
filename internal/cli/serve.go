@@ -192,7 +192,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig) error {
 		Harnesses:   harness.ProfileNames(),
 		Getenv:      os.Getenv,
 		DockerErr:   dockerErr,
-		ReadSecret:  cfg.secretReader(cfg.Out).read,
+		ReadSecret:  cfg.secretReader(cfg.Out).Read,
 		Workspace:   d.Root,
 		Command: func(s agentdir.Settings) (string, error) {
 			conf, secrets, err := d.ApplySettings(s)

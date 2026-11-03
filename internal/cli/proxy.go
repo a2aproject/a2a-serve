@@ -19,6 +19,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newProxyCmd(cfg *globalConfig) *cobra.Command {
@@ -34,6 +35,13 @@ func newProxyCmd(cfg *globalConfig) *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p.URL = args[0]
+			r := cfg.secretReader(cfg.stderr())
+			if err := p.SvcParams.ResolveAuth(func(v string) (string, error) {
+				_, v, err := secretref.ResolveHeader("auth", "Authorization: "+v, r)
+				return v, err
+			}); err != nil {
+				return err
+			}
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
 			return localsrv.RunProxy(ctx, tf.options(cfg), p)
@@ -43,7 +51,7 @@ func newProxyCmd(cfg *globalConfig) *cobra.Command {
 	f := cmd.Flags()
 	p.SvcParams.Attach(f)
 	f.Lookup("svc-param").Usage += " for the proxied agent"
-	f.Lookup("auth").Usage += " for the proxied agent"
+	f.Lookup("auth").Usage += " for the proxied agent; may end in env:VAR or -"
 	f.StringVar(&p.Tenant, "tenant", "", "Tenant of the proxied agent")
 	f.BoolVar(&p.InsecureGRPC, "insecure", false, "Reach the proxied agent over plaintext gRPC")
 	return cmd

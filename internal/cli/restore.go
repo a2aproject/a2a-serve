@@ -17,13 +17,12 @@ package cli
 import (
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRestoreCmd(cfg *globalConfig) *cobra.Command {
@@ -42,7 +41,9 @@ The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
 machine. Without it, the agent joins the network as a new machine on its
 first start. Stop the agent
-on the old host before taking over.`,
+on the old host before taking over.
+
+` + secretref.Help,
 		Example: "  a2a serve restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -53,7 +54,10 @@ on the old host before taking over.`,
 				}
 				dir = wd
 			}
-			passphrase, err := restoreKey(cfg, key)
+			if key == "" {
+				return clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
+			}
+			passphrase, err := secretref.Resolve("backup-key", key, cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
@@ -81,25 +85,7 @@ on the old host before taking over.`,
 	f := cmd.Flags()
 	f.StringVar(&dir, "dir", "", "Directory of the restored agent (default: the current directory)")
 	f.StringVar(&snapshot, "snapshot", "", "Snapshot to restore (default: the latest)")
-	f.StringVar(&key, "backup-key", "", "The backup key: env:VAR, - to read it, or the value")
+	f.StringVar(&key, "backup-key", "", secretUsage("The backup key"))
 	f.BoolVar(&takeOver, "take-over", false, "Also restore the network identity; stop the agent on the old host first")
 	return cmd
-}
-
-func restoreKey(cfg *globalConfig, v string) (string, error) {
-	switch {
-	case v == "":
-		return "", clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
-	case v == stdinSecret:
-		return cfg.secretReader(cfg.stderr()).read("--backup-key")
-	case strings.HasPrefix(v, "env:"):
-		name := strings.TrimPrefix(v, "env:")
-		if val := os.Getenv(name); val != "" {
-			return val, nil
-		}
-		return "", clierr.Usage(fmt.Sprintf("--backup-key: environment variable %s is empty", name))
-	case strings.HasPrefix(v, agentdir.SecretPrefix):
-		return "", clierr.Usage("--backup-key: a restore has no stored secrets yet; pass env:VAR, - or the value")
-	}
-	return v, nil
 }

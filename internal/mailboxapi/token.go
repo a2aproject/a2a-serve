@@ -17,7 +17,6 @@ package mailboxapi
 import (
 	"encoding/base64"
 	"errors"
-	"fmt"
 	"os"
 	"strings"
 )
@@ -51,19 +50,6 @@ func NodeClient(token string) (*Client, error) {
 		return nil, errors.New("not a node token")
 	}
 	return &Client{BaseURL: base, Token: token}, nil
-}
-
-// Secret resolves an env:VAR reference to the value of VAR, which must be set.
-func Secret(v string) (string, error) {
-	name, ok := strings.CutPrefix(v, "env:")
-	if !ok {
-		return v, nil
-	}
-	val := os.Getenv(name)
-	if val == "" {
-		return "", fmt.Errorf("environment variable %s is empty", name)
-	}
-	return val, nil
 }
 
 // A node token is a2rn.<base64url node API base>.<node ID>.<secret>, so a

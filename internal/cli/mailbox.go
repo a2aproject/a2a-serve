@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newMailboxCmd(cfg *globalConfig) *cobra.Command {
@@ -39,7 +40,9 @@ pairs once with "a2a serve tokens add <agent-url> <code>", then answers each wak
 with reply.
 
 The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the token
-"a2a serve tokens add" saved. It includes the agent's URL.`,
+"a2a serve tokens add" saved. It includes the agent's URL.
+
+` + secretref.Help,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
@@ -60,7 +63,7 @@ type nodeClientFlags struct {
 }
 
 func (r *nodeClientFlags) register(f *pflag.FlagSet) {
-	f.StringVar(&r.token, "token", "", "Node token, or env:VAR (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve tokens add)")
+	f.StringVar(&r.token, "token", "", secretUsage("Node token (default: $"+mailboxapi.EnvNodeToken+" or the token saved by a2a serve tokens add)"))
 }
 
 func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, error) {
@@ -73,7 +76,7 @@ func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, err
 
 func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	if r.token != "" {
-		return mailboxapi.Secret(r.token)
+		return secretref.Resolve("token", r.token, cfg.secretReader(cfg.stderr()))
 	}
 	if v := mailboxapi.EnvToken(); v != "" {
 		return v, nil

@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -37,6 +38,7 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <telegram|discord|email>",
 		Short: "Add a messenger, or replace its settings",
+		Long:  "Add a messenger, or replace its settings.\n\n" + secretref.Help,
 		Example: `  a2a serve channel add telegram --token env:CODER_BOT_TOKEN
   a2a serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
@@ -54,15 +56,14 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if args[0] != agentdir.ChannelEmail && token == "" {
 				return clierr.Usage("--token is required")
 			}
-			if token == stdinSecret {
-				v, err := cfg.secretReader(cfg.stderr()).read("--token")
+			if token != "" {
+				ref, err := secretref.Parse("token", token, cfg.secretReader(cfg.stderr()))
 				if err != nil {
 					return err
 				}
-				if v == "" {
-					return clierr.Usage("--token: empty secret")
+				if ref.Kind == secretref.Literal || ref.Kind == secretref.Prompted {
+					token = ref.Value
 				}
-				token = v
 			}
 			switch args[0] {
 			case agentdir.ChannelTelegram:
@@ -97,8 +98,8 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&token, "token", "", "Bot token: env:VAR or the token")
-	registerEmailFlags(f, &email, "password, env:VAR or the value")
+	f.StringVar(&token, "token", "", secretUsage("Bot token"))
+	registerEmailFlags(f, &email)
 	return cmd
 }
 

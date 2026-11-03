@@ -19,9 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newContactAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -34,7 +33,9 @@ agent is looked up by name on the private network, where it recognizes this
 agent by its network identity. With --url, pair with a code from the other
 agent's owner, or pass a token. A pairing another agent of the private
 network advertises, such as grok@ben from ` + "`a2a serve peers`" + `, needs neither:
-calls to it go through that agent.`,
+calls to it go through that agent.
+
+` + secretref.Help,
 		Example: "  a2a serve contact add coder\n  a2a serve contact add grok@ben\n  a2a serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -43,8 +44,10 @@ calls to it go through that agent.`,
 				return err
 			}
 			req.Name = args[0]
-			if req.Token, err = mailboxapi.Secret(req.Token); err != nil {
-				return clierr.Usage("--token: " + err.Error())
+			if req.Token != "" {
+				if req.Token, err = secretref.Resolve("token", req.Token, cfg.secretReader(cfg.stderr())); err != nil {
+					return err
+				}
 			}
 			info, err := c.AddContact(cmd.Context(), req)
 			if err != nil {
@@ -63,6 +66,6 @@ calls to it go through that agent.`,
 	}
 	cmd.Flags().StringVar(&req.URL, "url", "", "The agent's URL")
 	cmd.Flags().StringVar(&req.Code, "code", "", "A pairing code from the other agent's owner")
-	cmd.Flags().StringVar(&req.Token, "token", "", "A token for the other agent: env:VAR or the token")
+	cmd.Flags().StringVar(&req.Token, "token", "", secretUsage("A token for the other agent"))
 	return cmd
 }

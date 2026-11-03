@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -47,8 +47,9 @@ it as <name> with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with
 ` + "`a2a serve mailbox reply`" + `, and can call the agent with its token. Inviting a node
 again issues a new code, for example after it lost its token; with --webhook
-it also updates the node, and its previous token stops working. Header
-values may be env:VAR.
+it also updates the node, and its previous token stops working. A header
+value may end in a secret value, env:VAR or -, as in
+"Authorization: Bearer env:TOKEN".
 
 --advertised tells every agent on the private network about the node: they
 list it in ` + "`a2a serve peers`" + ` as <name>@<this agent> and can add it with
@@ -70,7 +71,7 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 			if req.Webhook == "" && (len(headers) > 0 || req.Description != "") {
 				return clierr.Usage("--webhook-header and --description go with --webhook")
 			}
-			hdrs, err := parseWebhookHeaders(headers)
+			hdrs, err := parseWebhookHeaders(headers, cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
@@ -101,7 +102,7 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 	f := cmd.Flags()
 	f.StringVar(&req.Role, "role", "member", "Role: member (can talk) or owner (can also approve)")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
-	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\" (repeatable)")
+	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, \"Name: value\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	sf.addControlFlags(f)
@@ -109,22 +110,16 @@ stops advertising it, and so does ` + "`pair rm`" + `.`,
 	return cmd
 }
 
-func parseWebhookHeaders(headers []string) (map[string]string, error) {
+// parseWebhookHeaders parses "Name: value" headers, whose values may end in
+// a secret value.
+func parseWebhookHeaders(headers []string, r *secretref.Reader) (map[string]string, error) {
 	out := map[string]string{}
 	for _, h := range headers {
-		k, v, ok := strings.Cut(h, ":")
-		if !ok || strings.TrimSpace(k) == "" {
-			return nil, clierr.Usage(fmt.Sprintf("--webhook-header must be \"Name: value\", got %q", h))
+		k, v, err := secretref.ResolveHeader("webhook-header", h, r)
+		if err != nil {
+			return nil, err
 		}
-		v = strings.TrimSpace(v)
-		if i := strings.Index(v, "env:"); i >= 0 {
-			secret, err := mailboxapi.Secret(v[i:])
-			if err != nil {
-				return nil, clierr.Usage(fmt.Sprintf("--webhook-header %s: %v", strings.TrimSpace(k), err))
-			}
-			v = v[:i] + secret
-		}
-		out[strings.TrimSpace(k)] = v
+		out[k] = v
 	}
 	return out, nil
 }

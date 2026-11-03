@@ -18,6 +18,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -36,9 +37,7 @@ overwritten. List entries are added, or replace the entry with the same key:
 and --allow-tools, --deny-tools and --approver by value. Remove entries with
 ` + "`a2a serve config unset`" + `.
 
-Secret-valued flags (--telegram, --discord, --email-password,
---tailscale-authkey, --ngrok-authtoken) take - to read the value from a
-prompt without echo, or from stdin, keeping it out of the shell history.`,
+` + secretref.Help,
 		Example: `  a2a serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
   a2a serve config set --telegram - --restart
   a2a serve config set --mount ~/docs:/docs:ro --dry-run`,

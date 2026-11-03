@@ -17,6 +17,7 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"os"
 	"regexp"
 	"strings"
@@ -30,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newTestAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
@@ -243,7 +245,7 @@ func TestSecretReader(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sr := &secretReader{in: pipeWith(t, "123:abc\n")}
+			sr := secretref.NewReader(pipeWith(t, "123:abc\n"), io.Discard)
 
 			got, err := tc.flags.settings(sr)
 			if err != nil {
