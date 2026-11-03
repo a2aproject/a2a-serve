@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -52,7 +53,7 @@ agent. Outside one, or with --joined, list the agents you joined with
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(all)
+				return output.PrintList(cfg.Printer, all)
 			}
 			rows := make([][]string, 0, len(all))
 			for _, p := range all {
@@ -99,7 +100,7 @@ func listJoined(cfg *globalConfig) error {
 		rows = append(rows, []string{j.URL, j.Agent, j.Principal, j.Joined.Format(time.DateTime)})
 	}
 	if cfg.IsJSON() {
-		return cfg.PrintJSON(out)
+		return output.PrintList(cfg.Printer, out)
 	}
 	return cfg.PrintTableOrEmpty([]string{"URL", "AGENT", "AS", "JOINED"}, rows, "no joined agents; join one with `a2a serve pair join <agent-url> <code>`")
 }

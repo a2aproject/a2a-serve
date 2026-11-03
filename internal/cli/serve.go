@@ -30,6 +30,7 @@ import (
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -134,6 +135,12 @@ func (f *serverFlags) control() (*controlapi.Client, error) {
 		return nil, err
 	}
 	return f.controlClient(d), nil
+}
+
+// controlContext returns ctx, in which the calls of agentctl to the running
+// agent use --timeout.
+func (f *serverFlags) controlContext(ctx context.Context) context.Context {
+	return agentctl.WithControlOptions(ctx, controlapi.WithTimeout(f.timeout))
 }
 
 // controlClient returns a client for the agent in d, with --timeout.

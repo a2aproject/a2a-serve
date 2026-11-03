@@ -50,7 +50,7 @@ func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) err
 	if err := d.CheckConfig(cfg, secrets); err != nil {
 		return &agentdir.SettingsError{Err: err}
 	}
-	client := controlapi.NewClient(d)
+	client := controlClient(ctx, d)
 	st, err := client.Status(ctx)
 	if errors.Is(err, controlapi.ErrNotRunning) {
 		return controlapi.NotRunning(cfg.Name)

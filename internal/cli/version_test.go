@@ -16,7 +16,6 @@ package cli
 
 import (
 	"encoding/json"
-	"strings"
 	"testing"
 )
 
@@ -50,8 +49,7 @@ func TestVersionFlagMatchesCommand(t *testing.T) {
 	if err != nil {
 		t.Fatalf("version error = %v", err)
 	}
-	first, _, _ := strings.Cut(cmd, "\n")
-	if strings.TrimSpace(flag) != first {
-		t.Fatalf("--version = %q, want the first line of version %q", flag, first)
+	if flag != cmd {
+		t.Fatalf("--version = %q, want the output of version %q", flag, cmd)
 	}
 }

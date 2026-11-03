@@ -60,7 +60,7 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	if err != nil {
 		return err
 	}
-	v, err := agentctl.Show(cmd.Context(), d)
+	v, err := agentctl.Show(sf.controlContext(cmd.Context()), d)
 	if err != nil {
 		return err
 	}

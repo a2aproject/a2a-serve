@@ -17,7 +17,7 @@ package cli
 import (
 	"fmt"
 
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -40,10 +40,14 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(struct {
-					Agents     []controlapi.Peer          `json:"agents"`
-					Advertised []controlapi.Advertisement `json:"advertised"`
-				}{nonNilSlice(peers), nonNilSlice(ads)})
+				out := make([]peerRow, 0, len(peers)+len(ads))
+				for _, p := range peers {
+					out = append(out, peerRow{Kind: "agent", Name: p.Name, URL: p.URL, Description: p.Description, Online: p.Online})
+				}
+				for _, a := range ads {
+					out = append(out, peerRow{Kind: "advertised", Name: a.Key, Description: a.Description})
+				}
+				return output.PrintList(cfg.Printer, out)
 			}
 			rows := make([][]string, 0, len(peers))
 			for _, p := range peers {
@@ -73,9 +77,12 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return cmd
 }
 
-func nonNilSlice[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
+// peerRow is an agent of the private network, or a pairing one advertises.
+type peerRow struct {
+	// Kind is agent or advertised.
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	URL         string `json:"url,omitempty"`
+	Description string `json:"description,omitempty"`
+	Online      bool   `json:"online"`
 }

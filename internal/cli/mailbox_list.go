@@ -18,9 +18,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
-
-	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func newMailboxListCmd(cfg *globalConfig) *cobra.Command {
@@ -39,19 +38,16 @@ func newMailboxListCmd(cfg *globalConfig) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			node, err := c.Node(ctx)
-			if err != nil {
-				return err
-			}
 			inbox, err := c.Inbox(ctx, all)
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(struct {
-					Node    *mailboxapi.NodeInfo    `json:"node"`
-					Entries []mailboxapi.InboxEntry `json:"entries"`
-				}{node, inbox.Entries})
+				return output.PrintList(cfg.Printer, inbox.Entries)
+			}
+			node, err := c.Node(ctx)
+			if err != nil {
+				return err
 			}
 			if _, err := fmt.Fprintf(cfg.Out, "%s (node %s)\n  A2A URL: %s\n  Webhook: %s\n\n", node.Name, node.ID, node.URL, node.Webhook); err != nil {
 				return err

@@ -36,10 +36,10 @@ Ctrl-C and run ` + "`a2a serve run`" + ` again.`,
 			if err != nil {
 				return err
 			}
-			return agentctl.Restart(cmd.Context(), d, quiet, cfg.Out)
+			return agentctl.Restart(sf.controlContext(cmd.Context()), d, quiet, cfg.Out)
 		},
 	}
 	cmd.Flags().BoolVar(&quiet, "quiet", false, quietUsage)
-	sf.addDirFlag(cmd.Flags())
+	sf.addControlFlags(cmd.Flags())
 	return cmd
 }

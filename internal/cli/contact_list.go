@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -34,7 +35,7 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(cs)
+				return output.PrintList(cfg.Printer, cs)
 			}
 			rows := make([][]string, 0, len(cs))
 			for _, x := range cs {

@@ -17,12 +17,14 @@ package cli
 import (
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func TestRemoveCommandsJSON(t *testing.T) {
@@ -82,5 +84,16 @@ func TestRemoveCommandsJSON(t *testing.T) {
 				t.Fatalf("a2a serve %v wrong result (-want +got) diff = %s", tc.args, diff)
 			}
 		})
+	}
+}
+
+func TestRemoveCommandsHaveDeleteAlias(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd(&globalConfig{Printer: output.NewPrinter(&strings.Builder{}, output.ModeText)})
+	for _, group := range []string{"channel", "contact", "pair", "schedule"} {
+		cmd, _, err := root.Find([]string{pluginName, group, "delete"})
+		if err != nil || cmd.Name() != "rm" {
+			t.Fatalf("a2a serve %s delete = %v, %v, want the rm command", group, cmd, err)
+		}
 	}
 }

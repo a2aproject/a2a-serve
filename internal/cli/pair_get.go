@@ -27,9 +27,9 @@ import (
 
 func newPairGetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:   "get <name|agent-url>",
-		Short: "Show a pairing: its role, tokens, linked accounts and pending codes, or an agent you joined",
-		Args:  cobra.ExactArgs(1),
+		Use:               "get <name|agent-url>",
+		Short:             "Show a pairing: its role, tokens, linked accounts and pending codes, or an agent you joined",
+		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if isAgentURL(args[0]) {

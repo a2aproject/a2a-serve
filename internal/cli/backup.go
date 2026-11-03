@@ -22,6 +22,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func newBackupCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -110,7 +111,7 @@ func newBackupListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(nonNil(snaps))
+				return output.PrintList(cfg.Printer, snaps)
 			}
 			rows := make([][]string, 0, len(snaps))
 			for _, s := range snaps {
@@ -119,11 +120,4 @@ func newBackupListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			return cfg.PrintTableOrEmpty([]string{"SNAPSHOT", "TAKEN"}, rows, "no snapshots yet; take one with `a2a serve backup now`")
 		},
 	}
-}
-
-func nonNil[T any](s []T) []T {
-	if s == nil {
-		return []T{}
-	}
-	return s
 }

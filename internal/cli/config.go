@@ -55,14 +55,14 @@ Without a subcommand, shows the settings.`,
 			default:
 				return clierr.Usage(fmt.Sprintf("invalid --output %q (want text, json, jsonl or yaml)", cfg.output))
 			}
-			return nil
+			return checkTextOnly(cmd, cfg)
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runConfigShow(cmd, cfg, sf, show)
 		},
 	}
 	show.register(cmd)
-	sf.addDirFlag(cmd.PersistentFlags())
+	sf.addControlFlags(cmd.PersistentFlags())
 	cmd.AddCommand(
 		newConfigShowCmd(cfg, sf),
 		newConfigSetCmd(cfg, sf),

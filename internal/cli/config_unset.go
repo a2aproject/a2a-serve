@@ -46,7 +46,7 @@ Settings: ` + strings.Join(agentdir.SettingNames(), ", "),
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Unset(cmd.Context(), d, args[0], args[1:], dryRun)
+			res, err := agentctl.Unset(sf.controlContext(cmd.Context()), d, args[0], args[1:], dryRun)
 			if err != nil {
 				return err
 			}

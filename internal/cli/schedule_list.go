@@ -17,6 +17,7 @@ package cli
 import (
 	"cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
 
@@ -36,7 +37,7 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(all)
+				return output.PrintList(cfg.Printer, all)
 			}
 			rows := make([][]string, 0, len(all))
 			for _, s := range all {

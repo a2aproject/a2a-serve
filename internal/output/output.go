@@ -90,6 +90,24 @@ func (p *Printer) PrintJSON(v any) error {
 	return p.jsonEncoder().Encode(v)
 }
 
+// PrintList writes items as a JSON array in ModeJson, and as one compact
+// object per line in ModeJSONL. A nil slice is an empty list.
+func PrintList[T any](p *Printer, items []T) error {
+	if p.Mode != ModeJSONL {
+		if items == nil {
+			items = []T{}
+		}
+		return p.PrintJSON(items)
+	}
+	enc := p.jsonEncoder()
+	for _, it := range items {
+		if err := enc.Encode(it); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // PrintTable writes rows as a column-aligned text table under headers.
 func (p *Printer) PrintTable(headers []string, rows [][]string) error {
 	tw := tabwriter.NewWriter(p.Out, 0, 4, 2, ' ', 0)

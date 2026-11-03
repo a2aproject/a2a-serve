@@ -698,12 +698,21 @@ a2a serve contact add grok@ben                                # no code needed
 
 ## Output and exit codes
 
-Management commands take `-o json` or `-o jsonl`. `status -o json` has the same
-schema whether the agent runs or not: `running` is always set, and the
-fields of the running server, such as `pid` and `local`, only while it runs.
-Removals (`stop`, `channel rm`, `contact rm`, `pair rm`)
-print `{"removed": true, "kind": …, "name": …}`, and `stop` prints
-`{"name", "stopped", "serviceInstalled", "serviceRemoved"}`.
+Management commands take `-o json` or `-o jsonl`. List commands (`pair list`,
+`channel list`, `contact list`, `schedule list`, `peers`, `backup list`,
+`mailbox list`, `doctor`) print a JSON array of objects with `-o json`, and
+one object per line with `-o jsonl`; each object has every column of the
+table, and `pair list` and `peers` add a `kind`. `status -o json` is one
+object with the same schema whether the agent runs or not: `running` is
+always set, and the fields of the running server, such as `pid` and `local`,
+only while it runs. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
+`schedule rm`, each also called `delete`) print
+`{"removed": true, "kind": …, "name": …}`, and `stop` prints
+`{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. Commands that
+only print text, `run`, `logs` and `config edit`, reject `-o`.
+
+Commands that call the running agent take `--timeout`, the timeout of each
+call (default 60s). `--version` prints what `version` prints.
 
 Errors follow the error contract of the
 [a2a CLI](https://github.com/a2aproject/a2a-cli) (`specification/SPEC.md`):

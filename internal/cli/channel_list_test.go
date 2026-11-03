@@ -15,9 +15,10 @@
 package cli
 
 import (
+	"cmp"
 	"testing"
 
-	"github.com/google/go-cmp/cmp"
+	gocmp "github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
@@ -26,11 +27,14 @@ func TestChannelListOffline(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name     string
+		output   string
 		channels []string
 		want     string
 	}{
 		{name: "configured", channels: []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord}, want: "CHANNEL   ACCOUNT  STATE\ntelegram           stopped\ndiscord            stopped\n"},
 		{name: "none", want: "no channels; add one with `a2a serve channel add <telegram|discord|email>`\n"},
+		{name: "jsonl", output: "jsonl", channels: []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord}, want: `{"name":"telegram","state":"stopped"}` + "\n" + `{"name":"discord","state":"stopped"}` + "\n"},
+		{name: "json none", output: "json", want: "[]\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -43,11 +47,11 @@ func TestChannelListOffline(t *testing.T) {
 			}
 			d := newTestAgent(t, cfg)
 
-			got, err := runCMD(t, "channel", "list", "--dir", d.Root)
+			got, err := runCMD(t, "-o", cmp.Or(tc.output, "text"), "channel", "list", "--dir", d.Root)
 			if err != nil {
 				t.Fatalf("a2a serve channel list error = %v", err)
 			}
-			if diff := cmp.Diff(tc.want, got); diff != "" {
+			if diff := gocmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("a2a serve channel list wrong result (-want +got) diff = %s", diff)
 			}
 		})

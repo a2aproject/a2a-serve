@@ -96,5 +96,6 @@ directory.`,
 		newProxyCmd(cfg),
 		newExecCmd(cfg),
 	)
+	markTextOnly(cmd)
 	return cmd
 }

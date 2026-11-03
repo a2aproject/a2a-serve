@@ -62,7 +62,7 @@ and --allow-tools and --deny-tools by value. Remove entries with
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Set(cmd.Context(), d, s, dryRun)
+			res, err := agentctl.Set(sf.controlContext(cmd.Context()), d, s, dryRun)
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ and --allow-tools and --deny-tools by value. Remove entries with
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(cmd.Context(), d, false, cfg.Out)
+			return agentctl.Restart(sf.controlContext(cmd.Context()), d, false, cfg.Out)
 		},
 	}
 	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)

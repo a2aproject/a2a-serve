@@ -341,6 +341,9 @@ func TestServeUsageErrors(t *testing.T) {
 		{name: "exec stream and chunk", args: []string{"run", "exec", "--stream", "--chunk", ",", "cat"}, wantErr: "--stream and --chunk are mutually exclusive"},
 		{name: "dir on a command without an agent", args: []string{"mailbox", "list", "--dir", "/tmp"}, wantErr: "unknown flag: --dir"},
 		{name: "pair set without changes", args: []string{"pair", "set", "anna"}, wantErr: "nothing to change"},
+		{name: "json output of logs", args: []string{"-o", "json", "logs"}, wantErr: "-o json doesn't apply to `a2a serve logs`"},
+		{name: "json output of a test server", args: []string{"-o", "jsonl", "run", "echo"}, wantErr: "-o jsonl doesn't apply to `a2a serve run echo`"},
+		{name: "json output of config edit", args: []string{"-o", "json", "config", "edit"}, wantErr: "doesn't apply to `a2a serve config edit`"},
 		{name: "schedule without cron or at", args: []string{"schedule", "add", "brief", "--prompt", "hello"}, wantErr: "set either --cron or --at"},
 		{name: "schedule without prompt", args: []string{"schedule", "add", "brief", "--cron", "@daily"}, wantErr: "--prompt is required"},
 		{name: "timeout on a command without requests", args: []string{"logs", "--timeout", "1s"}, wantErr: "unknown flag: --timeout"},
@@ -354,6 +357,28 @@ func TestServeUsageErrors(t *testing.T) {
 			}
 			if got := clierr.Classify(err).Code; got != clierr.CodeUsage {
 				t.Fatalf("a2a serve %s error code = %v, want %v", strings.Join(tc.args, " "), got, clierr.CodeUsage)
+			}
+		})
+	}
+}
+
+func TestIsPluginInfoCall(t *testing.T) {
+	t.Parallel()
+	pipe := pipeWith(t, "")
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "the a2a CLI asking", args: []string{"info"}, want: true},
+		{name: "info with more arguments", args: []string{"info", "x"}},
+		{name: "another command", args: []string{"status"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := isPluginInfoCall(tc.args, pipe); got != tc.want {
+				t.Fatalf("isPluginInfoCall(%q) = %v, want %v", tc.args, got, tc.want)
 			}
 		})
 	}

@@ -30,7 +30,7 @@ import (
 )
 
 func newConfigEditCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "edit",
 		Short: "Edit config.yaml in $EDITOR, validating it on save",
 		Long: `Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
@@ -47,7 +47,7 @@ aren't in config.yaml: store them with ` + "`a2a serve config set --secret NAME`
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Edit(cmd.Context(), d, func(path string) error {
+			res, err := agentctl.Edit(sf.controlContext(cmd.Context()), d, func(path string) error {
 				c := exec.CommandContext(cmd.Context(), editor[0], append(editor[1:], path)...)
 				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 				if err := c.Run(); err != nil {
@@ -63,6 +63,8 @@ aren't in config.yaml: store them with ` + "`a2a serve config set --secret NAME`
 			return printConfigResult(cfg, res)
 		},
 	}
+	markTextOnly(cmd)
+	return cmd
 }
 
 func editorCommand() ([]string, error) {

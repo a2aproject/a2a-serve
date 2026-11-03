@@ -21,6 +21,7 @@ import (
 func newScheduleRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:               "rm <name>",
+		Aliases:           []string{"delete"},
 		Short:             "Remove a schedule",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: scheduleNames(sf),
