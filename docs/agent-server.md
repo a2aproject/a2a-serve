@@ -402,6 +402,8 @@ page.
 
 ## Who can call the agent
 
+This section describes the current behavior. The [access model](access-model.md) describes the model a2a-serve is moving to.
+
 | Caller | How it is recognized | Principal |
 | --- | --- | --- |
 | You, on the machine running the agent | The owner token the server saves in your a2a credentials | `user:owner` |

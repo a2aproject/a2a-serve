@@ -78,6 +78,7 @@ The pinned `a2a` version is needed until a release has `--unix-socket` and crede
 
 - **[Agent server guide](./docs/agent-server.md):** sandboxing, approvals, networks, messengers, agent-to-agent calls, webhook nodes, schedules, backups, the inspector and the command reference.
 - **[Architecture](./docs/agent-server-architecture.md):** how a task flows through the server, with diagrams.
+- **[Access model](./docs/access-model.md):** who can call an agent from each network, what they may do, and how it runs on Agent Mesh.
 - **[Security](./docs/security.md):** what the sandbox protects and what each token grants.
 - **[Upgrades](./docs/upgrades.md):** how stored state migrates between versions.
 - **[Cookbook](./examples/):** runnable lessons, from [serving a coding agent](./examples/01-agent-server/) to [Tailscale, Telegram and a Grok bot](./examples/02-tailscale-telegram-grok/) and an [Agent Mesh relay](./examples/03-agentmesh-relay/).

@@ -1,0 +1,28 @@
+// A. Concepts: the entities of the access model and how they relate.
+// Render: docs/graphs/render.sh access-model-concepts.dot
+digraph concepts {
+  rankdir=TB;
+  graph [fontname="Helvetica", fontsize=14, nodesep=0.6, ranksep=0.7, pad=0.3, newrank=true,
+         label="A. Access model concepts", labelloc=t];
+  node  [fontname="Helvetica", fontsize=14, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555", margin="0.2,0.1"];
+  edge  [fontname="Helvetica", fontsize=12, color="#555555", fontcolor="#333333"];
+
+  { rank=same;
+    Network [label="Network\n(private, public)", fillcolor="#dbe8ff", color="#9bb7e0"];
+    Channel [label="Channel\n(Telegram, Discord, email)", fillcolor="#dbe8ff", color="#9bb7e0"];
+    Pairing [label="Pairing\n(trusted)", fillcolor="#fdf1e6", color="#e0b48a"];
+  }
+  Identity [fillcolor="#f4f4f4"];
+  Policy   [label="Policy\n(owner, authenticated,\nanonymous)", fillcolor="#e3f4e3", color="#9ccc9c"];
+  Agent    [fillcolor="#f3eefb", color="#b9a4dd"];
+  Contact  [label="Contact\n(untrusted)", shape=ellipse, fillcolor="#e3f4e3"];
+
+  Network -> Identity [label="contributes"];
+  Channel -> Identity [label="contributes"];
+  Pairing -> Identity [label="attests"];
+  Identity -> Policy  [dir=back, label="authorizes"];
+  Policy  -> Agent    [label="protects"];
+  Agent   -> Contact  [label="calls"];
+  Network -> Agent    [dir=back, style=dashed, label="listens on"];
+  Channel -> Agent    [dir=back, style=dashed, label="answers in"];
+}

@@ -199,5 +199,6 @@ The sources are Graphviz files in [`graphs/`](graphs/). After editing one,
 re-render it:
 
 ```sh
-cd docs/graphs && dot -Tpng -Gdpi=110 agent-server-<name>.dot -o agent-server-<name>.png
+docs/graphs/render.sh              # every diagram
+docs/graphs/render.sh <name>.dot   # one diagram
 ```

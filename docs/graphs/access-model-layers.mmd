@@ -1,0 +1,46 @@
+%%{init: {"markdownAutoWrap": false, "flowchart": {"wrappingWidth": 400}}}%%
+%% B. Layers: how a2a-serve runs on Agent Mesh, from the CLI down to Agent Mesh.
+%% Render: docs/graphs/render.sh access-model-layers.mmd
+graph TB
+    U(["People, scripts and other agents"])
+    class U user
+
+    subgraph L1 ["Layer 1: a2a-serve CLI"]
+        direction LR
+        A1["--private / --public"] ~~~ A2["--private-access / --public-access"] ~~~ A3["--allow-email"] ~~~ A4["pair"] ~~~ A5["contact"] ~~~ A6["channel"]
+    end
+
+    subgraph L2 ["Layer 2: data model"]
+        direction LR
+        B1["Network"] ~~~ B2["Identity"] ~~~ B3["Policy and roles"] ~~~ B4["Pairing"] ~~~ B5["Contact"] ~~~ B6["Channel"]
+    end
+
+    subgraph L3 ["Layer 3: Agent Mesh config"]
+        direction LR
+        C1["Enrollment"] ~~~ C2["Invites"] ~~~ C3["Service a2a://name"] ~~~ C4["Ingress"] ~~~ C5["Caller mapping"] ~~~ C6["Outbound calls"]
+    end
+
+    subgraph L4 ["Layer 4: Agent Mesh"]
+        direction LR
+        D1["Node keys"] ~~~ D2["Biscuits"] ~~~ D3["Relay"] ~~~ D4["Control plane"] ~~~ D5["Public ingress"] ~~~ D6["meshnet SDK"]
+    end
+
+    U --> L1
+    L1 --> L2
+    L2 --> L3
+    L3 --> L4
+
+    classDef user fill:#ffffff,stroke:#555555
+    classDef l1 fill:#dbe8ff,stroke:#9bb7e0
+    classDef l2 fill:#e3f4e3,stroke:#9ccc9c
+    classDef l3 fill:#fde5cf,stroke:#e0b48a
+    classDef l4 fill:#e8e8e8,stroke:#bbbbbb
+    class A1,A2,A3,A4,A5,A6 l1
+    class B1,B2,B3,B4,B5,B6 l2
+    class C1,C2,C3,C4,C5,C6 l3
+    class D1,D2,D3,D4,D5,D6 l4
+
+    style L1 fill:#eef5ff,stroke:#333,stroke-width:2px
+    style L2 fill:#f0f9f0,stroke:#333,stroke-width:2px
+    style L3 fill:#fdf1e6,stroke:#333,stroke-width:2px
+    style L4 fill:#f4f4f4,stroke:#333,stroke-width:2px

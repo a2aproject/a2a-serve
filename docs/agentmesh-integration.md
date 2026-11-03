@@ -171,5 +171,6 @@ The sources are Graphviz files in [`graphs/`](graphs/). After editing one,
 re-render it:
 
 ```sh
-cd docs/graphs && dot -Tpng -Gdpi=110 agentmesh-<name>.dot -o agentmesh-<name>.png
+docs/graphs/render.sh              # every diagram
+docs/graphs/render.sh <name>.dot   # one diagram
 ```
