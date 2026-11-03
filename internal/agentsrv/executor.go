@@ -263,7 +263,27 @@ func withOriginalMessage(t *a2a.Task, withLine, original *a2a.Message) *a2a.Task
 }
 
 func (e *observedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return e.observe(ctx, execCtx, e.inner.Cancel(ctx, execCtx))
+	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.inner.Cancel(ctx, execCtx)))
+}
+
+// canceledFirst yields the canceled event before the inner Cancel runs.
+// a2aacp stops the turn before yielding it, which can end a running
+// execution and close its queue first, failing the cancel with "queue is
+// closed": https://github.com/a2aproject/a2a-go/issues/518. The inner
+// events still run for their side effects; its canceled event is dropped.
+func canceledFirst(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		open := yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
+		for ev, err := range events {
+			if !open {
+				continue
+			}
+			if u, ok := ev.(*a2a.TaskStatusUpdateEvent); ok && err == nil && u.Status.State == a2a.TaskStateCanceled {
+				continue
+			}
+			open = yield(ev, err)
+		}
+	}
 }
 
 func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {

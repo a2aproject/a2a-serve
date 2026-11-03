@@ -18,11 +18,15 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
+	"math/rand/v2"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -118,7 +122,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &agentdir.Config{Name: o.name, Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal}
+	cfg := &agentdir.Config{Name: o.name, Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: freePort(t)}
 	if dir.Exists() {
 		if cfg, err = dir.LoadConfig(); err != nil {
 			t.Fatal(err)
@@ -152,6 +156,41 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	t.Cleanup(ts.stop)
 	return ts
+}
+
+// Agents keep their port across restarts. Ports are picked below the
+// ephemeral range, so that a parallel test listening on port 0 can't take
+// the port of a stopped agent before it restarts.
+const (
+	minTestPort = 20000
+	maxTestPort = 32000
+)
+
+var nextTestPort = struct {
+	sync.Mutex
+	n int
+}{n: rand.IntN(maxTestPort - minTestPort)}
+
+// freePort returns a free port for a new agent, never the same one twice
+// in this process.
+func freePort(t *testing.T) int {
+	t.Helper()
+	nextTestPort.Lock()
+	defer nextTestPort.Unlock()
+	for range maxTestPort - minTestPort {
+		port := minTestPort + nextTestPort.n
+		nextTestPort.n = (nextTestPort.n + 1) % (maxTestPort - minTestPort)
+		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		if err := ln.Close(); err != nil {
+			t.Fatalf("closing the listener on port %d: %v", port, err)
+		}
+		return port
+	}
+	t.Fatalf("no free port in [%d, %d)", minTestPort, maxTestPort)
+	return 0
 }
 
 func (ts *testServer) stop() {
@@ -398,14 +437,18 @@ func (f *fakeChannel) waitFor(t *testing.T, conv string, pred func(channel.Outbo
 		f.mu.Unlock()
 		time.Sleep(20 * time.Millisecond)
 	}
+	t.Fatalf("no matching message in %s; messages:\n%s", conv, f.dump())
+	return "", channel.Outbound{}
+}
+
+func (f *fakeChannel) dump() string {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var all []string
-	for _, id := range f.order {
+	for _, id := range slices.Sorted(maps.Keys(f.msgs)) {
 		all = append(all, fmt.Sprintf("%s[%s]: %q q=%v", id, f.msgs[id].Conv, f.msgs[id].Text, f.msgs[id].Question))
 	}
-	t.Fatalf("no matching message in %s; messages:\n%s", conv, strings.Join(all, "\n"))
-	return "", channel.Outbound{}
+	return strings.Join(all, "\n")
 }
 
 // waitEdited waits until the message with ID id contains text. The message
@@ -421,7 +464,7 @@ func (f *fakeChannel) waitEdited(t *testing.T, id, text string) {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("message %s = %q, want it to contain %q", id, got, text)
+			t.Fatalf("message %s = %q, want it to contain %q; messages:\n%s", id, got, text, f.dump())
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

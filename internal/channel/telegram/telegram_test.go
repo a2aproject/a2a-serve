@@ -185,6 +185,40 @@ func unescapeJSON(s string) string {
 	return out
 }
 
+func TestRunKeepsUpdateOrder(t *testing.T) {
+	t.Parallel()
+	const n = 50
+	var updates, want []string
+	for i := range n {
+		updates = append(updates, fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"m%d"}}`, i+1, i+1, i))
+		want = append(want, fmt.Sprintf("m%d", i))
+	}
+	srv := httptest.NewServer(&fakeBotAPI{t: t, calls: map[string][]string{}, updates: updates})
+	defer srv.Close()
+	c := New("123:abc")
+	c.ServerURL = srv.URL
+
+	ctx := t.Context()
+	in := make(chan channel.Inbound, n)
+	go func() {
+		if err := c.Run(ctx, in); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+	var got []string
+	for len(got) < n {
+		select {
+		case m := <-in:
+			got = append(got, m.Text)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("Run() delivered %d messages, want %d", len(got), n)
+		}
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Run() wrong message order (-want +got) diff = %s", diff)
+	}
+}
+
 func TestGroupMessages(t *testing.T) {
 	t.Parallel()
 	group := func(id int, text string) string {
