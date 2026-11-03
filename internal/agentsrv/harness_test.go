@@ -81,6 +81,9 @@ type serverOpts struct {
 	approver    string
 	credentials *credstore.Store
 	telegramAPI string
+	secrets     agentdir.Secrets
+	// configure changes the config before the server starts.
+	configure func(*agentdir.Config)
 }
 
 // startServer starts an agent server and stops it when the test ends.
@@ -115,12 +118,18 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if o.approver != "" {
 		cfg.Approvals.Approvers = []string{o.approver}
 	}
+	if o.configure != nil {
+		o.configure(cfg)
+	}
+	if o.secrets == nil {
+		o.secrets = agentdir.Secrets{}
+	}
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

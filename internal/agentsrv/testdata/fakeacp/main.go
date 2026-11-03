@@ -22,6 +22,7 @@
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
 //	crash            exits mid-turn
+//	mcp              replies with the MCP servers of session/new
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
 //	acall <agent> <t> the same, without waiting for the result
 //
@@ -62,7 +63,8 @@ type message struct {
 }
 
 type session struct {
-	Memory string `json:"memory"`
+	Memory     string            `json:"memory"`
+	MCPServers []json.RawMessage `json:"mcpServers"`
 }
 
 type agent struct {
@@ -163,7 +165,8 @@ func (a *agent) handle(m message) {
 		a.respond(m.ID, map[string]any{"protocolVersion": 1, "agentCapabilities": map[string]any{"loadSession": true}})
 	case "session/new":
 		var p struct {
-			Cwd string `json:"cwd"`
+			Cwd        string            `json:"cwd"`
+			MCPServers []json.RawMessage `json:"mcpServers"`
 		}
 		if err := json.Unmarshal(m.Params, &p); err != nil {
 			a.fail(m.ID, err.Error())
@@ -171,7 +174,7 @@ func (a *agent) handle(m message) {
 		}
 		a.dir = p.Cwd
 		id := fmt.Sprintf("s%d", time.Now().UnixNano())
-		if err := a.save(id, &session{}); err != nil {
+		if err := a.save(id, &session{MCPServers: p.MCPServers}); err != nil {
 			a.fail(m.ID, err.Error())
 			return
 		}
@@ -306,6 +309,14 @@ func (a *agent) prompt(m message) {
 		end("end_turn")
 	case "recall":
 		a.chunk(sid, "You said: "+s.Memory)
+		end("end_turn")
+	case "mcp":
+		data, err := json.Marshal(s.MCPServers)
+		if err != nil {
+			a.fail(m.ID, err.Error())
+			return
+		}
+		a.chunk(sid, string(data))
 		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")

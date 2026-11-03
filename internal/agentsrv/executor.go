@@ -100,6 +100,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	acp, err := a2aacp.NewExecutor(ctx, agent, &a2aacp.Config{
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
+		Session:      s.sessionParams,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", profile.Name(), err), prepared.Stop(ctx))
