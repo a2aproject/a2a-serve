@@ -26,6 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 const (
@@ -49,6 +50,7 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 			results = append(results, Result{ID: "secrets", Status: StatusFail, Message: err.Error(), Fix: fixEdit})
 		} else {
 			results = append(results, checkSecrets(cfg, secrets)...)
+			results = append(results, checkMCP(d, cfg, secrets)...)
 		}
 		results = append(results, checkMounts(d, cfg)...)
 	}
@@ -140,6 +142,45 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 	n := len(cfg.Secrets) + len(secretRefs(cfg))
 	if len(results) == 0 && n > 0 {
 		results = append(results, Result{ID: "secrets", Status: StatusOK, Message: fmt.Sprintf("%d %s stored", n, plural(n, "secret", "secrets"))})
+	}
+	return results
+}
+
+// checkMCP reports the MCP servers of the project's .mcp.json which reference
+// variables without a value, since the harness doesn't get them.
+func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
+	ws, err := d.WorkspaceMount(cfg)
+	if err != nil {
+		return nil
+	}
+	servers, err := project.LoadMCP(ws.Src)
+	if err != nil {
+		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the harness gets none of the project's MCP servers"}}
+	}
+	if len(servers) == 0 {
+		return nil
+	}
+	vars := project.Vars(cfg, secrets)
+	var results []Result
+	for _, srv := range servers {
+		_, missing := srv.Resolve(vars)
+		if len(missing) == 0 {
+			continue
+		}
+		fix := make([]string, len(missing))
+		for i, name := range missing {
+			fix[i] = "--secret " + name
+		}
+		results = append(results, Result{
+			ID:      "mcp",
+			Status:  StatusWarn,
+			Message: fmt.Sprintf("MCP server %s needs %s", srv.Name, strings.Join(missing, ", ")),
+			Detail:  "the harness doesn't get it until they have a value",
+			Fix:     "a2a serve config set " + strings.Join(fix, " "),
+		})
+	}
+	if len(results) == 0 {
+		return []Result{{ID: "mcp", Status: StatusOK, Message: fmt.Sprintf("%d MCP servers in %s", len(servers), project.MCPFile)}}
 	}
 	return results
 }

@@ -135,6 +135,9 @@ func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
+	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
+		st.ProjectError = err.Error()
+	}
 	jsonhttp.Write(w, http.StatusOK, st)
 }
 
