@@ -60,8 +60,12 @@ func (s *Server) setupNetwork(closers *stack) error {
 		if relay != nil {
 			return relay, nil
 		}
+		newRelay := s.newRelay
+		if newRelay == nil {
+			newRelay = network.NewRelay
+		}
 		var err error
-		relay, err = network.NewRelay(network.RelayConfig{
+		relay, err = newRelay(network.RelayConfig{
 			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
 			StateDir: s.dir.AgentMeshDir(), Token: s.secrets[SecretRelayToken],
 			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),

@@ -25,6 +25,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 func fakeIDToken(t *testing.T, claims map[string]any) string {
@@ -36,9 +38,30 @@ func fakeIDToken(t *testing.T, claims map[string]any) string {
 	return "eyJhbGciOiJSUzI1NiJ9." + base64.RawURLEncoding.EncodeToString(data) + ".sig"
 }
 
+// encodeControlPlaneInfo encodes the wire layout of Agent Mesh's
+// api.ControlPlaneInfoResponse (1: oidc_issuer, 2: client_id, 3: audience,
+// 4: router_addresses).
+func encodeControlPlaneInfo(issuer, clientID, audience string, routerAddrs ...string) []byte {
+	var b []byte
+	appendStr := func(num protowire.Number, v string) {
+		if v == "" {
+			return
+		}
+		b = protowire.AppendTag(b, num, protowire.BytesType)
+		b = protowire.AppendString(b, v)
+	}
+	appendStr(1, issuer)
+	appendStr(2, clientID)
+	appendStr(3, audience)
+	for _, addr := range routerAddrs {
+		appendStr(4, addr)
+	}
+	return b
+}
+
 // fakeRelay serves a relay's /info and its identity provider's device flow,
 // which grants the token after pending polls.
-func fakeRelay(t *testing.T, idToken string, pending int, withDevice bool) *httptest.Server {
+func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice bool) *httptest.Server {
 	t.Helper()
 	var polls atomic.Int32
 	var srv *httptest.Server
@@ -49,7 +72,20 @@ func fakeRelay(t *testing.T, idToken string, pending int, withDevice bool) *http
 		}
 	}
 	mux.HandleFunc("GET /info", func(w http.ResponseWriter, r *http.Request) {
-		write(w, map[string]any{"oidcIssuer": srv.URL + "/idp", "clientId": "mesh-client", "audience": "mesh"})
+		if got := r.Header.Get("Accept"); got != "application/x-protobuf" {
+			http.Error(w, "unexpected Accept: "+got, http.StatusNotAcceptable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		var payload []byte
+		if withOIDC {
+			payload = encodeControlPlaneInfo(srv.URL+"/idp", "mesh-client", "mesh", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
+		} else {
+			payload = encodeControlPlaneInfo("", "", "", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
+		}
+		if _, err := w.Write(payload); err != nil {
+			t.Errorf("writing /info: %v", err)
+		}
 	})
 	mux.HandleFunc("GET /idp/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
 		conf := map[string]any{"token_endpoint": srv.URL + "/idp/token"}
@@ -85,7 +121,7 @@ func fakeRelay(t *testing.T, idToken string, pending int, withDevice bool) *http
 func TestRelayLogin(t *testing.T) {
 	t.Parallel()
 	token := fakeIDToken(t, map[string]any{"email": "Ben@example.com", "email_verified": true})
-	relay := fakeRelay(t, token, 2, true)
+	relay := fakeRelay(t, token, 2, true, true)
 	dir := t.TempDir()
 	var logs []string
 	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
@@ -109,14 +145,24 @@ func TestRelayLogin(t *testing.T) {
 func TestRelayLoginErrors(t *testing.T) {
 	t.Parallel()
 	unverified := fakeIDToken(t, map[string]any{"email": "ben@example.com"})
+	badWire := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		if _, err := w.Write([]byte{0xff, 0xff}); err != nil {
+			t.Errorf("writing malformed /info: %v", err)
+		}
+	}))
+	t.Cleanup(badWire.Close)
+
 	tests := []struct {
 		name      string
 		relay     *httptest.Server
 		wantErr   bool
 		wantOwner string
 	}{
-		{name: "no device sign-in", relay: fakeRelay(t, unverified, 0, false), wantErr: true},
-		{name: "unverified email", relay: fakeRelay(t, unverified, 0, true)},
+		{name: "no oidc on relay", relay: fakeRelay(t, unverified, 0, false, false), wantErr: true},
+		{name: "malformed protobuf info", relay: badWire, wantErr: true},
+		{name: "no device sign-in", relay: fakeRelay(t, unverified, 0, true, false), wantErr: true},
+		{name: "unverified email", relay: fakeRelay(t, unverified, 0, true, true)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

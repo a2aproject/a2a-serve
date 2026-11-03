@@ -77,6 +77,8 @@ type Options struct {
 	Ready func(*Server)
 	// Private replaces the private network of the config, for tests.
 	Private network.Provider
+	// NewRelay replaces network.NewRelay, for tests.
+	NewRelay func(network.RelayConfig) (network.Provider, error)
 }
 
 // Server is a running agent server.
@@ -96,9 +98,10 @@ type Server struct {
 	chain   *auth.Chain
 	bus     *eventBus
 
-	private network.Provider
-	public  network.Provider
-	bridge  harnessBridge
+	private  network.Provider
+	public   network.Provider
+	newRelay func(network.RelayConfig) (network.Provider, error)
+	bridge   harnessBridge
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -168,6 +171,7 @@ func Run(ctx context.Context, opts Options) error {
 		telegramServerURL: opts.TelegramServerURL,
 		setupProblems:     opts.SetupProblems,
 		private:           opts.Private,
+		newRelay:          opts.NewRelay,
 
 		pairFailures: newFailureLimiter(10, time.Minute),
 	}
