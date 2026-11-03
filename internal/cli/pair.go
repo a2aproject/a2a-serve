@@ -86,7 +86,7 @@ func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, erro
 		return credstore.Credential{}, err
 	}
 	for _, c := range creds {
-		if strings.TrimSuffix(c.URL, "/") == strings.TrimSuffix(url, "/") {
+		if credstore.Normalize(c.URL) == credstore.Normalize(url) {
 			return c, nil
 		}
 	}

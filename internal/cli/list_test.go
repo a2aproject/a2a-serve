@@ -58,6 +58,11 @@ func TestPairListJoined(t *testing.T) {
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
 		t.Fatalf("a2a serve pair list --joined wrong result (-want +got) diff = %s", diff)
 	}
+	for _, u := range []string{"HTTPS://Coder.example.com/", "https://coder.example.com/.well-known/agent-card.json"} {
+		if out, err := runCMDWithCreds(t, creds, "pair", "get", u); err != nil || !strings.Contains(out, "agent        coder") {
+			t.Fatalf("a2a serve pair get %s = %q, %v, want the agent joined at the same URL", u, out, err)
+		}
+	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "get", "https://other.example.com"); err == nil || !strings.Contains(err.Error(), "you haven't joined") {
 		t.Fatalf("a2a serve pair get of an agent not joined error = %v, want a hint to join", err)
 	}
