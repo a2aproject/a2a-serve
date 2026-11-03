@@ -166,6 +166,28 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 	}
 }
 
+func TestNodeAnswersOwnApproval(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("telegram")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	node := addNode(t, ts, "grok", 0)
+	node.mu.Lock()
+	token := node.client.Token
+	node.mu.Unlock()
+	c := ts.client(token)
+
+	task := send(t, c, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want input-required", task.Status.State)
+	}
+	answer := send(t, c, userText("approve", string(task.ID), task.ContextID))
+
+	wantResult(t, answer, a2a.TaskStateCompleted, "Pushed (allow).")
+	if got := ts.ch.questions(); got != 0 {
+		t.Fatalf("questions sent to messengers = %d, want none: the node answers its own task", got)
+	}
+}
+
 func TestNodeSkill(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})

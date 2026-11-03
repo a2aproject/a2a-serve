@@ -190,6 +190,28 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	ts.ch.waitEdited(t, ref, "✓ Allow by owner")
 }
 
+func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
+	linkOwner(t, ts, "tg:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	ctx := context.Background()
+	contextID, err := ts.srv.router.contextOf(ctx, "telegram", "dm2")
+	if err != nil {
+		t.Fatalf("contextOf() error = %v", err)
+	}
+
+	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Principal{ID: "pair:anna", Roles: []string{auth.RoleMember}}, "ask"); err != nil {
+		t.Fatalf("injectTurn() error = %v", err)
+	}
+	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
+	if got := ts.ch.questions(); got != 1 {
+		t.Fatalf("questions sent = %d, want only the one in anna's chat", got)
+	}
+	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
+}
+
 func TestRouterOwnerChat(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
