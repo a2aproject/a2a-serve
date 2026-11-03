@@ -28,6 +28,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"google.golang.org/protobuf/encoding/protowire"
 )
 
 // AgentMeshVersion is the Agent Mesh version this a2a-serve joins relays
@@ -110,23 +112,69 @@ type relayInfo struct {
 	issuer, clientID, audience string
 }
 
-// info reads the relay's identity provider from its /info.
+// info reads the relay's identity provider from its /info, which Agent Mesh
+// serves as binary protobuf (api.ControlPlaneInfoResponse).
 func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
-	var raw map[string]any
-	if err := l.getJSON(ctx, strings.TrimSuffix(l.RelayURL, "/")+"/info", &raw); err != nil {
+	u := strings.TrimSuffix(l.RelayURL, "/") + "/info"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
-	str := func(keys ...string) string {
-		for _, k := range keys {
-			if v, ok := raw[k].(string); ok && v != "" {
-				return v
-			}
-		}
-		return ""
+	req.Header.Set("Accept", "application/x-protobuf")
+	resp, err := l.HTTP.Do(req)
+	if err != nil {
+		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
-	info := relayInfo{issuer: str("oidc_issuer", "oidcIssuer"), clientID: str("client_id", "clientId"), audience: str("audience")}
+	defer closeResp(resp)
+	if resp.StatusCode != http.StatusOK {
+		return relayInfo{}, fmt.Errorf("reading the relay's info: %s: %s", u, resp.Status)
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
+	}
+	info, err := decodeRelayInfo(body)
+	if err != nil {
+		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
+	}
 	if info.issuer == "" || info.clientID == "" {
 		return relayInfo{}, errors.New("the relay doesn't let agents sign in; join it with --relay-token")
+	}
+	return info, nil
+}
+
+// decodeRelayInfo reads oidc_issuer (1), client_id (2) and audience (3) from
+// a serialized api.ControlPlaneInfoResponse without pulling generated mesh
+// protos into builds without -tags agentmesh.
+func decodeRelayInfo(b []byte) (relayInfo, error) {
+	var info relayInfo
+	for len(b) > 0 {
+		num, typ, n := protowire.ConsumeTag(b)
+		if n < 0 {
+			return relayInfo{}, protowire.ParseError(n)
+		}
+		b = b[n:]
+		if typ == protowire.BytesType && (num == 1 || num == 2 || num == 3) {
+			v, m := protowire.ConsumeString(b)
+			if m < 0 {
+				return relayInfo{}, protowire.ParseError(m)
+			}
+			b = b[m:]
+			switch num {
+			case 1:
+				info.issuer = v
+			case 2:
+				info.clientID = v
+			case 3:
+				info.audience = v
+			}
+			continue
+		}
+		m := protowire.ConsumeFieldValue(num, typ, b)
+		if m < 0 {
+			return relayInfo{}, protowire.ParseError(m)
+		}
+		b = b[m:]
 	}
 	return info, nil
 }

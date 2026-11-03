@@ -24,8 +24,6 @@ import (
 	"net"
 	"net/http"
 	"net/url"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -103,12 +101,8 @@ func (a *agentMesh) logf(format string, args ...any) {
 }
 
 func hasMeshIdentity(stateDir string) bool {
-	for _, f := range []string{meshnet.StateDirCredentialFile, "agent.db"} {
-		if _, err := os.Stat(filepath.Join(stateDir, f)); err == nil {
-			return true
-		}
-	}
-	return false
+	_, cred, err := meshnet.ReadStateDir(stateDir)
+	return err == nil && len(cred.GetBiscuit()) > 0
 }
 
 func (a *agentMesh) start(ctx context.Context) error {

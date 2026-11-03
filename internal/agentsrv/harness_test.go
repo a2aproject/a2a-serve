@@ -90,6 +90,7 @@ type serverOpts struct {
 	configure func(*agentdir.Config)
 	google    *googleauth.Endpoints
 	private   network.Provider
+	newRelay  func(network.RelayConfig) (network.Provider, error)
 }
 
 // startServer starts an agent server and stops it when the test ends.
@@ -135,7 +136,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, NewRelay: o.newRelay, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

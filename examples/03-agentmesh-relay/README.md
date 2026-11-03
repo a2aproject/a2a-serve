@@ -135,6 +135,17 @@ a2a serve stop --dir ~/a2a-lesson3/reviewer
 rm -rf ~/a2a-lesson3
 ```
 
+## Automated end-to-end validation
+
+[`demo.sh`](./demo.sh) runs both the token-joined flow above (with optional
+`--tunnel cloudflare` public ingress) and OIDC device-flow sign-in with
+same-owner recognition against `agentmesh-one` `v0.2.0` and Docker-sandboxed
+`opencode` agents:
+
+```bash
+bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
+```
+
 ## What's next
 
 - Sign in instead of tokens: a relay with an identity provider prints a

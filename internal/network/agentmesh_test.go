@@ -18,15 +18,25 @@ package network
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/agentmesh/api"
 	"github.com/google/agentmesh/sdk/meshnet"
 	"github.com/google/go-cmp/cmp"
+	"google.golang.org/protobuf/encoding/protowire"
+	"google.golang.org/protobuf/proto"
 )
 
 type fakeMeshSession struct {
@@ -121,5 +131,188 @@ func TestAgentMeshPeersAndHTTPClient(t *testing.T) {
 	want := []PeerInfo{{Name: "anna", URL: "http://agentmesh.local/mesh/p2/a2a/anna", Description: "Anna's coder", Online: true}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Peers() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRelayLoginDecodesControlPlaneInfoProto(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "Ben@example.com", "email_verified": true})
+	var srv *httptest.Server
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /info", func(w http.ResponseWriter, r *http.Request) {
+		payload, err := proto.Marshal(&api.ControlPlaneInfoResponse{
+			OidcIssuer:      srv.URL + "/idp",
+			ClientId:        "mesh-client",
+			Audience:        "mesh-aud",
+			RouterAddresses: []string{"/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter"},
+			BannedPeerIds:   []string{"12D3KooWBanned"},
+			Routers:         []*api.RouterInfo{{PeerId: "12D3KooWRouter", Connections: 2, ConnectionLimit: 100}},
+			Directory:       api.NewDirectoryParameters(3, 5*time.Minute),
+		})
+		if err != nil {
+			t.Errorf("proto.Marshal() error = %v", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/x-protobuf")
+		if _, err := w.Write(payload); err != nil {
+			t.Errorf("Write() error = %v", err)
+		}
+	})
+	mux.HandleFunc("GET /idp/.well-known/openid-configuration", func(w http.ResponseWriter, _ *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"device_authorization_endpoint": srv.URL + "/idp/device",
+			"token_endpoint":                srv.URL + "/idp/token",
+		}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	mux.HandleFunc("POST /idp/device", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("client_id") != "mesh-client" || r.FormValue("audience") != "mesh-aud" {
+			http.Error(w, "bad client or audience", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]any{
+			"device_code":               "dc-proto",
+			"user_code":                 "WXYZ",
+			"verification_uri_complete": srv.URL + "/idp/activate?code=WXYZ",
+			"interval":                  0,
+			"expires_in":                60,
+		}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	mux.HandleFunc("POST /idp/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("device_code") != "dc-proto" {
+			http.Error(w, "bad code", http.StatusBadRequest)
+			return
+		}
+		if err := json.NewEncoder(w).Encode(map[string]string{"id_token": token}); err != nil {
+			t.Errorf("Encode() error = %v", err)
+		}
+	})
+	srv = httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+
+	dir := t.TempDir()
+	l := &RelayLogin{RelayURL: srv.URL, StateDir: dir, HTTP: srv.Client(), Poll: time.Millisecond}
+	got, err := l.Token(context.Background())
+	if err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v, want nil", err)
+	}
+	if got != token {
+		t.Fatalf("RelayLogin.Token() = %q, want %q", got, token)
+	}
+	if owner := SavedOwner(dir); owner != "ben@example.com" {
+		t.Fatalf("SavedOwner() = %q, want %q", owner, "ben@example.com")
+	}
+}
+
+func marshalLibp2pEd25519Key(t *testing.T) []byte {
+	t.Helper()
+	_, priv, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("ed25519.GenerateKey() error = %v", err)
+	}
+	var b []byte
+	b = protowire.AppendTag(b, 1, protowire.VarintType)
+	b = protowire.AppendVarint(b, 1)
+	b = protowire.AppendTag(b, 2, protowire.BytesType)
+	b = protowire.AppendBytes(b, priv)
+	return b
+}
+
+func TestHasMeshIdentity(t *testing.T) {
+	t.Parallel()
+	privBytes := marshalLibp2pEd25519Key(t)
+
+	interruptedDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(interruptedDir, "agent.db"), []byte("bbolt"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	emptyBiscuitDir := t.TempDir()
+	if err := meshnet.WriteStateDir(emptyBiscuitDir, privBytes, &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com"}); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+
+	enrolledDir := t.TempDir()
+	if err := meshnet.WriteStateDir(enrolledDir, privBytes, &api.MemberCredential{
+		ControlPlaneUrl: "https://relay.example.com",
+		Biscuit:         []byte("enrolled-biscuit"),
+	}); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+
+	tests := []struct {
+		name string
+		dir  string
+		want bool
+	}{
+		{name: "empty dir", dir: t.TempDir(), want: false},
+		{name: "interrupted first run with agent.db only", dir: interruptedDir, want: false},
+		{name: "saved key without biscuit", dir: emptyBiscuitDir, want: false},
+		{name: "enrolled credential with biscuit", dir: enrolledDir, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hasMeshIdentity(tc.dir); got != tc.want {
+				t.Fatalf("hasMeshIdentity(%q) = %v, want %v", tc.dir, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewRelayAttachAndClose(t *testing.T) {
+	t.Parallel()
+	if _, err := NewRelay(RelayConfig{URL: "tailscale"}); err == nil {
+		t.Fatal("NewRelay(invalid) error = nil, want error")
+	}
+
+	p, err := NewRelay(RelayConfig{URL: "https://relay.example.com", Private: true, Public: false})
+	if err != nil {
+		t.Fatalf("NewRelay() error = %v, want nil", err)
+	}
+	am := p.(*agentMesh)
+	privLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	pubLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	privURL, err := url.Parse("http://agentmesh.local/mesh/p1/a2a/coder")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	pubURL, err := url.Parse("https://relay.example.com/ingress/p1/a2a/coder")
+	if err != nil {
+		t.Fatalf("url.Parse() error = %v", err)
+	}
+	var epClosed bool
+	am.srv = &fakeMeshSession{}
+	am.epClose = func() error { epClosed = true; return privLn.Close() }
+	am.attach(privLn, privURL, pubLn, pubURL)
+	am.started.Store(true)
+
+	if _, err := pubLn.Accept(); !errors.Is(err, net.ErrClosed) {
+		t.Fatalf("unused public listener Accept() error = %v, want %v", err, net.ErrClosed)
+	}
+	gotLn, gotURL, err := am.ListenPrivate(context.Background())
+	if err != nil {
+		t.Fatalf("ListenPrivate() error = %v, want nil", err)
+	}
+	if gotLn == nil || gotURL.String() != privURL.String() {
+		t.Fatalf("ListenPrivate() = (%v, %v), want listener at %v", gotLn, gotURL, privURL)
+	}
+	if _, _, err := am.ListenPublic(context.Background()); err == nil {
+		t.Fatal("ListenPublic() when Public=false error = nil, want error")
+	}
+	if err := am.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
+	if !epClosed {
+		t.Fatal("Close() did not call endpoint closer")
 	}
 }
