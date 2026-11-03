@@ -16,14 +16,18 @@ package agentsrv
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func lookupOwnerToken(t *testing.T, creds *credstore.Store, url string) string {
@@ -68,6 +72,51 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	}
 	task = send(t, ts.client(renewed), userText("hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
+func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {
+	t.Parallel()
+	d, err := os.MkdirTemp("", "a2a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(d); err != nil {
+			t.Errorf("removing %s: %v", d, err)
+		}
+	})
+	dir, err := agentdir.Open(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &agentdir.Config{Name: "assistant", Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal}
+	if err := dir.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- Run(ctx, Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Credentials: creds})
+	}()
+	t.Cleanup(func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	})
+
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		status, err := controlapi.NewClient(dir).Status(ctx)
+		if err == nil && status.Local != "" {
+			lookupOwnerToken(t, creds, status.Local)
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("Status() = %v, %v, want the local URL", status, err)
+		}
+	}
 }
 
 func TestPairRejectsReservedName(t *testing.T) {

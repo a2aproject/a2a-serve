@@ -295,7 +295,7 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
-	addNode(t, ts, "grok", 3*time.Second)
+	addNode(t, ts, "grok", 200*time.Millisecond)
 	linkOwner(t, ts, "tg:1", "dm1")
 
 	ts.ch.write("tg:1", "dm1", "acall grok what's new?")

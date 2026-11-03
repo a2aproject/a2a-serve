@@ -356,6 +356,12 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	if err := s.listenNetwork(ctx, closers, errc); err != nil {
 		return nil, err
 	}
+	// Commands polling the control socket for the local URL use the owner
+	// token right away, so it is saved before the socket serves.
+	var ownerErr error
+	if s.credentials != nil {
+		ownerErr = s.saveLocalOwnerToken(ctx)
+	}
 	if err := s.serveControl(ctx, closers, errc); err != nil {
 		return nil, err
 	}
@@ -367,7 +373,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	go s.schedules.run(ctx)
 	go s.runGossip(ctx)
 	go s.runBackups(ctx)
-	return errc, s.printSummary(ctx)
+	return errc, s.printSummary(ctx, ownerErr)
 }
 
 // Stop shuts the server down.
@@ -508,7 +514,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 	}
 }
 
-func (s *Server) printSummary(ctx context.Context) error {
+func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	local, private, public := s.URLs()
 	s.logf("✓ local    %s", local)
 	if private != "" {
@@ -518,8 +524,8 @@ func (s *Server) printSummary(ctx context.Context) error {
 		s.logf("✓ public   %s", public)
 	}
 	if s.credentials != nil {
-		if err := s.saveLocalOwnerToken(ctx); err != nil {
-			s.logf("! saving an owner token for this machine: %v", err)
+		if ownerErr != nil {
+			s.logf("! saving an owner token for this machine: %v", ownerErr)
 		} else {
 			s.logf("→ call it from this machine: a2a send -a %s \"…\"", local)
 		}

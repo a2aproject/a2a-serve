@@ -103,8 +103,11 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 		}
 		wait = min(wait, next.Sub(now))
 	}
-	return max(wait, time.Second)
+	return max(wait, scheduleMinWait)
 }
+
+// scheduleMinWait is the shortest wait between checks of the schedules.
+var scheduleMinWait = time.Second
 
 func errText(err error) string {
 	if err == nil {
