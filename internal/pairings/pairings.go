@@ -44,7 +44,9 @@ const SchedulesAgent = "schedules"
 
 // Advertiser advertises webhook nodes to the agents of the private network.
 type Advertiser interface {
+	// Advertise adds or renews the advertisement of the node name.
 	Advertise(name, description string) error
+	// Withdraw stops advertising the node name.
 	Withdraw(name string) error
 	// Advertised reports whether the node is advertised.
 	Advertised(name string) bool

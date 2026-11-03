@@ -354,7 +354,7 @@ func (c *Config) Commands(stored Secrets) [][]string {
 	if !slices.Contains(Harnesses, h) {
 		h = HarnessACP
 	}
-	run := []string{"a2a-serve", "start", h}
+	start := []string{"a2a-serve", "start", h}
 	set := []string{"a2a-serve", "config", "set"}
 	channels := map[string][]string{}
 	for _, f := range fields {
@@ -362,6 +362,8 @@ func (c *Config) Commands(stored Secrets) [][]string {
 			continue
 		}
 		switch f.place {
+		case placeCore:
+			start = appendFlag(start, f.flag, f.get(c)...)
 		case placeOperational:
 			set = appendFlag(set, f.flag, f.get(c)...)
 		case placeChannel:
@@ -371,8 +373,6 @@ func (c *Config) Commands(stored Secrets) [][]string {
 				flag = "token"
 			}
 			channels[kind] = appendFlag(channels[kind], flag, f.get(c)...)
-		default:
-			run = appendFlag(run, f.flag, f.get(c)...)
 		}
 	}
 	for _, flag := range slices.Sorted(maps.Keys(unsetOnly)) {
@@ -380,7 +380,7 @@ func (c *Config) Commands(stored Secrets) [][]string {
 			set = appendFlag(set, flag, SecretPrefix+name)
 		}
 	}
-	out := [][]string{run}
+	out := [][]string{start}
 	if len(set) > 3 {
 		out = append(out, set)
 	}

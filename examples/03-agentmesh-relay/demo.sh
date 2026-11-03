@@ -134,6 +134,10 @@ GOMODCACHE="${GOMODCACHE:-$(go env GOMODCACHE)}"
 GOCACHE="${GOCACHE:-$(go env GOCACHE)}"
 export GOMODCACHE GOCACHE
 export PATH="$BIN_DIR:$PATH"
+# The docker context (such as rootless Docker) lives in ~/.docker, which the
+# demo's own HOME hides.
+DOCKER_HOST="${DOCKER_HOST:-$(docker context inspect --format '{{.Endpoints.docker.Host}}' 2>/dev/null || true)}"
+export DOCKER_HOST
 export HOME="$OWNER_HOME"
 
 cleanup() {
