@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
@@ -28,17 +29,27 @@ func newURLCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "url",
 		Short: "Print the agent's URL",
 		Long: `Print the agent's URL which reaches furthest: public, then private, then
-local. --local, --private and --public pick one.`,
+local. --local, --private and --public pick one. --local also works while
+the agent is stopped, once its first start picked its port.`,
 		Example: `  a2a send -a "$(a2a serve url)" "hello"
   a2a serve url --private`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
-			st, err := c.Status(cmd.Context())
-			if err != nil {
+			st, err := sf.controlClient(d).Status(cmd.Context())
+			if errors.Is(err, controlapi.ErrNotRunning) && local {
+				conf, cerr := d.LoadConfig()
+				if cerr != nil {
+					return cerr
+				}
+				if conf.LocalURL() == "" {
+					return err
+				}
+				st = &controlapi.Status{Local: conf.LocalURL()}
+			} else if err != nil {
 				return err
 			}
 			var scope string

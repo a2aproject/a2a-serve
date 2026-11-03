@@ -49,7 +49,7 @@ are signed with. Linked messenger accounts stay linked.
   a2a serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			changes := []string{"role", "webhook", "webhook-header", "description", "advertised", "rotate"}
 			if !slices.ContainsFunc(changes, cmd.Flags().Changed) {
 				return clierr.Usage("nothing to change: pass --role, --webhook, --webhook-header, --description, --advertised or --rotate")
@@ -65,10 +65,11 @@ are signed with. Linked messenger accounts stay linked.
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
 			}
-			c, err := sf.control()
+			c, offline, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			resp, err := c.UpdatePairing(cmd.Context(), args[0], req)
 			if err != nil {
 				return err
@@ -85,7 +86,10 @@ are signed with. Linked messenger accounts stay linked.
 			if _, err := fmt.Fprintln(cfg.Out, "  its tokens were revoked; pair again with the new code:"); err != nil {
 				return err
 			}
-			return printPairCode(cfg, resp.Code)
+			if err := printPairCode(cfg, resp.Code); err != nil {
+				return err
+			}
+			return warnPairCode(cfg.Out, resp.Code, offline)
 		},
 	}
 	f := cmd.Flags()

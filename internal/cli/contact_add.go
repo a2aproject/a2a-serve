@@ -38,11 +38,12 @@ calls to it go through that agent.
 ` + secretref.Help,
 		Example: "  a2a serve contact add coder\n  a2a serve contact add grok@ben\n  a2a serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			req.Name = args[0]
 			if req.Token != "" {
 				if req.Token, err = secretref.Resolve("token", req.Token, cfg.secretReader(cfg.stderr())); err != nil {
@@ -56,11 +57,7 @@ calls to it go through that agent.
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
-			status, err := c.Status(cmd.Context())
-			if err != nil {
-				return err
-			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ %s can call %s (%s, via %s)\n", status.Name, info.Name, info.URL, info.Via)
+			_, err = fmt.Fprintf(cfg.Out, "✓ the agent can call %s (%s, via %s)\n", info.Name, info.URL, info.Via)
 			return err
 		},
 	}

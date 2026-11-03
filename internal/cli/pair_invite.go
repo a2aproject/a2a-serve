@@ -63,7 +63,7 @@ them like any other caller from the private network.`,
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
   a2a serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
 		Args: cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
 			if !cmd.Flags().Changed("role") {
 				req.Role = ""
@@ -79,16 +79,17 @@ them like any other caller from the private network.`,
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
 			}
-			c, err := sf.control()
+			c, offline, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			resp, err := c.Pair(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				if err := warnLocalOnly(cfg.stderr(), resp); err != nil {
+				if err := warnPairCode(cfg.stderr(), resp, offline); err != nil {
 					return err
 				}
 				return cfg.PrintJSON(resp)
@@ -96,7 +97,7 @@ them like any other caller from the private network.`,
 			if err := printPairCode(cfg, resp); err != nil {
 				return err
 			}
-			return warnLocalOnly(cfg.Out, resp)
+			return warnPairCode(cfg.Out, resp, offline)
 		},
 	}
 	f := cmd.Flags()
@@ -146,9 +147,15 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 	return err
 }
 
-// warnLocalOnly warns when the code is redeemed at a URL which only works
-// on this machine, which is useless to invite someone else.
-func warnLocalOnly(w io.Writer, resp *controlapi.PairCodeResponse) error {
+// warnPairCode warns when the code can't be redeemed now, because the agent
+// is stopped, or only on this machine.
+func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) error {
+	if offline {
+		if _, err := fmt.Fprint(w, "! the agent is stopped: the code works once it runs, within its expiry; start it with `a2a serve run --detach`,\n"+
+			"  and `a2a serve url` prints the URL to redeem it at\n"); err != nil {
+			return err
+		}
+	}
 	if !controlapi.LocalOnly(resp.URL) {
 		return nil
 	}

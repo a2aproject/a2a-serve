@@ -25,11 +25,12 @@ func newScheduleRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:             "Remove a schedule",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: scheduleNames(sf),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			if err := c.DeleteSchedule(cmd.Context(), args[0]); err != nil {
 				return err
 			}

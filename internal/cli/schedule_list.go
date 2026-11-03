@@ -27,11 +27,12 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Aliases: []string{"ls"},
 		Short:   "List schedules, with their last and next runs",
 		Args:    cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			all, err := c.Schedules(cmd.Context())
 			if err != nil {
 				return err

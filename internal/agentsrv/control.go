@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -255,15 +256,19 @@ func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
 	jsonhttp.Write(w, http.StatusOK, out)
 }
 
+// contacts manages the contacts, refreshing the harness instructions
+// which list them.
+func (s *Server) contacts() manage.Contacts {
+	m := s.peers.contacts()
+	m.Changed = s.refreshInstructions
+	return m
+}
+
 func (s *Server) ctlContacts(w http.ResponseWriter, r *http.Request) {
-	cs, err := s.store.Contacts(r.Context())
+	out, err := s.contacts().List(r.Context())
 	if err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
-	}
-	out := []controlapi.ContactInfo{}
-	for _, c := range cs {
-		out = append(out, controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""})
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
@@ -273,17 +278,16 @@ func (s *Server) ctlAddContact(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	c, err := s.peers.addContact(r.Context(), req)
+	c, err := s.contacts().Add(r.Context(), req)
 	if err != nil {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.refreshInstructions(r.Context())
-	jsonhttp.Write(w, http.StatusOK, controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""})
+	jsonhttp.Write(w, http.StatusOK, manage.ContactInfo(c))
 }
 
 func (s *Server) ctlDeleteContact(w http.ResponseWriter, r *http.Request) {
-	err := s.store.DeleteContact(r.Context(), r.PathValue("name"))
+	err := s.contacts().Remove(r.Context(), r.PathValue("name"))
 	if errors.Is(err, store.ErrNotFound) {
 		jsonhttp.Error(w, http.StatusNotFound, "no contact "+r.PathValue("name"))
 		return
@@ -292,7 +296,6 @@ func (s *Server) ctlDeleteContact(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.refreshInstructions(r.Context())
 	jsonhttp.Write(w, http.StatusOK, map[string]string{"deleted": r.PathValue("name")})
 }
 
@@ -376,7 +379,7 @@ func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []controlapi.ScheduleInfo{}
 	for _, sc := range all {
-		out = append(out, scheduleInfo(sc))
+		out = append(out, manage.ScheduleInfo(sc))
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
@@ -391,7 +394,7 @@ func (s *Server) ctlAddSchedule(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, scheduleInfo(sc))
+	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
 }
 
 func (s *Server) ctlRunSchedule(w http.ResponseWriter, r *http.Request) {
@@ -402,7 +405,7 @@ func (s *Server) ctlRunSchedule(w http.ResponseWriter, r *http.Request) {
 	case err != nil:
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 	default:
-		jsonhttp.Write(w, http.StatusOK, scheduleInfo(sc))
+		jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
 	}
 }
 

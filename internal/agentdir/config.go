@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"os"
 	"path/filepath"
 	"slices"
@@ -258,6 +259,15 @@ var DefaultLimits = LimitsConfig{Memory: "4g", CPUs: "2", PIDs: 512}
 // also lists mounts, which tells it apart from a config in which the first
 // mount was the workspace.
 const defaultWorkspace = "."
+
+// LocalURL is the agent's URL on this machine, empty before the first start
+// picked its port.
+func (c *Config) LocalURL() string {
+	if c.Port == 0 {
+		return ""
+	}
+	return "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(c.Port))
+}
 
 // LoadConfig reads and validates config.yaml.
 func (d Dir) LoadConfig() (*Config, error) {

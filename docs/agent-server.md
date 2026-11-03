@@ -145,6 +145,15 @@ or service process doesn't depend on your shell's environment.
 | `a2a serve stop [--uninstall]` | Stops it, detached or as a service; `--uninstall` also removes the service. |
 | `a2a serve restart` | Stops it and starts it again in the same mode, detached or as a service. |
 
+Commands which change what the agent keeps, `pair invite|list|get|set|rm`,
+`contact add --url …|list|rm` and `schedule add|list|rm`, also work while it
+is stopped: they open `.a2a/state` directly, and the agent picks the changes
+up when it starts. A code issued while the agent is stopped works once it
+runs, until it expires. Commands which need live data still need it
+running: `peers`, `contact add <name>` (found on the private network),
+`schedule run`, `open`, `url --private|--public` and the details of
+`status`. `url --local` answers from the saved port.
+
 `restart` checks the settings first, so an agent which couldn't start again
 isn't stopped. An agent running in the foreground of another terminal can't
 be restarted from here: press Ctrl-C there and run `a2a serve run` again.

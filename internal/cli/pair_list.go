@@ -36,7 +36,7 @@ func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 agent. Outside one, or with --joined, list the agents you joined with
 ` + "`a2a serve pair join`" + `.`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			caller, err := sf.callerView(joined)
 			if err != nil {
 				return err
@@ -44,10 +44,11 @@ agent. Outside one, or with --joined, list the agents you joined with
 			if caller {
 				return listJoined(cfg)
 			}
-			c, err := sf.control()
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			all, err := c.Pairings(cmd.Context())
 			if err != nil {
 				return err

@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -762,11 +763,11 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 	if r.channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
-	user, err := resolveUser(ctx, r.store, who)
+	user, err := manage.ResolveUser(ctx, r.store, who)
 	if err != nil {
 		return approvals.Chat{}, err
 	}
-	conv, err := directConv(ctx, r.store, chName, user)
+	conv, err := manage.DirectConv(ctx, r.store, chName, user)
 	if err != nil {
 		return approvals.Chat{}, err
 	}

@@ -31,7 +31,7 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:             "Revoke a pairing, remove a webhook node, or forget an agent you joined",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			if isAgentURL(args[0]) {
 				store, err := cfg.credentialStore()
 				if err != nil {
@@ -46,10 +46,11 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				return cfg.PrintRemoved("joined", args[0], "✓ deleted the token for "+args[0])
 			}
-			c, err := sf.control()
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			resp, err := c.Revoke(cmd.Context(), args[0])
 			if err != nil {
 				return err

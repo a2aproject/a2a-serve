@@ -39,11 +39,12 @@ func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			}
 			return names, nil
 		}),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := sf.control()
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			if err := c.DeleteContact(cmd.Context(), args[0]); err != nil {
 				return err
 			}

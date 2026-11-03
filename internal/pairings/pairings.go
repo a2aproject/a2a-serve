@@ -38,6 +38,10 @@ import (
 // LocalOwner names the owner token the server saves for this machine.
 const LocalOwner = "local"
 
+// SchedulesAgent is the agent the harness manages schedules with, which no
+// webhook node or contact can be called.
+const SchedulesAgent = "schedules"
+
 // Advertiser advertises webhook nodes to the agents of the private network.
 type Advertiser interface {
 	Advertise(name, description string) error
@@ -59,8 +63,6 @@ type Service struct {
 	Mailbox func(id string) (waiting, open int)
 	// Changed is called after a node is added or removed. Optional.
 	Changed func(ctx context.Context)
-	// ReservedNodes are names a webhook node can't take, with the reason.
-	ReservedNodes map[string]string
 }
 
 // Kind classifies an [Error].
@@ -185,8 +187,8 @@ func (s *Service) callerCode(ctx context.Context, name, role string, sole bool) 
 }
 
 func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
-	if reason, ok := s.ReservedNodes[req.Name]; ok {
-		return nil, invalid("%q %s; pick another name", req.Name, reason)
+	if req.Name == SchedulesAgent {
+		return nil, invalid("%q is the agent the harness manages schedules with; pick another name", SchedulesAgent)
 	}
 	if err := nodes.ValidateWebhook(req.Webhook); err != nil {
 		return nil, invalid("%v", err)

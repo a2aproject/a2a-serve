@@ -32,8 +32,9 @@ func TestExitCodes(t *testing.T) {
 		wantCode string
 		wantExit int
 	}{
-		{name: "contact list on a stopped agent", args: []string{"contact", "list", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "pair invite on a stopped agent", args: []string{"pair", "invite", "anna", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "peers of a stopped agent", args: []string{"peers", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "schedule run on a stopped agent", args: []string{"schedule", "run", "brief", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "restart of a stopped agent", args: []string{"restart", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "status without an agent", args: []string{"status", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
 		{name: "start without an agent", args: []string{"run", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},

@@ -31,7 +31,7 @@ func newPairGetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:             "Show a pairing: its role, tokens, linked accounts and pending codes, or an agent you joined",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			if isAgentURL(args[0]) {
 				c, err := joinedCredential(cfg, args[0])
 				if err != nil {
@@ -44,10 +44,11 @@ func newPairGetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				_, err = fmt.Fprintf(cfg.Out, "%s (joined %s)\n  agent        %s\n  as           %s\n  joined       %s\n", j.URL, j.Kind, j.Agent, j.Principal, j.Joined.Format(time.DateTime))
 				return err
 			}
-			c, err := sf.control()
+			c, _, done, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
+			defer joinClose(&err, done)
 			p, err := c.Pairing(cmd.Context(), args[0])
 			if err != nil {
 				return err

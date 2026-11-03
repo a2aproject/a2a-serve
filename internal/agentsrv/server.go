@@ -300,7 +300,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		LinkHints:     s.router.linkHints,
 		Mailbox:       s.nodes.Mailbox,
 		Changed:       s.refreshInstructions,
-		ReservedNodes: map[string]string{schedulesAgent: "is the agent the harness manages schedules with"},
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router)
 	s.inspector = newInspector(s)
