@@ -18,7 +18,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
+
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func TestServeCommandsHaveGroups(t *testing.T) {
@@ -47,4 +51,25 @@ func TestServeHelp(t *testing.T) {
 			t.Fatalf("a2a-serve --help = %q, want no %s", out, flag)
 		}
 	}
+}
+
+func TestSecretFlagsHaveSecretValuesHelp(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd(&globalConfig{Printer: output.NewPrinter(&strings.Builder{}, output.ModeText)})
+	var walk func(c *cobra.Command)
+	walk = func(c *cobra.Command) {
+		var secret []string
+		c.Flags().VisitAll(func(f *pflag.Flag) {
+			if strings.Contains(f.Usage, secretref.Syntax) {
+				secret = append(secret, "--"+f.Name)
+			}
+		})
+		if len(secret) > 0 && !strings.Contains(c.Long, secretref.Help) {
+			t.Errorf("%s has secret flags %v, want the Secret values paragraph in its long help", c.CommandPath(), secret)
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(root)
 }

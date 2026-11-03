@@ -233,7 +233,7 @@ Every flag which takes a secret value accepts the same forms:
 
 The flags are `--tailscale-authkey`, `--ngrok-authtoken`,
 `--google-client-secret`, `--relay-token` and `--backup-key` of
-`config set`, `channel add --token` and `--email-password`, `restore
+`config set`, `channel add --token` and `--email-password`, `backup restore
 --backup-key`, `contact add --token` and `mailbox --token`. `-` keeps tokens out of the shell history:
 
 ```sh
@@ -365,7 +365,7 @@ from. Owners can answer any approval.
 | A schedule with `--chat <channel>[:<who>]` | the schedule's `--as` user | that chat |
 | A schedule without `--chat`, or a turn the server posts with no conversation | an owner | the owner chat |
 
-- The **owner chat** is set with `--owner-chat <channel>[:<who>]`, on `run
+- The **owner chat** is set with `--owner-chat <channel>[:<who>]`, on `start
   <harness>` and `config set`, with the syntax of `schedule add --chat`;
   `<who>` names an owner pairing, since only owners answer there.
   Without it, the server picks the first of telegram, discord and email where
@@ -413,7 +413,7 @@ page.
 
 ```sh
 a2a-serve pair invite grok                 # member: can talk to the agent
-a2a-serve pair invite anna --role owner    # owner: can also approve
+a2a-serve pair invite anna --role owner    # owner: also sees and answers every task
 a2a-serve pair invite anna                 # another code: a second device or account
 a2a-serve pair list                        # the pairings
 a2a-serve pair get anna                    # role, tokens, linked accounts, pending codes

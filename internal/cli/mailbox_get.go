@@ -16,6 +16,8 @@ package cli
 
 import (
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newMailboxGetCmd(cfg *globalConfig) *cobra.Command {
@@ -23,6 +25,7 @@ func newMailboxGetCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get <task-id>",
 		Short: "Show a task addressed to the node, with history and artifacts",
+		Long:  "Show a task addressed to the node, with history and artifacts.\n\n" + secretref.Help,
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := nodeContext(cmd, cfg)

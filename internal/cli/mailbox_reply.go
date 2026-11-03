@@ -21,6 +21,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
@@ -37,6 +38,7 @@ func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "reply <task-id>",
 		Short: "Post progress, a question or the result of a task",
+		Long:  "Post progress, a question or the result of a task.\n\n" + secretref.Help,
 		Example: `  a2a-serve mailbox reply <task> --status working --text "on it"
   a2a-serve mailbox reply <task> --input-required "Which branch?"
   a2a-serve mailbox reply <task> --final "Done" --artifact report.pdf

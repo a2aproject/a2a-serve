@@ -254,6 +254,10 @@ func (a *agent) prompt(m message) {
 	end := func(reason string) { a.respond(m.ID, map[string]any{"stopReason": reason}) }
 
 	cmd, arg, _ := strings.Cut(text, " ")
+	// A scheduled run asks like its prompt, after the server's preamble line.
+	if _, prompt, ok := strings.Cut(text, "\n"); ok && strings.HasPrefix(text, "Scheduled run of ") && prompt == "ask" {
+		cmd = prompt
+	}
 	switch strings.ToLower(cmd) {
 	case "tool":
 		a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "list files", "kind": "read", "status": "pending"})

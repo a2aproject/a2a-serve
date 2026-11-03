@@ -93,7 +93,7 @@ are signed with. Linked messenger accounts stay linked.
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "", "`Role` of a caller: member (can talk) or owner (can also approve)")
+	f.StringVar(&req.Role, "role", "", "Role of a caller: `member|owner`; members answer the approvals of their own tasks, owners those of every task")
 	f.StringVar(&req.Webhook, "webhook", "", "The URL the agent POSTs wakes to, for a webhook node")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, replacing the current ones: `Name: value`; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&description, "description", "", "Description for the node's card")
