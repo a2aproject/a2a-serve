@@ -104,7 +104,7 @@ The first run saves the flags to `.a2a/config.yaml`; later runs are `a2a serve`.
 | `serve doctor [--fix] [--online]` | Check the `a2a` CLI, Docker and the agent; `--fix` enables the plugin and the credential helper and makes state files private. `-o json`. |
 | `serve credential get` | The credential helper for the `a2a` CLI. |
 | `serve completion <shell>` | A completion script for `a2a-serve`: commands, harnesses, channel kinds, enum flags, and the contacts and pairings of a running agent. |
-| `serve peers` | Agents found on the private network. |
+| `serve peers` | Agents found on the private network, and the webhook nodes they advertise (`pair invite --advertised`), which `contact add <node>@<agent>` adds without a code. |
 | `serve contact add\|list\|rm` | Agents this agent may call with the `a2a` CLI, through the server. |
 | `serve channel add\|rm <telegram\|discord\|email>` / `channel list` | Messengers; `list` shows whether they run. |
 | `serve schedule add\|list\|run\|rm` | Run a prompt on a cron expression or once, as a user, and show the runs in their chat. The agent creates schedules too, such as for "remind me on Friday at 5". |

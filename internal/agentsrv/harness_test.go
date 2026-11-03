@@ -39,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 var fakeACP string
@@ -87,6 +88,7 @@ type serverOpts struct {
 	// configure changes the config before the server starts.
 	configure func(*agentdir.Config)
 	google    *googleauth.Endpoints
+	private   network.Provider
 }
 
 // startServer starts an agent server and stops it when the test ends.
@@ -132,7 +134,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

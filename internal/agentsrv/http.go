@@ -71,6 +71,9 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 	mux.HandleFunc("POST "+pairapi.Path, func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
 	s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
+	if kind == network.ListenerPrivate {
+		s.registerGossip(mux)
+	}
 	s.nodes.Register(mux, kind, func(r *http.Request) string { return base(baseURL, r) })
 	mux.Handle("POST /{$}", s.authenticate(kind, jsonrpc))
 	mux.Handle("/", s.authenticate(kind, rest))

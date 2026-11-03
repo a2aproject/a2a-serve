@@ -26,6 +26,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strconv"
 	"sync"
 	"time"
@@ -41,6 +42,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
+	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -73,6 +75,8 @@ type Options struct {
 	SetupProblems func(context.Context) []string
 	// Ready is called with the server once it serves requests.
 	Ready func(*Server)
+	// Private replaces the private network of the config, for tests.
+	Private network.Provider
 }
 
 // Server is a running agent server.
@@ -111,6 +115,8 @@ type Server struct {
 	nodes     *nodes.Host
 	approvals *approvals.Service
 	oauth     *oauthServer
+	// ads are the advertised pairings of the private network.
+	ads *gossip.Table
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -159,6 +165,7 @@ func Run(ctx context.Context, opts Options) error {
 		credentials:       opts.Credentials,
 		telegramServerURL: opts.TelegramServerURL,
 		setupProblems:     opts.SetupProblems,
+		private:           opts.Private,
 
 		pairFailures: newFailureLimiter(10, time.Minute),
 	}
@@ -239,6 +246,11 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 // build creates the components and starts the harness. Nothing serves yet.
 func (s *Server) build(ctx context.Context, closers *stack, opts Options) error {
 	agentName := func() string { return s.config().Name }
+	ads, err := gossip.Open(filepath.Join(s.dir.StateDir(), "ads.json"), s.config().Name)
+	if err != nil {
+		return err
+	}
+	s.ads = ads
 	s.chain = &auth.Chain{
 		Store: s.store, Net: s.private, Identities: s.config().Network.Identities,
 		GoogleAllowed: func(email string) bool { return googleauth.AllowedEmail(s.config().Auth.AllowEmails, email) },
@@ -262,6 +274,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		BaseURL:        s.bestURL,
 		Authenticate:   s.authenticate,
 		WebhookRetries: nodeWebhookRetries,
+		Advertised: func(id string) bool {
+			_, ok := s.ads.Own()[id]
+			return ok
+		},
 	})
 	s.router = &Router{
 		store:     s.store,
@@ -280,6 +296,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		approvals: s.approvals,
 		chat:      s.router,
 		schedules: s.schedules,
+		ads:       s.ads,
 		agentName: agentName,
 		bridge:    s.bridge,
 		ctx:       ctx,
@@ -341,6 +358,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	s.peers.resumeWatches(ctx)
 	go s.pruneLoop(ctx)
 	go s.schedules.run(ctx)
+	go s.runGossip(ctx)
 	return errc, s.printSummary(ctx)
 }
 

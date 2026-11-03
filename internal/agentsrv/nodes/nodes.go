@@ -67,6 +67,9 @@ type Config struct {
 	// WebhookRetries are the delays before each wake delivery attempt;
 	// nil uses DefaultWebhookRetries.
 	WebhookRetries []time.Duration
+	// Advertised reports whether the node is advertised to the private
+	// network, which lets members call it too. Nil advertises none.
+	Advertised func(id string) bool
 }
 
 // Host hosts the webhook nodes of an agent.
@@ -158,7 +161,7 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	}
 	h = a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
 		a2asrv.WithTaskStore(n.tasks(context.Background(), id)),
-		a2asrv.WithCallInterceptors(&nodeCallerInterceptor{}),
+		a2asrv.WithCallInterceptors(&nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),
 	)
@@ -168,17 +171,22 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	return h
 }
 
-// nodeCallerInterceptor lets owners call nodes; the agent calls them in-process as an owner.
+// nodeCallerInterceptor lets owners call nodes; the agent calls them
+// in-process as an owner. An advertised node also takes members, such as
+// the agents of other people on the private network.
 type nodeCallerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
+	node       string
+	advertised func(id string) bool
 }
 
-func (nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, _ *a2asrv.Request) (context.Context, any, error) {
+func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, _ *a2asrv.Request) (context.Context, any, error) {
 	p, ok := auth.Caller(ctx)
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
 	}
-	if !p.Has(auth.RoleOwner) {
+	member := p.Has(auth.RoleMember) && c.advertised != nil && c.advertised(c.node)
+	if !p.Has(auth.RoleOwner) && !member {
 		return ctx, nil, fmt.Errorf("%w: webhook nodes are reachable by the hosting agent and its owner", a2a.ErrUnauthorized)
 	}
 	auth.SetCallUser(callCtx, p)

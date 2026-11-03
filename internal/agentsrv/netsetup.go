@@ -71,6 +71,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 	}
 	var err error
 	switch {
+	case s.private != nil:
 	case cfg.Network.Private == "":
 	case network.IsRelayURL(cfg.Network.Private):
 		if s.private, err = relayAt(cfg.Network.Private); err != nil {
