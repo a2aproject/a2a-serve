@@ -212,14 +212,14 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	if s.Telegram != "" {
 		ref, err := resolve(s.Telegram, SecretTelegram)
 		if err != nil {
-			return nil, fmt.Errorf("--telegram: %w", err)
+			return nil, fmt.Errorf("telegram token: %w", err)
 		}
 		cfg.Channels.Telegram = &TelegramConfig{Token: ref}
 	}
 	if s.Discord != "" {
 		ref, err := resolve(s.Discord, SecretDiscord)
 		if err != nil {
-			return nil, fmt.Errorf("--discord: %w", err)
+			return nil, fmt.Errorf("discord token: %w", err)
 		}
 		cfg.Channels.Discord = &DiscordConfig{Token: ref}
 	}

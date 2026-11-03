@@ -143,10 +143,10 @@ func (c *Config) Validate() error {
 		add("invalid --pids %d: want a positive number", c.Limits.PIDs)
 	}
 	if t := c.Channels.Telegram; t != nil && t.Token == "" {
-		add("the telegram channel needs --telegram")
+		add("the telegram channel needs a token: a2a serve channel add telegram --token <token>")
 	}
 	if dc := c.Channels.Discord; dc != nil && dc.Token == "" {
-		add("the discord channel needs --discord")
+		add("the discord channel needs a token: a2a serve channel add discord --token <token>")
 	}
 	if e := c.Channels.Email; e != nil {
 		var missing []string
@@ -270,7 +270,11 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 	}
 	for _, ref := range cfg.secretRefs() {
 		if _, err := secrets.Resolve(ref.value); err != nil {
-			errs = append(errs, fmt.Errorf("--%s: %w", ref.flag, err))
+			label := "--" + ref.flag
+			if ref.flag == ChannelTelegram || ref.flag == ChannelDiscord {
+				label = ref.flag + " token (a2a serve channel add " + ref.flag + " --token)"
+			}
+			errs = append(errs, fmt.Errorf("%s: %w", label, err))
 		}
 	}
 	return errors.Join(errs...)

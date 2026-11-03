@@ -228,12 +228,16 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 		DockerErr:   dockerErr,
 		ReadSecret:  cfg.secretReader(cfg.Out).Read,
 		Workspace:   d.Root,
-		Command: func(s agentdir.Settings) (string, error) {
+		Command: func(s agentdir.Settings) ([]string, error) {
 			conf, secrets, err := d.ApplySettings(s)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			return joinCommands(conf.Commands(secrets), "\n  "), nil
+			var lines []string
+			for _, args := range conf.Commands(secrets) {
+				lines = append(lines, agentdir.ShellJoin(args))
+			}
+			return lines, nil
 		},
 	})
 	if err != nil {

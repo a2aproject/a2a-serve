@@ -31,8 +31,12 @@ func TestRun(t *testing.T) {
 	t.Parallel()
 	env := map[string]string{"OPENROUTER_API_KEY": "x", "NGROK_AUTHTOKEN": "y"}
 	getenv := func(k string) string { return env[k] }
-	command := func(s agentdir.Settings) (string, error) {
-		return "a2a serve run " + s.Harness + " --name " + s.Name, nil
+	command := func(s agentdir.Settings) ([]string, error) {
+		lines := []string{"a2a serve run " + s.Harness + " --name " + s.Name}
+		if s.Telegram != "" {
+			lines = append(lines, "a2a serve channel add telegram --token env:TELEGRAM_BOT_TOKEN")
+		}
+		return lines, nil
 	}
 	tests := []struct {
 		name       string
@@ -60,7 +64,7 @@ func TestRun(t *testing.T) {
 				Harness: "claude", Name: "coder", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}, Private: "tailscale", Public: "ngrok",
 				NgrokAuthToken: "env:NGROK_AUTHTOKEN", Telegram: "123:telegram-token",
 			}},
-			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a serve run claude --name coder --service\n"},
+			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a serve run claude --name coder --service\n  a2a serve channel add telegram --token env:TELEGRAM_BOT_TOKEN\n"},
 			wantNotOut: "123:telegram-token",
 		},
 	}
@@ -102,19 +106,19 @@ func TestRunNotSaved(t *testing.T) {
 	tests := []struct {
 		name    string
 		input   string
-		command func(agentdir.Settings) (string, error)
+		command func(agentdir.Settings) ([]string, error)
 		wantErr error
 	}{
 		{
 			name:    "declined",
 			input:   "\n\n\n\n\n\n\n\nn\n",
-			command: func(agentdir.Settings) (string, error) { return "a2a serve run opencode", nil },
+			command: func(agentdir.Settings) ([]string, error) { return []string{"a2a serve run opencode"}, nil },
 			wantErr: ErrCanceled,
 		},
 		{
 			name:    "invalid settings",
 			input:   "\n\n\n\n\n\n\n\n",
-			command: func(agentdir.Settings) (string, error) { return "", errInvalid },
+			command: func(agentdir.Settings) ([]string, error) { return nil, errInvalid },
 			wantErr: errInvalid,
 		},
 	}

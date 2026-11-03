@@ -57,7 +57,7 @@ func TestValidate(t *testing.T) {
 		{name: "owner chat channel", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
 		{name: "owner chat without who", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:" }, wantErr: `invalid --owner-chat "telegram:"`},
 		{name: "removed approvers", modify: func(c *Config) { c.Approvals.RemovedApprovers = []string{"pair:anna"} }, wantErr: "approvals.approvers was removed"},
-		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "needs --telegram"},
+		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "the telegram channel needs a token"},
 		{name: "sign-in", modify: func(c *Config) {
 			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
 		}},
@@ -136,7 +136,7 @@ func TestCheckConfig(t *testing.T) {
 		{
 			name:    "missing channel secret",
 			cfg:     Config{Name: "coder", Harness: "opencode", Channels: ChannelsConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
-			wantErr: "--discord: secret BOT is not set",
+			wantErr: "discord token (a2a serve channel add discord --token): secret BOT is not set",
 		},
 	}
 	for _, tc := range tests {

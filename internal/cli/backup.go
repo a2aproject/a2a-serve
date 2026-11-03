@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -46,6 +47,7 @@ Restore an agent on another host with "a2a serve restore".`,
 		},
 	}
 	sf.addDirFlag(cmd.PersistentFlags())
+	cmd.PersistentFlags().DurationVar(&sf.timeout, "timeout", 10*time.Minute, "Timeout of the command, which writes to or lists the backup destination")
 	cmd.AddCommand(
 		newBackupNowCmd(cfg, sf),
 		newBackupListCmd(cfg, sf),
@@ -82,7 +84,9 @@ func newBackupNowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snap, err := backup.Take(cmd.Context(), d, dest, bcfg, time.Now())
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			defer cancel()
+			snap, err := backup.Take(ctx, d, dest, bcfg, time.Now())
 			if err != nil {
 				return err
 			}
@@ -106,7 +110,9 @@ func newBackupListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			snaps, err := backup.List(cmd.Context(), dest, bcfg.Agent)
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			defer cancel()
+			snaps, err := backup.List(ctx, dest, bcfg.Agent)
 			if err != nil {
 				return err
 			}

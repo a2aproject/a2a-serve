@@ -102,9 +102,9 @@ type Options struct {
 	// ReadSecret prints prompt and reads an answer without echoing it; nil
 	// reads it like any other answer.
 	ReadSecret func(prompt string) (string, error)
-	// Command validates the settings and returns the `a2a serve run <harness>`
-	// command which creates the same agent, shown before saving.
-	Command func(agentdir.Settings) (string, error)
+	// Command validates the settings and returns the commands which create
+	// the same agent, `a2a serve run <harness>` first, shown before saving.
+	Command func(agentdir.Settings) ([]string, error)
 	// Workspace is the project directory, whose MCP servers and skills are
 	// shown. Empty skips them.
 	Workspace string
@@ -305,15 +305,15 @@ func (p *prompter) sandbox(dockerErr error) (string, error) {
 }
 
 // confirm shows the command which creates the same agent and asks to save it.
-func (p *prompter) confirm(res Result, command func(agentdir.Settings) (string, error)) error {
-	cmd, err := command(res.Settings)
+func (p *prompter) confirm(res Result, command func(agentdir.Settings) ([]string, error)) error {
+	lines, err := command(res.Settings)
 	if err != nil {
 		return err
 	}
-	if res.Mode != ModeForeground {
-		cmd += " --" + res.Mode
+	if res.Mode != ModeForeground && len(lines) > 0 {
+		lines[0] += " --" + res.Mode
 	}
-	if _, err := fmt.Fprintf(p.out, "\nThis is the same as running:\n  %s\n\n", cmd); err != nil {
+	if _, err := fmt.Fprintf(p.out, "\nThis is the same as running:\n  %s\n\n", strings.Join(lines, "\n  ")); err != nil {
 		return err
 	}
 	ok, err := p.choose("Save .a2a/config.yaml and start the agent", []string{"y", "n"}, "y")

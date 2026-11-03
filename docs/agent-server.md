@@ -721,7 +721,8 @@ only while it runs. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
 only print text, `run`, `logs` and `config edit`, reject `-o`.
 
 Commands that call the running agent take `--timeout`, the timeout of each
-call (default 60s). `--version` prints what `version` prints.
+call (default 60s); `backup now` and `backup list` take it as the timeout of
+the command (default 10m). `--version` prints what `version` prints.
 
 Errors follow the error contract of the
 [a2a CLI](https://github.com/a2aproject/a2a-cli) (`specification/SPEC.md`):
