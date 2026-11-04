@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
-// installA2A installs the a2a CLI this build needs.
-const installA2A = "go install github.com/a2aproject/a2a-cli@" + a2acli.PinnedVersion +
+// installA2A installs the latest a2a CLI.
+const installA2A = "go install github.com/a2aproject/a2a-cli@latest" +
 	` && mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"`
 
 const installServe = "go install github.com/a2aproject/a2a-serve@latest"
