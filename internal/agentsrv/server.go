@@ -337,6 +337,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 	}
+	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
+	closers.push(s.clients.close)
 	s.refreshInstructions(ctx)
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
 		return err
@@ -355,8 +357,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Anonymous:  s.split.Anonymous,
 		Timings:    s.timings,
 	})
-	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
-	closers.push(s.clients.close)
 	unattended := &contextSet{}
 	s.approvals = approvals.New(approvals.Deps{
 		Records:          records,
