@@ -27,6 +27,10 @@
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
 //	acall <agent> <t> the same, without waiting for the result
+//	parallel <dir> <agent> <t>
+//	                 a permission request; while it waits, once <dir>/go
+//	                 exists, a call like call, whose output goes to
+//	                 <dir>/result
 //
 // Sessions are kept in .fakeacp in the working directory, so session/load
 // works after a restart.
@@ -387,6 +391,22 @@ func (a *agent) prompt(m message) {
 			a.chunk(sid, "tool result: "+out)
 		}
 		end("end_turn")
+	case "parallel":
+		dir, rest, _ := strings.Cut(arg, " ")
+		agentName, msg, _ := strings.Cut(rest, " ")
+		called := make(chan struct{})
+		go func() {
+			defer close(called)
+			callWhenSignaled(agentsURL, dir, agentName, msg)
+		}()
+		option, ok := a.askPush(sid, "t2")
+		<-called
+		if !ok {
+			end("cancelled")
+			return
+		}
+		a.chunk(sid, "Pushed ("+option+").")
+		end("end_turn")
 	default:
 		a.chunk(sid, "Hello ")
 		a.chunk(sid, "from fakeacp.")
@@ -403,6 +423,30 @@ func parseAgentsURL(line string) string {
 	}
 	u, _, _ := strings.Cut(rest, " ")
 	return u
+}
+
+// callWhenSignaled calls an agent once dir/go exists, and writes the result
+// or error to dir/result.
+func callWhenSignaled(agentsURL, dir, name, text string) {
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		if _, err := os.Stat(filepath.Join(dir, "go")); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			fmt.Fprintln(os.Stderr, "fakeacp: no signal in", dir)
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	out, err := callAgent(agentsURL, name, text, false)
+	result := "tool result: " + out
+	if err != nil {
+		result = "tool error: " + err.Error()
+	}
+	if err := os.WriteFile(filepath.Join(dir, "result"), []byte(result), 0o600); err != nil {
+		fmt.Fprintln(os.Stderr, "fakeacp: writing the result:", err)
+	}
 }
 
 // callAgent sends text to an agent the way the a2a CLI does: it resolves

@@ -30,7 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -76,14 +76,6 @@ type Peers struct {
 	// turns has the claims of the running turn of each conversation; a2aacp
 	// runs one turn of a conversation at a time.
 	turns map[string]*callClaims
-	// starting counts the turns of each conversation which run but haven't
-	// begun yet.
-	starting map[string]int
-	// turnsChanged is closed when turns or starting change.
-	turnsChanged chan struct{}
-	// paused has the claims of the turn of each conversation which waits
-	// for an answer, so that the answer resumes it for the same user.
-	paused map[string]pausedTurn
 
 	// agentKey returns the agent key of the process a conversation runs in.
 	agentKey func(ctx context.Context, contextID string) (string, error)
@@ -175,7 +167,7 @@ var (
 
 // claimsOf returns the claims of the running turn of a handle's
 // conversation: [errUnknownHandle] for an unknown handle, and [errNoTurn]
-// when no turn runs. It waits for a turn which is starting.
+// when no turn runs.
 func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error) {
 	h, err := p.store.HandleByName(ctx, handle)
 	if errors.Is(err, store.ErrNotFound) {
@@ -184,54 +176,13 @@ func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error)
 	if err != nil {
 		return callClaims{}, fmt.Errorf("loading agents URL handle: %w", err)
 	}
-	for {
-		p.turnsMu.Lock()
-		c, starting, changed := p.turns[h.ContextID], p.starting[h.ContextID], p.turnsChanged
-		p.turnsMu.Unlock()
-		if c != nil {
-			return *c, nil
-		}
-		if starting == 0 {
-			return callClaims{}, errNoTurn
-		}
-		select {
-		case <-changed:
-		case <-ctx.Done():
-			return callClaims{}, ctx.Err()
-		}
-	}
-}
-
-// startingTurn marks a turn of a conversation as starting, until done is
-// called: a2aacp prompts the harness before it yields the working update
-// which begins the turn, so the harness can call its agents URL first.
-func (p *Peers) startingTurn(contextID string) (done func()) {
 	p.turnsMu.Lock()
-	p.starting[contextID]++
-	p.turnsMu.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			p.turnsMu.Lock()
-			defer p.turnsMu.Unlock()
-			if p.starting[contextID]--; p.starting[contextID] == 0 {
-				delete(p.starting, contextID)
-			}
-			p.notifyTurnsLocked()
-		})
+	defer p.turnsMu.Unlock()
+	c := p.turns[h.ContextID]
+	if c == nil {
+		return callClaims{}, errNoTurn
 	}
-}
-
-// notifyTurnsLocked wakes the calls waiting for a turn to begin.
-func (p *Peers) notifyTurnsLocked() {
-	close(p.turnsChanged)
-	p.turnsChanged = make(chan struct{})
-}
-
-// pausedTurn is a turn which waits for an answer to a question of its task.
-type pausedTurn struct {
-	task   a2a.TaskID
-	claims callClaims
+	return *c, nil
 }
 
 // beginTurn opens the agents URL of c's conversation to calls with c, until
@@ -240,7 +191,6 @@ func (p *Peers) beginTurn(c callClaims) (end func()) {
 	turn := &c
 	p.turnsMu.Lock()
 	p.turns[c.ContextID] = turn
-	p.notifyTurnsLocked()
 	p.turnsMu.Unlock()
 	return func() {
 		p.turnsMu.Lock()
@@ -251,54 +201,25 @@ func (p *Peers) beginTurn(c callClaims) (end func()) {
 	}
 }
 
-// duringTurn opens the agents URL of the conversation while the harness
-// runs a turn of it: from the turn's working update, which a2aacp sends once
-// the turn holds the conversation, until its events end. A turn which stops
-// for a question resumes for its user, whoever answers.
-func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
-	c := p.turnClaims(ctx, execCtx)
+// turn opens the agents URL of the conversation while the harness works on
+// a message, until it stops, also while the task waits for an answer. It is
+// the [a2aacp.Config.Turn] of the harness, so a turn which stops for a
+// question goes on for its caller, whoever answers.
+func (p *Peers) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
+	c := turnClaims(ctx, execCtx)
 	user, err := p.callerIn(ctx, c.ContextID, c.User)
 	if err != nil {
 		slog.Error("finding the agent process of a conversation", "context", c.ContextID, "error", err)
 		user = auth.Principal{ID: c.User.ID}
 	}
 	c.User = user
-	return func(yield func(a2a.Event, error) bool) {
-		var (
-			end   func()
-			state a2a.TaskState
-		)
-		started := p.startingTurn(c.ContextID)
-		defer func() {
-			started()
-			if end != nil {
-				end()
-			}
-			// The session of a new conversation is stored once the turn
-			// runs, so the line is recorded after it.
-			if hadAgentsLine(ctx) {
-				p.markLined(ctx, c.ContextID)
-			}
-			if state == a2a.TaskStateInputRequired {
-				p.turnsMu.Lock()
-				p.paused[c.ContextID] = pausedTurn{task: execCtx.TaskID, claims: c}
-				p.turnsMu.Unlock()
-			}
-		}()
-		for ev, err := range events {
-			switch e := ev.(type) {
-			case *a2a.Task:
-				state = e.Status.State
-			case *a2a.TaskStatusUpdateEvent:
-				state = e.Status.State
-				if end == nil && state == a2a.TaskStateWorking {
-					end = p.beginTurn(c)
-					started()
-				}
-			}
-			if !yield(ev, err) {
-				return
-			}
+	endTurn := p.beginTurn(c)
+	return func() {
+		endTurn()
+		// The session of a new conversation is stored once the turn runs,
+		// so the line is recorded after it.
+		if hadAgentsLine(ctx) {
+			p.markLined(ctx, c.ContextID)
 		}
 	}
 }
@@ -419,19 +340,8 @@ func (p *Peers) markLined(ctx context.Context, contextID string) {
 	p.lined[contextID] = &linedSession{id: sess.ID}
 }
 
-// turnClaims returns the claims of the turn execCtx runs: those of the
-// paused turn it answers, or else of its caller.
-func (p *Peers) turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callClaims {
-	p.turnsMu.Lock()
-	paused, ok := p.paused[execCtx.ContextID]
-	ok = ok && paused.task == execCtx.TaskID
-	if ok {
-		delete(p.paused, execCtx.ContextID)
-	}
-	p.turnsMu.Unlock()
-	if ok && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired {
-		return paused.claims
-	}
+// turnClaims returns the claims of the caller of execCtx.
+func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callClaims {
 	c := callClaims{ContextID: execCtx.ContextID}
 	if caller, ok := auth.Caller(ctx); ok {
 		c.User = caller

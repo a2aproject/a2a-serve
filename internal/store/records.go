@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 )
 
 // SessionStore implements the a2aacp session store: A2A context → ACP session.

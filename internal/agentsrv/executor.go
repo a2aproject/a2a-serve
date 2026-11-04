@@ -31,7 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
-	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -65,6 +65,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Turn:         s.peers.turn,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
@@ -89,6 +90,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Turn:         s.peers.turn,
 		// Approvals reject questions after AnonymousQuestionTimeout; this
 		// stops the turn if that answer doesn't arrive.
 		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
@@ -116,6 +118,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Turn:         s.peers.turn,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
@@ -332,7 +335,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	if execCtx.Message != nil {
 		e.peers.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.peers.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine)))))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}
