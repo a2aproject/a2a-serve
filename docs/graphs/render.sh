@@ -13,73 +13,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Renders the diagram sources in this directory to PNGs next to them:
-# Graphviz (.dot) with dot, Mermaid (.mmd) with mermaid-cli through npx.
-# Mermaid uses the system Chrome when it finds one (or $CHROME).
+# Renders the Graphviz sources in this directory to PNGs next to them:
+# <name>.png for light backgrounds and <name>-dark.png for dark ones, both
+# transparent. The dark variant swaps the palette below, so sources should
+# only use these colors. Docs show the pair with
+#   ![…](graphs/<name>.png#gh-light-mode-only)
+#   ![…](graphs/<name>-dark.png#gh-dark-mode-only)
+# which GitHub and the site both honor.
 #
 # Usage:
-#   docs/graphs/render.sh                      # every .dot and .mmd file here
-#   docs/graphs/render.sh access-model-*.dot   # only these
+#   docs/graphs/render.sh               # every .dot file here
+#   docs/graphs/render.sh <name>.dot    # only these
 
 set -euo pipefail
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
 
-if [[ $# -eq 0 ]]; then
-  shopt -s nullglob
-  set -- *.dot *.mmd
+if ! command -v dot >/dev/null; then
+  echo "error: dot not found; install Graphviz (apt install graphviz, brew install graphviz)" >&2
+  exit 1
 fi
 
-need() {
-  if ! command -v "$1" >/dev/null; then
-    echo "error: $1 not found; $2" >&2
-    exit 1
-  fi
-}
+# light=dark: node fill, lines, label text, then cluster fills, cluster
+# borders and ellipse fills of each color family.
+palette=(
+  "#ffffff=#1b1f24" "#555555=#9aa3ad" "#333333=#c9d1d9"
+  "#eef5ff=#141c2b" "#9bb7e0=#3d5a85" "#dbe8ff=#1e2b42"
+  "#f0f9f0=#13201a" "#9ccc9c=#3f6b4a" "#e3f4e3=#1c2e22"
+  "#f3eefb=#1d1828" "#b9a4dd=#5f4d85"
+  "#fff4e5=#2a2012" "#e0b070=#8a6a35" "#e0b48a=#8a6a45" "#fdf1e6=#2a2016"
+  "#f2f2f2=#22262b" "#f4f4f4=#22262b"
+)
+swap=()
+for pair in "${palette[@]}"; do
+  swap+=(-e "s/${pair%=*}/${pair#*=}/gI")
+done
 
-puppeteer_cfg=""
-mermaid() {
-  need npx "install Node.js to render Mermaid diagrams"
-  local chrome="${CHROME:-}"
-  if [[ -z "$chrome" ]]; then
-    for c in google-chrome google-chrome-stable chromium chromium-browser \
-      "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"; do
-      if command -v "$c" >/dev/null || [[ -x "$c" ]]; then
-        chrome="$(command -v "$c" || echo "$c")"
-        break
-      fi
-    done
-  fi
-  local args=()
-  if [[ -n "$chrome" ]]; then
-    if [[ -z "$puppeteer_cfg" ]]; then
-      puppeteer_cfg="$(mktemp --suffix=.json 2>/dev/null || mktemp)"
-      trap 'rm -f "$puppeteer_cfg"' EXIT
-      printf '{"executablePath": "%s", "args": ["--no-sandbox"]}\n' "$chrome" >"$puppeteer_cfg"
-    fi
-    args=(-p "$puppeteer_cfg")
-    export PUPPETEER_SKIP_DOWNLOAD=1
-  fi
-  npx -y @mermaid-js/mermaid-cli@11 -q "${args[@]}" -i "$1" -o "$2" -b white -w 1600 -s 1 >/dev/null
-}
+if [[ $# -eq 0 ]]; then
+  set -- *.dot
+fi
 
 for src in "$@"; do
   src="$(basename "$src")"
-  case "$src" in
-    *.dot)
-      need dot "install Graphviz (apt install graphviz, brew install graphviz)"
-      png="${src%.dot}.png"
-      dot -Tpng -Gdpi=110 "$src" -o "$png"
-      ;;
-    *.mmd)
-      png="${src%.mmd}.png"
-      mermaid "$src" "$png"
-      ;;
-    *)
-      echo "error: $src: want a .dot or .mmd file" >&2
-      exit 1
-      ;;
-  esac
-  size="$(python3 -c 'import struct,sys; d=open(sys.argv[1],"rb").read(24); print("%dx%d" % struct.unpack(">II", d[16:24]))' "$png" 2>/dev/null || echo "?")"
-  echo "$png ($size)"
+  name="${src%.dot}"
+  dot -Tpng -Gdpi=110 -Gbgcolor=transparent "$src" -o "$name.png"
+  sed "${swap[@]}" "$src" |
+    dot -Tpng -Gdpi=110 -Gbgcolor=transparent -Gfontcolor="#e6edf3" -Nfontcolor="#e6edf3" -o "$name-dark.png"
+  echo "$name.png $name-dark.png"
 done

@@ -14,7 +14,7 @@ This lesson serves a real coding agent, opencode or Claude Code, from its projec
 
 ## Prerequisites
 
-- The `a2a` CLI and `a2a-serve` installed (see [Installation](../../docs/agent-server.md#installation)).
+- The `a2a` CLI and `a2a-serve` installed (see [Installation](../../docs/getting-started.md#install)).
 - Docker. Without it, add `--sandbox local` to the start commands below; the
   harness then runs on your machine and needs to be installed there.
 - An API key for the model, such as `OPENROUTER_API_KEY`, exported in your shell.
@@ -174,6 +174,6 @@ directories to start over.
 
 [Lesson 2](../02-tailscale-telegram-grok/) puts the agent on your tailnet and
 in Telegram, and adds a Grok bot as a webhook node. The
-[agent server guide](../../docs/agent-server.md) covers the rest, and the
-[architecture](../../docs/agent-server-architecture.md) explains how the
+[user guide](../../docs/guide.md) covers the rest, and the
+[architecture](../../docs/concepts/architecture.md) explains how the
 pieces fit together.

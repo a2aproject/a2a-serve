@@ -16,7 +16,7 @@ no sidecar to run.
 ## Prerequisites
 
 - `a2a-serve` built with Agent Mesh support, and the `a2a` CLI (see the
-  [installation guide](../../docs/agent-server.md#installation)):
+  [installation guide](../../docs/getting-started.md#install)):
 
   ```bash
   go install -tags agentmesh github.com/a2aproject/a2a-serve@latest

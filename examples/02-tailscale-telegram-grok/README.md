@@ -243,7 +243,7 @@ a2a-serve logs -f
 
 ## Next steps
 
-The [agent server guide](../../docs/agent-server.md) covers Discord and email,
+The [user guide](../../docs/guide.md) covers Discord and email,
 who answers approvals, and contacts between agents on the same tailnet. The
-[architecture](../../docs/agent-server-architecture.md) shows how the pieces
+[architecture](../../docs/concepts/architecture.md) shows how the pieces
 fit together.

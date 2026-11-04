@@ -1,0 +1,67 @@
+// a2a-serve on Agent Mesh, in the style of readme-overview.dot. Agent Mesh
+// (orange) is the network, identity, ingress and egress; a2a-serve (green)
+// is everything about the agent. meshnet is Agent Mesh code running inside
+// the a2a-serve process.
+// Render: docs/graphs/render.sh agentmesh.dot
+digraph agentmesh {
+  rankdir=TB;
+  graph [fontname="Helvetica", nodesep=0.4, ranksep=0.5, pad=0.3, newrank=true];
+  node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
+
+  subgraph cluster_callers {
+    label="Callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
+    { rank=same;
+      People    [label="People\na2a CLI, other clients", shape=ellipse, fillcolor="#dbe8ff"];
+      Agents    [label="Other agents\non the mesh", shape=ellipse, fillcolor="#dbe8ff"];
+      Messenger [label="Messengers\nTelegram, Discord, email", shape=ellipse, fillcolor="#dbe8ff"];
+    }
+  }
+
+  subgraph cluster_mesh {
+    label="Agent Mesh relay"; labeljust=l; style="rounded,filled"; fillcolor="#fff4e5"; color="#e0b070";
+    { rank=same;
+      Ingress [label="Public ingress"];
+      Router  [label="Router"];
+      Control [label="Control plane\nenrollment, identity"];
+      Egress  [label="Egress"];
+    }
+  }
+
+  subgraph cluster_server {
+    label="a2a-serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
+    subgraph cluster_meshnet {
+      label=""; style="rounded,filled"; fillcolor="#fff4e5"; color="#e0b070";
+      Meshnet [label="meshnet node\nAgent Mesh SDK", fillcolor="#fff4e5"];
+    }
+    Channels [label="Channels"];
+    Access   [label="Access\npairings, policy"];
+    Core     [label="A2A server\ntasks, approvals"];
+    Proxy    [label="Peers proxy"];
+    { rank=same; Meshnet; Channels; }
+    { rank=same; Access; }
+    { rank=same; Core; Proxy; }
+  }
+
+  subgraph cluster_sandbox {
+    label="Docker sandbox"; labeljust=l; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
+    Harness [label="Coding agent\nover ACP"];
+  }
+
+  Internet [label="Internet", shape=ellipse, fillcolor="#f2f2f2"];
+
+  People -> Ingress [label="token, sign-in"];
+  Agents -> Router [label="mesh identity"];
+  Messenger -> Channels;
+  Ingress -> Router;
+  Control -> Meshnet [label="credentials", style=dashed];
+  Router -> Meshnet;
+  Meshnet -> Access [label="caller"];
+  Channels -> Access;
+  Access -> Core;
+  Core -> Harness [label="ACP"];
+  Harness -> Proxy [label="a2a send"];
+  Proxy -> Meshnet [label="calls contacts"];
+  Meshnet -> Egress [label="sandbox traffic", style=dashed];
+  Egress -> Internet [style=dashed];
+}

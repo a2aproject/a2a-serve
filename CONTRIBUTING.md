@@ -85,6 +85,17 @@ go test -tags e2e ./e2e/...
 
 Add a test there when a change affects a journey across commands or processes.
 
+### Documentation
+
+The site at <https://a2aproject.github.io/a2a-serve/> is built from `docs/` and `examples/`; links between them are written the way GitHub resolves them. The command reference in `docs/reference/commands` is generated from the command definitions, and a test fails when it is out of date. Diagrams are Graphviz sources in `docs/graphs`.
+
+```sh
+go run ./internal/tools/gendocs      # after changing a command or flag
+docs/graphs/render.sh                # after editing a diagram
+pip install -r site/requirements.txt
+site/build.sh serve                  # preview the site with live reload
+```
+
 ## Releases
 
 Releases are cut by [release-please](https://github.com/googleapis/release-please)

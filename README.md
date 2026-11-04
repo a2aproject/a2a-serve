@@ -14,7 +14,7 @@
 > [!WARNING]
 > A2A Serve is pre-1.0 and under active development. Commands, flags and
 > `config.yaml` keys may still change; stored state always migrates forward
-> (see [upgrades](./docs/upgrades.md)). Read the [security page](./docs/security.md)
+> (see [upgrades](./docs/upgrades.md)). Read the [security page](./docs/concepts/security.md)
 > before you expose an agent to other people, and the
 > [known limitations](#-known-limitations) below.
 
@@ -43,7 +43,10 @@ The flags are saved to `.a2a/config.yaml`, so the next start is `a2a-serve start
 - **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
 
 <div align="center">
-  <img src="./docs/graphs/readme-overview.png" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="./docs/graphs/readme-overview-dark.png">
+    <img src="./docs/graphs/readme-overview.png" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
+  </picture>
 </div>
 
 ## 🚀 Getting Started
@@ -72,14 +75,16 @@ mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
 a2a-serve doctor --fix
 ```
 
-The pinned `a2a` version is needed until a release has `--unix-socket` and credential helpers. [Installation](./docs/agent-server.md#installation) covers the manual setup and troubleshooting.
+The pinned `a2a` version is needed until a release has `--unix-socket` and credential helpers. [Getting started](./docs/getting-started.md#install) covers the manual setup and troubleshooting.
 
 ## 📚 Documentation
 
-- **[Agent server guide](./docs/agent-server.md):** sandboxing, approvals, networks, messengers, agent-to-agent calls, webhook nodes, schedules, backups, the inspector and the command reference.
-- **[Architecture](./docs/agent-server-architecture.md):** how a task flows through the server, with diagrams.
-- **[Access model](./docs/access-model.md):** who can call an agent from each network, what they may do, and how it runs on Agent Mesh.
-- **[Security](./docs/security.md):** what the sandbox protects and what each token grants.
+The documentation site is at <https://a2aproject.github.io/a2a-serve/>, built from [`docs/`](./docs/):
+
+- **[Getting started](./docs/getting-started.md):** install a2a-serve and start a first agent.
+- **[User guide](./docs/guide.md):** sandboxing, approvals, networks, messengers, agent-to-agent calls, webhook nodes, schedules, backups and the inspector.
+- **Concepts:** the [access model](./docs/concepts/access-model.md), [a2a-serve on Agent Mesh](./docs/concepts/agent-mesh.md), the [architecture](./docs/concepts/architecture.md) and [security](./docs/concepts/security.md).
+- **[Command reference](./docs/reference/commands/a2a-serve.md):** every command and flag, the [configuration file](./docs/reference/configuration.md), [exit codes](./docs/reference/output.md) and [HTTP routes](./docs/reference/http-routes.md).
 - **[Upgrades](./docs/upgrades.md):** how stored state migrates between versions.
 - **[Cookbook](./examples/):** runnable lessons, from [serving a coding agent](./examples/01-agent-server/) to [Tailscale, Telegram and a Grok bot](./examples/02-tailscale-telegram-grok/) and an [Agent Mesh relay](./examples/03-agentmesh-relay/).
 

@@ -1,9 +1,8 @@
-// A. Concepts: the entities of the access model and how they relate.
+// Concepts: the entities of the access model and how they relate.
 // Render: docs/graphs/render.sh access-model-concepts.dot
 digraph concepts {
   rankdir=TB;
-  graph [fontname="Helvetica", fontsize=14, nodesep=0.6, ranksep=0.7, pad=0.3, newrank=true,
-         label="A. Access model concepts", labelloc=t];
+  graph [fontname="Helvetica", fontsize=14, nodesep=0.6, ranksep=0.7, pad=0.3, newrank=true];
   node  [fontname="Helvetica", fontsize=14, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555", margin="0.2,0.1"];
   edge  [fontname="Helvetica", fontsize=12, color="#555555", fontcolor="#333333"];
 

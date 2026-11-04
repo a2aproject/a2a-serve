@@ -6,8 +6,7 @@ new version on its next start.
 
 ## Stored state migrates forward
 
-- **`server.db`** carries its schema version in SQLite's `PRAGMA
-  user_version`. On start, the server applies every migration from that
+- **`server.db`** carries its schema version in SQLite's `PRAGMA user_version`. On start, the server applies every migration from that
   version to the current one, each in its own transaction, so a failed
   migration leaves the database as it was. Released migrations never change;
   new versions add new ones.
