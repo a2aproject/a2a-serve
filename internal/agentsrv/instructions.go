@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/skills"
 )
@@ -147,10 +148,14 @@ func withSection(text, body string) string {
 }
 
 // withAgentsLine returns execCtx with the agents line added before the
-// caller's message, for a new prompt. Answers to the harness's own
-// questions are left alone, because the harness parses them.
+// caller's message, for a new prompt of a caller who may call agents.
+// Answers to the harness's own questions are left alone, because the
+// harness parses them.
 func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
 	if execCtx.Message == nil || (execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired) {
+		return execCtx
+	}
+	if caller, ok := auth.Caller(ctx); !ok || !mayCallAgents(caller) {
 		return execCtx
 	}
 	agents, err := p.callableAgents(ctx)

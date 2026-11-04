@@ -284,11 +284,18 @@ func TestAgentsURLHandles(t *testing.T) {
 // the owner, which ends with the test.
 func turnURL(t *testing.T, ts *testServer, contextID string) string {
 	t.Helper()
+	return turnURLOf(t, ts, contextID, auth.Owner())
+}
+
+// turnURLOf returns the agents URL of a conversation with a running turn of
+// user, which ends with the test.
+func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Principal) string {
+	t.Helper()
 	u, err := ts.srv.peers.agentsURL(context.Background(), contextID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, User: auth.Owner()}))
+	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, User: user}))
 	return u
 }
 
@@ -374,6 +381,37 @@ func TestAgentsProxy(t *testing.T) {
 			}
 			if err == nil && resultText(task) != tc.want {
 				t.Fatalf("task result = %q, want %q", resultText(task), tc.want)
+			}
+		})
+	}
+}
+
+func TestAgentsProxyChecksTheTurnsRole(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	ts := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, ts, "grok", 0)
+	addContact(t, ts, coder, "coder", auth.RoleAuthenticated)
+	tests := []struct {
+		name    string
+		user    auth.Principal
+		agent   string
+		wantErr bool
+	}{
+		{name: "owner calls a node", user: auth.Owner(), agent: "grok"},
+		{name: "authenticated calls a node", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, agent: "grok"},
+		{name: "anonymous calls a node", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "grok", wantErr: true},
+		{name: "anonymous calls a contact", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantErr: true},
+		{name: "anonymous calls the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: schedulesAgent, wantErr: true},
+		{name: "user without a role calls a node", user: auth.Principal{ID: "pair:gone"}, agent: "grok", wantErr: true},
+	}
+	for i, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			u := turnURLOf(t, ts, fmt.Sprintf("c%d", i), tc.user)
+			_, err := callAgent(t, harnessClient(ts), u+"/"+tc.agent, "hi")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("callAgent() error = %v, want error %v", err, tc.wantErr)
 			}
 		})
 	}

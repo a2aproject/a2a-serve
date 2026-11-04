@@ -120,6 +120,10 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
+		if !mayCallAgents(claims.User) {
+			jsonhttp.Error(w, http.StatusForbidden, "the user of this conversation can't call other agents; answer without calling one")
+			return
+		}
 		if claims.User.Hops+1 > auth.MaxHops {
 			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops))
 			return
@@ -161,6 +165,12 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 		}
 		inner.ServeHTTP(w, r2)
 	})
+}
+
+// mayCallAgents reports whether the conversations of user may call other
+// agents. Anonymous callers can't use this agent's contacts and nodes.
+func mayCallAgents(user auth.Principal) bool {
+	return user.Role == auth.RoleOwner || user.Role == auth.RoleAuthenticated
 }
 
 // serveSchedules serves the built-in schedules agent for the conversation
