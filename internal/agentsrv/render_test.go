@@ -45,7 +45,7 @@ func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
 			t.Parallel()
 			ch := newFakeChannel("fake")
 			ch.maxText = tc.maxText
-			rd := newRenderer(&Router{}, ch, "conv", channel.Ref{}, auth.Principal{})
+			rd := newRenderer(&ChatApprovals{}, ch, "conv", channel.Ref{}, auth.Principal{})
 			done := make(chan struct{})
 			go func() {
 				defer close(done)
@@ -113,7 +113,7 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			ch := &flakyChannel{fakeChannel: newFakeChannel("fake")}
-			rd := newRenderer(&Router{agentName: func() string { return "coder" }}, ch, "conv", channel.Ref{}, auth.Principal{})
+			rd := newRenderer(&ChatApprovals{agentName: func() string { return "coder" }}, ch, "conv", channel.Ref{}, auth.Principal{})
 			rd.onArtifact(&a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart("partial")}}, false)
 			rd.flush(ctx, true)
 			ch.editErr, ch.rateLimited = tc.editErr, tc.rateLimited

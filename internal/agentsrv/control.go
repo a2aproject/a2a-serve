@@ -132,7 +132,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
-	st.Channels = s.router.status()
+	st.Channels = s.supervisor.status()
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -231,7 +231,7 @@ func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
-	peers, err := s.peers.discover(r.Context())
+	peers, err := s.clients.discover(r.Context())
 	if err != nil {
 		controlapi.WriteError(w, err)
 		return
@@ -246,7 +246,7 @@ func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
 // contacts manages the contacts, refreshing the harness instructions
 // which list them.
 func (s *Server) contacts() manage.Contacts {
-	m := s.peers.contacts()
+	m := s.clients.contacts()
 	m.Changed = s.refreshInstructions
 	return m
 }
@@ -319,8 +319,8 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
 		return nil, err
 	}
-	s.router.add(ch)
-	return s.router.channelStatus(ch, s.router.ownerLink(ctx, ch)), nil
+	s.supervisor.add(ch)
+	return s.supervisor.channelStatus(ch, s.supervisor.ownerLink(ctx, ch)), nil
 }
 
 func (s *Server) ctlDeleteChannel(w http.ResponseWriter, r *http.Request) {
@@ -342,7 +342,7 @@ func (s *Server) deleteChannel(kind string) error {
 	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
 		return err
 	}
-	s.router.remove(kind)
+	s.supervisor.remove(kind)
 	return nil
 }
 

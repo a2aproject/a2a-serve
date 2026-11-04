@@ -50,7 +50,7 @@ A run sends the prompt to you in this conversation, as the user who asked.`
 // agent for the conversation and user of claims.
 type schedulesExecutor struct {
 	sc     *schedules
-	claims callClaims
+	claims callerClaims
 }
 
 func (e *schedulesExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {

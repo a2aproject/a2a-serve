@@ -239,7 +239,7 @@ func (s *Server) listenHarnessSocket() (net.Listener, harnessBridge, error) {
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
 	bus       *eventBus
-	peers     *Peers
+	claims    *CallClaims
 	approvals *approvals.Service
 	// anonymous reports whether a conversation is anonymous. Its prompts
 	// get no agents line, since it can't call other agents.
@@ -267,9 +267,9 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	withLine := execCtx
 	if !e.anonymous(ctx, execCtx.ContextID) {
-		withLine = e.peers.withAgentsLine(ctx, execCtx)
+		withLine = e.claims.withAgentsLine(ctx, execCtx)
 	}
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.inner.Execute(ctx, withLine))))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.duringTurn(ctx, execCtx, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}

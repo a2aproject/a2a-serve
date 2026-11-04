@@ -108,7 +108,7 @@ func (s *Server) runGossip(ctx context.Context) {
 }
 
 func (s *Server) gossipRound(ctx context.Context) {
-	peers, err := s.peers.discover(ctx)
+	peers, err := s.clients.discover(ctx)
 	if err != nil {
 		slog.Debug("finding peers to gossip with", "error", err)
 		return

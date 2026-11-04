@@ -18,16 +18,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-
-	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/skills"
 )
 
@@ -56,12 +52,12 @@ type AgentRef struct {
 
 // callableAgents returns the built-in schedules agent, the contacts and the
 // hosted nodes.
-func (p *Peers) callableAgents(ctx context.Context) ([]AgentRef, error) {
-	contacts, err := p.store.Contacts(ctx)
+func callableAgents(ctx context.Context, st *store.Store) ([]AgentRef, error) {
+	contacts, err := st.Contacts(ctx)
 	if err != nil {
 		return nil, err
 	}
-	nodes, err := p.store.Nodes(ctx)
+	nodes, err := st.Nodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -85,7 +81,7 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 	}
 	s.instructionsMu.Lock()
 	defer s.instructionsMu.Unlock()
-	agents, err := s.peers.callableAgents(ctx)
+	agents, err := callableAgents(ctx, s.store)
 	if err != nil {
 		return err
 	}
@@ -145,41 +141,4 @@ func withSection(text, body string) string {
 		end += len(text[end:]) - len(strings.TrimPrefix(text[end:], "\n"))
 	}
 	return text[:i] + section + text[end:]
-}
-
-// withAgentsLine returns execCtx with the agents line added before the
-// caller's message, for a new prompt of a caller who may call agents.
-// Answers to the harness's own questions are left alone, because the
-// harness parses them.
-func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
-	if execCtx.Message == nil || (execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired) {
-		return execCtx
-	}
-	if caller, ok := auth.Caller(ctx); !ok || !mayCallAgents(caller) {
-		return execCtx
-	}
-	agents, err := p.callableAgents(ctx)
-	if err != nil {
-		slog.Warn("listing callable agents", "error", err)
-		return execCtx
-	}
-	if len(agents) == 0 {
-		return execCtx
-	}
-	u, err := p.agentsURL(ctx, execCtx.ContextID)
-	if err != nil {
-		slog.Warn("creating the agents URL", "error", err)
-		return execCtx
-	}
-	names := make([]string, len(agents))
-	for i, a := range agents {
-		names[i] = a.Name
-	}
-	line := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s; call one with a2a send -a %s/<name>)",
-		agentsLinePrefix, u, strings.Join(names, ", "), u)
-	ec := *execCtx
-	msg := *execCtx.Message
-	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)
-	ec.Message = &msg
-	return &ec
 }

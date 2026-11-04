@@ -90,7 +90,7 @@ func TestWithAgentsLine(t *testing.T) {
 			}
 			execCtx := &a2asrv.ExecutorContext{ContextID: "c1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 
-			got := ts.srv.peers.withAgentsLine(ctx, execCtx)
+			got := ts.srv.claims.withAgentsLine(ctx, execCtx)
 
 			if hasLine := strings.Contains(a2atext.Message(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
 				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", a2atext.Message(got.Message), tc.wantLine)

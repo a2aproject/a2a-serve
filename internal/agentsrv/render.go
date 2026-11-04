@@ -35,7 +35,7 @@ import (
 // renderer shows one task in a conversation. Channels which stream get one
 // message edited as the agent writes; others get questions and the result.
 type renderer struct {
-	r       *Router
+	a       *ChatApprovals
 	ch      channel.Channel
 	caps    channel.Caps
 	conv    channel.ConvKey
@@ -72,12 +72,12 @@ type artifactText struct {
 	text strings.Builder
 }
 
-func newRenderer(r *Router, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal) *renderer {
+func newRenderer(a *ChatApprovals, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal) *renderer {
 	caps := ch.Caps()
 	if caps.MaxText <= 0 {
 		caps.MaxText = 4000
 	}
-	return &renderer{r: r, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p, lostFrom: -1}
+	return &renderer{a: a, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p, lostFrom: -1}
 }
 
 // onEvent renders an event and reports whether the task stopped: it
@@ -196,7 +196,7 @@ func (rd *renderer) flush(ctx context.Context, force bool) {
 		return
 	}
 	if !force {
-		if wait := rd.r.timings.EditInterval - time.Since(rd.lastEdit); wait > 0 {
+		if wait := rd.a.timings.EditInterval - time.Since(rd.lastEdit); wait > 0 {
 			if rd.timer == nil {
 				rd.timer = time.AfterFunc(wait, func() {
 					rd.mu.Lock()
@@ -308,7 +308,7 @@ func (rd *renderer) resend(ctx context.Context, text string) {
 	}
 }
 
-func (rd *renderer) subject() string { return rd.r.agentName() }
+func (rd *renderer) subject() string { return rd.a.agentName() }
 
 func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
 	rd.mu.Lock()
@@ -380,7 +380,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, a2atext.Message(msg))
 		return
 	}
-	if rd.p.Role == auth.RoleAnonymous || rd.r.anonymous(ctx, contextID) {
+	if rd.p.Role == auth.RoleAnonymous || rd.a.anonymous(ctx, contextID) {
 		rd.mu.Lock()
 		rd.waitsForOwner = true
 		rd.mu.Unlock()
@@ -388,16 +388,16 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 			rd.onWaitForOwner(taskID)
 		}
 		rd.send(ctx, fmt.Sprintf("⏳ This needs the owner's approval, which I asked for. Without an answer in %s, it is rejected:\n\n%s",
-			approvals.ApprovalTimeout(rd.r.timings.AnonymousQuestionTimeout), q.Display()))
+			approvals.ApprovalTimeout(rd.a.timings.AnonymousQuestionTimeout), q.Display()))
 		return
 	}
 	// An owner who answered an earlier question may be rendering the task,
 	// and its starter must still be able to answer this one.
-	user := rd.r.approvals.Starter(ctx, taskID)
+	user := rd.a.records.Starter(ctx, taskID)
 	if user == "" {
 		user = rd.p.ID
 	}
-	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", user, q)
+	rec, err := rd.a.records.NewRecord(ctx, taskID, contextID, "", user, q)
 	if err != nil {
 		slog.Error("storing question", "error", err)
 		rd.send(ctx, a2atext.Message(msg))
@@ -407,9 +407,9 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	if rd.caps.Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		out.Text += rd.r.answerHint(ctx, rec, q)
+		out.Text += rd.a.answerHint(ctx, rec, q)
 	}
-	rd.r.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text)
+	rd.a.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text)
 }
 
 // waitingForOwner returns the task which waits for an owner's answer.
@@ -441,7 +441,7 @@ func (rd *renderer) finish(ctx context.Context) {
 		rd.final(ctx, interrupted)
 		return
 	}
-	stored, err := rd.r.tasks.Get(auth.WithPrincipal(context.WithoutCancel(ctx), auth.Owner()), taskID)
+	stored, err := rd.a.tasks.Get(auth.WithPrincipal(context.WithoutCancel(ctx), auth.Owner()), taskID)
 	if err != nil {
 		slog.Warn("loading the task of an ended stream", "task", taskID, "error", err)
 		rd.final(ctx, interrupted)

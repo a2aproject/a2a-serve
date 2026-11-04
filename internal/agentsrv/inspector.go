@@ -425,7 +425,7 @@ func (in *inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ insp
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	in.s.router.MarkAnswered(ctx, rec.ID, opt.Label, "the inspector")
+	in.s.chatApprovals.MarkAnswered(ctx, rec.ID, opt.Label, "the inspector")
 	http.Redirect(w, r, InspectorPath+"/", http.StatusSeeOther)
 }
 

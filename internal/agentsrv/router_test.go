@@ -329,7 +329,7 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 
-	if err := ts.srv.router.injectTurn(ctx, a2a.NewContextID(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, a2a.NewContextID(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
@@ -346,12 +346,12 @@ func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 	linkOwner(t, ts, "telegram:1", "dm1")
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
-	contextID, err := ts.srv.router.contextOf(ctx, "telegram", "dm2")
+	contextID, err := ts.srv.chatTurns.contextOf(ctx, "telegram", "dm2")
 	if err != nil {
 		t.Fatalf("contextOf() error = %v", err)
 	}
 
-	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, contextID, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
@@ -367,17 +367,17 @@ func TestRouterOwnerChatOrder(t *testing.T) {
 	ts := startServer(t, serverOpts{channel: newFakeChannel("discord")})
 	linkOwner(t, ts, "discord:1", "dm1")
 	ctx := context.Background()
-	if got, ok := ts.srv.router.OwnerChat(ctx); !ok || got.Channel != "discord" {
+	if got, ok := ts.srv.chatApprovals.OwnerChat(ctx); !ok || got.Channel != "discord" {
 		t.Fatalf("OwnerChat() with discord only = %+v, %v, want discord", got, ok)
 	}
 
 	tg := newFakeChannel("telegram")
-	ts.srv.router.add(tg)
+	ts.srv.supervisor.add(tg)
 	tg.waitReady(t)
 	tg.write("telegram:1", "tgdm1", "join "+ownerCode(t, ts))
 	tg.waitFor(t, "tgdm1", hasText("Linked as owner"))
 
-	got, ok := ts.srv.router.OwnerChat(ctx)
+	got, ok := ts.srv.chatApprovals.OwnerChat(ctx)
 	if want := (approvals.Chat{Channel: "telegram", Conv: "tgdm1"}); !ok || got != want {
 		t.Fatalf("OwnerChat() with discord and telegram = %+v, %v, want %+v: telegram comes first", got, ok, want)
 	}
@@ -413,7 +413,7 @@ func TestRouterOwnerChat(t *testing.T) {
 				linkOwner(t, ts, "telegram:1", "dm1")
 			}
 
-			got, ok := ts.srv.router.OwnerChat(context.Background())
+			got, ok := ts.srv.chatApprovals.OwnerChat(context.Background())
 
 			if ok != tc.wantOK || got != tc.want {
 				t.Fatalf("OwnerChat() = %+v, %v, want %+v, %v", got, ok, tc.want, tc.wantOK)
@@ -450,7 +450,7 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	time.Sleep(3 * testTimings.InjectRetry)

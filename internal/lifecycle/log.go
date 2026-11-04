@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package launch runs an agent server in the foreground, in the background or
-// as a user service, and follows its log.
 package lifecycle
 
 import (

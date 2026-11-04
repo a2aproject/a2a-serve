@@ -30,15 +30,37 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
-	"github.com/a2aproject/a2a-serve/internal/localsrv"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
+
+// HarnessProxy serves the agents URLs on the harness listener: the agents
+// the harness may call, proxied by this server for the user of the running
+// turn of the conversation.
+type HarnessProxy struct {
+	store     *store.Store
+	claims    *CallClaims
+	clients   *ContactClients
+	watches   *Watches
+	schedules *schedules
+}
+
+// HarnessProxyDeps are the dependencies of [HarnessProxy].
+type HarnessProxyDeps struct {
+	Store     *store.Store
+	Claims    *CallClaims
+	Clients   *ContactClients
+	Watches   *Watches
+	Schedules *schedules
+}
+
+func newHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
+	return &HarnessProxy{store: deps.Store, claims: deps.Claims, clients: deps.Clients, watches: deps.Watches, schedules: deps.Schedules}
+}
 
 // harnessHost is the host of agents URLs when the harness reaches the server
 // through a Unix socket; the CLI sends every request through the socket.
@@ -66,28 +88,20 @@ func writeHarnessHelper(home, host, key string) (string, error) {
 	return harness.EnvCredentialHelper + "=" + host + "=" + path.Join(harness.ContainerHome, harnessHelperPath), nil
 }
 
-// agentsURL is where the harness calls other agents in one conversation:
-// <agents URL>/<name> is an A2A agent. The handle in the path stands for the
-// conversation; the user and the hop count are those of its running turn.
-func (p *Peers) agentsURL(ctx context.Context, contextID string) (string, error) {
-	base := p.bridge.url
-	if p.bridge.socket != "" {
-		base = socketHost
-	}
-	if base == "" {
-		return "", errors.New("the harness listener is not running")
-	}
-	h, err := p.handle(ctx, contextID)
-	if err != nil {
-		return "", err
-	}
-	return base + "/" + h, nil
+// harnessBridge is how the harness reaches the server: through the Unix
+// socket, or over TCP at url with key, which the credential helper of
+// helperEnv gives the harness's a2a CLI.
+type harnessBridge struct {
+	socket    string
+	url       string
+	key       string
+	helperEnv string
 }
 
-// harnessRoutes serves the agents URLs on the harness listener.
-func (p *Peers) harnessRoutes(key string) http.Handler {
+// routes serves the agents URLs on the harness listener.
+func (hp *HarnessProxy) routes(key string) http.Handler {
 	mux := http.NewServeMux()
-	agents := p.agentsHandler(key)
+	agents := hp.agentsHandler(key)
 	mux.Handle("/{handle}/{agent}", agents)
 	mux.Handle("/{handle}/{agent}/{rest...}", agents)
 	return mux
@@ -97,7 +111,7 @@ func (p *Peers) harnessRoutes(key string) http.Handler {
 // /{handle}/{agent}/..., as A2A agents proxied by this server: contacts are
 // called with this agent's identity, nodes in-process. Over a Unix socket
 // only the harness can connect; over TCP it sends key.
-func (p *Peers) agentsHandler(key string) http.Handler {
+func (hp *HarnessProxy) agentsHandler(key string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if key != "" {
 			tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
@@ -107,7 +121,7 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			}
 		}
 		handle, name := r.PathValue("handle"), r.PathValue("agent")
-		claims, err := p.claimsOf(r.Context(), handle)
+		claims, err := hp.claims.claimsOf(r.Context(), handle)
 		switch {
 		case errors.Is(err, errUnknownHandle):
 			jsonhttp.Error(w, http.StatusNotFound, err.Error())
@@ -131,10 +145,10 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 		rest := "/" + r.PathValue("rest")
 		base := "http://" + r.Host + "/" + handle + "/" + name
 		if name == schedulesAgent {
-			p.serveSchedules(w, r, claims, base, rest)
+			hp.serveSchedules(w, r, claims, base, rest)
 			return
 		}
-		ok, err := p.callable(r.Context(), name)
+		ok, err := hp.clients.callable(r.Context(), name)
 		if err != nil {
 			slog.Error("looking up a callable agent", "agent", name, "error", err)
 			jsonhttp.Error(w, http.StatusInternalServerError, "looking up "+name+" failed")
@@ -148,12 +162,12 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			a2asrv.NewStaticAgentCardHandler(proxyCard(name, base)).ServeHTTP(w, r)
 			return
 		}
-		h, principal, err := p.agentHandler(r.Context(), claims, name)
+		h, principal, err := hp.clients.agentHandler(r.Context(), claims, name)
 		if err != nil {
 			jsonhttp.Error(w, http.StatusBadGateway, err.Error())
 			return
 		}
-		guarded := &guardedHandler{RequestHandler: h, p: p, claims: claims, agent: name}
+		guarded := &guardedHandler{RequestHandler: h, proxy: hp, claims: claims, agent: name}
 		r2 := r.Clone(r.Context())
 		r2.URL.Path, r2.URL.RawPath = rest, ""
 		if principal != nil {
@@ -175,14 +189,14 @@ func mayCallAgents(user auth.Principal) bool {
 
 // serveSchedules serves the built-in schedules agent for the conversation
 // of claims.
-func (p *Peers) serveSchedules(w http.ResponseWriter, r *http.Request, claims callClaims, base, rest string) {
+func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, claims callerClaims, base, rest string) {
 	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
 		card := proxyCard(schedulesAgent, base)
 		card.Description = "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."
 		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
 		return
 	}
-	h := a2asrv.NewHandler(&schedulesExecutor{sc: p.schedules, claims: claims})
+	h := a2asrv.NewHandler(&schedulesExecutor{sc: hp.schedules, claims: claims})
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = rest, ""
 	inner := a2asrv.NewRESTHandler(h)
@@ -190,18 +204,6 @@ func (p *Peers) serveSchedules(w http.ResponseWriter, r *http.Request, claims ca
 		inner = a2asrv.NewJSONRPCHandler(h)
 	}
 	inner.ServeHTTP(w, r2)
-}
-
-// callable reports whether name is a contact or a hosted node.
-func (p *Peers) callable(ctx context.Context, name string) (bool, error) {
-	if node, err := p.isNode(ctx, name); err != nil || node {
-		return node, err
-	}
-	_, err := p.store.Contact(ctx, name)
-	if errors.Is(err, store.ErrNotFound) {
-		return false, nil
-	}
-	return err == nil, err
 }
 
 func proxyCard(name, base string) *a2a.AgentCard {
@@ -219,26 +221,6 @@ func proxyCard(name, base string) *a2a.AgentCard {
 	}
 }
 
-// agentHandler returns the A2A handler of a node or a contact. A node is
-// served in-process, as principal.
-func (p *Peers) agentHandler(ctx context.Context, c callClaims, name string) (a2asrv.RequestHandler, *auth.Principal, error) {
-	node, err := p.isNode(ctx, name)
-	if err != nil {
-		return nil, nil, err
-	}
-	if node {
-		pr := p.nodeCaller(c.User, c.User.Hops)
-		return p.nodes.Handler(name), &pr, nil
-	}
-	client, err := p.contactClient(ctx, name)
-	if err != nil {
-		return nil, nil, err
-	}
-	return &localsrv.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
-		return viaAgent(ctx, c.User.Hops)
-	}}, nil, nil
-}
-
 // guardedHandler keeps a conversation to the tasks it started, and
 // approvals with the user: the harness can't answer another agent's
 // permission question, which is relayed to the user's chat instead. Tasks
@@ -246,8 +228,8 @@ func (p *Peers) agentHandler(ctx context.Context, c callClaims, name string) (a2
 // the conversation.
 type guardedHandler struct {
 	a2asrv.RequestHandler
-	p      *Peers
-	claims callClaims
+	proxy  *HarnessProxy
+	claims callerClaims
 	agent  string
 }
 
@@ -309,7 +291,7 @@ func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksReques
 	out := *res
 	out.Tasks = nil
 	for _, t := range res.Tasks {
-		ok, err := g.p.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
+		ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
 		if err != nil {
 			return nil, err
 		}
@@ -365,14 +347,14 @@ func (g *guardedHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.Dele
 // record notes that this conversation started a task.
 func (g *guardedHandler) record(ctx context.Context, id a2a.TaskID, contextID string) {
 	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID}
-	if err := g.p.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
+	if err := g.proxy.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
 		slog.Error("recording a call task", "agent", g.agent, "task", id, "error", err)
 	}
 }
 
 // checkTask refuses a task this conversation didn't start.
 func (g *guardedHandler) checkTask(ctx context.Context, id a2a.TaskID) error {
-	ok, err := g.p.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(id))
+	ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(id))
 	if err != nil {
 		return err
 	}
@@ -394,7 +376,7 @@ func (g *guardedHandler) checkMessage(ctx context.Context, req *a2a.SendMessageR
 			return err
 		}
 	case m.ContextID != "":
-		ok, err := g.p.store.HasCallContext(ctx, g.claims.ContextID, g.agent, m.ContextID)
+		ok, err := g.proxy.store.HasCallContext(ctx, g.claims.ContextID, g.agent, m.ContextID)
 		if err != nil {
 			return err
 		}
@@ -439,7 +421,7 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 		if q == nil || q.Type != approvals.TypePermission {
 			return
 		}
-		g.p.relay(g.p.ctx, g.claims, g.agent, task, q)
+		g.proxy.watches.relay(g.proxy.watches.ctx, g.claims, g.agent, task, q)
 	}
 	identity, err := json.Marshal(g.claims.User.Identity)
 	if err != nil {
@@ -450,9 +432,9 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
 		OnBehalfOf: g.claims.User.ID, Identity: string(identity),
 	}
-	if err := g.p.store.PutWatch(ctx, w); err != nil {
+	if err := g.proxy.store.PutWatch(ctx, w); err != nil {
 		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
 		return
 	}
-	g.p.watch(w)
+	g.proxy.watches.watch(w)
 }

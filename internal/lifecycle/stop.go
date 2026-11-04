@@ -33,7 +33,9 @@ const stopTimeout = 2 * time.Minute
 type Wait bool
 
 const (
-	NoWait      Wait = false
+	// NoWait returns once the server was asked to stop.
+	NoWait Wait = false
+	// WaitStopped returns once the server has exited.
 	WaitStopped Wait = true
 )
 
