@@ -581,11 +581,11 @@ func (s *Server) access(ctx context.Context) (*controlapi.Access, error) {
 	if err != nil {
 		return nil, err
 	}
-	net := access.Network{Public: s.public != nil, SignIn: s.signIn()}
+	networks := access.Network{Public: s.public != nil, SignIn: s.signIn()}
 	if s.private != nil {
-		net.Private = s.private.Name()
+		networks.Private = s.private.Name()
 	}
-	return access.Describe(s.config().Policy, net, access.CountPairings(all)), nil
+	return access.Describe(s.config().Policy, networks, access.CountPairings(all)), nil
 }
 
 func pid() int { return os.Getpid() }
