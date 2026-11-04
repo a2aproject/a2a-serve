@@ -15,16 +15,21 @@
 package agentsrv
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"maps"
+	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -197,7 +202,8 @@ func TestCardDescription(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{cfg: &agentdir.Config{Name: "coder", Harness: tc.harness}}
+			s := &Server{}
+			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: tc.harness}})
 			if got := s.card(network.ListenerPrivate, "http://127.0.0.1:9000").Description; got != tc.want {
 				t.Fatalf("Server.card().Description = %q, want %q", got, tc.want)
 			}
@@ -224,12 +230,73 @@ func TestCardPairingScheme(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}, private: &fakeProvider{signIn: tc.signIn}}
+			s := &Server{private: &fakeProvider{signIn: tc.signIn}}
+			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
 			card := s.card(tc.kind, "http://127.0.0.1:9000")
 			_, got := card.SecuritySchemes["pairing"]
 			if got != tc.want || (len(card.SecurityRequirements) > 0) != tc.want {
 				t.Fatalf("Server.card(%q) advertises the pairing scheme = %v, want %v", tc.kind, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestOversizedA2ABody(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	u, err := url.Parse(ts.localURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"/", "/message:send"} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			conn, err := net.Dial("tcp", u.Host)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := conn.Close(); err != nil {
+					t.Errorf("closing the connection: %v", err)
+				}
+			}()
+			req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", path, u.Host, bearer, jsonhttp.MaxBody+1)
+			if _, err := io.WriteString(conn, req); err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
+			}
+		})
+	}
+}
+
+func TestPairingBackoffThroughTunnel(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{public: publicNet()})
+	ctx := context.Background()
+	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "anna"})
+	if err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	pair := func(u, code string) int {
+		return statusOf(t, http.MethodPost, u+"/pair", `{"code":"`+code+`"}`, http.Header{"Content-Type": {"application/json"}})
+	}
+	if got := pair(ts.publicURL(), "WRONGCODE"); got != http.StatusForbidden {
+		t.Fatalf("pair with a wrong code status = %d, want %d", got, http.StatusForbidden)
+	}
+	if got := pair(ts.publicURL(), code.Code); got != http.StatusTooManyRequests {
+		t.Fatalf("pair through the tunnel during backoff status = %d, want %d", got, http.StatusTooManyRequests)
+	}
+	if got := pair(ts.localURL(), code.Code); got != http.StatusOK {
+		t.Fatalf("pair on the local listener status = %d, want %d", got, http.StatusOK)
 	}
 }

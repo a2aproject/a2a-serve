@@ -19,7 +19,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"net"
 	"syscall"
@@ -39,9 +38,6 @@ const (
 	// CodeIO marks a transport failure reaching or reading from the agent —
 	// DNS, connection, TLS, reset, broken pipe. Exit 3.
 	CodeIO = "A2ACLI_ERR_IO"
-	// CodeCardInvalid marks a card that was reached but is not usable — a
-	// non-OK status or a malformed body. Exit 4.
-	CodeCardInvalid = "A2ACLI_ERR_CARD_INVALID"
 	// CodeTimeout marks a --timeout that expired before a terminal state; exit 5.
 	CodeTimeout = "A2ACLI_ERR_TIMEOUT"
 	// CodeInternal marks an unexpected CLI-side failure, or any condition with
@@ -97,32 +93,6 @@ const UsageHint = "run `a2a-serve --help` for the current commands and flags"
 // Usage builds a usage error for invalid arguments, flags, or flag combinations.
 func Usage(msg string) *Error {
 	return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: 2}
-}
-
-// CardResolution builds an error for a failure to resolve an --agent-card.
-//
-// It is called only from the card-resolution path, where the reference itself
-// is already known to be well-formed (see flagparse.URLOrPath.Validate), so the
-// outcome is binary: either the agent could not be reached (an IO failure), or
-// it was reached but did not yield a usable card.
-func CardResolution(err error) *Error {
-	msg := fmt.Sprintf("failed to resolve agent card: %v", err)
-	if isIOError(err) {
-		return &Error{
-			Code:    CodeIO,
-			Message: msg,
-			Exit:    3,
-			err:     err,
-			Hint:    "check the agent is running and the --agent-card reference is correct",
-		}
-	}
-	return &Error{
-		Code:    CodeCardInvalid,
-		Message: msg,
-		Exit:    4,
-		Hint:    "check the --agent-card reference (host, full card URL, or local file path)",
-		err:     err,
-	}
 }
 
 // MarshalJSON implements [json.Marshaler].
@@ -192,7 +162,7 @@ func Classify(err error) *Error {
 			Message: msg,
 			Exit:    5,
 			err:     err,
-			Hint:    "increase --timeout, or start the task with --async and follow it later",
+			Hint:    "increase --timeout",
 		}
 	}
 

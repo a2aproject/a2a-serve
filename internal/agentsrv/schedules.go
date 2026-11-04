@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -49,8 +50,8 @@ type schedules struct {
 	wake chan struct{}
 }
 
-func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain) *schedules {
-	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: time.Now, wake: make(chan struct{}, 1)}
+func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain, now func() time.Time) *schedules {
+	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: now, wake: make(chan struct{}, 1)}
 }
 
 // run runs due schedules until ctx ends. A run missed while the agent was
@@ -92,18 +93,28 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 			wait = min(wait, s.NextRun.Sub(now))
 			continue
 		}
+		next, ok, nextErr := whenOf(s).Next(now)
+		if nextErr != nil || !ok {
+			next = time.Time{}
+		}
+		// A run whose next time isn't saved would repeat on every check.
+		if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
+			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
+			continue
+		}
 		runErr := sc.start(ctx, s)
-		next, ok, err := whenOf(s).Next(now)
-		if err != nil || !ok {
+		if runErr == nil && nextErr == nil && !ok {
 			if err := sc.store.DeleteSchedule(ctx, s.Name); err != nil && !errors.Is(err, store.ErrNotFound) {
 				slog.Error("removing a finished schedule", "schedule", s.Name, "error", err)
 			}
 			continue
 		}
-		if err := sc.store.RecordScheduleRun(ctx, s.Name, now, next, errText(runErr)); err != nil {
+		if err := sc.store.RecordScheduleResult(ctx, s.Name, now, errText(cmp.Or(runErr, nextErr))); err != nil {
 			slog.Error("recording a schedule run", "schedule", s.Name, "error", err)
 		}
-		wait = min(wait, next.Sub(now))
+		if !next.IsZero() {
+			wait = min(wait, next.Sub(now))
+		}
 	}
 	return max(wait, scheduleMinWait)
 }
@@ -207,7 +218,7 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 	}
 	runErr := sc.start(ctx, s)
 	s.LastRun, s.LastError = sc.now(), errText(runErr)
-	if err := sc.store.RecordScheduleRun(ctx, s.Name, s.LastRun, s.NextRun, s.LastError); err != nil {
+	if err := sc.store.RecordScheduleResult(ctx, s.Name, s.LastRun, s.LastError); err != nil {
 		return store.Schedule{}, err
 	}
 	return s, runErr

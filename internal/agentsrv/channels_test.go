@@ -110,3 +110,39 @@ func TestDeleteChannelNotConfigured(t *testing.T) {
 		t.Fatalf("DeleteChannel() error = %v, want telegram is not configured", err)
 	}
 }
+
+func TestAddChannelWhileReadingStatus(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant", telegramAPI: fakeBotAPI(t)})
+	ctx := context.Background()
+	client := controlapi.NewClient(ts.dir)
+	done := make(chan struct{})
+	errc := make(chan error, 1)
+	go func() {
+		defer close(errc)
+		for {
+			select {
+			case <-done:
+				return
+			default:
+			}
+			if _, err := client.Status(ctx); err != nil {
+				errc <- err
+				return
+			}
+		}
+	}()
+	for range 3 {
+		if _, err := client.AddChannel(ctx, controlapi.ChannelRequest{
+			Kind:    agentdir.ChannelTelegram,
+			Token:   "secret:" + agentdir.SecretTelegram,
+			Secrets: agentdir.Secrets{agentdir.SecretTelegram: "good"},
+		}); err != nil {
+			t.Fatalf("AddChannel() error = %v", err)
+		}
+	}
+	close(done)
+	if err := <-errc; err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+}

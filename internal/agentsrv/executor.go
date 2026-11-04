@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
@@ -124,7 +125,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, an
 	}
 	env := append([]string{}, cfg.Env...)
 	for _, name := range cfg.Secrets {
-		v, ok := s.secrets[name]
+		v, ok := s.secrets()[name]
 		if !ok {
 			return nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
 		}
@@ -488,6 +489,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		return ctx, nil, fmt.Errorf("%w: too many agents in this chain (%d)", a2a.ErrUnauthorized, p.Hops)
 	}
 	auth.SetCallUser(callCtx, p)
+	if !p.IsOwner() {
+		ctx = limiter.AttachScope(ctx, p.ID)
+	}
 	// Anonymous callers who proved nothing share one principal, so they
 	// list only the conversation they name, whose ID proves it is theirs.
 	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.AnonymousID && list.ContextID == "" {

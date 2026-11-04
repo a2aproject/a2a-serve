@@ -15,10 +15,15 @@
 package cli
 
 import (
+	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func TestChannelAddTokenFromStdin(t *testing.T) {
@@ -74,6 +79,64 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 
 			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("a2a-serve %s with empty stdin error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPrintChannelSaved(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		mode output.Mode
+		want string
+	}{
+		{name: "text", mode: output.ModeText, want: "✓ saved telegram; it starts with the agent (a2a-serve start)\n"},
+		{name: "json", mode: output.ModeJson, want: "{\n  \"name\": \"telegram\"\n}\n"},
+		{name: "jsonl", mode: output.ModeJSONL, want: "{\"name\":\"telegram\"}\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&buf, tc.mode)}
+
+			err := printChannelSaved(cfg, "telegram")
+
+			if err != nil {
+				t.Fatalf("printChannelSaved() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, buf.String()); diff != "" {
+				t.Fatalf("printChannelSaved() wrong output (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestGlobalConfigProgress(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		mode       output.Mode
+		wantStdout string
+		wantStderr string
+	}{
+		{name: "text", mode: output.ModeText, wantStdout: "working\n"},
+		{name: "json", mode: output.ModeJson, wantStderr: "working\n"},
+		{name: "jsonl", mode: output.ModeJSONL, wantStderr: "working\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var stdout, stderr bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&stdout, tc.mode), errOut: &stderr}
+
+			if _, err := fmt.Fprintln(cfg.progress(), "working"); err != nil {
+				t.Fatalf("Fprintln() error = %v", err)
+			}
+
+			if diff := cmp.Diff([]string{tc.wantStdout, tc.wantStderr}, []string{stdout.String(), stderr.String()}); diff != "" {
+				t.Fatalf("cfg.progress() wrong stdout and stderr (-want +got) diff = %s", diff)
 			}
 		})
 	}

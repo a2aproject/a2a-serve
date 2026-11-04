@@ -126,6 +126,13 @@ func addChannelOffline(ctx context.Context, cfg *globalConfig, d agentdir.Dir, c
 	if err := d.SaveConfig(conf); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", kind)
+	return printChannelSaved(cfg, kind)
+}
+
+func printChannelSaved(cfg *globalConfig, kind string) error {
+	if cfg.IsJSON() {
+		return cfg.PrintJSON(controlapi.ChannelStatus{Name: kind})
+	}
+	_, err := fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", kind)
 	return err
 }

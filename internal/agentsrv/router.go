@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/backoff"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -83,10 +84,12 @@ type convTicket struct {
 	once sync.Once
 }
 
-// Channel restarts back off from channelRetryMin to channelRetryMax.
+// Channel restarts back off from channelRetryMin to channelRetryMax, and
+// start over after a run of channelHealthy.
 var (
 	channelRetryMin = 5 * time.Second
 	channelRetryMax = 5 * time.Minute
+	channelHealthy  = time.Minute
 )
 
 // start dispatches channel messages until ctx ends.
@@ -113,8 +116,9 @@ func (r *Router) add(ch channel.Channel) {
 
 func (r *Router) run(ctx context.Context, rc *runningChannel) {
 	defer close(rc.done)
-	delay := channelRetryMin
+	retry := backoff.New(channelRetryMin, channelRetryMax, channelHealthy)
 	for {
+		started := time.Now()
 		err := rc.ch.Run(ctx, r.in)
 		if ctx.Err() != nil {
 			return
@@ -122,6 +126,7 @@ func (r *Router) run(ctx context.Context, rc *runningChannel) {
 		if err == nil {
 			err = errors.New("stopped unexpectedly")
 		}
+		delay := retry.Next(time.Since(started))
 		slog.Error("channel stopped; restarting", "channel", rc.ch.Name(), "in", delay, "error", err)
 		r.mu.Lock()
 		rc.err = err
@@ -131,7 +136,6 @@ func (r *Router) run(ctx context.Context, rc *runningChannel) {
 			return
 		case <-time.After(delay):
 		}
-		delay = min(delay*2, channelRetryMax)
 		r.mu.Lock()
 		rc.err = nil
 		r.mu.Unlock()
@@ -344,6 +348,18 @@ func (r *Router) reply(ctx context.Context, ch channel.Channel, in channel.Inbou
 	}
 }
 
+// firstSeen reports whether the message is new, so that redelivered ones are
+// dropped. It runs after the checks that refuse a sender, so that strangers
+// don't make the server write.
+func (r *Router) firstSeen(ctx context.Context, in channel.Inbound) bool {
+	first, err := r.store.FirstSeen(ctx, in.Channel+"|"+in.MessageID)
+	if err != nil {
+		slog.Error("dedup", "error", err)
+		return false
+	}
+	return first
+}
+
 func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) {
 	if t != nil {
 		defer r.release(t)
@@ -352,19 +368,16 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	if ch == nil {
 		return
 	}
-	first, err := r.store.FirstSeen(ctx, in.Channel+"|"+in.MessageID)
-	if err != nil {
-		slog.Error("dedup", "error", err)
-		return
-	}
-	if !first {
-		return
-	}
 	if in.Action != nil {
-		r.handleAction(ctx, ch, in)
+		if r.firstSeen(ctx, in) {
+			r.handleAction(ctx, ch, in)
+		}
 		return
 	}
 	if code, ok := auth.LinkCode(in.Text); ok {
+		if !r.firstSeen(ctx, in) {
+			return
+		}
 		p, err := auth.Link(ctx, r.store, &in, code)
 		if err != nil {
 			r.reply(ctx, ch, in, "That code is invalid or has expired. Ask the owner for a new one.")
@@ -387,6 +400,9 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	// --public-access anyone admits unlinked senders in direct chats only;
 	// groups keep ignoring them.
 	if p.Role == auth.RoleAnonymous && !in.Direct {
+		return
+	}
+	if !r.firstSeen(ctx, in) {
 		return
 	}
 	if in.Prepare != nil {
@@ -530,6 +546,7 @@ func (r *Router) stream(ctx context.Context, ch channel.Channel, conv channel.Co
 // message, with its first event, or with the error it was refused with.
 func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal, req *a2a.SendMessageRequest, accepted func(error)) {
 	rd := newRenderer(r, ch, conv, replyTo, p)
+	rd.onWaitForOwner = func(taskID a2a.TaskID) { r.followOwnerAnswer(ctx, ch, conv, p, taskID) }
 	first := true
 	for ev, err := range r.handler.SendStreamingMessage(auth.InProcess(ctx, p), req) {
 		if first {
@@ -541,9 +558,6 @@ func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channe
 			return
 		}
 		if rd.onEvent(ctx, ev) {
-			if taskID, ok := rd.waitingForOwner(); ok {
-				r.followOwnerAnswer(ctx, ch, conv, p, taskID)
-			}
 			return
 		}
 	}
@@ -737,18 +751,22 @@ func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.Co
 		unsubscribe()
 		return
 	}
-	go func() {
-		defer unsubscribe()
-		rd := newRenderer(r, ch, conv, channel.Ref{}, p)
-		timeout := time.NewTimer(25 * time.Hour)
-		defer timeout.Stop()
-		for {
-			ev, ok := events.next(ctx, timeout.C)
-			if !ok || rd.onEvent(ctx, ev) {
-				return
-			}
+	go r.render(ctx, ch, conv, p, events, unsubscribe)
+}
+
+// render renders the events of a task in a conversation until the task
+// stops, and then unsubscribes.
+func (r *Router) render(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, events *subscription, unsubscribe func()) {
+	defer unsubscribe()
+	rd := newRenderer(r, ch, conv, channel.Ref{}, p)
+	timeout := time.NewTimer(25 * time.Hour)
+	defer timeout.Stop()
+	for {
+		ev, ok := events.next(ctx, timeout.C)
+		if !ok || rd.onEvent(ctx, ev) {
+			return
 		}
-	}()
+	}
 }
 
 // MarkAnswered replaces the buttons of a question with who answered it.
@@ -784,14 +802,23 @@ func (r *Router) Ask(ctx context.Context, to approvals.Chat, header string, rec 
 	if ch.Caps().Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), r.approvals.PageURL(rec))
+		out.Text += r.answerHint(ctx, rec, q)
 	}
-	ref, err := ch.Send(ctx, out)
-	if err != nil {
-		slog.Warn("sending question", "channel", ch.Name(), "error", err)
-		return
+	r.sendQuestion(ctx, ch, out, rec.ID, text)
+}
+
+// answerHint tells how to answer a question in a chat without buttons: by
+// typing an option, or on its page when the task's user may answer there.
+func (r *Router) answerHint(ctx context.Context, rec store.Question, q *approvals.Question) string {
+	hint := "\n\nReply " + q.Words()
+	link, err := r.approvals.PageURL(ctx, rec)
+	switch {
+	case err != nil:
+		slog.Warn("checking who may answer a question on its page", "question", rec.ID, "error", err)
+	case link != "":
+		hint += ", or open " + link
 	}
-	r.remember(ctx, rec.ID, ch.Name(), to.Conv, ref, text)
+	return hint
 }
 
 // ownerChatOrder is the order in which, without --owner-chat, the
@@ -912,15 +939,22 @@ func (r *Router) setUnattended(contextID string) {
 	r.unattended[contextID] = true
 }
 
-// remember records a message which shows a question, so that it can be
-// updated once answered, and makes the question the one a typed reply in
-// the conversation answers.
-func (r *Router) remember(ctx context.Context, questionID, ch string, conv channel.ConvKey, ref channel.Ref, text string) {
-	if err := r.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Channel: ch, Conv: string(ref.Conv), MessageID: ref.ID, Text: text}); err != nil {
-		slog.Warn("recording a question message", "error", err)
-	}
-	if err := r.store.SetPendingQuestion(ctx, ch, string(conv), questionID); err != nil {
+// sendQuestion sends a question and records it. It is pending in the chat
+// before it is sent, so that a reply typed right after it arrives answers it.
+func (r *Router) sendQuestion(ctx context.Context, ch channel.Channel, out channel.Outbound, questionID, text string) {
+	if err := r.store.SetPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
 		slog.Warn("recording pending question", "error", err)
+	}
+	ref, err := ch.Send(ctx, out)
+	if err != nil {
+		slog.Warn("sending question", "channel", ch.Name(), "error", err)
+		if err := r.store.ClearPendingQuestion(ctx, ch.Name(), string(out.Conv)); err != nil {
+			slog.Warn("clearing pending question", "error", err)
+		}
+		return
+	}
+	if err := r.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Channel: ch.Name(), Conv: string(ref.Conv), MessageID: ref.ID, Text: text}); err != nil {
+		slog.Warn("recording a question message", "error", err)
 	}
 }
 

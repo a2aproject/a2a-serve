@@ -17,10 +17,14 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -869,5 +873,270 @@ func TestReplaceCode(t *testing.T) {
 		if _, err := s.TakeCode(ctx, tc.code, AnyCode); !errors.Is(err, tc.wantErr) {
 			t.Fatalf("TakeCode(%s) error = %v, want %v", tc.code, err, tc.wantErr)
 		}
+	}
+}
+
+func TestCallerBlobReferencesStripped(t *testing.T) {
+	t.Parallel()
+	secret := []byte("another task's attachment")
+	sum := sha256.Sum256(secret)
+	real := hex.EncodeToString(sum[:])
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{name: "unknown hash", ref: "deadbeef"},
+		{name: "stored hash", ref: real},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ts := s.Tasks("", testViewer)
+			owner := asUser("owner")
+			victim := newTask("victim", "c0")
+			victim.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart(secret))}
+			if _, err := ts.Create(owner, victim); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			part := a2a.NewTextPart("hello")
+			part.Metadata = map[string]any{blobKey: tc.ref, "keep": "me"}
+			task := newTask("t1", "c1")
+			task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, part)}
+			if _, err := ts.Create(owner, task); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			got, err := ts.Get(owner, "t1")
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			wantPart := a2a.NewTextPart("hello")
+			wantPart.Metadata = map[string]any{"keep": "me"}
+			if diff := cmp.Diff(a2a.ContentParts{wantPart}, got.Task.History[0].Parts); diff != "" {
+				t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+			}
+			list, err := ts.List(owner, &a2a.ListTasksRequest{})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if len(list.Tasks) != 2 {
+				t.Fatalf("List() returned %d tasks, want 2", len(list.Tasks))
+			}
+		})
+	}
+}
+
+func TestMissingBlobDoesNotFailReads(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("see"), a2a.NewRawPart([]byte("lost")))}
+	if _, err := ts.Create(owner, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM blobs`); err != nil {
+		t.Fatalf("deleting blobs: %v", err)
+	}
+
+	got, err := ts.Get(owner, "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	want := a2a.ContentParts{a2a.NewTextPart("see"), a2a.NewTextPart(missingBlobText)}
+	if diff := cmp.Diff(want, got.Task.History[0].Parts); diff != "" {
+		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestReadsDoNotWaitForWrites(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	started, release, written := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		written <- s.inTx(ctx, func(tx *sql.Tx) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	_, err := s.Schedules(readCtx)
+
+	close(release)
+	if werr := <-written; werr != nil {
+		t.Fatalf("inTx() error = %v", werr)
+	}
+	if err != nil {
+		t.Fatalf("Schedules() during a write error = %v", err)
+	}
+}
+
+func TestWritesAreReadBack(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{name: "file", path: func(t *testing.T) string { return filepath.Join(t.TempDir(), "server.db") }},
+		{name: "memory", path: func(*testing.T) string { return ":memory:" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStoreAt(t, tc.path(t))
+			ctx := context.Background()
+			for i := range 20 {
+				name := fmt.Sprintf("s%d", i)
+				if err := s.AddSchedule(ctx, Schedule{Name: name, Cron: "@daily", Prompt: "x", UserID: "user:owner", Conversation: "new", CreatedBy: "user:owner"}); err != nil {
+					t.Fatalf("AddSchedule(%s) error = %v", name, err)
+				}
+				if _, err := s.Schedule(ctx, name); err != nil {
+					t.Fatalf("Schedule(%s) right after AddSchedule() error = %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenSetsSynchronousNormal(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	var got int
+	if err := s.db.QueryRow(`PRAGMA synchronous`).Scan(&got); err != nil {
+		t.Fatalf("reading synchronous: %v", err)
+	}
+	const normal = 1
+	if got != normal {
+		t.Fatalf("PRAGMA synchronous = %d, want %d (NORMAL)", got, normal)
+	}
+}
+
+func TestLookupTokenRecordsUseOncePerMinute(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		at   time.Duration
+		want time.Duration
+	}{
+		{name: "first use", at: 0, want: 0},
+		{name: "within a minute", at: 30 * time.Second, want: 0},
+		{name: "after a minute", at: 61 * time.Second, want: 61 * time.Second},
+		{name: "again within a minute", at: 90 * time.Second, want: 61 * time.Second},
+	}
+	for _, tc := range tests {
+		now = start.Add(tc.at)
+		if _, err := s.LookupToken(ctx, "a2p_secret"); err != nil {
+			t.Fatalf("LookupToken() at %s error = %v", tc.name, err)
+		}
+		tokens, err := s.Tokens(ctx)
+		if err != nil {
+			t.Fatalf("Tokens() error = %v", err)
+		}
+		want := start.Add(tc.want)
+		if got := tokens[0].LastUsed; !got.Equal(want) {
+			t.Fatalf("Tokens()[0].LastUsed at %s = %v, want %v", tc.name, got, want)
+		}
+	}
+}
+
+func TestLookupTokenSucceedsWhenRecordingUseFails(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER no_updates BEFORE UPDATE ON tokens BEGIN SELECT RAISE(ABORT, 'database is locked'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+
+	got, err := s.LookupToken(ctx, "a2p_secret")
+	if err != nil {
+		t.Fatalf("LookupToken() error = %v", err)
+	}
+	if got.Pairing != "grok" {
+		t.Fatalf("LookupToken().Pairing = %q, want grok", got.Pairing)
+	}
+}
+
+func TestPruneForgetsOldSeenKeys(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	if _, err := s.FirstSeen(ctx, "old"); err != nil {
+		t.Fatalf("FirstSeen() error = %v", err)
+	}
+	now = start.Add(seenRetention + time.Hour)
+	if _, err := s.FirstSeen(ctx, "fresh"); err != nil {
+		t.Fatalf("FirstSeen() error = %v", err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM seen`).Scan(&rows); err != nil {
+		t.Fatalf("counting seen keys: %v", err)
+	}
+	if rows != 2 {
+		t.Fatalf("seen keys after FirstSeen() = %d, want 2: only Prune forgets old keys", rows)
+	}
+
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		key  string
+		want bool
+	}{{"old", true}, {"fresh", false}} {
+		got, err := s.FirstSeen(ctx, tc.key)
+		if err != nil {
+			t.Fatalf("FirstSeen(%q) error = %v", tc.key, err)
+		}
+		if got != tc.want {
+			t.Fatalf("FirstSeen(%q) after Prune() = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
+func TestSeenKeysAreIndexedByTime(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN DELETE FROM seen WHERE at < 1`)
+	if err != nil {
+		t.Fatalf("explaining the delete: %v", err)
+	}
+	defer closeRows(rows)
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("reading the plan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the plan: %v", err)
+	}
+	if got := strings.Join(plan, "; "); !strings.Contains(got, "seen_at") {
+		t.Fatalf("query plan of deleting old seen keys = %q, want it to use the seen_at index", got)
 	}
 }

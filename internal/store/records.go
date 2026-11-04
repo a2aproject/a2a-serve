@@ -35,7 +35,7 @@ var _ a2aacp.SessionStore = SessionStore{}
 // Get returns the ACP session of an A2A context.
 func (ss SessionStore) Get(ctx context.Context, contextID string) (a2aacp.Session, bool, error) {
 	var sess a2aacp.Session
-	err := ss.s.db.QueryRowContext(ctx, `SELECT session_id, agent_key FROM sessions WHERE context_id = ?`, contextID).
+	err := ss.s.reads.QueryRowContext(ctx, `SELECT session_id, agent_key FROM sessions WHERE context_id = ?`, contextID).
 		Scan(&sess.ID, &sess.AgentKey)
 	if errors.Is(err, sql.ErrNoRows) {
 		return a2aacp.Session{}, false, nil
@@ -54,7 +54,7 @@ func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Se
 // ContextOf returns the A2A context of a channel conversation.
 func (s *Store) ContextOf(ctx context.Context, channel, conv string) (string, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT context_id FROM convs WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
+	err := s.reads.QueryRowContext(ctx, `SELECT context_id FROM convs WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -71,7 +71,7 @@ func (s *Store) SetContext(ctx context.Context, channel, conv, contextID string)
 
 // ConvOf returns the channel conversation bound to an A2A context.
 func (s *Store) ConvOf(ctx context.Context, contextID string) (channel, conv string, err error) {
-	err = s.db.QueryRowContext(ctx, `SELECT channel, conv FROM convs WHERE context_id = ? ORDER BY updated DESC LIMIT 1`,
+	err = s.reads.QueryRowContext(ctx, `SELECT channel, conv FROM convs WHERE context_id = ? ORDER BY updated DESC LIMIT 1`,
 		contextID).Scan(&channel, &conv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrNotFound
@@ -103,7 +103,7 @@ func (s *Store) PutContact(ctx context.Context, c Contact) error {
 func (s *Store) Contact(ctx context.Context, name string) (Contact, error) {
 	c := Contact{Name: name}
 	var created int64
-	err := s.db.QueryRowContext(ctx, `SELECT url, token, via, created FROM contacts WHERE name = ?`, name).
+	err := s.reads.QueryRowContext(ctx, `SELECT url, token, via, created FROM contacts WHERE name = ?`, name).
 		Scan(&c.URL, &c.Token, &c.Via, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Contact{}, ErrNotFound
@@ -114,7 +114,7 @@ func (s *Store) Contact(ctx context.Context, name string) (Contact, error) {
 
 // Contacts lists contacts.
 func (s *Store) Contacts(ctx context.Context) ([]Contact, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, url, token, via, created FROM contacts ORDER BY name`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT name, url, token, via, created FROM contacts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -183,7 +183,7 @@ func (s *Store) Node(ctx context.Context, id string) (Node, error) {
 		headers string
 		created int64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT name, description, webhook, headers, secret, token_hash, created FROM nodes WHERE id = ?`, id).
+	err := s.reads.QueryRowContext(ctx, `SELECT name, description, webhook, headers, secret, token_hash, created FROM nodes WHERE id = ?`, id).
 		Scan(&n.Name, &n.Description, &n.Webhook, &headers, &n.Secret, &n.TokenHash, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Node{}, ErrNotFound
@@ -197,7 +197,7 @@ func (s *Store) Node(ctx context.Context, id string) (Node, error) {
 
 // Nodes lists nodes.
 func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id FROM nodes ORDER BY id`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT id FROM nodes ORDER BY id`)
 	if err != nil {
 		return nil, err
 	}
@@ -298,13 +298,13 @@ func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 }
 
 func (s *Store) question(ctx context.Context, where string, arg string) (Question, error) {
-	return scanQuestion(s.db.QueryRowContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE `+where, arg))
+	return scanQuestion(s.reads.QueryRowContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE `+where, arg))
 }
 
 // UnansweredQuestions lists the questions nobody answered yet, newest
 // first. Questions of tasks which ended without an answer are among them.
 func (s *Store) UnansweredQuestions(ctx context.Context) ([]Question, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE answered_by = '' ORDER BY created DESC`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE answered_by = '' ORDER BY created DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +402,7 @@ func (s *Store) SetPendingQuestion(ctx context.Context, channel, conv, questionI
 // conversation answers.
 func (s *Store) PendingQuestion(ctx context.Context, channel, conv string) (string, error) {
 	var id string
-	err := s.db.QueryRowContext(ctx, `SELECT question_id FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
+	err := s.reads.QueryRowContext(ctx, `SELECT question_id FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -450,7 +450,7 @@ func (s *Store) HandleOf(ctx context.Context, contextID string) (Handle, error) 
 
 func (s *Store) handle(ctx context.Context, where string, args ...any) (Handle, error) {
 	var h Handle
-	err := s.db.QueryRowContext(ctx, `SELECT handle, context_id FROM handles WHERE `+where, args...).Scan(&h.Handle, &h.ContextID)
+	err := s.reads.QueryRowContext(ctx, `SELECT handle, context_id FROM handles WHERE `+where, args...).Scan(&h.Handle, &h.ContextID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Handle{}, ErrNotFound
 	}
@@ -486,7 +486,7 @@ func (s *Store) HasCallContext(ctx context.Context, contextID, agent, remoteCont
 
 func (s *Store) exists(ctx context.Context, query string, args ...any) (bool, error) {
 	var found bool
-	err := s.db.QueryRowContext(ctx, query, args...).Scan(&found)
+	err := s.reads.QueryRowContext(ctx, query, args...).Scan(&found)
 	return found, err
 }
 
@@ -516,7 +516,7 @@ func (s *Store) PutWatch(ctx context.Context, w Watch) error {
 
 // Watches lists watches.
 func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since FROM watches`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since FROM watches`)
 	if err != nil {
 		return nil, err
 	}

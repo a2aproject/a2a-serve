@@ -107,7 +107,7 @@ func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.T
 	if err := errors.Join(err, pr.Close()); err != nil {
 		// A cloud CLI may have stored what it read before the failure.
 		if derr := dest.Delete(context.WithoutCancel(ctx), snap.Name); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
-			slog.Debug("removing a failed snapshot", "error", derr)
+			slog.Warn("removing a failed snapshot", "error", derr)
 		}
 		return Snapshot{}, fmt.Errorf("storing %s: %w", snap.Name, err)
 	}

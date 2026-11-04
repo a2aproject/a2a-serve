@@ -23,7 +23,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -37,10 +36,11 @@ var ErrNotFound = errors.New("not found")
 
 // Store is the SQLite database of one agent server.
 type Store struct {
-	db  *sql.DB
-	now func() time.Time
-	// pruned is when FirstSeen last pruned the database, in Unix nanoseconds.
-	pruned atomic.Int64
+	// db is the only connection that writes. reads serves the read-only
+	// queries and is db for an in-memory database.
+	db    *sql.DB
+	reads *sql.DB
+	now   func() time.Time
 	// taskTTL is how long tasks are kept after their last update.
 	taskTTL atomic.Int64
 
@@ -52,25 +52,48 @@ type Store struct {
 	writes  sync.WaitGroup
 }
 
+// readConns is the size of the pool that serves reads of an on-disk database.
+const readConns = 4
+
 // Open opens or creates the database at path. ":memory:" opens a private
 // in-memory database, for tests.
 func Open(path string) (*Store, error) {
-	u := url.URL{Scheme: "file", OmitHost: true, Path: path, RawQuery: "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)"}
-	dsn := u.String()
 	if path == ":memory:" {
-		dsn = "file::memory:?_pragma=foreign_keys(1)"
+		db, err := sql.Open("sqlite", "file::memory:?_pragma=foreign_keys(1)")
+		if err != nil {
+			return nil, err
+		}
+		// Each connection has a database of its own, so there is only one.
+		db.SetMaxOpenConns(1)
+		return newStore(db, db, path)
 	}
-	db, err := sql.Open("sqlite", dsn)
+	u := url.URL{Scheme: "file", OmitHost: true, Path: path}
+	// WAL lets reads proceed during a write; NORMAL syncs at checkpoints
+	// only, which can't corrupt the database in WAL mode.
+	const common = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
+	u.RawQuery = common
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err
 	}
-	// SQLite allows one writer; a single connection also keeps an in-memory
-	// database alive and shared.
+	// SQLite allows one writer.
 	db.SetMaxOpenConns(1)
-	s := &Store{db: db, now: time.Now}
+	u.RawQuery = common + "&_pragma=query_only(1)"
+	reads, err := sql.Open("sqlite", u.String())
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	reads.SetMaxOpenConns(readConns)
+	return newStore(db, reads, path)
+}
+
+// newStore migrates db and wraps it. reads serves the read-only queries, and
+// is db itself or a pool of read-only connections.
+func newStore(db, reads *sql.DB, path string) (*Store, error) {
+	s := &Store{db: db, reads: reads, now: time.Now}
 	s.SetTaskTTL(DefaultTaskTTL)
 	if err := s.migrate(context.Background()); err != nil {
-		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), db.Close())
+		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), s.closeDBs())
 	}
 	return s, nil
 }
@@ -82,7 +105,14 @@ func (s *Store) Close() error {
 	s.closed = true
 	s.closeMu.Unlock()
 	s.writes.Wait()
-	return s.db.Close()
+	return s.closeDBs()
+}
+
+func (s *Store) closeDBs() error {
+	if s.reads == s.db {
+		return s.db.Close()
+	}
+	return errors.Join(s.reads.Close(), s.db.Close())
 }
 
 // beginWrite registers a write for Close to wait for, and returns the
@@ -182,6 +212,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	// pairing is the user running the agent.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, schemaV11)
+		return err
+	},
+	// 12: pruning deletes expired dedup keys by time.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS seen_at ON seen (at)`)
 		return err
 	},
 }
@@ -429,7 +464,7 @@ func (s *Store) ChannelState() ChannelState { return ChannelState{s: s} }
 // Get returns the value of key, or false if it is not set.
 func (cs ChannelState) Get(ctx context.Context, key string) (string, bool, error) {
 	var v string
-	err := cs.s.db.QueryRowContext(ctx, `SELECT value FROM channel_state WHERE key = ?`, key).Scan(&v)
+	err := cs.s.reads.QueryRowContext(ctx, `SELECT value FROM channel_state WHERE key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -447,24 +482,15 @@ func (cs ChannelState) Set(ctx context.Context, key, value string) error {
 const seenRetention = 7 * 24 * time.Hour
 
 // FirstSeen records key and reports whether it was new. Channels use it to
-// drop redelivered messages.
+// drop redelivered messages. [Store.Prune] forgets old keys.
 func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
-	now := s.now()
-	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, now.UnixNano())
+	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, s.now().UnixNano())
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
-	}
-	if _, err := s.exec(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
-		return false, err
-	}
-	if last := s.pruned.Load(); now.UnixNano()-last >= int64(pruneInterval) && s.pruned.CompareAndSwap(last, now.UnixNano()) {
-		if err := s.Prune(ctx); err != nil {
-			slog.Error("pruning the database", "error", err)
-		}
 	}
 	return n == 1, nil
 }

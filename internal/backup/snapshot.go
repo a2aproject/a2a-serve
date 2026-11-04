@@ -125,12 +125,28 @@ func addFile(tw *tar.Writer, src, name string) error {
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	_, err = io.Copy(tw, f)
+	n, err := io.CopyN(tw, f, hdr.Size)
+	if errors.Is(err, io.EOF) {
+		// The file shrank after the header was written.
+		_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+	}
 	return err
 }
 
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
+}
+
 func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
-	err := filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+	return filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+		if errors.Is(err, fs.ErrNotExist) {
+			// A missing root is an absent optional tree, a vanished
+			// entry was deleted during the backup.
+			return nil
+		}
 		if err != nil {
 			return err
 		}
@@ -146,12 +162,18 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
 		}
 		entry := path.Join(name, filepath.ToSlash(rel))
 		info, err := e.Info()
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
 		if err != nil {
 			return err
 		}
 		switch {
 		case info.Mode().IsRegular():
-			return addFile(tw, p, entry)
+			if err := addFile(tw, p, entry); err != nil && !errors.Is(err, fs.ErrNotExist) {
+				return err
+			}
+			return nil
 		case info.IsDir(), info.Mode()&fs.ModeSymlink != 0:
 			link := ""
 			if info.Mode()&fs.ModeSymlink != 0 {
@@ -172,10 +194,6 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
 		// Sockets and other special files don't survive a move.
 		return nil
 	})
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	return err
 }
 
 // extractArchive extracts a snapshot into dst, the .a2a directory of the

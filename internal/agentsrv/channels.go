@@ -35,9 +35,7 @@ const (
 // buildChannels creates the channels of the config.
 func (s *Server) buildChannels() ([]channel.Channel, error) {
 	cfg := s.config()
-	s.cfgMu.Lock()
-	secrets := s.secrets
-	s.cfgMu.Unlock()
+	secrets := s.secrets()
 	configured := []struct {
 		kind string
 		set  bool

@@ -86,3 +86,33 @@ func TestRestartResumesConversation(t *testing.T) {
 		t.Fatalf("a2a send recall after restart wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestRestartJSONOutput(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+
+	var restarted struct {
+		Name    string `json:"name"`
+		Running bool   `json:"running"`
+	}
+	coder.serveJSON(&restarted, "restart")
+	var set struct {
+		Restart []string `json:"restart"`
+	}
+	coder.serveJSON(&set, "config", "set", "--env", "DEBUG=1", "--restart")
+
+	want := struct {
+		Name    string
+		Running bool
+		Restart []string
+	}{"coder", true, []string{"env"}}
+	got := struct {
+		Name    string
+		Running bool
+		Restart []string
+	}{restarted.Name, restarted.Running, set.Restart}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("a2a-serve restart and config set --restart -o json wrong result (-want +got) diff = %s", diff)
+	}
+}

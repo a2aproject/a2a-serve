@@ -16,10 +16,12 @@ package agentsrv
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,14 +117,18 @@ func TestAddScheduleErrors(t *testing.T) {
 
 func TestHarnessSchedulesInConversation(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	var skew atomic.Int64
+	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), now: now})
 	linkOwner(t, ts, "telegram:1", "dm1")
-	at := time.Now().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+	at := time.Now().Add(time.Hour).Format(time.RFC3339Nano)
 
 	ts.ch.write("telegram:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
 	ts.ch.waitFor(t, "dm1", hasText("Scheduled soon"))
 	ts.ch.write("telegram:1", "dm1", "call schedules list")
 	ts.ch.waitFor(t, "dm1", hasText("- soon (once"))
+	skew.Store(int64(time.Hour))
+	ts.srv.schedules.changed()
 	ts.ch.waitFor(t, "dm1", hasText(`ran Scheduled run of "soon"`))
 
 	deadline := time.Now().Add(10 * time.Second)
@@ -227,6 +233,69 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 		}
 		if time.Now().After(deadline) {
 			t.Fatalf("TaskCounts() = %v, want the run's task", tasks)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestFailedOneTimeScheduleIsKept(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	due := time.Now().Add(-time.Minute)
+	if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
+		Name: "once", At: due, Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
+		DeliverChannel: "gone", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
+	}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+
+	ts.srv.schedules.runDue(ctx)
+
+	got, err := ts.srv.store.Schedule(ctx, "once")
+	if err != nil {
+		t.Fatalf("Schedule() after a failed run error = %v, want the schedule kept", err)
+	}
+	if !strings.Contains(got.LastError, "channel gone is not running") || !got.NextRun.IsZero() || got.LastRun.IsZero() {
+		t.Fatalf("Schedule() = %+v, want the error recorded and no next run", got)
+	}
+}
+
+func TestScheduleDoesNotRunWhenItsNextRunIsNotSaved(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	db, err := sql.Open("sqlite", ts.dir.DBPath())
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	if _, err := db.Exec(`CREATE TRIGGER no_updates BEFORE UPDATE ON schedules BEGIN SELECT RAISE(ABORT, 'read only'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+
+	due := time.Now().Add(-time.Hour)
+	if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
+		Name: "hourly", Cron: "@hourly", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
+		CreatedBy: auth.OwnerID, NextRun: due,
+	}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+
+	ts.srv.schedules.runDue(ctx)
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		counts, err := ts.srv.tasks.TaskCounts(ctx)
+		if err != nil {
+			t.Fatalf("TaskCounts() error = %v", err)
+		}
+		if len(counts) > 0 {
+			t.Fatalf("TaskCounts() = %v, want no run when the next run can't be saved", counts)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}

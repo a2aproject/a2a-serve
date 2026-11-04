@@ -25,4 +25,4 @@ The person who started a task answers its approvals, in the place the task start
 - Set the **owner chat** with `--owner-chat <channel>[:<who>]`. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
 - In a group chat, only the person who started the task, or an owner, can answer.
 - Authenticated callers approve their own tasks, so use `--deny-tools` to limit what they can run.
-- Email approvals link to a web page for the answer.
+- Email approvals link to a web page where the person who started the task answers. Approvals that only an owner can answer have no link.

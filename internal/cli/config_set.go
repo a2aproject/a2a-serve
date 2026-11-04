@@ -72,7 +72,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(sf.controlContext(cmd.Context()), d, false, cfg.Out)
+			return agentctl.Restart(sf.controlContext(cmd.Context()), d, false, cfg.progress())
 		},
 	}
 	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
