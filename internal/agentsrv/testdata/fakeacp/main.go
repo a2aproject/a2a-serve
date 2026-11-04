@@ -18,6 +18,7 @@
 //	hello            two message chunks
 //	tool             a tool call with progress
 //	ask              a permission request; the answer decides the reply
+//	ask twice        two permission requests in one turn
 //	slow             chunks until canceled
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
@@ -136,6 +137,31 @@ func (a *agent) call(method string, params any) message {
 
 func (a *agent) chunk(sessionID, text string) {
 	a.notify(sessionID, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}})
+}
+
+// askPush asks permission to run git push in tool call toolCallID, and
+// returns the chosen option, or false if the request was canceled.
+func (a *agent) askPush(sessionID, toolCallID string) (string, bool) {
+	a.notify(sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": toolCallID, "title": "git push", "kind": "execute", "status": "pending", "rawInput": map[string]any{"command": "git push origin main"}})
+	resp := a.call("session/request_permission", map[string]any{
+		"sessionId": sessionID,
+		"toolCall":  map[string]any{"toolCallId": toolCallID},
+		"options": []map[string]any{
+			{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
+			{"optionId": "always", "name": "Always", "kind": "allow_always"},
+			{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
+		},
+	})
+	var r struct {
+		Outcome struct {
+			Outcome  string `json:"outcome"`
+			OptionID string `json:"optionId"`
+		} `json:"outcome"`
+	}
+	if err := json.Unmarshal(resp.Result, &r); err != nil || r.Outcome.Outcome == "cancelled" {
+		return "", false
+	}
+	return r.Outcome.OptionID, true
 }
 
 func (a *agent) sessionPath(id string) string { return filepath.Join(a.dir, ".fakeacp", id+".json") }
@@ -266,32 +292,32 @@ func (a *agent) prompt(m message) {
 		a.chunk(sid, "Listed the files.")
 		end("end_turn")
 	case "ask":
-		a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "t2", "title": "git push", "kind": "execute", "status": "pending", "rawInput": map[string]any{"command": "git push origin main"}})
-		resp := a.call("session/request_permission", map[string]any{
-			"sessionId": sid,
-			"toolCall":  map[string]any{"toolCallId": "t2"},
-			"options": []map[string]any{
-				{"optionId": "allow", "name": "Allow", "kind": "allow_once"},
-				{"optionId": "always", "name": "Always", "kind": "allow_always"},
-				{"optionId": "deny", "name": "Deny", "kind": "reject_once"},
-			},
-		})
-		var r struct {
-			Outcome struct {
-				Outcome  string `json:"outcome"`
-				OptionID string `json:"optionId"`
-			} `json:"outcome"`
+		if arg == "twice" {
+			first, ok := a.askPush(sid, "t2")
+			if !ok {
+				end("cancelled")
+				return
+			}
+			second, ok := a.askPush(sid, "t3")
+			if !ok {
+				end("cancelled")
+				return
+			}
+			a.chunk(sid, "Pushed twice ("+first+", "+second+").")
+			end("end_turn")
+			return
 		}
-		if err := json.Unmarshal(resp.Result, &r); err != nil || r.Outcome.Outcome == "cancelled" {
+		option, ok := a.askPush(sid, "t2")
+		if !ok {
 			end("cancelled")
 			return
 		}
-		if r.Outcome.OptionID == "deny" {
+		if option == "deny" {
 			a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "failed"})
 			a.chunk(sid, "Push denied.")
 		} else {
 			a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "completed"})
-			a.chunk(sid, "Pushed ("+r.Outcome.OptionID+").")
+			a.chunk(sid, "Pushed ("+option+").")
 		}
 		end("end_turn")
 	case "slow":

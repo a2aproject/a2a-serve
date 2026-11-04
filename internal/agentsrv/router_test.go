@@ -156,6 +156,94 @@ func TestRouterTypedAnswer(t *testing.T) {
 	ts.ch.waitFor(t, "thread1", hasText("Push denied."))
 }
 
+func TestRouterTypedReplyAfterStoppedQuestionReachesAgent(t *testing.T) {
+	t.Parallel()
+	ch := newFakeChannel("fake")
+	ch.buttons = false
+	ts := startServer(t, serverOpts{channel: ch})
+	linkOwner(t, ts, "me@example.com", "thread1")
+	ts.ch.write("me@example.com", "thread1", "ask")
+	ref, _ := ts.ch.waitFor(t, "thread1", hasText("Reply approve, always, deny"))
+
+	ts.ch.write("me@example.com", "thread1", "/stop")
+	ts.ch.waitFor(t, "thread1", hasText("Stopped."))
+	ts.ch.waitEdited(t, ref, "no longer waits for an answer")
+	ts.ch.write("me@example.com", "thread1", "yes")
+
+	ts.ch.waitFor(t, "thread1", hasText("Hello from fakeacp."))
+}
+
+func TestRouterStoppedQuestionLosesButtons(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ts.ch.write("telegram:1", "dm1", "ask")
+	ref, _ := ts.ch.waitFor(t, "dm1", hasQuestion)
+
+	ts.ch.write("telegram:1", "dm1", "/stop")
+
+	ts.ch.waitEdited(t, ref, "no longer waits for an answer")
+	if got := ts.ch.questions(); got != 0 {
+		t.Fatalf("messages with buttons after the task stopped = %d, want 0; messages:\n%s", got, ts.ch.dump())
+	}
+}
+
+func TestRouterTypedReplyAfterRestartReachesAgent(t *testing.T) {
+	t.Parallel()
+	ch := newFakeChannel("fake")
+	ch.buttons = false
+	ts := startServer(t, serverOpts{channel: ch})
+	linkOwner(t, ts, "me@example.com", "thread1")
+	ts.ch.write("me@example.com", "thread1", "ask")
+	ts.ch.waitFor(t, "thread1", hasText("Reply approve, always, deny"))
+	root := ts.dir.Root
+	ts.stop()
+
+	restarted := startServer(t, serverOpts{dir: root, channel: newFakeChannel("fake")})
+	restarted.ch.write("me@example.com", "thread1", "yes")
+
+	restarted.ch.waitFor(t, "thread1", hasText("Hello from fakeacp."))
+}
+
+func TestRouterStarterAnswersQuestionAfterOwnerAnswered(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
+	inGroup := func(identity, text string) {
+		in := ts.ch.message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.deliver(in)
+	}
+
+	inGroup("telegram:2", "ask twice")
+	first, q1 := ts.ch.waitFor(t, "grp", hasQuestion)
+	ts.ch.click("telegram:1", "grp", first, q1.Question, 0)
+	second, q2 := ts.ch.waitFor(t, "grp", func(m channel.Outbound) bool { return hasQuestion(m) && m.Question.ID != q1.Question.ID })
+	ts.ch.click("telegram:2", "grp", second, q2.Question, 0)
+
+	ts.ch.waitFor(t, "grp", hasText("Pushed twice (allow, allow)."))
+}
+
+func TestRouterAnswerElsewhereRendersInChat(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ts.ch.write("telegram:1", "dm1", "ask")
+	_, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+	ctx := context.Background()
+	rec, err := ts.srv.store.QuestionByID(ctx, q.Question.ID)
+	if err != nil {
+		t.Fatalf("QuestionByID() error = %v", err)
+	}
+
+	if err := ts.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0]); err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+
+	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))
+}
+
 func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
 	t.Parallel()
 	ch := newFakeChannel(ChannelEmail)

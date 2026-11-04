@@ -30,8 +30,8 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 
 // Prune deletes expired codes, and the pairings nobody redeemed a code of
 // when their last code expires; tasks not updated for the task TTL with their
-// events, snapshots, questions and attachments; answered questions of remote
-// agents as old; the handles and call tasks of contexts left without tasks;
+// events, snapshots, questions and attachments; questions of remote agents
+// as old; the handles and call tasks of contexts left without tasks;
 // and the dedup keys of messages older than the retention.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
@@ -67,7 +67,7 @@ func (s *Store) Prune(ctx context.Context) error {
 				}
 			}
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND answered_by != '' AND created < ?`, cutoff); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND created < ?`, cutoff); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_questions WHERE question_id NOT IN (SELECT id FROM questions)`); err != nil {

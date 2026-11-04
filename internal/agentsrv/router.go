@@ -603,9 +603,20 @@ func renderUntilStop(ctx context.Context, rd *renderer, events *subscription, ti
 }
 
 // restorePending makes a question whose answer wasn't delivered the one a
-// typed reply in the conversation answers again.
-func (r *Router) restorePending(ctx context.Context, in channel.Inbound, questionID string) {
-	if err := r.store.SetPendingQuestion(context.WithoutCancel(ctx), in.Channel, string(in.Conv), questionID); err != nil {
+// typed reply in the conversation answers again, while its task waits for
+// the answer.
+func (r *Router) restorePending(ctx context.Context, in channel.Inbound, rec store.Question) {
+	ctx = context.WithoutCancel(ctx)
+	waiting, err := r.approvals.Waiting(ctx, rec)
+	if err != nil {
+		slog.Warn("checking whether a question is still open", "question", rec.ID, "error", err)
+		return
+	}
+	if !waiting {
+		r.approvals.Close(ctx, rec.ID)
+		return
+	}
+	if err := r.store.SetPendingQuestion(ctx, in.Channel, string(in.Conv), rec.ID); err != nil {
 		slog.Warn("restoring the pending question", "error", err)
 	}
 }
@@ -640,7 +651,8 @@ func (r *Router) handleAction(ctx context.Context, ch channel.Channel, in channe
 
 // typedAnswer returns the answer a message types to the question pending
 // in its conversation, for channels without buttons and for people who
-// type instead of clicking.
+// type instead of clicking. A question whose task no longer waits for it
+// is closed, and the message goes to the agent.
 func (r *Router) typedAnswer(ctx context.Context, in channel.Inbound) (store.Question, *approvals.Question, approvals.Option, bool) {
 	id, err := r.store.PendingQuestion(ctx, in.Channel, string(in.Conv))
 	if err != nil {
@@ -655,7 +667,19 @@ func (r *Router) typedAnswer(ctx context.Context, in channel.Inbound) (store.Que
 	}
 	q := approvals.FromRecord(rec)
 	opt, ok := q.Match(in.Text)
-	return rec, q, opt, ok
+	if !ok {
+		return store.Question{}, nil, approvals.Option{}, false
+	}
+	waiting, err := r.approvals.Waiting(ctx, rec)
+	if err != nil {
+		slog.Warn("checking whether the pending question is still open", "question", rec.ID, "error", err)
+		return store.Question{}, nil, approvals.Option{}, false
+	}
+	if !waiting {
+		r.approvals.Close(ctx, rec.ID)
+		return store.Question{}, nil, approvals.Option{}, false
+	}
+	return rec, q, opt, true
 }
 
 // answerIn answers a question from a conversation. If the question belongs
@@ -676,15 +700,21 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("resolving conversation context", "error", err)
 	}
-	if rec.Contact == "" && rec.ContextID == own && r.convBusy(in.Channel, in.Conv) {
-		// A turn queued behind the task holds the conversation, so the rest
-		// of the task is rendered without it.
-		r.follow(ctx, ch, in.Conv, p, a2a.TaskID(rec.TaskID), func() error { return r.approvals.Answer(ctx, rec, p, opt) }, func(err error) {
-			r.answered(ctx, ch, in, rec, opt, who, err)
-		})
-		return
-	}
-	if rec.Contact == "" && rec.ContextID == own {
+	// A turn queued behind the task holds a busy conversation, so the rest
+	// of the task is rendered without it, as for answers given elsewhere.
+	if rec.Contact == "" && rec.ContextID == own && !r.convBusy(in.Channel, in.Conv) {
+		waiting, err := r.approvals.Waiting(ctx, rec)
+		if err != nil {
+			slog.Error("checking whether a question is still open", "question", rec.ID, "error", err)
+			r.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
+			r.restorePending(ctx, in, rec)
+			return
+		}
+		if !waiting {
+			r.approvals.Close(ctx, rec.ID)
+			r.reply(ctx, ch, in, "This question is no longer open.")
+			return
+		}
 		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
 		if err != nil {
 			slog.Error("answering question", "question", rec.ID, "error", err)
@@ -714,7 +744,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 			}
 		})
 		if !answered {
-			r.restorePending(ctx, in, rec.ID)
+			r.restorePending(ctx, in, rec)
 		}
 		return
 	}
@@ -726,8 +756,11 @@ func (r *Router) answered(ctx context.Context, ch channel.Channel, in channel.In
 	switch {
 	case errors.Is(err, store.ErrAnswered):
 		r.reply(ctx, ch, in, "Already answered.")
+	case errors.Is(err, approvals.ErrClosed):
+		r.approvals.Close(ctx, rec.ID)
+		r.reply(ctx, ch, in, "This question is no longer open.")
 	case err != nil:
-		r.restorePending(ctx, in, rec.ID)
+		r.restorePending(ctx, in, rec)
 		r.reply(ctx, ch, in, "Couldn't send the answer: "+err.Error())
 	default:
 		r.MarkAnswered(ctx, rec.ID, opt.Label, who)
@@ -741,17 +774,28 @@ func (r *Router) convBusy(ch string, conv channel.ConvKey) bool {
 	return len(r.convs[ch+"\x00"+string(conv)]) > 0
 }
 
-// follow renders the rest of a task in a conversation after answer
-// delivers an answer to it, and calls done with answer's result.
-func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID, answer func() error, done func(error)) {
-	events, unsubscribe := r.bus.subscribe(taskID)
-	err := answer()
-	done(err)
-	if err != nil {
-		unsubscribe()
-		return
+// Follow delivers an answer to a question of the agent's task and renders
+// the rest of the task in the conversation of its context. Anonymous
+// conversations follow owner answers on their own.
+func (r *Router) Follow(ctx context.Context, rec store.Question, p auth.Principal, deliver func() error) error {
+	if rec.Contact != "" || r.anonymous(ctx, rec.ContextID) {
+		return deliver()
 	}
-	go r.render(ctx, ch, conv, p, events, unsubscribe)
+	chName, conv, err := r.store.ConvOf(ctx, rec.ContextID)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		slog.Warn("resolving the conversation of a question", "question", rec.ID, "error", err)
+	}
+	ch := r.channel(chName)
+	if ch == nil {
+		return deliver()
+	}
+	events, unsubscribe := r.bus.subscribe(a2a.TaskID(rec.TaskID))
+	if err := deliver(); err != nil {
+		unsubscribe()
+		return err
+	}
+	go r.render(r.ctx, ch, channel.ConvKey(conv), p, events, unsubscribe)
+	return nil
 }
 
 // render renders the events of a task in a conversation until the task
@@ -771,9 +815,21 @@ func (r *Router) render(ctx context.Context, ch channel.Channel, conv channel.Co
 
 // MarkAnswered replaces the buttons of a question with who answered it.
 func (r *Router) MarkAnswered(ctx context.Context, questionID, label, who string) {
+	r.endQuestion(ctx, questionID, fmt.Sprintf("✓ %s by %s", label, who))
+}
+
+// MarkClosed replaces the buttons of a question whose task no longer waits
+// for it with a note.
+func (r *Router) MarkClosed(ctx context.Context, questionID string) {
+	r.endQuestion(ctx, questionID, "✗ The task no longer waits for an answer.")
+}
+
+// endQuestion replaces the buttons of the messages which show a question
+// with a note.
+func (r *Router) endQuestion(ctx context.Context, questionID, note string) {
 	msgs, err := r.store.TakeQuestionMessages(ctx, questionID)
 	if err != nil {
-		slog.Warn("loading the messages of an answered question", "question", questionID, "error", err)
+		slog.Warn("loading the messages of a question", "question", questionID, "error", err)
 		return
 	}
 	for _, m := range msgs {
@@ -781,10 +837,9 @@ func (r *Router) MarkAnswered(ctx context.Context, questionID, label, who string
 		if ch == nil || !ch.Caps().Edit {
 			continue
 		}
-		text := fmt.Sprintf("%s\n\n✓ %s by %s", m.Text, label, who)
 		ref := channel.Ref{Conv: channel.ConvKey(m.Conv), ID: m.MessageID}
-		if err := ch.Edit(ctx, ref, channel.Outbound{Conv: ref.Conv, Text: text}); err != nil {
-			slog.Debug("updating answered question", "error", err)
+		if err := ch.Edit(ctx, ref, channel.Outbound{Conv: ref.Conv, Text: m.Text + "\n\n" + note}); err != nil {
+			slog.Debug("updating a question message", "error", err)
 		}
 	}
 }
