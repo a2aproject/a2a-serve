@@ -115,15 +115,23 @@ func (s *Store) Schedules(ctx context.Context) ([]Schedule, error) {
 	return out, rows.Err()
 }
 
-// RecordScheduleRun records a run of a schedule, its error or "", and when
-// it runs next.
-func (s *Store) RecordScheduleRun(ctx context.Context, name string, ran, next time.Time, runErr string) error {
-	_, err := s.exec(ctx, `UPDATE schedules SET last_run = ?, next_run = ?, last_error = ? WHERE name = ?`,
-		nanos(ran), nanos(next), runErr, name)
+// SetScheduleNextRun sets when a schedule runs next, or never when next is
+// zero.
+func (s *Store) SetScheduleNextRun(ctx context.Context, name string, next time.Time) error {
+	_, err := s.exec(ctx, `UPDATE schedules SET next_run = ? WHERE name = ?`, nanos(next), name)
+	return err
+}
+
+// RecordScheduleResult records when a schedule ran and its error, or "",
+// and leaves when it runs next as it is.
+func (s *Store) RecordScheduleResult(ctx context.Context, name string, ran time.Time, runErr string) error {
+	_, err := s.exec(ctx, `UPDATE schedules SET last_run = ?, last_error = ? WHERE name = ?`, nanos(ran), runErr, name)
 	return err
 }
 
 // DeleteSchedule removes a schedule, or returns [ErrNotFound].
 func (s *Store) DeleteSchedule(ctx context.Context, name string) error {
-	return deleteOneTx(ctx, s.db, `DELETE FROM schedules WHERE name = ?`, name)
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		return deleteOneTx(ctx, tx, `DELETE FROM schedules WHERE name = ?`, name)
+	})
 }

@@ -157,6 +157,9 @@ func (e *schedulesExecutor) list(ctx context.Context, who auth.Principal) (strin
 
 // describeTime formats t in the time zone tz, or the server's.
 func describeTime(t time.Time, tz string) string {
+	if t.IsZero() {
+		return "never"
+	}
 	loc, err := schedule.Location(tz)
 	if err != nil {
 		loc = time.Local

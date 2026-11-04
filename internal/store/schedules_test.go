@@ -48,8 +48,11 @@ func TestSchedules(t *testing.T) {
 	}
 
 	ran := next.Add(time.Minute)
-	if err := s.RecordScheduleRun(ctx, "brief", ran, next.Add(24*time.Hour), "no chat"); err != nil {
-		t.Fatalf("RecordScheduleRun() error = %v", err)
+	if err := s.SetScheduleNextRun(ctx, "brief", next.Add(24*time.Hour)); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+	if err := s.RecordScheduleResult(ctx, "brief", ran, "no chat"); err != nil {
+		t.Fatalf("RecordScheduleResult() error = %v", err)
 	}
 	got, err := s.Schedules(ctx)
 	if err != nil {
@@ -69,5 +72,46 @@ func TestSchedules(t *testing.T) {
 	}
 	if _, err := s.Schedule(ctx, "remind"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Schedule() of a removed schedule error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestRecordScheduleResultKeepsNextRun(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	next := time.Date(2026, 11, 9, 6, 0, 0, 0, time.UTC)
+	if err := s.AddSchedule(ctx, Schedule{Name: "brief", Cron: "@daily", Prompt: "x", UserID: "user:owner", Conversation: "new", CreatedBy: "user:owner", NextRun: next}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+	if err := s.SetScheduleNextRun(ctx, "brief", next.Add(24*time.Hour)); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+
+	if err := s.RecordScheduleResult(ctx, "brief", next, "boom"); err != nil {
+		t.Fatalf("RecordScheduleResult() error = %v", err)
+	}
+
+	got, err := s.Schedule(ctx, "brief")
+	if err != nil {
+		t.Fatalf("Schedule() error = %v", err)
+	}
+	want := Schedule{NextRun: next.Add(24 * time.Hour), LastRun: next, LastError: "boom"}
+	if diff := cmp.Diff(want, Schedule{NextRun: got.NextRun, LastRun: got.LastRun, LastError: got.LastError}, cmpopts.EquateApproxTime(0)); diff != "" {
+		t.Fatalf("Schedule() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestDeleteScheduleAfterClose(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	if err := s.AddSchedule(ctx, Schedule{Name: "brief", Cron: "@daily", Prompt: "x", UserID: "user:owner", Conversation: "new", CreatedBy: "user:owner"}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := s.DeleteSchedule(ctx, "brief"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("DeleteSchedule() after Close() error = %v, want %v", err, ErrClosed)
 	}
 }
