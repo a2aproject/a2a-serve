@@ -48,8 +48,6 @@ func NetworkOf(cfg *agentdir.Config) Network {
 	case "":
 	case agentdir.NetworkTailscale:
 		n.Private = network.ProviderTailscale
-	case agentdir.NetworkLAN:
-		n.Private = network.ProviderLAN
 	default:
 		n.Private = network.ProviderRelay
 	}
@@ -172,8 +170,6 @@ func networkName(provider string) string {
 	switch provider {
 	case network.ProviderTailscale:
 		return "the tailnet"
-	case network.ProviderLAN:
-		return "the LAN"
 	case network.ProviderRelay:
 		return "the relay"
 	}

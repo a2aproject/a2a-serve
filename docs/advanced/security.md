@@ -34,7 +34,6 @@ A web page open in your browser can't make requests that change state on the age
 | --- | --- |
 | localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
 | Tailscale | Everyone on the tailnet, or with `--private-access paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
-| LAN | Everyone who can reach the port, or with `--private-access paired` only callers with a token. The server accepts only requests for its LAN address, against DNS rebinding. |
 | Agent Mesh relay | On a relay that admits people by sign-in: you, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. `--private-access` overrides both. |
 | Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-access anyone`, also anyone, as an anonymous caller. |
 | Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |

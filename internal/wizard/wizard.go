@@ -172,7 +172,7 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 		return res, err
 	}
 
-	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale", "lan"}, "none"); err != nil {
+	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale"}, "none"); err != nil {
 		return res, err
 	}
 	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale"}, "none"); err != nil {

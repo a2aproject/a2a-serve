@@ -127,7 +127,7 @@ func (s *Status) URL(scope string) (string, error) {
 		return s.Local, nil
 	case ScopePrivate:
 		if s.Private == "" {
-			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
 		}
 		return s.Private, nil
 	case ScopePublic:

@@ -6,7 +6,6 @@ The agent is reachable on localhost by default. Network flags add a private URL,
 | --- | --- | --- |
 | *(none)* | localhost and messengers | pairing tokens |
 | `--private tailscale` | your tailnet, as `https://<name>.<tailnet>.ts.net` | Tailscale identity |
-| `--private lan` | the local network, over plain HTTP | the caller's address |
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public <relay-url>` | the internet, at a URL on the relay | pairing tokens |

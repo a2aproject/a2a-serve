@@ -101,7 +101,7 @@ func TestIdentityPrincipalID(t *testing.T) {
 		{name: "pairing before email", id: Identity{Pairing: "anna", Email: "anna@example.com"}, want: "pair:anna"},
 		{name: "webhook node", id: Identity{WebhookNode: "grok"}, want: "node:grok"},
 		{name: "email in lower case", id: Identity{Email: "Anna@Example.com", Node: "n1"}, want: "email:anna@example.com"},
-		{name: "network node", id: Identity{Provider: network.ProviderLAN, Node: "192.168.1.5"}, want: "node:lan:192.168.1.5"},
+		{name: "network node", id: Identity{Provider: network.ProviderTailscale, Node: "nT5kZ3"}, want: "node:tailscale:nT5kZ3"},
 		{name: "nothing", id: Identity{Network: network.ListenerPublic}},
 	}
 	for _, tc := range tests {
@@ -133,8 +133,8 @@ func TestPolicyOthers(t *testing.T) {
 		{name: "no private network", policy: testPolicy(true, nil)},
 		{name: "closed private network", policy: testPolicy(false, nil), provider: network.ProviderRelay},
 		{
-			name: "emails", policy: testPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderLAN,
-			want: []string{"everyone on the LAN", "emails matching *@example.com", "emails matching anna@example.org"},
+			name: "emails", policy: testPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderTailscale,
+			want: []string{"everyone on the tailnet", "emails matching *@example.com", "emails matching anna@example.org"},
 		},
 		{name: "anyone", policy: Policy{Owner: []string{MemberSelf}, Anonymous: []string{MemberAnyone}}, want: []string{"anyone on the public URL or in a direct chat"}},
 		{

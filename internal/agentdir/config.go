@@ -197,14 +197,12 @@ func (b BackupConfig) BackupRetention() time.Duration {
 // NetworkConfig selects the providers which make the agent reachable beyond
 // localhost.
 type NetworkConfig struct {
-	// Private is tailscale, lan or empty.
+	// Private is tailscale, a relay URL or empty.
 	Private string `yaml:"private,omitempty" json:"private,omitempty"`
 	// Public is tailscale, a relay URL or empty.
 	Public string `yaml:"public,omitempty" json:"public,omitempty"`
 
 	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty" json:"tailscaleControlURL,omitempty"`
-	// LANPort is the port of the LAN listener. Zero picks one on first run.
-	LANPort int `yaml:"lan_port,omitempty" json:"lanPort,omitempty"`
 }
 
 // ChannelsConfig configures the messengers the agent is reachable from.
