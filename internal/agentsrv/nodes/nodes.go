@@ -23,7 +23,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"iter"
 	"log/slog"
 	"net/http"
@@ -647,16 +646,18 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 			slog.Info("woke node", "node", node.ID, "kind", env.Kind, "task", env.TaskID)
 			return
 		}
-		slog.Warn("webhook delivery failed", "node", node.ID, "attempt", i+1, "error", err)
+		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", RedactURL(node.Webhook), "attempt", i+1, "error", err)
 	}
 }
 
+// postWebhook delivers a wake to the node's webhook. Its errors leave out
+// the URL and the response body, which may hold secrets.
 func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byte) error {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, node.Webhook, bytes.NewReader(body))
 	if err != nil {
-		return err
+		return withoutURL(err)
 	}
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("User-Agent", "a2a-server")
@@ -667,7 +668,7 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return withoutURL(err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -675,13 +676,18 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 		}
 	}()
 	if resp.StatusCode/100 != 2 {
-		b, err := io.ReadAll(io.LimitReader(resp.Body, 300))
-		if err != nil {
-			return fmt.Errorf("webhook returned %s", resp.Status)
-		}
-		return fmt.Errorf("webhook returned %s: %s", resp.Status, strings.TrimSpace(string(b)))
+		return fmt.Errorf("webhook returned %s", resp.Status)
 	}
 	return nil
+}
+
+// withoutURL drops the URL of a *url.Error.
+func withoutURL(err error) error {
+	var uerr *url.Error
+	if errors.As(err, &uerr) {
+		return uerr.Err
+	}
+	return err
 }
 
 // instructions tell an LLM-driven node what a wake means and how to answer.

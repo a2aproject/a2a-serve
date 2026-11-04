@@ -59,7 +59,7 @@ func (s *Server) startBackups(ctx context.Context) {
 	if cfg.Backup.To == "" {
 		return
 	}
-	dest, bcfg, err := backup.ForAgent(cfg, s.secrets, nil)
+	dest, bcfg, err := backup.ForAgent(cfg, s.secrets(), nil)
 	if err != nil {
 		s.logf("! backups are off: %v", err)
 		return

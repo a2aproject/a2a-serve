@@ -17,7 +17,11 @@ package approvals
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -54,7 +58,13 @@ func newService(t *testing.T, h a2asrv.RequestHandler) *Service {
 		}
 	})
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
-	return &Service{Store: s, Tasks: s.Tasks("", all), Handler: h}
+	policy := auth.Policy{Owner: []string{auth.MemberSelf}, Anonymous: []string{auth.MemberAnyone}}
+	return &Service{
+		Store: s, Tasks: s.Tasks("", all), Handler: h,
+		Chain:     &auth.Chain{Store: s, Policy: func() auth.Policy { return policy }},
+		BaseURL:   func() string { return "https://agent.example" },
+		AgentName: func() string { return "assistant" },
+	}
 }
 
 // fakeNotifier records the questions sent to chats.
@@ -206,6 +216,107 @@ func TestOnQuestion(t *testing.T) {
 			defer n.mu.Unlock()
 			if diff := cmp.Diff(tc.wantAsked, n.asked); diff != "" {
 				t.Fatalf("OnQuestion() asked chats wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestHandlePage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name         string
+		user         string
+		wantGet      int
+		wantPost     int
+		wantAnswerBy string
+	}{
+		{name: "owner's task", user: auth.OwnerID, wantGet: http.StatusOK, wantPost: http.StatusSeeOther, wantAnswerBy: auth.OwnerID},
+		{name: "authenticated pairing's task", user: "pair:anna", wantGet: http.StatusOK, wantPost: http.StatusSeeOther, wantAnswerBy: "pair:anna"},
+		{name: "anonymous sender's task", user: "email:stranger@example.org", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
+		{name: "unlinked chat account's task", user: "telegram:9", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
+		{name: "removed pairing's task", user: "pair:gone", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &sendingHandler{}
+			svc := newService(t, h)
+			svc.Notifier = &fakeNotifier{}
+			ctx := context.Background()
+			if _, err := svc.Store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+				t.Fatalf("EnsurePairing() error = %v", err)
+			}
+			q := FromMessage(permissionMessage(t))
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, q)
+			if err != nil {
+				t.Fatalf("NewRecord() error = %v", err)
+			}
+			page := func(method string, body string) int {
+				req := httptest.NewRequest(method, "/hitl/"+rec.Token, strings.NewReader(body))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.SetPathValue("token", rec.Token)
+				w := httptest.NewRecorder()
+				svc.HandlePage(w, req)
+				return w.Code
+			}
+
+			if got := page(http.MethodGet, ""); got != tc.wantGet {
+				t.Fatalf("HandlePage() GET status = %d, want %d", got, tc.wantGet)
+			}
+			if got := page(http.MethodPost, url.Values{"option": {"once"}}.Encode()); got != tc.wantPost {
+				t.Fatalf("HandlePage() POST status = %d, want %d", got, tc.wantPost)
+			}
+
+			got, err := svc.Store.QuestionByID(ctx, rec.ID)
+			if err != nil {
+				t.Fatalf("QuestionByID() error = %v", err)
+			}
+			if got.AnsweredBy != tc.wantAnswerBy {
+				t.Fatalf("HandlePage() answered by %q, want %q", got.AnsweredBy, tc.wantAnswerBy)
+			}
+			if h.caller.ID != tc.wantAnswerBy {
+				t.Fatalf("HandlePage() sent the answer as %q, want %q", h.caller.ID, tc.wantAnswerBy)
+			}
+		})
+	}
+}
+
+func TestPageURL(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		user string
+		want bool
+	}{
+		{name: "owner's task", user: auth.OwnerID, want: true},
+		{name: "authenticated pairing's task", user: "pair:anna", want: true},
+		{name: "anonymous sender's task", user: "email:stranger@example.org"},
+		{name: "unlinked chat account's task", user: "telegram:9"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := newService(t, &sendingHandler{})
+			ctx := context.Background()
+			if _, err := svc.Store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+				t.Fatalf("EnsurePairing() error = %v", err)
+			}
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, FromMessage(permissionMessage(t)))
+			if err != nil {
+				t.Fatalf("NewRecord() error = %v", err)
+			}
+
+			got, err := svc.PageURL(ctx, rec)
+
+			if err != nil {
+				t.Fatalf("PageURL() error = %v", err)
+			}
+			want := ""
+			if tc.want {
+				want = "https://agent.example/hitl/" + rec.Token
+			}
+			if got != want {
+				t.Fatalf("PageURL() = %q, want %q", got, want)
 			}
 		})
 	}

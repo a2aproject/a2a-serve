@@ -89,3 +89,19 @@ func TestRestoreUsageErrors(t *testing.T) {
 		})
 	}
 }
+
+func TestBackupRestoreHelpDescribesDir(t *testing.T) {
+	t.Parallel()
+
+	out, err := runCMD(t, "backup", "restore", "--help")
+	if err != nil {
+		t.Fatalf("a2a-serve backup restore --help error = %v", err)
+	}
+
+	if want := "Directory of the restored agent (default: the current directory)"; !strings.Contains(out, want) {
+		t.Fatalf("a2a-serve backup restore --help = %q, want %q", out, want)
+	}
+	if bad := "nearest directory with .a2a"; strings.Contains(out, bad) {
+		t.Fatalf("a2a-serve backup restore --help = %q, want no %q", out, bad)
+	}
+}

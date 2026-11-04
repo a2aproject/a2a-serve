@@ -40,6 +40,7 @@ import (
 	"github.com/emersion/go-message/mail"
 	"golang.org/x/net/publicsuffix"
 
+	"github.com/a2aproject/a2a-serve/internal/backoff"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 )
@@ -108,20 +109,19 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 	if c.cfg.TrustedAuthServ == "" {
 		return errors.New("email: trusted_authserv must be set, or no mail could be trusted")
 	}
-	backoff := time.Second
+	retry := backoff.New(time.Second, 5*time.Minute, time.Minute)
 	for ctx.Err() == nil {
+		started := time.Now()
 		err := c.session(ctx, in)
 		if ctx.Err() != nil {
 			return nil
 		}
-		slog.Warn("email: IMAP session ended, reconnecting", "error", err, "in", backoff)
+		delay := retry.Next(time.Since(started))
+		slog.Warn("email: IMAP session ended, reconnecting", "error", err, "in", delay)
 		select {
 		case <-ctx.Done():
 			return nil
-		case <-time.After(backoff):
-		}
-		if backoff < 5*time.Minute {
-			backoff *= 2
+		case <-time.After(delay):
 		}
 	}
 	return nil

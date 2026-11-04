@@ -204,7 +204,7 @@ func (ts *TaskStore) materialize(ctx context.Context, h *taskHeader) (*a2a.Task,
 	terminal := h.task.Status.State.Terminal()
 	if terminal {
 		var data string
-		err := ts.s.db.QueryRowContext(ctx, `SELECT data FROM task_snapshots WHERE scope = ? AND task_id = ? AND version = ?`,
+		err := ts.s.reads.QueryRowContext(ctx, `SELECT data FROM task_snapshots WHERE scope = ? AND task_id = ? AND version = ?`,
 			ts.scope, string(h.task.ID), h.version).Scan(&data)
 		if err == nil {
 			task := &a2a.Task{}
@@ -233,7 +233,7 @@ func (ts *TaskStore) materialize(ctx context.Context, h *taskHeader) (*a2a.Task,
 
 // events returns the events of a task up to version, oldest first.
 func (ts *TaskStore) events(ctx context.Context, taskID a2a.TaskID, version int64) ([]a2a.Event, error) {
-	rows, err := ts.s.db.QueryContext(ctx, `SELECT kind, data FROM task_events WHERE scope = ? AND task_id = ? AND version <= ? ORDER BY version`,
+	rows, err := ts.s.reads.QueryContext(ctx, `SELECT kind, data FROM task_events WHERE scope = ? AND task_id = ? AND version <= ? ORDER BY version`,
 		ts.scope, string(taskID), version)
 	if err != nil {
 		return nil, err
@@ -274,7 +274,7 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 	if err != nil {
 		return nil, err
 	}
-	h, err := scanHeader(ts.s.db.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
+	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
 		ts.scope, string(taskID)))
 	if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
 		return nil, a2a.ErrTaskNotFound
@@ -332,7 +332,7 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 	filter := strings.Join(where, " AND ")
 
 	var total int
-	if err := ts.s.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&total); err != nil {
+	if err := ts.s.reads.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&total); err != nil {
 		return nil, err
 	}
 
@@ -345,7 +345,7 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 		pageWhere += " AND (updated < ? OR (updated = ? AND id > ?))"
 		pageArgs = append(append([]any{}, args...), updated, updated, id)
 	}
-	rows, err := ts.s.db.QueryContext(ctx, "SELECT "+headerColumns+" FROM tasks WHERE "+pageWhere+
+	rows, err := ts.s.reads.QueryContext(ctx, "SELECT "+headerColumns+" FROM tasks WHERE "+pageWhere+
 		" ORDER BY updated DESC, id LIMIT ?", append(pageArgs, pageSize+1)...)
 	if err != nil {
 		return nil, err
@@ -417,7 +417,7 @@ func decodePageToken(tok string) (int64, string, error) {
 // state as failed with reason. Executions don't survive a restart, so such
 // tasks would otherwise never finish.
 func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string) (int, error) {
-	rows, err := ts.s.db.QueryContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND state NOT IN (?, ?, ?, ?)`,
+	rows, err := ts.s.reads.QueryContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND state NOT IN (?, ?, ?, ?)`,
 		ts.scope, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
 	if err != nil {
 		return 0, err
@@ -456,7 +456,7 @@ func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string) (int, er
 
 // LatestInContext returns the most recently updated task of a context.
 func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2a.Task, error) {
-	h, err := scanHeader(ts.s.db.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
+	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
 		ts.scope, contextID))
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, ErrNotFound
@@ -481,7 +481,7 @@ func (ts *TaskStore) HasOthersTasks(ctx context.Context, contextID, user string)
 
 // TaskCounts returns the number of tasks of the scope per state.
 func (ts *TaskStore) TaskCounts(ctx context.Context) (map[a2a.TaskState]int, error) {
-	rows, err := ts.s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM tasks WHERE scope = ? GROUP BY state`, ts.scope)
+	rows, err := ts.s.reads.QueryContext(ctx, `SELECT state, COUNT(*) FROM tasks WHERE scope = ? GROUP BY state`, ts.scope)
 	if err != nil {
 		return nil, err
 	}

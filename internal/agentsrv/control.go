@@ -161,7 +161,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Approvals = len(approvals)
-	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets); err != nil {
+	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
@@ -331,9 +331,7 @@ func (s *Server) ctlAddChannel(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	s.cfgMu.Lock()
-	s.secrets = secrets
-	s.cfgMu.Unlock()
+	s.setSecrets(secrets)
 	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
@@ -368,9 +366,7 @@ func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	s.cfgMu.Lock()
-	agentdir.CopyLive(s.cfg, saved)
-	s.cfgMu.Unlock()
+	s.reloadConfig(saved)
 	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email", "owner", "allow"}})
 }
 

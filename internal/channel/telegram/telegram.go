@@ -355,9 +355,21 @@ func keyboard(q *channel.Question) models.ReplyMarkup {
 	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{row}}
 }
 
-// isParseError reports whether Telegram rejected the MarkdownV2 entities.
-func isParseError(err error) bool {
-	return err != nil && strings.Contains(err.Error(), "can't parse entities")
+// isFormatError reports whether Telegram rejected the MarkdownV2 text: its
+// entities don't parse or the escaped text is too long. The same text sent
+// plain fits the limit.
+func isFormatError(err error) bool {
+	return err != nil && (strings.Contains(err.Error(), "can't parse entities") || strings.Contains(err.Error(), "message is too long"))
+}
+
+// apiError wraps a Bot API error, as a [channel.RateLimitError] if Telegram
+// asks to wait.
+func apiError(op string, err error) error {
+	var limit *bot.TooManyRequestsError
+	if errors.As(err, &limit) {
+		return &channel.RateLimitError{RetryAfter: time.Duration(limit.RetryAfter) * time.Second, Err: fmt.Errorf("telegram %s: %w", op, err)}
+	}
+	return fmt.Errorf("telegram %s: %w", op, err)
 }
 
 func isNotModified(err error) bool {
@@ -380,7 +392,7 @@ func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, er
 			Document: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
 		})
 		if err != nil {
-			return ref, fmt.Errorf("telegram sendDocument: %w", err)
+			return ref, apiError("sendDocument", err)
 		}
 		ref = channel.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID)}
 	}
@@ -397,12 +409,12 @@ func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, er
 			params.ReplyMarkup = keyboard(m.Question)
 		}
 		msg, err := c.bot.SendMessage(ctx, params)
-		if isParseError(err) {
+		if isFormatError(err) {
 			params.Text, params.ParseMode = piece, ""
 			msg, err = c.bot.SendMessage(ctx, params)
 		}
 		if err != nil {
-			return ref, fmt.Errorf("telegram sendMessage: %w", err)
+			return ref, apiError("sendMessage", err)
 		}
 		ref = channel.Ref{Conv: m.Conv, ID: strconv.Itoa(msg.ID)}
 	}
@@ -429,12 +441,12 @@ func (c *Channel) Edit(ctx context.Context, ref channel.Ref, m channel.Outbound)
 		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
 	}
 	_, err = c.bot.EditMessageText(ctx, params)
-	if isParseError(err) {
+	if isFormatError(err) {
 		params.Text, params.ParseMode = text, ""
 		_, err = c.bot.EditMessageText(ctx, params)
 	}
 	if err != nil && !isNotModified(err) {
-		return fmt.Errorf("telegram editMessageText: %w", err)
+		return apiError("editMessageText", err)
 	}
 	return nil
 }

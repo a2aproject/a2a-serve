@@ -103,10 +103,24 @@ func (d dirDest) Put(_ context.Context, name string, r io.Reader) error {
 		return err
 	}
 	_, err = io.Copy(tmp, r)
+	if err == nil {
+		err = tmp.Sync()
+	}
 	if err := errors.Join(err, tmp.Close()); err != nil {
 		return errors.Join(err, os.Remove(tmp.Name()))
 	}
-	return os.Rename(tmp.Name(), filepath.Join(string(d), name))
+	if err := os.Rename(tmp.Name(), filepath.Join(string(d), name)); err != nil {
+		return errors.Join(err, os.Remove(tmp.Name()))
+	}
+	return syncDir(string(d))
+}
+
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	return errors.Join(f.Sync(), f.Close())
 }
 
 func (d dirDest) List(context.Context) ([]string, error) {

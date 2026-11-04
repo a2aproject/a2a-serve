@@ -15,11 +15,17 @@
 package agentsrv
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
 func TestWriteSection(t *testing.T) {
@@ -56,6 +62,37 @@ func TestWriteSection(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, string(got)); diff != "" {
 				t.Fatalf("writeSection() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestWithAgentsLine(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	tests := []struct {
+		name     string
+		caller   *auth.Principal
+		wantLine bool
+	}{
+		{name: "owner", caller: &auth.Principal{ID: auth.OwnerID, Role: auth.RoleOwner}, wantLine: true},
+		{name: "authenticated", caller: &auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, wantLine: true},
+		{name: "anonymous", caller: &auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}},
+		{name: "no caller"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			if tc.caller != nil {
+				ctx = auth.WithPrincipal(ctx, *tc.caller)
+			}
+			execCtx := &a2asrv.ExecutorContext{ContextID: "c1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
+
+			got := ts.srv.peers.withAgentsLine(ctx, execCtx)
+
+			if hasLine := strings.Contains(messageText(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
+				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", messageText(got.Message), tc.wantLine)
 			}
 		})
 	}

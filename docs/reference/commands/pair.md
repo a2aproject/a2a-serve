@@ -22,7 +22,7 @@ a2a-serve pair <command>
 a2a-serve pair invite anna
 a2a-serve pair join https://coder.tail1234.ts.net 3MZ8-LQ0D
 a2a-serve pair list
-a2a-serve pair set anna --role owner
+a2a-serve pair set anna --owner
 a2a-serve pair rm anna
 ```
 

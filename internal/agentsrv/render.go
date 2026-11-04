@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -56,9 +57,16 @@ type renderer struct {
 	lastEdit  time.Time
 	timer     *time.Timer
 	done      bool
+	// lostFrom is the offset in the text from which what the user sees is
+	// stale because an edit or send failed, or -1.
+	lostFrom int
 	// waitsForOwner is set once the task waits for an owner to answer its
 	// question elsewhere, as for anonymous conversations.
 	waitsForOwner bool
+	// onWaitForOwner, if set, is called when the task starts waiting for an
+	// owner, before the conversation is told, so that an answer given
+	// meanwhile isn't missed.
+	onWaitForOwner func(a2a.TaskID)
 }
 
 type artifactText struct {
@@ -71,7 +79,7 @@ func newRenderer(r *Router, ch channel.Channel, conv channel.ConvKey, replyTo ch
 	if caps.MaxText <= 0 {
 		caps.MaxText = 4000
 	}
-	return &renderer{r: r, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p}
+	return &renderer{r: r, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p, lostFrom: -1}
 }
 
 // onEvent renders an event and reports whether the task stopped: it
@@ -206,8 +214,9 @@ func (rd *renderer) flush(ctx context.Context, force bool) {
 }
 
 // showLocked edits or sends the streaming message, starting a new message
-// when the text outgrows the channel's limit.
-func (rd *renderer) showLocked(ctx context.Context, progress string) {
+// when the text outgrows the channel's limit. It returns the offset in the
+// text from which the user doesn't see the current text, or -1.
+func (rd *renderer) showLocked(ctx context.Context, progress string) int {
 	text := rd.text()
 	limit := max(rd.caps.MaxText-200, rd.caps.MaxText/2, 1)
 	for len(text)-rd.segStart > limit {
@@ -219,7 +228,9 @@ func (rd *renderer) showLocked(ctx context.Context, progress string) {
 		if cut == 0 {
 			_, cut = utf8.DecodeRuneInString(seg)
 		}
-		rd.showSegmentLocked(ctx, seg[:cut])
+		if !rd.showSegmentLocked(ctx, seg[:cut]) && rd.lostFrom < 0 {
+			rd.lostFrom = rd.segStart
+		}
 		rd.segStart += cut
 		rd.ref, rd.lastShown = channel.Ref{}, ""
 	}
@@ -230,31 +241,34 @@ func (rd *renderer) showLocked(ctx context.Context, progress string) {
 		}
 		display += "⚙ " + progress
 	}
-	if display != "" {
-		rd.showSegmentLocked(ctx, display)
+	if display != "" && !rd.showSegmentLocked(ctx, display) && rd.lostFrom < 0 {
+		return rd.segStart
 	}
+	return rd.lostFrom
 }
 
-func (rd *renderer) showSegmentLocked(ctx context.Context, display string) {
+// showSegmentLocked reports whether display is shown.
+func (rd *renderer) showSegmentLocked(ctx context.Context, display string) bool {
 	if display == rd.lastShown {
-		return
+		return true
 	}
 	rd.lastEdit = time.Now()
 	out := channel.Outbound{Conv: rd.conv, Text: display, ReplyTo: rd.replyTo}
 	if rd.ref.ID != "" && rd.caps.Edit {
 		if err := rd.ch.Edit(ctx, rd.ref, out); err != nil {
 			slog.Debug("editing message", "channel", rd.ch.Name(), "error", err)
-			return
+			return false
 		}
 		rd.lastShown = display
-		return
+		return true
 	}
 	ref, err := rd.ch.Send(ctx, out)
 	if err != nil {
 		slog.Warn("sending message", "channel", rd.ch.Name(), "error", err)
-		return
+		return false
 	}
 	rd.ref, rd.lastShown = ref, display
+	return true
 }
 
 // send sends a standalone message, split to the channel's limit.
@@ -268,6 +282,32 @@ func (rd *renderer) send(ctx context.Context, text string) channel.Ref {
 		}
 	}
 	return ref
+}
+
+// maxRetryWait is the longest the renderer waits for a rate limit to end.
+var maxRetryWait = 30 * time.Second
+
+// resend sends text as new messages after the last edit of the streaming
+// message failed, so that the user gets the final answer. A rate limit is
+// retried once.
+func (rd *renderer) resend(ctx context.Context, text string) {
+	for _, piece := range channel.Split(text, rd.caps.MaxText) {
+		out := channel.Outbound{Conv: rd.conv, Text: piece, ReplyTo: rd.replyTo, Subject: rd.subject()}
+		_, err := rd.ch.Send(ctx, out)
+		var limit *channel.RateLimitError
+		if errors.As(err, &limit) && limit.RetryAfter <= maxRetryWait {
+			select {
+			case <-ctx.Done():
+				err = ctx.Err()
+			case <-time.After(limit.RetryAfter):
+				_, err = rd.ch.Send(ctx, out)
+			}
+		}
+		if err != nil {
+			slog.Warn("sending the final answer after a failed edit", "channel", rd.ch.Name(), "error", err)
+			return
+		}
+	}
 }
 
 func (rd *renderer) subject() string { return rd.r.agentName() }
@@ -298,16 +338,20 @@ func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
 	}
 	files := rd.files
 	streamed := rd.caps.Stream
+	lost := -1
 	if streamed {
 		rd.artifacts = []*artifactText{{id: "final"}}
 		rd.artifacts[0].text.WriteString(text)
-		rd.showLocked(ctx, "")
+		lost = rd.showLocked(ctx, "")
 	}
 	rd.done = true
 	rd.mu.Unlock()
 
 	if !streamed && text != "" {
 		rd.send(ctx, text)
+	}
+	if lost >= 0 {
+		rd.resend(ctx, text[lost:])
 	}
 	if len(files) > 0 {
 		if _, err := rd.ch.Send(ctx, channel.Outbound{Conv: rd.conv, Files: files, ReplyTo: rd.replyTo, Subject: rd.subject()}); err != nil {
@@ -342,6 +386,9 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.mu.Lock()
 		rd.waitsForOwner = true
 		rd.mu.Unlock()
+		if rd.onWaitForOwner != nil {
+			rd.onWaitForOwner(taskID)
+		}
 		rd.send(ctx, fmt.Sprintf("⏳ This needs the owner's approval, which I asked for. Without an answer in %s, it is rejected:\n\n%s",
 			approvals.ApprovalTimeout(anonymousQuestionTimeout), q.Display()))
 		return
@@ -356,14 +403,9 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	if rd.caps.Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), rd.r.approvals.PageURL(rec))
+		out.Text += rd.r.answerHint(ctx, rec, q)
 	}
-	ref, err := rd.ch.Send(ctx, out)
-	if err != nil {
-		slog.Warn("sending question", "channel", rd.ch.Name(), "error", err)
-		return
-	}
-	rd.r.remember(ctx, rec.ID, rd.ch.Name(), rd.conv, ref, q.Text)
+	rd.r.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text)
 }
 
 // waitingForOwner returns the task which waits for an owner's answer.

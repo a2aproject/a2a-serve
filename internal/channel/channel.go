@@ -22,6 +22,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Channel is one messenger account of the agent, such as its Telegram bot.
@@ -54,6 +55,17 @@ type Validator interface {
 	// Validate reports whether the channel's credentials work.
 	Validate(ctx context.Context) error
 }
+
+// RateLimitError is returned by a channel when the messenger asks the
+// sender to wait before the next call.
+type RateLimitError struct {
+	RetryAfter time.Duration
+	Err        error
+}
+
+func (e *RateLimitError) Error() string { return e.Err.Error() }
+
+func (e *RateLimitError) Unwrap() error { return e.Err }
 
 // Caps are what a channel supports.
 type Caps struct {

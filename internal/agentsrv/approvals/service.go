@@ -67,6 +67,8 @@ type Service struct {
 	Handler  a2asrv.RequestHandler
 	Notifier Notifier
 	Remote   RemoteAnswerer
+	// Chain gives the user of a question the role they have now.
+	Chain *auth.Chain
 	// Unattended reports whether nobody watches the tasks of a context,
 	// such as the runs of a schedule without a chat. Their questions go to
 	// the owner chat.
@@ -119,9 +121,25 @@ func MayAnswer(p auth.Principal, user string) bool {
 	return false
 }
 
-// PageURL is the page where a question can be answered.
-func (s *Service) PageURL(rec store.Question) string {
-	return s.BaseURL() + "/hitl/" + rec.Token
+// PageURL is the page where the user of a question answers it, or empty
+// when they may not answer it.
+func (s *Service) PageURL(ctx context.Context, rec store.Question) (string, error) {
+	p, err := s.pageUser(ctx, rec)
+	if err != nil || !MayAnswer(p, rec.User) {
+		return "", err
+	}
+	return s.BaseURL() + "/hitl/" + rec.Token, nil
+}
+
+// pageUser is who answers a question on its page: its user, with the role
+// they have now. A user the policy refuses now has no role.
+func (s *Service) pageUser(ctx context.Context, rec store.Question) (auth.Principal, error) {
+	p, err := s.Chain.Refresh(ctx, rec.User, auth.Identity{})
+	var refused *auth.RefusedError
+	if errors.As(err, &refused) || errors.Is(err, auth.ErrNoCredential) {
+		return auth.Principal{ID: rec.User}, nil
+	}
+	return p, err
 }
 
 // OnQuestion sends a permission question of a task nobody watches, or of
@@ -290,12 +308,23 @@ button{font-size:1rem;margin:.25rem;padding:.5rem 1rem}</style></head>
 <form method="post">{{range .Options}}<button name="option" value="{{.ID}}">{{.Label}}</button>{{end}}</form>{{end}}
 </body></html>`))
 
-// HandlePage serves the page of a question at /hitl/{token}. Its token is the credential:
-// it is sent only to the chat which may answer, and the answer is sent as the owner.
+// HandlePage serves the page of a question at /hitl/{token}. Its token is the credential
+// of the question's user: it is sent only where they may answer, and the answer is sent
+// as them.
 func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 	rec, err := s.Store.QuestionByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		http.Error(w, "This question does not exist.", http.StatusNotFound)
+		return
+	}
+	p, err := s.pageUser(r.Context(), rec)
+	if err != nil {
+		slog.Error("resolving the user of a question", "question", rec.ID, "error", err)
+		http.Error(w, "Couldn't load the question. Try again.", http.StatusInternalServerError)
+		return
+	}
+	if !MayAnswer(p, rec.User) {
+		http.Error(w, "Only the owner can answer this question.", http.StatusForbidden)
 		return
 	}
 	q := FromRecord(rec)
@@ -305,7 +334,7 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown option.", http.StatusBadRequest)
 			return
 		}
-		if err := s.Answer(r.Context(), rec, auth.Owner(), opt); err != nil && !errors.Is(err, store.ErrAnswered) {
+		if err := s.Answer(r.Context(), rec, p, opt); err != nil && !errors.Is(err, store.ErrAnswered) {
 			slog.Error("answering question from the web", "question", rec.ID, "error", err)
 			http.Error(w, "Couldn't send the answer. Try again.", http.StatusInternalServerError)
 			return
