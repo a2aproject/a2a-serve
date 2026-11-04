@@ -50,8 +50,8 @@ type schedules struct {
 	wake chan struct{}
 }
 
-func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain) *schedules {
-	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: time.Now, wake: make(chan struct{}, 1)}
+func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain, now func() time.Time) *schedules {
+	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: now, wake: make(chan struct{}, 1)}
 }
 
 // run runs due schedules until ctx ends. A run missed while the agent was

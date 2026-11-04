@@ -85,6 +85,8 @@ type Options struct {
 	Public  network.Provider
 	// NewRelay replaces network.NewRelay, for tests.
 	NewRelay func(network.RelayConfig) (network.Provider, error)
+	// Now replaces time.Now for schedules, for tests.
+	Now func() time.Time
 }
 
 // Server is a running agent server.
@@ -181,6 +183,9 @@ func Run(ctx context.Context, opts Options) error {
 	ctx, cancel := context.WithCancel(ctx)
 	if opts.Out == nil {
 		opts.Out = io.Discard
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
 	}
 	s := &Server{
 		dir:     opts.Dir,
@@ -323,7 +328,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 	}
-	s.schedules = newSchedules(ctx, s.store, s.router, s.chain)
+	s.schedules = newSchedules(ctx, s.store, s.router, s.chain, opts.Now)
 	s.inspector = newInspector(s)
 	s.peers = &Peers{
 		store:     s.store,

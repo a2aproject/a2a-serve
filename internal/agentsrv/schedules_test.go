@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -116,14 +117,18 @@ func TestAddScheduleErrors(t *testing.T) {
 
 func TestHarnessSchedulesInConversation(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	var skew atomic.Int64
+	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), now: now})
 	linkOwner(t, ts, "telegram:1", "dm1")
-	at := time.Now().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
+	at := time.Now().Add(time.Hour).Format(time.RFC3339Nano)
 
 	ts.ch.write("telegram:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
 	ts.ch.waitFor(t, "dm1", hasText("Scheduled soon"))
 	ts.ch.write("telegram:1", "dm1", "call schedules list")
 	ts.ch.waitFor(t, "dm1", hasText("- soon (once"))
+	skew.Store(int64(time.Hour))
+	ts.srv.schedules.changed()
 	ts.ch.waitFor(t, "dm1", hasText(`ran Scheduled run of "soon"`))
 
 	deadline := time.Now().Add(10 * time.Second)
