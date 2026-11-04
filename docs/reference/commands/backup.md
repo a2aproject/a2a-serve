@@ -42,8 +42,7 @@ a2a-serve backup now
 
 Recreate an agent's .a2a directory from a snapshot taken by
 "a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
-latest snapshot is used unless --snapshot names one. --dir is the directory
-of the restored agent (default: the current directory).
+latest snapshot is used unless --snapshot names one.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
@@ -71,5 +70,6 @@ a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-ke
 | Flag | Default | Description |
 |---|---|---|
 | `--backup-key string` |  | The backup key (secret value: env:VAR, -, or the value) |
+| `--dir string` |  | Directory of the restored agent (default: the current directory) |
 | `--snapshot string` |  | Snapshot to restore (default: the latest) |
 | `--take-over` |  | Also restore the network identity; stop the agent on the old host first |

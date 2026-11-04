@@ -36,8 +36,7 @@ func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Recreate an agent from a backup snapshot",
 		Long: `Recreate an agent's .a2a directory from a snapshot taken by
 "a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
-latest snapshot is used unless --snapshot names one. --dir is the directory
-of the restored agent (default: the current directory).
+latest snapshot is used unless --snapshot names one.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
@@ -88,6 +87,7 @@ on the old host before taking over.
 		},
 	}
 	f := cmd.Flags()
+	f.StringVar(&sf.dir, "dir", "", "Directory of the restored agent (default: the current directory)")
 	f.StringVar(&snapshot, "snapshot", "", "Snapshot to restore (default: the latest)")
 	f.StringVar(&key, "backup-key", "", secretUsage("The backup key"))
 	f.BoolVar(&takeOver, "take-over", false, "Also restore the network identity; stop the agent on the old host first")
