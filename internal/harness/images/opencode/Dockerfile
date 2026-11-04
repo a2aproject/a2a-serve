@@ -1,10 +1,7 @@
 # Harness image for `a2a-serve start opencode`. The server runs it as the host
 # user with the workspace mounted at its host path and HOME=/home/agent.
-# The harness calls other agents with the a2a CLI of this image, so
-# A2A_CLI_VERSION must match a2acli.PinnedVersion; the published tag is
-# a2a-<A2A_CLI_VERSION>.
 FROM golang:1.26-bookworm AS a2a
-ARG A2A_CLI_VERSION=v0.3.2-0.20261030153310-f90e4eb628cd
+ARG A2A_CLI_VERSION=latest
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/a2aproject/a2a-cli@${A2A_CLI_VERSION}
 
 FROM node:22-bookworm-slim

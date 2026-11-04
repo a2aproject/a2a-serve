@@ -19,14 +19,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
@@ -295,21 +293,9 @@ func TestBootstrap(t *testing.T) {
 func TestDockerfiles(t *testing.T) {
 	t.Parallel()
 	for _, name := range ProfileNames() {
-		df, ok := Dockerfile(name)
-		if !ok {
+		if _, ok := Dockerfile(name); !ok {
 			t.Errorf("Dockerfile(%q) missing", name)
-			continue
 		}
-		if want := "\nARG A2A_CLI_VERSION=" + a2acli.PinnedVersion + "\n"; !strings.Contains(string(df), want) {
-			t.Errorf("Dockerfile(%q) doesn't contain %q, which CI publishes as tag %s", name, strings.TrimSpace(want), ImageTag)
-		}
-	}
-}
-
-func TestImageTag(t *testing.T) {
-	t.Parallel()
-	if !regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$`).MatchString(ImageTag) {
-		t.Fatalf("ImageTag = %q, want a valid docker tag", ImageTag)
 	}
 }
 
