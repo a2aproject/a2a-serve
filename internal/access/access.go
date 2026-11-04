@@ -66,12 +66,11 @@ func PrivateAccess(p agentdir.PolicyConfig, signIn bool) string {
 	return agentdir.AccessEveryone
 }
 
-// Policy is the policy of the settings p: the user running the agent and
-// the --owner members are owners; the private network with
-// --private-access everyone, --allow-email and the --allow members are
-// authenticated; with --public-access anyone, anyone is anonymous.
+// Policy is the policy of the settings p: the private network with
+// --private-access everyone and --allow-email are authenticated; with
+// --public-access anyone, anyone is anonymous.
 func Policy(p agentdir.PolicyConfig, signIn bool) auth.Policy {
-	out := auth.Policy{Owner: append([]string{auth.MemberSelf}, p.Owner...)}
+	var out auth.Policy
 	if PrivateAccess(p, signIn) == agentdir.AccessEveryone {
 		out.Authenticated = append(out.Authenticated, auth.MemberPrivate)
 	}
@@ -80,7 +79,6 @@ func Policy(p agentdir.PolicyConfig, signIn bool) auth.Policy {
 			out.Authenticated = append(out.Authenticated, auth.MemberEmailPrefix+e)
 		}
 	}
-	out.Authenticated = append(out.Authenticated, p.Allow...)
 	if p.PublicAccess == agentdir.AccessAnyone {
 		out.Anonymous = []string{auth.MemberAnyone}
 	}
@@ -112,7 +110,7 @@ func CountPairings(ps []store.Pairing) Pairings {
 func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *controlapi.Access {
 	pol := Policy(p, net.SignIn)
 	a := &controlapi.Access{
-		Owner: pol.Owner, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
+		Owner: []string{auth.MemberSelf}, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
 		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private),
 	}
 	if net.Private != "" {
@@ -133,7 +131,7 @@ func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *controlapi.Acce
 	case !net.Public:
 	case a.PublicAccess == agentdir.AccessAnyone:
 		a.Summary = append(a.Summary, "the public URL is open to anyone")
-	case len(p.Emails()) > 0:
+	case len(p.AllowEmails) > 0:
 		a.Summary = append(a.Summary, "the public URL needs a pairing or Google sign-in")
 	default:
 		a.Summary = append(a.Summary, "the public URL needs a pairing")

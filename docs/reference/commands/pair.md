@@ -9,8 +9,8 @@ to the agent's bot.
 
 On the caller's side, "join" saves the agent's token to
 ~/.config/a2a-serve/credentials.json, which the a2a CLI sends with requests to
-that agent. Outside an agent directory, or with --joined, "list" shows the
-agents you joined, and "get" and "rm" take an agent URL.
+that agent. "list" also shows the agents you joined, and "get" and "rm" take
+an agent URL.
 
 ```
 a2a-serve pair <command>
@@ -110,10 +110,10 @@ a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D
 
 ## a2a-serve pair list
 
-In an agent directory, list the pairings of the agent with their kind and
-role: people, devices, other agents and webhook nodes, and the built-in local
-pairing, which is you. Outside one, or with --joined, list the agents you joined with
-`a2a-serve pair join`.
+List the pairings of the agent with their kind and role: people, devices,
+other agents and webhook nodes, and the built-in local pairing, which is you.
+Then list the agents you joined with `a2a-serve pair join`. Run it in an agent
+directory; --joined lists only the agents you joined, from any directory.
 
 ```
 a2a-serve pair list [flags]
@@ -125,7 +125,8 @@ Aliases: `ls`
 
 | Flag | Default | Description |
 |---|---|---|
-| `--joined` |  | List the agents you joined, also in an agent directory |
+| `--invited` |  | List only the pairings of the agent |
+| `--joined` |  | List only the agents you joined |
 
 ## a2a-serve pair rm
 

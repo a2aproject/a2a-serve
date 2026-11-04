@@ -37,13 +37,18 @@ func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
+		// A pairing without codes may have just had its code taken, with its
+		// kind set by a later transaction, so only pairings whose codes all
+		// expired are deleted.
+		if _, err := tx.ExecContext(ctx, `DELETE FROM pairings WHERE kind = ''
+			AND name IN (SELECT pairing FROM codes WHERE expires < ?)
+			AND name NOT IN (SELECT pairing FROM codes WHERE expires >= ?)`, now.UnixNano(), now.UnixNano()); err != nil {
+			return err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE expires < ?`, now.UnixNano()); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM pairings WHERE kind = '' AND name NOT IN (SELECT pairing FROM codes)`); err != nil {
 			return err
 		}
 		pruned, err := pruneTasks(ctx, tx, cutoff)

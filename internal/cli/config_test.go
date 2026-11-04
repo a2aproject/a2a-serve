@@ -487,3 +487,58 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 		t.Fatalf("a2a-serve config set without --agent in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
 	}
 }
+
+func TestConfigSetSecretValueForms(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		secret  string
+		stdin   string
+		want    agentdir.Secrets
+		wantErr string
+	}{
+		{name: "value", secret: "KEY=sk-123", want: agentdir.Secrets{"KEY": "sk-123", "OLD": "stored"}},
+		{name: "value with equals signs", secret: "KEY=a=b", want: agentdir.Secrets{"KEY": "a=b", "OLD": "stored"}},
+		{name: "other variable", secret: "KEY=env:HOME", want: agentdir.Secrets{"KEY": os.Getenv("HOME"), "OLD": "stored"}},
+		{name: "stdin", secret: "KEY=-", stdin: "piped\n", want: agentdir.Secrets{"KEY": "piped", "OLD": "stored"}},
+		{name: "stored value", secret: "KEY=secret:OLD", want: agentdir.Secrets{"KEY": "stored", "OLD": "stored"}},
+		{name: "unknown stored value", secret: "KEY=secret:MISSING", wantErr: "--secret KEY: no stored secret MISSING"},
+		{name: "empty variable", secret: "KEY=env:A2A_SERVE_TEST_UNSET", wantErr: "--secret KEY: environment variable A2A_SERVE_TEST_UNSET is empty"},
+		{name: "empty value", secret: "KEY=", wantErr: "--secret KEY: empty secret"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"OLD"}})
+			if err := d.SaveSecrets(agentdir.Secrets{"OLD": "stored"}); err != nil {
+				t.Fatalf("SaveSecrets() error = %v", err)
+			}
+
+			_, err := runCMDWithStdin(t, pipeWith(t, tc.stdin), "config", "set", "--secret", tc.secret, "--dir", d.Root)
+
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("a2a-serve config set --secret %s error = %v, want %q", tc.secret, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a2a-serve config set --secret %s error = %v", tc.secret, err)
+			}
+			got, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("a2a-serve config set --secret %s wrong secrets (-want +got) diff = %s", tc.secret, diff)
+			}
+			conf, err := d.LoadConfig()
+			if err != nil {
+				t.Fatalf("LoadConfig() error = %v", err)
+			}
+			if diff := cmp.Diff([]string{"OLD", "KEY"}, conf.Secrets); diff != "" {
+				t.Fatalf("a2a-serve config set --secret %s wrong config secrets (-want +got) diff = %s", tc.secret, diff)
+			}
+		})
+	}
+}

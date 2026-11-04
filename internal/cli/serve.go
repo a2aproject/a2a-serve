@@ -40,10 +40,11 @@ import (
 )
 
 // serverFlags holds the agent directory and control timeout of the commands
-// which manage an agent.
+// which manage an agent, and the time limit of the backup commands.
 type serverFlags struct {
-	dir     string
-	timeout time.Duration
+	dir      string
+	timeout  time.Duration
+	deadline time.Duration
 }
 
 const dirUsage = "Agent directory (default: the nearest directory with .a2a, walking up from the current one)"

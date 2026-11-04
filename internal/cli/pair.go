@@ -20,7 +20,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
@@ -35,8 +34,8 @@ to the agent's bot.
 
 On the caller's side, "join" saves the agent's token to
 ~/.config/a2a-serve/credentials.json, which the a2a CLI sends with requests to
-that agent. Outside an agent directory, or with --joined, "list" shows the
-agents you joined, and "get" and "rm" take an agent URL.`,
+that agent. "list" also shows the agents you joined, and "get" and "rm" take
+an agent URL.`,
 		Example: `  a2a-serve pair invite anna
   a2a-serve pair join https://coder.tail1234.ts.net 3MZ8-LQ0D
   a2a-serve pair list
@@ -61,19 +60,6 @@ agents you joined, and "get" and "rm" take an agent URL.`,
 
 // isAgentURL reports whether arg names a joined agent rather than a pairing.
 func isAgentURL(arg string) bool { return strings.Contains(arg, "://") }
-
-// callerView reports whether a pair command acts on the agents this user
-// joined: with joined, or outside an agent directory.
-func (sf *serverFlags) callerView(joined bool) (bool, error) {
-	if joined {
-		return true, nil
-	}
-	_, err := sf.agentDir()
-	if errors.Is(err, agentdir.ErrNotFound) && sf.dir == "" {
-		return true, nil
-	}
-	return false, err
-}
 
 // joinedCredential returns the saved token of the agent at url.
 func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, error) {

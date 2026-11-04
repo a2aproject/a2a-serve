@@ -91,7 +91,7 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.StringVar(&s.Workspace, "workspace", "", "Workspace directory: `src[:dst][:ro]`, such as ~/src/app (default: the directory holding .a2a)")
 	f.StringArrayVar(&s.Mounts, "mount", nil, listUsage("Extra directory to mount: `src[:dst][:ro]`, such as ~/docs:/docs:ro; keyed by dst", false))
 	f.StringArrayVar(&s.Env, "env", nil, listUsage("Extra variable for the agent: `NAME=value`, such as DEBUG=1; keyed by NAME", false))
-	f.StringArrayVar(&s.Secrets, "secret", nil, listUsage("Name of an environment variable to pass to the agent, such as an API key (`NAME`); its value is read from your environment (or prompted) and stored in .a2a/state/secrets", false))
+	f.StringArrayVar(&s.Secrets, "secret", nil, listUsage(secretUsage("Environment variable to pass to the agent, such as an API key: `NAME[=value]`, stored in .a2a/state/secrets; without a value, read from your environment or prompted"), false))
 	f.StringVar(&s.Sandbox, "sandbox", "", "Where the agent runs: docker (default) or local")
 	f.StringVar(&s.Image, "image", "", "Container image of the agent; only applies to --sandbox docker")
 	f.StringVar(&sf.command, "command", "", commandUsage)
@@ -101,8 +101,6 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in)")
 	f.StringVar(&s.PublicAccess, "public-access", "", "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired)")
 	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL", true))
-	f.StringArrayVar(&s.Owner, "owner", nil, listUsage("Make a `member` an owner, who sees every task and answers every approval: private for everyone on the private network, email:<address> or email:*@<domain>", false))
-	f.StringArrayVar(&s.Allow, "allow", nil, listUsage("Let a `member` call the agent: email:<address> or email:*@<domain>", false))
 	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
 	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, listUsage("ACP tool `kinds` denied without asking, like --allow-tools", true))
 	f.StringVar(&s.OwnerChat, "owner-chat", "", "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)")
@@ -117,7 +115,7 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	setSection(f, sectionWorkspace, "workspace", "mount", "env", "secret")
 	setSection(f, sectionSandbox, "sandbox", "image", "command")
 	setSection(f, sectionNetwork, "port", "private", "public")
-	setSection(f, sectionAccess, "private-access", "public-access", "allow-email", "owner", "allow")
+	setSection(f, sectionAccess, "private-access", "public-access", "allow-email")
 	setSection(f, sectionApprovals, "allow-tools", "deny-tools", "owner-chat")
 	must(cmd.RegisterFlagCompletionFunc("owner-chat", fixedCompletions(agentdir.ChannelKinds...)))
 }
@@ -189,18 +187,31 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 			*v.dst = ref.Value
 		}
 	}
-	for _, name := range s.Secrets {
-		if os.Getenv(name) != "" || !r.Terminal() {
+	s.Secrets = slices.Clone(s.Secrets)
+	for i, entry := range s.Secrets {
+		name, value, ok := strings.Cut(entry, "=")
+		s.Secrets[i] = name
+		if !ok && (os.Getenv(name) != "" || !r.Terminal()) {
 			continue
 		}
-		val, err := r.Read(name)
+		if !ok {
+			value = secretref.Stdin
+		}
+		ref, err := secretref.Parse("secret "+name, value, r)
 		if err != nil {
 			return s, err
+		}
+		if ref.Kind == secretref.Stored {
+			if s.SecretSources == nil {
+				s.SecretSources = map[string]string{}
+			}
+			s.SecretSources[name] = ref.Name
+			continue
 		}
 		if s.SecretValues == nil {
 			s.SecretValues = agentdir.Secrets{}
 		}
-		s.SecretValues[name] = val
+		s.SecretValues[name] = ref.Value
 	}
 	return s, nil
 }

@@ -48,7 +48,7 @@ on the old host before taking over.
 		Example: "  a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.deadline)
 			defer cancel()
 			dir := sf.dir
 			if dir == "" {
@@ -72,12 +72,12 @@ on the old host before taking over.
 			if snapshot == "" {
 				latest, err := backup.Latest(ctx, dest)
 				if err != nil {
-					return fmt.Errorf("%s: %w", args[0], err)
+					return deadlineError(fmt.Errorf("%s: %w", args[0], err))
 				}
 				snapshot = latest.Name
 			}
 			if err := backup.Restore(ctx, dest, snapshot, passphrase, dir, takeOver); err != nil {
-				return err
+				return deadlineError(err)
 			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver})

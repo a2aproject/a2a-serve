@@ -223,7 +223,7 @@ func formatPolicy(p agentdir.PolicyConfig) string {
 		values []string
 	}{
 		{"private", nonEmpty(p.PrivateAccess)}, {"public", nonEmpty(p.PublicAccess)},
-		{"emails", p.AllowEmails}, {"owners", p.Owner}, {"allowed", p.Allow},
+		{"emails", p.AllowEmails},
 	} {
 		if len(a.values) > 0 {
 			parts = append(parts, a.label+" "+strings.Join(a.values, ", "))

@@ -92,6 +92,11 @@ func Exit(code int, msg string) *Error {
 // Silent reports whether the failure was already reported.
 func (e *Error) Silent() bool { return e.silent }
 
+// Timeout classifies err, which the time limit of flag ended, as a timeout.
+func Timeout(err error, flag string) *Error {
+	return &Error{Code: CodeTimeout, Message: err.Error(), Exit: 5, err: err, Hint: "increase --" + flag}
+}
+
 // UsageHint is remediation advice attached to every usage error.
 const UsageHint = "run `a2a-serve --help` for the current commands and flags"
 
@@ -167,13 +172,7 @@ func Classify(err error) *Error {
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
-		return &Error{
-			Code:    CodeTimeout,
-			Message: msg,
-			Exit:    5,
-			err:     err,
-			Hint:    "increase --timeout",
-		}
+		return Timeout(err, "timeout")
 	}
 
 	var a2aErr *a2a.Error

@@ -101,6 +101,24 @@ func TestAddChannelSavesOnlyValidTokens(t *testing.T) {
 	}
 }
 
+func TestAddChannelReturnsOwnerLink(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant", telegramAPI: fakeBotAPI(t)})
+
+	st, err := controlapi.NewClient(ts.dir).AddChannel(context.Background(), controlapi.ChannelRequest{
+		Kind:    agentdir.ChannelTelegram,
+		Token:   "secret:" + agentdir.SecretTelegram,
+		Secrets: map[string]string{agentdir.SecretTelegram: "good"},
+	})
+
+	if err != nil {
+		t.Fatalf("AddChannel() error = %v", err)
+	}
+	if l := st.OwnerLink; l == nil || l.Code == "" || !strings.Contains(l.Hint, l.Code) || time.Until(l.Expires) <= 0 || strings.Contains(st.Account, l.Code) {
+		t.Fatalf("AddChannel() = %+v, want an owner link with a code, apart from the account", st)
+	}
+}
+
 func TestDeleteChannelNotConfigured(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})

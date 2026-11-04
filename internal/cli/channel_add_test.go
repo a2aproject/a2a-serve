@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -91,9 +92,15 @@ func TestPrintChannelAdded(t *testing.T) {
 		name    string
 		mode    output.Mode
 		running bool
+		link    *controlapi.OwnerLink
 		want    string
 	}{
 		{name: "text", mode: output.ModeText, running: true, want: "✓ telegram @coder_bot\n"},
+		{
+			name: "text with an owner link", mode: output.ModeText, running: true,
+			link: &controlapi.OwnerLink{Hint: "https://t.me/coder_bot?start=K7Q2", Code: "K7Q2", Expires: time.Now().Add(15*time.Minute + 30*time.Second)},
+			want: "✓ telegram @coder_bot\n→ link yourself as owner: https://t.me/coder_bot?start=K7Q2   (15 min)\n",
+		},
 		{name: "text of a stopped agent", mode: output.ModeText, want: "✓ saved telegram; it starts with the agent (a2a-serve start)\n"},
 		{name: "json", mode: output.ModeJson, want: "{\n  \"name\": \"telegram\",\n  \"account\": \"@coder_bot\"\n}\n"},
 		{name: "jsonl", mode: output.ModeJSONL, want: "{\"name\":\"telegram\",\"account\":\"@coder_bot\"}\n"},
@@ -104,7 +111,7 @@ func TestPrintChannelAdded(t *testing.T) {
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, tc.mode)}
 
-			err := printChannelAdded(cfg, &controlapi.ChannelStatus{Name: "telegram", Account: "@coder_bot"}, tc.running)
+			err := printChannelAdded(cfg, &controlapi.ChannelStatus{Name: "telegram", Account: "@coder_bot", OwnerLink: tc.link}, tc.running)
 
 			if err != nil {
 				t.Fatalf("printChannelAdded() error = %v", err)
