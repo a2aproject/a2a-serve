@@ -139,8 +139,8 @@ func addBlobs(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID, 
 }
 
 // loadBlobs puts the bytes of the blobs the raw parts of tasks refer to back
-// into the parts. It must not run while rows of the store are open: the
-// store has a single connection.
+// into the parts. It must not run while rows of the store are open: an
+// in-memory store has a single connection.
 func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
 	refs := map[string][]*a2a.Part{}
 	collect := func(parts []*a2a.Part) {
@@ -171,7 +171,7 @@ func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
 	}
 	for h, parts := range refs {
 		var data []byte
-		err := s.db.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data)
+		err := s.reads.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data)
 		missing := errors.Is(err, sql.ErrNoRows)
 		if err != nil && !missing {
 			return fmt.Errorf("loading blob %s: %w", h, err)

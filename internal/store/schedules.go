@@ -94,12 +94,12 @@ func scanSchedule(row interface{ Scan(...any) error }) (Schedule, error) {
 
 // Schedule returns a schedule by name.
 func (s *Store) Schedule(ctx context.Context, name string) (Schedule, error) {
-	return scanSchedule(s.db.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE name = ?`, name))
+	return scanSchedule(s.reads.QueryRowContext(ctx, `SELECT `+scheduleColumns+` FROM schedules WHERE name = ?`, name))
 }
 
 // Schedules lists the schedules by name.
 func (s *Store) Schedules(ctx context.Context) ([]Schedule, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+scheduleColumns+` FROM schedules ORDER BY name`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT `+scheduleColumns+` FROM schedules ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}

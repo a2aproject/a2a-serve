@@ -53,12 +53,12 @@ func (s *Store) EnsurePairing(ctx context.Context, p Pairing) (Pairing, error) {
 
 // Pairing returns a pairing by name.
 func (s *Store) Pairing(ctx context.Context, name string) (Pairing, error) {
-	return scanPairing(s.db.QueryRowContext(ctx, `SELECT name, kind, role, created FROM pairings WHERE name = ?`, name))
+	return scanPairing(s.reads.QueryRowContext(ctx, `SELECT name, kind, role, created FROM pairings WHERE name = ?`, name))
 }
 
 // Pairings lists the pairings by name.
 func (s *Store) Pairings(ctx context.Context) ([]Pairing, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, kind, role, created FROM pairings ORDER BY name`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT name, kind, role, created FROM pairings ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -175,7 +175,7 @@ func scanToken(row interface{ Scan(...any) error }) (Token, error) {
 // LookupToken returns the token record and records its use.
 func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 	h := cryptoutil.Hash(token)
-	t, err := scanToken(s.db.QueryRowContext(ctx, `SELECT `+tokenColumns+` FROM tokens WHERE hash = ?`, h))
+	t, err := scanToken(s.reads.QueryRowContext(ctx, `SELECT `+tokenColumns+` FROM tokens WHERE hash = ?`, h))
 	if err != nil {
 		return Token{}, err
 	}
@@ -187,7 +187,7 @@ func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 
 // Tokens lists issued tokens.
 func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+tokenColumns+` FROM tokens ORDER BY created`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT `+tokenColumns+` FROM tokens ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
@@ -235,7 +235,7 @@ func (s *Store) PutLink(ctx context.Context, l Link, kind string) error {
 // LinkOf returns the link of a chat account.
 func (s *Store) LinkOf(ctx context.Context, channel, identity string) (Link, error) {
 	l := Link{Channel: channel, Identity: identity}
-	err := s.db.QueryRowContext(ctx, `SELECT pairing, conv FROM links WHERE channel = ? AND identity = ?`,
+	err := s.reads.QueryRowContext(ctx, `SELECT pairing, conv FROM links WHERE channel = ? AND identity = ?`,
 		channel, identity).Scan(&l.Pairing, &l.Conv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Link{}, ErrNotFound
@@ -255,7 +255,7 @@ func (s *Store) Links(ctx context.Context) (map[string][]Link, error) {
 }
 
 func (s *Store) links(ctx context.Context, where string, args ...any) (map[string][]Link, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT channel, identity, pairing, conv FROM links `+where+` ORDER BY created`, args...)
+	rows, err := s.reads.QueryContext(ctx, `SELECT channel, identity, pairing, conv FROM links `+where+` ORDER BY created`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -354,7 +354,7 @@ func AnyCode(Code) bool { return true }
 
 // PendingCodes lists the codes not used or expired yet, by pairing.
 func (s *Store) PendingCodes(ctx context.Context) (map[string][]Code, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT c.pairing, p.kind, c.expires FROM codes c JOIN pairings p ON p.name = c.pairing
+	rows, err := s.reads.QueryContext(ctx, `SELECT c.pairing, p.kind, c.expires FROM codes c JOIN pairings p ON p.name = c.pairing
 		WHERE c.expires > ? ORDER BY c.expires`, s.now().UnixNano())
 	if err != nil {
 		return nil, err

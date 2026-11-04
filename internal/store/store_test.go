@@ -21,6 +21,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -946,5 +947,72 @@ func TestMissingBlobDoesNotFailReads(t *testing.T) {
 	want := a2a.ContentParts{a2a.NewTextPart("see"), a2a.NewTextPart(missingBlobText)}
 	if diff := cmp.Diff(want, got.Task.History[0].Parts); diff != "" {
 		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestReadsDoNotWaitForWrites(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	started, release, written := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		written <- s.inTx(ctx, func(tx *sql.Tx) error {
+			close(started)
+			<-release
+			return nil
+		})
+	}()
+	<-started
+	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+
+	_, err := s.Schedules(readCtx)
+
+	close(release)
+	if werr := <-written; werr != nil {
+		t.Fatalf("inTx() error = %v", werr)
+	}
+	if err != nil {
+		t.Fatalf("Schedules() during a write error = %v", err)
+	}
+}
+
+func TestWritesAreReadBack(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{name: "file", path: func(t *testing.T) string { return filepath.Join(t.TempDir(), "server.db") }},
+		{name: "memory", path: func(*testing.T) string { return ":memory:" }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStoreAt(t, tc.path(t))
+			ctx := context.Background()
+			for i := range 20 {
+				name := fmt.Sprintf("s%d", i)
+				if err := s.AddSchedule(ctx, Schedule{Name: name, Cron: "@daily", Prompt: "x", UserID: "user:owner", Conversation: "new", CreatedBy: "user:owner"}); err != nil {
+					t.Fatalf("AddSchedule(%s) error = %v", name, err)
+				}
+				if _, err := s.Schedule(ctx, name); err != nil {
+					t.Fatalf("Schedule(%s) right after AddSchedule() error = %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestOpenSetsSynchronousNormal(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	var got int
+	if err := s.db.QueryRow(`PRAGMA synchronous`).Scan(&got); err != nil {
+		t.Fatalf("reading synchronous: %v", err)
+	}
+	const normal = 1
+	if got != normal {
+		t.Fatalf("PRAGMA synchronous = %d, want %d (NORMAL)", got, normal)
 	}
 }
