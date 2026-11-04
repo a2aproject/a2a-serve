@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -405,7 +406,7 @@ func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
 		return
 	}
-	slog.Info("task "+stateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
+	slog.Info("task "+a2atext.StateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
 }
 
 // eventState returns the task state an event reports, if it reports one.

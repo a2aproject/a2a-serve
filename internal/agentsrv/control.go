@@ -27,20 +27,19 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
-
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // serveControl serves the control socket, through which management commands
@@ -66,33 +65,25 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	if err := os.WriteFile(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
 		return errors.Join(err, ln.Close())
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /status", s.ctlStatus)
-	mux.HandleFunc("POST /stop", func(w http.ResponseWriter, r *http.Request) {
-		jsonhttp.Write(w, http.StatusOK, map[string]bool{"stopping": true})
-		go s.Stop()
+	mux := control.Handler(control.Deps{
+		Status:        s.status,
+		Stop:          s.Stop,
+		Config:        s.config,
+		ReloadConfig:  s.reloadSavedConfig,
+		Pairings:      s.pairings,
+		Peers:         s.clients.discover,
+		Contacts:      s.contacts,
+		AddChannel:    s.addChannel,
+		RemoveChannel: s.deleteChannel,
+		Store:         s.store,
+		AddSchedule: func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
+			return s.schedules.add(ctx, req, by, "")
+		},
+		RunSchedule:    s.schedules.runNow,
+		RemoveSchedule: s.schedules.remove,
+		Ads:            s.ads,
+		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
-	mux.HandleFunc("POST /pair", s.ctlPair)
-	mux.HandleFunc("GET /pairings", s.ctlPairings)
-	mux.HandleFunc("GET /pairings/{name}", s.ctlPairing)
-	mux.HandleFunc("PATCH /pairings/{name}", s.ctlUpdatePairing)
-	mux.HandleFunc("DELETE /pair/{name}", s.ctlRevoke)
-	mux.HandleFunc("GET /peers", s.ctlPeers)
-	mux.HandleFunc("GET /contacts", s.ctlContacts)
-	mux.HandleFunc("POST /contacts", s.ctlAddContact)
-	mux.HandleFunc("DELETE /contacts/{name}", s.ctlDeleteContact)
-	mux.HandleFunc("POST /channels", s.ctlAddChannel)
-	mux.HandleFunc("DELETE /channels/{kind}", s.ctlDeleteChannel)
-	mux.HandleFunc("GET /schedules", s.ctlSchedules)
-	mux.HandleFunc("POST /schedules", s.ctlAddSchedule)
-	mux.HandleFunc("POST /schedules/{name}/run", s.ctlRunSchedule)
-	mux.HandleFunc("DELETE /schedules/{name}", s.ctlDeleteSchedule)
-	mux.HandleFunc("GET /advertisements", s.ctlAds)
-	mux.HandleFunc("POST /inspector/login", func(w http.ResponseWriter, r *http.Request) {
-		jsonhttp.Write(w, http.StatusOK, controlapi.InspectorLogin{Path: inspector.Path + "/login?code=" + s.inspector.LoginCode()})
-	})
-	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { jsonhttp.Write(w, http.StatusOK, s.config()) })
-	mux.HandleFunc("POST /config/reload", s.ctlReloadConfig)
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
@@ -113,15 +104,6 @@ func removeIfExists(path string) error {
 	return nil
 }
 
-func (s *Server) ctlStatus(w http.ResponseWriter, r *http.Request) {
-	st, err := s.status(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, st)
-}
-
 // status describes the running server, as `a2a-serve status` shows it.
 func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	cfg := s.config()
@@ -139,7 +121,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	for state, n := range counts {
-		st.Tasks[stateName(state)] = n
+		st.Tasks[a2atext.StateName(state)] = n
 	}
 	links, err := s.store.LinksOf(ctx, auth.LocalPairing)
 	if err != nil {
@@ -172,125 +154,12 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	return st, nil
 }
 
-func stateName(s a2a.TaskState) string { return a2atext.StateName(s) }
-
-func (s *Server) ctlPair(w http.ResponseWriter, r *http.Request) {
-	var req controlapi.PairCodeRequest
-	if !jsonhttp.Read(w, r, &req) {
-		return
-	}
-	resp, err := s.pairings.Invite(r.Context(), req)
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, resp)
-}
-
-func (s *Server) ctlPairings(w http.ResponseWriter, r *http.Request) {
-	out, err := s.pairings.List(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
-}
-
-func (s *Server) ctlPairing(w http.ResponseWriter, r *http.Request) {
-	p, err := s.pairings.Get(r.Context(), r.PathValue("name"))
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, p)
-}
-
-func (s *Server) ctlUpdatePairing(w http.ResponseWriter, r *http.Request) {
-	var req controlapi.PairingUpdate
-	if !jsonhttp.Read(w, r, &req) {
-		return
-	}
-	resp, err := s.pairings.Update(r.Context(), r.PathValue("name"), req)
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, resp)
-}
-
-// ctlRevoke removes the pairing called name with its tokens, links and
-// codes.
-func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
-	resp, err := s.pairings.Remove(r.Context(), r.PathValue("name"))
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, resp)
-}
-
-func (s *Server) ctlPeers(w http.ResponseWriter, r *http.Request) {
-	peers, err := s.clients.discover(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	out := make([]controlapi.Peer, len(peers))
-	for i, p := range peers {
-		out[i] = controlapi.Peer{Name: p.Name, URL: p.URL, Description: p.Description, Online: p.Online}
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
-}
-
 // contacts manages the contacts, refreshing the harness instructions
 // which list them.
 func (s *Server) contacts() manage.Contacts {
 	m := s.clients.contacts()
 	m.Changed = s.refreshInstructions
 	return m
-}
-
-func (s *Server) ctlContacts(w http.ResponseWriter, r *http.Request) {
-	out, err := s.contacts().List(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
-}
-
-func (s *Server) ctlAddContact(w http.ResponseWriter, r *http.Request) {
-	var req controlapi.ContactRequest
-	if !jsonhttp.Read(w, r, &req) {
-		return
-	}
-	c, err := s.contacts().Add(r.Context(), req)
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, manage.ContactInfo(c))
-}
-
-func (s *Server) ctlDeleteContact(w http.ResponseWriter, r *http.Request) {
-	if err := s.contacts().Remove(r.Context(), r.PathValue("name")); err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, map[string]string{"deleted": r.PathValue("name")})
-}
-
-func (s *Server) ctlAddChannel(w http.ResponseWriter, r *http.Request) {
-	var req controlapi.ChannelRequest
-	if !jsonhttp.Read(w, r, &req) {
-		return
-	}
-	st, err := s.addChannel(r.Context(), req)
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, st)
 }
 
 // addChannel checks the channel of req, saves it and starts it.
@@ -322,15 +191,6 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 	return s.supervisor.channelStatus(ch, s.supervisor.ownerLink(ctx, ch)), nil
 }
 
-func (s *Server) ctlDeleteChannel(w http.ResponseWriter, r *http.Request) {
-	kind := r.PathValue("kind")
-	if err := s.deleteChannel(kind); err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, map[string]string{"removed": kind})
-}
-
 func (s *Server) deleteChannel(kind string) error {
 	if err := (&agentdir.Config{}).SetChannel(kind, "", nil); err != nil {
 		return agenterr.Invalid(err)
@@ -345,57 +205,12 @@ func (s *Server) deleteChannel(kind string) error {
 	return nil
 }
 
-// ctlReloadConfig applies the live settings of config.yaml, which the CLI
-// has validated and saved.
-func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
+// reloadSavedConfig applies the live settings of config.yaml.
+func (s *Server) reloadSavedConfig() error {
 	saved, err := s.dir.LoadConfig()
 	if err != nil {
-		controlapi.WriteError(w, err)
-		return
+		return err
 	}
 	s.reloadConfig(saved)
-	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}})
-}
-
-func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {
-	all, err := s.store.Schedules(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	out := []controlapi.ScheduleInfo{}
-	for _, sc := range all {
-		out = append(out, manage.ScheduleInfo(sc))
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
-}
-
-func (s *Server) ctlAddSchedule(w http.ResponseWriter, r *http.Request) {
-	var req schedule.Request
-	if !jsonhttp.Read(w, r, &req) {
-		return
-	}
-	sc, err := s.schedules.add(r.Context(), req, auth.Owner(), "")
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
-}
-
-func (s *Server) ctlRunSchedule(w http.ResponseWriter, r *http.Request) {
-	sc, err := s.schedules.runNow(r.Context(), r.PathValue("name"))
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
-}
-
-func (s *Server) ctlDeleteSchedule(w http.ResponseWriter, r *http.Request) {
-	if err := s.schedules.remove(r.Context(), r.PathValue("name"), auth.Owner()); err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, map[string]string{"deleted": r.PathValue("name")})
+	return nil
 }

@@ -220,7 +220,7 @@ func (ws *Watches) watch(w store.Watch) {
 			if !task.Status.State.Terminal() && task.Status.State != a2a.TaskStateInputRequired {
 				continue
 			}
-			text := fmt.Sprintf("[%s finished task %s: %s]\n%s", w.Contact, w.TaskID, stateName(task.Status.State), resultText(task))
+			text := fmt.Sprintf("[%s finished task %s: %s]\n%s", w.Contact, w.TaskID, a2atext.StateName(task.Status.State), resultText(task))
 			if task.Status.State == a2a.TaskStateInputRequired {
 				text = fmt.Sprintf("[%s asks, on task %s]\n%s\nAnswer with: a2a send -a <agents URL>/%s --task-id %s \"...\"",
 					w.Contact, w.TaskID, a2atext.Message(task.Status.Message), w.Contact, w.TaskID)
