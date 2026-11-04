@@ -36,8 +36,9 @@ with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
 | --- | --- | --- |
 | 0 | | Success |
 | 1 | `A2ACLI_ERR_INTERNAL`, `A2ACLI_ERR_PROTOCOL` | Any other failure |
-| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags or settings |
+| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags or settings, or a name the agent doesn't have, such as `pair rm` of an unknown pairing |
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
 | 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` expired |
 | 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a-serve start --detach` |
 | 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
+| 8 | `A2ASERVE_ERR_BUSY` | The agent server is starting or stopping; run the command again in a moment |

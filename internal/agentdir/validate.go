@@ -179,6 +179,9 @@ func (c *Config) Validate() error {
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
 		add("--google-client-id and --google-client-secret go together: they are your Google app")
 	}
+	if c.Auth.GoogleClientID != "" && len(c.Policy.Emails()) == 0 {
+		add("--google-client-id needs --allow-email: people sign in with your Google app only when the agent allows their email")
+	}
 	errs = append(errs, c.Backup.validate()...)
 	return errors.Join(errs...)
 }

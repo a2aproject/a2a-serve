@@ -211,11 +211,20 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 			Tags:        []string{"coding", cfg.Harness},
 		}},
 	}
-	if s.needsPairing(kind) {
-		card.SecuritySchemes = a2a.NamedSecuritySchemes{
-			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a-serve pair join <agent-url> <code>`, with a code from the owner."},
-		}
-		card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
+	if !s.needsPairing(kind) {
+		return card
+	}
+	card.SecuritySchemes = a2a.NamedSecuritySchemes{
+		"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a-serve pair join <agent-url> <code>`, with a code from the owner."},
+	}
+	card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
+	if kind != network.ListenerPublic {
+		return card
+	}
+	// The sign-in schemes are alternatives to pairing.
+	if scheme := s.oauth.cardScheme(baseURL); scheme != nil {
+		card.SecuritySchemes["google"] = scheme
+		card.SecurityRequirements = append(card.SecurityRequirements, a2a.SecurityRequirements{"google": {}})
 	}
 	return card
 }

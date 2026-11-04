@@ -24,6 +24,8 @@ import (
 	"syscall"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 // Code is a symbolic error identifier.
@@ -51,6 +53,9 @@ const (
 	// CodeNoAgent marks a command run outside an agent directory, or with a
 	// --dir that has none; exit 7.
 	CodeNoAgent = "A2ASERVE_ERR_NO_AGENT"
+	// CodeBusy marks a command run while the agent server starts or stops,
+	// and can't take the change; exit 8.
+	CodeBusy = "A2ASERVE_ERR_BUSY"
 )
 
 // Error is a classified CLI failure.
@@ -142,7 +147,7 @@ func Classify(err error) *Error {
 	msg := err.Error()
 
 	var ue usageError
-	if errors.As(err, &ue) && ue.UsageError() {
+	if agenterr.IsRequest(err) || errors.As(err, &ue) && ue.UsageError() {
 		return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: 2, err: err}
 	}
 
@@ -154,6 +159,11 @@ func Classify(err error) *Error {
 	var na noAgentError
 	if errors.As(err, &na) && na.NoAgent() {
 		return &Error{Code: CodeNoAgent, Message: msg, Exit: 7, err: err}
+	}
+
+	var busy *agenterr.BusyError
+	if errors.As(err, &busy) {
+		return &Error{Code: CodeBusy, Message: msg, Exit: 8, err: err}
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {

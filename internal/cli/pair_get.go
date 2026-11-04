@@ -45,11 +45,11 @@ func newPairGetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				_, err = fmt.Fprintf(cfg.Out, "%s (joined %s)\n  agent        %s\n  as           %s\n  joined       %s\n", j.URL, j.Kind, j.Agent, j.Principal, j.Joined.Format(time.DateTime))
 				return err
 			}
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			p, err := c.Pairing(cmd.Context(), args[0])
 			if err != nil {
 				return err

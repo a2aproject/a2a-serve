@@ -56,15 +56,6 @@ type Option struct {
 	Label string
 }
 
-// FromEvent returns the question of an input-required status update, or nil.
-func FromEvent(ev a2a.Event) *Question {
-	su, ok := ev.(*a2a.TaskStatusUpdateEvent)
-	if !ok {
-		return nil
-	}
-	return FromStatus(su.Status)
-}
-
 // FromStatus returns the question of an input-required status, or nil.
 func FromStatus(st a2a.TaskStatus) *Question {
 	if st.State != a2a.TaskStateInputRequired || st.Message == nil {

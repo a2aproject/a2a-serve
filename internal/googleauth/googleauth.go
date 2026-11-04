@@ -53,10 +53,13 @@ var Google = Endpoints{
 	Issuers:  []string{"https://accounts.google.com", "accounts.google.com"},
 }
 
+// OpenIDConfiguration is the OpenID Connect discovery URL of Google.
+const OpenIDConfiguration = "https://accounts.google.com/.well-known/openid-configuration"
+
 // SharedClientID is the client ID of the Google app the A2A project owns,
 // which a2a CLI signs in with for agents whose owner registered none. Empty
 // until the app is registered, which turns the token exchange off.
-var SharedClientID = ""
+const SharedClientID = ""
 
 // AuthCodeURL returns the URL of Google's sign-in page for a request with
 // PKCE, asking for the email of the account.

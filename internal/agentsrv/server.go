@@ -56,9 +56,12 @@ import (
 type Options struct {
 	// GoogleEndpoints replace Google's OAuth endpoints, for tests.
 	GoogleEndpoints *googleauth.Endpoints
-	Dir             agentdir.Dir
-	Config          *agentdir.Config
-	Secrets         agentdir.Secrets
+	// SharedGoogleClientID is the client ID of the shared Google app whose
+	// ID tokens the token exchange accepts; empty turns the exchange off.
+	SharedGoogleClientID string
+	Dir                  agentdir.Dir
+	Config               *agentdir.Config
+	Secrets              agentdir.Secrets
 	// Out receives progress lines for the user.
 	Out io.Writer
 	// HarnessLog receives the harness's stderr. Discarded if nil.
@@ -296,7 +299,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
 	}
-	s.oauth = newOAuthServer(s, google)
+	s.oauth = newOAuthServer(s, google, opts.SharedGoogleClientID)
 	s.approvals = &approvals.Service{
 		Store:     s.store,
 		Tasks:     s.tasks,

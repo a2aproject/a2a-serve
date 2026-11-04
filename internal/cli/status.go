@@ -53,7 +53,8 @@ picked its port.`,
 			if err != nil {
 				return err
 			}
-			st, err := sf.controlClient(d).Status(cmd.Context())
+			client := sf.controlClient(d)
+			st, err := client.Status(cmd.Context())
 			if scope != "" {
 				return printStatusURL(cfg, d, st, err, scope)
 			}
@@ -71,7 +72,7 @@ picked its port.`,
 			if err != nil {
 				return err
 			}
-			pending, _, err := agentctl.Pending(cmd.Context(), d)
+			pending, _, err := agentctl.Pending(cmd.Context(), d, client)
 			if err != nil {
 				return err
 			}
