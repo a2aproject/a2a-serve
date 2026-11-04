@@ -39,10 +39,8 @@ a2a-serve pair invite anna   # prints a one-time code for anna
 - **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
 
 <div align="center">
-  <picture>
-    <source media="(prefers-color-scheme: dark)" srcset="./docs/graphs/readme-overview-dark.png">
-    <img src="./docs/graphs/readme-overview.png" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
-  </picture>
+  <img src="./docs/graphs/readme-overview.png#gh-light-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
+  <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
 </div>
 
 ## 🚀 Getting Started
