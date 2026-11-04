@@ -64,3 +64,24 @@ func TestPrintStatusAccess(t *testing.T) {
 		t.Fatalf("printStatus() = %q, want the access block %q", out.String(), want)
 	}
 }
+
+func TestStatusJSONNamesAgentOnce(t *testing.T) {
+	t.Parallel()
+	st := &controlapi.Status{Name: "coder", Harness: "opencode", Dir: "/work"}
+
+	data, err := json.Marshal(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st})
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+
+	var got map[string]any
+	if err := json.Unmarshal(data, &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", data, err)
+	}
+	if _, ok := got["harness"]; ok {
+		t.Fatalf("status -o json = %s, want no harness key", data)
+	}
+	if got["agent"] != "opencode" {
+		t.Fatalf("status -o json agent = %v, want %q", got["agent"], "opencode")
+	}
+}

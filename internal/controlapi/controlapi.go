@@ -43,7 +43,7 @@ import (
 // Status describes a running agent server.
 type Status struct {
 	Name    string    `json:"name"`
-	Harness string    `json:"harness"`
+	Harness string    `json:"agent"`
 	Dir     string    `json:"dir"`
 	PID     int       `json:"pid"`
 	Started time.Time `json:"started"`
