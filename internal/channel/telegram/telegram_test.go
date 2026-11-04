@@ -50,6 +50,8 @@ type fakeBotAPI struct {
 type apiFailure struct {
 	status int
 	body   string
+	// onlyWith, if set, limits the failure to requests whose body contains it.
+	onlyWith string
 }
 
 func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +67,7 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls[method] = append(f.calls[method], string(body))
 	var result string
-	if fail, ok := f.failures[method]; ok {
+	if fail, ok := f.failures[method]; ok && strings.Contains(string(body), fail.onlyWith) {
 		f.mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(fail.status)
@@ -387,6 +389,44 @@ func TestSendAndEditRateLimit(t *testing.T) {
 			}
 			if want := 3 * time.Second; limit.RetryAfter != want {
 				t.Fatalf("RateLimitError.RetryAfter = %v, want %v", limit.RetryAfter, want)
+			}
+		})
+	}
+}
+
+func TestSendAndEditFallBackToPlainTextWhenTooLong(t *testing.T) {
+	t.Parallel()
+	tooLong := apiFailure{status: http.StatusBadRequest, body: `{"ok":false,"error_code":400,"description":"Bad Request: message is too long"}`, onlyWith: "MarkdownV2"}
+	tests := []struct {
+		name   string
+		method string
+		call   func(c *Channel) error
+	}{
+		{name: "send", method: "sendMessage", call: func(c *Channel) error {
+			_, err := c.Send(t.Context(), channel.Outbound{Conv: "42", Text: "a.b-c"})
+			return err
+		}},
+		{name: "edit", method: "editMessageText", call: func(c *Channel) error {
+			return c.Edit(t.Context(), channel.Ref{Conv: "42", ID: "7"}, channel.Outbound{Conv: "42", Text: "a.b-c"})
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := &fakeBotAPI{t: t, calls: map[string][]string{}, failures: map[string]apiFailure{tc.method: tooLong}}
+			srv := httptest.NewServer(api)
+			defer srv.Close()
+			c := New("123:abc")
+			c.ServerURL = srv.URL
+			if err := tc.call(c); err != nil {
+				t.Fatalf("Channel error = %v, want nil", err)
+			}
+			calls := api.called(tc.method)
+			if len(calls) != 2 {
+				t.Fatalf("%s calls = %d, want 2", tc.method, len(calls))
+			}
+			if last := unescapeJSON(calls[1]); strings.Contains(last, "MarkdownV2") || !strings.Contains(last, "a.b-c") {
+				t.Fatalf("%s retry = %s, want plain text a.b-c", tc.method, calls[1])
 			}
 		})
 	}
