@@ -132,7 +132,7 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 				ID:      "secrets",
 				Status:  StatusFail,
 				Message: "secret " + name + " not stored",
-				Detail:  "the harness gets it as an environment variable",
+				Detail:  "the agent gets it as an environment variable",
 				Fix:     "a2a-serve config set --secret " + name,
 			})
 		}
@@ -164,7 +164,7 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 	}
 	servers, err := project.LoadMCP(ws.Src)
 	if err != nil {
-		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the harness gets none of the project's MCP servers"}}
+		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the agent gets none of the project's MCP servers"}}
 	}
 	if len(servers) == 0 {
 		return nil
@@ -184,7 +184,7 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 			ID:      "mcp",
 			Status:  StatusWarn,
 			Message: fmt.Sprintf("MCP server %s needs %s", srv.Name, strings.Join(missing, ", ")),
-			Detail:  "the harness doesn't get it until they have a value",
+			Detail:  "the agent doesn't get it until they have a value",
 			Fix:     "a2a-serve config set " + strings.Join(fix, " "),
 		})
 	}

@@ -89,7 +89,7 @@ The description, the owner chat, the allowed and denied tools, and messengers ap
 
 List settings are keyed: `--secret` and `--env` by name, `--mount` by destination, `--identity` by login. Setting an existing entry replaces it. `config unset secret OPENROUTER_API_KEY` removes the entry and its stored value.
 
-`config set --harness opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.
+`config set --agent opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.
 
 ### Secret values
 

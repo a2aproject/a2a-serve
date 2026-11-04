@@ -24,7 +24,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
-const quietUsage = "Print less on the terminal: keep the harness image pull and build output in the log"
+const quietUsage = "Print less on the terminal: keep the agent image pull and build output in the log"
 
 // addRunFlags adds the flags of how an agent runs, which are not saved.
 func (m *runMode) addRunFlags(f *pflag.FlagSet) {
@@ -65,12 +65,12 @@ func sandboxIsLocal(c *cobra.Command, dir func() (agentdir.Dir, error)) bool {
 func newStartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var mode runMode
 	cmd := &cobra.Command{
-		Use:   "start [<harness>|echo|proxy|exec]",
+		Use:   "start [<agent>|echo|proxy|exec]",
 		Short: "Start the agent, or a local test server",
 		Long: `Without an argument, start the agent saved in the nearest .a2a directory
 (or --dir). On a first run in a terminal, it asks a few questions instead.
 
-With a harness, create the agent in this directory on the first run, or apply
+With an agent, create it in this directory on the first run, or apply
 the flags to the existing agent like ` + "`a2a-serve config set`" + `, then start it.
 
 echo, proxy and exec run a local test server instead, without an agent

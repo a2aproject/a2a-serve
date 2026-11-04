@@ -182,7 +182,7 @@ func TestRunAsksForMCPVariables(t *testing.T) {
 	if diff := cmp.Diff(want, got.Settings); diff != "" {
 		t.Fatalf("Run() wrong settings (-want +got) diff = %s", diff)
 	}
-	for _, s := range []string{"skills work with every harness: deploy", "docs: http https://docs.example.com/mcp", "github: npx -y server-github", "Pass GITHUB_TOKEN from this shell for github"} {
+	for _, s := range []string{"skills work with every agent: deploy", "docs: http https://docs.example.com/mcp", "github: npx -y server-github", "Pass GITHUB_TOKEN from this shell for github"} {
 		if !strings.Contains(out.String(), s) {
 			t.Fatalf("Run() printed %q, want it to contain %q", out.String(), s)
 		}

@@ -28,8 +28,8 @@ import (
 func TestEdit(t *testing.T) {
 	t.Parallel()
 	const (
-		valid   = "name: coder\nharness: opencode\nsandbox: local # edited\n"
-		invalid = "name: coder\nharness: opencode\nsandbox: vm\n"
+		valid   = "name: coder\nagent: opencode\nsandbox: local # edited\n"
+		invalid = "name: coder\nagent: opencode\nsandbox: vm\n"
 	)
 	tests := []struct {
 		name        string

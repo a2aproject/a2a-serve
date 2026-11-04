@@ -37,7 +37,10 @@ import (
 type Config struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Harness     string `yaml:"harness" json:"harness"`
+	Harness     string `yaml:"agent" json:"agent"`
+	// LegacyHarness reads the agent from config files written before the
+	// key was renamed; it is never written.
+	LegacyHarness string `yaml:"harness,omitempty" json:"-"`
 	// Command replaces the harness profile's command line, for any ACP agent.
 	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
 	// Image overrides the container image of the harness profile.
@@ -320,6 +323,10 @@ func ParseConfig(data []byte) (*Config, error) {
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, err
 	}
+	if cfg.Harness == "" {
+		cfg.Harness = cfg.LegacyHarness
+	}
+	cfg.LegacyHarness = ""
 	if cfg.Workspace == defaultWorkspace {
 		cfg.Workspace = ""
 	}

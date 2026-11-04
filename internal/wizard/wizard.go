@@ -103,7 +103,7 @@ type Options struct {
 	// reads it like any other answer.
 	ReadSecret func(prompt string) (string, error)
 	// Command validates the settings and returns the commands which create
-	// the same agent, `a2a-serve start <harness>` first, shown before saving.
+	// the same agent, `a2a-serve start <agent>` first, shown before saving.
 	Command func(agentdir.Settings) ([]string, error)
 	// Workspace is the project directory, whose MCP servers and skills are
 	// shown. Empty skips them.
@@ -127,7 +127,7 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	if slices.Contains(harnesses, "opencode") {
 		def = "opencode"
 	}
-	if s.Harness, err = p.choose("Harness", harnesses, def); err != nil {
+	if s.Harness, err = p.choose("Coding agent", harnesses, def); err != nil {
 		return res, err
 	}
 	if s.Name, err = p.ask("Agent name", opts.DefaultName); err != nil {
@@ -225,7 +225,7 @@ func (p *prompter) project(opts Options, s *agentdir.Settings) error {
 		for i, sk := range skills {
 			names[i] = sk.Name
 		}
-		if _, err := fmt.Fprintf(p.out, "  The project's skills work with every harness: %s\n", strings.Join(names, ", ")); err != nil {
+		if _, err := fmt.Fprintf(p.out, "  The project's skills work with every agent: %s\n", strings.Join(names, ", ")); err != nil {
 			return err
 		}
 	}

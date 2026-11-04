@@ -17,5 +17,5 @@ a2a-serve restart [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
-| `--quiet` |  | Print less on the terminal: keep the harness image pull and build output in the log |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--timeout duration` | `1m0s` | Timeout of each call to the running agent, a duration such as 30s or 2m |

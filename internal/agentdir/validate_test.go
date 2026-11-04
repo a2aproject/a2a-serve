@@ -35,10 +35,10 @@ func TestValidate(t *testing.T) {
 		{name: "valid", modify: func(*Config) {}},
 		{name: "acp with a command", modify: func(c *Config) { c.Harness, c.Command = "acp", []string{"fakeacp"} }},
 		{name: "unknown harness with a command", modify: func(c *Config) { c.Harness, c.Command = "gemini", []string{"gemini"} }},
-		{name: "no harness", modify: func(c *Config) { c.Harness = "" }, wantErr: "no harness"},
-		{name: "acp without a command", modify: func(c *Config) { c.Harness = "acp" }, wantErr: "harness acp needs a command"},
+		{name: "no agent", modify: func(c *Config) { c.Harness = "" }, wantErr: "no agent"},
+		{name: "acp without a command", modify: func(c *Config) { c.Harness = "acp" }, wantErr: "agent acp needs a command"},
 		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown harness "gemini"`},
-		{name: "reserved harness with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid harness "script"`},
+		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
 		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, lan or none`},
 		{name: "public", modify: func(c *Config) { c.Network.Public = "lan" }, wantErr: `invalid --public "lan"`},
@@ -131,7 +131,7 @@ func TestCheckConfig(t *testing.T) {
 			secrets: Secrets{"KEY": "k", "BOT": "b"},
 		},
 		{name: "relative workspace", cfg: Config{Name: "coder", Harness: "opencode", Workspace: "docs"}},
-		{name: "invalid", cfg: Config{Name: "coder"}, wantErr: "no harness"},
+		{name: "invalid", cfg: Config{Name: "coder"}, wantErr: "no agent"},
 		{name: "missing mount source", cfg: Config{Name: "coder", Harness: "opencode", Mounts: []string{"/nonexistent-a2a:/x"}}, wantErr: "the source does not exist"},
 		{name: "duplicate destination", cfg: Config{Name: "coder", Harness: "opencode", Mounts: []string{docs + ":" + root}}, wantErr: "already uses the destination"},
 		{name: "missing secret", cfg: Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}}, wantErr: "secret KEY is not stored"},
@@ -232,7 +232,7 @@ func TestParseConfigWorkspace(t *testing.T) {
 		wantWorkspace string
 		wantMounts    []string
 	}{
-		{name: "default", yaml: "harness: opencode\n"},
+		{name: "default", yaml: "agent: opencode\n"},
 		{name: "mounts without workspace", yaml: "mounts: [/src/app, /docs:/docs:ro]\n", wantMounts: []string{"/src/app", "/docs:/docs:ro"}},
 		{name: "default workspace with mounts", yaml: "workspace: .\nmounts: [/docs]\n", wantMounts: []string{"/docs"}},
 		{name: "workspace", yaml: "workspace: /src/app\nmounts: [/docs]\n", wantWorkspace: "/src/app", wantMounts: []string{"/docs"}},
@@ -265,6 +265,37 @@ func TestParseConfigWorkspace(t *testing.T) {
 	}
 }
 
+func TestParseConfigAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		yaml string
+	}{
+		{name: "agent", yaml: "agent: opencode\n"},
+		{name: "legacy harness key", yaml: "harness: opencode\n"},
+		{name: "agent wins over the legacy key", yaml: "agent: opencode\nharness: claude\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ParseConfig([]byte(tc.yaml))
+			if err != nil {
+				t.Fatalf("ParseConfig() error = %v", err)
+			}
+			if got.Harness != "opencode" {
+				t.Fatalf("ParseConfig().Harness = %q, want %q", got.Harness, "opencode")
+			}
+			data, err := MarshalConfig(got)
+			if err != nil {
+				t.Fatalf("MarshalConfig() error = %v", err)
+			}
+			if !strings.Contains(string(data), "\nagent: opencode\n") || strings.Contains(string(data), "harness:") {
+				t.Fatalf("MarshalConfig() = %q, want only the agent key", data)
+			}
+		})
+	}
+}
+
 func TestMounts(t *testing.T) {
 	t.Parallel()
 	d := Dir{Root: "/src/app"}
@@ -284,7 +315,7 @@ func TestCheckHarness(t *testing.T) {
 	if err := cfg.CheckHarness("opencode"); err != nil {
 		t.Fatalf("CheckHarness(opencode) error = %v, want nil", err)
 	}
-	want := "this agent runs opencode; switch with `a2a-serve config set --harness claude`"
+	want := "this agent runs opencode; switch with `a2a-serve config set --agent claude`"
 	if err := cfg.CheckHarness("claude"); err == nil || err.Error() != want {
 		t.Fatalf("CheckHarness(claude) error = %v, want %q", err, want)
 	}

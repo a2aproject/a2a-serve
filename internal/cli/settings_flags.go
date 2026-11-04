@@ -29,7 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
-// settingsFlags are the agent settings shared by `a2a-serve start <harness>` and
+// settingsFlags are the agent settings shared by `a2a-serve start <agent>` and
 // `a2a-serve config set`, so both speak one vocabulary.
 type settingsFlags struct {
 	s       agentdir.Settings
@@ -40,12 +40,12 @@ type settingsFlags struct {
 type settingsSet int
 
 const (
-	// coreSettings are the flags of `start <harness>` and `config set`.
+	// coreSettings are the flags of `start <agent>` and `config set`.
 	coreSettings settingsSet = 1 << iota
 	// operationalSettings are the flags of `config set` only: limits,
 	// network-provider options, backups and Google sign-in.
 	operationalSettings
-	// harnessSetting is --harness, which `start` takes as its argument.
+	// harnessSetting is --agent, which `start` takes as its argument.
 	harnessSetting
 )
 
@@ -67,9 +67,9 @@ func (sf *settingsFlags) register(cmd *cobra.Command, sets settingsSet) {
 	f := cmd.Flags()
 	s := &sf.s
 	if sets&harnessSetting != 0 {
-		f.StringVar(&s.Harness, "harness", "", "Harness: claude, opencode, or acp with --command")
-		must(cmd.RegisterFlagCompletionFunc("harness", fixedCompletions(append(slices.Clone(agentdir.Harnesses), agentdir.HarnessACP)...)))
-		setSection(f, sectionGeneral, "harness")
+		f.StringVar(&s.Harness, "agent", "", "Agent: claude, opencode, or acp with --command")
+		must(cmd.RegisterFlagCompletionFunc("agent", fixedCompletions(append(slices.Clone(agentdir.Harnesses), agentdir.HarnessACP)...)))
+		setSection(f, sectionGeneral, "agent")
 	}
 	if sets&coreSettings != 0 {
 		sf.registerCore(cmd)
@@ -82,7 +82,7 @@ func (sf *settingsFlags) register(cmd *cobra.Command, sets settingsSet) {
 func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f := cmd.Flags()
 	s := &sf.s
-	commandUsage := "Command line of the harness, as shell `words`, such as \"cloudcode acp\"; replaces the harness's default command"
+	commandUsage := "Command line of the agent, as shell `words`, such as \"cloudcode acp\"; replaces its default command"
 	if cmd.Name() == agentdir.HarnessACP {
 		commandUsage = "Command line of the ACP agent, as shell `words`, such as \"gemini --experimental-acp\""
 	}
@@ -90,10 +90,10 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.StringVar(&s.Description, "description", "", "Agent description for its card")
 	f.StringVar(&s.Workspace, "workspace", "", "Workspace directory: `src[:dst][:ro]`, such as ~/src/app (default: the directory holding .a2a)")
 	f.StringArrayVar(&s.Mounts, "mount", nil, listUsage("Extra directory to mount: `src[:dst][:ro]`, such as ~/docs:/docs:ro; keyed by dst", false))
-	f.StringArrayVar(&s.Env, "env", nil, listUsage("Extra variable for the harness: `NAME=value`, such as DEBUG=1; keyed by NAME", false))
-	f.StringArrayVar(&s.Secrets, "secret", nil, listUsage("Name of an environment variable to pass to the harness, such as an API key (`NAME`); its value is read from your environment (or prompted) and stored in .a2a/state/secrets", false))
-	f.StringVar(&s.Sandbox, "sandbox", "", "Where the harness runs: docker (default) or local")
-	f.StringVar(&s.Image, "image", "", "Container image of the harness; only applies to --sandbox docker")
+	f.StringArrayVar(&s.Env, "env", nil, listUsage("Extra variable for the agent: `NAME=value`, such as DEBUG=1; keyed by NAME", false))
+	f.StringArrayVar(&s.Secrets, "secret", nil, listUsage("Name of an environment variable to pass to the agent, such as an API key (`NAME`); its value is read from your environment (or prompted) and stored in .a2a/state/secrets", false))
+	f.StringVar(&s.Sandbox, "sandbox", "", "Where the agent runs: docker (default) or local")
+	f.StringVar(&s.Image, "image", "", "Container image of the agent; only applies to --sandbox docker")
 	f.StringVar(&sf.command, "command", "", commandUsage)
 	f.IntVar(&s.Port, "port", 0, "Localhost port, 1-65535 (default: a free port, kept across runs)")
 	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com")

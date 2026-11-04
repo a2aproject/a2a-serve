@@ -42,7 +42,7 @@ Every failure names the command which fixes it. Exits 1 if a check failed.
 --fix enables command plugins and the credential helper in
 ~/.config/a2a-cli/config.yaml and makes credentials.json and .a2a/state
 private. It never installs software and never touches a running agent.
---online also checks bot tokens and whether the harness image can be pulled.`,
+--online also checks bot tokens and whether the agent image can be pulled.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			env, err := doctorEnv(cfg)

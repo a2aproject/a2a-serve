@@ -90,9 +90,9 @@ func TestConfigCommands(t *testing.T) {
 		{name: "approver removed", args: []string{"config", "set", "--approver", "pair:anna"}, wantUsage: true},
 		{name: "set missing mount", args: []string{"config", "set", "--mount", "/nonexistent-a2a:/x"}, wantUsage: true},
 		{
-			name:       "set harness",
-			args:       []string{"config", "set", "--harness", "claude"},
-			wantOut:    []string{"harness      opencode → claude"},
+			name:       "set agent",
+			args:       []string{"config", "set", "--agent", "claude"},
+			wantOut:    []string{"agent        opencode → claude"},
 			wantConfig: func(c *agentdir.Config) { c.Harness = "claude" },
 		},
 		{
@@ -103,7 +103,7 @@ func TestConfigCommands(t *testing.T) {
 		},
 		{name: "unset unknown entry", args: []string{"config", "unset", "allow-tools", "edit"}, wantUsage: true},
 		{name: "unset unknown setting", args: []string{"config", "unset", "nope"}, wantUsage: true},
-		{name: "unset harness", args: []string{"config", "unset", "harness"}, wantUsage: true},
+		{name: "unset agent", args: []string{"config", "unset", "agent"}, wantUsage: true},
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
 		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
 		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
@@ -181,7 +181,7 @@ func TestHarnessCommandValidation(t *testing.T) {
 		wantErr  string
 	}{
 		{name: "invalid setting on the first run", args: []string{"start", "opencode", "--private", "tailscal"}, wantErr: `invalid --private "tailscal"`},
-		{name: "acp without a command", args: []string{"start", "acp"}, wantErr: "harness acp needs a command"},
+		{name: "acp without a command", args: []string{"start", "acp"}, wantErr: "agent acp needs a command"},
 		{
 			name:     "acp command from the config",
 			existing: &agentdir.Config{Name: "coder", Harness: "acp", Command: []string{"fakeacp"}},
@@ -192,7 +192,7 @@ func TestHarnessCommandValidation(t *testing.T) {
 			name:     "other harness",
 			existing: &agentdir.Config{Name: "coder", Harness: "opencode"},
 			args:     []string{"start", "claude"},
-			wantErr:  "this agent runs opencode; switch with `a2a-serve config set --harness claude`",
+			wantErr:  "this agent runs opencode; switch with `a2a-serve config set --agent claude`",
 		},
 	}
 	for _, tc := range tests {
@@ -431,12 +431,12 @@ func TestSettingsHelpSections(t *testing.T) {
 			name:   "run harness",
 			args:   []string{"start", "opencode", "--help"},
 			want:   []string{"General:", "Workspace:", "Sandbox:", "Network:", "Approvals:", "Run (not saved):", "--detach", "--image", "(repeatable)"},
-			absent: []string{"--memory", "--telegram", "--harness"},
+			absent: []string{"--memory", "--telegram", "--agent"},
 		},
 		{
 			name:   "config set",
 			args:   []string{"config", "set", "--help"},
-			want:   []string{"General:", "--harness", "--memory", "--backup-key", "Flags:", "--dry-run"},
+			want:   []string{"General:", "--agent", "--memory", "--backup-key", "Flags:", "--dry-run"},
 			absent: []string{"Run (not saved):", "--telegram", "--quiet"},
 		},
 		{
@@ -472,8 +472,8 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	t.Parallel()
 	d := newTestAgent(t, nil)
 
-	if _, err := runCMD(t, "config", "set", "--dir", d.Root, "--harness", "opencode", "--name", "coder", "--memory", "8g"); err != nil {
-		t.Fatalf("a2a-serve config set --harness in a new directory error = %v", err)
+	if _, err := runCMD(t, "config", "set", "--dir", d.Root, "--agent", "opencode", "--name", "coder", "--memory", "8g"); err != nil {
+		t.Fatalf("a2a-serve config set --agent in a new directory error = %v", err)
 	}
 
 	got, err := d.ReadConfig()
@@ -482,9 +482,9 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	}
 	want := &agentdir.Config{Name: "coder", Harness: "opencode", Limits: agentdir.LimitsConfig{Memory: "8g"}}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("a2a-serve config set --harness wrong config (-want +got) diff = %s", diff)
+		t.Fatalf("a2a-serve config set --agent wrong config (-want +got) diff = %s", diff)
 	}
 	if _, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g"); !errors.Is(err, agentdir.ErrNotFound) {
-		t.Fatalf("a2a-serve config set without --harness in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
+		t.Fatalf("a2a-serve config set without --agent in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
 	}
 }

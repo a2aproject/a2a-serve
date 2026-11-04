@@ -5,14 +5,14 @@
 Without an argument, start the agent saved in the nearest .a2a directory
 (or --dir). On a first run in a terminal, it asks a few questions instead.
 
-With a harness, create the agent in this directory on the first run, or apply
+With an agent, create it in this directory on the first run, or apply
 the flags to the existing agent like `a2a-serve config set`, then start it.
 
 echo, proxy and exec run a local test server instead, without an agent
 directory.
 
 ```
-a2a-serve start [<harness>|echo|proxy|exec] [flags]
+a2a-serve start [<agent>|echo|proxy|exec] [flags]
 ```
 
 **Examples**
@@ -29,7 +29,7 @@ a2a-serve start echo --port 9000
 | Flag | Default | Description |
 |---|---|---|
 | `--detach` |  | Run the agent in the background |
-| `--quiet` |  | Print less on the terminal: keep the harness image pull and build output in the log |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
 
 **Flags**
@@ -66,9 +66,9 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--env NAME=value` |  | Extra variable for the harness: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
+| `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the harness, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -76,8 +76,8 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the ACP agent, as shell words, such as "gemini --experimental-acp" |
-| `--image string` |  | Container image of the harness; only applies to --sandbox docker |
-| `--sandbox string` |  | Where the harness runs: docker (default) or local |
+| `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
 
@@ -102,7 +102,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--detach` |  | Run the agent in the background |
 | `--dir string` |  | Agent directory (default: the current directory) |
-| `--quiet` |  | Print less on the terminal: keep the harness image pull and build output in the log |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
 
 ## a2a-serve start claude
@@ -133,18 +133,18 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--env NAME=value` |  | Extra variable for the harness: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
+| `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the harness, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--command words` |  | Command line of the harness, as shell words, such as "cloudcode acp"; replaces the harness's default command |
-| `--image string` |  | Container image of the harness; only applies to --sandbox docker |
-| `--sandbox string` |  | Where the harness runs: docker (default) or local |
+| `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
+| `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
 
@@ -169,7 +169,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--detach` |  | Run the agent in the background |
 | `--dir string` |  | Agent directory (default: the current directory) |
-| `--quiet` |  | Print less on the terminal: keep the harness image pull and build output in the log |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
 
 ## a2a-serve start echo
@@ -272,18 +272,18 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--env NAME=value` |  | Extra variable for the harness: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
+| `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the harness, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--command words` |  | Command line of the harness, as shell words, such as "cloudcode acp"; replaces the harness's default command |
-| `--image string` |  | Container image of the harness; only applies to --sandbox docker |
-| `--sandbox string` |  | Where the harness runs: docker (default) or local |
+| `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
+| `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
 
@@ -308,7 +308,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--detach` |  | Run the agent in the background |
 | `--dir string` |  | Agent directory (default: the current directory) |
-| `--quiet` |  | Print less on the terminal: keep the harness image pull and build output in the log |
+| `--quiet` |  | Print less on the terminal: keep the agent image pull and build output in the log |
 | `--service` |  | Install and start the agent as a launchd or systemd user service |
 
 ## a2a-serve start proxy

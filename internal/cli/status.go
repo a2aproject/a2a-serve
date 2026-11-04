@@ -128,7 +128,7 @@ func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, er
 // [controlapi.Status] are only set while it runs.
 type statusJSON struct {
 	Name    string `json:"name"`
-	Harness string `json:"harness"`
+	Harness string `json:"agent"`
 	Dir     string `json:"dir"`
 	Running bool   `json:"running"`
 	*controlapi.Status
@@ -172,7 +172,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	for _, m := range st.MCPServers {
 		line := m.Name + ": " + m.Summary
 		if len(m.Missing) > 0 {
-			line += fmt.Sprintf(" ! not passed to the harness, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
+			line += fmt.Sprintf(" ! not passed to the agent, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
 		}
 		fmt.Fprintf(&sb, "  mcp      %s\n", line)
 	}

@@ -36,7 +36,7 @@ func TestStatusStoppedJSON(t *testing.T) {
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
 	}
-	want := map[string]any{"name": "coder", "harness": "opencode", "dir": d.Root, "running": false}
+	want := map[string]any{"name": "coder", "agent": "opencode", "dir": d.Root, "running": false}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("a2a-serve status -o json wrong result (-want +got) diff = %s", diff)
 	}

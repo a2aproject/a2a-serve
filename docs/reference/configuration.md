@@ -6,7 +6,7 @@ such as `secret:TELEGRAM_BOT_TOKEN`.
 
 ```yaml
 name: coder
-harness: opencode
+agent: opencode
 command: [cloudcode, acp]        # optional: replaces the profile's command
 sandbox: docker                  # or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a

@@ -32,11 +32,11 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "set <flags>",
-		Short: "Change settings with the flags of `a2a-serve start <harness>`, and the settings only it takes",
-		Long: `Change settings with the flags of ` + "`a2a-serve start <harness>`" + `, and the
+		Short: "Change settings with the flags of `a2a-serve start <agent>`, and the settings only it takes",
+		Long: `Change settings with the flags of ` + "`a2a-serve start <agent>`" + `, and the
 operational settings only config set takes: limits, network-provider
 options, backups and Google sign-in. Messengers are set with
-` + "`a2a-serve channel add`" + `. With --harness, config set also creates an
+` + "`a2a-serve channel add`" + `. With --agent, config set also creates an
 agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
@@ -50,7 +50,7 @@ and --allow-tools and --deny-tools by value. Remove entries with
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			d, err := sf.agentDir()
-			// With --harness, a new agent is configured before its first
+			// With --agent, a new agent is configured before its first
 			// start, such as with the credentials a headless start needs.
 			if errors.Is(err, agentdir.ErrNotFound) && flags.s.Harness != "" {
 				d, err = harnessDir(sf.dir)

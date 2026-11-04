@@ -8,7 +8,7 @@ and its result and approval requests can go to a chat, where replying
 continues the conversation. A run missed while the agent was stopped runs
 once when it starts.
 
-The harness can also create schedules during a conversation, such as for
+The agent can also create schedules during a conversation, such as for
 "remind me on Friday at 5"; they run as the user who asked and report back
 in the same conversation.
 

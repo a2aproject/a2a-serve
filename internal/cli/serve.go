@@ -197,7 +197,7 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	d, err := f.agentDir()
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return clierr.Usage("no agent here: start one with `a2a-serve start <harness>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`")
+			return clierr.Usage("no agent here: start one with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`")
 		}
 		return runWizard(cmd, cfg, m.quiet)
 	}

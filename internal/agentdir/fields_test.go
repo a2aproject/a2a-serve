@@ -67,7 +67,7 @@ func TestUnset(t *testing.T) {
 		{setting: "tailscale-authkey", modify: func(*Config) {}, wantDeleted: []string{SecretTailscaleKey}},
 		{setting: "env", entries: []string{"MISSING"}, wantErr: true},
 		{setting: "port", entries: []string{"1"}, wantErr: true},
-		{setting: "harness", wantErr: true},
+		{setting: "agent", wantErr: true},
 		{setting: "nope", wantErr: true},
 	}
 	d := Dir{Root: "/src/app"}

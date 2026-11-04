@@ -63,11 +63,11 @@ func (c *Config) Validate() error {
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
 	switch {
 	case c.Harness == "":
-		add("no harness: run `a2a-serve start <harness>`")
+		add("no agent: run `a2a-serve start <agent>`")
 	case slices.Contains(ReservedHarnesses, c.Harness):
-		add("invalid harness %q: %s are test servers, not harnesses", c.Harness, strings.Join(ReservedHarnesses, ", "))
+		add("invalid agent %q: %s are test servers", c.Harness, strings.Join(ReservedHarnesses, ", "))
 	case c.Harness == HarnessACP && len(c.Command) == 0:
-		add(`harness acp needs a command, such as --command "gemini --experimental-acp"`)
+		add(`agent acp needs a command, such as --command "gemini --experimental-acp"`)
 	case len(c.Command) == 0 && !slices.Contains(Harnesses, c.Harness):
 		add("unknown harness %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
@@ -327,5 +327,5 @@ func (c *Config) CheckHarness(name string) error {
 	if c.Harness == "" || c.Harness == name {
 		return nil
 	}
-	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --harness %s`", c.Harness, name)}
+	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --agent %s`", c.Harness, name)}
 }

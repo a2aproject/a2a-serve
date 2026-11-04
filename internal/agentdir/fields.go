@@ -27,7 +27,7 @@ import (
 type placement int
 
 const (
-	// placeCore settings are flags of `start <harness>` and `config set`.
+	// placeCore settings are flags of `start <agent>` and `config set`.
 	placeCore placement = iota
 	// placeOperational settings are flags of `config set` only.
 	placeOperational
@@ -146,7 +146,7 @@ func mountArgKey(s string) string {
 }
 
 var fields = []field{
-	scalar("harness", false, func(c *Config) *string { return &c.Harness }),
+	scalar("agent", false, func(c *Config) *string { return &c.Harness }),
 	scalar("name", false, func(c *Config) *string { return &c.Name }),
 	scalar("description", true, func(c *Config) *string { return &c.Description }),
 	{
@@ -313,8 +313,8 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 		return nil, fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)
 	case !ok:
 		return nil, fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))
-	case setting == "harness":
-		return nil, fmt.Errorf("the harness can't be unset; switch it with `a2a-serve config set --harness <name>`")
+	case setting == "agent":
+		return nil, fmt.Errorf("the agent can't be unset; switch it with `a2a-serve config set --agent <name>`")
 	case !f.list && len(entries) > 0:
 		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
 	case setting == "name":
@@ -359,7 +359,7 @@ func (c *Config) Commands(stored Secrets) [][]string {
 	set := []string{"a2a-serve", "config", "set"}
 	channels := map[string][]string{}
 	for _, f := range fields {
-		if f.flag == "harness" || (f.flag == "name" && c.Name == "") {
+		if f.flag == "agent" || (f.flag == "name" && c.Name == "") {
 			continue
 		}
 		switch f.place {

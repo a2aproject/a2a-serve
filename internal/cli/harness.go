@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
-// newHarnessCmd builds `a2a-serve start <harness>`, which creates the agent on
+// newHarnessCmd builds `a2a-serve start <agent>`, which creates the agent on
 // the first run and starts it. In an existing agent the flags go through
 // the `config set` path first. "acp" starts any ACP agent given with
 // --command.

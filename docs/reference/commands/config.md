@@ -3,7 +3,7 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Show and change the settings in .a2a/config.yaml with the flags of
-`a2a-serve start <harness>`. Every change is validated and printed as a diff. A
+`a2a-serve start <agent>`. Every change is validated and printed as a diff. A
 running agent applies the description and the approval settings at once;
 other settings wait for `a2a-serve restart`.
 
@@ -33,10 +33,10 @@ a2a-serve config edit
 
 ## a2a-serve config set
 
-Change settings with the flags of `a2a-serve start <harness>`, and the
+Change settings with the flags of `a2a-serve start <agent>`, and the
 operational settings only config set takes: limits, network-provider
 options, backups and Google sign-in. Messengers are set with
-`a2a-serve channel add`. With --harness, config set also creates an
+`a2a-serve channel add`. With --agent, config set also creates an
 agent, to be started with `a2a-serve start`. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, --identity by login,
@@ -64,12 +64,12 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
+| `--agent string` |  | Agent: claude, opencode, or acp with --command |
 | `--backup string` |  | Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix |
 | `--backup-interval duration` |  | Time between snapshots, a duration such as 30m or 1h (default 24h) |
 | `--backup-key string` |  | Passphrase the snapshots are encrypted with; keep a copy away from the backups (secret value: env:VAR, -, or the value) |
 | `--backup-retention duration` |  | How long snapshots are kept, a duration in hours or days such as 48h or 7d; the latest is always kept (default 7d) |
 | `--description string` |  | Agent description for its card |
-| `--harness string` |  | Harness: claude, opencode, or acp with --command |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 | `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d) |
 
@@ -77,21 +77,21 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
-| `--env NAME=value` |  | Extra variable for the harness: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
+| `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the harness, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
 
 | Flag | Default | Description |
 |---|---|---|
-| `--command words` |  | Command line of the harness, as shell words, such as "cloudcode acp"; replaces the harness's default command |
+| `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
 | `--cpus string` |  | Container CPU limit, such as 2 or 1.5 (default 2) |
-| `--image string` |  | Container image of the harness; only applies to --sandbox docker |
+| `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--memory string` |  | Container memory limit, such as 4g or 512m (default 4g) |
 | `--pids int` |  | Container process limit (default 512) |
-| `--sandbox string` |  | Where the harness runs: docker (default) or local |
+| `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
 
@@ -156,7 +156,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, an identity by login. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
 
-Settings: allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, harness, identity, image, memory, mount, name, ngrok-authtoken, ngrok-url, owner-chat, pids, port, private, public, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, identity, image, memory, mount, name, ngrok-authtoken, ngrok-url, owner-chat, pids, port, private, public, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

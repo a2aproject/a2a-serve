@@ -379,7 +379,7 @@ export RELAY RELAY_TOKEN
 echo "Agent Mesh relay ready at: ${RELAY}"
 
 banner "2. Starting two Docker-sandboxed opencode agents (coder & reviewer) with --private/--public ${RELAY}"
-a2a-serve config set --dir "$WORK/coder" --harness opencode \
+a2a-serve config set --dir "$WORK/coder" --agent opencode \
   --name coder \
   --description "Primary coding agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \
@@ -390,7 +390,7 @@ a2a-serve config set --dir "$WORK/coder" --harness opencode \
   "${SECRET_ARGS[@]}"
 a2a-serve start --dir "$WORK/coder" --quiet --detach
 
-a2a-serve config set --dir "$WORK/reviewer" --harness opencode \
+a2a-serve config set --dir "$WORK/reviewer" --agent opencode \
   --name reviewer \
   --description "Code review agent on Agent Mesh" \
   "${IMAGE_ARGS[@]}" \

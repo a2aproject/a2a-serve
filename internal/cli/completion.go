@@ -38,7 +38,7 @@ func newCompletionCmd() *cobra.Command {
 		Use:   "completion <bash|zsh|fish|powershell>",
 		Short: "Print a shell completion script",
 		Long: `Print a completion script for ` + scriptProgram + `, the binary the a2a CLI runs
-as ` + "`a2a serve`" + `. It completes commands, harness names, channel kinds, enum
+as ` + "`a2a serve`" + `. It completes commands, agent names, channel kinds, enum
 flags, and the contacts and pairings of a running agent.
 
   source <(a2a-serve completion bash)
