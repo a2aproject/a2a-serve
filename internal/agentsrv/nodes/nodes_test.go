@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -112,4 +113,30 @@ func TestRepeatedEventInLaterTurn(t *testing.T) {
 	}
 	turn(true)
 	turn(true)
+}
+
+func TestPostWebhookErrorHidesSecrets(t *testing.T) {
+	t.Parallel()
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad key s3cret", http.StatusUnauthorized)
+	}))
+	t.Cleanup(failing.Close)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	tests := []struct {
+		name    string
+		webhook string
+	}{
+		{name: "error status", webhook: failing.URL + "/hook?key=s3cret"},
+		{name: "unreachable", webhook: closed.URL + "/hook?key=s3cret"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := postWebhook(t.Context(), store.Node{ID: "grok", Webhook: tc.webhook}, "wake_1", []byte("{}"))
+			if err == nil || strings.Contains(err.Error(), "s3cret") {
+				t.Fatalf("postWebhook() error = %v, want an error without the secret", err)
+			}
+		})
+	}
 }
