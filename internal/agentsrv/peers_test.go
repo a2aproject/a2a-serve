@@ -293,6 +293,54 @@ func TestAgentsURLHandles(t *testing.T) {
 	}
 }
 
+func TestAgentsURLWaitsForStartingTurn(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	p := ts.srv.peers
+	ctx := context.Background()
+	h, err := p.handle(ctx, "ctx1")
+	if err != nil {
+		t.Fatalf("handle() error = %v", err)
+	}
+	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "task1"}
+	var (
+		got    callClaims
+		gotErr error
+	)
+	// a2aacp prompts the agent before it yields the working update, so the
+	// agent can call its agents URL first.
+	inner := func(yield func(a2a.Event, error) bool) {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			got, gotErr = p.claimsOf(ctx, h)
+		}()
+		select {
+		case <-done:
+		case <-time.After(100 * time.Millisecond):
+		}
+		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
+			return
+		}
+		<-done
+	}
+	for _, err := range p.duringTurn(auth.WithPrincipal(ctx, auth.Owner()), execCtx, inner) {
+		if err != nil {
+			t.Fatalf("duringTurn() error = %v", err)
+		}
+	}
+	if gotErr != nil {
+		t.Fatalf("claimsOf() before the working update error = %v, want nil", gotErr)
+	}
+	want := callClaims{ContextID: "ctx1", User: auth.Owner()}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := p.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+		t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	}
+}
+
 // turnURL returns the agents URL of a conversation with a running turn of
 // the owner, which ends with the test.
 func turnURL(t *testing.T, ts *testServer, contextID string) string {

@@ -79,6 +79,11 @@ type Peers struct {
 	// turns has the claims of the running turn of each conversation; a2aacp
 	// runs one turn of a conversation at a time.
 	turns map[string]*callClaims
+	// starting counts the turns of each conversation which run but haven't
+	// begun yet.
+	starting map[string]int
+	// turnsChanged is closed when turns or starting change.
+	turnsChanged chan struct{}
 	// paused has the claims of the turn of each conversation which waits
 	// for an answer, so that the answer resumes it for the same user.
 	paused map[string]pausedTurn
@@ -161,7 +166,7 @@ var (
 
 // claimsOf returns the claims of the running turn of a handle's
 // conversation: [errUnknownHandle] for an unknown handle, and [errNoTurn]
-// when no turn runs.
+// when no turn runs. It waits for a turn which is starting.
 func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error) {
 	h, err := p.store.HandleByName(ctx, handle)
 	if errors.Is(err, store.ErrNotFound) {
@@ -170,13 +175,48 @@ func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error)
 	if err != nil {
 		return callClaims{}, fmt.Errorf("loading agents URL handle: %w", err)
 	}
-	p.turnsMu.Lock()
-	defer p.turnsMu.Unlock()
-	c := p.turns[h.ContextID]
-	if c == nil {
-		return callClaims{}, errNoTurn
+	for {
+		p.turnsMu.Lock()
+		c, starting, changed := p.turns[h.ContextID], p.starting[h.ContextID], p.turnsChanged
+		p.turnsMu.Unlock()
+		if c != nil {
+			return *c, nil
+		}
+		if starting == 0 {
+			return callClaims{}, errNoTurn
+		}
+		select {
+		case <-changed:
+		case <-ctx.Done():
+			return callClaims{}, ctx.Err()
+		}
 	}
-	return *c, nil
+}
+
+// startingTurn marks a turn of a conversation as starting, until done is
+// called: a2aacp prompts the harness before it yields the working update
+// which begins the turn, so the harness can call its agents URL first.
+func (p *Peers) startingTurn(contextID string) (done func()) {
+	p.turnsMu.Lock()
+	p.starting[contextID]++
+	p.turnsMu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			p.turnsMu.Lock()
+			defer p.turnsMu.Unlock()
+			if p.starting[contextID]--; p.starting[contextID] == 0 {
+				delete(p.starting, contextID)
+			}
+			p.notifyTurnsLocked()
+		})
+	}
+}
+
+// notifyTurnsLocked wakes the calls waiting for a turn to begin.
+func (p *Peers) notifyTurnsLocked() {
+	close(p.turnsChanged)
+	p.turnsChanged = make(chan struct{})
 }
 
 // pausedTurn is a turn which waits for an answer to a question of its task.
@@ -191,6 +231,7 @@ func (p *Peers) beginTurn(c callClaims) (end func()) {
 	turn := &c
 	p.turnsMu.Lock()
 	p.turns[c.ContextID] = turn
+	p.notifyTurnsLocked()
 	p.turnsMu.Unlock()
 	return func() {
 		p.turnsMu.Lock()
@@ -212,7 +253,9 @@ func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 			end   func()
 			state a2a.TaskState
 		)
+		started := p.startingTurn(c.ContextID)
 		defer func() {
+			started()
 			if end != nil {
 				end()
 			}
@@ -230,6 +273,7 @@ func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 				state = e.Status.State
 				if end == nil && state == a2a.TaskStateWorking {
 					end = p.beginTurn(c)
+					started()
 				}
 			}
 			if !yield(ev, err) {

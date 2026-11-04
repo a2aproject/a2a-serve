@@ -265,7 +265,7 @@ func TestScheduleDoesNotRunWhenItsNextRunIsNotSaved(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", ts.dir.DBPath())
+	db, err := sql.Open("sqlite", "file:"+ts.dir.DBPath()+"?_pragma=busy_timeout(5000)")
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v", err)
 	}
