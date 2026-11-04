@@ -15,14 +15,12 @@
 package cli
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/service"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
 func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -40,38 +38,25 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			client := sf.controlClient(d)
-			_, err = client.Status(cmd.Context())
-			running := err == nil
-			if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
-				return err
-			}
-			name := d.ServiceName()
-			installed := service.Installed(name)
-			if installed && uninstall {
-				if err := service.Uninstall(name); err != nil {
-					return err
-				}
-			}
-			// A detached agent, or one the service manager didn't stop.
-			if err := client.Stop(cmd.Context()); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+			res, err := lifecycle.Stop(cmd.Context(), d, sf.controlClient(d), lifecycle.StopOptions{Uninstall: uninstall})
+			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(stopResult{Name: conf.Name, Stopped: running, ServiceInstalled: installed && !uninstall, ServiceRemoved: installed && uninstall})
+				return cfg.PrintJSON(stopResult{Name: conf.Name, Stopped: res.Running, ServiceInstalled: res.ServiceInstalled && !res.ServiceRemoved, ServiceRemoved: res.ServiceRemoved})
 			}
 			var sb strings.Builder
-			if running {
+			if res.Running {
 				fmt.Fprintf(&sb, "✓ stopped %s\n", conf.Name)
 			} else {
 				fmt.Fprintf(&sb, "%s is not running\n", conf.Name)
 			}
 			switch {
-			case uninstall && installed:
+			case res.ServiceRemoved:
 				fmt.Fprintf(&sb, "✓ removed the %s service\n", conf.Name)
 			case uninstall:
 				sb.WriteString("  no service was installed\n")
-			case installed:
+			case res.ServiceInstalled:
 				sb.WriteString("  it starts again at login; remove the service with `a2a-serve stop --uninstall`\n")
 			}
 			_, err = fmt.Fprint(cfg.Out, sb.String())

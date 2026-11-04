@@ -12,12 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package launch runs an agent server in the foreground, in the background or
-// as a user service, and follows its log.
-package launch
+// Package lifecycle starts, stops and restarts an agent server, in the
+// foreground, in the background or as a user service, and follows its log.
+package lifecycle
 
 import (
-	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -41,13 +40,48 @@ import (
 // maxLogSize is the size at which the server log is rotated on start.
 const maxLogSize = 10 << 20
 
-// Foreground runs the agent of dir until ctx ends. Progress, including the
-// output of pulling or building the harness image, goes to out; logs and the
-// harness's stderr go to state/server.log, and also to stderr when verbose.
-// quiet keeps the image output in the log only. creds, if set, receives an
-// owner token for the local URL. ready, if set, is called once the agent
-// serves.
-func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, quiet bool, creds *credstore.Store, ready func()) error {
+// Mode is how [Start] runs the agent.
+type Mode int
+
+const (
+	// Foreground runs the agent until the context of [Start] ends.
+	Foreground Mode = iota
+	// Detached starts the agent detached from the terminal.
+	Detached
+	// Service installs and starts the agent as a user service.
+	Service
+)
+
+// StartOptions configure [Start].
+type StartOptions struct {
+	Mode Mode
+	// Out receives progress, including the output of pulling or building
+	// the harness image.
+	Out io.Writer
+	// Quiet keeps the image output in the log only.
+	Quiet bool
+	// Verbose also writes logs and the harness's stderr to stderr in the
+	// foreground.
+	Verbose bool
+	// Credentials, if set, receives an owner token for the local URL in the
+	// foreground.
+	Credentials *credstore.Store
+	// Ready, if set, is called once the agent serves in the foreground.
+	Ready func()
+}
+
+// Start runs the agent of dir. In the foreground it runs until ctx ends;
+// detached or as a service it returns once the agent serves, and an agent
+// which already serves is left running.
+func Start(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
+	if opts.Mode == Foreground {
+		return foreground(ctx, dir, opts)
+	}
+	return background(ctx, dir, opts.Mode == Service, opts.Quiet, opts.Out)
+}
+
+// foreground logs to state/server.log, and also to stderr when verbose.
+func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error {
 	cfg, err := dir.LoadConfig()
 	if err != nil {
 		return err
@@ -80,22 +114,22 @@ func Foreground(ctx context.Context, dir agentdir.Dir, out io.Writer, verbose, q
 	}()
 	var logOut io.Writer = logFile
 	level := slog.LevelInfo
-	if verbose {
+	if opts.Verbose {
 		logOut = io.MultiWriter(logFile, os.Stderr)
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: level})))
 	slog.Info("starting agent server", "name", cfg.Name, "harness", cfg.Harness, "dir", dir.Root)
-	opts := agentsrv.Options{Dir: dir, Config: cfg, Secrets: secrets, Out: out, HarnessLog: logOut, ImageProgress: out, Credentials: creds, SetupProblems: doctor.SetupProblems, SharedGoogleClientID: googleauth.SharedClientID}
-	if quiet {
+	srvOpts := agentsrv.Options{Dir: dir, Config: cfg, Secrets: secrets, Out: opts.Out, HarnessLog: logOut, ImageProgress: opts.Out, Credentials: opts.Credentials, SetupProblems: doctor.SetupProblems, SharedGoogleClientID: googleauth.SharedClientID}
+	if opts.Quiet {
 		lw := &logLines{msg: "harness image"}
 		defer lw.flush()
-		opts.ImageProgress = lw
+		srvOpts.ImageProgress = lw
 	}
-	if ready != nil {
-		opts.Ready = func(*agentsrv.Server) { ready() }
+	if ready := opts.Ready; ready != nil {
+		srvOpts.Ready = func(*agentsrv.Server) { ready() }
 	}
-	err = agentsrv.Run(ctx, opts)
+	err = agentsrv.Run(ctx, srvOpts)
 	if err != nil {
 		slog.Error("agent server stopped", "error", err)
 	}
@@ -163,11 +197,9 @@ func copyTruncate(src, dst string) (err error) {
 	return os.Truncate(src, 0)
 }
 
-// Background starts the agent detached from the terminal, or as a user
+// background starts the agent detached from the terminal, or as a user
 // service when asService, and relays its progress to out until it serves.
-// An agent which already serves is left running.
-// quiet keeps the output of pulling or building the harness image out of it.
-func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, out io.Writer) error {
+func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, out io.Writer) error {
 	cfg, err := dir.LoadConfig()
 	if err != nil {
 		return err
@@ -303,96 +335,4 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 		case <-time.After(300 * time.Millisecond):
 		}
 	}
-}
-
-// isProgress reports whether a log line is a progress line for the user
-// rather than a structured log record.
-func isProgress(line string) bool {
-	return line != "" && !strings.HasPrefix(line, "time=")
-}
-
-// readFrom returns the complete lines of the file at path after offset, and
-// the offset after them. A file shorter than offset was replaced, as on a
-// restart, and is read from the start.
-func readFrom(path string, offset int64) ([]string, int64, error) {
-	f, err := os.Open(path)
-	if err != nil {
-		return nil, offset, err
-	}
-	defer func() {
-		if err := f.Close(); err != nil {
-			slog.Debug("closing log", "error", err)
-		}
-	}()
-	fi, err := f.Stat()
-	if err != nil {
-		return nil, offset, err
-	}
-	if fi.Size() < offset {
-		offset = 0
-	}
-	if _, err := f.Seek(offset, io.SeekStart); err != nil {
-		return nil, offset, err
-	}
-	var lines []string
-	r := bufio.NewReader(f)
-	for {
-		line, err := r.ReadString('\n')
-		if errors.Is(err, io.EOF) {
-			// A partial line is read again once it is complete.
-			return lines, offset, nil
-		}
-		if err != nil {
-			return lines, offset, err
-		}
-		offset += int64(len(line))
-		lines = append(lines, strings.TrimRight(line, "\r\n"))
-	}
-}
-
-// FollowLog prints the last n lines of the log, then new lines until ctx
-// ends if follow is set.
-func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out io.Writer) error {
-	data, err := os.ReadFile(dir.LogPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("no log yet at %s", dir.LogPath())
-	}
-	if err != nil {
-		return err
-	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if n > 0 && len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	if err := printLines(out, lines); err != nil {
-		return err
-	}
-	if !follow {
-		return nil
-	}
-	offset := int64(len(data))
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		case <-time.After(500 * time.Millisecond):
-		}
-		lines, next, err := readFrom(dir.LogPath(), offset)
-		if err != nil {
-			return err
-		}
-		offset = next
-		if err := printLines(out, lines); err != nil {
-			return err
-		}
-	}
-}
-
-func printLines(out io.Writer, lines []string) error {
-	for _, l := range lines {
-		if _, err := fmt.Fprintln(out, l); err != nil {
-			return err
-		}
-	}
-	return nil
 }

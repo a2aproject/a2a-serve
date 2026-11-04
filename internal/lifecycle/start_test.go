@@ -12,14 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package launch
+package lifecycle
 
 import (
 	"context"
-	"errors"
 	"io"
-	"net"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -29,9 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
 
 func TestReadFrom(t *testing.T) {
@@ -69,7 +64,7 @@ func TestReadFrom(t *testing.T) {
 	}
 }
 
-func TestForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
+func TestStartForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("advisory locks are no-ops on this platform")
@@ -95,61 +90,36 @@ func TestForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 
-	err = Foreground(context.Background(), dir, io.Discard, false, true, nil, nil)
+	err = Start(context.Background(), dir, StartOptions{Out: io.Discard, Quiet: true})
 	if err == nil || !strings.Contains(err.Error(), "already running") {
-		t.Fatalf("Foreground() error = %v, want an already running error", err)
+		t.Fatalf("Start() error = %v, want an already running error", err)
 	}
 	data, err := os.ReadFile(dir.LogPath())
 	if err != nil {
 		t.Fatalf("reading the log error = %v", err)
 	}
 	if string(data) != big {
-		t.Fatalf("Foreground() changed the running agent's log to %d bytes, want %d", len(data), len(big))
+		t.Fatalf("Start() changed the running agent's log to %d bytes, want %d", len(data), len(big))
 	}
 	if _, err := os.Stat(dir.LogPath() + ".1"); !os.IsNotExist(err) {
-		t.Fatalf("Foreground() rotated the running agent's log: os.Stat() error = %v", err)
+		t.Fatalf("Start() rotated the running agent's log: os.Stat() error = %v", err)
 	}
 }
 
-func TestBackgroundWhileRunning(t *testing.T) {
+func TestStartDetachedWhileRunning(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("unix sockets are not used on this platform")
 	}
-	dir, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
-	}
-	if err := dir.SaveConfig(&agentdir.Config{Name: "coder", Harness: "opencode"}); err != nil {
-		t.Fatalf("SaveConfig() error = %v", err)
-	}
-	if err := dir.Init(); err != nil {
-		t.Fatalf("Init() error = %v", err)
-	}
-	ln, err := net.Listen("unix", dir.SocketPath())
-	if err != nil {
-		t.Fatalf("net.Listen() error = %v", err)
-	}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder"})
-	})}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			t.Errorf("Serve() error = %v", err)
-		}
-	}()
-	t.Cleanup(func() {
-		if err := srv.Close(); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
+	dir := newAgent(t)
+	serveControl(t, dir, &fakeControl{})
 
 	var out strings.Builder
-	if err := Background(context.Background(), dir, false, true, &out); err != nil {
-		t.Fatalf("Background() error = %v", err)
+	if err := Start(context.Background(), dir, StartOptions{Mode: Detached, Quiet: true, Out: &out}); err != nil {
+		t.Fatalf("Start() error = %v", err)
 	}
 	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
-		t.Fatalf("Background() output = %q, want %q", out.String(), want)
+		t.Fatalf("Start() output = %q, want %q", out.String(), want)
 	}
 }
 

@@ -17,7 +17,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
 func newRestartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -38,7 +38,7 @@ Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 			}
 			ctx := cmd.Context()
 			client := sf.controlClient(d)
-			if err := agentctl.Restart(ctx, d, client, quiet, cfg.progress()); err != nil {
+			if err := lifecycle.Restart(ctx, d, client, quiet, cfg.progress()); err != nil {
 				return err
 			}
 			if !cfg.IsJSON() {

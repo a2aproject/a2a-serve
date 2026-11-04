@@ -14,7 +14,7 @@
 
 //go:build !unix
 
-package agentctl
+package lifecycle
 
 // sessionLeader assumes a detached server where sessions don't exist.
 func sessionLeader(int) (bool, error) { return true, nil }

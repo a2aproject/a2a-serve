@@ -35,7 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
-	"github.com/a2aproject/a2a-serve/internal/launch"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
@@ -233,7 +233,11 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 		return err
 	}
 	if m.detach || m.service {
-		return launch.Background(ctx, d, m.service, m.quiet, cfg.Out)
+		mode := lifecycle.Detached
+		if m.service {
+			mode = lifecycle.Service
+		}
+		return lifecycle.Start(ctx, d, lifecycle.StartOptions{Mode: mode, Quiet: m.quiet, Out: cfg.Out})
 	}
 	ctx, stop := signalContext(ctx)
 	defer stop()
@@ -241,7 +245,13 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 	if err != nil {
 		slog.Warn("no credential store for the owner token of this machine", "error", err)
 	}
-	return launch.Foreground(ctx, d, cfg.Out, cfg.verbose, m.quiet, creds, func() { printForegroundHint(cfg.Out) })
+	return lifecycle.Start(ctx, d, lifecycle.StartOptions{
+		Out:         cfg.Out,
+		Quiet:       m.quiet,
+		Verbose:     cfg.verbose,
+		Credentials: creds,
+		Ready:       func() { printForegroundHint(cfg.Out) },
+	})
 }
 
 // printAgentLine names the agent and the directory it runs from, since a
