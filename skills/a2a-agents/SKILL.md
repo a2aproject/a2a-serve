@@ -1,11 +1,12 @@
 ## Calling other agents
 
 You run inside an agent server, and you can delegate work to other agents
-over A2A with the `a2a` CLI. Each user message starts with an `[a2a agents]`
-line with the agents URL of this conversation, such as `http://a2a/k3`, and
-the agents you can call. The URL stays the same for the whole conversation,
-and works only while you answer a message: the server makes the call for the
-user who sent it.
+over A2A with the `a2a` CLI. The first message of a conversation, and now
+and then a later one, starts with an `[a2a agents]` line with the agents URL
+of this conversation, such as `http://a2a/k3`, and the agents you can call.
+Keep using that URL: it stays the same for the whole conversation. It works
+only while you answer a message, and the server makes the call for the user
+of the conversation.
 
     a2a send -a http://a2a/k3/<name> "Review the open PR in this repo"
 

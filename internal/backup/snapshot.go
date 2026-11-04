@@ -42,6 +42,8 @@ const (
 	pathSecrets = "state/secrets"
 	pathAds     = "state/ads.json"
 	pathHome    = "state/home"
+	// pathUserHomes holds a home per authenticated user.
+	pathUserHomes = "state/homes"
 )
 
 // identityPaths hold the agent's network identity on a tailnet or an Agent
@@ -54,7 +56,7 @@ var skippedHomeDirs = []string{".cache", ".npm"}
 
 // writeArchive writes a gzipped tar of the agent's state to w: a consistent
 // copy of server.db, config.yaml, the secrets, the advertised pairings, the
-// harness home and the network identity.
+// harness homes and the network identity.
 func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
@@ -66,7 +68,7 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 			return err
 		}
 	}
-	for _, p := range append([]string{pathHome}, identityPaths...) {
+	for _, p := range append([]string{pathHome, pathUserHomes}, identityPaths...) {
 		if err := addTree(ctx, tw, filepath.Join(d.Path(), p), p); err != nil {
 			return err
 		}
@@ -157,7 +159,7 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
 		if err != nil {
 			return err
 		}
-		if e.IsDir() && slices.Contains(skippedHomeDirs, rel) && name == pathHome {
+		if e.IsDir() && isHomeCache(name, filepath.ToSlash(rel)) {
 			return filepath.SkipDir
 		}
 		entry := path.Join(name, filepath.ToSlash(rel))
@@ -228,6 +230,19 @@ func extractArchive(r io.Reader, dst string, takeOver bool) error {
 		}
 	}
 	return gz.Close()
+}
+
+// isHomeCache reports whether rel in the tree name is a cache directory of
+// a harness home.
+func isHomeCache(name, rel string) bool {
+	switch name {
+	case pathHome:
+		return slices.Contains(skippedHomeDirs, rel)
+	case pathUserHomes:
+		_, dir, ok := strings.Cut(rel, "/")
+		return ok && slices.Contains(skippedHomeDirs, dir)
+	}
+	return false
 }
 
 func isIdentity(name string) bool {

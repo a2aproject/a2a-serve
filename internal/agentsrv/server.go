@@ -47,6 +47,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -134,8 +135,9 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector
-	// split runs anonymous conversations in their own agent process, and
-	// budget limits their tasks.
+	// split runs the conversations of anonymous callers and of each
+	// authenticated user in their own agent processes, and budget limits
+	// the tasks of anonymous callers.
 	split  *splitExecutor
 	budget *anonymousBudget
 
@@ -354,6 +356,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		turns:     map[string]*callClaims{},
 		starting:  map[string]int{},
 		paused:    map[string]pausedTurn{},
+		sessions:  s.store.Sessions(),
+		lined:     map[string]*linedSession{},
+		lineEvery: agentsLineEvery,
 
 		turnsChanged: make(chan struct{}),
 	}
@@ -376,12 +381,16 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.budget = newAnonymousBudget()
 	s.split = &splitExecutor{main: exec, sessions: s.store.Sessions(), budget: s.budget, ctx: ctx}
 	if opts.Executor == nil {
-		s.split.start = func(ctx context.Context) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-			return s.newAnonymousExecutor(ctx, opts.HarnessLog)
+		s.split.start = func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			if pool == anonymousPool {
+				return s.newAnonymousExecutor(ctx, opts.HarnessLog)
+			}
+			return s.newUsersExecutor(ctx, opts.HarnessLog)
 		}
 	}
 	closers.push(s.split.close)
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, peers: s.peers, approvals: s.approvals, anonymous: s.split.Anonymous},
+	s.peers.agentKey = s.split.agentKey
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, peers: s.peers, approvals: s.approvals},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -617,7 +626,24 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 			s.logf("! %s", p)
 		}
 	}
+	a, err := s.access(ctx)
+	if err != nil {
+		return err
+	}
+	if w := localSandboxWarning(s.config().Sandbox, a); w != "" {
+		s.logf("! %s", w)
+	}
 	return s.router.announce(ctx)
+}
+
+// localSandboxWarning warns when an agent without a sandbox may be called
+// by others than you: their conversations run in separate processes, but
+// on the host as you, so they can read each other's files and yours.
+func localSandboxWarning(sandbox string, a *controlapi.Access) string {
+	if sandbox != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
+		return ""
+	}
+	return "the agent runs without a sandbox, so everyone who may call it can read your files and the conversations of others; use --sandbox docker unless you trust them all"
 }
 
 // viewer is the task store's view of the caller: owners see every task,

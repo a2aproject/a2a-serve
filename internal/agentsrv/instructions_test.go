@@ -70,6 +70,7 @@ func TestWriteSection(t *testing.T) {
 func TestWithAgentsLine(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
+	ts.pair("anna", auth.RoleAuthenticated)
 	tests := []struct {
 		name     string
 		caller   *auth.Principal
@@ -89,7 +90,7 @@ func TestWithAgentsLine(t *testing.T) {
 			}
 			execCtx := &a2asrv.ExecutorContext{ContextID: "c1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 
-			got := ts.srv.peers.withAgentsLine(ctx, execCtx)
+			_, got := ts.srv.peers.withAgentsLine(ctx, execCtx)
 
 			if hasLine := strings.Contains(messageText(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
 				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", messageText(got.Message), tc.wantLine)

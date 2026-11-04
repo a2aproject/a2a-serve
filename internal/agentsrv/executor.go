@@ -50,7 +50,7 @@ const harnessSocketName = "a2a.sock"
 // newExecutor starts the harness as an ACP agent in its sandbox. close stops
 // the harness and cleans up its sandbox.
 func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.Writer) (exec a2asrv.AgentExecutor, close func(context.Context) error, err error) {
-	h, err := s.prepareHarness(ctx, imageProgress, false)
+	h, err := s.prepareHarness(ctx, imageProgress, "")
 	if err != nil {
 		return nil, nil, err
 	}
@@ -78,7 +78,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 // It gets no way to call other agents: no socket, credential helper or CLI.
 // With Docker it runs in its own container with its own home.
 func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-	h, err := s.prepareHarness(ctx, harnessLog, true)
+	h, err := s.prepareHarness(ctx, harnessLog, anonymousAgentKey)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -100,6 +100,47 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
 }
 
+// maxUserAgents limits the agent processes of authenticated users that run
+// at once; the least recently used idle one stops to start another.
+const maxUserAgents = 10
+
+// newUsersExecutor runs the conversations of each authenticated user in an
+// agent process of their own, with its own home and, with Docker, its own
+// container. A process starts on the user's first task, and stops when idle.
+func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
+		return s.startUserAgent(ctx, key, harnessLog)
+	})
+	acp, err := a2aacp.NewExecutor(ctx, start, &a2aacp.Config{
+		Pool:         &a2aacp.PoolConfig{Key: s.split.agentKey, MaxAgents: maxUserAgents},
+		AutoAnswer:   liveToolRules(s.config),
+		SessionStore: s.store.Sessions(),
+		Session:      s.sessionParams,
+	})
+	if err != nil {
+		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
+	}
+	return acp, func(context.Context) error { return acp.Close() }, nil
+}
+
+// startUserAgent starts the agent process of a user's agent key.
+func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
+	id, ok := userOfKey(key)
+	if !ok {
+		return nil, fmt.Errorf("unknown agent key %q", key)
+	}
+	h, err := s.prepareHarness(ctx, harnessLog, key)
+	if err != nil {
+		return nil, err
+	}
+	rwc, err := h.process(harnessLog).Start(ctx, key)
+	if err != nil {
+		return nil, errors.Join(err, h.prepared.Stop(context.WithoutCancel(ctx)))
+	}
+	slog.Info("started the agent process of a user", "user", id, "sandbox", h.prepared.Summary)
+	return a2aacp.WithCleanup(rwc, func() error { return h.prepared.Stop(context.Background()) }), nil
+}
+
 // preparedHarness is a harness ready to start as an ACP agent.
 type preparedHarness struct {
 	profile  harness.Profile
@@ -111,9 +152,9 @@ func (h *preparedHarness) process(stderr io.Writer) a2aacp.Process {
 	return a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr}
 }
 
-// prepareHarness prepares the harness of the agent, or the separate one of
-// anonymous callers.
-func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, anonymous bool) (*preparedHarness, error) {
+// prepareHarness prepares the harness of the agent process of an agent
+// key: the owner's for no key, anonymous callers' or a user's.
+func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
 	cfg := s.config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
@@ -144,15 +185,19 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, an
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress: imageProgress,
 	}
-	switch {
-	case anonymous:
+	if key == anonymousAgentKey {
 		spec.Home = s.dir.AnonymousHomeDir()
 		spec.Name += "-anonymous"
 		spec.Labels["a2a.role"] = auth.RoleAnonymous
 		if err := fsutil.MkdirPrivate(spec.Home); err != nil {
 			return nil, err
 		}
-	default:
+	} else {
+		if id, ok := userOfKey(key); ok {
+			if err := s.prepareUserHome(ctx, &spec, id); err != nil {
+				return nil, err
+			}
+		}
 		spec.Socket = s.bridge.socket
 		if s.bridge.helperEnv != "" {
 			spec.Env = append(spec.Env, s.bridge.helperEnv)
@@ -166,6 +211,27 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, an
 		return nil, err
 	}
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared}, nil
+}
+
+// prepareUserHome gives spec the home and container name of the agent
+// process of the user id, with the credential helper and instructions of
+// the owner's home.
+func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
+	spec.Home = s.dir.UserHomeDir(id)
+	spec.Name += "-" + agentdir.UserKey(id)
+	spec.Labels["a2a.role"] = auth.RoleAuthenticated
+	if err := fsutil.MkdirPrivate(s.dir.UserHomesDir()); err != nil {
+		return err
+	}
+	if err := fsutil.MkdirPrivate(spec.Home); err != nil {
+		return err
+	}
+	if s.bridge.key != "" {
+		if _, err := writeHarnessHelper(spec.Home, s.bridge.dial, s.bridge.key); err != nil {
+			return fmt.Errorf("saving the harness key: %w", err)
+		}
+	}
+	return s.writeInstructionsIn(ctx, spec.Home)
 }
 
 // localCLI returns the a2a CLI on PATH, with which a harness without a
@@ -207,7 +273,7 @@ func (s *Server) listenHarness(sandboxed bool) (net.Listener, harnessBridge, err
 	if err != nil {
 		return nil, harnessBridge{}, errors.Join(err, ln.Close())
 	}
-	b := harnessBridge{url: "http://" + net.JoinHostPort(dial, port), key: cryptoutil.RandomString(40, cryptoutil.Alphanumeric)}
+	b := harnessBridge{url: "http://" + net.JoinHostPort(dial, port), dial: dial, key: cryptoutil.RandomString(40, cryptoutil.Alphanumeric)}
 	b.helperEnv, err = writeHarnessHelper(s.dir.HomeDir(), dial, b.key)
 	if err != nil {
 		return nil, harnessBridge{}, errors.Join(fmt.Errorf("saving the harness key: %w", err), ln.Close())
@@ -241,9 +307,6 @@ type observedExecutor struct {
 	bus       *eventBus
 	peers     *Peers
 	approvals *approvals.Service
-	// anonymous reports whether a conversation is anonymous. Its prompts
-	// get no agents line, since it can't call other agents.
-	anonymous func(ctx context.Context, contextID string) bool
 }
 
 var (
@@ -265,11 +328,11 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	withLine := execCtx
-	if !e.anonymous(ctx, execCtx.ContextID) {
-		withLine = e.peers.withAgentsLine(ctx, execCtx)
+	ctx, withLine := e.peers.withAgentsLine(ctx, execCtx)
+	if execCtx.Message != nil {
+		e.peers.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.inner.Execute(ctx, withLine))))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.peers.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine)))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}

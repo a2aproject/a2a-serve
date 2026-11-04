@@ -63,7 +63,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 With `--public-access anyone`, anyone on the public URL, and anyone who writes to the agent's bot in a direct chat, can start tasks. The agent still ignores unlinked senders in group chats.
 
-- Their conversations run in a separate agent process. With Docker it is a second container with its own home directory, `state/home-anonymous`, so it can't read the history of other conversations. It works on the same workspace, and it isn't backed up.
+- Their conversations share an agent process, separate from yours and from each authenticated user's. With Docker it is a container with its own home directory, `state/home-anonymous`, so it can't read the history of other users' conversations. It works on the same workspace, and it isn't backed up.
 - Their approvals go to the owner chat, or wait in the inspector. Only owners answer them. An approval that nobody answers in 10 minutes is rejected.
 - Their conversations can't call other agents or use the schedules agent.
 - The public URL and each messenger take at most 20 new anonymous tasks an hour, and run at most 2 at a time.

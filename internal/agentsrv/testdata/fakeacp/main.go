@@ -50,7 +50,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 )
 
-// agentsLinePrefix starts the line the agent server adds to every prompt.
+// agentsLinePrefix starts the line the agent server adds to the first
+// prompt of a session.
 const agentsLinePrefix = "[a2a agents]"
 
 type message struct {
@@ -67,6 +68,9 @@ type message struct {
 type session struct {
 	Memory     string            `json:"memory"`
 	MCPServers []json.RawMessage `json:"mcpServers"`
+	// AgentsURL is from the last agents line of the session, which a real
+	// agent keeps in its history.
+	AgentsURL string `json:"agentsURL"`
 }
 
 type agent struct {
@@ -273,6 +277,15 @@ func (a *agent) prompt(m message) {
 		a.fail(m.ID, "unknown session")
 		return
 	}
+	lined := agentsURL != ""
+	if lined && agentsURL != s.AgentsURL {
+		s.AgentsURL = agentsURL
+		if err := a.save(sid, s); err != nil {
+			a.fail(m.ID, err.Error())
+			return
+		}
+	}
+	agentsURL = s.AgentsURL
 	canceled := make(chan struct{})
 	a.mu.Lock()
 	a.cancels[sid] = canceled
@@ -351,6 +364,13 @@ func (a *agent) prompt(m message) {
 		end("end_turn")
 	case "scheduled":
 		a.chunk(sid, "ran "+text)
+		end("end_turn")
+	case "line":
+		if lined {
+			a.chunk(sid, "with agents line")
+		} else {
+			a.chunk(sid, "without agents line")
+		}
 		end("end_turn")
 	case "pid":
 		a.chunk(sid, fmt.Sprintf("pid %d", os.Getpid()))

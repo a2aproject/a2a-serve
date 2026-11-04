@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
@@ -88,6 +89,17 @@ type Peers struct {
 	// for an answer, so that the answer resumes it for the same user.
 	paused map[string]pausedTurn
 
+	// agentKey returns the agent key of the process a conversation runs in.
+	agentKey func(ctx context.Context, contextID string) (string, error)
+	sessions a2aacp.SessionStore
+	linedMu  sync.Mutex
+	// lined has the ACP session of each conversation whose prompt had the
+	// agents line, which the agent keeps in the session's history.
+	lined map[string]*linedSession
+	// lineEvery is how many tokens a session may see before the agents
+	// line is added again, in case the agent compacted it away.
+	lineEvery int
+
 	// buildMu serializes building contact clients, so that two calls don't
 	// build one each and destroy the other's.
 	buildMu sync.Mutex
@@ -107,11 +119,12 @@ type chat interface {
 }
 
 // harnessBridge is how the harness reaches the server: through the Unix
-// socket, or over TCP at url with key, which the credential helper of
-// helperEnv gives the harness's a2a CLI.
+// socket, or over TCP at url, on host dial, with key, which the credential
+// helper of helperEnv gives the harness's a2a CLI.
 type harnessBridge struct {
 	socket    string
 	url       string
+	dial      string
 	key       string
 	helperEnv string
 }
@@ -248,6 +261,12 @@ func (p *Peers) beginTurn(c callClaims) (end func()) {
 // for a question resumes for its user, whoever answers.
 func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	c := p.turnClaims(ctx, execCtx)
+	user, err := p.callerIn(ctx, c.ContextID, c.User)
+	if err != nil {
+		slog.Error("finding the agent process of a conversation", "context", c.ContextID, "error", err)
+		user = auth.Principal{ID: c.User.ID}
+	}
+	c.User = user
 	return func(yield func(a2a.Event, error) bool) {
 		var (
 			end   func()
@@ -258,6 +277,11 @@ func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 			started()
 			if end != nil {
 				end()
+			}
+			// The session of a new conversation is stored once the turn
+			// runs, so the line is recorded after it.
+			if hadAgentsLine(ctx) {
+				p.markLined(ctx, c.ContextID)
 			}
 			if state == a2a.TaskStateInputRequired {
 				p.turnsMu.Lock()
@@ -281,6 +305,122 @@ func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext,
 			}
 		}
 	}
+}
+
+// callerIn returns who user acts as through the agents URL of a
+// conversation, capped to the user of the agent process it runs in.
+func (p *Peers) callerIn(ctx context.Context, contextID string, user auth.Principal) (auth.Principal, error) {
+	if p.agentKey == nil {
+		return user, nil
+	}
+	key, err := p.agentKey(ctx, contextID)
+	if err != nil || key == "" {
+		return user, err
+	}
+	process := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
+	if id, ok := userOfKey(key); ok {
+		if process, err = p.chain.Refresh(ctx, id, auth.Identity{}); err != nil {
+			slog.Warn("resolving the user of an agent process", "user", id, "error", err)
+			process = auth.Principal{ID: id}
+		}
+	}
+	return capToProcessUser(user, process), nil
+}
+
+// agentsLineEvery is the default of [Peers.lineEvery]. ACP doesn't tell
+// when an agent compacts its context, so the line comes again after about as
+// many tokens as fill a context window.
+const agentsLineEvery = 200_000
+
+// linedSession is the ACP session that had the agents line, and an estimate
+// of the tokens it saw since.
+type linedSession struct {
+	id     string
+	tokens int
+}
+
+// estimateTokens roughly estimates the tokens of the text of parts.
+func estimateTokens(parts []*a2a.Part) int {
+	n := 0
+	for _, p := range parts {
+		n += len(p.Text())
+	}
+	return n / 4
+}
+
+// addTokens counts tokens seen by the session of a conversation since its
+// agents line.
+func (p *Peers) addTokens(contextID string, tokens int) {
+	if tokens == 0 {
+		return
+	}
+	p.linedMu.Lock()
+	defer p.linedMu.Unlock()
+	if l := p.lined[contextID]; l != nil {
+		l.tokens += tokens
+	}
+}
+
+// countTokens counts the text of events, which the session of a
+// conversation sees, as they pass.
+func (p *Peers) countTokens(contextID string, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		for ev, err := range events {
+			switch ev := ev.(type) {
+			case *a2a.TaskArtifactUpdateEvent:
+				p.addTokens(contextID, estimateTokens(ev.Artifact.Parts))
+			case *a2a.TaskStatusUpdateEvent:
+				if ev.Status.Message != nil {
+					p.addTokens(contextID, estimateTokens(ev.Status.Message.Parts))
+				}
+			case *a2a.Message:
+				p.addTokens(contextID, estimateTokens(ev.Parts))
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+type agentsLineKey struct{}
+
+// hadAgentsLine reports whether the prompt of the turn of ctx had the
+// agents line.
+func hadAgentsLine(ctx context.Context) bool {
+	v, _ := ctx.Value(agentsLineKey{}).(bool)
+	return v
+}
+
+// needsAgentsLine reports whether the ACP session of a conversation is new,
+// hasn't had the agents line since the server started, or saw
+// [Peers.lineEvery] tokens since.
+func (p *Peers) needsAgentsLine(ctx context.Context, contextID string) bool {
+	sess, ok, err := p.sessions.Get(ctx, contextID)
+	if err != nil {
+		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
+		return true
+	}
+	if !ok {
+		return true
+	}
+	p.linedMu.Lock()
+	defer p.linedMu.Unlock()
+	l := p.lined[contextID]
+	return l == nil || l.id != sess.ID || l.tokens >= p.lineEvery
+}
+
+// markLined records that the ACP session of a conversation had the agents
+// line.
+func (p *Peers) markLined(ctx context.Context, contextID string) {
+	sess, ok, err := p.sessions.Get(ctx, contextID)
+	if err != nil || !ok {
+		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
+		return
+	}
+	p.linedMu.Lock()
+	defer p.linedMu.Unlock()
+	p.lined[contextID] = &linedSession{id: sess.ID}
 }
 
 // turnClaims returns the claims of the turn execCtx runs: those of the

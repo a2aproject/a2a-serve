@@ -155,7 +155,6 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 		bus:       newEventBus(),
 		peers:     ts.srv.peers,
 		approvals: ts.srv.approvals,
-		anonymous: func(context.Context, string) bool { return false },
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
 

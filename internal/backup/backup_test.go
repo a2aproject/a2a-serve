@@ -60,6 +60,8 @@ func newAgent(t *testing.T) agentdir.Dir {
 		"state/home/.config/opencode/opencode.json": "{}",
 		"state/home/.cache/big":                     "cache",
 		"state/home/.npm/pkg":                       "cache",
+		"state/homes/u1/.claude/settings.json":      "{}",
+		"state/homes/u1/.cache/big":                 "cache",
 		"state/tsnet/tailscaled.state":              "identity",
 		"state/agentmesh/node.key":                  "identity",
 	}
@@ -141,6 +143,7 @@ func TestTakeAndRestore(t *testing.T) {
 				"state/ads.json":  "{}",
 				"state/home/.config/opencode/opencode.json": "{}",
 				"state/home/deploy":                         "-> /src/app/.agents/skills/deploy",
+				"state/homes/u1/.claude/settings.json":      "{}",
 			},
 		},
 		{
@@ -153,6 +156,7 @@ func TestTakeAndRestore(t *testing.T) {
 				"state/ads.json":  "{}",
 				"state/home/.config/opencode/opencode.json": "{}",
 				"state/home/deploy":                         "-> /src/app/.agents/skills/deploy",
+				"state/homes/u1/.claude/settings.json":      "{}",
 				"state/tsnet/tailscaled.state":              "identity",
 				"state/agentmesh/node.key":                  "identity",
 			},

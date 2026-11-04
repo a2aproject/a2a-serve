@@ -31,8 +31,9 @@ import (
 	"github.com/a2aproject/a2a-serve/skills"
 )
 
-// agentsLinePrefix starts the line added to every prompt with the agents the
-// harness can call and the agents URL of the conversation.
+// agentsLinePrefix starts the line added to the first prompt of an ACP
+// session with the agents the harness can call and the agents URL of the
+// conversation.
 const agentsLinePrefix = "[a2a agents]"
 
 // instructionFiles are the global instruction files of the known harnesses,
@@ -77,9 +78,25 @@ func (p *Peers) callableAgents(ctx context.Context) ([]AgentRef, error) {
 }
 
 // writeInstructions puts the a2a-agents skill and the agents the harness can
-// call into the global instruction files in the harness home. A local
-// harness uses your own home, which is left alone.
+// call into the global instruction files in the homes of the owner's and the
+// users' agent processes.
 func (s *Server) writeInstructions(ctx context.Context) error {
+	homes := []string{s.dir.HomeDir()}
+	entries, err := os.ReadDir(s.dir.UserHomesDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			homes = append(homes, filepath.Join(s.dir.UserHomesDir(), e.Name()))
+		}
+	}
+	return s.writeInstructionsIn(ctx, homes...)
+}
+
+// writeInstructionsIn writes the instruction files into homes. A local
+// harness uses your own home, which is left alone.
+func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
 	if s.config().Sandbox == harness.SandboxLocal {
 		return nil
 	}
@@ -103,8 +120,10 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 		sb.WriteString("\n")
 	}
 	var errs []error
-	for _, f := range instructionFiles {
-		errs = append(errs, writeSection(filepath.Join(s.dir.HomeDir(), f), sb.String()))
+	for _, home := range homes {
+		for _, f := range instructionFiles {
+			errs = append(errs, writeSection(filepath.Join(home, f), sb.String()))
+		}
 	}
 	return errors.Join(errs...)
 }
@@ -148,28 +167,37 @@ func withSection(text, body string) string {
 }
 
 // withAgentsLine returns execCtx with the agents line added before the
-// caller's message, for a new prompt of a caller who may call agents.
-// Answers to the harness's own questions are left alone, because the
-// harness parses them.
-func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorContext) *a2asrv.ExecutorContext {
+// caller's message, for the first prompt of an ACP session in which the
+// caller may call agents, and ctx marked for [Peers.turn]. Answers to the
+// harness's own questions are left alone, because the harness parses them.
+func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorContext) (context.Context, *a2asrv.ExecutorContext) {
 	if execCtx.Message == nil || (execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired) {
-		return execCtx
+		return ctx, execCtx
 	}
-	if caller, ok := auth.Caller(ctx); !ok || !mayCallAgents(caller) {
-		return execCtx
+	caller, ok := auth.Caller(ctx)
+	if !ok {
+		return ctx, execCtx
+	}
+	user, err := p.callerIn(ctx, execCtx.ContextID, caller)
+	if err != nil {
+		slog.Warn("finding the agent process of a conversation", "context", execCtx.ContextID, "error", err)
+		return ctx, execCtx
+	}
+	if !mayCallAgents(user) || !p.needsAgentsLine(ctx, execCtx.ContextID) {
+		return ctx, execCtx
 	}
 	agents, err := p.callableAgents(ctx)
 	if err != nil {
 		slog.Warn("listing callable agents", "error", err)
-		return execCtx
+		return ctx, execCtx
 	}
 	if len(agents) == 0 {
-		return execCtx
+		return ctx, execCtx
 	}
 	u, err := p.agentsURL(ctx, execCtx.ContextID)
 	if err != nil {
 		slog.Warn("creating the agents URL", "error", err)
-		return execCtx
+		return ctx, execCtx
 	}
 	names := make([]string, len(agents))
 	for i, a := range agents {
@@ -181,5 +209,5 @@ func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	msg := *execCtx.Message
 	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)
 	ec.Message = &msg
-	return &ec
+	return context.WithValue(ctx, agentsLineKey{}, true), &ec
 }

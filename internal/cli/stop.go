@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/launch"
 	"github.com/a2aproject/a2a-serve/internal/service"
@@ -55,8 +56,15 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 			}
 			// A detached agent, or one the service manager didn't stop.
-			if err := client.Stop(cmd.Context()); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+			err = client.Stop(cmd.Context())
+			switch {
+			case errors.Is(err, controlapi.ErrNotRunning):
+			case err != nil:
 				return err
+			default:
+				if err := agentctl.WaitStopped(cmd.Context(), d); err != nil {
+					return err
+				}
 			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(stopResult{Name: conf.Name, Stopped: running, ServiceInstalled: installed && !uninstall, ServiceRemoved: installed && uninstall})
