@@ -152,11 +152,11 @@ func TestChannelSupervisorAddReplacesChannelAfterItStopped(t *testing.T) {
 		}}
 	}
 	sv.add(newChannel("first"))
-	eventually(t, "the first channel to start", func() bool { return len(snapshot()) == 1 })
+	waitFor(t, "the first channel to start", func() bool { return len(snapshot()) == 1 })
 
 	sv.add(newChannel("second"))
 
-	eventually(t, "the second channel to start", func() bool { return len(snapshot()) == 3 })
+	waitFor(t, "the second channel to start", func() bool { return len(snapshot()) == 3 })
 	want := []string{"first started", "first stopped", "second started"}
 	if diff := cmp.Diff(want, snapshot()); diff != "" {
 		t.Fatalf("sv.add() order of events wrong result (-want +got) diff = %s", diff)
@@ -178,7 +178,7 @@ func TestChannelSupervisorStopAll(t *testing.T) {
 	for _, name := range []string{"a", "b", "c"} {
 		sv.add(newChannel(name))
 	}
-	eventually(t, "the channels to start", func() bool { return running.Load() == 3 })
+	waitFor(t, "the channels to start", func() bool { return running.Load() == 3 })
 
 	if err := sv.stopAll(context.Background()); err != nil {
 		t.Fatalf("sv.stopAll() error = %v", err)
@@ -260,7 +260,7 @@ func TestChannelSupervisorStatusReportsFailure(t *testing.T) {
 			ch.run = func(context.Context, chan<- channel.Inbound) error { return tc.runErr }
 			sv.add(ch)
 
-			eventually(t, "the failure to be reported", func() bool { return sv.status()[0].Error != "" })
+			waitFor(t, "the failure to be reported", func() bool { return sv.status()[0].Error != "" })
 
 			want := []controlapi.ChannelStatus{{Name: "fake", Account: "@fake", Error: tc.wantErr}}
 			if diff := cmp.Diff(want, sv.status()); diff != "" {

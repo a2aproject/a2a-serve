@@ -109,7 +109,7 @@ func TestConversationQueueLock(t *testing.T) {
 
 	acquired := make(chan func())
 	go func() { acquired <- q.lock("fake", "dm1") }()
-	eventually(t, "the second lock to take its place in line", func() bool {
+	waitFor(t, "the second lock to take its place in line", func() bool {
 		q.mu.Lock()
 		defer q.mu.Unlock()
 		return len(q.convs["fake\x00dm1"]) == 2

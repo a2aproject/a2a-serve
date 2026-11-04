@@ -99,17 +99,6 @@ func (f *fakeChannel) transcript() []channel.Outbound {
 	return out
 }
 
-func eventually(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(waitTimeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(time.Millisecond)
-	}
-}
-
 type readyWaiter interface{ waitReady(t *testing.T) }
 
 // chatFixture is the parts the chat code works with, over a temporary store.
