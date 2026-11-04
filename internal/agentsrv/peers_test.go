@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -121,13 +122,15 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
+	ch := newFakeChannel("fake")
+	ch.sendDelay = 200 * time.Millisecond
+	assistant := startServer(t, serverOpts{name: "assistant", channel: ch})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 
 	assistant.ch.write("telegram:1", "dm1", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
-	waitPendingQuestion(t, assistant, "fake", "dm1", q.Question.ID)
+	waitQuestionMessage(t, assistant, q.Question.ID)
 	root := assistant.dir.Root
 	assistant.stop()
 
@@ -141,18 +144,28 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	restarted.ch.waitEdited(t, ref, "✓ Allow by owner")
 }
 
-// waitPendingQuestion waits until the server recorded the question it sent
-// to a conversation, which it does after sending it.
-func waitPendingQuestion(t *testing.T, ts *testServer, ch, conv, questionID string) {
+// waitQuestionMessage waits until the server recorded the message it sent
+// for a question, which it does after sending it.
+func waitQuestionMessage(t *testing.T, ts *testServer, questionID string) {
 	t.Helper()
+	db, err := sql.Open("sqlite", ts.dir.DBPath())
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	defer func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	}()
 	deadline := time.Now().Add(10 * time.Second)
 	for {
-		id, err := ts.srv.store.PendingQuestion(context.Background(), ch, conv)
-		if err == nil && id == questionID {
+		var n int
+		err := db.QueryRow(`SELECT COUNT(*) FROM question_messages WHERE question_id = ?`, questionID).Scan(&n)
+		if err == nil && n > 0 {
 			return
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("PendingQuestion() = %q, %v, want %q", id, err, questionID)
+			t.Fatalf("question messages of %s = %d, %v, want one", questionID, n, err)
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
