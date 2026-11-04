@@ -9,7 +9,7 @@
   --md-primary-fg-color--dark: #eaeef2;
   --md-primary-bg-color: #0b0d10;
   --md-primary-bg-color--light: rgba(11, 13, 16, .6);
-  --md-typeset-a-color: #0f9488;
+  --md-typeset-a-color: #0b7268;
   --md-footer-bg-color: #f6f8fa;
   --md-footer-bg-color--dark: #eaeef2;
   --md-footer-fg-color: #0b0d10;
@@ -40,3 +40,5 @@
 .md-typeset pre > code { border-left: 3px solid var(--md-accent-fg-color); }
 .md-nav__link--active { color: var(--md-accent-fg-color) !important; font-weight: 600; }
 .md-header__button.md-logo img { height: 1.6rem; }
+[data-md-color-scheme="default"] .md-search__input { background-color: #f0f2f4; }
+[data-md-color-scheme="default"] .md-search__input:hover { background-color: #e6e9ec; }
