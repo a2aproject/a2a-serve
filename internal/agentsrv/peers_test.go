@@ -126,6 +126,7 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 
 	assistant.ch.write("tg:1", "dm1", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
+	waitPendingQuestion(t, assistant, "fake", "dm1", q.Question.ID)
 	root := assistant.dir.Root
 	assistant.stop()
 
@@ -137,6 +138,23 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	}
 	restarted.ch.click("tg:1", "dm1", ref, q.Question, 0)
 	restarted.ch.waitEdited(t, ref, "✓ Allow by owner")
+}
+
+// waitPendingQuestion waits until the server recorded the question it sent
+// to a conversation, which it does after sending it.
+func waitPendingQuestion(t *testing.T, ts *testServer, ch, conv, questionID string) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		id, err := ts.srv.store.PendingQuestion(context.Background(), ch, conv)
+		if err == nil && id == questionID {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("PendingQuestion() = %q, %v, want %q", id, err, questionID)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestContactClientIsShared(t *testing.T) {

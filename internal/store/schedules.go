@@ -59,7 +59,7 @@ func nanos(t time.Time) int64 {
 
 // AddSchedule stores a new schedule, or returns [ErrExists].
 func (s *Store) AddSchedule(ctx context.Context, sc Schedule) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	res, err := s.exec(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO NOTHING`,
 		sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.DeliverChannel, sc.DeliverUser, sc.Conversation, sc.ContextID,
 		sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
@@ -116,7 +116,7 @@ func (s *Store) Schedules(ctx context.Context) ([]Schedule, error) {
 // RecordScheduleRun records a run of a schedule, its error or "", and when
 // it runs next.
 func (s *Store) RecordScheduleRun(ctx context.Context, name string, ran, next time.Time, runErr string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE schedules SET last_run = ?, next_run = ?, last_error = ? WHERE name = ?`,
+	_, err := s.exec(ctx, `UPDATE schedules SET last_run = ?, next_run = ?, last_error = ? WHERE name = ?`,
 		nanos(ran), nanos(next), runErr, name)
 	return err
 }

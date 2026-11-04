@@ -25,6 +25,7 @@ import (
 	"log/slog"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -42,6 +43,13 @@ type Store struct {
 	pruned atomic.Int64
 	// taskTTL is how long tasks are kept after their last update.
 	taskTTL atomic.Int64
+
+	// Close waits for writes in progress: a transaction keeps its connection
+	// past sql.DB.Close and could commit after the next server opened the
+	// database.
+	closeMu sync.Mutex
+	closed  bool
+	writes  sync.WaitGroup
 }
 
 // Open opens or creates the database at path. ":memory:" opens a private
@@ -67,8 +75,36 @@ func Open(path string) (*Store, error) {
 	return s, nil
 }
 
-// Close closes the database.
-func (s *Store) Close() error { return s.db.Close() }
+// Close waits for the writes in progress and closes the database. Later
+// writes fail with ErrClosed.
+func (s *Store) Close() error {
+	s.closeMu.Lock()
+	s.closed = true
+	s.closeMu.Unlock()
+	s.writes.Wait()
+	return s.db.Close()
+}
+
+// beginWrite registers a write for Close to wait for, and returns the
+// function that ends it.
+func (s *Store) beginWrite() (func(), error) {
+	s.closeMu.Lock()
+	defer s.closeMu.Unlock()
+	if s.closed {
+		return nil, ErrClosed
+	}
+	s.writes.Add(1)
+	return s.writes.Done, nil
+}
+
+func (s *Store) exec(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	done, err := s.beginWrite()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
+	return s.db.ExecContext(ctx, query, args...)
+}
 
 // migrations bring the database from the version in PRAGMA user_version,
 // which is its index here, to the next. They run in a transaction each and
@@ -270,6 +306,11 @@ func (s *Store) runMigration(ctx context.Context, from int) (err error) {
 
 // inTx runs fn in a transaction, committing it if fn succeeds.
 func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	done, err := s.beginWrite()
+	if err != nil {
+		return err
+	}
+	defer done()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -293,6 +334,9 @@ func addColumn(ctx context.Context, tx *sql.Tx, table, column, decl string) erro
 	return err
 }
 
+// ErrClosed is returned by writes to a closed store.
+var ErrClosed = errors.New("the database is closed")
+
 // ErrExists is returned when a record to create already exists.
 var ErrExists = errors.New("already exists")
 
@@ -315,7 +359,7 @@ func (cs ChannelState) Get(ctx context.Context, key string) (string, bool, error
 
 // Set stores the value of key.
 func (cs ChannelState) Set(ctx context.Context, key, value string) error {
-	_, err := cs.s.db.ExecContext(ctx, `INSERT INTO channel_state (key, value) VALUES (?, ?)
+	_, err := cs.s.exec(ctx, `INSERT INTO channel_state (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
@@ -327,7 +371,7 @@ const seenRetention = 7 * 24 * time.Hour
 // drop redelivered messages.
 func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
 	now := s.now()
-	res, err := s.db.ExecContext(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, now.UnixNano())
+	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, now.UnixNano())
 	if err != nil {
 		return false, err
 	}
@@ -335,7 +379,7 @@ func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
+	if _, err := s.exec(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
 		return false, err
 	}
 	if last := s.pruned.Load(); now.UnixNano()-last >= int64(pruneInterval) && s.pruned.CompareAndSwap(last, now.UnixNano()) {

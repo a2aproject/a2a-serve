@@ -382,7 +382,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	go s.pruneLoop(ctx)
 	go s.schedules.run(ctx)
 	go s.runGossip(ctx)
-	go s.runBackups(ctx)
+	s.startBackups(ctx)
 	return errc, s.printSummary(ctx, ownerErr)
 }
 

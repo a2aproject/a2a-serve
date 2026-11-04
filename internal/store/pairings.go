@@ -63,7 +63,7 @@ func (s *Store) PendingCodes(ctx context.Context) (map[string][]Code, error) {
 // DeleteCodes deletes the pending codes of purpose and name, and returns
 // how many there were.
 func (s *Store) DeleteCodes(ctx context.Context, purpose, name string) (int, error) {
-	res, err := s.db.ExecContext(ctx, `DELETE FROM codes WHERE purpose = ? AND name = ?`, purpose, name)
+	res, err := s.exec(ctx, `DELETE FROM codes WHERE purpose = ? AND name = ?`, purpose, name)
 	if err != nil {
 		return 0, err
 	}

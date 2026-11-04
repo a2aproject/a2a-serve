@@ -17,6 +17,7 @@ package store
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -33,7 +34,12 @@ import (
 
 func openStore(t *testing.T) *Store {
 	t.Helper()
-	s, err := Open(filepath.Join(t.TempDir(), "server.db"))
+	return openStoreAt(t, filepath.Join(t.TempDir(), "server.db"))
+}
+
+func openStoreAt(t *testing.T, path string) *Store {
+	t.Helper()
+	s, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
@@ -314,6 +320,48 @@ func TestOpenPathWithURLCharacters(t *testing.T) {
 	}
 	if _, err := os.Stat(path); err != nil {
 		t.Fatalf("Stat() error = %v", err)
+	}
+}
+
+func TestCloseWaitsForWrites(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "server.db")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	started, release, written := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		written <- s.inTx(ctx, func(tx *sql.Tx) error {
+			close(started)
+			<-release
+			_, err := tx.ExecContext(ctx, `INSERT INTO channel_state (key, value) VALUES ('k', 'v')`)
+			return err
+		})
+	}()
+	<-started
+	closed := make(chan error, 1)
+	go func() { closed <- s.Close() }()
+	select {
+	case err := <-closed:
+		t.Fatalf("Close() = %v during a write, want it to wait", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+	if err := <-written; err != nil {
+		t.Fatalf("inTx() error = %v", err)
+	}
+	if err := <-closed; err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	if err := s.ChannelState().Set(ctx, "k2", "v2"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("ChannelState().Set() after Close() error = %v, want %v", err, ErrClosed)
+	}
+
+	reopened := openStoreAt(t, path)
+	if v, ok, err := reopened.ChannelState().Get(ctx, "k"); err != nil || !ok || v != "v" {
+		t.Fatalf("ChannelState().Get() = %q, %v, %v, want the write made before Close()", v, ok, err)
 	}
 }
 

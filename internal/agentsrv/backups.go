@@ -20,6 +20,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -51,9 +52,9 @@ func (b *backups) update(fn func(*controlapi.BackupStatus)) {
 	fn(&b.status)
 }
 
-// runBackups takes snapshots until ctx ends. The first one is due an
-// interval after the latest stored snapshot.
-func (s *Server) runBackups(ctx context.Context) {
+// startBackups reports the backup destination in status right away, and
+// takes snapshots in the background until ctx ends.
+func (s *Server) startBackups(ctx context.Context) {
 	cfg := s.config()
 	if cfg.Backup.To == "" {
 		return
@@ -63,9 +64,18 @@ func (s *Server) runBackups(ctx context.Context) {
 		s.logf("! backups are off: %v", err)
 		return
 	}
-	interval := cfg.Backup.BackupInterval()
-	s.backups.update(func(st *controlapi.BackupStatus) { st.To = cfg.Backup.To })
 	next := time.Now().Add(firstBackupDelay)
+	s.backups.update(func(st *controlapi.BackupStatus) {
+		st.To = cfg.Backup.To
+		st.Next = next
+	})
+	go s.runBackups(ctx, cfg, dest, bcfg, next)
+}
+
+// runBackups takes snapshots until ctx ends. The first one is due an
+// interval after the latest stored snapshot.
+func (s *Server) runBackups(ctx context.Context, cfg *agentdir.Config, dest backup.Dest, bcfg backup.Config, next time.Time) {
+	interval := cfg.Backup.BackupInterval()
 	snaps, err := backup.List(ctx, dest, bcfg.Agent)
 	switch {
 	case err != nil:
