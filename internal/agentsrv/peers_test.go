@@ -24,6 +24,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
@@ -81,6 +82,45 @@ func TestAgentCallsContact(t *testing.T) {
 
 	unknown := send(t, c, userText("call nobody hi", "", ""))
 	wantResult(t, unknown, a2a.TaskStateCompleted, "404")
+}
+
+func TestAgentCallsContactWhileWaitingForApproval(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+	signals := t.TempDir()
+
+	task := send(t, c, userText("parallel "+signals+" coder hello", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want input-required", task.Status.State)
+	}
+	if err := os.WriteFile(filepath.Join(signals, "go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	result := waitFile(t, filepath.Join(signals, "result"))
+	if !strings.HasPrefix(result, "tool result:") || !strings.Contains(result, "Hello from fakeacp.") {
+		t.Fatalf("call while waiting for approval = %q, want the called agent's result", result)
+	}
+
+	wantResult(t, send(t, c, userText("approve", string(task.ID), task.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+}
+
+// waitFile waits until path exists and returns its content.
+func waitFile(t *testing.T, path string) string {
+	t.Helper()
+	deadline := time.Now().Add(20 * time.Second)
+	for {
+		data, err := os.ReadFile(path)
+		if err == nil {
+			return string(data)
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("os.ReadFile(%s) error = %v", path, err)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
 }
 
 func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
@@ -726,47 +766,48 @@ func TestAgentsURLReachesOnlyItsTasks(t *testing.T) {
 	}
 }
 
-// turnEvents yields the status updates of task in states, checking the
-// claims of handle after each working update.
-func turnEvents(t *testing.T, p *Peers, handle string, task *a2a.Task, check func(callClaims), states ...a2a.TaskState) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		for _, s := range states {
-			if !yield(a2a.NewStatusUpdateEvent(task, s, nil), nil) {
-				return
-			}
-			if s != a2a.TaskStateWorking {
-				continue
-			}
-			c, err := p.claimsOf(context.Background(), handle)
-			if err != nil {
-				t.Errorf("claimsOf() during the turn error = %v", err)
-				continue
-			}
-			check(c)
-		}
-	}
-}
-
-func TestAnsweredTurnKeepsItsUser(t *testing.T) {
+func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 	t.Parallel()
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
+	tests := []struct {
+		name    string
+		ctx     context.Context
+		execCtx *a2asrv.ExecutorContext
+		want    auth.Principal
+	}{
+		{
+			name:    "caller",
+			ctx:     auth.InProcess(context.Background(), anna),
+			execCtx: &a2asrv.ExecutorContext{ContextID: "c1", User: &a2asrv.User{Name: "someone else"}},
+			want:    anna,
+		},
+		{
+			name:    "user of a stored execution",
+			ctx:     context.Background(),
+			execCtx: &a2asrv.ExecutorContext{ContextID: "c1", User: &a2asrv.User{Name: anna.ID}},
+			want:    auth.Principal{ID: anna.ID},
+		},
+	}
 	ts := startServer(t, serverOpts{})
-	p, ctx := ts.srv.peers, context.Background()
-	h, err := p.handle(ctx, "c1")
+	p := ts.srv.peers
+	h, err := p.handle(context.Background(), "c1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	task := &a2a.Task{ID: "t1", ContextID: "c1"}
-	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
-	wantAnna := func(c callClaims) {
-		if c.User.ID != anna.ID {
-			t.Errorf("claimsOf() user = %q, want %q", c.User.ID, anna.ID)
-		}
-	}
-
-	prompt := &a2asrv.ExecutorContext{TaskID: task.ID, ContextID: "c1"}
-	for range p.duringTurn(auth.InProcess(ctx, anna), prompt, turnEvents(t, p, h, task, wantAnna, a2a.TaskStateWorking, a2a.TaskStateInputRequired)) {
-	}
-	answer := &a2asrv.ExecutorContext{TaskID: task.ID, ContextID: "c1", StoredTask: &a2a.Task{ID: task.ID, ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}}
-	for range p.duringTurn(auth.InProcess(ctx, auth.Owner()), answer, turnEvents(t, p, h, task, wantAnna, a2a.TaskStateWorking, a2a.TaskStateCompleted)) {
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			end := p.turn(tc.ctx, tc.execCtx)
+			got, err := p.claimsOf(context.Background(), h)
+			end()
+			if err != nil {
+				t.Fatalf("claimsOf() during the turn error = %v", err)
+			}
+			if diff := cmp.Diff(callClaims{ContextID: "c1", User: tc.want}, got); diff != "" {
+				t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
+			}
+			if _, err := p.claimsOf(context.Background(), h); !errors.Is(err, errNoTurn) {
+				t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+			}
+		})
 	}
 }

@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -79,9 +78,6 @@ type Peers struct {
 	// turns has the claims of the running turn of each conversation; a2aacp
 	// runs one turn of a conversation at a time.
 	turns map[string]*callClaims
-	// paused has the claims of the turn of each conversation which waits
-	// for an answer, so that the answer resumes it for the same user.
-	paused map[string]pausedTurn
 
 	// buildMu serializes building contact clients, so that two calls don't
 	// build one each and destroy the other's.
@@ -179,12 +175,6 @@ func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error)
 	return *c, nil
 }
 
-// pausedTurn is a turn which waits for an answer to a question of its task.
-type pausedTurn struct {
-	task   a2a.TaskID
-	claims callClaims
-}
-
 // beginTurn opens the agents URL of c's conversation to calls with c, until
 // end is called.
 func (p *Peers) beginTurn(c callClaims) (end func()) {
@@ -201,57 +191,16 @@ func (p *Peers) beginTurn(c callClaims) (end func()) {
 	}
 }
 
-// duringTurn opens the agents URL of the conversation while the harness
-// runs a turn of it: from the turn's working update, which a2aacp sends once
-// the turn holds the conversation, until its events end. A turn which stops
-// for a question resumes for its user, whoever answers.
-func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
-	c := p.turnClaims(ctx, execCtx)
-	return func(yield func(a2a.Event, error) bool) {
-		var (
-			end   func()
-			state a2a.TaskState
-		)
-		defer func() {
-			if end != nil {
-				end()
-			}
-			if state == a2a.TaskStateInputRequired {
-				p.turnsMu.Lock()
-				p.paused[c.ContextID] = pausedTurn{task: execCtx.TaskID, claims: c}
-				p.turnsMu.Unlock()
-			}
-		}()
-		for ev, err := range events {
-			switch e := ev.(type) {
-			case *a2a.Task:
-				state = e.Status.State
-			case *a2a.TaskStatusUpdateEvent:
-				state = e.Status.State
-				if end == nil && state == a2a.TaskStateWorking {
-					end = p.beginTurn(c)
-				}
-			}
-			if !yield(ev, err) {
-				return
-			}
-		}
-	}
+// turn opens the agents URL of the conversation while the harness works on
+// a message, until it stops, also while the task waits for an answer. It is
+// the [a2aacp.Config.Turn] of the harness, so a turn which stops for a
+// question goes on for its caller, whoever answers.
+func (p *Peers) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
+	return p.beginTurn(turnClaims(ctx, execCtx))
 }
 
-// turnClaims returns the claims of the turn execCtx runs: those of the
-// paused turn it answers, or else of its caller.
-func (p *Peers) turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callClaims {
-	p.turnsMu.Lock()
-	paused, ok := p.paused[execCtx.ContextID]
-	ok = ok && paused.task == execCtx.TaskID
-	if ok {
-		delete(p.paused, execCtx.ContextID)
-	}
-	p.turnsMu.Unlock()
-	if ok && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired {
-		return paused.claims
-	}
+// turnClaims returns the claims of the caller of execCtx.
+func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callClaims {
 	c := callClaims{ContextID: execCtx.ContextID}
 	if caller, ok := auth.Caller(ctx); ok {
 		c.User = caller

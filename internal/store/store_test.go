@@ -34,7 +34,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
-	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 )
 
 func openStore(t *testing.T) *Store {
