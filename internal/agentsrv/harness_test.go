@@ -100,10 +100,10 @@ type serverOpts struct {
 	google    *googleauth.Endpoints
 	// sharedClientID is the client ID of the shared Google app.
 	sharedClientID string
-	private   network.Provider
-	public    network.Provider
-	newRelay  func(network.RelayConfig) (network.Provider, error)
-	now       func() time.Time
+	private        network.Provider
+	public         network.Provider
+	newRelay       func(network.RelayConfig) (network.Provider, error)
+	now            func() time.Time
 }
 
 // startServer starts an agent server and stops it when the test ends.
