@@ -13,18 +13,6 @@ Visit [Getting Started](https://a2aproject.github.io/a2a-serve/getting-started/)
 > [!WARNING]
 > A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward. Read the [security page](./docs/advanced/security.md) and the [known limitations](#-known-limitations) before you expose an agent to other people.
 
-## ✨ Features
-
-- **Any ACP agent:** opencode, Claude Code, or your own with `a2a-serve start acp --command`.
-- **Sandbox and approvals:** the agent runs in Docker, and its edits and commands wait for your approval.
-- **Reachable anywhere:** your tailnet, an [Agent Mesh](./docs/advanced/agent-mesh.md) relay, a public URL, Telegram, Discord or email, with access by one-time pairing codes.
-- **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
-
-<p align="center">
-  <img src="./docs/graphs/readme-overview.png#gh-light-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="680">
-  <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="680">
-</p>
-
 ## 🚀 Install
 
 ```bash
@@ -39,6 +27,18 @@ curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.s
 ```
 
 Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
+
+## ✨ Features
+
+- **Any ACP agent:** opencode, Claude Code, or your own with `a2a-serve start acp --command`.
+- **Sandbox and approvals:** the agent runs in Docker, and its edits and commands wait for your approval.
+- **Reachable anywhere:** your tailnet, an [Agent Mesh](./docs/advanced/agent-mesh.md) relay, a public URL, Telegram, Discord or email, with access by one-time pairing codes.
+- **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
+
+<p align="center">
+  <img src="./docs/graphs/readme-overview.png#gh-light-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="680">
+  <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="680">
+</p>
 
 ## 📚 User Guide
 
