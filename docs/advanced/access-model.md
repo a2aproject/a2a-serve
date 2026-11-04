@@ -127,7 +127,7 @@ Every request yields one identity: verified claims, and where each came from.
 
 ### Policy
 
-The policy gives each role a list of members, as an Agent Mesh binding does.
+The policy gives each role a list of members, as an Agent Mesh binding does. The `owner` role holds only `self`; owner pairings add other owners.
 
 ```yaml
 policy:
@@ -143,7 +143,6 @@ policy:
 | `--public-access anyone` | `anonymous: [anyone]`, on the public URL and in direct chats |
 | `--allow-email P` | adds `email:P` to `authenticated` |
 | `pair invite --owner` | the pairing's role is `owner` |
-| `--owner M`, `--allow M` | add member `M` to `owner` or `authenticated` |
 
 Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
 

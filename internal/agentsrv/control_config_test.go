@@ -47,7 +47,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReloadConfig() error = %v", err)
 	}
-	if diff := cmp.Diff([]string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email", "owner", "allow"}, res.Applied); diff != "" {
+	if diff := cmp.Diff([]string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}, res.Applied); diff != "" {
 		t.Fatalf("ReloadConfig() wrong result (-want +got) diff = %s", diff)
 	}
 	running, err := client.Config(ctx)

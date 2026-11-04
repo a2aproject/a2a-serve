@@ -43,6 +43,11 @@ a2a-serve start echo --port 9000
 Start any ACP agent (--command) in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`.
 
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
 ```
 a2a-serve start acp [flags]
 ```
@@ -68,7 +73,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -91,9 +96,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
 | `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
@@ -118,6 +121,11 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 Start a claude agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
 
 ```
 a2a-serve start claude [flags]
@@ -144,7 +152,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -167,9 +175,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
 | `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
@@ -215,9 +221,9 @@ a2a send -a http://127.0.0.1:9000 hello
 | `--description string` |  | Agent description for the generated card |
 | `--host string` | `127.0.0.1` | Bind address |
 | `--name string` |  | Agent name for the generated card |
+| `--no-traffic-log` |  | Don't log the requests and responses on the terminal |
 | `--port int` | `8080` | Listen port |
 | `--protocol string` | `latest` | Protocol version: "latest" or "0.3" |
-| `--quiet` |  | Print less on the terminal: don't log the traffic |
 | `--transport string` | `rest` | Transport to serve: rest, jsonrpc or grpc |
 
 ## a2a-serve start exec
@@ -256,9 +262,9 @@ a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTE
 | `--description string` |  | Agent description for the generated card |
 | `--host string` | `127.0.0.1` | Bind address |
 | `--name string` |  | Agent name for the generated card |
+| `--no-traffic-log` |  | Don't log the requests and responses on the terminal |
 | `--port int` | `8080` | Listen port |
 | `--protocol string` | `latest` | Protocol version: "latest" or "0.3" |
-| `--quiet` |  | Print less on the terminal: don't log the traffic |
 | `--stream` |  | Stream stdout line by line |
 | `--transport string` | `rest` | Transport to serve: rest, jsonrpc or grpc |
 
@@ -266,6 +272,11 @@ a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTE
 
 Start an opencode agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
 
 ```
 a2a-serve start opencode [flags]
@@ -292,7 +303,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME` |  | Name of an environment variable to pass to the agent, such as an API key (NAME); its value is read from your environment (or prompted) and stored in .a2a/state/secrets (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -315,9 +326,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
 | `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
 | `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
@@ -366,9 +375,9 @@ a2a-serve start proxy https://agent.example.com --auth "Bearer env:AGENT_TOKEN"
 | `--host string` | `127.0.0.1` | Bind address |
 | `--insecure` |  | Reach the proxied agent over plaintext gRPC |
 | `--name string` |  | Agent name for the generated card |
+| `--no-traffic-log` |  | Don't log the requests and responses on the terminal |
 | `--port int` | `8080` | Listen port |
 | `--protocol string` | `latest` | Protocol version: "latest" or "0.3" |
-| `--quiet` |  | Print less on the terminal: don't log the traffic |
 | `--svc-param key=value` |  | Service parameter key=value (repeatable) for the proxied agent |
 | `--tenant string` |  | Tenant of the proxied agent |
 | `--transport string` | `rest` | Transport to serve: rest, jsonrpc or grpc |

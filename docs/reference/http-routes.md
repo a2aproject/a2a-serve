@@ -8,7 +8,7 @@ An a2a-serve agent serves these routes on every listener.
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
-| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in on the public URL, when `--allow-email`, `--owner` or `--allow` names an email |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in on the public URL, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
 | `/inspect/…` | the owner's web inspector (`a2a-serve inspect`); on the local listener, and on the private listener of a tailnet |
 | `/n/<node>/…` | webhook nodes |

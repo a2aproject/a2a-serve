@@ -87,7 +87,7 @@ func TestPairingsOnBothSides(t *testing.T) {
 	}
 
 	coder.serve("pair", "set", "anna", "--owner", "--kind", "device")
-	all := jsonl[pairing](t, coder.serve("pair", "list", "-o", "jsonl"))
+	all := jsonl[pairing](t, coder.serve("pair", "list", "--invited", "-o", "jsonl"))
 	kinds := map[string]string{}
 	for _, p := range all {
 		kinds[p.Name] = p.Kind + "/" + p.Role
@@ -100,9 +100,9 @@ func TestPairingsOnBothSides(t *testing.T) {
 		URL   string `json:"url"`
 		Agent string `json:"agent"`
 	}
-	anna.runJSON(anna.home, &joined, "a2a", "serve", "pair", "list")
+	anna.runJSON(anna.home, &joined, "a2a", "serve", "pair", "list", "--joined")
 	if len(joined) != 1 || joined[0].URL != coder.url || joined[0].Agent != "coder" {
-		t.Fatalf("a2a-serve pair list outside an agent directory = %+v, want coder at %s", joined, coder.url)
+		t.Fatalf("a2a-serve pair list --joined outside an agent directory = %+v, want coder at %s", joined, coder.url)
 	}
 	if out := resultOf(anna.mustSend(coder.url, "hello")); out.Text != "Hello from fakeacp." {
 		t.Fatalf("a2a send by anna = %+v, want the agent's answer", out)
@@ -188,8 +188,8 @@ func TestAccessSettings(t *testing.T) {
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 
-	out := coder.serve("config", "set", "--private-access", "paired", "--allow-email", "*@example.com", "--owner", "email:me@example.com")
-	for _, want := range []string{"applied to the running agent: private-access, allow-email, owner", "who may call:\n  you: this machine\n  emails matching me@example.com as owners, emails matching *@example.com\n"} {
+	out := coder.serve("config", "set", "--private-access", "paired", "--allow-email", "*@example.com")
+	for _, want := range []string{"applied to the running agent: private-access, allow-email", "who may call:\n  you: this machine\n  emails matching *@example.com\n"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("a2a-serve config set --private-access = %q, want %q", out, want)
 		}
@@ -203,10 +203,10 @@ func TestAccessSettings(t *testing.T) {
 		} `json:"access"`
 	}
 	coder.serveJSON(&status, "status")
-	if diff := cmp.Diff([]string{"self", "email:me@example.com"}, status.Access.Owner); diff != "" {
+	if diff := cmp.Diff([]string{"self"}, status.Access.Owner); diff != "" {
 		t.Fatalf("a2a-serve status -o json access.owner wrong result (-want +got) diff = %s", diff)
 	}
-	coder.mustFail("--allow self: you are always an owner", "config", "set", "--allow", "self")
+	coder.mustFail("unknown flag: --allow", "config", "set", "--allow", "email:me@example.com")
 	coder.mustFail(`invalid --public "ngrok"`, "config", "set", "--public", "ngrok")
 }
 

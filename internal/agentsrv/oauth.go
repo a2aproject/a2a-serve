@@ -99,7 +99,7 @@ func newOAuthServer(s *Server, google googleauth.Endpoints, sharedClientID strin
 	}
 }
 
-func (o *oauthServer) enabled() bool { return len(o.s.config().Policy.Emails()) > 0 }
+func (o *oauthServer) enabled() bool { return len(o.s.config().Policy.AllowEmails) > 0 }
 
 func (o *oauthServer) register(mux *http.ServeMux, base func(*http.Request) string) {
 	mux.HandleFunc("GET "+protectedResourcePath, o.on(func(w http.ResponseWriter, r *http.Request) {
@@ -313,7 +313,7 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {err.Error()}})
 		return
 	}
-	if !googleauth.Allowed(cfg.Policy.Emails(), claims) {
+	if !googleauth.Allowed(cfg.Policy.AllowEmails, claims) {
 		slog.Warn("refused a Google sign-in", "email", claims.Email)
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {claims.Email + " may not call this agent; ask its owner to allow it"}})
 		return
@@ -389,7 +389,7 @@ func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base stri
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the Google token was requested for another agent")
 		return
 	}
-	if !googleauth.Allowed(o.s.config().Policy.Emails(), claims) {
+	if !googleauth.Allowed(o.s.config().Policy.AllowEmails, claims) {
 		oauthError(w, http.StatusForbidden, "access_denied", claims.Email+" may not call this agent; ask its owner to allow it")
 		return
 	}

@@ -115,6 +115,12 @@ func printChannelAdded(cfg *globalConfig, st *controlapi.ChannelStatus, running 
 		_, err := fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", st.Name)
 		return err
 	}
-	_, err := fmt.Fprintf(cfg.Out, "✓ %s %s\n", st.Name, st.Account)
+	if _, err := fmt.Fprintf(cfg.Out, "✓ %s %s\n", st.Name, st.Account); err != nil {
+		return err
+	}
+	if st.OwnerLink == nil {
+		return nil
+	}
+	_, err := fmt.Fprintln(cfg.Out, st.OwnerLink.Line())
 	return err
 }

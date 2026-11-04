@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
@@ -50,12 +51,12 @@ func TestPairListJoined(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a-serve pair list --joined error = %v", err)
 	}
-	var got []joinedAgent
+	var got []joinedPairing
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
 	}
-	want := []joinedAgent{{URL: "https://coder.example.com", Kind: "caller", Agent: "coder", Principal: "pair:anna"}}
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
+	want := []joinedPairing{{Side: sideJoined, joinedAgent: joinedAgent{URL: "https://coder.example.com", Kind: "caller", Agent: "coder", Principal: "pair:anna"}}}
+	if diff := cmp.Diff(want, got, cmp.AllowUnexported(joinedPairing{}), cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
 		t.Fatalf("a2a-serve pair list --joined wrong result (-want +got) diff = %s", diff)
 	}
 	for _, u := range []string{"HTTPS://Coder.example.com/", "https://coder.example.com/.well-known/agent-card.json"} {
@@ -87,5 +88,69 @@ func TestPairGetJoinedNode(t *testing.T) {
 	want := joinedAgent{URL: node.URL, Kind: credstore.KindNode, Agent: "grok", Principal: "node:grok"}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(joinedAgent{}, "Joined")); diff != "" {
 		t.Fatalf("a2a-serve pair get of a joined node wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPairListSides(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	if err := creds.Put(credstore.Credential{URL: "https://reviewer.example.com", Token: "tok", Agent: "reviewer", Principal: "pair:coder"}); err != nil {
+		t.Fatalf("creds.Put() error = %v", err)
+	}
+	type entry struct {
+		Side string `json:"side"`
+		Name string `json:"name"`
+		URL  string `json:"url"`
+	}
+	tests := []struct {
+		name     string
+		args     []string
+		want     []entry
+		wantText []string
+	}{
+		{
+			name:     "both sides",
+			want:     []entry{{Side: sideInvited, Name: "local"}, {Side: sideJoined, URL: "https://reviewer.example.com"}},
+			wantText: []string{"Invited to this agent:\nNAME", "local", "\n\nJoined by you:\nURL", "https://reviewer.example.com"},
+		},
+		{name: "invited", args: []string{"--invited"}, want: []entry{{Side: sideInvited, Name: "local"}}, wantText: []string{"NAME"}},
+		{name: "joined", args: []string{"--joined"}, want: []entry{{Side: sideJoined, URL: "https://reviewer.example.com"}}, wantText: []string{"URL"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			args := append([]string{"pair", "list", "--dir", d.Root}, tc.args...)
+			out, err := runCMDWithCreds(t, creds, append([]string{"-o", "json"}, args...)...)
+			if err != nil {
+				t.Fatalf("a2a-serve pair list error = %v", err)
+			}
+			var got []entry
+			if err := json.Unmarshal([]byte(out), &got); err != nil {
+				t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("a2a-serve pair list -o json wrong result (-want +got) diff = %s", diff)
+			}
+			text, err := runCMDWithCreds(t, creds, args...)
+			if err != nil {
+				t.Fatalf("a2a-serve pair list error = %v", err)
+			}
+			for _, want := range tc.wantText {
+				if !strings.Contains(text, want) {
+					t.Fatalf("a2a-serve pair list = %q, want %q", text, want)
+				}
+			}
+			if (len(tc.args) == 0) != strings.Contains(text, "Joined by you:") {
+				t.Fatalf("a2a-serve pair list = %q, want section headings only without a filter", text)
+			}
+		})
+	}
+}
+
+func TestPairListOutsideAgentDir(t *testing.T) {
+	t.Parallel()
+	if _, err := runCMD(t, "pair", "list", "--dir", t.TempDir()); err == nil {
+		t.Fatal("a2a-serve pair list outside an agent directory error = nil, want an error")
 	}
 }

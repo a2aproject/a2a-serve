@@ -16,12 +16,10 @@ port: 46757                      # localhost port, chosen on the first run
 network:
   private: tailscale
   public: tailscale
-policy:                          # --private-access, --public-access, --allow-email, --owner, --allow
+policy:                          # --private-access, --public-access, --allow-email
   private_access: paired         # default everyone; paired on a relay that admits people by sign-in
   public_access: paired          # or anyone
   allow_emails: [mom@example.com, "*@example.com"]
-  owner: [email:me@example.com]
-  allow: [email:ben@example.org]
 channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:

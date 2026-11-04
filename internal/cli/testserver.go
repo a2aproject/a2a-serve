@@ -36,7 +36,7 @@ func (t *testServerFlags) register(cmd *cobra.Command) {
 	f.StringVar(&t.o.Protocol, "protocol", "latest", `Protocol version: "latest" or "0.3"`)
 	f.StringVar(&t.o.Transport, "transport", "rest", "Transport to serve: rest, jsonrpc or grpc")
 	f.StringVar(&t.o.Card.AdvertiseAddress, "advertise-address", "", "Agent endpoint to put in the agent card (default: the listen address)")
-	f.BoolVar(&t.o.Quiet, "quiet", false, "Print less on the terminal: don't log the traffic")
+	f.BoolVar(&t.o.Quiet, "no-traffic-log", false, "Don't log the requests and responses on the terminal")
 	must(cmd.RegisterFlagCompletionFunc("protocol", fixedCompletions("latest", "0.3")))
 	must(cmd.RegisterFlagCompletionFunc("transport", fixedCompletions("rest", "jsonrpc", "grpc")))
 }
