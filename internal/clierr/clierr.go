@@ -192,7 +192,7 @@ func Classify(err error) *Error {
 			Message: msg,
 			Exit:    5,
 			err:     err,
-			Hint:    "increase --timeout, or start the task with --async and follow it later",
+			Hint:    "increase --timeout",
 		}
 	}
 

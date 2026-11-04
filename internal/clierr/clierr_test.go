@@ -200,3 +200,13 @@ func TestCardResolution(t *testing.T) {
 		})
 	}
 }
+
+func TestClassifyTimeoutHint(t *testing.T) {
+	t.Parallel()
+
+	got := Classify(fmt.Errorf("waiting: %w", context.DeadlineExceeded))
+
+	if want := "increase --timeout"; got.Hint != want {
+		t.Fatalf("Classify(context.DeadlineExceeded).Hint = %q, want %q", got.Hint, want)
+	}
+}
