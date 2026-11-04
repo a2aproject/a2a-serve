@@ -22,8 +22,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"testing"
-
-	"github.com/a2aproject/a2a-serve/internal/a2acli"
 )
 
 // binDir holds a2a, a2a-serve and fakeacp; it goes first on every user's PATH.
@@ -74,7 +72,7 @@ func installCLI(dir string) error {
 	if src := os.Getenv("E2E_A2A_CLI"); src != "" {
 		return os.Symlink(src, dst)
 	}
-	if err := goCmd(dir, []string{"GOBIN=" + dir}, "install", "github.com/a2aproject/a2a-cli@"+a2acli.PinnedVersion); err != nil {
+	if err := goCmd(dir, []string{"GOBIN=" + dir}, "install", "github.com/a2aproject/a2a-cli@latest"); err != nil {
 		return err
 	}
 	return os.Rename(filepath.Join(dir, "a2a-cli"), dst)

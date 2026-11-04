@@ -22,8 +22,6 @@ import (
 	"io"
 	"os/exec"
 	"strings"
-
-	"github.com/a2aproject/a2a-serve/internal/a2acli"
 )
 
 //go:embed images/*/Dockerfile
@@ -43,8 +41,7 @@ func LocalImage(harness string) string {
 // EnsureImage makes image, or the profile's image when empty, available to
 // docker: it uses a local copy or pulls it. Only the profile's own image
 // falls back to building the harness's embedded Dockerfile when the pull
-// fails, with the a2a CLI at [a2acli.PinnedVersion] whatever the a2a on
-// PATH is. It returns the image to run and a line describing what it did.
+// fails. It returns the image to run and a line describing what it did.
 func EnsureImage(ctx context.Context, image string, profile Profile, progress io.Writer) (string, string, error) {
 	harness := profile.Name()
 	if image == "" {
@@ -73,7 +70,7 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 	if imageExists(ctx, local) {
 		return local, "using " + local, nil
 	}
-	build := exec.CommandContext(ctx, "docker", "build", "-t", local, "--build-arg", "A2A_CLI_VERSION="+a2acli.PinnedVersion, "-")
+	build := exec.CommandContext(ctx, "docker", "build", "-t", local, "-")
 	build.Stdin = bytes.NewReader(df)
 	build.Stdout, build.Stderr = progress, progress
 	if err := build.Run(); err != nil {
