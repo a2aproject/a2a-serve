@@ -15,7 +15,7 @@
 ### Documentation
 
 * Keep each fact in one place and link to it from others. `README.md` and `docs/index.md` mirror each other: change both together.
-* Give each page one audience. Getting started is the shortest path to a working agent, without internals, config file details or troubleshooting. The user guide covers what users do. `docs/concepts/architecture.md` stays high level, with no code paths. Wire formats such as headers and signatures go in `docs/reference/`, and contributor material goes in `CONTRIBUTING.md`.
+* Give each page one audience. Getting started is the shortest path to a working agent, without internals, config file details or troubleshooting. The user guide pages in `docs/guide/` cover what users do. `docs/advanced/architecture.md` stays high level, with no code paths. Wire formats such as headers and signatures go in `docs/reference/`, and contributor material goes in `CONTRIBUTING.md`.
 * Don't repeat flag lists in prose; link to the command reference. It is generated from the command definitions, so fix help text there and run `go run ./internal/tools/gendocs`.
 * Write short, plain sentences with one idea each. Avoid metaphors, slogans and contrastive constructions ("X, not Y", "X rather than Y", "X instead of Y"); state the positive claim. Use "that" for restrictive clauses, and US English.
 * Call the coding agent "the agent" and a2a-serve "the server", and its home "the agent home directory". Don't write "harness" in user-facing text, including CLI help and errors.

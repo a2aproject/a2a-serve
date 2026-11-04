@@ -7,12 +7,12 @@
 <div align="center">
    <img src="https://raw.githubusercontent.com/a2aproject/A2A/refs/heads/main/docs/assets/a2a_logo/color/SVG/a2a_color.svg" width="256" alt="Agent2Agent Protocol Logo"/>
    <h3>
-       One command turns the coding agent in your project into a sandboxed <a href="https://a2a-protocol.org">A2A</a> agent that people, scripts and other agents can call.
+       One command turns the coding agent on your machine into a sandboxed <a href="https://a2a-protocol.org">A2A</a> agent that people, scripts and other agents can call.
    </h3>
 </div>
 
 > [!WARNING]
-> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward ([upgrades](./docs/upgrades.md)). Read the [security page](./docs/concepts/security.md) and the [known limitations](#-known-limitations) before you expose an agent to other people.
+> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward. Read the [security page](./docs/advanced/security.md) and the [known limitations](#-known-limitations) before you expose an agent to other people.
 
 ---
 
@@ -39,8 +39,8 @@ a2a-serve pair invite anna   # prints a one-time code for anna
 - **Agents calling agents:** the agent delegates to other agents through the server, which keeps their tokens outside the sandbox.
 
 <div align="center">
-  <img src="./docs/graphs/readme-overview.png#gh-light-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
-  <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a Docker sandbox; the agent calls other agents through the server" width="720">
+  <img src="./docs/graphs/readme-overview.png#gh-light-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="720">
+  <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="720">
 </div>
 
 ## 🚀 Getting Started
@@ -50,17 +50,38 @@ brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux
 a2a-serve doctor --fix                       # set up the a2a CLI and check Docker
 ```
 
-[Getting started](./docs/getting-started.md) has the install script and walks through a first agent.
+[Getting Started](./docs/getting-started.md) has the install script and walks through a first agent.
 
 ## 📚 Documentation
 
 The documentation site is <https://a2aproject.github.io/a2a-serve/>.
 
-- **[Getting started](./docs/getting-started.md):** install a2a-serve and talk to your first agent.
-- **[User guide](./docs/guide.md):** settings, sandbox, approvals, networks, messengers, agents calling agents, schedules and backups.
-- **Concepts:** the [architecture](./docs/concepts/architecture.md), the [access model](./docs/concepts/access-model.md), [Agent Mesh](./docs/concepts/agent-mesh.md) and [security](./docs/concepts/security.md).
-- **[Examples](./examples/):** step-by-step lessons, from [a local agent](./examples/01-agent-server/) to [Tailscale, Telegram and a Grok bot](./examples/02-tailscale-telegram-grok/) and an [Agent Mesh relay](./examples/03-agentmesh-relay/).
+- **[Getting Started](./docs/getting-started.md):** install a2a-serve and talk to your first agent.
+- **Advanced:** the [architecture](./docs/advanced/architecture.md), the [agent directory](./docs/advanced/agent-directory.md), the [access model](./docs/advanced/access-model.md), [Agent Mesh](./docs/advanced/agent-mesh.md) and [security](./docs/advanced/security.md).
+- **[Examples](./examples/):** step-by-step examples, from [a local agent](./examples/01-agent-server/) to [Tailscale, Telegram and a Grok bot](./examples/02-tailscale-telegram-grok/) and an [Agent Mesh relay](./examples/03-agentmesh-relay/).
 - **[Reference](./docs/reference/commands/a2a-serve.md):** every command and flag, the [configuration file](./docs/reference/configuration.md), [exit codes](./docs/reference/output.md) and [HTTP routes](./docs/reference/http-routes.md).
+
+### User Guide
+
+| | |
+|---|---|
+| [Supported Agents](./docs/guide/supported-agents.md) | The supported agents, images and platforms |
+| [Running](./docs/guide/running.md) | Start, stop, restart and check on an agent |
+| [Config](./docs/guide/config.md) | Change settings |
+| [Secrets](./docs/guide/secrets.md) | API keys for the agent and tokens for the server |
+| [Sandbox](./docs/guide/sandbox.md) | What the Docker sandbox mounts and limits |
+| [MCP and Skills](./docs/guide/mcp-and-skills.md) | Give the agent the MCP servers and skills of its project |
+| [Approvals](./docs/guide/approvals.md) | Answer tool calls, and who answers them |
+| [Inspector](./docs/guide/inspector.md) | A web page with conversations, tasks and approvals |
+| [Identities](./docs/guide/identities.md) | Callers, roles and pairing codes |
+| [Email Sign-In](./docs/guide/email-sign-in.md) | Let people on an email allowlist call the agent |
+| [Networks](./docs/guide/networks.md) | Tailscale, the local network, Agent Mesh relays and public URLs |
+| [Messengers](./docs/guide/messengers.md) | Telegram, Discord and email |
+| [Agent2Agent](./docs/guide/agent2agent.md) | Contacts, peers and calls between agents |
+| [Schedules](./docs/guide/schedules.md) | Run prompts at set times |
+| [Webhook Nodes](./docs/guide/webhook-nodes.md) | Give agents that run only when woken an A2A address |
+| [Backups](./docs/guide/backups.md) | Encrypted snapshots and restores on another machine |
+| [Shell Completion](./docs/guide/shell-completion.md) | Completion scripts for bash, zsh, fish and PowerShell |
 
 ## 🚧 Known Limitations
 

@@ -1,6 +1,6 @@
-# Lesson 3 — Agent Mesh relay (experimental)
+# Agent Mesh Relay (Experimental)
 
-Lesson 2 put an agent on a tailnet. This lesson puts two agents on an
+[Tailscale, Telegram and a Grok Bot](../02-tailscale-telegram-grok/README.md) put an agent on a tailnet. This example puts two agents on an
 [Agent Mesh](https://google.github.io/agentmesh/) relay: no Tailscale
 account, agents reachable from behind NAT, and a public URL for each on the
 relay. a2a-serve runs Agent Mesh's `meshnet` library in-process, so there is
@@ -16,13 +16,13 @@ no sidecar to run.
 ## Prerequisites
 
 - `a2a-serve` built with Agent Mesh support, and the `a2a` CLI (see
-  [Getting started](../../docs/getting-started.md#install)):
+  [Getting Started](../../docs/getting-started.md#install)):
 
   ```bash
   go install -tags agentmesh github.com/a2aproject/a2a-serve@latest
   ```
 
-- Docker, and an API key for the agent, as in lesson 1
+- Docker, and an API key for the agent, as in the [prerequisites of Serve a coding agent](../01-agent-server/README.md#prerequisites)
 - The relay, at the Agent Mesh version this a2a-serve joins with:
 
   ```bash
@@ -36,8 +36,8 @@ A2A services and get public URLs that forward requests unchanged
 (`PASSTHROUGH`), so a2a-serve's own pairing codes work there:
 
 ```bash
-mkdir -p ~/a2a-lesson3/relay
-cat > ~/a2a-lesson3/relay/policy.json <<'JSON'
+mkdir -p ~/a2a-example3/relay
+cat > ~/a2a-example3/relay/policy.json <<'JSON'
 {
   "roles": [
     {"name": "mesh-admin", "allowed_services": ["*"], "allowed_targets": ["*"], "allowed_ingress": [{"services": ["*"]}]},
@@ -51,16 +51,16 @@ cat > ~/a2a-lesson3/relay/policy.json <<'JSON'
 }
 JSON
 agentmesh-one --bind-address 127.0.0.1 --port 8443 \
-  --data-dir ~/a2a-lesson3/relay --policy-file ~/a2a-lesson3/relay/policy.json
+  --data-dir ~/a2a-example3/relay --policy-file ~/a2a-example3/relay/policy.json
 ```
 
 The relay serves its control plane, the connections between agents and the
 public URLs on one port, and writes a join token to
-`~/a2a-lesson3/relay/join-token`. In another terminal:
+`~/a2a-example3/relay/join-token`. In another terminal:
 
 ```bash
 export RELAY=http://127.0.0.1:8443
-export RELAY_TOKEN="$(cat ~/a2a-lesson3/relay/join-token)"
+export RELAY_TOKEN="$(cat ~/a2a-example3/relay/join-token)"
 ```
 
 A relay that people sign in to with their accounts prints a sign-in link on
@@ -70,12 +70,12 @@ provider, so the agents join with the token.
 ## 2. Join two agents
 
 ```bash
-mkdir -p ~/a2a-lesson3/coder && cd ~/a2a-lesson3/coder
+mkdir -p ~/a2a-example3/coder && cd ~/a2a-example3/coder
 a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
   --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
 a2a-serve start --detach
 
-mkdir -p ~/a2a-lesson3/reviewer && cd ~/a2a-lesson3/reviewer
+mkdir -p ~/a2a-example3/reviewer && cd ~/a2a-example3/reviewer
 a2a-serve config set --agent opencode --name reviewer --secret OPENROUTER_API_KEY \
   --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
 a2a-serve start --detach
@@ -85,12 +85,12 @@ a2a-serve start --detach
 each agent with it before its first start, and `start` starts it.
 
 ```bash
-cd ~/a2a-lesson3/coder && a2a-serve status
+cd ~/a2a-example3/coder && a2a-serve status
 ```
 
 ```
 coder (opencode) running for 4s, pid 51200
-  dir      /home/you/a2a-lesson3/coder
+  dir      /home/you/a2a-example3/coder
   local    http://127.0.0.1:41823
   private  http://agentmesh.local/mesh/12D3KooW…/a2a/coder
            (works only from other a2a-serve agents on the relay; give people the public URL)
@@ -102,15 +102,15 @@ coder (opencode) running for 4s, pid 51200
 Agents on the relay find each other by name:
 
 ```bash
-a2a-serve peers --dir ~/a2a-lesson3/coder     # lists reviewer
+a2a-serve peers --dir ~/a2a-example3/coder     # lists reviewer
 ```
 
 Only agents with the join token are on this relay, so everyone on it can
 call reviewer, and coder needs no code:
 
 ```bash
-a2a-serve contact add reviewer --dir ~/a2a-lesson3/coder
-a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-lesson3/coder)" \
+a2a-serve contact add reviewer --dir ~/a2a-example3/coder
+a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)" \
   "Ask reviewer what it thinks of the README of this project."
 ```
 
@@ -123,8 +123,8 @@ The public URL forwards requests unchanged, so a caller pairs there like
 anywhere else:
 
 ```bash
-PUBLIC="$(a2a-serve status --url=public --dir ~/a2a-lesson3/coder)"
-a2a-serve pair invite me --dir ~/a2a-lesson3/coder     # prints a code
+PUBLIC="$(a2a-serve status --url=public --dir ~/a2a-example3/coder)"
+a2a-serve pair invite me --dir ~/a2a-example3/coder     # prints a code
 a2a-serve pair join "$PUBLIC" <code>
 a2a send -a "$PUBLIC" "What does this project do?"
 ```
@@ -132,10 +132,10 @@ a2a send -a "$PUBLIC" "What does this project do?"
 ## 5. Clean up
 
 ```bash
-a2a-serve stop --dir ~/a2a-lesson3/coder
-a2a-serve stop --dir ~/a2a-lesson3/reviewer
+a2a-serve stop --dir ~/a2a-example3/coder
+a2a-serve stop --dir ~/a2a-example3/reviewer
 # stop agentmesh-one with Ctrl+C
-rm -rf ~/a2a-lesson3
+rm -rf ~/a2a-example3
 ```
 
 ## Next steps

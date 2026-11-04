@@ -1,9 +1,9 @@
-# Access model: who can call an agent
+# Access Model: Who Can Call an Agent
 
 > [!NOTE]
 > The sandbox reaching the network only through the server is planned
 > ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
-> [Who can call the agent](../guide.md#who-can-call-the-agent) describes what
+> [Identities](../guide/identities.md) describes what
 > works today.
 
 An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.

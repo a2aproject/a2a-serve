@@ -1,4 +1,4 @@
-# HTTP routes
+# HTTP Routes
 
 An a2a-serve agent serves these routes on every listener.
 

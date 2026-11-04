@@ -1,6 +1,6 @@
 # Architecture
 
-a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), such as opencode or Claude Code, into an A2A agent. This page explains how it works. The [user guide](../guide.md) explains how to use it.
+a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), such as opencode or Claude Code, into an A2A agent. This page explains how it works. The [user guide](../index.md#user-guide) explains how to use it.
 
 ## Overview
 
