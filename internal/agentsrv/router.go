@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
@@ -53,6 +54,7 @@ type Router struct {
 	// router starts.
 	anonymous func(ctx context.Context, contextID string) bool
 	logf      func(format string, args ...any)
+	timings   Timings
 	// handler is the agent's A2A handler. It is set before the router starts.
 	handler a2asrv.RequestHandler
 
@@ -84,10 +86,9 @@ type convTicket struct {
 	once sync.Once
 }
 
-// Channel restarts back off from channelRetryMin to channelRetryMax, and
-// start over after a run of channelHealthy.
-var (
-	channelRetryMin = 5 * time.Second
+// Channel restarts back off from Timings.ChannelRetryMin to
+// channelRetryMax, and start over after a run of channelHealthy.
+const (
 	channelRetryMax = 5 * time.Minute
 	channelHealthy  = time.Minute
 )
@@ -116,7 +117,7 @@ func (r *Router) add(ch channel.Channel) {
 
 func (r *Router) run(ctx context.Context, rc *runningChannel) {
 	defer close(rc.done)
-	retry := backoff.New(channelRetryMin, channelRetryMax, channelHealthy)
+	retry := backoff.New(r.timings.ChannelRetryMin, channelRetryMax, channelHealthy)
 	for {
 		started := time.Now()
 		err := rc.ch.Run(ctx, r.in)
@@ -201,18 +202,15 @@ func (r *Router) channels() []channel.Channel {
 func (r *Router) status() []controlapi.ChannelStatus {
 	var out []controlapi.ChannelStatus
 	for _, ch := range r.channels() {
-		out = append(out, *r.channelStatus(ch, ""))
+		out = append(out, *r.channelStatus(ch, nil))
 	}
 	return out
 }
 
-func (r *Router) channelStatus(ch channel.Channel, hint string) *controlapi.ChannelStatus {
-	st := &controlapi.ChannelStatus{Name: ch.Name()}
+func (r *Router) channelStatus(ch channel.Channel, link *controlapi.OwnerLink) *controlapi.ChannelStatus {
+	st := &controlapi.ChannelStatus{Name: ch.Name(), OwnerLink: link}
 	if d, ok := ch.(channel.Describer); ok {
 		st.Account = d.Describe()
-	}
-	if hint != "" {
-		st.Account = strings.TrimSpace(st.Account + "\n" + hint)
 	}
 	r.mu.Lock()
 	if rc := r.chans[ch.Name()]; rc != nil && rc.err != nil {
@@ -225,51 +223,57 @@ func (r *Router) channelStatus(ch channel.Channel, hint string) *controlapi.Chan
 // announce prints the channels, and how to link the owner if nobody is
 // linked as owner yet. One owner code serves every channel.
 func (r *Router) announce(ctx context.Context) error {
-	code := ""
+	var code mintedCode
 	for _, ch := range r.channels() {
 		line := "✓ " + ch.Name()
 		if d, ok := ch.(channel.Describer); ok {
 			line += " " + d.Describe()
 		}
 		r.logf("%s", line)
-		if hint := r.ownerHintWith(ctx, ch, &code); hint != "" {
-			r.logf("%s", hint)
+		if link := r.ownerLinkWith(ctx, ch, &code); link != nil {
+			r.logf("%s", link.Line())
 		}
 	}
 	return nil
 }
 
-// ownerHint mints an owner code for a channel nobody is linked on as owner.
-func (r *Router) ownerHint(ctx context.Context, ch channel.Channel) string {
-	code := ""
-	return r.ownerHintWith(ctx, ch, &code)
+// mintedCode is an owner code minted for the owner links of channels.
+type mintedCode struct {
+	code    string
+	expires time.Time
 }
 
-// ownerHintWith is ownerHint which mints *code if it is empty, and reuses it
-// otherwise. A new owner code replaces the pending one, so that restarts
+// ownerLink mints an owner code for a channel nobody is linked on as owner.
+func (r *Router) ownerLink(ctx context.Context, ch channel.Channel) *controlapi.OwnerLink {
+	var code mintedCode
+	return r.ownerLinkWith(ctx, ch, &code)
+}
+
+// ownerLinkWith is ownerLink which mints *code if it is empty, and reuses
+// it otherwise. A new owner code replaces the pending one, so that restarts
 // don't pile up codes.
-func (r *Router) ownerHintWith(ctx context.Context, ch channel.Channel, code *string) string {
+func (r *Router) ownerLinkWith(ctx context.Context, ch channel.Channel, code *mintedCode) *controlapi.OwnerLink {
 	links, err := r.store.LinksOf(ctx, auth.LocalPairing)
 	if err != nil {
 		slog.Error("listing owner links", "error", err)
-		return ""
+		return nil
 	}
 	if slices.ContainsFunc(links, func(l store.Link) bool { return l.Channel == ch.Name() }) {
-		return ""
+		return nil
 	}
 	d, ok := ch.(channel.Describer)
 	if !ok {
-		return ""
+		return nil
 	}
-	if *code == "" {
-		c, _, err := auth.MintSoleCode(ctx, r.store, auth.LocalPairing)
+	if code.code == "" {
+		c, expires, err := auth.MintSoleCode(ctx, r.store, auth.LocalPairing)
 		if err != nil {
 			slog.Error("minting owner code", "error", err)
-			return ""
+			return nil
 		}
-		*code = c
+		*code = mintedCode{code: c, expires: expires}
 	}
-	return fmt.Sprintf("→ link yourself as owner: %s   (%d min)", d.LinkHint(*code), int(auth.CodeTTL.Minutes()))
+	return &controlapi.OwnerLink{Hint: d.LinkHint(code.code), Code: code.code, Expires: code.expires}
 }
 
 func (r *Router) linkHints(code string) []string {
@@ -576,7 +580,7 @@ func (r *Router) followOwnerAnswer(ctx context.Context, ch channel.Channel, conv
 		defer unsubscribe()
 		for {
 			rd := newRenderer(r, ch, conv, channel.Ref{}, p)
-			if !renderUntilStop(ctx, rd, events, anonymousQuestionTimeout+time.Minute) {
+			if !renderUntilStop(ctx, rd, events, r.timings.AnonymousQuestionTimeout+time.Minute) {
 				return
 			}
 			if _, waits := rd.waitingForOwner(); !waits {
@@ -694,7 +698,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 	}
 	who := in.Name
 	if who == "" {
-		who = approvals.DisplayPrincipal(p.ID)
+		who = auth.DisplayPrincipal(p.ID)
 	}
 	own, err := r.store.ContextOf(ctx, in.Channel, string(in.Conv))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -878,7 +882,7 @@ func (r *Router) answerHint(ctx context.Context, rec store.Question, q *approval
 
 // ownerChatOrder is the order in which, without --owner-chat, the
 // messengers are tried for the owner chat.
-var ownerChatOrder = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
+var ownerChatOrder = []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}
 
 // OwnerChat returns the chat of --owner-chat, or else the direct chat of an
 // owner on the first running messenger, in ownerChatOrder.
@@ -1056,9 +1060,6 @@ func (r *Router) injectTurn(ctx context.Context, contextID string, p auth.Princi
 	return nil
 }
 
-// injectRetry is how often a held-back turn checks whether it can be posted.
-var injectRetry = 2 * time.Second
-
 func (r *Router) waitingForInput(ctx context.Context, contextID string) bool {
 	last, err := r.tasks.LatestInContext(ctx, contextID)
 	return err == nil && last.Status.State == a2a.TaskStateInputRequired
@@ -1070,7 +1071,7 @@ func (r *Router) waitInput(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(injectRetry):
+	case <-time.After(r.timings.InjectRetry):
 		return true
 	}
 }

@@ -180,13 +180,13 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "anyone on the public listener",
-			policy: Policy{Owner: []string{MemberSelf}, Anonymous: []string{MemberAnyone}},
+			policy: Policy{Anonymous: []string{MemberAnyone}},
 			req:    Request{Listener: network.ListenerPublic, Header: http.Header{}},
 			want:   Principal{ID: AnonymousID, Role: RoleAnonymous, Identity: Identity{Network: network.ListenerPublic}},
 		},
 		{
 			name:    "anyone on the local listener",
-			policy:  Policy{Owner: []string{MemberSelf}, Anonymous: []string{MemberAnyone}},
+			policy:  Policy{Anonymous: []string{MemberAnyone}},
 			req:     Request{Listener: network.ListenerLocal, Header: http.Header{}},
 			wantErr: ErrNoCredential,
 		},
@@ -635,5 +635,14 @@ func TestMintSoleCodeRevokesPendingCode(t *testing.T) {
 	}
 	if _, err := s.TakeCode(ctx, NormalizeCode(second), store.AnyCode); err != nil {
 		t.Fatalf("TakeCode(second) error = %v, want nil", err)
+	}
+}
+
+func TestDisplayPrincipal(t *testing.T) {
+	t.Parallel()
+	for id, want := range map[string]string{"": "A caller", "pair:anna": "anna", "owner": "owner"} {
+		if got := DisplayPrincipal(id); got != want {
+			t.Fatalf("DisplayPrincipal(%q) = %q, want %q", id, got, want)
+		}
 	}
 }

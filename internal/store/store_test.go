@@ -848,6 +848,26 @@ func TestPrune(t *testing.T) {
 	}
 }
 
+func TestPruneKeepsPairingOfTakenCode(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	if err := s.InviteCode(ctx, Pairing{Name: "invited", Role: "authenticated"}, "CODE", time.Now().Add(time.Minute)); err != nil {
+		t.Fatalf("InviteCode() error = %v", err)
+	}
+	if _, err := s.TakeCode(ctx, "CODE", AnyCode); err != nil {
+		t.Fatalf("TakeCode() error = %v", err)
+	}
+
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	if err := s.PutToken(ctx, "tok", Token{Pairing: "invited"}, "person"); err != nil {
+		t.Fatalf("PutToken() after Prune() error = %v", err)
+	}
+}
+
 func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

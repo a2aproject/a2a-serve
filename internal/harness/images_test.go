@@ -22,8 +22,6 @@ import (
 	"runtime"
 	"strings"
 	"testing"
-
-	"github.com/a2aproject/a2a-serve/internal/a2acli"
 )
 
 // noImagesDocker has no images, fails every pull and docker info, and builds
@@ -58,8 +56,7 @@ func putOnPath(t *testing.T, name, script string) {
 }
 
 func TestEnsureImage(t *testing.T) {
-	log := fakeDocker(t, noImagesDocker)
-	putOnPath(t, a2acli.Binary, `echo '{"version":"0.3.1"}'`)
+	fakeDocker(t, noImagesDocker)
 	tests := []struct {
 		name    string
 		image   string
@@ -86,13 +83,6 @@ func TestEnsureImage(t *testing.T) {
 				t.Fatalf("EnsureImage() = %q, want %q", got, tc.want)
 			}
 		})
-	}
-	calls, err := os.ReadFile(log)
-	if err != nil {
-		t.Fatalf("os.ReadFile() error = %v", err)
-	}
-	if want := "--build-arg A2A_CLI_VERSION=" + a2acli.PinnedVersion + " "; !strings.Contains(string(calls), want) {
-		t.Fatalf("EnsureImage() ran docker with:\n%s\nwant a build with %q", calls, want)
 	}
 }
 

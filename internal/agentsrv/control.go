@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -308,7 +309,7 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 	if err != nil {
 		return nil, agenterr.Invalid(err)
 	}
-	if err := validateChannel(ctx, ch); err != nil {
+	if err := channel.Validate(ctx, ch); err != nil {
 		return nil, err
 	}
 	if err := s.dir.SaveSecrets(req.Secrets); err != nil {
@@ -319,7 +320,7 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 		return nil, err
 	}
 	s.router.add(ch)
-	return s.router.channelStatus(ch, s.router.ownerHint(ctx, ch)), nil
+	return s.router.channelStatus(ch, s.router.ownerLink(ctx, ch)), nil
 }
 
 func (s *Server) ctlDeleteChannel(w http.ResponseWriter, r *http.Request) {
@@ -354,7 +355,7 @@ func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reloadConfig(saved)
-	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email", "owner", "allow"}})
+	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}})
 }
 
 func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {

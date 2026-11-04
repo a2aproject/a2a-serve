@@ -179,7 +179,7 @@ func (c *Config) Validate() error {
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
 		add("--google-client-id and --google-client-secret go together: they are your Google app")
 	}
-	if c.Auth.GoogleClientID != "" && len(c.Policy.Emails()) == 0 {
+	if c.Auth.GoogleClientID != "" && len(c.Policy.AllowEmails) == 0 {
 		add("--google-client-id needs --allow-email: people sign in with your Google app only when the agent allows their email")
 	}
 	errs = append(errs, c.Backup.validate()...)
@@ -211,38 +211,7 @@ func (p PolicyConfig) validate() []error {
 			errs = append(errs, fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", e))
 		}
 	}
-	for _, m := range p.Owner {
-		if err := validMember("owner", m); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	for _, m := range p.Allow {
-		if err := validMember("allow", m); err != nil {
-			errs = append(errs, err)
-		}
-	}
 	return errs
-}
-
-// validMember checks a member of --owner or --allow. The user running the
-// agent is always an owner, anyone comes only from --public-access, and
-// the private network joins authenticated only with --private-access.
-func validMember(flag, m string) error {
-	switch m {
-	case MemberSelf:
-		return fmt.Errorf("--%s self: you are always an owner", flag)
-	case MemberAnyone:
-		return fmt.Errorf("--%s anyone: anyone can call only with --public-access anyone", flag)
-	case MemberPrivate:
-		if flag == "allow" {
-			return errors.New("--allow private: let everyone on the private network call with --private-access everyone")
-		}
-		return nil
-	}
-	if e, ok := strings.CutPrefix(m, MemberEmailPrefix); ok && validEmailPattern(e) {
-		return nil
-	}
-	return fmt.Errorf("invalid --%s %q: want private, email:<address> or email:*@<domain>", flag, m)
 }
 
 // validEmailPattern reports whether entry is an email or *@domain.

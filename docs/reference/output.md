@@ -4,7 +4,8 @@ Management commands take `-o json` or `-o jsonl`. List commands (`pair list`,
 `channel list`, `contact list`, `schedule list`, `peers`, `backup list`,
 `mailbox list`, `doctor`) print a JSON array of objects with `-o json`, and
 one object per line with `-o jsonl`; each object has every column of the
-table, and `pair list` and `peers` add a `kind`. `status -o json` is one
+table, and `pair list` and `peers` add a `kind`. `pair list` gives each entry
+a `side`: `invited` for a pairing of the agent, `joined` for an agent you joined. `status -o json` is one
 object with the same schema whether the agent runs or not: `running` is
 always set, and the fields of the running server, such as `pid` and `local`,
 only while it runs. Its `access` object says who may call: `privateAccess`
@@ -20,13 +21,14 @@ may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. `restart` prints the
 same object as `status -o json`, and `channel add` prints the channel's `name` and
-`account`. Progress lines of `restart` and `config set --restart` go to stderr with
+`account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
+that makes you its owner, until you link an account. Progress lines of `restart` and `config set --restart` go to stderr with
 `-o json`. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 
 Commands that call the running agent take `--timeout`, the timeout of each
-call (default 60s); `backup now` and `backup list` take it as the timeout of
-the command (default 10m). `--version` prints what `version` prints.
+call (default 60s). The `backup` commands take `--deadline`, the time limit of
+the whole command (default 10m). `--version` prints what `version` prints.
 
 Errors follow the error contract of the
 [a2a CLI](https://github.com/a2aproject/a2a-cli) (`specification/SPEC.md`):
@@ -38,7 +40,7 @@ with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
 | 1 | `A2ACLI_ERR_INTERNAL`, `A2ACLI_ERR_PROTOCOL` | Any other failure |
 | 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags or settings, or a name the agent doesn't have, such as `pair rm` of an unknown pairing |
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
-| 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` expired |
+| 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` or `--deadline` expired |
 | 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a-serve start --detach` |
 | 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
 | 8 | `A2ASERVE_ERR_BUSY` | The agent server is starting or stopping; run the command again in a moment |

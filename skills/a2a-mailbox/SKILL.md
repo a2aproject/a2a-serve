@@ -27,9 +27,8 @@ install that binary another way, then use `a2a-serve` and `a2a` instead of
 `./a2a-serve` and `./a2a` below:
 
 - `a2a-serve`: `go install github.com/a2aproject/a2a-serve@latest`
-- `a2a`: `go install github.com/a2aproject/a2a-cli@v0.3.2-0.20261030153310-f90e4eb628cd`,
-  then rename the installed `a2a-cli` to `a2a`. Releases don't have credential
-  helpers yet.
+- `a2a`: `go install github.com/a2aproject/a2a-cli@latest`, then rename the
+  installed `a2a-cli` to `a2a`.
 
 With both on your PATH, `a2a-serve <command>` is the same as
 `a2a serve <command>`. If you can't run either, every command below has an

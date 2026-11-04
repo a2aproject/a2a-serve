@@ -58,7 +58,7 @@ func newService(t *testing.T, h a2asrv.RequestHandler) *Service {
 		}
 	})
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
-	policy := auth.Policy{Owner: []string{auth.MemberSelf}, Anonymous: []string{auth.MemberAnyone}}
+	policy := auth.Policy{Anonymous: []string{auth.MemberAnyone}}
 	return &Service{
 		Store: s, Tasks: s.Tasks("", all), Handler: h, Notifier: &fakeNotifier{},
 		Chain:     &auth.Chain{Store: s, Policy: func() auth.Policy { return policy }},

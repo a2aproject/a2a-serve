@@ -28,12 +28,13 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
 
 // LocalOwner is the built-in pairing of the user running the agent: the
@@ -119,20 +120,20 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	webhook := exists && p.Kind == pairapi.PairingWebhook
+	isWebhook := exists && p.Kind == pairapi.PairingWebhook
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil
 	switch {
-	case nodeFlags && webhook:
+	case nodeFlags && isWebhook:
 		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
 	case nodeFlags && exists:
 		return nil, agenterr.Conflictf("%s is already paired; pick another name, or run `a2a-serve pair rm %s` first", req.Name, req.Name)
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
-	case (nodeFlags || webhook) && req.Owner:
+	case (nodeFlags || isWebhook) && req.Owner:
 		return nil, invalid("--owner doesn't apply to webhook nodes")
 	case nodeFlags:
 		return s.addNode(ctx, req)
-	case webhook:
+	case isWebhook:
 		node, err := s.Store.Node(ctx, req.Name)
 		if err != nil {
 			return nil, err
@@ -167,7 +168,7 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 	if req.Name == SchedulesAgent {
 		return nil, invalid("%q is the agent the harness manages schedules with; pick another name", SchedulesAgent)
 	}
-	if err := nodes.ValidateWebhook(req.Webhook); err != nil {
+	if err := webhook.Validate(req.Webhook); err != nil {
 		return nil, invalid("%v", err)
 	}
 	if _, err := s.Store.Contact(ctx, req.Name); err == nil {
@@ -218,8 +219,8 @@ func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*co
 // NodeInfo describes a node hosted at the agent URL base.
 func NodeInfo(base string, node store.Node) controlapi.NodeInfo {
 	return controlapi.NodeInfo{
-		ID: node.ID, Name: node.Name, URL: strings.TrimSuffix(base, "/") + "/n/" + node.ID,
-		Webhook: nodes.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
+		ID: node.ID, Name: node.Name, URL: mailboxapi.NodeURL(base, node.ID),
+		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
@@ -310,7 +311,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		return nil, invalid("--owner and --kind don't apply to webhook nodes")
 	}
 	if req.Webhook != "" {
-		if err := nodes.ValidateWebhook(req.Webhook); err != nil {
+		if err := webhook.Validate(req.Webhook); err != nil {
 			return nil, invalid("%v", err)
 		}
 		node.Webhook = req.Webhook
@@ -468,7 +469,7 @@ func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
 		if n, ok := nodesByID[p.Name]; ok {
 			cp.Principal = auth.NodePrincipal(n.ID)
 			cp.Node = &controlapi.NodeDetails{
-				URL: NodeInfo(base, n).URL, Webhook: nodes.RedactURL(n.Webhook), Description: n.Description,
+				URL: mailboxapi.NodeURL(base, n.ID), Webhook: webhook.RedactURL(n.Webhook), Description: n.Description,
 				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
 				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
 			}

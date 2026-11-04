@@ -37,6 +37,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protowire"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -140,7 +141,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 		if err != nil {
 			t.Fatalf("tasks.LatestInContext() error = %v, want nil", err)
 		}
-		if len(last.History) > 0 && strings.Contains(messageText(last.History[0]), "Pushed (allow).") {
+		if len(last.History) > 0 && strings.Contains(a2atext.Message(last.History[0]), "Pushed (allow).") {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -203,7 +204,7 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 
 	reviewer := startServer(t, serverOpts{
 		name:     "reviewer",
-		secrets:  agentdir.Secrets{SecretRelayToken: "join-secret"},
+		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
@@ -212,7 +213,7 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	})
 	coder := startServer(t, serverOpts{
 		name:     "coder",
-		secrets:  agentdir.Secrets{SecretRelayToken: "join-secret"},
+		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()

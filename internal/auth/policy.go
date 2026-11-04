@@ -44,9 +44,10 @@ const (
 	MemberEmailPrefix = "email:"
 )
 
-// Policy gives each role a list of members, as an Agent Mesh binding does.
+// Policy gives the authenticated and anonymous roles a list of members, as
+// an Agent Mesh binding does. The owner role holds only the user running the
+// agent and owner pairings.
 type Policy struct {
-	Owner         []string
 	Authenticated []string
 	Anonymous     []string
 }
@@ -60,7 +61,7 @@ type Policy struct {
 func (p Policy) Resolve(id Identity) string {
 	role := ""
 	switch {
-	case matchesAny(p.Owner, id) || id.PairingRole == RoleOwner:
+	case matches(MemberSelf, id) || id.PairingRole == RoleOwner:
 		role = RoleOwner
 	case matchesAny(p.Authenticated, id) || id.PairingRole == RoleAuthenticated || id.WebhookNode != "":
 		role = RoleAuthenticated
@@ -113,15 +114,12 @@ func EmailMatches(pattern, email, domain string) bool {
 	return pattern == email
 }
 
-const ownerSuffix = " as owners"
-
 // Others describes who may call under the policy without a pairing, such
-// as "everyone on the tailnet" or "emails matching *@example.com as
-// owners". provider is the private network's provider, or empty without
+// as "everyone on the tailnet" or "emails matching *@example.com". provider is the private network's provider, or empty without
 // one.
 func (p Policy) Others(provider string) []string {
 	var out []string
-	add := func(members []string, suffix string) {
+	add := func(members []string) {
 		for _, m := range members {
 			var who string
 			switch pattern, email := strings.CutPrefix(m, MemberEmailPrefix); {
@@ -132,13 +130,12 @@ func (p Policy) Others(provider string) []string {
 			case email:
 				who = "emails matching " + pattern
 			}
-			if who != "" && !slices.Contains(out, who+suffix) && !slices.Contains(out, who+ownerSuffix) {
-				out = append(out, who+suffix)
+			if who != "" && !slices.Contains(out, who) {
+				out = append(out, who)
 			}
 		}
 	}
-	add(p.Owner, ownerSuffix)
-	add(p.Authenticated, "")
-	add(p.Anonymous, "")
+	add(p.Authenticated)
+	add(p.Anonymous)
 	return out
 }

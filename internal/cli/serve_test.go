@@ -227,7 +227,7 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "inspect", "--no-browser", "--dir", dir); err != nil || !strings.Contains(out, "open this link once") {
 		t.Fatalf("a2a-serve inspect --no-browser = %q, %v, want the link", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "inspect", "--private", "--no-browser", "--dir", dir); err == nil || !strings.Contains(err.Error(), "has no private URL") {
+	if _, err := runCMDWithCreds(t, creds, "inspect", "--url", "private", "--no-browser", "--dir", dir); err == nil || !strings.Contains(err.Error(), "has no private URL") {
 		t.Fatalf("a2a-serve inspect --private error = %v, want no private URL", err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "pair"); err != nil || !strings.Contains(out, "invite") {

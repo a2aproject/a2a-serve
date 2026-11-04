@@ -126,7 +126,7 @@ func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		done <- Run(ctx, Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Credentials: creds})
+		done <- Run(ctx, Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Credentials: creds, Timings: testTimings})
 	}()
 	t.Cleanup(func() {
 		cancel()

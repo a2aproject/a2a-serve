@@ -91,6 +91,8 @@ type Options struct {
 	NewRelay func(network.RelayConfig) (network.Provider, error)
 	// Now replaces time.Now for schedules, for tests.
 	Now func() time.Time
+	// Timings replace the delays and timeouts of the server, for tests.
+	Timings Timings
 }
 
 // Server is a running agent server.
@@ -144,6 +146,7 @@ type Server struct {
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
 	pairLimit      *pairLimiter
+	timings        Timings
 }
 
 // runtimeConfig is the config and secrets the server runs with. Changes
@@ -163,10 +166,6 @@ const (
 // maxExecutionsOf is the execution limit of a scope, which only callers
 // other than owners get.
 func maxExecutionsOf(string) int { return maxCallerExecutions }
-
-// nodeWebhookRetries are the delays before each wake delivery attempt to a
-// webhook node.
-var nodeWebhookRetries = nodes.DefaultWebhookRetries
 
 // stack holds what to close when the server stops, closed in reverse order
 // of opening. Only Run owns one.
@@ -211,6 +210,7 @@ func Run(ctx context.Context, opts Options) error {
 		newRelay:          opts.NewRelay,
 
 		pairLimit: newPairLimiter(),
+		timings:   opts.Timings.withDefaults(),
 	}
 	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
@@ -315,7 +315,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		AgentName:      agentName,
 		BaseURL:        s.bestURL,
 		Authenticate:   s.authenticate,
-		WebhookRetries: nodeWebhookRetries,
+		WebhookRetries: s.timings.WebhookRetries,
 		Advertised:     s.ads.Advertised,
 	})
 	s.router = &Router{
@@ -327,6 +327,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		agentName: agentName,
 		ownerChat: func() string { return s.config().Approvals.OwnerChat },
 		logf:      s.logf,
+		timings:   s.timings,
 	}
 	s.pairings = &pairings.Service{
 		Store:     s.store,
@@ -337,7 +338,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 	}
-	s.schedules = newSchedules(ctx, s.store, s.router, s.chain, opts.Now)
+	s.schedules = newSchedules(ctx, s.store, s.router, s.chain, opts.Now, s.timings.ScheduleMinWait)
 	s.inspector = newInspector(s)
 	s.peers = &Peers{
 		store:     s.store,
@@ -350,6 +351,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		ads:       s.ads,
 		agentName: agentName,
 		bridge:    s.bridge,
+		timings:   s.timings,
 		ctx:       ctx,
 		watching:  map[string]bool{},
 		clients:   map[string]*contactClient{},
@@ -406,7 +408,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.approvals.Notifier = s.router
 	s.approvals.Unattended = s.router.Unattended
 	s.approvals.Anonymous = s.split.Anonymous
-	s.approvals.AnonymousTimeout = anonymousQuestionTimeout
+	s.approvals.AnonymousTimeout = s.timings.AnonymousQuestionTimeout
 	s.router.anonymous = s.split.Anonymous
 	s.approvals.Remote = s.peers
 	return nil
@@ -587,7 +589,7 @@ func (s *Server) bestURL() string {
 }
 
 // pruneInterval is how often the server drops expired and old records.
-var pruneInterval = time.Hour
+const pruneInterval = time.Hour
 
 // pruneLoop prunes the store now and every pruneInterval until ctx ends.
 func (s *Server) pruneLoop(ctx context.Context) {

@@ -22,12 +22,9 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/doctor"
-	"github.com/a2aproject/a2a-serve/internal/launch"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 func newDoctorCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -99,14 +96,6 @@ func doctorEnv(cfg *globalConfig) (doctor.Env, error) {
 	if cfg.credentials != nil {
 		env.Credentials = cfg.credentials
 	}
-	env.ServiceUnit = func(d agentdir.Dir) (string, error) {
-		name := launch.ServiceName(d)
-		if !service.Installed(name) {
-			return "", nil
-		}
-		return service.UnitFile(name)
-	}
-	env.ValidateChannel = agentsrv.ValidateChannel
 	return env, nil
 }
 

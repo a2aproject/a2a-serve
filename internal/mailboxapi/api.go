@@ -155,21 +155,3 @@ func ParseState(s string) (a2a.TaskState, bool) {
 	}
 	return "", false
 }
-
-// TextOf joins the text parts of a message.
-func TextOf(m *a2a.Message) string {
-	if m == nil {
-		return ""
-	}
-	return textOfParts(m.Parts)
-}
-
-func textOfParts(parts []*a2a.Part) string {
-	var out []string
-	for _, p := range parts {
-		if t := p.Text(); t != "" {
-			out = append(out, t)
-		}
-	}
-	return strings.Join(out, "\n")
-}

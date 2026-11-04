@@ -89,9 +89,9 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
-		// Approvals reject questions after anonymousQuestionTimeout; this
+		// Approvals reject questions after AnonymousQuestionTimeout; this
 		// stops the turn if that answer doesn't arrive.
-		QuestionTimeout: anonymousQuestionTimeout + time.Minute,
+		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
@@ -243,7 +243,7 @@ func (s *Server) localCLI(ctx context.Context) string {
 		return ""
 	}
 	if v := a2acli.Version(ctx); a2acli.Outdated(v) {
-		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a-serve doctor", v, cli, a2acli.PinnedVersion)
+		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a-serve doctor", v, cli, a2acli.MinVersion)
 	}
 	return cli
 }

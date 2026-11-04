@@ -34,24 +34,21 @@ func TestPolicy(t *testing.T) {
 		signIn   bool
 		want     auth.Policy
 	}{
-		{name: "defaults", want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}}},
-		{name: "network that admits by sign-in", signIn: true, want: auth.Policy{Owner: []string{"self"}}},
+		{name: "defaults", want: auth.Policy{Authenticated: []string{"private"}}},
+		{name: "network that admits by sign-in", signIn: true, want: auth.Policy{}},
 		{
 			name: "everyone on a network that admits by sign-in", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessEveryone}, signIn: true,
-			want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}},
+			want: auth.Policy{Authenticated: []string{"private"}},
 		},
-		{name: "closed private network", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: auth.Policy{Owner: []string{"self"}}},
+		{name: "closed private network", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: auth.Policy{}},
 		{
 			name: "public URL open to anyone", settings: agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone},
-			want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{"anyone"}},
+			want: auth.Policy{Authenticated: []string{"private"}, Anonymous: []string{"anyone"}},
 		},
 		{
-			name: "emails and members",
-			settings: agentdir.PolicyConfig{
-				PrivateAccess: agentdir.AccessPaired, AllowEmails: []string{"*@example.com"},
-				Owner: []string{"email:me@example.com"}, Allow: []string{"email:ben@example.org"},
-			},
-			want: auth.Policy{Owner: []string{"self", "email:me@example.com"}, Authenticated: []string{"email:*@example.com", "email:ben@example.org"}},
+			name:     "emails",
+			settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired, AllowEmails: []string{"*@example.com"}},
+			want:     auth.Policy{Authenticated: []string{"email:*@example.com"}},
 		},
 	}
 	for _, tc := range tests {

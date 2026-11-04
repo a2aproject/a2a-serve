@@ -44,7 +44,7 @@ func TestManageStoppedAgent(t *testing.T) {
 		t.Fatalf("a2a-serve pair set of a stopped agent = %q, want anna updated", out)
 	}
 	var all []controlapi.Pairing
-	if err := json.Unmarshal([]byte(run("-o", "json", "pair", "list")), &all); err != nil || len(all) != 2 || all[0].Name != "anna" || all[0].Role != "owner" || len(all[0].PendingCodes) != 1 {
+	if err := json.Unmarshal([]byte(run("-o", "json", "pair", "list", "--invited")), &all); err != nil || len(all) != 2 || all[0].Name != "anna" || all[0].Role != "owner" || len(all[0].PendingCodes) != 1 {
 		t.Fatalf("a2a-serve pair list of a stopped agent = %+v, %v, want anna as an owner with a pending code, and local", all, err)
 	}
 	if out := run("pair", "get", "anna"); !strings.Contains(out, "anna (not joined yet, owner)") {

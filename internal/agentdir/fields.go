@@ -161,8 +161,6 @@ var fields = []field{
 	scalar("private-access", true, func(c *Config) *string { return &c.Policy.PrivateAccess }),
 	scalar("public-access", true, func(c *Config) *string { return &c.Policy.PublicAccess }),
 	list("allow-email", true, func(c *Config) *[]string { return &c.Policy.AllowEmails }, strings.ToLower),
-	list("owner", true, func(c *Config) *[]string { return &c.Policy.Owner }, strings.ToLower),
-	list("allow", true, func(c *Config) *[]string { return &c.Policy.Allow }, strings.ToLower),
 	operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL })),
 	tokenField(ChannelTelegram, func(c *Config, v string) {
 		c.Channels.Telegram = nil
@@ -412,5 +410,5 @@ func CopyLive(dst, src *Config) {
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-access", "public-access", "allow-email", "owner", "allow"}, setting)
+	return slices.Contains([]string{"private", "public", "private-access", "public-access", "allow-email"}, setting)
 }

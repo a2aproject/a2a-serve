@@ -26,48 +26,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-func TestValidateWebhook(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		url     string
-		wantErr bool
-	}{
-		{url: "https://example.com/hook"},
-		{url: "http://localhost:8080/hook"},
-		{url: "ftp://example.com/hook", wantErr: true},
-		{url: "example.com/hook", wantErr: true},
-		{url: "https://", wantErr: true},
-	}
-	for _, tc := range tests {
-		t.Run(tc.url, func(t *testing.T) {
-			t.Parallel()
-			if err := ValidateWebhook(tc.url); (err != nil) != tc.wantErr {
-				t.Fatalf("ValidateWebhook(%q) error = %v, want error %v", tc.url, err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestRedactURL(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		url  string
-		want string
-	}{
-		{url: "https://example.com/hook", want: "https://example.com/hook"},
-		{url: "https://example.com/hook?key=secret", want: "https://example.com/hook?…"},
-		{url: "https://user:pass@example.com/hook", want: "https://example.com/hook"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.url, func(t *testing.T) {
-			t.Parallel()
-			if got := RedactURL(tc.url); got != tc.want {
-				t.Fatalf("RedactURL(%q) = %q, want %q", tc.url, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestRepeatedEventInLaterTurn(t *testing.T) {
 	t.Parallel()
 	h := New(t.Context(), Config{})

@@ -25,6 +25,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
@@ -92,8 +93,8 @@ func TestWithAgentsLine(t *testing.T) {
 
 			_, got := ts.srv.peers.withAgentsLine(ctx, execCtx)
 
-			if hasLine := strings.Contains(messageText(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
-				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", messageText(got.Message), tc.wantLine)
+			if hasLine := strings.Contains(a2atext.Message(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
+				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", a2atext.Message(got.Message), tc.wantLine)
 			}
 		})
 	}

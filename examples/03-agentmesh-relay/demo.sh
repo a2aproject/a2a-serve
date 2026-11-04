@@ -48,7 +48,7 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "$REPO_ROOT"
 
-PINNED_A2A_CLI="v0.3.2-0.20261030153310-f90e4eb628cd"
+PINNED_A2A_CLI="v0.4.0"
 AGENTMESH_VERSION="v0.2.0"
 
 CACHE_DIR="${TMPDIR:-/tmp}/a2a-am-cache"

@@ -163,11 +163,9 @@ func copyTruncate(src, dst string) (err error) {
 	return os.Truncate(src, 0)
 }
 
-// ServiceName is the name of the agent's background service.
-func ServiceName(dir agentdir.Dir) string { return "a2a-" + dir.ID() }
-
 // Background starts the agent detached from the terminal, or as a user
 // service when asService, and relays its progress to out until it serves.
+// An agent which already serves is left running.
 // quiet keeps the output of pulling or building the harness image out of it.
 func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, out io.Writer) error {
 	cfg, err := dir.LoadConfig()
@@ -189,7 +187,8 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		return err
 	}
 	if _, err := controlapi.NewClient(dir).Status(ctx); err == nil {
-		return fmt.Errorf("the agent is already running (a2a-serve status); stop it first with `a2a-serve stop`")
+		_, err := fmt.Fprintf(out, "✓ %s is already running (a2a-serve status)\n", cfg.Name)
+		return err
 	}
 	if err := checkNotRunning(dir); err != nil {
 		return err
@@ -207,7 +206,7 @@ func Background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		args = append(args, "--quiet")
 	}
 	u := service.Unit{
-		Name:        ServiceName(dir),
+		Name:        dir.ServiceName(),
 		Description: fmt.Sprintf("a2a-serve %s (%s)", cfg.Name, dir.Root),
 		Exe:         exe,
 		Args:        args,

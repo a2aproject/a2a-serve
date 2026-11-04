@@ -183,6 +183,9 @@ func (d Dir) ID() string {
 	return hex.EncodeToString(sum[:])[:10]
 }
 
+// ServiceName is the name of the agent's background service.
+func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
+
 // Init creates the .a2a and state directories and the .gitignore which keeps
 // state out of version control.
 func (d Dir) Init() error {

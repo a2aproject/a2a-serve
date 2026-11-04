@@ -16,7 +16,10 @@ package launch
 
 import (
 	"context"
+	"errors"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,7 +29,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
 
 func TestReadFrom(t *testing.T) {
@@ -106,6 +111,48 @@ func TestForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 	}
 }
 
+func TestBackgroundWhileRunning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	if err := dir.SaveConfig(&agentdir.Config{Name: "coder", Harness: "opencode"}); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if err := dir.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	ln, err := net.Listen("unix", dir.SocketPath())
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder"})
+	})}
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve() error = %v", err)
+		}
+	}()
+	t.Cleanup(func() {
+		if err := srv.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	var out strings.Builder
+	if err := Background(context.Background(), dir, false, true, &out); err != nil {
+		t.Fatalf("Background() error = %v", err)
+	}
+	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
+		t.Fatalf("Background() output = %q, want %q", out.String(), want)
+	}
+}
+
 func TestRotateLog(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -171,16 +218,5 @@ func TestRotateLog(t *testing.T) {
 				t.Fatalf("rotateLog() wrong rotated log (-want +got) diff = %s", diff)
 			}
 		})
-	}
-}
-
-func TestServiceName(t *testing.T) {
-	t.Parallel()
-	dir, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
-	}
-	if got, want := ServiceName(dir), "a2a-"+dir.ID(); got != want {
-		t.Fatalf("ServiceName() = %q, want %q", got, want)
 	}
 }

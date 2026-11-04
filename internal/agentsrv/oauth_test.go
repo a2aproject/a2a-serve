@@ -267,24 +267,3 @@ func TestSignInOnlyOnPublicURL(t *testing.T) {
 		})
 	}
 }
-
-func TestSignInForOwnerAndAllowedMembers(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		policy agentdir.PolicyConfig
-	}{
-		{name: "owner", policy: agentdir.PolicyConfig{Owner: []string{"email:mom@example.org"}}},
-		{name: "allowed", policy: agentdir.PolicyConfig{Allow: []string{"email:mom@example.org"}}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			g := googletest.New(t, googletest.Account{Email: "mom@example.org", Verified: true})
-			ts := startSignInServer(t, g, tc.policy)
-			if got, _ := signIn(t, ts, "verifier-0123456789-0123456789-0123456789"); got.Get("code") == "" {
-				t.Fatalf("client redirect = %v, want a code", got)
-			}
-		})
-	}
-}
