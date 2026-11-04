@@ -134,7 +134,7 @@ func (s *Server) listenNetwork(ctx context.Context, closers *stack, errc chan<- 
 		s.urlMu.Lock()
 		s.publicURL = u.String()
 		s.urlMu.Unlock()
-		closers.push(s.serveHTTP(ctx, ln, listener{kind: network.ListenerPublic, baseURL: u.String()}, errc))
+		closers.push(s.serveHTTP(ctx, ln, listener{kind: network.ListenerPublic, baseURL: u.String(), tunneled: true}, errc))
 	}
 	return nil
 }

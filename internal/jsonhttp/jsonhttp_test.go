@@ -15,6 +15,7 @@
 package jsonhttp
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -75,4 +76,42 @@ func TestRequireJSON(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLimitBody(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		size          int64
+		contentLength int64
+		want          int
+	}{
+		{name: "at the limit", size: MaxBody, contentLength: MaxBody, want: http.StatusOK},
+		{name: "declared over the limit", size: 1, contentLength: MaxBody + 1, want: http.StatusRequestEntityTooLarge},
+		{name: "chunked over the limit", size: MaxBody + 1, contentLength: -1, want: http.StatusRequestEntityTooLarge},
+	}
+	h := LimitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			Error(w, http.StatusRequestEntityTooLarge, err.Error())
+		}
+	}))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := httptest.NewRequest(http.MethodPost, "/", io.LimitReader(zeros{}, tc.size))
+			r.ContentLength = tc.contentLength
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("LimitBody() status = %d, want %d", w.Code, tc.want)
+			}
+		})
+	}
+}
+
+type zeros struct{}
+
+func (zeros) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }

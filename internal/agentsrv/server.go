@@ -33,6 +33,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -130,9 +131,19 @@ type Server struct {
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
-	// pairFailures limits guesses of pairing codes.
-	pairFailures *failureLimiter
+	pairLimit      *pairLimiter
 }
+
+// maxExecutions bounds the tasks running at once, and
+// maxCallerExecutions those of one caller other than an owner.
+const (
+	maxExecutions       = 64
+	maxCallerExecutions = 8
+)
+
+// maxExecutionsOf is the execution limit of a scope, which only callers
+// other than owners get.
+func maxExecutionsOf(string) int { return maxCallerExecutions }
 
 // nodeWebhookRetries are the delays before each wake delivery attempt to a
 // webhook node.
@@ -179,7 +190,7 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		pairFailures: newFailureLimiter(10, time.Minute),
+		pairLimit: newPairLimiter(),
 	}
 	var closers stack
 	defer func() {
@@ -344,6 +355,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
+		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 		a2asrv.WithLogger(slog.Default()),
 	)
 	// The handler runs the executor, which hands questions to approvals;
@@ -465,6 +477,7 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 	srv := &http.Server{
 		Handler:           s.routes(l),
 		ReadHeaderTimeout: 30 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	go func() {

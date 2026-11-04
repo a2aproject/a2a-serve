@@ -79,6 +79,19 @@ func RequireJSON(next http.Handler) http.Handler {
 	})
 }
 
+// LimitBody refuses request bodies larger than [MaxBody]: up front when the
+// request declares its length, and once read past it otherwise.
+func LimitBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.ContentLength > MaxBody {
+			Error(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+		r.Body = http.MaxBytesReader(w, r.Body, MaxBody)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func isJSON(contentType string) bool {
 	mediaType, _, err := mime.ParseMediaType(contentType)
 	return err == nil && (mediaType == "application/json" || mediaType == "application/a2a+json")

@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
@@ -424,6 +425,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		return ctx, nil, fmt.Errorf("%w: too many agents in this chain (%d)", a2a.ErrUnauthorized, p.Hops)
 	}
 	auth.SetCallUser(callCtx, p)
+	if !p.IsOwner() {
+		ctx = limiter.AttachScope(ctx, p.ID)
+	}
 	msg, ok := req.Payload.(*a2a.SendMessageRequest)
 	if !ok || msg.Message == nil {
 		return ctx, nil, nil

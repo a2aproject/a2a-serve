@@ -18,12 +18,15 @@ import (
 	"cmp"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +62,9 @@ type listener struct {
 	// inspector serves the web inspector, on listeners where its login link
 	// and session cookie stay private.
 	inspector bool
+	// tunneled is set when every caller arrives from the address of a
+	// tunnel, such as Funnel or the relay.
+	tunneled bool
 }
 
 // privateListener describes the private listener reached at u: the
@@ -70,6 +76,8 @@ func (s *Server) privateListener(u *url.URL) listener {
 		l.inspector = true
 	case ProviderLAN:
 		l.host = u.Host
+	case network.ProviderRelay:
+		l.tunneled = true
 	}
 	return l
 }
@@ -100,7 +108,7 @@ func (s *Server) routes(l listener) http.Handler {
 	})
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
-	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })))
+	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l.tunneled) })))
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
 	if l.kind == network.ListenerPublic {
 		s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
@@ -112,8 +120,8 @@ func (s *Server) routes(l listener) http.Handler {
 		s.inspector.register(mux)
 	}
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
-	mux.Handle("POST /{$}", jsonhttp.RequireJSON(s.authenticate(l.kind, jsonrpc)))
-	mux.Handle("/", jsonhttp.RequireJSON(s.authenticate(l.kind, rest)))
+	mux.Handle("POST /{$}", jsonhttp.RequireJSON(jsonhttp.LimitBody(s.authenticate(l.kind, jsonrpc))))
+	mux.Handle("/", jsonhttp.RequireJSON(jsonhttp.LimitBody(s.authenticate(l.kind, rest))))
 	h := http.NewCrossOriginProtection().Handler(mux)
 	if l.host != "" {
 		h = onlyHost(l.host, h)
@@ -250,11 +258,12 @@ func (s *Server) needsPairing(kind string) bool {
 
 // handlePair exchanges a pair code for a caller token, or a node code for a
 // node token.
-func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL string) {
+func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL string, tunneled bool) {
 	host := remoteHost(r.RemoteAddr)
-	if !s.pairFailures.allow(host) {
-		w.Header().Set("Retry-After", "60")
-		jsonhttp.Error(w, http.StatusTooManyRequests, "too many invalid pairing codes; try again in a minute")
+	if wait := s.pairLimit.wait(host, tunneled); wait > 0 {
+		secs := int(math.Ceil(wait.Seconds()))
+		w.Header().Set("Retry-After", strconv.Itoa(secs))
+		jsonhttp.Error(w, http.StatusTooManyRequests, fmt.Sprintf("too many invalid pairing codes; try again in %d seconds", secs))
 		return
 	}
 	var req pairapi.Request
@@ -276,7 +285,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 		return
 	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
-		s.pairFailures.fail(host)
+		s.pairLimit.fail(host, tunneled)
 		jsonhttp.Error(w, http.StatusForbidden, "invalid or expired pairing code")
 		return
 	}
@@ -285,6 +294,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
 		return
 	}
+	s.pairLimit.succeed(tunneled)
 	if c.Kind == pairapi.PairingWebhook {
 		s.nodes.Pair(w, r, baseURL, c.Pairing)
 		return
