@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/backoff"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -79,10 +80,12 @@ type convTicket struct {
 	once sync.Once
 }
 
-// Channel restarts back off from channelRetryMin to channelRetryMax.
+// Channel restarts back off from channelRetryMin to channelRetryMax, and
+// start over after a run of channelHealthy.
 var (
 	channelRetryMin = 5 * time.Second
 	channelRetryMax = 5 * time.Minute
+	channelHealthy  = time.Minute
 )
 
 // start dispatches channel messages until ctx ends.
@@ -109,8 +112,9 @@ func (r *Router) add(ch channel.Channel) {
 
 func (r *Router) run(ctx context.Context, rc *runningChannel) {
 	defer close(rc.done)
-	delay := channelRetryMin
+	retry := backoff.New(channelRetryMin, channelRetryMax, channelHealthy)
 	for {
+		started := time.Now()
 		err := rc.ch.Run(ctx, r.in)
 		if ctx.Err() != nil {
 			return
@@ -118,6 +122,7 @@ func (r *Router) run(ctx context.Context, rc *runningChannel) {
 		if err == nil {
 			err = errors.New("stopped unexpectedly")
 		}
+		delay := retry.Next(time.Since(started))
 		slog.Error("channel stopped; restarting", "channel", rc.ch.Name(), "in", delay, "error", err)
 		r.mu.Lock()
 		rc.err = err
@@ -127,7 +132,6 @@ func (r *Router) run(ctx context.Context, rc *runningChannel) {
 			return
 		case <-time.After(delay):
 		}
-		delay = min(delay*2, channelRetryMax)
 		r.mu.Lock()
 		rc.err = nil
 		r.mu.Unlock()

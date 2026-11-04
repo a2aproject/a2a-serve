@@ -85,11 +85,11 @@ func (l *failureLimiter) evict(now time.Time) {
 	}
 }
 
-// backoff delays the next attempt after each failure, doubling the delay
+// failureBackoff delays the next attempt after each failure, doubling the delay
 // from base up to max. Callers behind a tunnel share one address, so they
 // share one backoff: it bounds the guessing rate while a caller with a valid
 // code waits at most max.
-type backoff struct {
+type failureBackoff struct {
 	base, max time.Duration
 	now       func() time.Time
 
@@ -98,19 +98,19 @@ type backoff struct {
 	until    time.Time
 }
 
-func newBackoff(base, max time.Duration) *backoff {
-	return &backoff{base: base, max: max, now: time.Now}
+func newFailureBackoff(base, max time.Duration) *failureBackoff {
+	return &failureBackoff{base: base, max: max, now: time.Now}
 }
 
 // wait returns how long until the next attempt is allowed.
-func (b *backoff) wait() time.Duration {
+func (b *failureBackoff) wait() time.Duration {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return max(b.until.Sub(b.now()), 0)
 }
 
 // fail records a failure. Failures after a quiet period of max start over.
-func (b *backoff) fail() {
+func (b *failureBackoff) fail() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	now := b.now()
@@ -126,7 +126,7 @@ func (b *backoff) fail() {
 }
 
 // reset forgets the failures after a success.
-func (b *backoff) reset() {
+func (b *failureBackoff) reset() {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.failures = 0
@@ -138,11 +138,11 @@ func (b *backoff) reset() {
 // address, so they share one backoff.
 type pairLimiter struct {
 	direct *failureLimiter
-	tunnel *backoff
+	tunnel *failureBackoff
 }
 
 func newPairLimiter() *pairLimiter {
-	return &pairLimiter{direct: newFailureLimiter(10, time.Minute), tunnel: newBackoff(time.Second, 10*time.Second)}
+	return &pairLimiter{direct: newFailureLimiter(10, time.Minute), tunnel: newFailureBackoff(time.Second, 10*time.Second)}
 }
 
 // wait returns how long the caller at host must wait before trying a code.

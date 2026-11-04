@@ -89,7 +89,7 @@ func TestBackoff(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			now := time.Unix(1000, 0)
-			b := newBackoff(time.Second, 10*time.Second)
+			b := newFailureBackoff(time.Second, 10*time.Second)
 			b.now = func() time.Time { return now }
 			for range tc.failures {
 				b.fail()
@@ -108,7 +108,7 @@ func TestBackoff(t *testing.T) {
 func TestBackoffForgetsFailuresAfterQuietPeriod(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1000, 0)
-	b := newBackoff(time.Second, 10*time.Second)
+	b := newFailureBackoff(time.Second, 10*time.Second)
 	b.now = func() time.Time { return now }
 	for range 5 {
 		b.fail()
