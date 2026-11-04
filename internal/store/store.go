@@ -13,8 +13,9 @@
 // limitations under the License.
 
 // Package store keeps the state of an agent server in SQLite: tasks, ACP
-// sessions, linked users, pairing codes and tokens, contacts, webhook nodes,
-// channel conversations, questions and the handles of agents URLs.
+// sessions, pairings with their tokens, chat links and codes, contacts,
+// webhook nodes, channel conversations, questions and the handles of agents
+// URLs.
 package store
 
 import (
@@ -174,6 +175,15 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV10)
 		return err
 	},
+	// 11: pairings are records with a name, a kind and a role, which
+	// tokens, chat links and codes point to; Google sign-in tokens keep the
+	// email. Users, tokens, links and codes are dropped, so callers pair
+	// again; webhook nodes become webhook pairings. The built-in local
+	// pairing is the user running the agent.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV11)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -304,6 +314,37 @@ CREATE TABLE call_tasks (
 	context_id TEXT NOT NULL, agent TEXT NOT NULL, task_id TEXT NOT NULL, remote_context_id TEXT NOT NULL,
 	PRIMARY KEY (context_id, agent, task_id));
 CREATE INDEX call_tasks_remote_context ON call_tasks (context_id, agent, remote_context_id);
+`
+
+const schemaV11 = `
+DROP TABLE links;
+DROP TABLE tokens;
+DROP TABLE codes;
+DROP TABLE users;
+CREATE TABLE pairings (name TEXT PRIMARY KEY, kind TEXT NOT NULL, role TEXT NOT NULL, created INTEGER NOT NULL);
+INSERT INTO pairings (name, kind, role, created) VALUES ('local', 'person', 'owner', CAST(strftime('%s', 'now') AS INTEGER) * 1000000000);
+INSERT INTO pairings (name, kind, role, created) SELECT id, 'webhook', 'authenticated', created FROM nodes WHERE id != 'local';
+DELETE FROM nodes WHERE id = 'local';
+CREATE TABLE nodes_v11 (
+	id TEXT PRIMARY KEY REFERENCES pairings(name) ON DELETE CASCADE, name TEXT NOT NULL, description TEXT NOT NULL DEFAULT '',
+	webhook TEXT NOT NULL, headers TEXT NOT NULL DEFAULT '{}', secret TEXT NOT NULL,
+	token_hash TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL);
+INSERT INTO nodes_v11 SELECT id, name, description, webhook, headers, secret, token_hash, created FROM nodes;
+DROP TABLE nodes;
+ALTER TABLE nodes_v11 RENAME TO nodes;
+CREATE TABLE tokens (
+	hash TEXT PRIMARY KEY, pairing TEXT REFERENCES pairings(name) ON DELETE CASCADE,
+	email TEXT NOT NULL DEFAULT '', domain TEXT NOT NULL DEFAULT '',
+	url TEXT NOT NULL, created INTEGER NOT NULL, last_used INTEGER NOT NULL DEFAULT 0);
+CREATE INDEX tokens_pairing ON tokens (pairing);
+CREATE TABLE links (
+	channel TEXT NOT NULL, identity TEXT NOT NULL, pairing TEXT NOT NULL REFERENCES pairings(name) ON DELETE CASCADE,
+	conv TEXT NOT NULL DEFAULT '', created INTEGER NOT NULL,
+	PRIMARY KEY (channel, identity));
+CREATE INDEX links_pairing ON links (pairing);
+CREATE TABLE codes (
+	hash TEXT PRIMARY KEY, pairing TEXT NOT NULL REFERENCES pairings(name) ON DELETE CASCADE, expires INTEGER NOT NULL);
+CREATE INDEX codes_pairing ON codes (pairing);
 `
 
 func (s *Store) migrate(ctx context.Context) error {

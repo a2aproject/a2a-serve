@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -39,9 +40,14 @@ import (
 // they arrive.
 const OwnerID = "user:owner"
 
-// LocalPairing names the owner token the server saves for the user running
-// it. It works only on the local listener.
-const LocalPairing = "local"
+// OwnerName names the user running the agent where a pairing name is
+// expected, such as in the owner chat setting and schedules. No pairing can
+// take it.
+const OwnerName = "owner"
+
+// LocalPairing is the built-in pairing of the user running the agent. Its
+// tokens work only on the local listener; its chat links are that user.
+const LocalPairing = store.LocalPairing
 
 // HeaderHops is set by agent servers calling each other to the number of
 // agent servers a request passed through.
@@ -116,10 +122,6 @@ type Chain struct {
 	Policy func() Policy
 }
 
-// GooglePrefix starts the names of the tokens of people who signed in with
-// Google: google:<email>.
-const GooglePrefix = "google:"
-
 // Authenticate returns the principal of r: [ErrNoCredential] when r proves
 // nothing, or a [RefusedError] when the policy refuses who it proves.
 func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) {
@@ -162,14 +164,14 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 	}
 	if identity.Pairing != "" {
 		identity.PairingRole = ""
-		u, err := a.Store.User(ctx, PairPrincipal(identity.Pairing))
+		p, err := a.Store.Pairing(ctx, identity.Pairing)
 		switch {
 		case errors.Is(err, store.ErrNotFound):
 			identity.Pairing = ""
 		case err != nil:
 			return Principal{}, err
 		default:
-			identity.PairingRole = pairingRole(u.Role)
+			identity.PairingRole = pairingRole(p.Role)
 		}
 	}
 	p, err := a.Resolve(identity)
@@ -213,14 +215,27 @@ func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error
 	if err != nil {
 		return Identity{}, err
 	}
-	switch email, google := strings.CutPrefix(t.Name, GooglePrefix); {
-	case t.Name == LocalPairing:
+	switch {
+	case t.Pairing == LocalPairing:
 		id.Self = id.Self || r.Listener == network.ListenerLocal
-	case google && id.Email == "":
-		id.Email, id.EmailSource, id.Domain = email, EmailFromGoogle, t.Domain
-	case !google:
-		id.Pairing, id.PairingRole = t.Name, pairingRole(t.Role)
+	case t.Pairing == "" && id.Email == "":
+		id.Email, id.EmailSource, id.Domain = t.Email, EmailFromGoogle, t.Domain
+	case t.Pairing != "":
+		return a.withPairing(ctx, id, t.Pairing)
 	}
+	return id, nil
+}
+
+// withPairing adds the pairing name with its current role to id.
+func (a *Chain) withPairing(ctx context.Context, id Identity, name string) (Identity, error) {
+	p, err := a.Store.Pairing(ctx, name)
+	if errors.Is(err, store.ErrNotFound) {
+		return id, nil
+	}
+	if err != nil {
+		return Identity{}, err
+	}
+	id.Pairing, id.PairingRole = p.Name, pairingRole(p.Role)
 	return id, nil
 }
 
@@ -256,15 +271,15 @@ func NodeOfToken(ctx context.Context, s *store.Store, token string) (store.Node,
 }
 
 // channelIdentity identifies the sender of a channel message: the pairing
-// or the user their account is linked to, and the email of mail which
-// passed DMARC.
+// their account is linked to, which is the user running the agent for the
+// local pairing, and the email of mail which passed DMARC.
 func (a *Chain) channelIdentity(ctx context.Context, in *channel.Inbound) (Identity, error) {
 	if !in.Authentic {
 		return Identity{}, ErrNoCredential
 	}
 	id := Identity{Network: NetworkChat, Provider: in.Channel, ChatAccount: in.Identity, Direct: in.Direct}
-	if addr, ok := strings.CutPrefix(in.Identity, channel.MailPrefix); ok && network.IsEmail(addr) {
-		id.Email, id.EmailSource, id.Domain = addr, EmailFromMail, DomainOf(addr)
+	if network.IsEmail(in.Identity) {
+		id.Email, id.EmailSource, id.Domain = in.Identity, EmailFromMail, DomainOf(in.Identity)
 	}
 	l, err := a.Store.LinkOf(ctx, in.Channel, in.Identity)
 	if errors.Is(err, store.ErrNotFound) {
@@ -273,23 +288,11 @@ func (a *Chain) channelIdentity(ctx context.Context, in *channel.Inbound) (Ident
 	if err != nil {
 		return Identity{}, err
 	}
-	if l.UserID == OwnerID {
+	if l.Pairing == LocalPairing {
 		id.Self = true
 		return id, nil
 	}
-	name, ok := strings.CutPrefix(l.UserID, PairPrefix)
-	if !ok {
-		return id, nil
-	}
-	u, err := a.Store.User(ctx, l.UserID)
-	if errors.Is(err, store.ErrNotFound) {
-		return id, nil
-	}
-	if err != nil {
-		return Identity{}, err
-	}
-	id.Pairing, id.PairingRole = name, pairingRole(u.Role)
-	return id, nil
+	return a.withPairing(ctx, id, l.Pairing)
 }
 
 // hops returns the hop count the caller sent. A caller can leave it out,
@@ -321,12 +324,6 @@ const TokenPrefix = "a2p_"
 // CodeTTL is how long pairing codes are valid.
 const CodeTTL = 15 * time.Minute
 
-// Code purposes.
-const (
-	PurposePair = "pair"
-	PurposeNode = "node"
-)
-
 // codeAlphabet avoids characters that are easy to confuse when read out.
 const codeAlphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
@@ -344,36 +341,52 @@ func NormalizeCode(code string) string {
 // NewToken returns a new pairing token.
 func NewToken() string { return TokenPrefix + cryptoutil.RandomString(40, cryptoutil.Alphanumeric) }
 
-// PrincipalForCode is the principal a pairing code creates: the user
-// running the agent for the local token and the owner chat link, and the
-// pairing otherwise.
-func PrincipalForCode(name string) string {
-	if name == OwnerLink || name == LocalPairing {
+// PairingPrincipal is the principal of the pairing name: the user running
+// the agent for the local pairing.
+func PairingPrincipal(name string) string {
+	if name == LocalPairing {
 		return OwnerID
 	}
 	return PairPrincipal(name)
 }
 
-// OwnerLink names the code which links the chat accounts of the user
-// running the agent.
-const OwnerLink = "owner"
+// PrincipalPairing is the pairing of a principal, which is the local
+// pairing for the user running the agent, or false if it has none.
+func PrincipalPairing(id string) (string, bool) {
+	if id == OwnerID {
+		return LocalPairing, true
+	}
+	name, ok := strings.CutPrefix(id, PairPrefix)
+	return name, ok && name != ""
+}
 
-// MintCode stores a new single-use code and returns it.
-func MintCode(ctx context.Context, s *store.Store, purpose, name, role string) (string, time.Time, error) {
+// MintCode stores a new single-use code of a pairing and returns it.
+func MintCode(ctx context.Context, s *store.Store, pairing string) (string, time.Time, error) {
 	code := NewCode()
 	expires := time.Now().Add(CodeTTL)
-	if err := s.PutCode(ctx, NormalizeCode(code), store.Code{Purpose: purpose, Name: name, Role: role, Expires: expires}); err != nil {
+	if err := s.PutCode(ctx, NormalizeCode(code), store.Code{Pairing: pairing, Expires: expires}); err != nil {
+		return "", time.Time{}, err
+	}
+	return code, expires, nil
+}
+
+// MintInviteCode is MintCode which first creates the pairing p if it
+// doesn't exist.
+func MintInviteCode(ctx context.Context, s *store.Store, p store.Pairing) (string, time.Time, error) {
+	code := NewCode()
+	expires := time.Now().Add(CodeTTL)
+	if err := s.InviteCode(ctx, p, NormalizeCode(code), expires); err != nil {
 		return "", time.Time{}, err
 	}
 	return code, expires, nil
 }
 
 // MintSoleCode is MintCode which also revokes the other pending codes of
-// purpose and name.
-func MintSoleCode(ctx context.Context, s *store.Store, purpose, name, role string) (string, time.Time, error) {
+// the pairing.
+func MintSoleCode(ctx context.Context, s *store.Store, pairing string) (string, time.Time, error) {
 	code := NewCode()
 	expires := time.Now().Add(CodeTTL)
-	if err := s.ReplaceCode(ctx, NormalizeCode(code), store.Code{Purpose: purpose, Name: name, Role: role, Expires: expires}); err != nil {
+	if err := s.ReplaceCode(ctx, NormalizeCode(code), store.Code{Pairing: pairing, Expires: expires}); err != nil {
 		return "", time.Time{}, err
 	}
 	return code, expires, nil
@@ -382,17 +395,15 @@ func MintSoleCode(ctx context.Context, s *store.Store, purpose, name, role strin
 // ErrInvalidCode is returned for unknown, used or expired codes.
 var ErrInvalidCode = errors.New("invalid or expired code")
 
-// IssueToken issues a bearer token at agentURL for a taken pair code.
-func IssueToken(ctx context.Context, s *store.Store, c store.Code, agentURL string) (string, Principal, error) {
-	p := Principal{ID: PrincipalForCode(c.Name), Role: pairingRole(c.Role)}
-	if _, err := s.EnsureUser(ctx, p.ID, p.Role); err != nil {
-		return "", Principal{}, err
-	}
+// IssueToken issues a bearer token of a pairing at agentURL, and gives the
+// pairing kind if it has none yet. It returns the token and the principal
+// it acts as.
+func IssueToken(ctx context.Context, s *store.Store, pairing, agentURL, kind string) (string, string, error) {
 	tok := NewToken()
-	if err := s.PutToken(ctx, tok, store.Token{Name: c.Name, Principal: p.ID, Role: p.Role, URL: agentURL}); err != nil {
-		return "", Principal{}, err
+	if err := s.PutToken(ctx, tok, store.Token{Pairing: pairing, URL: agentURL}, kind); err != nil {
+		return "", "", err
 	}
-	return tok, p, nil
+	return tok, PairingPrincipal(pairing), nil
 }
 
 var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:join|link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
@@ -408,25 +419,29 @@ func LinkCode(text string) (string, bool) {
 }
 
 // Link consumes a pairing code sent from a channel and links the sender's
-// identity to the code's principal.
+// chat account to the code's pairing, which becomes a person if it has no
+// kind yet. Codes of webhook pairings stay pending.
 func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string) (Principal, error) {
 	if !in.Authentic {
 		return Principal{}, fmt.Errorf("the sender of this message could not be verified")
 	}
-	c, err := s.TakeCode(ctx, NormalizeCode(code), PurposePair)
+	c, err := s.TakeCode(ctx, NormalizeCode(code), func(pending store.Code) bool { return pending.Kind != pairapi.PairingWebhook })
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
 		return Principal{}, ErrInvalidCode
 	}
 	if err != nil {
 		return Principal{}, err
 	}
-	p := Principal{ID: PrincipalForCode(c.Name), Role: pairingRole(c.Role)}
-	if _, err := s.EnsureUser(ctx, p.ID, p.Role); err != nil {
-		return Principal{}, err
-	}
-	l := store.Link{Channel: in.Channel, Identity: in.Identity, UserID: p.ID, Name: c.Name}
+	l := store.Link{Channel: in.Channel, Identity: in.Identity, Pairing: c.Pairing}
 	if in.Direct {
 		l.Conv = string(in.Conv)
 	}
-	return p, s.PutLink(ctx, l)
+	if err := s.PutLink(ctx, l, pairapi.PairingPerson); err != nil {
+		return Principal{}, err
+	}
+	p, err := s.Pairing(ctx, c.Pairing)
+	if err != nil {
+		return Principal{}, err
+	}
+	return Principal{ID: PairingPrincipal(c.Pairing), Role: pairingRole(p.Role)}, nil
 }

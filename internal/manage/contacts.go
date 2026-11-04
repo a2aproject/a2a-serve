@@ -93,7 +93,7 @@ func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if req.Code != "" {
-		resp, err := pairapi.Pair(ctx, m.client(c), c.URL, req.Code)
+		resp, err := pairapi.Pair(ctx, m.client(c), c.URL, req.Code, pairapi.PairingAgent)
 		if err != nil {
 			return store.Contact{}, err
 		}

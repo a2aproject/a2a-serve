@@ -191,8 +191,8 @@ Check that the node is paired:
 a2a-serve pair list
 ```
 
-The `grok` row shows `node:grok`. It says `not paired` until the bot has
-redeemed its code. If the code expired, run `a2a-serve pair invite grok`
+The `grok` row has the kind `webhook`. It says `not paired` until the bot
+has redeemed its code. If the code expired, run `a2a-serve pair invite grok`
 again for a new one.
 
 ## 8. Delegate to Grok from Telegram

@@ -220,10 +220,11 @@ func Normalize(raw string) string {
 	return u.String()
 }
 
-// Pair exchanges a pairing code at agentURL for a credential.
-func Pair(ctx context.Context, hc *http.Client, agentURL, code string) (Credential, error) {
+// Pair exchanges a pairing code at agentURL for a credential, as a
+// redeemer of kind.
+func Pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Credential, error) {
 	base := Normalize(agentURL)
-	pr, err := pairapi.Pair(ctx, hc, base, code)
+	pr, err := pairapi.Pair(ctx, hc, base, code, kind)
 	if err != nil {
 		return Credential{}, err
 	}

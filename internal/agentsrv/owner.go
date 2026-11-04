@@ -41,7 +41,7 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	}
 	if ok && saved.Kind != credstore.KindNode {
 		t, err := s.store.LookupToken(ctx, saved.Token)
-		if err == nil && t.Name == localOwnerName {
+		if err == nil && t.Pairing == localOwnerName {
 			return nil
 		}
 		if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -51,9 +51,9 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	if err := s.store.DeleteTokens(ctx, localOwnerName); err != nil {
 		return err
 	}
-	token, p, err := auth.IssueToken(ctx, s.store, store.Code{Name: localOwnerName, Role: auth.RoleOwner}, local)
+	token, principal, err := auth.IssueToken(ctx, s.store, localOwnerName, local, "")
 	if err != nil {
 		return err
 	}
-	return s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.config().Name, Principal: p.ID, Created: time.Now().UTC()})
+	return s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.config().Name, Principal: principal, Created: time.Now().UTC()})
 }

@@ -564,7 +564,11 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 
 // directChat returns the first direct chat of user in a messenger.
 func (p *Peers) directChat(ctx context.Context, user string) (approvals.Chat, bool) {
-	links, err := p.store.LinksOf(ctx, user)
+	name, ok := auth.PrincipalPairing(user)
+	if !ok {
+		return approvals.Chat{}, false
+	}
+	links, err := p.store.LinksOf(ctx, name)
 	if err != nil {
 		slog.Warn("listing links", "user", user, "error", err)
 		return approvals.Chat{}, false

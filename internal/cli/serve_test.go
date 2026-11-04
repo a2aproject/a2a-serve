@@ -232,7 +232,7 @@ func TestServerPairAndSend(t *testing.T) {
 		t.Fatalf("a2a-serve pair = %q, %v, want help listing invite", out, err)
 	}
 
-	out, err = runCMDWithCreds(t, creds, "pair", "invite", "me", "--dir", dir, "--role", "owner")
+	out, err = runCMDWithCreds(t, creds, "pair", "invite", "me", "--dir", dir, "--owner")
 	if err != nil {
 		t.Fatalf("a2a-serve pair invite error = %v", err)
 	}
@@ -246,11 +246,14 @@ func TestServerPairAndSend(t *testing.T) {
 	if _, err := runCMDWithCreds(t, creds, "pair", "join", status.Local, code[1]); err != nil {
 		t.Fatalf("a2a-serve pair join error = %v", err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "pair", "get", "me", "--dir", dir); err != nil || !strings.Contains(out, "me (caller, owner)") || !strings.Contains(out, "tokens       1") {
-		t.Fatalf("a2a-serve pair get me = %q, %v, want an owner with one token", out, err)
+	if out, err := runCMDWithCreds(t, creds, "pair", "get", "me", "--dir", dir); err != nil || !strings.Contains(out, "me (person, owner)") || !strings.Contains(out, "tokens       1") {
+		t.Fatalf("a2a-serve pair get me = %q, %v, want an owner person with one token", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "me", "--role", "authenticated", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set me --role authenticated") {
-		t.Fatalf("a2a-serve pair invite of an owner as a member error = %v, want a hint to pair set", err)
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--dir", dir); err != nil {
+		t.Fatalf("a2a-serve pair invite anna error = %v", err)
+	}
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--owner", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set anna --owner") {
+		t.Fatalf("a2a-serve pair invite --owner of an authenticated pairing error = %v, want a hint to pair set", err)
 	}
 	out, err = send(t, creds, status.Local, "hello")
 	if err != nil {
@@ -287,10 +290,10 @@ func TestServerPairAndSend(t *testing.T) {
 		t.Fatalf("send after pairing a node error = %v", err)
 	}
 
-	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+caller\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+node`).MatchString(out) {
+	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+person\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+webhook\s+authenticated`).MatchString(out) {
 		t.Fatalf("a2a-serve pair list = %q, %v, want me and grok", out, err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || out != `{"kind":"node","name":"grok","removed":true}`+"\n" {
+	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || out != `{"kind":"webhook","name":"grok","removed":true}`+"\n" {
 		t.Fatalf("a2a-serve -o jsonl pair rm grok = %q, %v, want the node removed", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "pair", "set", "me", "--rotate", "--dir", dir); err != nil || !strings.Contains(out, "its tokens were revoked") {

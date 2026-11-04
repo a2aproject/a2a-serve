@@ -324,7 +324,7 @@ func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
 		subject = ""
 	}
 
-	identity := channel.MailPrefix + sender
+	identity := sender
 	authentic := Authentic(h.Values("Authentication-Results"), c.cfg.TrustedAuthServ, domainOf(sender))
 	in := channel.Inbound{
 		Channel:   c.Name(),

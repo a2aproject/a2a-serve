@@ -241,7 +241,7 @@ func (r *Router) ownerHint(ctx context.Context, ch channel.Channel) string {
 // otherwise. A new owner code replaces the pending one, so that restarts
 // don't pile up codes.
 func (r *Router) ownerHintWith(ctx context.Context, ch channel.Channel, code *string) string {
-	links, err := r.store.LinksOf(ctx, auth.OwnerID)
+	links, err := r.store.LinksOf(ctx, auth.LocalPairing)
 	if err != nil {
 		slog.Error("listing owner links", "error", err)
 		return ""
@@ -254,7 +254,7 @@ func (r *Router) ownerHintWith(ctx context.Context, ch channel.Channel, code *st
 		return ""
 	}
 	if *code == "" {
-		c, _, err := auth.MintSoleCode(ctx, r.store, auth.PurposePair, auth.OwnerLink, auth.RoleOwner)
+		c, _, err := auth.MintSoleCode(ctx, r.store, auth.LocalPairing)
 		if err != nil {
 			slog.Error("minting owner code", "error", err)
 			return ""
@@ -772,7 +772,7 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 	if r.channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
-	anyOwner := who == "" || who == auth.OwnerLink || who == auth.OwnerID
+	anyOwner := who == "" || who == auth.OwnerName || who == auth.OwnerID || who == auth.LocalPairing
 	if anyOwner {
 		conv, err := manage.DirectConv(ctx, r.store, chName, auth.OwnerID)
 		if err == nil {
@@ -784,18 +784,20 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 		}
 		return approvals.Chat{}, err
 	}
-	named, err := r.store.NamedLinks(ctx)
+	links, err := r.store.LinksOf(ctx, who)
 	if err != nil {
 		return approvals.Chat{}, err
 	}
-	for _, l := range named[who] {
-		owner, err := r.isOwnerUser(ctx, l.UserID)
+	if len(links) > 0 {
+		owner, err := r.isOwnerPairing(ctx, who)
 		if err != nil {
 			return approvals.Chat{}, err
 		}
 		if !owner {
-			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a-serve pair set %s --role owner`", who, who)
+			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a-serve pair set %s --owner`", who, who)
 		}
+	}
+	for _, l := range links {
 		if l.Channel == chName && l.Conv != "" {
 			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(l.Conv)}, nil
 		}
@@ -806,16 +808,16 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 // ownerPairingChat returns the direct chat on a channel of the first owner
 // pairing by name which has one.
 func (r *Router) ownerPairingChat(ctx context.Context, chName string) (approvals.Chat, bool, error) {
-	named, err := r.store.NamedLinks(ctx)
+	links, err := r.store.Links(ctx)
 	if err != nil {
 		return approvals.Chat{}, false, err
 	}
-	for _, name := range slices.Sorted(maps.Keys(named)) {
-		for _, l := range named[name] {
+	for _, name := range slices.Sorted(maps.Keys(links)) {
+		for _, l := range links[name] {
 			if l.Channel != chName || l.Conv == "" {
 				continue
 			}
-			owner, err := r.isOwnerUser(ctx, l.UserID)
+			owner, err := r.isOwnerPairing(ctx, name)
 			if err != nil {
 				return approvals.Chat{}, false, err
 			}
@@ -827,17 +829,17 @@ func (r *Router) ownerPairingChat(ctx context.Context, chName string) (approvals
 	return approvals.Chat{}, false, nil
 }
 
-// isOwnerUser reports whether the user a chat account is linked to is an
-// owner: you, or an owner pairing.
-func (r *Router) isOwnerUser(ctx context.Context, id string) (bool, error) {
-	if id == auth.OwnerID {
+// isOwnerPairing reports whether a pairing is an owner: you, or an owner
+// pairing.
+func (r *Router) isOwnerPairing(ctx context.Context, name string) (bool, error) {
+	if name == auth.LocalPairing {
 		return true, nil
 	}
-	u, err := r.store.User(ctx, id)
+	p, err := r.store.Pairing(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
 	}
-	return err == nil && u.Role == auth.RoleOwner, err
+	return err == nil && p.Role == auth.RoleOwner, err
 }
 
 // Unattended reports whether a turn was posted to the context with no

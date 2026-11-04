@@ -40,14 +40,12 @@ var ReservedHarnesses = []string{"echo", "proxy", "script"}
 
 // Values of the enum settings.
 const (
-	SandboxDocker     = "docker"
-	SandboxLocal      = "local"
-	NetworkTailscale  = "tailscale"
-	NetworkLAN        = "lan"
-	NetworkNgrok      = "ngrok"
-	NetworkNone       = "none"
-	RoleOwner         = "owner"
-	RoleAuthenticated = "authenticated"
+	SandboxDocker    = "docker"
+	SandboxLocal     = "local"
+	NetworkTailscale = "tailscale"
+	NetworkLAN       = "lan"
+	NetworkNgrok     = "ngrok"
+	NetworkNone      = "none"
 )
 
 var (

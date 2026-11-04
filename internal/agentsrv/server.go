@@ -298,6 +298,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		LinkHints: s.router.linkHints,
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
+		Others:    s.othersAllowed,
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router, s.chain)
 	s.inspector = newInspector(s)
@@ -567,6 +568,15 @@ func (s *Server) policy() auth.Policy {
 		everyone = false
 	}
 	return auth.DefaultPolicy(everyone, s.config().Auth.AllowEmails)
+}
+
+// othersAllowed describes who may call the agent without a pairing.
+func (s *Server) othersAllowed(context.Context) []string {
+	provider := ""
+	if s.private != nil {
+		provider = s.private.Name()
+	}
+	return s.policy().Others(provider)
 }
 
 func pid() int { return os.Getpid() }

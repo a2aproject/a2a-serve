@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,6 +30,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 func lookupOwnerToken(t *testing.T, creds *credstore.Store, url string) string {
@@ -150,5 +153,58 @@ func TestPairRejectsReservedName(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant"})
 	if _, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: localOwnerName}); err == nil {
 		t.Fatalf("Pair(%q) error = nil, want error", localOwnerName)
+	}
+}
+
+func TestPairCodeSetsKind(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	ctx := context.Background()
+	ctl := controlapi.NewClient(ts.dir)
+	tests := []struct {
+		name    string
+		kind    string
+		want    string
+		wantErr string
+	}{
+		{name: "anna", kind: pairapi.PairingPerson, want: pairapi.PairingPerson},
+		{name: "reviewer", kind: pairapi.PairingAgent, want: pairapi.PairingAgent},
+		{name: "laptop", want: pairapi.PairingPerson},
+		{name: "fake", kind: pairapi.PairingWebhook, wantErr: "unknown kind webhook"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			code, err := ctl.Pair(ctx, controlapi.PairCodeRequest{Name: tc.name})
+			if err != nil {
+				t.Fatalf("Pair() error = %v", err)
+			}
+			_, err = pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code, tc.kind)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("pairapi.Pair() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("pairapi.Pair() error = %v", err)
+			}
+			p, err := ctl.Pairing(ctx, tc.name)
+			if err != nil || p.Kind != tc.want {
+				t.Fatalf("Pairing() = %+v, %v, want kind %s", p, err, tc.want)
+			}
+		})
+	}
+}
+
+func TestPairRefusesOwnerLinkCode(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	code := ownerCode(t, ts)
+
+	if _, err := pairapi.Pair(context.Background(), http.DefaultClient, ts.localURL(), code, pairapi.PairingPerson); err == nil || !strings.Contains(err.Error(), "links your chat account") {
+		t.Fatalf("pairapi.Pair() with the owner link code error = %v, want a hint to send it to the bot", err)
+	}
+	if _, err := ts.srv.store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode); err != nil {
+		t.Fatalf("TakeCode() of the owner link code error = %v, want it still pending", err)
 	}
 }

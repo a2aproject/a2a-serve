@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -217,11 +218,11 @@ func (ts *testServer) localURL() string {
 func (ts *testServer) pair(name, role string) string {
 	ts.t.Helper()
 	ctx := context.Background()
-	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: name, Role: role})
+	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: name, Owner: role == auth.RoleOwner})
 	if err != nil {
 		ts.t.Fatalf("Pair() error = %v", err)
 	}
-	resp, err := pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code)
+	resp, err := pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code, pairapi.PairingPerson)
 	if err != nil {
 		ts.t.Fatalf("pairapi.Pair() error = %v", err)
 	}

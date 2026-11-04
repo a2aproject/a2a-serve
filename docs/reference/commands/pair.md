@@ -28,7 +28,7 @@ a2a-serve pair rm anna
 
 ## a2a-serve pair get
 
-Show a pairing: its role, tokens, linked accounts and pending codes, or an agent you joined
+Show a pairing: its kind, role, tokens, linked accounts and pending codes, or an agent you joined
 
 ```
 a2a-serve pair get <name|agent-url>
@@ -39,8 +39,10 @@ a2a-serve pair get <name|agent-url>
 Create a pairing called &lt;name&gt; and print its code: 8 characters, valid once
 for 15 minutes. The caller redeems it for a token with
 `a2a-serve pair join <agent-url> <code>`, or links a messenger account by
-sending "join &lt;code&gt;" to the agent's bot. Inviting an existing name issues
-another code, for another device or account; its tokens keep working.
+sending "join &lt;code&gt;" to the agent's bot. Another agent redeems it with
+`a2a-serve contact add --code`. The first redemption sets the pairing's kind:
+person, or agent for a contact. Inviting an existing name issues another
+code, for another device or account; its tokens keep working.
 `a2a-serve pair set` changes a pairing, and rotates its credentials.
 
 With --webhook, &lt;name&gt; is a webhook node: an agent which only runs when woken,
@@ -70,7 +72,7 @@ a2a-serve pair invite <name> [flags]
 
 ```bash
 a2a-serve pair invite grok
-a2a-serve pair invite anna --role owner
+a2a-serve pair invite anna --owner
 a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
   --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
 a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
@@ -82,7 +84,7 @@ a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
 |---|---|---|
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
-| `--role authenticated\|owner` | `authenticated` | Role: authenticated\|owner; authenticated callers see and approve their own tasks, owners every task |
+| `--owner` |  | Make the pairing an owner, who sees and approves every task; others see and approve their own |
 | `--webhook string` |  | Host a webhook node: the URL the agent POSTs wakes to |
 | `--webhook-header Name: value` |  | Header sent with every wake: Name: value, such as "Authorization: Bearer env:TOKEN"; the value may end in env:VAR or - (repeatable) |
 
@@ -108,8 +110,9 @@ a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D
 
 ## a2a-serve pair list
 
-In an agent directory, list the callers and webhook nodes paired with the
-agent. Outside one, or with --joined, list the agents you joined with
+In an agent directory, list the pairings of the agent with their kind and
+role: people, devices, other agents and webhook nodes, and the built-in local
+pairing, which is you. Outside one, or with --joined, list the agents you joined with
 `a2a-serve pair join`.
 
 ```
@@ -126,7 +129,14 @@ Aliases: `ls`
 
 ## a2a-serve pair rm
 
-Revoke a pairing, remove a webhook node, or forget an agent you joined
+Delete a pairing with its tokens, linked messenger accounts and pending
+codes, or remove a webhook node. The person may still call the agent through
+the private network or an --allow-email rule; the command says so.
+
+`a2a-serve pair rm local` revokes the token of this machine and your linked
+chat accounts, and keeps the pairing; the next start issues a new token.
+
+With an agent URL, forget the token you saved with `a2a-serve pair join`.
 
 ```
 a2a-serve pair rm <name|agent-url>
@@ -136,8 +146,10 @@ Aliases: `delete`
 
 ## a2a-serve pair set
 
-Change a pairing in place: the role of a caller, or the webhook, headers,
-description and advertising of a webhook node. Its tokens keep working.
+Change a pairing in place: whether it is an owner and its kind (person,
+device or agent), or the webhook, headers, description and advertising of a
+webhook node. Its tokens keep working, and a change applies to their next
+request.
 
 --rotate revokes every token of the pairing and its pending codes, and
 prints a new code; for a webhook node, it also changes the secret its wakes
@@ -155,7 +167,9 @@ a2a-serve pair set <name> [flags]
 **Examples**
 
 ```bash
-a2a-serve pair set anna --role owner
+a2a-serve pair set anna --owner
+a2a-serve pair set anna --owner=false
+a2a-serve pair set laptop --kind device
 a2a-serve pair set anna --rotate
 a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 ```
@@ -166,7 +180,8 @@ a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 |---|---|---|
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
-| `--role authenticated\|owner` |  | Role of a caller: authenticated\|owner; authenticated callers see and approve their own tasks, owners every task |
+| `--kind person\|device\|agent` |  | Kind of the pairing: person\|device\|agent |
+| `--owner` |  | Make the pairing an owner, who sees and approves every task, or not with --owner=false |
 | `--rotate` |  | Revoke every token of the pairing and print a new code |
 | `--webhook string` |  | The URL the agent POSTs wakes to, for a webhook node |
 | `--webhook-header Name: value` |  | Header sent with every wake, replacing the current ones: Name: value; the value may end in env:VAR or - (repeatable) |

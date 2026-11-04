@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package pairings manages who is paired with an agent: callers, who hold
-// tokens and linked messenger accounts under a pairing name, and webhook
-// nodes. The control socket of a running agent and the CLI of a stopped one
-// share it.
+// Package pairings manages who is paired with an agent: people, devices and
+// other agents, who hold tokens and linked chat accounts under a pairing,
+// and webhook nodes. The control socket of a running agent and the CLI of a
+// stopped one share it.
 package pairings
 
 import (
@@ -35,7 +35,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// LocalOwner names the owner token the server saves for this machine.
+// LocalOwner is the built-in pairing of the user running the agent: the
+// token of this machine, and the chat accounts linked with the code printed
+// at start.
 const LocalOwner = auth.LocalPairing
 
 // SchedulesAgent is the agent the harness manages schedules with, which no
@@ -65,6 +67,9 @@ type Service struct {
 	Mailbox func(id string) (waiting, open int)
 	// Changed is called after a node is added or removed. Optional.
 	Changed func(ctx context.Context)
+	// Others describes who may call the agent without a pairing, such as
+	// everyone on the private network. Optional.
+	Others func(ctx context.Context) []string
 }
 
 // Kind classifies an [Error].
@@ -103,18 +108,18 @@ func validateName(name string) error {
 	if name == "" || strings.ContainsAny(name, " /:") {
 		return invalid("the name must be non-empty, without spaces, slashes or colons")
 	}
-	if name == LocalOwner {
-		return invalid("%q is reserved for the owner token of this machine; pick another name", LocalOwner)
+	if name == LocalOwner || name == auth.OwnerName {
+		return invalid("%q names the user running the agent; pick another name", name)
 	}
 	return nil
 }
 
-func (s *Service) node(ctx context.Context, name string) (store.Node, bool, error) {
-	n, err := s.Store.Node(ctx, name)
+func (s *Service) pairing(ctx context.Context, name string) (store.Pairing, bool, error) {
+	p, err := s.Store.Pairing(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
-		return store.Node{}, false, nil
+		return store.Pairing{}, false, nil
 	}
-	return n, err == nil, err
+	return p, err == nil, err
 }
 
 // Invite issues a pairing code for a new pairing, or for another device or
@@ -125,52 +130,43 @@ func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	if err := validateName(req.Name); err != nil {
 		return nil, err
 	}
-	node, isNode, err := s.node(ctx, req.Name)
+	p, exists, err := s.pairing(ctx, req.Name)
 	if err != nil {
 		return nil, err
 	}
-	caller, err := s.caller(ctx, req.Name)
-	if err != nil {
-		return nil, err
-	}
+	webhook := exists && p.Kind == pairapi.PairingWebhook
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil
 	switch {
-	case nodeFlags && isNode:
+	case nodeFlags && webhook:
 		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
-	case nodeFlags && caller != nil:
-		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired as a caller; pick another name, or run `a2a-serve pair rm " + req.Name + "` first"}
+	case nodeFlags && exists:
+		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired; pick another name, or run `a2a-serve pair rm " + req.Name + "` first"}
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
-	case nodeFlags && req.Role != "":
-		return nil, invalid("--role doesn't apply to webhook nodes")
+	case (nodeFlags || webhook) && req.Owner:
+		return nil, invalid("--owner doesn't apply to webhook nodes")
 	case nodeFlags:
 		return s.addNode(ctx, req)
-	case isNode && req.Role != "":
-		return nil, invalid("--role doesn't apply to webhook nodes")
-	case isNode:
+	case webhook:
+		node, err := s.Store.Node(ctx, req.Name)
+		if err != nil {
+			return nil, err
+		}
 		return s.nodeCode(ctx, node, false)
+	case exists && req.Owner && p.Role != auth.RoleOwner:
+		return nil, invalid("%s is paired as %s; make it an owner with `a2a-serve pair set %s --owner`", req.Name, p.Role, req.Name)
 	}
-	role := req.Role
-	switch {
-	case caller != nil && role != "" && role != caller.Role:
-		return nil, invalid("%s is paired as %s; change the role with `a2a-serve pair set %s --role %s`", req.Name, caller.Role, req.Name, role)
-	case caller != nil:
-		role = caller.Role
-	case role == "":
-		role = auth.RoleAuthenticated
+	role := auth.RoleAuthenticated
+	if req.Owner {
+		role = auth.RoleOwner
 	}
-	if role != auth.RoleAuthenticated && role != auth.RoleOwner {
-		return nil, invalid("--role must be authenticated or owner")
-	}
-	return s.callerCode(ctx, req.Name, role, false)
+	return s.callerCode(ctx, req.Name, func(ctx context.Context, st *store.Store, name string) (string, time.Time, error) {
+		return auth.MintInviteCode(ctx, st, store.Pairing{Name: name, Role: role})
+	})
 }
 
-func (s *Service) callerCode(ctx context.Context, name, role string, sole bool) (*controlapi.PairCodeResponse, error) {
-	mint := auth.MintCode
-	if sole {
-		mint = auth.MintSoleCode
-	}
-	code, expires, err := mint(ctx, s.Store, auth.PurposePair, name, role)
+func (s *Service) callerCode(ctx context.Context, name string, mint func(context.Context, *store.Store, string) (string, time.Time, error)) (*controlapi.PairCodeResponse, error) {
+	code, expires, err := mint(ctx, s.Store, name)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +192,11 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 		ID: req.Name, Name: req.Name, Description: req.Description, Webhook: req.Webhook, Headers: req.Headers,
 		Secret: cryptoutil.RandomString(40, cryptoutil.Alphanumeric),
 	}
-	if err := s.Store.PutNode(ctx, node); err != nil {
+	err := s.Store.PutNode(ctx, node)
+	if errors.Is(err, store.ErrExists) {
+		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired; pick another name"}
+	}
+	if err != nil {
 		return nil, err
 	}
 	resp, err := s.nodeCode(ctx, node, false)
@@ -218,7 +218,7 @@ func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*co
 	if sole {
 		mint = auth.MintSoleCode
 	}
-	code, expires, err := mint(ctx, s.Store, auth.PurposeNode, node.ID, "")
+	code, expires, err := mint(ctx, s.Store, node.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -257,53 +257,64 @@ func (s *Service) changed(ctx context.Context) {
 // Update changes the pairing called name in place. Rotate revokes its tokens
 // and issues a new code, which the response carries.
 func (s *Service) Update(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
-	node, isNode, err := s.node(ctx, name)
+	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	if isNode {
+	if !exists {
+		return nil, notFound(name)
+	}
+	if p.Kind == pairapi.PairingWebhook {
+		node, err := s.Store.Node(ctx, name)
+		if err != nil {
+			return nil, err
+		}
 		return s.updateNode(ctx, node, req)
 	}
-	caller, err := s.caller(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	if caller == nil {
-		return nil, notFound(name)
+	if name == LocalOwner {
+		return nil, invalid("%s is you, on this machine and in your linked chats; `a2a-serve pair rm %s` revokes its token and chat links, and the next start issues a new token", name, name)
 	}
 	if req.Webhook != "" || len(req.Headers) > 0 || req.Description != nil || req.Advertised != nil {
 		return nil, invalid("--webhook, --webhook-header, --description and --advertised apply to webhook nodes")
 	}
-	if req.Role != "" && req.Role != auth.RoleAuthenticated && req.Role != auth.RoleOwner {
-		return nil, invalid("--role must be authenticated or owner")
+	next := p
+	if req.Kind != "" {
+		if req.Kind == pairapi.PairingWebhook || !slices.Contains(pairapi.PairingKinds, req.Kind) {
+			return nil, invalid("--kind must be %s, %s or %s; webhook nodes come from `a2a-serve pair invite --webhook`", pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent)
+		}
+		next.Kind = req.Kind
 	}
-	role := caller.Role
-	if req.Role != "" && req.Role != role {
-		if err := s.Store.SetPairingRole(ctx, name, req.Role, caller.Principal); err != nil {
+	if req.Owner != nil {
+		next.Role = auth.RoleAuthenticated
+		if *req.Owner {
+			next.Role = auth.RoleOwner
+		}
+	}
+	if next != p {
+		if err := s.Store.UpdatePairing(ctx, next); err != nil {
 			return nil, err
 		}
-		role = req.Role
 	}
 	var resp controlapi.PairingUpdateResponse
 	if req.Rotate {
 		if err := s.Store.DeleteTokens(ctx, name); err != nil {
 			return nil, err
 		}
-		if resp.Code, err = s.callerCode(ctx, name, role, true); err != nil {
+		if resp.Code, err = s.callerCode(ctx, name, auth.MintSoleCode); err != nil {
 			return nil, err
 		}
 	}
-	p, err := s.Get(ctx, name)
+	got, err := s.Get(ctx, name)
 	if err != nil {
 		return nil, err
 	}
-	resp.Pairing = *p
+	resp.Pairing = *got
 	return &resp, nil
 }
 
 func (s *Service) updateNode(ctx context.Context, node store.Node, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
-	if req.Role != "" {
-		return nil, invalid("--role doesn't apply to webhook nodes")
+	if req.Owner != nil || req.Kind != "" {
+		return nil, invalid("--owner and --kind don't apply to webhook nodes")
 	}
 	if req.Webhook != "" {
 		if err := nodes.ValidateWebhook(req.Webhook); err != nil {
@@ -350,34 +361,38 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 	return &resp, nil
 }
 
-// Remove revokes the tokens, messenger links and pending codes of a caller,
-// or removes a webhook node. It returns the kind of pairing removed.
-func (s *Service) Remove(ctx context.Context, name string) (string, error) {
-	err := s.Store.DeleteNode(ctx, name)
-	if err == nil {
+// Remove deletes a pairing with its tokens, chat links and pending codes,
+// and a webhook node with it. The local pairing stays; only its credentials
+// are revoked.
+func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
+	p, exists, err := s.pairing(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, notFound(name)
+	}
+	resp := &controlapi.RevokeResponse{Kind: p.Kind}
+	if name == LocalOwner {
+		resp.Kept = true
+		return resp, s.Store.RevokeCredentials(ctx, name)
+	}
+	if err := s.Store.DeletePairing(ctx, name); err != nil {
+		return nil, err
+	}
+	if p.Kind == pairapi.PairingWebhook {
 		if s.Ads != nil {
 			if err := s.Ads.Withdraw(name); err != nil {
-				return "", fmt.Errorf("withdrawing the advertisement of %s: %w", name, err)
+				return nil, fmt.Errorf("withdrawing the advertisement of %s: %w", name, err)
 			}
 		}
 		s.changed(ctx)
-		return pairapi.KindNode, nil
+		return resp, nil
 	}
-	if !errors.Is(err, store.ErrNotFound) {
-		return "", err
+	if s.Others != nil {
+		resp.StillAllowed = s.Others(ctx)
 	}
-	n, err := s.Store.RevokeTokens(ctx, name, auth.PrincipalForCode(name))
-	if err != nil {
-		return "", err
-	}
-	codes, err := s.Store.DeleteCodes(ctx, auth.PurposePair, name)
-	if err != nil {
-		return "", err
-	}
-	if n+codes == 0 {
-		return "", notFound(name)
-	}
-	return pairapi.KindCaller, nil
+	return resp, nil
 }
 
 // Get describes the pairing called name.
@@ -393,126 +408,66 @@ func (s *Service) Get(ctx context.Context, name string) (*controlapi.Pairing, er
 	return &all[i], nil
 }
 
-// caller returns the caller pairing called name, or nil.
-func (s *Service) caller(ctx context.Context, name string) (*controlapi.Pairing, error) {
-	callers, err := s.callers(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return callers[name], nil
-}
-
-// List describes every pairing, callers by name, then nodes.
+// List describes every pairing, by name.
 func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
-	callers, err := s.callers(ctx)
+	all, err := s.Store.Pairings(ctx)
 	if err != nil {
 		return nil, err
-	}
-	out := make([]controlapi.Pairing, 0, len(callers))
-	for _, name := range slices.Sorted(maps.Keys(callers)) {
-		out = append(out, *callers[name])
-	}
-	all, err := s.Store.Nodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	codes, err := s.Store.PendingCodes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	base := s.BaseURL()
-	for _, n := range all {
-		p := controlapi.Pairing{
-			Name: n.ID, Kind: pairapi.KindNode, Principal: auth.NodePrincipal(n.ID), Created: n.Created,
-			Tokens: []controlapi.PairingToken{}, Accounts: []controlapi.LinkedAccount{}, PendingCodes: []time.Time{},
-			Node: &controlapi.NodeDetails{
-				URL: NodeInfo(base, n).URL, Webhook: nodes.RedactURL(n.Webhook), Description: n.Description,
-				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
-				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
-			},
-		}
-		for _, c := range codes[n.ID] {
-			if c.Purpose == auth.PurposeNode {
-				p.PendingCodes = append(p.PendingCodes, c.Expires)
-			}
-		}
-		if s.Mailbox != nil {
-			p.Node.Waiting, p.Node.Open = s.Mailbox(n.ID)
-		}
-		out = append(out, p)
-	}
-	return out, nil
-}
-
-// callers collects the caller pairings from their tokens, links and pending
-// codes, by name.
-func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, error) {
-	out := map[string]*controlapi.Pairing{}
-	get := func(name, role string) *controlapi.Pairing {
-		p := out[name]
-		if p == nil {
-			p = &controlapi.Pairing{
-				Name: name, Kind: pairapi.KindCaller, Role: role, Principal: auth.PrincipalForCode(name),
-				Tokens: []controlapi.PairingToken{}, Accounts: []controlapi.LinkedAccount{}, PendingCodes: []time.Time{},
-			}
-			out[name] = p
-		}
-		return p
 	}
 	toks, err := s.Store.Tokens(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range toks {
-		p := get(t.Name, roleOf(t.Role))
-		p.Tokens = append(p.Tokens, controlapi.PairingToken{URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
-		if p.Created.IsZero() || t.Created.Before(p.Created) {
-			p.Created = t.Created
-		}
-		if t.LastUsed.After(p.LastUsed) {
-			p.LastUsed = t.LastUsed
-		}
-	}
-	links, err := s.Store.NamedLinks(ctx)
+	links, err := s.Store.Links(ctx)
 	if err != nil {
 		return nil, err
-	}
-	for name, ls := range links {
-		role := auth.RoleOwner
-		if ls[0].UserID != auth.OwnerID {
-			u, err := s.Store.User(ctx, ls[0].UserID)
-			if err != nil && !errors.Is(err, store.ErrNotFound) {
-				return nil, err
-			}
-			role = roleOf(u.Role)
-		}
-		p := get(name, role)
-		for _, l := range ls {
-			p.Accounts = append(p.Accounts, controlapi.LinkedAccount{Channel: l.Channel, Account: l.Identity})
-		}
 	}
 	codes, err := s.Store.PendingCodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for name, cs := range codes {
-		for _, c := range cs {
-			if c.Purpose != auth.PurposePair {
+	nodeList, err := s.Store.Nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
+	nodesByID := map[string]store.Node{}
+	for _, n := range nodeList {
+		nodesByID[n.ID] = n
+	}
+	base := s.BaseURL()
+	out := make([]controlapi.Pairing, 0, len(all))
+	for _, p := range all {
+		cp := controlapi.Pairing{
+			Name: p.Name, Kind: p.Kind, Role: p.Role, Principal: auth.PairingPrincipal(p.Name), Created: p.Created,
+			Tokens: []controlapi.PairingToken{}, Accounts: []controlapi.LinkedAccount{}, PendingCodes: []time.Time{},
+		}
+		for _, t := range toks {
+			if t.Pairing != p.Name {
 				continue
 			}
-			p := get(name, c.Role)
-			p.PendingCodes = append(p.PendingCodes, c.Expires)
-			if issued := c.Expires.Add(-auth.CodeTTL); p.Created.IsZero() || issued.Before(p.Created) {
-				p.Created = issued
+			cp.Tokens = append(cp.Tokens, controlapi.PairingToken{URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
+			if t.LastUsed.After(cp.LastUsed) {
+				cp.LastUsed = t.LastUsed
 			}
 		}
+		for _, l := range links[p.Name] {
+			cp.Accounts = append(cp.Accounts, controlapi.LinkedAccount{Channel: l.Channel, Account: l.Identity})
+		}
+		for _, c := range codes[p.Name] {
+			cp.PendingCodes = append(cp.PendingCodes, c.Expires)
+		}
+		if n, ok := nodesByID[p.Name]; ok {
+			cp.Principal = auth.NodePrincipal(n.ID)
+			cp.Node = &controlapi.NodeDetails{
+				URL: NodeInfo(base, n).URL, Webhook: nodes.RedactURL(n.Webhook), Description: n.Description,
+				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
+				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
+			}
+			if s.Mailbox != nil {
+				cp.Node.Waiting, cp.Node.Open = s.Mailbox(n.ID)
+			}
+		}
+		out = append(out, cp)
 	}
 	return out, nil
-}
-
-func roleOf(role string) string {
-	if role == auth.RoleOwner {
-		return auth.RoleOwner
-	}
-	return auth.RoleAuthenticated
 }

@@ -40,18 +40,23 @@ func TestManageStoppedAgent(t *testing.T) {
 	if !strings.Contains(out, "a2a-serve pair join http://127.0.0.1:4100 ") || !strings.Contains(out, "the agent is stopped") {
 		t.Fatalf("a2a-serve pair invite of a stopped agent = %q, want a code at its local URL and a note that it is stopped", out)
 	}
-	if out := run("pair", "set", "anna", "--role", "owner"); !strings.Contains(out, "✓ updated anna") {
+	if out := run("pair", "set", "anna", "--owner"); !strings.Contains(out, "✓ updated anna") {
 		t.Fatalf("a2a-serve pair set of a stopped agent = %q, want anna updated", out)
 	}
 	var all []controlapi.Pairing
-	if err := json.Unmarshal([]byte(run("-o", "json", "pair", "list")), &all); err != nil || len(all) != 1 || all[0].Role != "owner" || len(all[0].PendingCodes) != 1 {
-		t.Fatalf("a2a-serve pair list of a stopped agent = %+v, %v, want anna as an owner with a pending code", all, err)
+	if err := json.Unmarshal([]byte(run("-o", "json", "pair", "list")), &all); err != nil || len(all) != 2 || all[0].Name != "anna" || all[0].Role != "owner" || len(all[0].PendingCodes) != 1 {
+		t.Fatalf("a2a-serve pair list of a stopped agent = %+v, %v, want anna as an owner with a pending code, and local", all, err)
 	}
-	if out := run("pair", "get", "anna"); !strings.Contains(out, "anna (caller, owner)") {
+	if out := run("pair", "get", "anna"); !strings.Contains(out, "anna (not joined yet, owner)") {
 		t.Fatalf("a2a-serve pair get of a stopped agent = %q, want anna", out)
 	}
 	if out := run("pair", "rm", "anna"); !strings.Contains(out, "anna can no longer call the agent") {
 		t.Fatalf("a2a-serve pair rm of a stopped agent = %q, want anna revoked", out)
+	}
+	run("pair", "invite", "bob")
+	run("config", "set", "--private", "tailscale", "--allow-email", "*@example.com")
+	if out := run("pair", "rm", "bob"); !strings.Contains(out, "! bob may still call the agent as one of: everyone on the tailnet; emails matching *@example.com") {
+		t.Fatalf("a2a-serve pair rm on an open tailnet = %q, want a note that bob may still call", out)
 	}
 
 	if out := run("schedule", "add", "brief", "--cron", "@daily", "--prompt", "hello"); !strings.Contains(out, "added schedule brief") {

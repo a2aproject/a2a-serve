@@ -22,8 +22,6 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
-
-	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 )
 
 // SessionStore implements the a2aacp session store: A2A context → ACP session.
@@ -53,111 +51,6 @@ func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Se
 	return err
 }
 
-// User is a person known to the agent, identified across channels.
-type User struct {
-	ID      string
-	Role    string
-	Created time.Time
-}
-
-// Link ties a channel identity to a user. Conv is the conversation of the
-// identity's direct chat, where the agent can reach the user unprompted.
-type Link struct {
-	Channel  string
-	Identity string
-	UserID   string
-	Conv     string
-	// Name is the pairing the link was made with, so that revoking the
-	// pairing removes it even when it links to the owner.
-	Name string
-}
-
-// EnsureUser creates the user if it doesn't exist and returns it.
-func (s *Store) EnsureUser(ctx context.Context, id, role string) (User, error) {
-	if _, err := s.exec(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-		id, role, s.now().UnixNano()); err != nil {
-		return User{}, err
-	}
-	return s.User(ctx, id)
-}
-
-// User returns a user.
-func (s *Store) User(ctx context.Context, id string) (User, error) {
-	var (
-		role    string
-		created int64
-	)
-	err := s.db.QueryRowContext(ctx, `SELECT roles, created FROM users WHERE id = ?`, id).Scan(&role, &created)
-	if errors.Is(err, sql.ErrNoRows) {
-		return User{}, ErrNotFound
-	}
-	if err != nil {
-		return User{}, err
-	}
-	return User{ID: id, Role: role, Created: unixTime(created)}, nil
-}
-
-// Users lists users with role, or all users if role is empty.
-func (s *Store) Users(ctx context.Context, role string) ([]User, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT id, roles, created FROM users ORDER BY created`)
-	if err != nil {
-		return nil, err
-	}
-	defer closeRows(rows)
-	var out []User
-	for rows.Next() {
-		var (
-			u       User
-			created int64
-		)
-		if err := rows.Scan(&u.ID, &u.Role, &created); err != nil {
-			return nil, err
-		}
-		u.Created = unixTime(created)
-		if role == "" || u.Role == role {
-			out = append(out, u)
-		}
-	}
-	return out, rows.Err()
-}
-
-// PutLink links a channel identity to a user, replacing an existing link.
-func (s *Store) PutLink(ctx context.Context, l Link) error {
-	_, err := s.exec(ctx, `INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT (channel, identity) DO UPDATE SET user_id = excluded.user_id, conv = excluded.conv, name = excluded.name`,
-		l.Channel, l.Identity, l.UserID, l.Conv, l.Name, s.now().UnixNano())
-	return err
-}
-
-// LinkOf returns the link of a channel identity.
-func (s *Store) LinkOf(ctx context.Context, channel, identity string) (Link, error) {
-	l := Link{Channel: channel, Identity: identity}
-	err := s.db.QueryRowContext(ctx, `SELECT user_id, conv FROM links WHERE channel = ? AND identity = ?`,
-		channel, identity).Scan(&l.UserID, &l.Conv)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Link{}, ErrNotFound
-	}
-	return l, err
-}
-
-// LinksOf returns the links of a user.
-func (s *Store) LinksOf(ctx context.Context, userID string) ([]Link, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT channel, identity, conv FROM links WHERE user_id = ? ORDER BY created`, userID)
-	if err != nil {
-		return nil, err
-	}
-	defer closeRows(rows)
-	var out []Link
-	for rows.Next() {
-		l := Link{UserID: userID}
-		if err := rows.Scan(&l.Channel, &l.Identity, &l.Conv); err != nil {
-			return nil, err
-		}
-		out = append(out, l)
-	}
-	return out, rows.Err()
-}
-
 // ContextOf returns the A2A context of a channel conversation.
 func (s *Store) ContextOf(ctx context.Context, channel, conv string) (string, error) {
 	var id string
@@ -184,173 +77,6 @@ func (s *Store) ConvOf(ctx context.Context, contextID string) (channel, conv str
 		return "", "", ErrNotFound
 	}
 	return channel, conv, err
-}
-
-// Code is a pending one-time code. Purpose is pair (exchanged for a token or
-// a channel link) or node (exchanged for a node token).
-type Code struct {
-	Purpose string
-	// Name is the principal name for pair codes, or the node ID.
-	Name    string
-	Role    string
-	Expires time.Time
-}
-
-// PutCode stores a code by its hash.
-func (s *Store) PutCode(ctx context.Context, code string, c Code) error {
-	_, err := s.exec(ctx, `INSERT INTO codes (hash, purpose, name, role, expires) VALUES (?, ?, ?, ?, ?)`,
-		cryptoutil.Hash(code), c.Purpose, c.Name, c.Role, c.Expires.UnixNano())
-	return err
-}
-
-// ReplaceCode stores a code by its hash and deletes the other codes of its
-// purpose and name, so that at most one of them is pending.
-func (s *Store) ReplaceCode(ctx context.Context, code string, c Code) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE purpose = ? AND name = ?`, c.Purpose, c.Name); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO codes (hash, purpose, name, role, expires) VALUES (?, ?, ?, ?, ?)`,
-			cryptoutil.Hash(code), c.Purpose, c.Name, c.Role, c.Expires.UnixNano())
-		return err
-	})
-}
-
-// ErrCodeExpired is returned when a code was found but has expired.
-var ErrCodeExpired = errors.New("the code has expired")
-
-// TakeCode consumes a code of the given purpose, or of any purpose when
-// purpose is empty. A code can be used once.
-func (s *Store) TakeCode(ctx context.Context, code, purpose string) (Code, error) {
-	var c Code
-	var expires int64
-	err := s.db.QueryRowContext(ctx, `DELETE FROM codes WHERE hash = ? AND (? = '' OR purpose = ?) RETURNING purpose, name, role, expires`,
-		cryptoutil.Hash(code), purpose, purpose).Scan(&c.Purpose, &c.Name, &c.Role, &expires)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Code{}, ErrNotFound
-	}
-	if err != nil {
-		return Code{}, err
-	}
-	c.Expires = unixTime(expires)
-	if s.now().After(c.Expires) {
-		return Code{}, ErrCodeExpired
-	}
-	return c, nil
-}
-
-// Token is a bearer token issued by pairing, stored by its hash.
-type Token struct {
-	Name      string
-	Principal string
-	Role      string
-	// Domain is the Google Workspace domain of the email of a Google
-	// sign-in token, when it is the email's domain.
-	Domain string
-	// URL is the agent URL the token was issued at.
-	URL      string
-	Created  time.Time
-	LastUsed time.Time
-}
-
-// PutToken stores a token by its hash.
-func (s *Store) PutToken(ctx context.Context, token string, t Token) error {
-	_, err := s.exec(ctx, `INSERT INTO tokens (hash, name, principal, roles, domain, url, created) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		cryptoutil.Hash(token), t.Name, t.Principal, t.Role, t.Domain, t.URL, s.now().UnixNano())
-	return err
-}
-
-// LookupToken returns the token record and records its use.
-func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
-	var (
-		t                 Token
-		created, lastUsed int64
-	)
-	h := cryptoutil.Hash(token)
-	err := s.db.QueryRowContext(ctx, `SELECT name, principal, roles, domain, url, created, last_used FROM tokens WHERE hash = ?`, h).
-		Scan(&t.Name, &t.Principal, &t.Role, &t.Domain, &t.URL, &created, &lastUsed)
-	if errors.Is(err, sql.ErrNoRows) {
-		return Token{}, ErrNotFound
-	}
-	if err != nil {
-		return Token{}, err
-	}
-	t.Created, t.LastUsed = unixTime(created), unixTime(lastUsed)
-	if _, err := s.exec(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, s.now().UnixNano(), h); err != nil {
-		return Token{}, err
-	}
-	return t, nil
-}
-
-// Tokens lists issued tokens.
-func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, principal, roles, domain, url, created, last_used FROM tokens ORDER BY created`)
-	if err != nil {
-		return nil, err
-	}
-	defer closeRows(rows)
-	var out []Token
-	for rows.Next() {
-		var (
-			t                 Token
-			created, lastUsed int64
-		)
-		if err := rows.Scan(&t.Name, &t.Principal, &t.Role, &t.Domain, &t.URL, &created, &lastUsed); err != nil {
-			return nil, err
-		}
-		t.Created, t.LastUsed = unixTime(created), unixTime(lastUsed)
-		out = append(out, t)
-	}
-	return out, rows.Err()
-}
-
-// DeleteTokens deletes the tokens issued to name, keeping its user and links.
-func (s *Store) DeleteTokens(ctx context.Context, name string) error {
-	_, err := s.exec(ctx, `DELETE FROM tokens WHERE name = ?`, name)
-	return err
-}
-
-// RevokeTokens deletes the tokens and channel links made with the pairing
-// name, and the user of principal with its links. It returns the number of
-// tokens and links deleted.
-func (s *Store) RevokeTokens(ctx context.Context, name, principal string) (n int, err error) {
-	done, err := s.beginWrite()
-	if err != nil {
-		return 0, err
-	}
-	defer done()
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return 0, err
-	}
-	defer func() {
-		if err != nil {
-			err = errors.Join(err, tx.Rollback())
-		}
-	}()
-	res, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE name = ?`, name)
-	if err != nil {
-		return 0, err
-	}
-	tokens, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	res, err = tx.ExecContext(ctx, `DELETE FROM links WHERE name = ? OR user_id = ?`, name, principal)
-	if err != nil {
-		return 0, err
-	}
-	links, err := res.RowsAffected()
-	if err != nil {
-		return 0, err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ?`, principal); err != nil {
-		return 0, err
-	}
-	if err := tx.Commit(); err != nil {
-		return 0, err
-	}
-	return int(tokens + links), nil
 }
 
 // Contact is another agent this agent may call.
@@ -431,17 +157,23 @@ type Node struct {
 	Created   time.Time
 }
 
-// PutNode creates or replaces a node.
+// PutNode creates or replaces a node, with its webhook pairing. It returns
+// [ErrExists] if a pairing of another kind has its ID.
 func (s *Store) PutNode(ctx context.Context, n Node) error {
 	headers, err := json.Marshal(n.Headers)
 	if err != nil {
 		return err
 	}
-	_, err = s.exec(ctx, `INSERT INTO nodes (id, name, description, webhook, headers, secret, token_hash, created)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description,
-		webhook = excluded.webhook, headers = excluded.headers, secret = excluded.secret, token_hash = excluded.token_hash`,
-		n.ID, n.Name, n.Description, n.Webhook, string(headers), n.Secret, n.TokenHash, s.now().UnixNano())
-	return err
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if err := s.putWebhookPairing(ctx, tx, n.ID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO nodes (id, name, description, webhook, headers, secret, token_hash, created)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description,
+			webhook = excluded.webhook, headers = excluded.headers, secret = excluded.secret, token_hash = excluded.token_hash`,
+			n.ID, n.Name, n.Description, n.Webhook, string(headers), n.Secret, n.TokenHash, s.now().UnixNano())
+		return err
+	})
 }
 
 // Node returns a node by ID.
@@ -489,19 +221,6 @@ func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
 		out = append(out, n)
 	}
 	return out, nil
-}
-
-// DeleteNode removes a node and its pending codes.
-func (s *Store) DeleteNode(ctx context.Context, id string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE purpose = 'node' AND name = ?`, id); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact = ?`, id); err != nil {
-			return err
-		}
-		return deleteOneTx(ctx, tx, `DELETE FROM nodes WHERE id = ?`, id)
-	})
 }
 
 // Question is a pending agent question relayed to a channel or a web page.

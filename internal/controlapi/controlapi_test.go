@@ -82,9 +82,9 @@ func TestClientRequests(t *testing.T) {
 		{name: "status", call: func(ctx context.Context, c *Client) error { _, err := c.Status(ctx); return err }, wantMethod: http.MethodGet, wantPath: "/status"},
 		{name: "stop", call: func(ctx context.Context, c *Client) error { return c.Stop(ctx) }, wantMethod: http.MethodPost, wantPath: "/stop"},
 		{name: "pair", call: func(ctx context.Context, c *Client) error {
-			_, err := c.Pair(ctx, PairCodeRequest{Name: "anna", Role: "member"})
+			_, err := c.Pair(ctx, PairCodeRequest{Name: "anna", Owner: true})
 			return err
-		}, wantMethod: http.MethodPost, wantPath: "/pair", wantBody: `{"name":"anna","role":"member"}`},
+		}, wantMethod: http.MethodPost, wantPath: "/pair", wantBody: `{"name":"anna","owner":true}`},
 		{name: "revoke", call: func(ctx context.Context, c *Client) error { _, err := c.Revoke(ctx, "a/b"); return err }, wantMethod: http.MethodDelete, wantPath: "/pair/a%2Fb"},
 		{name: "delete contact", call: func(ctx context.Context, c *Client) error { return c.DeleteContact(ctx, "coder") }, wantMethod: http.MethodDelete, wantPath: "/contacts/coder"},
 		{name: "delete channel", call: func(ctx context.Context, c *Client) error { return c.DeleteChannel(ctx, "telegram") }, wantMethod: http.MethodDelete, wantPath: "/channels/telegram"},

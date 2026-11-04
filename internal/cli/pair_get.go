@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"cmp"
 	"fmt"
 	"strconv"
 	"strings"
@@ -28,7 +29,7 @@ import (
 func newPairGetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:               "get <name|agent-url>",
-		Short:             "Show a pairing: its role, tokens, linked accounts and pending codes, or an agent you joined",
+		Short:             "Show a pairing: its kind, role, tokens, linked accounts and pending codes, or an agent you joined",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -74,7 +75,7 @@ func renderPairing(p *controlapi.Pairing) string {
 	if p.Node != nil {
 		fmt.Fprintf(&sb, "%s (webhook node)\n", p.Name)
 	} else {
-		fmt.Fprintf(&sb, "%s (caller, %s)\n", p.Name, p.Role)
+		fmt.Fprintf(&sb, "%s (%s, %s)\n", p.Name, cmp.Or(p.Kind, "not joined yet"), p.Role)
 	}
 	line("principal", p.Principal)
 	if !p.Created.IsZero() {

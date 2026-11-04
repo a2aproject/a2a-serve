@@ -100,7 +100,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if diff := cmp.Diff(wantInstructions, resp.Instructions); diff != "" {
 		t.Fatalf("Pair() wrong instructions (-want +got) diff = %s", diff)
 	}
-	paired, err := credstore.Pair(ctx, http.DefaultClient, ts.srv.bestURL(), resp.Code)
+	paired, err := credstore.Pair(ctx, http.DefaultClient, ts.srv.bestURL(), resp.Code, pairapi.PairingAgent)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
@@ -169,7 +169,7 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 func TestNodeAnswersOwnApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("telegram")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 	node := addNode(t, ts, "grok", 0)
 	node.mu.Lock()
 	token := node.client.Token
@@ -237,7 +237,7 @@ func TestPairNodeOrCaller(t *testing.T) {
 		{name: "new caller", req: controlapi.PairCodeRequest{Name: "bob"}},
 		{name: "existing node gets a node code", req: controlapi.PairCodeRequest{Name: "grok"}, wantNode: true},
 		{name: "existing node with a new webhook", req: controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/new"}, wantErr: true},
-		{name: "role for a node", req: controlapi.PairCodeRequest{Name: "grok", Role: auth.RoleOwner}, wantErr: true},
+		{name: "owner for a node", req: controlapi.PairCodeRequest{Name: "grok", Owner: true}, wantErr: true},
 		{name: "webhook for a caller's name", req: controlapi.PairCodeRequest{Name: "anna", Webhook: "https://example.com/hook"}, wantErr: true},
 	}
 	for _, tc := range tests {
@@ -259,7 +259,7 @@ func TestPairRmRemovesNodeOrCaller(t *testing.T) {
 	addNode(t, ts, "grok", 0)
 	ts.pair("anna", auth.RoleAuthenticated)
 	ctx := context.Background()
-	for name, want := range map[string]string{"grok": pairapi.KindNode, "anna": pairapi.KindCaller} {
+	for name, want := range map[string]string{"grok": pairapi.PairingWebhook, "anna": pairapi.PairingPerson} {
 		resp, err := controlapi.NewClient(ts.dir).Revoke(ctx, name)
 		if err != nil {
 			t.Fatalf("Revoke(%q) error = %v", name, err)
@@ -305,9 +305,9 @@ func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
 	addNode(t, ts, "grok", 200*time.Millisecond)
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 
-	ts.ch.write("tg:1", "dm1", "acall grok what's new?")
+	ts.ch.write("telegram:1", "dm1", "acall grok what's new?")
 	ts.ch.waitFor(t, "dm1", hasText("tool result: task"))
 	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
 

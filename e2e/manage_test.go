@@ -78,21 +78,21 @@ func TestPairingsOnBothSides(t *testing.T) {
 
 	anna.pairJoin(coder.url, coder.invite("anna"))
 	coder.invite("anna")
-	coder.mustFail("a2a-serve pair set anna --role owner", "pair", "invite", "anna", "--role", "owner")
+	coder.mustFail("a2a-serve pair set anna --owner", "pair", "invite", "anna", "--owner")
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "anna")
-	if got.Kind != "caller" || got.Role != "authenticated" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
-		t.Fatalf("a2a-serve pair get anna = %+v, want an authenticated caller with the token of the first code and the second code pending", got)
+	if got.Kind != "person" || got.Role != "authenticated" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
+		t.Fatalf("a2a-serve pair get anna = %+v, want an authenticated person with the token of the first code and the second code pending", got)
 	}
 
-	coder.serve("pair", "set", "anna", "--role", "owner")
+	coder.serve("pair", "set", "anna", "--owner", "--kind", "device")
 	all := jsonl[pairing](t, coder.serve("pair", "list", "-o", "jsonl"))
 	kinds := map[string]string{}
 	for _, p := range all {
 		kinds[p.Name] = p.Kind + "/" + p.Role
 	}
-	if diff := cmp.Diff(map[string]string{"anna": "caller/owner", "local": "caller/owner"}, kinds); diff != "" {
+	if diff := cmp.Diff(map[string]string{"anna": "device/owner", "local": "person/owner"}, kinds); diff != "" {
 		t.Fatalf("a2a-serve pair list -o jsonl wrong result (-want +got) diff = %s", diff)
 	}
 
@@ -133,7 +133,7 @@ func TestWebhookNodeChangedInPlace(t *testing.T) {
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "grok")
-	if got.Kind != "node" || got.Node == nil || got.Node.Webhook != webhook.URL+"/new" || got.Node.Description != "web search" ||
+	if got.Kind != "webhook" || got.Node == nil || got.Node.Webhook != webhook.URL+"/new" || got.Node.Description != "web search" ||
 		!cmp.Equal(got.Node.HeaderNames, []string{"X-Key"}) || !got.Node.Paired {
 		t.Fatalf("a2a-serve pair get grok = %+v, want the changed node, still paired", got)
 	}

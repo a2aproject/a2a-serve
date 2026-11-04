@@ -26,7 +26,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 // The conformance suite runs every scenario a harness profile must pass
@@ -226,11 +225,7 @@ func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	ch := newFakeChannel("telegram")
 	ts := startServer(t, serverOpts{channel: ch})
 	ctx := context.Background()
-	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "owner", Role: auth.RoleOwner})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ch.write("tg:1", "dm1", "/start "+code.Code)
+	ch.write("telegram:1", "dm1", "/start "+ownerCode(t, ts))
 	ch.waitFor(t, "dm1", hasText("Linked as owner"))
 
 	member := ts.client(ts.pair("grok", auth.RoleAuthenticated))

@@ -35,7 +35,21 @@ const Path = "/pair"
 // Request is the body of a pairing request.
 type Request struct {
 	Code string `json:"code"`
+	// Kind is what the redeemer is, one of the Pairing* kinds. It sets the
+	// kind of a pairing redeemed for the first time.
+	Kind string `json:"kind,omitempty"`
 }
+
+// Kinds of pairings.
+const (
+	PairingPerson  = "person"
+	PairingDevice  = "device"
+	PairingAgent   = "agent"
+	PairingWebhook = "webhook"
+)
+
+// PairingKinds are the kinds of pairings, in the order they are listed.
+var PairingKinds = []string{PairingPerson, PairingDevice, PairingAgent, PairingWebhook}
 
 // Kinds of tokens a pairing returns.
 const (
@@ -53,10 +67,11 @@ type Response struct {
 	URL       string `json:"url"`
 }
 
-// Pair exchanges code at the agent at agentURL for a token.
-func Pair(ctx context.Context, hc *http.Client, agentURL, code string) (Response, error) {
+// Pair exchanges code at the agent at agentURL for a token, as a redeemer
+// of kind.
+func Pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Response, error) {
 	agentURL = strings.TrimSuffix(agentURL, "/")
-	body, err := json.Marshal(Request{Code: code})
+	body, err := json.Marshal(Request{Code: code, Kind: kind})
 	if err != nil {
 		return Response{}, err
 	}

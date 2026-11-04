@@ -226,7 +226,7 @@ func (c *Channel) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 	m := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: fmt.Sprintf("%d:%d", msg.Chat.ID, msg.ID),
-		Identity:  "tg:" + strconv.FormatInt(msg.From.ID, 10),
+		Identity:  "telegram:" + strconv.FormatInt(msg.From.ID, 10),
 		Name:      displayName(msg.From),
 		Conv:      conv,
 		Direct:    direct,
@@ -334,7 +334,7 @@ func (c *Channel) handleCallback(ctx context.Context, b *bot.Bot, q *models.Call
 	c.deliver(ctx, channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: "cb:" + q.ID,
-		Identity:  "tg:" + strconv.FormatInt(q.From.ID, 10),
+		Identity:  "telegram:" + strconv.FormatInt(q.From.ID, 10),
 		Name:      displayName(&q.From),
 		Conv:      conv,
 		Direct:    msg.Chat.Type == "private",

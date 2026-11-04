@@ -9,7 +9,9 @@ object with the same schema whether the agent runs or not: `running` is
 always set, and the fields of the running server, such as `pid` and `local`,
 only while it runs. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
-`{"removed": true, "kind": …, "name": …}`, and `stop` prints
+`{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
+may still call the agent without the pairing, and `kept` for the `local`
+pairing, which stays. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 

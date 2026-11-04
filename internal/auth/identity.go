@@ -55,7 +55,8 @@ type Identity struct {
 	PairingRole string `json:"pairingRole,omitempty"`
 	// WebhookNode is the webhook node whose token was used.
 	WebhookNode string `json:"webhookNode,omitempty"`
-	// ChatAccount is the sender of a channel message, such as tg:<id>.
+	// ChatAccount is the sender of a channel message: telegram:<id>,
+	// discord:<id> or an email address.
 	ChatAccount string `json:"chatAccount,omitempty"`
 	// Direct is true for a message in a direct chat.
 	Direct bool `json:"direct,omitempty"`

@@ -96,7 +96,7 @@ func TestParse(t *testing.T) {
 		t.Fatalf("parse() = %v, %v, want a message", ok, err)
 	}
 	want := channel.Inbound{
-		Channel: "email", MessageID: "mail:alice@alice.org|m2@alice.org", Identity: "mail:alice@alice.org", Name: "Alice",
+		Channel: "email", MessageID: "alice@alice.org|m2@alice.org", Identity: "alice@alice.org", Name: "Alice",
 		Conv: ConvKey("alice@alice.org", "root@alice.org", "Re: fix the test"), Direct: true, Authentic: true,
 		Text: "Please push it.",
 	}

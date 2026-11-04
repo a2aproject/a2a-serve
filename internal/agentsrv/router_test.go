@@ -31,23 +31,30 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
-// linkOwner links identity as the owner in conversation conv.
+// ownerCode mints a code which links a chat account to you, as the one
+// printed at start.
+func ownerCode(t *testing.T, ts *testServer) string {
+	t.Helper()
+	code, _, err := auth.MintCode(context.Background(), ts.srv.store, auth.LocalPairing)
+	if err != nil {
+		t.Fatalf("MintCode() error = %v", err)
+	}
+	return code
+}
+
+// linkOwner links identity as you in conversation conv.
 func linkOwner(t *testing.T, ts *testServer, identity, conv string) {
 	t.Helper()
-	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "owner", Role: auth.RoleOwner})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ts.ch.write(identity, conv, "link "+code.Code)
+	ts.ch.write(identity, conv, "link "+ownerCode(t, ts))
 	ts.ch.waitFor(t, conv, hasText("Linked as owner"))
 }
 
 func TestRouterUnknownSenderGetsPairingHint(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	ts.ch.write("tg:9", "dm9", "hello")
+	ts.ch.write("telegram:9", "dm9", "hello")
 	ts.ch.waitFor(t, "dm9", hasText("I don't know you yet"))
-	ts.ch.write("tg:9", "dm9", "link AAAA-BBBB")
+	ts.ch.write("telegram:9", "dm9", "link AAAA-BBBB")
 	ts.ch.waitFor(t, "dm9", hasText("invalid or has expired"))
 }
 
@@ -57,14 +64,14 @@ func TestRouterRestartsFailingChannel(t *testing.T) {
 	ch.failures = 2
 	ts := startServer(t, serverOpts{channel: ch})
 	ts.ch.waitReady(t)
-	ts.ch.write("tg:9", "dm9", "hello")
+	ts.ch.write("telegram:9", "dm9", "hello")
 	ts.ch.waitFor(t, "dm9", hasText("I don't know you yet"))
 }
 
 func TestRouterPreparesOnlyAllowedSenders(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 	var mu sync.Mutex
 	prepared := map[string]bool{}
 	withPrepare := func(identity, conv, text string) channel.Inbound {
@@ -78,14 +85,14 @@ func TestRouterPreparesOnlyAllowedSenders(t *testing.T) {
 		return in
 	}
 
-	ts.ch.deliver(withPrepare("tg:9", "dm9", "hello"))
+	ts.ch.deliver(withPrepare("telegram:9", "dm9", "hello"))
 	ts.ch.waitFor(t, "dm9", hasText("I don't know you yet"))
-	ts.ch.deliver(withPrepare("tg:1", "dm1", "hello"))
+	ts.ch.deliver(withPrepare("telegram:1", "dm1", "hello"))
 	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
 
 	mu.Lock()
 	defer mu.Unlock()
-	if diff := cmp.Diff(map[string]bool{"tg:1": true}, prepared); diff != "" {
+	if diff := cmp.Diff(map[string]bool{"telegram:1": true}, prepared); diff != "" {
 		t.Fatalf("Prepare() calls wrong result (-want +got) diff = %s", diff)
 	}
 }
@@ -93,17 +100,17 @@ func TestRouterPreparesOnlyAllowedSenders(t *testing.T) {
 func TestRouterTurnAndApprovalInChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 
-	ts.ch.write("tg:1", "dm1", "hello")
+	ts.ch.write("telegram:1", "dm1", "hello")
 	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
 
-	ts.ch.write("tg:1", "dm1", "ask")
+	ts.ch.write("telegram:1", "dm1", "ask")
 	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
 	if len(q.Question.Options) != 3 {
 		t.Fatalf("question options = %v, want 3", q.Question.Options)
 	}
-	ts.ch.click("tg:1", "dm1", ref, q.Question, 1)
+	ts.ch.click("telegram:1", "dm1", ref, q.Question, 1)
 	ts.ch.waitFor(t, "dm1", hasText("Pushed (always)."))
 }
 
@@ -112,43 +119,43 @@ func TestRouterTypedAnswer(t *testing.T) {
 	ch := newFakeChannel("fake")
 	ch.buttons = false
 	ts := startServer(t, serverOpts{channel: ch})
-	linkOwner(t, ts, "mail:me@example.com", "thread1")
+	linkOwner(t, ts, "me@example.com", "thread1")
 
-	ts.ch.write("mail:me@example.com", "thread1", "ask")
+	ts.ch.write("me@example.com", "thread1", "ask")
 	ts.ch.waitFor(t, "thread1", hasText("Reply approve, always, deny"))
-	ts.ch.write("mail:me@example.com", "thread1", "deny")
+	ts.ch.write("me@example.com", "thread1", "deny")
 	ts.ch.waitFor(t, "thread1", hasText("Push denied."))
 }
 
 func TestRouterFollowUpAndNewConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 
-	ts.ch.write("tg:1", "dm1", "remember red")
+	ts.ch.write("telegram:1", "dm1", "remember red")
 	ts.ch.waitFor(t, "dm1", hasText("OK."))
-	ts.ch.write("tg:1", "dm1", "recall")
+	ts.ch.write("telegram:1", "dm1", "recall")
 	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
-	ts.ch.write("tg:1", "dm1", "/new")
+	ts.ch.write("telegram:1", "dm1", "/new")
 	ts.ch.waitFor(t, "dm1", hasText("Started a new conversation."))
-	ts.ch.write("tg:1", "dm1", "recall")
+	ts.ch.write("telegram:1", "dm1", "recall")
 	ts.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == "You said: " })
 }
 
 func TestRouterStop(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	go ts.ch.write("tg:1", "dm1", "slow")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	go ts.ch.write("telegram:1", "dm1", "slow")
 	ts.ch.waitFor(t, "dm1", hasText("..."))
-	ts.ch.write("tg:1", "dm1", "/stop")
+	ts.ch.write("telegram:1", "dm1", "/stop")
 	ts.ch.waitFor(t, "dm1", hasText("Stopped."))
 }
 
 // linkAs links identity as name with role in conversation conv.
 func linkAs(t *testing.T, ts *testServer, name, role, identity, conv string) {
 	t.Helper()
-	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: name, Role: role})
+	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: name, Owner: role == auth.RoleOwner})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,15 +166,15 @@ func linkAs(t *testing.T, ts *testServer, name, role, identity, conv string) {
 func TestRouterMemberAnswersOwnApprovalInChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 
-	ts.ch.write("tg:2", "dm2", "ask")
+	ts.ch.write("telegram:2", "dm2", "ask")
 	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
 	if got := ts.ch.questions(); got != 1 {
 		t.Fatalf("questions sent = %d, want only anna's: she answers her own task", got)
 	}
-	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	ts.ch.click("telegram:2", "dm2", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
@@ -175,8 +182,8 @@ func TestRouterMemberAnswersOwnApprovalInChat(t *testing.T) {
 func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 
 	if err := ts.srv.router.injectTurn(ctx, a2a.NewContextID(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
@@ -186,15 +193,15 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	if !strings.Contains(q.Text, "anna needs your approval") {
 		t.Fatalf("question text = %q, want it to name anna", q.Text)
 	}
-	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 	ts.ch.waitEdited(t, ref, "✓ Allow by owner")
 }
 
 func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 	contextID, err := ts.srv.router.contextOf(ctx, "telegram", "dm2")
 	if err != nil {
@@ -208,14 +215,14 @@ func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 	if got := ts.ch.questions(); got != 1 {
 		t.Fatalf("questions sent = %d, want only the one in anna's chat", got)
 	}
-	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	ts.ch.click("telegram:2", "dm2", ref, q.Question, 0)
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
 
 func TestRouterOwnerChatOrder(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("discord")})
-	linkOwner(t, ts, "dc:1", "dm1")
+	linkOwner(t, ts, "discord:1", "dm1")
 	ctx := context.Background()
 	if got, ok := ts.srv.router.OwnerChat(ctx); !ok || got.Channel != "discord" {
 		t.Fatalf("OwnerChat() with discord only = %+v, %v, want discord", got, ok)
@@ -224,11 +231,7 @@ func TestRouterOwnerChatOrder(t *testing.T) {
 	tg := newFakeChannel("telegram")
 	ts.srv.router.add(tg)
 	tg.waitReady(t)
-	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "owner", Role: auth.RoleOwner})
-	if err != nil {
-		t.Fatalf("Pair() error = %v", err)
-	}
-	tg.write("tg:1", "tgdm1", "join "+code.Code)
+	tg.write("telegram:1", "tgdm1", "join "+ownerCode(t, ts))
 	tg.waitFor(t, "tgdm1", hasText("Linked as owner"))
 
 	got, ok := ts.srv.router.OwnerChat(ctx)
@@ -259,12 +262,12 @@ func TestRouterOwnerChat(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ts := startServer(t, serverOpts{channel: newFakeChannel(tc.channel), configure: func(c *agentdir.Config) { c.Approvals.OwnerChat = tc.ownerChat }})
-			linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+			linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 			if tc.linkBen {
-				linkAs(t, ts, "ben", auth.RoleOwner, "tg:3", "dm3")
+				linkAs(t, ts, "ben", auth.RoleOwner, "telegram:3", "dm3")
 			}
 			if tc.link {
-				linkOwner(t, ts, "tg:1", "dm1")
+				linkOwner(t, ts, "telegram:1", "dm1")
 			}
 
 			got, ok := ts.srv.router.OwnerChat(context.Background())
@@ -279,15 +282,15 @@ func TestRouterOwnerChat(t *testing.T) {
 func TestRouterHandlesConversationInOrder(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 
-	slow := ts.ch.message("tg:1", "dm1", "remember red")
+	slow := ts.ch.message("telegram:1", "dm1", "remember red")
 	slow.Prepare = func(context.Context, *channel.Inbound) error {
 		time.Sleep(200 * time.Millisecond)
 		return nil
 	}
 	ts.ch.deliver(slow)
-	ts.ch.write("tg:1", "dm1", "recall")
+	ts.ch.write("telegram:1", "dm1", "recall")
 
 	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
 }
@@ -295,8 +298,8 @@ func TestRouterHandlesConversationInOrder(t *testing.T) {
 func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	ts.ch.write("tg:1", "dm1", "ask")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ts.ch.write("telegram:1", "dm1", "ask")
 	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
 	ctx := context.Background()
 	contextID, err := ts.srv.store.ContextOf(ctx, "fake", "dm1")
@@ -308,7 +311,7 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	time.Sleep(3 * injectRetry)
-	ts.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))
 	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
@@ -317,22 +320,22 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 func TestRouterGroupMessageDoesNotJoinOthersPendingTask(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
-	linkAs(t, ts, "bob", auth.RoleAuthenticated, "tg:3", "dm3")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
+	linkAs(t, ts, "bob", auth.RoleAuthenticated, "telegram:3", "dm3")
 	inGroup := func(identity, text string) {
 		in := ts.ch.message(identity, "grp", text)
 		in.Direct = false
 		ts.ch.deliver(in)
 	}
 
-	inGroup("tg:2", "ask")
+	inGroup("telegram:2", "ask")
 	ref, q := ts.ch.waitFor(t, "grp", hasQuestion)
-	inGroup("tg:3", "hello")
+	inGroup("telegram:3", "hello")
 	ts.ch.waitFor(t, "grp", hasText("yours starts after it"))
-	ts.ch.click("tg:3", "grp", ref, q.Question, 0)
+	ts.ch.click("telegram:3", "grp", ref, q.Question, 0)
 	ts.ch.waitFor(t, "grp", hasText("Only the person who started the task or an owner can answer this."))
-	ts.ch.click("tg:2", "grp", ref, q.Question, 0)
+	ts.ch.click("telegram:2", "grp", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "grp", hasText("Hello from fakeacp."))
 }

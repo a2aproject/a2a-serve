@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"io"
@@ -22,6 +23,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -240,7 +242,20 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	c, err := s.store.TakeCode(r.Context(), auth.NormalizeCode(req.Code), "")
+	kind := cmp.Or(req.Kind, pairapi.PairingPerson)
+	if kind == pairapi.PairingWebhook || !slices.Contains(pairapi.PairingKinds, kind) {
+		jsonhttp.Error(w, http.StatusBadRequest, "unknown kind "+req.Kind)
+		return
+	}
+	local := false
+	c, err := s.store.TakeCode(r.Context(), auth.NormalizeCode(req.Code), func(pending store.Code) bool {
+		local = pending.Pairing == auth.LocalPairing
+		return !local
+	})
+	if local {
+		jsonhttp.Error(w, http.StatusForbidden, "this code links your chat account; send \"join <code>\" to the agent's bot")
+		return
+	}
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
 		s.pairFailures.fail(host)
 		jsonhttp.Error(w, http.StatusForbidden, "invalid or expired pairing code")
@@ -251,18 +266,18 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
 		return
 	}
-	if c.Purpose == auth.PurposeNode {
-		s.nodes.Pair(w, r, baseURL, c.Name)
+	if c.Kind == pairapi.PairingWebhook {
+		s.nodes.Pair(w, r, baseURL, c.Pairing)
 		return
 	}
-	tok, p, err := auth.IssueToken(r.Context(), s.store, c, baseURL)
+	tok, principal, err := auth.IssueToken(r.Context(), s.store, c.Pairing, baseURL, kind)
 	if err != nil {
 		slog.Error("pairing failed", "error", err)
 		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
 		return
 	}
-	slog.Info("paired", "principal", p.ID, "url", baseURL)
-	jsonhttp.Write(w, http.StatusOK, pairapi.Response{Kind: pairapi.KindCaller, Token: tok, Principal: p.ID, Agent: s.config().Name, URL: baseURL})
+	slog.Info("paired", "pairing", c.Pairing, "url", baseURL)
+	jsonhttp.Write(w, http.StatusOK, pairapi.Response{Kind: pairapi.KindCaller, Token: tok, Principal: principal, Agent: s.config().Name, URL: baseURL})
 }
 
 // cliSkill is the agent skill of the a2a CLI on PATH, read once.

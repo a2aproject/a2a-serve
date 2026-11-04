@@ -3,8 +3,8 @@
 > [!NOTE]
 > This page describes the access model a2a-serve is moving to. Until it lands,
 > [Who can call the agent](../guide.md#who-can-call-the-agent) describes the
-> current behavior. `--private-access`, `--public-access`, `pair invite --owner`,
-> `--owner` and `--allow` don't exist yet, and `status` has no `access` block.
+> current behavior. `--private-access`, `--public-access`, `--owner` and
+> `--allow` don't exist yet, and `status` has no `access` block.
 
 An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
 
@@ -157,6 +157,10 @@ A request is resolved in this order:
 ### Pairings
 
 A pairing is a record with a name, a kind (person, device, agent or webhook) and a role. Tokens and chat links point to it and carry no role of their own, so a role change applies to the next request. A webhook pairing's token opens the node's mailbox and lets the node call the agent as `authenticated`.
+
+The first code redeemed sets the kind: `pair join` and `join <code>` in a chat make a person, `contact add --code` makes an agent, and `pair invite --webhook` makes a webhook. `pair set --kind` changes it.
+
+The built-in `local` pairing is you. Its token works only on the local listener, and chat accounts linked with the code printed at start are its links. Google sign-in tokens carry the email and belong to no pairing.
 
 ## Relay
 

@@ -33,7 +33,7 @@ import (
 func TestScheduleRunIsShownInChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
 
@@ -65,8 +65,8 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
 	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "push", Cron: "@daily", Prompt: "ask", As: "anna", Chat: "fake:anna"}); err != nil {
@@ -81,14 +81,14 @@ func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	if got := ts.ch.questions(); got != 1 {
 		t.Fatalf("questions sent = %d, want only the one in anna's chat: she is the schedule's user", got)
 	}
-	ts.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	ts.ch.click("telegram:2", "dm2", ref, q.Question, 0)
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
 
 func TestAddScheduleErrors(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
 	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "taken", Cron: "@daily", Prompt: "x"}); err != nil {
@@ -116,12 +116,12 @@ func TestAddScheduleErrors(t *testing.T) {
 func TestHarnessSchedulesInConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkOwner(t, ts, "tg:1", "dm1")
+	linkOwner(t, ts, "telegram:1", "dm1")
 	at := time.Now().Add(500 * time.Millisecond).Format(time.RFC3339Nano)
 
-	ts.ch.write("tg:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
+	ts.ch.write("telegram:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
 	ts.ch.waitFor(t, "dm1", hasText("Scheduled soon"))
-	ts.ch.write("tg:1", "dm1", "call schedules list")
+	ts.ch.write("telegram:1", "dm1", "call schedules list")
 	ts.ch.waitFor(t, "dm1", hasText("- soon (once"))
 	ts.ch.waitFor(t, "dm1", hasText(`ran Scheduled run of "soon"`))
 
@@ -141,17 +141,17 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "x"}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
 
-	ts.ch.write("tg:2", "dm2", "call schedules list")
+	ts.ch.write("telegram:2", "dm2", "call schedules list")
 	ts.ch.waitFor(t, "dm2", hasText("No schedules."))
-	ts.ch.write("tg:2", "dm2", "call schedules rm brief")
+	ts.ch.write("telegram:2", "dm2", "call schedules rm brief")
 	ts.ch.waitFor(t, "dm2", hasText("no schedule brief"))
-	ts.ch.write("tg:2", "dm2", `call schedules add mine --cron @daily --prompt "x"`)
+	ts.ch.write("telegram:2", "dm2", `call schedules add mine --cron @daily --prompt "x"`)
 	ts.ch.waitFor(t, "dm2", hasText("Scheduled mine"))
 
 	mine, err := ts.srv.store.Schedule(ctx, "mine")

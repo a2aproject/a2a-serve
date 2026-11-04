@@ -20,9 +20,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
@@ -32,27 +32,35 @@ func newPairSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		headers     []string
 		description string
 		advertised  bool
+		owner       bool
 	)
 	cmd := &cobra.Command{
 		Use:   "set <name>",
 		Short: "Change a pairing, or rotate its credentials",
-		Long: `Change a pairing in place: the role of a caller, or the webhook, headers,
-description and advertising of a webhook node. Its tokens keep working.
+		Long: `Change a pairing in place: whether it is an owner and its kind (person,
+device or agent), or the webhook, headers, description and advertising of a
+webhook node. Its tokens keep working, and a change applies to their next
+request.
 
 --rotate revokes every token of the pairing and its pending codes, and
 prints a new code; for a webhook node, it also changes the secret its wakes
 are signed with. Linked messenger accounts stay linked.
 
 ` + secretref.Help,
-		Example: `  a2a-serve pair set anna --role owner
+		Example: `  a2a-serve pair set anna --owner
+  a2a-serve pair set anna --owner=false
+  a2a-serve pair set laptop --kind device
   a2a-serve pair set anna --rotate
   a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			changes := []string{"role", "webhook", "webhook-header", "description", "advertised", "rotate"}
+			changes := []string{"owner", "kind", "webhook", "webhook-header", "description", "advertised", "rotate"}
 			if !slices.ContainsFunc(changes, cmd.Flags().Changed) {
-				return clierr.Usage("nothing to change: pass --role, --webhook, --webhook-header, --description, --advertised or --rotate")
+				return clierr.Usage("nothing to change: pass --owner, --kind, --webhook, --webhook-header, --description, --advertised or --rotate")
+			}
+			if cmd.Flags().Changed("owner") {
+				req.Owner = &owner
 			}
 			hdrs, err := parseWebhookHeaders(headers, cfg.secretReader(cfg.stderr()))
 			if err != nil {
@@ -93,12 +101,13 @@ are signed with. Linked messenger accounts stay linked.
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "", "Role of a caller: `authenticated|owner`; authenticated callers see and approve their own tasks, owners every task")
+	f.BoolVar(&owner, "owner", false, "Make the pairing an owner, who sees and approves every task, or not with --owner=false")
+	f.StringVar(&req.Kind, "kind", "", "Kind of the pairing: `person|device|agent`")
 	f.StringVar(&req.Webhook, "webhook", "", "The URL the agent POSTs wakes to, for a webhook node")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, replacing the current ones: `Name: value`; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	f.BoolVar(&req.Rotate, "rotate", false, "Revoke every token of the pairing and print a new code")
-	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleAuthenticated, agentdir.RoleOwner)))
+	must(cmd.RegisterFlagCompletionFunc("kind", fixedCompletions(pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent)))
 	return cmd
 }

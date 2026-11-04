@@ -186,46 +186,101 @@ func TestFailUnfinished(t *testing.T) {
 	}
 }
 
+func ensurePairing(t *testing.T, s *Store, p Pairing) {
+	t.Helper()
+	if _, err := s.EnsurePairing(context.Background(), p); err != nil {
+		t.Fatalf("EnsurePairing(%s) error = %v", p.Name, err)
+	}
+}
+
+func TestPairings(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Role: "authenticated"})
+	if _, err := s.EnsurePairing(ctx, Pairing{Name: "anna", Kind: "agent", Role: "owner"}); err != nil {
+		t.Fatalf("EnsurePairing() of an existing pairing error = %v", err)
+	}
+	if err := s.UpdatePairing(ctx, Pairing{Name: "anna", Kind: "device", Role: "owner"}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+	if err := s.UpdatePairing(ctx, Pairing{Name: "bob", Role: "owner"}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("UpdatePairing() of a missing pairing error = %v, want %v", err, ErrNotFound)
+	}
+
+	all, err := s.Pairings(ctx)
+	if err != nil {
+		t.Fatalf("Pairings() error = %v", err)
+	}
+	want := []Pairing{{Name: "anna", Kind: "device", Role: "owner"}, {Name: LocalPairing, Kind: "person", Role: "owner"}}
+	if diff := cmp.Diff(want, all, cmpopts.IgnoreFields(Pairing{}, "Created")); diff != "" {
+		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestDeletePairing(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
+	}
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	if err := s.PutCode(ctx, "CODE", Code{Pairing: "grok", Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+
+	if err := s.DeletePairing(ctx, "grok"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+
+	if _, err := s.LookupToken(ctx, "a2p_secret"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LookupToken() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.LinkOf(ctx, "telegram", "telegram:1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LinkOf() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.TakeCode(ctx, "CODE", AnyCode); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("TakeCode() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if err := s.DeletePairing(ctx, "grok"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeletePairing() of a missing pairing error = %v, want %v", err, ErrNotFound)
+	}
+}
+
 func TestCodes(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
 	now := time.Now()
 	s.now = func() time.Time { return now }
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
 
-	if err := s.PutCode(ctx, "K7Q29XF4", Code{Purpose: "pair", Name: "grok", Role: "member", Expires: now.Add(time.Minute)}); err != nil {
+	if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: now.Add(time.Minute)}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
-	if _, err := s.TakeCode(ctx, "K7Q29XF4", "node"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("TakeCode() wrong purpose error = %v, want %v", err, ErrNotFound)
+	if _, err := s.TakeCode(ctx, "K7Q29XF4", func(Code) bool { return false }); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("TakeCode() of a refused code error = %v, want %v", err, ErrNotFound)
 	}
-	got, err := s.TakeCode(ctx, "K7Q29XF4", "pair")
+	got, err := s.TakeCode(ctx, "K7Q29XF4", AnyCode)
 	if err != nil {
 		t.Fatalf("TakeCode() error = %v", err)
 	}
-	if got.Name != "grok" || got.Role != "member" {
-		t.Fatalf("TakeCode() = %+v, want grok/member", got)
+	if diff := cmp.Diff(Code{Pairing: "grok", Expires: got.Expires}, got); diff != "" {
+		t.Fatalf("TakeCode() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := s.TakeCode(ctx, "K7Q29XF4", "pair"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.TakeCode(ctx, "K7Q29XF4", AnyCode); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("TakeCode() second use error = %v, want %v", err, ErrNotFound)
 	}
 
-	if err := s.PutCode(ctx, "OLD", Code{Purpose: "pair", Expires: now.Add(-time.Second)}); err != nil {
-		t.Fatal(err)
+	if err := s.PutCode(ctx, "OLD", Code{Pairing: "grok", Expires: now.Add(-time.Second)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
 	}
-	if _, err := s.TakeCode(ctx, "OLD", "pair"); !errors.Is(err, ErrCodeExpired) {
+	if _, err := s.TakeCode(ctx, "OLD", AnyCode); !errors.Is(err, ErrCodeExpired) {
 		t.Fatalf("TakeCode() expired error = %v, want %v", err, ErrCodeExpired)
-	}
-
-	if err := s.PutCode(ctx, "NODE", Code{Purpose: "node", Name: "grok", Expires: now.Add(time.Minute)}); err != nil {
-		t.Fatal(err)
-	}
-	got, err = s.TakeCode(ctx, "NODE", "")
-	if err != nil {
-		t.Fatalf("TakeCode() any purpose error = %v", err)
-	}
-	if diff := cmp.Diff(Code{Purpose: "node", Name: "grok", Expires: got.Expires}, got); diff != "" {
-		t.Fatalf("TakeCode() any purpose wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -233,34 +288,71 @@ func TestTokens(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureUser(ctx, "pair:grok", "authenticated"); err != nil {
-		t.Fatal(err)
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
 	}
-	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "tg:1", UserID: "pair:grok"}); err != nil {
-		t.Fatal(err)
-	}
-	if err := s.PutToken(ctx, "a2p_secret", Token{Name: "grok", Principal: "pair:grok", Role: "authenticated", URL: "http://x"}); err != nil {
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
+	if err := s.PutToken(ctx, "a2p_google", Token{Email: "anna@example.com", Domain: "example.com", URL: "http://x"}, ""); err != nil {
+		t.Fatalf("PutToken() of a sign-in token error = %v", err)
+	}
+
 	got, err := s.LookupToken(ctx, "a2p_secret")
 	if err != nil {
 		t.Fatalf("LookupToken() error = %v", err)
 	}
-	if got.Principal != "pair:grok" || got.Name != "grok" {
-		t.Fatalf("LookupToken() = %+v, want pair:grok", got)
+	if diff := cmp.Diff(Token{Pairing: "grok", URL: "http://x"}, got, cmpopts.IgnoreFields(Token{}, "Created")); diff != "" {
+		t.Fatalf("LookupToken() wrong result (-want +got) diff = %s", diff)
 	}
-	n, err := s.RevokeTokens(ctx, "grok", "pair:grok")
+	got, err = s.LookupToken(ctx, "a2p_google")
 	if err != nil {
-		t.Fatalf("RevokeTokens() error = %v", err)
+		t.Fatalf("LookupToken() of a sign-in token error = %v", err)
 	}
-	if n != 2 {
-		t.Fatalf("RevokeTokens() = %d, want 2", n)
+	if diff := cmp.Diff(Token{Email: "anna@example.com", Domain: "example.com", URL: "http://x"}, got, cmpopts.IgnoreFields(Token{}, "Created")); diff != "" {
+		t.Fatalf("LookupToken() of a sign-in token wrong result (-want +got) diff = %s", diff)
+	}
+	p, err := s.Pairing(ctx, "grok")
+	if err != nil || p.Kind != "person" {
+		t.Fatalf("Pairing() = %+v, %v, want the kind of its first redemption, person", p, err)
+	}
+
+	if err := s.RevokeCredentials(ctx, "grok"); err != nil {
+		t.Fatalf("RevokeCredentials() error = %v", err)
 	}
 	if _, err := s.LookupToken(ctx, "a2p_secret"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("LookupToken() after revoke error = %v, want %v", err, ErrNotFound)
+		t.Fatalf("LookupToken() after RevokeCredentials() error = %v, want %v", err, ErrNotFound)
 	}
-	if _, err := s.LinkOf(ctx, "telegram", "tg:1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("LinkOf() after revoke error = %v, want %v", err, ErrNotFound)
+	if _, err := s.LinkOf(ctx, "telegram", "telegram:1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LinkOf() after RevokeCredentials() error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.Pairing(ctx, "grok"); err != nil {
+		t.Fatalf("Pairing() after RevokeCredentials() error = %v, want nil", err)
+	}
+}
+
+func TestPutNodeNeedsWebhookPairing(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Role: "authenticated"})
+
+	if err := s.PutNode(ctx, Node{ID: "anna", Name: "anna", Webhook: "https://x"}); !errors.Is(err, ErrExists) {
+		t.Fatalf("PutNode() over a person pairing error = %v, want %v", err, ErrExists)
+	}
+	if err := s.PutNode(ctx, Node{ID: "grok", Name: "grok", Webhook: "https://x"}); err != nil {
+		t.Fatalf("PutNode() error = %v", err)
+	}
+	p, err := s.Pairing(ctx, "grok")
+	if err != nil || p.Kind != "webhook" || p.Role != "authenticated" {
+		t.Fatalf("Pairing() of a node = %+v, %v, want an authenticated webhook pairing", p, err)
+	}
+	if err := s.DeletePairing(ctx, "grok"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+	if _, err := s.Node(ctx, "grok"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Node() after DeletePairing() error = %v, want %v", err, ErrNotFound)
 	}
 }
 
@@ -269,7 +361,7 @@ func TestFirstSeen(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	for i, want := range []bool{true, false} {
-		got, err := s.FirstSeen(ctx, "tg:1:2")
+		got, err := s.FirstSeen(ctx, "telegram:1:2")
 		if err != nil {
 			t.Fatalf("FirstSeen() error = %v", err)
 		}
@@ -693,12 +785,16 @@ func TestPrune(t *testing.T) {
 			t.Fatalf("PutHandle() error = %v", err)
 		}
 	}
-	if err := s.PutCode(ctx, "EXPIRED", Code{Purpose: "pair", Expires: start.Add(time.Minute)}); err != nil {
-		t.Fatalf("PutCode() error = %v", err)
+	ensurePairing(t, s, Pairing{Name: "invited", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "joined", Kind: "person", Role: "authenticated"})
+	for code, pairing := range map[string]string{"EXPIRED": "invited", "JOINED": "joined"} {
+		if err := s.PutCode(ctx, code, Code{Pairing: pairing, Expires: start.Add(time.Minute)}); err != nil {
+			t.Fatalf("PutCode() error = %v", err)
+		}
 	}
 
 	now = start.Add(25 * time.Hour)
-	if err := s.PutCode(ctx, "FRESH", Code{Purpose: "pair", Expires: now.Add(time.Minute)}); err != nil {
+	if err := s.PutCode(ctx, "FRESH", Code{Pairing: "joined", Expires: now.Add(time.Minute)}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
 	if err := s.Prune(ctx); err != nil {
@@ -726,11 +822,17 @@ func TestPrune(t *testing.T) {
 	if _, err := s.HandleByName(ctx, "cd"); err != nil {
 		t.Fatalf("HandleByName() of a live context error = %v", err)
 	}
-	if _, err := s.TakeCode(ctx, "EXPIRED", "pair"); !errors.Is(err, ErrNotFound) {
+	if _, err := s.TakeCode(ctx, "EXPIRED", AnyCode); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("TakeCode() of an expired code error = %v, want %v", err, ErrNotFound)
 	}
-	if _, err := s.TakeCode(ctx, "FRESH", "pair"); err != nil {
+	if _, err := s.TakeCode(ctx, "FRESH", AnyCode); err != nil {
 		t.Fatalf("TakeCode() of a fresh code error = %v", err)
+	}
+	if _, err := s.Pairing(ctx, "invited"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Pairing() nobody redeemed a code of error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.Pairing(ctx, "joined"); err != nil {
+		t.Fatalf("Pairing() of a redeemed pairing error = %v, want nil", err)
 	}
 	var blobs int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
@@ -746,12 +848,12 @@ func TestReplaceCode(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	expires := time.Now().Add(time.Minute)
-	owner := Code{Purpose: "pair", Name: "owner", Role: "owner", Expires: expires}
-	if err := s.PutCode(ctx, "OTHER", Code{Purpose: "pair", Name: "grok", Role: "member", Expires: expires}); err != nil {
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutCode(ctx, "OTHER", Code{Pairing: "grok", Expires: expires}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
 	for _, code := range []string{"FIRST", "SECOND"} {
-		if err := s.ReplaceCode(ctx, code, owner); err != nil {
+		if err := s.ReplaceCode(ctx, code, Code{Pairing: LocalPairing, Expires: expires}); err != nil {
 			t.Fatalf("ReplaceCode(%s) error = %v", code, err)
 		}
 	}
@@ -764,7 +866,7 @@ func TestReplaceCode(t *testing.T) {
 		{code: "OTHER"},
 	}
 	for _, tc := range tests {
-		if _, err := s.TakeCode(ctx, tc.code, "pair"); !errors.Is(err, tc.wantErr) {
+		if _, err := s.TakeCode(ctx, tc.code, AnyCode); !errors.Is(err, tc.wantErr) {
 			t.Fatalf("TakeCode(%s) error = %v, want %v", tc.code, err, tc.wantErr)
 		}
 	}

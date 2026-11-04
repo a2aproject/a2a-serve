@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
@@ -201,7 +202,7 @@ func TestMigrateTasksToEvents(t *testing.T) {
 	}
 }
 
-func TestMigrateRolesToAccessModel(t *testing.T) {
+func TestMigrateToPairingRecords(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "server.db")
 	db, err := sql.Open("sqlite", path)
@@ -210,21 +211,17 @@ func TestMigrateRolesToAccessModel(t *testing.T) {
 	}
 	ctx := context.Background()
 	old := &Store{db: db, now: time.Now}
-	for v := range 9 {
+	for v := range 10 {
 		if err := old.runMigration(ctx, v); err != nil {
 			t.Fatalf("runMigration(%d) error = %v", v, err)
 		}
 	}
 	if _, err := db.Exec(`
-INSERT INTO users (id, roles, created) VALUES ('user:owner', 'owner', 1), ('pair:anna', 'member', 1);
-INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES
-	('h1', 'local', 'user:owner', 'owner', 'http://local', 1),
-	('h2', 'phone', 'user:owner', 'owner', 'http://x', 1),
-	('h3', 'anna', 'pair:anna', 'member', 'http://x', 1);
-INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES
-	('telegram', 'tg:1', 'user:owner', 'dm1', 'owner', 1),
-	('telegram', 'tg:2', 'user:owner', 'dm2', 'phone', 1);
-INSERT INTO codes (hash, purpose, name, role, expires) VALUES ('c1', 'pair', 'bob', 'member', 4102444800000000000);
+INSERT INTO users (id, roles, created) VALUES ('user:owner', 'owner', 1), ('pair:anna', 'authenticated', 1);
+INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES ('h1', 'anna', 'pair:anna', 'authenticated', 'http://x', 1);
+INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES ('telegram', 'tg:1', 'user:owner', 'dm1', 'owner', 1);
+INSERT INTO codes (hash, purpose, name, role, expires) VALUES ('c1', 'pair', 'bob', 'authenticated', 4102444800000000000);
+INSERT INTO nodes (id, name, webhook, secret, token_hash, created) VALUES ('grok', 'grok', 'https://x', 's', 'th', 1);
 `); err != nil {
 		t.Fatalf("inserting pairings: %v", err)
 	}
@@ -241,32 +238,28 @@ INSERT INTO codes (hash, purpose, name, role, expires) VALUES ('c1', 'pair', 'bo
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	toks, err := s.Tokens(ctx)
+	all, err := s.Pairings(ctx)
 	if err != nil {
-		t.Fatalf("Tokens() error = %v", err)
+		t.Fatalf("Pairings() error = %v", err)
 	}
-	var gotTokens []string
-	for _, tok := range toks {
-		gotTokens = append(gotTokens, tok.Name+" "+tok.Principal+" "+tok.Role)
+	want := []Pairing{{Name: "grok", Kind: "webhook", Role: "authenticated"}, {Name: LocalPairing, Kind: "person", Role: "owner"}}
+	if diff := cmp.Diff(want, all, cmpopts.IgnoreFields(Pairing{}, "Created")); diff != "" {
+		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
 	}
-	wantTokens := []string{"local user:owner owner", "phone pair:phone owner", "anna pair:anna authenticated"}
-	if diff := cmp.Diff(wantTokens, gotTokens); diff != "" {
-		t.Fatalf("Tokens() wrong result (-want +got) diff = %s", diff)
+	n, err := s.Node(ctx, "grok")
+	if err != nil || n.TokenHash != "th" {
+		t.Fatalf("Node() = %+v, %v, want the node with its token", n, err)
 	}
-	for id, want := range map[string]string{"pair:phone": "owner", "pair:anna": "authenticated", "user:owner": "owner"} {
-		u, err := s.User(ctx, id)
-		if err != nil || u.Role != want {
-			t.Fatalf("User(%q) = %+v, %v, want role %s", id, u, err, want)
-		}
+	toks, err := s.Tokens(ctx)
+	if err != nil || len(toks) != 0 {
+		t.Fatalf("Tokens() = %+v, %v, want none", toks, err)
 	}
-	for identity, want := range map[string]string{"tg:1": "user:owner", "tg:2": "pair:phone"} {
-		l, err := s.LinkOf(ctx, "telegram", identity)
-		if err != nil || l.UserID != want {
-			t.Fatalf("LinkOf(%q) = %+v, %v, want user %s", identity, l, err, want)
-		}
+	links, err := s.Links(ctx)
+	if err != nil || len(links) != 0 {
+		t.Fatalf("Links() = %+v, %v, want none", links, err)
 	}
 	codes, err := s.PendingCodes(ctx)
-	if err != nil || len(codes["bob"]) != 1 || codes["bob"][0].Role != "authenticated" {
-		t.Fatalf("PendingCodes() = %+v, %v, want bob's code as authenticated", codes, err)
+	if err != nil || len(codes) != 0 {
+		t.Fatalf("PendingCodes() = %+v, %v, want none", codes, err)
 	}
 }
