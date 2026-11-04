@@ -42,6 +42,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
 
 // nodeTaskTimeout fails a node task which posts no event for this long.
@@ -258,7 +259,7 @@ func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
 func (n *Host) Info(node store.Node) controlapi.NodeInfo {
 	return controlapi.NodeInfo{
 		ID: node.ID, Name: node.Name, URL: trimSlash(n.cfg.BaseURL()) + "/n/" + node.ID,
-		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
+		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
@@ -304,7 +305,7 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	return mailboxapi.NodeInfo{
 		ID: node.ID, Name: node.Name, Description: node.Description, URL: trimSlash(baseURL) + "/n/" + node.ID,
-		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
+		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
 }
 
@@ -646,7 +647,7 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 			slog.Info("woke node", "node", node.ID, "kind", env.Kind, "task", env.TaskID)
 			return
 		}
-		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", RedactURL(node.Webhook), "attempt", i+1, "error", err)
+		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", webhook.RedactURL(node.Webhook), "attempt", i+1, "error", err)
 	}
 }
 
@@ -710,28 +711,6 @@ func instructions(env mailboxapi.Envelope) string {
 		return "Test wake. No reply needed."
 	}
 	return ""
-}
-
-// ValidateWebhook checks the URL of a webhook node.
-func ValidateWebhook(u string) error {
-	p, err := url.Parse(u)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
-		return fmt.Errorf("--webhook must be an http(s) URL, got %q", u)
-	}
-	return nil
-}
-
-// RedactURL drops the query, which webhook providers often use for secrets.
-func RedactURL(u string) string {
-	p, err := url.Parse(u)
-	if err != nil {
-		return ""
-	}
-	if p.RawQuery != "" {
-		p.RawQuery = "…"
-	}
-	p.User = nil
-	return p.String()
 }
 
 func trimSlash(u string) string { return strings.TrimSuffix(u, "/") }

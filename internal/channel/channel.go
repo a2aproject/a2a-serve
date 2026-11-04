@@ -56,6 +56,14 @@ type Validator interface {
 	Validate(ctx context.Context) error
 }
 
+// Validate checks the credentials of ch if it is a [Validator].
+func Validate(ctx context.Context, ch Channel) error {
+	if v, ok := ch.(Validator); ok {
+		return v.Validate(ctx)
+	}
+	return nil
+}
+
 // RateLimitError is returned by a channel when the messenger asks the
 // sender to wait before the next call.
 type RateLimitError struct {

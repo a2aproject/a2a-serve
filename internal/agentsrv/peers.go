@@ -603,7 +603,7 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 		slog.Info("remote approval waits in the inspector: no chat", "agent", agent, "user", user, "question", rec.ID)
 		return
 	}
-	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user)), rec)
+	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", auth.DisplayPrincipal(user)), rec)
 }
 
 // directChat returns the first direct chat of user in a messenger.

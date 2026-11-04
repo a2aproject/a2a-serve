@@ -283,7 +283,7 @@ func (in *inspector) conversations(ctx context.Context) ([]inspectorConversation
 		if err != nil {
 			return nil, err
 		}
-		c := inspectorConversation{ContextID: t.ContextID, User: approvals.DisplayPrincipal(stored.User), State: stateName(t.Status.State), Tasks: 1}
+		c := inspectorConversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(stored.User), State: stateName(t.Status.State), Tasks: 1}
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
@@ -349,7 +349,7 @@ func (in *inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 	for _, t := range slices.Backward(resp.Tasks) {
 		it := inspectorTask{ID: string(t.ID), State: stateName(t.Status.State)}
 		if stored, err := in.s.tasks.Get(ctx, t.ID); err == nil {
-			it.User = approvals.DisplayPrincipal(stored.User)
+			it.User = auth.DisplayPrincipal(stored.User)
 		}
 		if t.Status.Timestamp != nil {
 			it.Updated = *t.Status.Timestamp

@@ -159,12 +159,3 @@ func TestAnswerMessage(t *testing.T) {
 		t.Fatalf("AnswerMessage() = task %q, context %q, want task, ctx", msg.TaskID, msg.ContextID)
 	}
 }
-
-func TestDisplayPrincipal(t *testing.T) {
-	t.Parallel()
-	for id, want := range map[string]string{"": "A caller", "pair:anna": "anna", "owner": "owner"} {
-		if got := DisplayPrincipal(id); got != want {
-			t.Fatalf("DisplayPrincipal(%q) = %q, want %q", id, got, want)
-		}
-	}
-}

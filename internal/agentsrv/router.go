@@ -694,7 +694,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 	}
 	who := in.Name
 	if who == "" {
-		who = approvals.DisplayPrincipal(p.ID)
+		who = auth.DisplayPrincipal(p.ID)
 	}
 	own, err := r.store.ContextOf(ctx, in.Channel, string(in.Conv))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {

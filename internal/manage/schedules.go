@@ -27,7 +27,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -158,7 +157,7 @@ func ScheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
 		Thread: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,
 	}
 	if s.DeliverChannel != "" {
-		info.Chat = s.DeliverChannel + ":" + approvals.DisplayPrincipal(s.DeliverUser)
+		info.Chat = s.DeliverChannel + ":" + auth.DisplayPrincipal(s.DeliverUser)
 	}
 	return info
 }
@@ -177,7 +176,7 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 			return l.Conv, nil
 		}
 	}
-	return "", agenterr.Invalidf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", approvals.DisplayPrincipal(user), ch)
+	return "", agenterr.Invalidf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", auth.DisplayPrincipal(user), ch)
 }
 
 // ResolveUser turns owner or a pairing name into the principal ID of a
@@ -191,11 +190,11 @@ func ResolveUser(ctx context.Context, st *store.Store, who string) (string, erro
 	}
 	name, ok := auth.PrincipalPairing(who)
 	if !ok {
-		return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
+		return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", auth.DisplayPrincipal(who))
 	}
 	if _, err := st.Pairing(ctx, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
+			return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", auth.DisplayPrincipal(who))
 		}
 		return "", err
 	}

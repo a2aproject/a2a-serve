@@ -171,7 +171,7 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 			slog.Error("storing question", "error", err)
 			return
 		}
-		header := fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter))
+		header := fmt.Sprintf("%s needs your approval", auth.DisplayPrincipal(starter))
 		if anonymous {
 			time.AfterFunc(s.AnonymousTimeout, func() { s.expire(ctx, rec.ID) })
 			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", anonymousName(starter), ApprovalTimeout(s.AnonymousTimeout))
@@ -427,7 +427,7 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := hitlPage.Execute(w, map[string]any{
 		"Agent": s.AgentName(), "Text": q.Display(), "Options": q.Options,
-		"Answered": rec.Answer, "By": DisplayPrincipal(rec.AnsweredBy),
+		"Answered": rec.Answer, "By": auth.DisplayPrincipal(rec.AnsweredBy),
 	}); err != nil {
 		slog.Warn("rendering hitl page", "error", err)
 	}
