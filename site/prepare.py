@@ -18,11 +18,13 @@ The markdown in the repository links between files the way GitHub resolves
 them. This copies docs/ to <out>/ and examples/ to <out>/examples/, renames
 README.md to index.md, and rewrites every relative link: links to pages and images in
 docs/ or examples/ point at the copies, and links to other files point at
-GitHub.
+GitHub. Each page gets a meta description from its first paragraph, so the
+repository's markdown needs no front matter, which GitHub renders as a table.
 
 Usage: site/prepare.py <out>
 """
 
+import json
 import os
 import re
 import shutil
@@ -37,6 +39,9 @@ SERVED = (".md", ".png", ".svg", ".jpg", ".gif")
 LINK = re.compile(r"(!?\[[^\]]*\]\()([^)\s]+)(\))")
 IMG_SRC = re.compile(r'(<img\s[^>]*src=")([^"]+)(")')
 FENCE = re.compile(r"^\s*(```|~~~)")
+# Lines that don't start a prose paragraph.
+NOT_PROSE = re.compile(r"^\s*([#>|!<*+-]|\d+\.|```|~~~)")
+DESCRIPTION_MAX = 160
 
 
 def site_path(repo_path):
@@ -86,6 +91,37 @@ def rewrite(text, src_repo_file, dst_site_file):
     return "\n".join(out)
 
 
+def description(text):
+    """Returns the first prose paragraph of a page as plain text, shortened
+    to a sentence or word boundary within DESCRIPTION_MAX characters."""
+    para, in_code, skip = [], False, False
+    for line in text.split("\n"):
+        if FENCE.match(line):
+            in_code = not in_code
+            continue
+        if in_code:
+            continue
+        if not line.strip():
+            if para and not para[-1].endswith(":"):
+                break
+            para, skip = [], False
+            continue
+        if not para and NOT_PROSE.match(line):
+            skip = True
+        if not skip:
+            para.append(line.strip())
+    plain = " ".join(para)
+    plain = re.sub(r"!?\[([^\]]*)\]\([^)]*\)", r"\1", plain)
+    plain = re.sub(r"[`*_]", "", plain)
+    if len(plain) <= DESCRIPTION_MAX:
+        return plain
+    cut = plain[:DESCRIPTION_MAX]
+    end = cut.rfind(". ")
+    if end > DESCRIPTION_MAX // 2:
+        return cut[: end + 1]
+    return cut[: cut.rfind(" ")].rstrip(",;:") + "…"
+
+
 def main(out):
     if os.path.exists(out):
         shutil.rmtree(out)
@@ -104,6 +140,9 @@ def main(out):
                 with open(os.path.join(REPO, repo_file)) as f:
                     text = f.read()
                 with open(target, "w") as f:
+                    desc = description(text)
+                    if desc:
+                        f.write(f"---\ndescription: {json.dumps(desc, ensure_ascii=False)}\n---\n\n")
                     f.write(rewrite(text, repo_file, site_file))
 
 

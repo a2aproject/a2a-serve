@@ -35,7 +35,7 @@ func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "restore <backup-destination>",
 		Short: "Recreate an agent from a backup snapshot",
 		Long: `Recreate an agent's .a2a directory from a snapshot taken by
-"a2a-serve backup now" or the running agent: its database, config, secrets and harness home. The
+"a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
 latest snapshot is used unless --snapshot names one. --dir is the directory
 of the restored agent (default: the current directory).
 

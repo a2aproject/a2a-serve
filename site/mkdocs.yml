@@ -1,5 +1,5 @@
 site_name: A2A Serve
-site_description: Turn the coding agent in your project into a sandboxed A2A agent.
+site_description: One command turns the coding agent in your project into a sandboxed A2A agent that people, scripts and other agents can call.
 site_url: https://a2aproject.github.io/a2a-serve/
 repo_url: https://github.com/a2aproject/a2a-serve
 repo_name: a2aproject/a2a-serve

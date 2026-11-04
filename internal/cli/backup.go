@@ -31,7 +31,7 @@ func newBackupCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "backup",
 		Short: "Take, list and restore encrypted backup snapshots of the agent",
 		Long: `Snapshots hold a consistent copy of the database (conversations, pairings,
-contacts, schedules), config.yaml, the secrets, the harness home and the
+contacts, schedules), config.yaml, the secrets, the agent home directory and the
 network identity, encrypted with --backup-key. A running agent takes one every
 --backup-interval and keeps them for --backup-retention, always keeping the
 latest. The workspace isn't included: it is usually in git.

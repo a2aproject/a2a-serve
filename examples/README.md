@@ -1,5 +1,7 @@
 # Examples
 
+Step-by-step lessons that build on each other, from a local agent to a team of agents on a relay.
+
 ### 1. Serve a coding agent — [`01-agent-server/`](01-agent-server/)
 
 Turn opencode or Claude Code into an A2A agent. Pair with it, send it work, approve a tool call it asks about, and let it call a second agent.

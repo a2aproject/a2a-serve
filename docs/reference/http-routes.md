@@ -1,6 +1,6 @@
 # HTTP routes
 
-Served on every listener:
+An a2a-serve agent serves these routes on every listener.
 
 | Route | |
 | --- | --- |

@@ -1,5 +1,7 @@
 # Getting started
 
+Install a2a-serve, start a coding agent in your project, and talk to it from your terminal and your phone.
+
 ## Install
 
 ```bash

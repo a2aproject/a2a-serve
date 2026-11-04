@@ -1,6 +1,8 @@
 # The a2a CLI
 
-With `a2a-serve` on your `PATH`, every `a2a-serve` command also runs as `a2a serve`. a2a-serve needs these features of the `a2a` CLI:
+With `a2a-serve` on your `PATH`, every `a2a-serve` command also runs as `a2a serve`.
+
+a2a-serve needs these features of the `a2a` CLI:
 
 - Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
 - `--unix-socket` (`A2ACLI_UNIX_SOCKET=<path>`): on Linux and with

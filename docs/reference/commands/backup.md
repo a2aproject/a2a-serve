@@ -3,7 +3,7 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Snapshots hold a consistent copy of the database (conversations, pairings,
-contacts, schedules), config.yaml, the secrets, the harness home and the
+contacts, schedules), config.yaml, the secrets, the agent home directory and the
 network identity, encrypted with --backup-key. A running agent takes one every
 --backup-interval and keeps them for --backup-retention, always keeping the
 latest. The workspace isn't included: it is usually in git.
@@ -41,7 +41,7 @@ a2a-serve backup now
 ## a2a-serve backup restore
 
 Recreate an agent's .a2a directory from a snapshot taken by
-"a2a-serve backup now" or the running agent: its database, config, secrets and harness home. The
+"a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
 latest snapshot is used unless --snapshot names one. --dir is the directory
 of the restored agent (default: the current directory).
 
