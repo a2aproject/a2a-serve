@@ -38,11 +38,11 @@ func newScheduleAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err := req.Validate(); err != nil {
 				return clierr.Usage(err.Error())
 			}
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			info, err := c.AddSchedule(cmd.Context(), req)
 			if err != nil {
 				return err

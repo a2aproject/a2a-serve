@@ -39,11 +39,11 @@ calls to it go through that agent.
 		Example: "  a2a-serve contact add coder\n  a2a-serve contact add grok@ben\n  a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			req.Name = args[0]
 			if req.Token != "" {
 				if req.Token, err = secretref.Resolve("token", req.Token, cfg.secretReader(cfg.stderr())); err != nil {

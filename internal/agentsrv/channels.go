@@ -19,6 +19,7 @@ import (
 	"fmt"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/channel/discord"
 	"github.com/a2aproject/a2a-serve/internal/channel/email"
@@ -67,7 +68,7 @@ func (s *Server) buildChannel(cfg *agentdir.Config, secrets agentdir.Secrets, ki
 func ValidateChannel(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error {
 	ch, err := newChannel(cfg, secrets, kind, nil, "")
 	if err != nil {
-		return err
+		return agenterr.Invalid(err)
 	}
 	return validateChannel(ctx, ch)
 }

@@ -24,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -69,13 +70,13 @@ type Contacts struct {
 func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store.Contact, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
-		return store.Contact{}, errors.New("contact name must be non-empty, without spaces or slashes")
+		return store.Contact{}, agenterr.Invalidf("contact name must be non-empty, without spaces or slashes")
 	}
 	if req.Name == pairings.SchedulesAgent {
-		return store.Contact{}, fmt.Errorf("%q is the agent the harness manages schedules with; pick another name", pairings.SchedulesAgent)
+		return store.Contact{}, agenterr.Invalidf("%q is the agent the harness manages schedules with; pick another name", pairings.SchedulesAgent)
 	}
 	if _, err := m.Store.Node(ctx, req.Name); err == nil {
-		return store.Contact{}, fmt.Errorf("%q is the name of a webhook node; pick another name", req.Name)
+		return store.Contact{}, agenterr.Conflictf("%q is the name of a webhook node; pick another name", req.Name)
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.Contact{}, err
 	}
@@ -141,7 +142,11 @@ func (m Contacts) List(ctx context.Context) ([]controlapi.ContactInfo, error) {
 // Remove removes a contact. It returns [store.ErrNotFound] for a name which
 // isn't one.
 func (m Contacts) Remove(ctx context.Context, name string) error {
-	if err := m.Store.DeleteContact(ctx, name); err != nil {
+	err := m.Store.DeleteContact(ctx, name)
+	if errors.Is(err, store.ErrNotFound) {
+		return &agenterr.NotFoundError{Kind: "contact", Name: name}
+	}
+	if err != nil {
 		return err
 	}
 	m.changed(ctx)

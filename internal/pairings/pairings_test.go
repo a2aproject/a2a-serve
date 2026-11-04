@@ -23,6 +23,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -74,12 +75,29 @@ func invite(t *testing.T, s *Service, req controlapi.PairCodeRequest) *controlap
 	return resp
 }
 
-func kindOf(err error) Kind {
-	var pe *Error
-	if errors.As(err, &pe) {
-		return pe.Kind
+type errKind string
+
+const (
+	Invalid  errKind = "invalid"
+	Conflict errKind = "conflict"
+	NotFound errKind = "not found"
+)
+
+func kindOf(err error) errKind {
+	var (
+		nf *agenterr.NotFoundError
+		in *agenterr.InvalidError
+		co *agenterr.ConflictError
+	)
+	switch {
+	case errors.As(err, &nf):
+		return NotFound
+	case errors.As(err, &in):
+		return Invalid
+	case errors.As(err, &co):
+		return Conflict
 	}
-	return 0
+	return ""
 }
 
 func TestInvite(t *testing.T) {
@@ -87,7 +105,7 @@ func TestInvite(t *testing.T) {
 	tests := []struct {
 		name     string
 		req      controlapi.PairCodeRequest
-		wantKind Kind
+		wantKind errKind
 	}{
 		{name: "new caller", req: controlapi.PairCodeRequest{Name: "bob"}},
 		{name: "another device of a caller", req: controlapi.PairCodeRequest{Name: "anna"}},
@@ -111,10 +129,10 @@ func TestInvite(t *testing.T) {
 
 			_, err := s.Invite(context.Background(), tc.req)
 
-			if got := kindOf(err); got != tc.wantKind || (tc.wantKind == 0 && err != nil) {
+			if got := kindOf(err); got != tc.wantKind || (tc.wantKind == "" && err != nil) {
 				t.Fatalf("Invite(%+v) error = %v, want kind %v", tc.req, err, tc.wantKind)
 			}
-			if tc.wantKind != 0 {
+			if tc.wantKind != "" {
 				return
 			}
 			anna, err := s.Get(context.Background(), "anna")

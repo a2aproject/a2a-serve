@@ -26,11 +26,11 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:   "List contacts",
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			cs, err := c.Contacts(cmd.Context())
 			if err != nil {
 				return err

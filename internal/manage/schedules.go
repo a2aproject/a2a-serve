@@ -21,12 +21,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -60,18 +60,18 @@ func (m Schedules) changed() {
 // (contextID set) runs as the conversation's user and continues it.
 func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	if err := req.Validate(); err != nil {
-		return store.Schedule{}, err
+		return store.Schedule{}, agenterr.Invalid(err)
 	}
 	when, err := req.When()
 	if err != nil {
-		return store.Schedule{}, err
+		return store.Schedule{}, agenterr.Invalid(err)
 	}
 	next, ok, err := when.Next(m.now())
 	if err != nil {
-		return store.Schedule{}, err
+		return store.Schedule{}, agenterr.Invalid(err)
 	}
 	if !ok {
-		return store.Schedule{}, fmt.Errorf("--at %s is in the past", req.At)
+		return store.Schedule{}, agenterr.Invalidf("--at %s is in the past", req.At)
 	}
 	s := store.Schedule{
 		Name: req.Name, Cron: when.Cron, At: when.At, TZ: when.TZ, Prompt: req.Prompt,
@@ -106,7 +106,7 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Princi
 	}
 	if err := m.Store.AddSchedule(ctx, s); err != nil {
 		if errors.Is(err, store.ErrExists) {
-			return store.Schedule{}, fmt.Errorf("a schedule named %s already exists", req.Name)
+			return store.Schedule{}, agenterr.Conflictf("a schedule named %s already exists", req.Name)
 		}
 		return store.Schedule{}, err
 	}
@@ -118,11 +118,11 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Princi
 // or who made it can remove it.
 func (m Schedules) Remove(ctx context.Context, name string, by auth.Principal) error {
 	s, err := m.Store.Schedule(ctx, name)
+	if errors.Is(err, store.ErrNotFound) || err == nil && !canManage(s, by) {
+		return &agenterr.NotFoundError{Kind: "schedule", Name: name}
+	}
 	if err != nil {
 		return err
-	}
-	if !canManage(s, by) {
-		return store.ErrNotFound
 	}
 	if err := m.Store.DeleteSchedule(ctx, name); err != nil {
 		return err
@@ -177,7 +177,7 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 			return l.Conv, nil
 		}
 	}
-	return "", fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", approvals.DisplayPrincipal(user), ch)
+	return "", agenterr.Invalidf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", approvals.DisplayPrincipal(user), ch)
 }
 
 // ResolveUser turns owner or a pairing name into the principal ID of a
@@ -191,11 +191,11 @@ func ResolveUser(ctx context.Context, st *store.Store, who string) (string, erro
 	}
 	name, ok := auth.PrincipalPairing(who)
 	if !ok {
-		return "", fmt.Errorf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
+		return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
 	}
 	if _, err := st.Pairing(ctx, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return "", fmt.Errorf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
+			return "", agenterr.Invalidf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
 		}
 		return "", err
 	}

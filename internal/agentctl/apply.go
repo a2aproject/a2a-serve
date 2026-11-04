@@ -67,30 +67,17 @@ func (r *Result) Empty() bool { return len(r.Changes) == 0 && len(r.Secrets) == 
 // the secrets to delete.
 type Mutation func(cfg *agentdir.Config) (store agentdir.Secrets, del []string, err error)
 
-type controlOptionsKey struct{}
-
-// WithControlOptions returns a context in which the calls to the running
-// agent use opts, such as a timeout.
-func WithControlOptions(ctx context.Context, opts ...controlapi.Option) context.Context {
-	return context.WithValue(ctx, controlOptionsKey{}, opts)
-}
-
-func controlClient(ctx context.Context, d agentdir.Dir) *controlapi.Client {
-	opts, _ := ctx.Value(controlOptionsKey{}).([]controlapi.Option)
-	return controlapi.NewClient(d, opts...)
-}
-
 // Set merges settings into the agent's config.
-func Set(ctx context.Context, d agentdir.Dir, s agentdir.Settings, dryRun bool) (*Result, error) {
-	return Apply(ctx, d, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
+	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		store, err := s.Apply(cfg, d)
 		return store, nil, err
 	}, dryRun)
 }
 
 // Unset removes entries of a list setting, or resets a setting.
-func Unset(ctx context.Context, d agentdir.Dir, setting string, entries []string, dryRun bool) (*Result, error) {
-	return Apply(ctx, d, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+func Unset(ctx context.Context, d agentdir.Dir, client *controlapi.Client, setting string, entries []string, dryRun bool) (*Result, error) {
+	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		del, err := d.Unset(cfg, setting, entries)
 		return nil, del, err
 	}, dryRun)
@@ -98,12 +85,12 @@ func Unset(ctx context.Context, d agentdir.Dir, setting string, entries []string
 
 // Replace replaces the agent's config with data, the content of
 // config.yaml as edited by hand, which is saved as it is.
-func Replace(ctx context.Context, d agentdir.Dir, data []byte, dryRun bool) (*Result, error) {
+func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data []byte, dryRun bool) (*Result, error) {
 	next, err := agentdir.ParseConfig(data)
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: err}
 	}
-	return apply(ctx, d, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		*cfg = *next
 		return nil, nil, nil
 	}, dryRun, data)
@@ -111,15 +98,16 @@ func Replace(ctx context.Context, d agentdir.Dir, data []byte, dryRun bool) (*Re
 
 // Apply changes the agent's config with mutate, validates the result and
 // saves it. A running server applies channels, the description and
-// approval settings at once; the result lists the settings which wait for a
-// restart. Invalid settings are a [agentdir.SettingsError] and nothing is
-// saved.
-func Apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool) (*Result, error) {
-	return apply(ctx, d, mutate, dryRun, nil)
+// approval settings at once, through client; the result lists the settings
+// which wait for a restart. The directory of a stopped agent stays locked
+// against a start while Apply saves. Invalid settings are a
+// [agentdir.SettingsError] and nothing is saved.
+func Apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, dryRun bool) (*Result, error) {
+	return apply(ctx, d, client, mutate, dryRun, nil)
 }
 
 // apply is [Apply], saving raw as config.yaml if set.
-func apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool, raw []byte) (*Result, error) {
+func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, dryRun bool, raw []byte) (_ *Result, err error) {
 	created := !d.Exists()
 	old, err := d.LoadOrNewConfig()
 	if err != nil {
@@ -149,12 +137,14 @@ func apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool, ra
 	if dryRun {
 		return res, nil
 	}
-	client := controlClient(ctx, d)
 	if !created {
-		_, err := client.Status(ctx)
-		res.Running = err == nil
-		if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+		release, err := connect(ctx, d, client)
+		if err != nil {
 			return nil, err
+		}
+		res.Running = release == nil
+		if release != nil {
+			defer func() { err = errors.Join(err, release()) }()
 		}
 	}
 	if res.Running {
@@ -313,8 +303,8 @@ func appendNew(list []string, items ...string) []string {
 
 // Pending returns the settings changed in config.yaml since the running
 // server started, and whether it runs.
-func Pending(ctx context.Context, d agentdir.Dir) ([]string, bool, error) {
-	running, err := controlClient(ctx, d).Config(ctx)
+func Pending(ctx context.Context, d agentdir.Dir, client *controlapi.Client) ([]string, bool, error) {
+	running, err := client.Config(ctx)
 	if errors.Is(err, controlapi.ErrNotRunning) {
 		return nil, false, nil
 	}

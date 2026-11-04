@@ -26,11 +26,11 @@ func newScheduleRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: scheduleNames(sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			if err := c.DeleteSchedule(cmd.Context(), args[0]); err != nil {
 				return err
 			}

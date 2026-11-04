@@ -32,7 +32,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // schedulesAgent is the built-in agent the harness creates, lists and
@@ -107,9 +106,6 @@ func (e *schedulesExecutor) run(ctx context.Context, text string) (string, error
 			return "", errors.New("usage: rm <name>")
 		}
 		if err := e.sc.remove(ctx, args[1], who); err != nil {
-			if errors.Is(err, store.ErrNotFound) {
-				return "", fmt.Errorf("no schedule %s", args[1])
-			}
 			return "", err
 		}
 		return "Removed " + args[1] + ".", nil

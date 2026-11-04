@@ -15,16 +15,14 @@
 package cli
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"slices"
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
@@ -44,7 +42,7 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
 		Args:      cobra.ExactArgs(1),
 		ValidArgs: agentdir.ChannelKinds,
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			d, err := sf.agentDir()
 			if err != nil {
 				return err
@@ -89,18 +87,16 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			}
 			req := controlapi.ChannelRequestFromConfig(conf, args[0])
 			req.Secrets = secrets
-			st, err := sf.controlClient(d).AddChannel(cmd.Context(), req)
-			if errors.Is(err, controlapi.ErrNotRunning) {
-				return addChannelOffline(cmd.Context(), cfg, d, conf, secrets, args[0])
-			}
+			m, closer, err := agentctl.Open(cmd.Context(), d, sf.controlClient(d))
 			if err != nil {
 				return err
 			}
-			if cfg.IsJSON() {
-				return cfg.PrintJSON(st)
+			defer joinClose(&err, closer)
+			st, err := m.AddChannel(cmd.Context(), req)
+			if err != nil {
+				return err
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ %s %s\n", st.Name, st.Account)
-			return err
+			return printChannelAdded(cfg, st, m.Running())
 		},
 	}
 	f := cmd.Flags()
@@ -109,30 +105,16 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return cmd
 }
 
-// addChannelOffline checks the channel's credentials before saving it for
-// the next start, since no running agent can check them.
-func addChannelOffline(ctx context.Context, cfg *globalConfig, d agentdir.Dir, conf *agentdir.Config, secrets agentdir.Secrets, kind string) error {
-	all, err := d.LoadSecrets()
-	if err != nil {
-		return err
-	}
-	maps.Copy(all, secrets)
-	if err := agentsrv.ValidateChannel(ctx, conf, all, kind); err != nil {
-		return err
-	}
-	if err := d.SaveSecrets(secrets); err != nil {
-		return err
-	}
-	if err := d.SaveConfig(conf); err != nil {
-		return err
-	}
-	return printChannelSaved(cfg, kind)
-}
-
-func printChannelSaved(cfg *globalConfig, kind string) error {
+// printChannelAdded prints the channel added to the agent, which starts it
+// at once if running.
+func printChannelAdded(cfg *globalConfig, st *controlapi.ChannelStatus, running bool) error {
 	if cfg.IsJSON() {
-		return cfg.PrintJSON(controlapi.ChannelStatus{Name: kind})
+		return cfg.PrintJSON(st)
 	}
-	_, err := fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", kind)
+	if !running {
+		_, err := fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", st.Name)
+		return err
+	}
+	_, err := fmt.Fprintf(cfg.Out, "✓ %s %s\n", st.Name, st.Account)
 	return err
 }

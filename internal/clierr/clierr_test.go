@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 func TestClassify(t *testing.T) {
@@ -46,6 +48,30 @@ func TestClassify(t *testing.T) {
 			err:      fmt.Errorf("loading: %w", markedUsage{}),
 			wantCode: CodeUsage,
 			wantExit: 2,
+		},
+		{
+			name:     "missing pairing",
+			err:      fmt.Errorf("pair rm: %w", &agenterr.NotFoundError{Kind: "pairing", Name: "anna"}),
+			wantCode: CodeUsage,
+			wantExit: 2,
+		},
+		{
+			name:     "invalid request",
+			err:      agenterr.Invalidf("unknown channel %s", "irc"),
+			wantCode: CodeUsage,
+			wantExit: 2,
+		},
+		{
+			name:     "conflicting request",
+			err:      agenterr.Conflictf("anna is already paired"),
+			wantCode: CodeUsage,
+			wantExit: 2,
+		},
+		{
+			name:     "agent server starting",
+			err:      &agenterr.BusyError{Name: "coder"},
+			wantCode: CodeBusy,
+			wantExit: 8,
 		},
 		{
 			name:     "agent server not running",

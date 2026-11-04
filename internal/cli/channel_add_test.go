@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -84,16 +85,18 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 	}
 }
 
-func TestPrintChannelSaved(t *testing.T) {
+func TestPrintChannelAdded(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		mode output.Mode
-		want string
+		name    string
+		mode    output.Mode
+		running bool
+		want    string
 	}{
-		{name: "text", mode: output.ModeText, want: "✓ saved telegram; it starts with the agent (a2a-serve start)\n"},
-		{name: "json", mode: output.ModeJson, want: "{\n  \"name\": \"telegram\"\n}\n"},
-		{name: "jsonl", mode: output.ModeJSONL, want: "{\"name\":\"telegram\"}\n"},
+		{name: "text", mode: output.ModeText, running: true, want: "✓ telegram @coder_bot\n"},
+		{name: "text of a stopped agent", mode: output.ModeText, want: "✓ saved telegram; it starts with the agent (a2a-serve start)\n"},
+		{name: "json", mode: output.ModeJson, want: "{\n  \"name\": \"telegram\",\n  \"account\": \"@coder_bot\"\n}\n"},
+		{name: "jsonl", mode: output.ModeJSONL, want: "{\"name\":\"telegram\",\"account\":\"@coder_bot\"}\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -101,13 +104,13 @@ func TestPrintChannelSaved(t *testing.T) {
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, tc.mode)}
 
-			err := printChannelSaved(cfg, "telegram")
+			err := printChannelAdded(cfg, &controlapi.ChannelStatus{Name: "telegram", Account: "@coder_bot"}, tc.running)
 
 			if err != nil {
-				t.Fatalf("printChannelSaved() error = %v", err)
+				t.Fatalf("printChannelAdded() error = %v", err)
 			}
 			if diff := cmp.Diff(tc.want, buf.String()); diff != "" {
-				t.Fatalf("printChannelSaved() wrong output (-want +got) diff = %s", diff)
+				t.Fatalf("printChannelAdded() wrong output (-want +got) diff = %s", diff)
 			}
 		})
 	}
