@@ -14,7 +14,7 @@ The server recognizes each caller and gives it a role: owner, authenticated or a
 | --- | --- | --- |
 | You, on the machine running the agent | The token a2a-serve saves for you on start, listed as `local` | owner |
 | Your devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device | owner |
-| Everyone else on the private network, unless `--private-access paired` | The tailnet's or relay's identity, or the address on the LAN | authenticated |
+| Everyone else on the private network, unless `--private-access paired` | The tailnet's or relay's identity | authenticated |
 | Messenger accounts | Linked with a pairing code | the pairing's role |
 | People whose email matches `--allow-email` | A verified email: [Google sign-in](email-sign-in.md), a tailnet or relay login, or mail that passes DMARC | authenticated |
 | Members of `--owner` and `--allow` | A verified email as above, or everyone on the private network with `--owner private` | owner, authenticated |

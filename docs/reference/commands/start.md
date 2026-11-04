@@ -84,7 +84,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
+| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
 | `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
 
 **Access flags**
@@ -160,7 +160,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
+| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
 | `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
 
 **Access flags**
@@ -308,7 +308,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
+| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
 | `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
 
 **Access flags**

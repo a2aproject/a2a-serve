@@ -16,7 +16,7 @@ An agent is reachable from your machine, a private network, a public URL and mes
 | Entity | What it is | Commands and flags |
 |---|---|---|
 | **Agent** | Your coding agent in its sandbox | `start`, `stop`, `status`, `config` |
-| **Private network** | Where your machines and team reach the agent: a tailnet, an Agent Mesh relay, or the LAN. Everyone on it is trusted | `--private tailscale\|<relay-url>\|lan\|none` |
+| **Private network** | Where your machines and team reach the agent: a tailnet or an Agent Mesh relay. Everyone on it is trusted | `--private tailscale\|<relay-url>\|none` |
 | **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL | `--public tailscale\|<relay-url>\|none` |
 | **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. Created with a one-time code; the credential works on every network | `pair invite\|join\|list\|get\|set\|rm` |
 | **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm` |

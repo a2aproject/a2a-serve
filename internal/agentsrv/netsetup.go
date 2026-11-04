@@ -19,14 +19,12 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 // Network provider names.
 const (
 	ProviderTailscale = network.ProviderTailscale
-	ProviderLAN       = network.ProviderLAN
 )
 
 // Secrets read by network providers.
@@ -81,10 +79,8 @@ func (s *Server) setupNetwork(closers *stack) error {
 		}
 	case cfg.Network.Private == ProviderTailscale:
 		s.private = tailscale()
-	case cfg.Network.Private == ProviderLAN:
-		s.private = &network.LAN{AgentName: cfg.Name, Port: cfg.Network.LANPort}
 	default:
-		return fmt.Errorf("unknown private network %q: want tailscale, lan or a relay URL", cfg.Network.Private)
+		return fmt.Errorf("unknown private network %q: want tailscale or a relay URL", cfg.Network.Private)
 	}
 	switch {
 	case s.public != nil:
@@ -115,11 +111,6 @@ func (s *Server) listenNetwork(ctx context.Context, closers *stack, errc chan<- 
 		ln, u, err := s.private.ListenPrivate(ctx)
 		if err != nil {
 			return fmt.Errorf("private network (%s): %w", s.private.Name(), err)
-		}
-		if lan, ok := s.private.(*network.LAN); ok && s.config().Network.LANPort == 0 {
-			if err := s.updateConfig(func(c *agentdir.Config) error { c.Network.LANPort = lan.BoundPort(); return nil }); err != nil {
-				return err
-			}
 		}
 		s.urlMu.Lock()
 		s.privateURL = u.String()

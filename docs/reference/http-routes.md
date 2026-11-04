@@ -22,8 +22,6 @@ State-changing requests (any method except `GET`, `HEAD` and `OPTIONS`) to the A
 
 On every route, the server refuses state-changing requests that a browser marks as cross-site, with `Sec-Fetch-Site` or an `Origin` that doesn't match the host. They get 403. The forms of `/hitl/<token>` and the inspector rely on this check, and the inspector's forms also carry a CSRF token.
 
-The LAN listener accepts only requests for its own address in the `Host` header, and answers others with 421. This keeps a web page that rebinds its DNS name to the LAN address from passing the checks above.
-
 ## Signatures and headers
 
 The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. Calls between agents carry `X-A2A-Serve-Hops`, the number of agent servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.

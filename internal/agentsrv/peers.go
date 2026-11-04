@@ -308,7 +308,7 @@ func (p *Peers) turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 // discover lists agents on the private network, cached briefly.
 func (p *Peers) discover(ctx context.Context) ([]network.PeerInfo, error) {
 	if p.private == nil {
-		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or lan) and `a2a-serve restart`")
+		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
 	}
 	p.mu.Lock()
 	if time.Since(p.cachedAt) < 30*time.Second {
