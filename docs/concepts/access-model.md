@@ -1,11 +1,10 @@
 # Access model: who can call an agent
 
 > [!NOTE]
-> Parts of this page are planned: callers on the public URL with
-> `--public-access anyone`, the separate agent process, budget and approval
-> timeouts of anonymous callers, and the sandbox reaching the network only
-> through the server. [Who can call the agent](../guide.md#who-can-call-the-agent)
-> describes what works today.
+> The sandbox reaching the network only through the server is planned
+> ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
+> [Who can call the agent](../guide.md#who-can-call-the-agent) describes what
+> works today.
 
 An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
 
@@ -81,7 +80,7 @@ coder (opencode) running for 2h, pid 41233
 |---|---|
 | **You**, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
 | **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, and let their conversations call this agent's contacts |
-| **Anyone**, with `--public-access anyone` | Start tasks in their own conversation. Their approvals go to your owner chat. Their conversations can't call other agents |
+| **Anyone**, with `--public-access anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
 
 ### Channels
 
@@ -100,7 +99,7 @@ The agent calls other agents through its server, which holds the credentials. Th
 
 ### The shared sandbox
 
-All conversations of an agent run in one agent process and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a separate agent process.
+All conversations of an agent run in one agent process and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a separate agent process. In Docker it has its own home directory, so it can't read the history of other conversations. It works on the same workspace.
 
 ## Data model reference
 

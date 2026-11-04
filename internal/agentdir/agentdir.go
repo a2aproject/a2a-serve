@@ -113,6 +113,10 @@ func (d Dir) AgentMeshDir() string { return filepath.Join(d.StateDir(), "agentme
 // HomeDir returns the harness home, mounted at /home/agent in a container.
 func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }
 
+// AnonymousHomeDir is the home of the separate agent process of anonymous
+// callers.
+func (d Dir) AnonymousHomeDir() string { return filepath.Join(d.StateDir(), "home-anonymous") }
+
 // LogPath returns the path of the server log.
 func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log") }
 

@@ -11,6 +11,8 @@ By default the agent runs in Docker with:
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
 - a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. On Docker Desktop the socket is a TCP port on the host's loopback, and the agent sends a key.
 
+[Anonymous callers](../guide.md#anonymous-callers) get a second container, with `state/home-anonymous` as its home and no socket to the server. It shares the workspace, the `--mount` directories and the `--secret` values with the agent's container.
+
 Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide.md#approvals)). The agent can't answer the approvals of agents it calls; the server relays them to the user.
 
 What the sandbox doesn't protect yet:
@@ -34,7 +36,7 @@ A web page open in your browser can't make requests that change state on the age
 | Tailscale | Everyone on the tailnet, or with `--private-access paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
 | LAN | Everyone who can reach the port, or with `--private-access paired` only callers with a token. The server accepts only requests for its LAN address, against DNS rebinding. |
 | Agent Mesh relay | On a relay that admits people by sign-in: you, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. `--private-access` overrides both. |
-| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. |
+| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-access anyone`, also anyone, as an anonymous caller. |
 | Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
@@ -44,13 +46,14 @@ A call that comes through another agent gets at most the authenticated role, eve
 
 What a role allows:
 
-| | Owner | Authenticated |
-| --- | --- | --- |
-| Talk to the agent and start tasks | yes | yes |
-| See tasks | all | their own |
-| Answer tool approvals | all | their own tasks; `--deny-tools` limits what they can run |
-| Send a message into another user's conversation (A2A `contextId`) | yes | no |
-| Continue another user's waiting task in a shared chat | yes | no |
+| | Owner | Authenticated | Anonymous |
+| --- | --- | --- | --- |
+| Talk to the agent and start tasks | yes | yes | yes, within a budget per listener |
+| See tasks | all | their own | their own; on the public URL, the tasks whose task or conversation ID they have |
+| Answer tool approvals | all | their own tasks; `--deny-tools` limits what they can run | no |
+| Call other agents and use the schedules agent | yes | yes | no |
+| Send a message into another user's conversation (A2A `contextId`) | yes | no | no |
+| Continue another user's waiting task in a shared chat | yes | no | no |
 
 Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.
 

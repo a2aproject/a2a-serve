@@ -47,6 +47,10 @@ type Router struct {
 	agentName func() string
 	// ownerChat returns the --owner-chat setting.
 	ownerChat func() string
+	// anonymous reports whether a conversation is anonymous, so that an
+	// owner answers its questions in the owner chat. It is set before the
+	// router starts.
+	anonymous func(ctx context.Context, contextID string) bool
 	logf      func(format string, args ...any)
 	// handler is the agent's A2A handler. It is set before the router starts.
 	handler a2asrv.RequestHandler
@@ -437,8 +441,10 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 }
 
 // canContinue reports whether p's message continues the task: p started it
-// or is an owner. Others start a task of their own, so that a group
-// member's message doesn't land in another member's pending task.
+// or is an owner, and may answer its question. Others start a task of their
+// own, so that a group member's message doesn't land in another member's
+// pending task, and an anonymous caller's message doesn't answer an
+// approval.
 func (r *Router) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) bool {
 	if p.IsOwner() {
 		return true
@@ -448,7 +454,11 @@ func (r *Router) canContinue(ctx context.Context, p auth.Principal, taskID a2a.T
 		slog.Warn("loading the pending task of a conversation", "task", taskID, "error", err)
 		return false
 	}
-	return stored.User == p.ID
+	if stored.User != p.ID {
+		return false
+	}
+	q := approvals.FromStatus(stored.Task.Status)
+	return q == nil || q.Type != approvals.TypePermission || approvals.MayAnswer(p, stored.User)
 }
 
 // refused reports whether err refuses a channel sender: one the policy
@@ -531,6 +541,9 @@ func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channe
 			return
 		}
 		if rd.onEvent(ctx, ev) {
+			if taskID, ok := rd.waitingForOwner(); ok {
+				r.followOwnerAnswer(ctx, ch, conv, p, taskID)
+			}
 			return
 		}
 	}
@@ -538,6 +551,41 @@ func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channe
 		accepted(errors.New("the agent ended the stream without a reply"))
 	}
 	rd.finish(ctx)
+}
+
+// followOwnerAnswer renders the rest of a task in its conversation after
+// an owner answered its question in the owner chat, or the question was
+// rejected after the timeout.
+func (r *Router) followOwnerAnswer(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID) {
+	events, unsubscribe := r.bus.subscribe(taskID)
+	go func() {
+		defer unsubscribe()
+		for {
+			rd := newRenderer(r, ch, conv, channel.Ref{}, p)
+			if !renderUntilStop(ctx, rd, events, anonymousQuestionTimeout+time.Minute) {
+				return
+			}
+			if _, waits := rd.waitingForOwner(); !waits {
+				return
+			}
+		}
+	}()
+}
+
+// renderUntilStop renders events until the task stops, and reports false
+// if it didn't within timeout.
+func renderUntilStop(ctx context.Context, rd *renderer, events *subscription, timeout time.Duration) bool {
+	t := time.NewTimer(timeout)
+	defer t.Stop()
+	for {
+		ev, ok := events.next(ctx, t.C)
+		if !ok {
+			return false
+		}
+		if rd.onEvent(ctx, ev) {
+			return true
+		}
+	}
 }
 
 // restorePending makes a question whose answer wasn't delivered the one a

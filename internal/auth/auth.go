@@ -40,6 +40,12 @@ import (
 // they arrive.
 const OwnerID = "user:owner"
 
+// AnonymousID is the principal of anonymous callers who proved nothing
+// about themselves, such as callers on the public URL without a token. They
+// share it, so the IDs of their tasks and conversations, which the server
+// generates, prove what is theirs.
+const AnonymousID = "anonymous"
+
 // OwnerName names the user running the agent where a pairing name is
 // expected, such as in the owner chat setting and schedules. No pairing can
 // take it.
@@ -146,9 +152,10 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 	if role == "" && id.identified() {
 		return Principal{}, &RefusedError{Identity: id}
 	}
-	// Until anonymous callers get an ID of their own, a caller who proved
-	// nothing can't call, whatever the policy says.
 	pid := id.PrincipalID()
+	if pid == "" && role == RoleAnonymous {
+		pid = AnonymousID
+	}
 	if role == "" || pid == "" {
 		return Principal{}, ErrNoCredential
 	}
