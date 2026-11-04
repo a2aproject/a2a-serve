@@ -15,7 +15,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 | Component | What it does |
 | --- | --- |
 | Listeners | Accept requests on localhost, the private network (Tailscale, LAN or an Agent Mesh relay), the public URL (Funnel, ngrok or a relay), the control socket and the agent's socket. |
-| Auth | Turns each request into a caller: a pairing token, a messenger link, a Tailscale or relay identity, or a Google sign-in. |
+| Auth | Turns each request into an identity, from a pairing token, a messenger link, a Tailscale or relay identity, a Google sign-in or a verified email sender, and gives it one role with the access policy. |
 | A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
 | Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |
 | Executor | Keeps one ACP session per conversation, and turns ACP updates into A2A task updates and approval requests. |
@@ -33,7 +33,7 @@ Access starts with a one-time code from `a2a-serve pair invite`. Only someone wi
 
 The caller redeems the code for a token. People run `a2a-serve pair join`, chat accounts send `join <code>` to the bot, other agents run `contact add --code`, and webhook nodes get a node token. The `a2a` CLI attaches saved tokens through a2a-serve's credential helper.
 
-The user who starts the server gets an owner token for the local URL. On a tailnet or relay, your own devices and agents are recognized by their network identity and need no code.
+The user who starts the server gets an owner token for the local URL. On a tailnet, your own devices are recognized by their network identity and need no code, and everyone else on the tailnet can call the agent.
 
 ## A turn
 

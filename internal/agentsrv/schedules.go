@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -23,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -40,13 +42,15 @@ type schedules struct {
 	ctx    context.Context
 	store  *store.Store
 	router *Router
-	now    func() time.Time
+	// chain gives the user a schedule runs as its role at each run.
+	chain *auth.Chain
+	now   func() time.Time
 	// wake makes the scheduler check the schedules again after a change.
 	wake chan struct{}
 }
 
-func newSchedules(ctx context.Context, st *store.Store, router *Router) *schedules {
-	return &schedules{ctx: ctx, store: st, router: router, now: time.Now, wake: make(chan struct{}, 1)}
+func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain) *schedules {
+	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: time.Now, wake: make(chan struct{}, 1)}
 }
 
 // run runs due schedules until ctx ends. A run missed while the agent was
@@ -119,15 +123,24 @@ func whenOf(s store.Schedule) schedule.When {
 }
 
 // start posts a run of s into its conversation as a new turn. The turn runs
-// in the background, as an ordinary task of the schedule's user.
+// in the background, as an ordinary task of the schedule's user, with the
+// role the user has now.
 func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
+	user, err := storedPrincipal(ctx, sc.chain, s.UserID, s.UserIdentity)
+	if err == nil && user.Role == "" {
+		err = fmt.Errorf("%s can no longer call this agent", approvals.DisplayPrincipal(s.UserID))
+	}
+	if err != nil {
+		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
+		return err
+	}
 	contextID, err := sc.contextFor(ctx, s)
 	if err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.router.injectTurn(sc.ctx, contextID, userPrincipal(ctx, sc.store, s.UserID), text); err != nil {
+	if err := sc.router.injectTurn(sc.ctx, contextID, user, text); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
@@ -157,25 +170,27 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
 }
 
-// userPrincipal is the principal of a stored user, with the roles it has now.
-func userPrincipal(ctx context.Context, st *store.Store, id string) auth.Principal {
-	if id == "" || id == auth.OwnerID {
-		return auth.Owner()
-	}
-	who := auth.Principal{ID: id}
-	u, err := st.User(ctx, id)
-	if err != nil {
-		if !errors.Is(err, store.ErrNotFound) {
-			slog.Warn("loading a user", "user", id, "error", err)
+// storedPrincipal is a principal stored to act later, such as the user a
+// schedule runs as, with the role it has now. identity is its stored
+// identity as JSON, or empty when the ID says it all. A principal the
+// policy refuses now has no role.
+func storedPrincipal(ctx context.Context, chain *auth.Chain, id, identity string) (auth.Principal, error) {
+	var ident auth.Identity
+	if identity != "" {
+		if err := json.Unmarshal([]byte(identity), &ident); err != nil {
+			return auth.Principal{}, fmt.Errorf("reading the identity of %s: %w", id, err)
 		}
-		return who
 	}
-	who.Roles = u.Roles
-	return who
+	p, err := chain.Refresh(ctx, id, ident)
+	var refused *auth.RefusedError
+	if errors.As(err, &refused) || errors.Is(err, auth.ErrNoCredential) {
+		return auth.Principal{ID: id, Identity: ident}, nil
+	}
+	return p, err
 }
 
 // add creates a schedule made by by, in the conversation contextID if set.
-func (sc *schedules) add(ctx context.Context, req schedule.Request, by, contextID string) (store.Schedule, error) {
+func (sc *schedules) add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	return sc.manage().Add(ctx, req, by, contextID)
 }
 

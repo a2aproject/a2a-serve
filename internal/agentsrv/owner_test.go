@@ -78,7 +78,8 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 func TestOwnerTokenWorksOnlyOnLocalURL(t *testing.T) {
 	t.Parallel()
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
-	ts := startServer(t, serverOpts{credentials: creds, private: (&fakeNet{agents: map[string]string{}}).provider("coder")})
+	net := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", unidentified: true}
+	ts := startServer(t, serverOpts{credentials: creds, private: net})
 	header := http.Header{"Authorization": {"Bearer " + lookupOwnerToken(t, creds, ts.localURL())}, "Content-Type": {"application/json"}}
 	_, private, _ := ts.srv.URLs()
 	tests := []struct {

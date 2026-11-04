@@ -25,14 +25,13 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 // fakeNet is a private network of agents on loopback, where every caller is
-// the user "peer".
+// the machine "peer".
 type fakeNet struct {
 	mu     sync.Mutex
 	agents map[string]string
@@ -43,7 +42,13 @@ type fakeProvider struct {
 	name string
 	// kind is the provider name it reports; empty is "fake".
 	kind string
+	// unidentified makes WhoIs identify nobody.
+	unidentified bool
+	// signIn makes the network one which admits people by sign-in.
+	signIn bool
 }
+
+func (p *fakeProvider) AdmitsBySignIn() bool { return p.signIn }
 
 func (n *fakeNet) provider(name string) *fakeProvider { return &fakeProvider{net: n, name: name} }
 
@@ -71,7 +76,10 @@ func (p *fakeProvider) ListenPublic(context.Context) (net.Listener, *url.URL, er
 }
 
 func (p *fakeProvider) WhoIs(context.Context, string) (*network.Peer, error) {
-	return &network.Peer{ID: "peer"}, nil
+	if p.unidentified {
+		return nil, network.ErrNoIdentity
+	}
+	return &network.Peer{Node: "peer"}, nil
 }
 
 func (p *fakeProvider) Peers(context.Context) ([]network.PeerInfo, error) {
@@ -93,9 +101,7 @@ func (p *fakeProvider) Close() error { return nil }
 func TestAdvertisedPairing(t *testing.T) {
 	t.Parallel()
 	fnet := &fakeNet{agents: map[string]string{}}
-	ben := startServer(t, serverOpts{name: "ben", private: fnet.provider("ben"), configure: func(c *agentdir.Config) {
-		c.Network.Identities = map[string]string{"peer": auth.RoleMember}
-	}})
+	ben := startServer(t, serverOpts{name: "ben", private: fnet.provider("ben")})
 	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
 	ctx := context.Background()
 	addNode(t, ben, "grok", 0)

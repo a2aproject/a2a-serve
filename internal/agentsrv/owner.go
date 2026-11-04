@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"context"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -42,7 +41,7 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	}
 	if ok && saved.Kind != credstore.KindNode {
 		t, err := s.store.LookupToken(ctx, saved.Token)
-		if err == nil && slices.Contains(t.Roles, auth.RoleOwner) {
+		if err == nil && t.Name == localOwnerName {
 			return nil
 		}
 		if err != nil && !errors.Is(err, store.ErrNotFound) {

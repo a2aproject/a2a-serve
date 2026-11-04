@@ -63,7 +63,7 @@ type Tailscale struct {
 var _ Provider = (*Tailscale)(nil)
 
 // Name implements [Provider].
-func (t *Tailscale) Name() string { return "tailscale" }
+func (t *Tailscale) Name() string { return ProviderTailscale }
 
 func (t *Tailscale) start(ctx context.Context) error {
 	t.mu.Lock()
@@ -267,15 +267,15 @@ func (t *Tailscale) WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
 	if err != nil {
 		return nil, err
 	}
-	p := &Peer{ID: who.UserProfile.LoginName, Machine: who.Node.ComputedName, Caps: map[string][]json.RawMessage{}}
-	for k, v := range who.CapMap {
-		for _, raw := range v {
-			p.Caps[string(k)] = append(p.Caps[string(k)], json.RawMessage(raw))
-		}
+	p := &Peer{Node: string(who.Node.StableID), Machine: who.Node.ComputedName}
+	// Tagged nodes belong to the tailnet, not to the user who tagged them.
+	if who.Node.IsTagged() {
+		return p, nil
 	}
-	if st.Self != nil && !who.Node.IsTagged() && who.Node.User == st.Self.UserID {
-		p.Self = true
+	if login := who.UserProfile.LoginName; IsEmail(login) {
+		p.Email = login
 	}
+	p.Self = st.Self != nil && who.Node.User == st.Self.UserID
 	return p, nil
 }
 

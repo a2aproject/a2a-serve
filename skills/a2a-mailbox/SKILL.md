@@ -92,7 +92,7 @@ history with `./a2a-serve mailbox get <taskId>`.
 
 ## Call the agent
 
-Your node token also works as an A2A token for the agent, as a member: you
+Your node token also works as an A2A token for the agent, as an authenticated caller: you
 can send it tasks, but not approve its tool calls. `a2a send` attaches the
 token saved by `a2a-serve pair join`, or $A2A_NODE_TOKEN, through a2a-serve's
 credential helper. A2ACLI_CREDENTIAL_HELPER takes the path of a program

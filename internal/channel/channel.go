@@ -86,6 +86,9 @@ type Action struct {
 	Option     int
 }
 
+// MailPrefix starts the identity of an email sender: mail:<addr>.
+const MailPrefix = "mail:"
+
 // Inbound is a message from a channel.
 type Inbound struct {
 	Channel string

@@ -1,7 +1,7 @@
 # Agent Mesh
 
 > [!NOTE]
-> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. The access flags, verified-email mapping and egress through the relay are planned, and marked as such below.
+> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. The access flags and egress through the relay are planned, and marked as such below.
 
 [Agent Mesh](https://google.github.io/agentmesh/) is a zero-trust network for agents: nodes enroll with a control plane, get short-lived credentials bound to their own keys, reach each other through routers from behind NAT, and can be reached from the internet through ingress. a2a-serve runs on top of it.
 
@@ -40,7 +40,7 @@ The [access model](access-model.md) has the same entities on every network. On a
 | Agent | a `meshnet` node and its `a2a://<name>` service |
 | Private network | everyone the relay admits: enrolled nodes and signed-in people |
 | Public network | ingress for `a2a://<name>` in `passthrough` mode |
-| Identity | `meshnet.WhoIs` returns `CallerInfo`: the peer ID becomes the node, and the principal becomes the email only when it is a verified email (planned) |
+| Identity | `meshnet.WhoIs` returns `CallerInfo`: the peer ID becomes the node, and the principal becomes the email only when it is a verified email |
 | `self` | a caller whose verified email equals the one saved when this agent signed in |
 | `private` | any caller the relay admits |
 | Pairing | an a2a-serve credential; the relay forwards it unchanged through ingress |
@@ -54,7 +54,7 @@ Every request passes three steps:
 
 `--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network (planned). Removing someone from the private network happens at the relay, by revoking their enrollment.
 
-A relay whose sign-in accepts any account of a public identity provider admits anyone with such an account. On such a relay `--private-access` defaults to `paired` until you set it (planned).
+A relay that admits people by sign-in admits anyone its identity provider accepts. On such a relay only you, your pairings and `--allow-email` matches can call; a relay that agents join only with tokens lets everyone on it call. Setting this with `--private-access` is planned.
 
 ## Calls between agents
 

@@ -47,7 +47,6 @@ func TestValidate(t *testing.T) {
 		{name: "secret name", modify: func(c *Config) { c.Secrets = []string{"NOT-A-NAME"} }, wantErr: "invalid --secret"},
 		{name: "env", modify: func(c *Config) { c.Env = []string{"DEBUG"} }, wantErr: `invalid --env "DEBUG"`},
 		{name: "port", modify: func(c *Config) { c.Port = 70000 }, wantErr: "invalid --port 70000"},
-		{name: "identity role", modify: func(c *Config) { c.Network.Identities = map[string]string{"anna": "admin"} }, wantErr: "invalid --identity anna=admin"},
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
 		{name: "cpus", modify: func(c *Config) { c.Limits.CPUs = "-1" }, wantErr: "invalid --cpus"},
 		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},

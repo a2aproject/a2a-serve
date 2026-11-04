@@ -149,7 +149,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	}
 }
 
-func TestRelayOtherUserIdentityGrantAndMemberBounds(t *testing.T) {
+func TestRelaySignInClosesPrivateNetworkUntilEmailAllowed(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fabric := newTestRelayFabric(t, "Ben@example.com")
@@ -167,7 +167,7 @@ func TestRelayOtherUserIdentityGrantAndMemberBounds(t *testing.T) {
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
-			c.Network.Identities = map[string]string{"anna@example.com": auth.RoleMember}
+			c.Auth.AllowEmails = []string{"anna@example.com"}
 		},
 	})
 	anna := startServer(t, serverOpts{
@@ -189,13 +189,13 @@ func TestRelayOtherUserIdentityGrantAndMemberBounds(t *testing.T) {
 
 	annaClient := anna.client(anna.pair("anna-local", auth.RoleOwner))
 	denied := send(t, annaClient, userText("call closed-reviewer hello", "", ""))
-	wantResult(t, denied, a2a.TaskStateCompleted, "401")
+	wantResult(t, denied, a2a.TaskStateCompleted, "403")
 
 	allowed := send(t, annaClient, userText("call open-reviewer hello", "", ""))
 	wantResult(t, allowed, a2a.TaskStateCompleted, "Hello from fakeacp.")
 }
 
-func TestRelayTokenJoinRequiresPairingAndServesPublicIngress(t *testing.T) {
+func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fabric := newTestRelayFabric(t, "")
@@ -229,22 +229,9 @@ func TestRelayTokenJoinRequiresPairingAndServesPublicIngress(t *testing.T) {
 	}
 	ownerClient := coder.client(coder.pair("me", auth.RoleOwner))
 	unpaired := send(t, ownerClient, userText("call reviewer hello", "", ""))
-	wantResult(t, unpaired, a2a.TaskStateCompleted, "401")
+	wantResult(t, unpaired, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	reviewerCtl := controlapi.NewClient(reviewer.dir)
-	code, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "coder", Role: auth.RoleMember})
-	if err != nil {
-		t.Fatalf("reviewerCtl.Pair() error = %v, want nil", err)
-	}
-	pairedContact, err := coderCtl.AddContact(ctx, controlapi.ContactRequest{Name: "reviewer", Code: code.Code})
-	if err != nil {
-		t.Fatalf("coderCtl.AddContact(paired) error = %v, want nil", err)
-	}
-	if pairedContact.Via != ViaPrivate || !pairedContact.HasToken {
-		t.Fatalf("coderCtl.AddContact(paired) = %+v, want private contact with token", pairedContact)
-	}
-	paired := send(t, ownerClient, userText("call reviewer hello", "", ""))
-	wantResult(t, paired, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	_, _, pubURL := reviewer.srv.URLs()
 	cardResp, err := http.Get(pubURL + "/.well-known/agent-card.json")
@@ -269,7 +256,7 @@ func TestRelayTokenJoinRequiresPairingAndServesPublicIngress(t *testing.T) {
 		t.Fatalf("http.Post(public unauthenticated) status = %d, want %d", unauthResp.StatusCode, http.StatusUnauthorized)
 	}
 
-	extCode, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "external", Role: auth.RoleMember})
+	extCode, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "external", Role: auth.RoleAuthenticated})
 	if err != nil {
 		t.Fatalf("reviewerCtl.Pair(external) error = %v, want nil", err)
 	}
@@ -432,6 +419,7 @@ type testRelayNode struct {
 	peerID    string
 	principal string
 	owner     string
+	signIn    bool
 
 	startOnce sync.Once
 	startErr  error
@@ -440,7 +428,9 @@ type testRelayNode struct {
 	conns     sync.Map
 }
 
-func (n *testRelayNode) Name() string { return "agentmesh" }
+func (n *testRelayNode) Name() string { return network.ProviderRelay }
+
+func (n *testRelayNode) AdmitsBySignIn() bool { return n.signIn }
 
 func (n *testRelayNode) start(ctx context.Context) error {
 	n.startOnce.Do(func() {
@@ -480,6 +470,7 @@ func (n *testRelayNode) start(ctx context.Context) error {
 		} else {
 			n.principal = "node:" + n.peerID
 		}
+		n.signIn = n.cfg.Token == "" || network.RelayAdmitsBySignIn(ctx, n.fabric.srv.Client(), n.cfg.URL)
 		if n.cfg.Private {
 			n.privLn = newRelayPipeListener("mesh-private:" + n.peerID)
 		}
@@ -521,11 +512,12 @@ func (n *testRelayNode) WhoIs(_ context.Context, remoteAddr string) (*network.Pe
 		return nil, network.ErrNoIdentity
 	}
 	caller := v.(*testRelayNode)
-	return &network.Peer{
-		ID:      caller.principal,
-		Machine: caller.peerID,
-		Self:    n.owner != "" && strings.EqualFold(caller.principal, n.owner),
-	}, nil
+	p := &network.Peer{Node: caller.peerID, Machine: caller.peerID}
+	if network.IsEmail(caller.principal) {
+		p.Email = caller.principal
+		p.Self = n.owner != "" && strings.EqualFold(caller.principal, n.owner)
+	}
+	return p, nil
 }
 
 func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {

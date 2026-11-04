@@ -82,8 +82,8 @@ func TestPairingsOnBothSides(t *testing.T) {
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "anna")
-	if got.Kind != "caller" || got.Role != "member" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
-		t.Fatalf("a2a-serve pair get anna = %+v, want a member with the token of the first code and the second code pending", got)
+	if got.Kind != "caller" || got.Role != "authenticated" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
+		t.Fatalf("a2a-serve pair get anna = %+v, want an authenticated caller with the token of the first code and the second code pending", got)
 	}
 
 	coder.serve("pair", "set", "anna", "--role", "owner")

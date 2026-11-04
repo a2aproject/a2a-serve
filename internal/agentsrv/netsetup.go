@@ -25,9 +25,9 @@ import (
 
 // Network provider names.
 const (
-	ProviderTailscale = "tailscale"
-	ProviderLAN       = "lan"
-	ProviderNgrok     = "ngrok"
+	ProviderTailscale = network.ProviderTailscale
+	ProviderLAN       = network.ProviderLAN
+	ProviderNgrok     = network.ProviderNgrok
 )
 
 // Secrets read by network providers.

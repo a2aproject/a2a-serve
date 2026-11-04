@@ -56,7 +56,7 @@ func TestCompletion(t *testing.T) {
 		{name: "sandbox", args: []string{"start", "claude", "--sandbox", ""}, want: []string{"docker", "local"}},
 		{name: "agent", args: []string{"config", "set", "--agent", ""}, want: []string{"claude", "opencode", "acp"}},
 		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},
-		{name: "role", args: []string{"pair", "invite", "anna", "--role", ""}, want: []string{"member", "owner"}},
+		{name: "role", args: []string{"pair", "invite", "anna", "--role", ""}, want: []string{"authenticated", "owner"}},
 		{name: "joined agents", args: []string{"pair", "rm", "--dir", "/nonexistent-a2a-agent", ""}, want: []string{agentURL}},
 		{name: "contacts of a stopped agent", args: []string{"contact", "rm", "--dir", "/nonexistent-a2a-agent", ""}},
 	}

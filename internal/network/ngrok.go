@@ -43,7 +43,7 @@ type Ngrok struct {
 var _ Provider = (*Ngrok)(nil)
 
 // Name implements [Provider].
-func (n *Ngrok) Name() string { return "ngrok" }
+func (n *Ngrok) Name() string { return ProviderNgrok }
 
 // ListenPrivate implements [Provider].
 func (n *Ngrok) ListenPrivate(context.Context) (net.Listener, *url.URL, error) {

@@ -12,19 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package auth turns requests to an agent server into principals: channel
-// links, network identity and pairing tokens.
+// Package auth turns requests to an agent server into principals: it
+// identifies the caller from channel links, network identity and tokens,
+// and gives the identity one role with the policy.
 package auth
 
 import (
 	"context"
 	"crypto/subtle"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
-	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -36,58 +35,40 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// Roles.
-const (
-	// RoleOwner sees every task and answers any approval.
-	RoleOwner = "owner"
-	// RoleMember can talk to the agent and answer the approvals of their own tasks.
-	RoleMember = "member"
-)
-
-// OwnerID is the principal of the agent's owner, whichever way they arrive.
+// OwnerID is the principal of the user running the agent, whichever way
+// they arrive.
 const OwnerID = "user:owner"
 
 // LocalPairing names the owner token the server saves for the user running
 // it. It works only on the local listener.
 const LocalPairing = "local"
 
-// Headers set by agent servers calling each other.
-const (
-	HeaderOnBehalfOf = "X-A2A-Serve-On-Behalf-Of"
-	HeaderHops       = "X-A2A-Serve-Hops"
-)
+// HeaderHops is set by agent servers calling each other to the number of
+// agent servers a request passed through.
+const HeaderHops = "X-A2A-Serve-Hops"
 
 // MaxHops limits chains of agents calling agents.
 const MaxHops = 3
 
-// TailscaleCap is the Tailscale application capability which grants a role
-// to tailnet users other than the owner: {"role": "member"}.
-const TailscaleCap = "a2aproject.org/cap/a2a"
-
-// Principal is an authenticated caller.
+// Principal is a caller with its role.
 type Principal struct {
-	// ID is user:<id>, pair:<name>, agent:<name> or node:<id>.
-	ID    string   `json:"id"`
-	Roles []string `json:"roles,omitempty"`
-	// OnBehalfOf is the user who started a chain of agent calls.
+	// ID is what the caller acts as, from [Identity.PrincipalID], or
+	// agent:<name> for this agent's calls to its webhook nodes.
+	ID   string `json:"id"`
+	Role string `json:"role,omitempty"`
+	// OnBehalfOf names the user this server acts for in its own calls to
+	// its webhook nodes, which nodes see. It never decides access.
 	OnBehalfOf string `json:"onBehalfOf,omitempty"`
-	// Hops is the number of agents the request passed through.
-	Hops int `json:"hops,omitempty"`
+	Identity
 }
 
-// Has reports whether the principal has a role.
-func (p Principal) Has(role string) bool { return slices.Contains(p.Roles, role) }
+// IsOwner reports whether the principal has the owner role.
+func (p Principal) IsOwner() bool { return p.Role == RoleOwner }
 
-// User is the person the principal acts for.
-func (p Principal) User() string {
-	if p.OnBehalfOf != "" {
-		return p.OnBehalfOf
-	}
-	return p.ID
+// Owner is the principal of the user running the agent.
+func Owner() Principal {
+	return Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Self: true}}
 }
-
-// Owner is the principal of the owner.
-func Owner() Principal { return Principal{ID: OwnerID, Roles: []string{RoleOwner}} }
 
 type principalKey struct{}
 
@@ -112,69 +93,143 @@ type Request struct {
 	Channel *channel.Inbound
 }
 
-// Authenticator turns a request into a principal, or says it doesn't apply.
-type Authenticator interface {
-	// Authenticate returns the principal of r, or false if this
-	// authenticator can't identify the caller.
-	Authenticate(ctx context.Context, r Request) (Principal, bool, error)
+// ErrNoCredential is returned for a caller who proved nothing about
+// themselves, such as a request without a token on the public URL.
+var ErrNoCredential = errors.New("this agent needs a credential")
+
+// RefusedError is returned for a known caller the policy refuses.
+type RefusedError struct {
+	Identity Identity
 }
 
-// Chain authenticates with channel links, then network identity on the
-// private listener, then pairing tokens on any listener.
+func (e *RefusedError) Error() string {
+	return "this agent doesn't accept " + e.Identity.Describe()
+}
+
+// Chain turns requests into identities, from channel links, the private
+// network's identity and tokens, and gives each one role with the policy.
 type Chain struct {
 	Store *store.Store
 	// Net identifies callers on the private listener. Optional.
 	Net network.Provider
-	// Identities maps network logins of users other than the owner to roles.
-	Identities map[string]string
-	// GoogleAllowed reports whether an email which signed in with Google
-	// may still call the agent. Nil refuses every such token.
-	GoogleAllowed func(email string) bool
+	// Policy returns the policy in force.
+	Policy func() Policy
 }
 
-// GooglePrefix starts the principals of people who signed in with Google:
-// google:<email>.
+// GooglePrefix starts the names of the tokens of people who signed in with
+// Google: google:<email>.
 const GooglePrefix = "google:"
 
-var _ Authenticator = (*Chain)(nil)
-
-// Authenticate implements [Authenticator].
-func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, bool, error) {
+// Authenticate returns the principal of r: [ErrNoCredential] when r proves
+// nothing, or a [RefusedError] when the policy refuses who it proves.
+func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) {
+	var (
+		id  Identity
+		err error
+	)
 	if r.Channel != nil {
-		return a.channelPrincipal(ctx, r.Channel)
+		id, err = a.channelIdentity(ctx, r.Channel)
+	} else {
+		id, err = a.requestIdentity(ctx, r)
 	}
+	if err != nil {
+		return Principal{}, err
+	}
+	return a.Resolve(id)
+}
+
+// Resolve gives an identity its role with the policy in force.
+func (a *Chain) Resolve(id Identity) (Principal, error) {
+	role := a.Policy().Resolve(id)
+	if role == "" && id.identified() {
+		return Principal{}, &RefusedError{Identity: id}
+	}
+	// Until anonymous callers get an ID of their own, a caller who proved
+	// nothing can't call, whatever the policy says.
+	pid := id.PrincipalID()
+	if role == "" || pid == "" {
+		return Principal{}, ErrNoCredential
+	}
+	return Principal{ID: pid, Role: role, Identity: id}, nil
+}
+
+// Refresh gives a principal stored to act later, such as the user a
+// schedule runs as, its role now: the pairing's current role, and the
+// policy in force. A zero identity is rebuilt from the ID.
+func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Principal, error) {
+	if identity == (Identity{}) {
+		identity = IdentityOf(id)
+	}
+	if identity.Pairing != "" {
+		identity.PairingRole = ""
+		u, err := a.Store.User(ctx, PairPrincipal(identity.Pairing))
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			identity.Pairing = ""
+		case err != nil:
+			return Principal{}, err
+		default:
+			identity.PairingRole = pairingRole(u.Role)
+		}
+	}
+	p, err := a.Resolve(identity)
+	if err != nil {
+		return Principal{}, err
+	}
+	p.ID = id
+	return p, nil
+}
+
+func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error) {
+	id := Identity{Network: r.Listener, Hops: hops(r.Header)}
 	if r.Listener == network.ListenerPrivate && a.Net != nil {
-		p, ok, err := a.networkPrincipal(ctx, r)
-		if err != nil || ok {
-			return p, ok, err
+		id.Provider = a.Net.Name()
+		peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
+		switch {
+		case err == nil:
+			id.Email, id.Node, id.Self = peer.Email, peer.Node, peer.Self
+			if id.Email != "" {
+				id.EmailSource = EmailFromNetwork
+			}
+		case !errors.Is(err, network.ErrNoIdentity):
+			return Identity{}, err
 		}
 	}
 	tok, ok := BearerToken(r.Header.Get("Authorization"))
 	if !ok {
-		return Principal{}, false, nil
+		return id, nil
 	}
-	if strings.HasPrefix(tok, TokenPrefix) {
-		t, err := a.Store.LookupToken(ctx, tok)
-		if errors.Is(err, store.ErrNotFound) {
-			return Principal{}, false, nil
+	if !strings.HasPrefix(tok, TokenPrefix) {
+		node, ok, err := NodeOfToken(ctx, a.Store, tok)
+		if ok {
+			id.WebhookNode = node.ID
 		}
-		if err != nil {
-			return Principal{}, false, err
-		}
-		if t.Name == LocalPairing && r.Listener != network.ListenerLocal {
-			return Principal{}, false, nil
-		}
-		// Removing an email from the allowlist cuts it off at once.
-		if email, ok := strings.CutPrefix(t.Principal, GooglePrefix); ok && (a.GoogleAllowed == nil || !a.GoogleAllowed(email)) {
-			return Principal{}, false, nil
-		}
-		return Principal{ID: t.Principal, Roles: t.Roles, Hops: hops(r.Header)}, true, nil
+		return id, err
 	}
-	node, ok, err := NodeOfToken(ctx, a.Store, tok)
-	if err != nil || !ok {
-		return Principal{}, false, err
+	t, err := a.Store.LookupToken(ctx, tok)
+	if errors.Is(err, store.ErrNotFound) {
+		return id, nil
 	}
-	return Principal{ID: NodePrincipal(node.ID), Roles: []string{RoleMember}, Hops: hops(r.Header)}, true, nil
+	if err != nil {
+		return Identity{}, err
+	}
+	switch email, google := strings.CutPrefix(t.Name, GooglePrefix); {
+	case t.Name == LocalPairing:
+		id.Self = id.Self || r.Listener == network.ListenerLocal
+	case google && id.Email == "":
+		id.Email, id.EmailSource, id.Domain = email, EmailFromGoogle, t.Domain
+	case !google:
+		id.Pairing, id.PairingRole = t.Name, pairingRole(t.Role)
+	}
+	return id, nil
+}
+
+// pairingRole is the role a pairing stored with role has.
+func pairingRole(role string) string {
+	if role == RoleOwner {
+		return RoleOwner
+	}
+	return RoleAuthenticated
 }
 
 // NodePrincipal is the principal of the webhook node id.
@@ -200,75 +255,52 @@ func NodeOfToken(ctx context.Context, s *store.Store, token string) (store.Node,
 	return node, true, nil
 }
 
-func (a *Chain) channelPrincipal(ctx context.Context, in *channel.Inbound) (Principal, bool, error) {
+// channelIdentity identifies the sender of a channel message: the pairing
+// or the user their account is linked to, and the email of mail which
+// passed DMARC.
+func (a *Chain) channelIdentity(ctx context.Context, in *channel.Inbound) (Identity, error) {
 	if !in.Authentic {
-		return Principal{}, false, nil
+		return Identity{}, ErrNoCredential
+	}
+	id := Identity{Network: NetworkChat, Provider: in.Channel, ChatAccount: in.Identity, Direct: in.Direct}
+	if addr, ok := strings.CutPrefix(in.Identity, channel.MailPrefix); ok && network.IsEmail(addr) {
+		id.Email, id.EmailSource, id.Domain = addr, EmailFromMail, DomainOf(addr)
 	}
 	l, err := a.Store.LinkOf(ctx, in.Channel, in.Identity)
 	if errors.Is(err, store.ErrNotFound) {
-		return Principal{}, false, nil
+		return id, nil
 	}
 	if err != nil {
-		return Principal{}, false, err
+		return Identity{}, err
+	}
+	if l.UserID == OwnerID {
+		id.Self = true
+		return id, nil
+	}
+	name, ok := strings.CutPrefix(l.UserID, PairPrefix)
+	if !ok {
+		return id, nil
 	}
 	u, err := a.Store.User(ctx, l.UserID)
-	if err != nil {
-		return Principal{}, false, err
-	}
-	return Principal{ID: u.ID, Roles: u.Roles}, true, nil
-}
-
-func (a *Chain) networkPrincipal(ctx context.Context, r Request) (Principal, bool, error) {
-	peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
-	if errors.Is(err, network.ErrNoIdentity) {
-		return Principal{}, false, nil
+	if errors.Is(err, store.ErrNotFound) {
+		return id, nil
 	}
 	if err != nil {
-		return Principal{}, false, err
+		return Identity{}, err
 	}
-	var p Principal
-	switch {
-	case peer.Self:
-		p = Owner()
-	case a.Identities[peer.ID] != "":
-		p = Principal{ID: "user:" + peer.ID, Roles: []string{a.Identities[peer.ID]}}
-	default:
-		role := capRole(peer.Caps[TailscaleCap])
-		if role == "" {
-			return Principal{}, false, nil
-		}
-		p = Principal{ID: "user:" + peer.ID, Roles: []string{role}}
-	}
-	// The claimed user is named in the caller's namespace, where user:owner
-	// is the caller's owner. It only means the same here when the caller is
-	// another agent server of this owner.
-	if peer.Self {
-		p.OnBehalfOf = r.Header.Get(HeaderOnBehalfOf)
-	}
-	p.Hops = hops(r.Header)
-	return p, true, nil
+	id.Pairing, id.PairingRole = name, pairingRole(u.Role)
+	return id, nil
 }
 
-// hops returns the hop count the caller sent. It only guards against loops
-// of agents calling each other, so callers are trusted with it.
+// hops returns the hop count the caller sent. A caller can leave it out,
+// so it only lowers a role, and guards against loops of agents calling
+// each other.
 func hops(h http.Header) int {
 	n, err := strconv.Atoi(h.Get(HeaderHops))
 	if err != nil || n < 0 {
 		return 0
 	}
 	return n
-}
-
-func capRole(values []json.RawMessage) string {
-	for _, v := range values {
-		var c struct {
-			Role string `json:"role"`
-		}
-		if json.Unmarshal(v, &c) == nil && (c.Role == RoleOwner || c.Role == RoleMember) {
-			return c.Role
-		}
-	}
-	return ""
 }
 
 // BearerToken extracts the token of an Authorization header.
@@ -312,13 +344,19 @@ func NormalizeCode(code string) string {
 // NewToken returns a new pairing token.
 func NewToken() string { return TokenPrefix + cryptoutil.RandomString(40, cryptoutil.Alphanumeric) }
 
-// PrincipalForCode is the principal a pairing code creates.
-func PrincipalForCode(name, role string) string {
-	if role == RoleOwner {
+// PrincipalForCode is the principal a pairing code creates: the user
+// running the agent for the local token and the owner chat link, and the
+// pairing otherwise.
+func PrincipalForCode(name string) string {
+	if name == OwnerLink || name == LocalPairing {
 		return OwnerID
 	}
-	return "pair:" + name
+	return PairPrincipal(name)
 }
+
+// OwnerLink names the code which links the chat accounts of the user
+// running the agent.
+const OwnerLink = "owner"
 
 // MintCode stores a new single-use code and returns it.
 func MintCode(ctx context.Context, s *store.Store, purpose, name, role string) (string, time.Time, error) {
@@ -346,12 +384,12 @@ var ErrInvalidCode = errors.New("invalid or expired code")
 
 // IssueToken issues a bearer token at agentURL for a taken pair code.
 func IssueToken(ctx context.Context, s *store.Store, c store.Code, agentURL string) (string, Principal, error) {
-	p := Principal{ID: PrincipalForCode(c.Name, c.Role), Roles: []string{c.Role}}
-	if _, err := s.EnsureUser(ctx, p.ID, p.Roles); err != nil {
+	p := Principal{ID: PrincipalForCode(c.Name), Role: pairingRole(c.Role)}
+	if _, err := s.EnsureUser(ctx, p.ID, p.Role); err != nil {
 		return "", Principal{}, err
 	}
 	tok := NewToken()
-	if err := s.PutToken(ctx, tok, store.Token{Name: c.Name, Principal: p.ID, Roles: p.Roles, URL: agentURL}); err != nil {
+	if err := s.PutToken(ctx, tok, store.Token{Name: c.Name, Principal: p.ID, Role: p.Role, URL: agentURL}); err != nil {
 		return "", Principal{}, err
 	}
 	return tok, p, nil
@@ -382,8 +420,8 @@ func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string)
 	if err != nil {
 		return Principal{}, err
 	}
-	p := Principal{ID: PrincipalForCode(c.Name, c.Role), Roles: []string{c.Role}}
-	if _, err := s.EnsureUser(ctx, p.ID, p.Roles); err != nil {
+	p := Principal{ID: PrincipalForCode(c.Name), Role: pairingRole(c.Role)}
+	if _, err := s.EnsureUser(ctx, p.ID, p.Role); err != nil {
 		return Principal{}, err
 	}
 	l := store.Link{Channel: in.Channel, Identity: in.Identity, UserID: p.ID, Name: c.Name}

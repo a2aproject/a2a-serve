@@ -152,29 +152,38 @@ func (s *Server) listenerURL(kind string) string {
 	return ""
 }
 
-// authenticate resolves the principal of a request with the auth chain.
+// authenticate resolves the principal of a request with the auth chain: 401
+// for a caller without a credential, and 403 naming a known caller whom
+// the policy refuses.
 func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		p, ok, err := s.chain.Authenticate(r.Context(), auth.Request{Listener: kind, RemoteAddr: r.RemoteAddr, Header: r.Header})
-		if err != nil {
-			slog.Error("authentication failed", "error", err)
-			jsonhttp.Error(w, http.StatusInternalServerError, "authentication failed")
+		p, err := s.chain.Authenticate(r.Context(), auth.Request{Listener: kind, RemoteAddr: r.RemoteAddr, Header: r.Header})
+		var refused *auth.RefusedError
+		switch {
+		case errors.As(err, &refused):
+			slog.Info("refused a caller", "caller", refused.Identity.Describe())
+			jsonhttp.Error(w, http.StatusForbidden, refused.Error()+"; "+pairHint)
 			return
-		}
-		if !ok {
+		case errors.Is(err, auth.ErrNoCredential):
 			w.Header().Set("WWW-Authenticate", s.oauth.challengeHeader(base(s.listenerURL(kind), r)))
 			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
+			return
+		case err != nil:
+			slog.Error("authentication failed", "error", err)
+			jsonhttp.Error(w, http.StatusInternalServerError, "authentication failed")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
 	})
 }
 
+const pairHint = "ask the agent's owner for a pairing code and run `a2a-serve pair join <agent-url> <code>`"
+
 // unauthorizedHint explains a 401. On the machine running the agent the
 // caller is usually the owner whose a2a CLI doesn't attach the owner token.
 func unauthorizedHint(kind string) string {
 	local := "on the machine running the agent, enable the credential helper of a2a-serve (run `a2a-serve doctor --fix`)"
-	remote := "elsewhere, ask the agent's owner for a pairing code and run `a2a-serve pair join <agent-url> <code>`"
+	remote := "elsewhere, " + pairHint
 	if kind == network.ListenerLocal {
 		return "this agent needs a token: " + local + "; " + remote
 	}

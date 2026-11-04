@@ -215,17 +215,16 @@ func TestSettingsApply(t *testing.T) {
 	}
 	cfg := &Config{Network: NetworkConfig{Public: "tailscale"}}
 	secrets, err := Settings{
-		Harness:    "opencode",
-		Secrets:    []string{"A2A_TEST_KEY"},
-		Private:    "tailscale",
-		Public:     "none",
-		Telegram:   "env:A2A_TEST_BOT",
-		Workspace:  "/src/app",
-		Mounts:     []string{"/docs:/docs:ro"},
-		Memory:     "8g",
-		CPUs:       "4",
-		PIDs:       1024,
-		Identities: []string{"anna=member"},
+		Harness:   "opencode",
+		Secrets:   []string{"A2A_TEST_KEY"},
+		Private:   "tailscale",
+		Public:    "none",
+		Telegram:  "env:A2A_TEST_BOT",
+		Workspace: "/src/app",
+		Mounts:    []string{"/docs:/docs:ro"},
+		Memory:    "8g",
+		CPUs:      "4",
+		PIDs:      1024,
 	}.Apply(cfg, d)
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
@@ -236,7 +235,7 @@ func TestSettingsApply(t *testing.T) {
 		Secrets:   []string{"A2A_TEST_KEY"},
 		Workspace: "/src/app",
 		Mounts:    []string{"/docs:ro"},
-		Network:   NetworkConfig{Private: "tailscale", Identities: map[string]string{"anna": "member"}},
+		Network:   NetworkConfig{Private: "tailscale"},
 		Channels:  ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:A2A_TEST_BOT"}},
 		Limits:    LimitsConfig{Memory: "8g", CPUs: "4", PIDs: 1024},
 	}
@@ -271,14 +270,12 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/a:/docs", "/b:/data"},
 		Env:       []string{"DEBUG=1", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read"}, OwnerChat: "telegram"},
-		Network:   NetworkConfig{Identities: map[string]string{"anna": "member"}},
 	}
 	_, err = Settings{
 		Mounts:     []string{"/c:/docs:ro", "/e:/extra"},
 		Env:        []string{"DEBUG=0"},
 		AllowTools: []string{"read", "search"},
 		OwnerChat:  "discord:anna",
-		Identities: []string{"anna=owner"},
 		Workspace:  d.Root,
 	}.Apply(cfg, d)
 	if err != nil {
@@ -290,7 +287,6 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/c:/docs:ro", "/b:/data", "/e:/extra"},
 		Env:       []string{"DEBUG=0", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "discord:anna"},
-		Network:   NetworkConfig{Identities: map[string]string{"anna": "owner"}},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)

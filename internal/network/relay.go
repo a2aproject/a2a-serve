@@ -112,16 +112,40 @@ type relayInfo struct {
 	issuer, clientID, audience string
 }
 
-// info reads the relay's identity provider from its /info, which Agent Mesh
-// serves as binary protobuf (api.ControlPlaneInfoResponse).
+// info reads the relay's identity provider, which agents sign in with.
 func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
-	u := strings.TrimSuffix(l.RelayURL, "/") + "/info"
+	info, err := fetchRelayInfo(ctx, l.HTTP, l.RelayURL)
+	if err != nil {
+		return relayInfo{}, err
+	}
+	if info.issuer == "" || info.clientID == "" {
+		return relayInfo{}, errors.New("the relay doesn't let agents sign in; join it with --relay-token")
+	}
+	return info, nil
+}
+
+// RelayAdmitsBySignIn reports whether the relay at relayURL admits people by
+// signing in with an identity provider: its /info names an issuer. A relay
+// whose /info can't be read is taken to do so.
+func RelayAdmitsBySignIn(ctx context.Context, client *http.Client, relayURL string) bool {
+	info, err := fetchRelayInfo(ctx, client, relayURL)
+	if err != nil {
+		slog.Warn("reading the relay's info; treating it as a sign-in relay", "relay", relayURL, "error", err)
+		return true
+	}
+	return info.issuer != ""
+}
+
+// fetchRelayInfo reads the relay's /info, which Agent Mesh serves as binary
+// protobuf (api.ControlPlaneInfoResponse).
+func fetchRelayInfo(ctx context.Context, client *http.Client, relayURL string) (relayInfo, error) {
+	u := strings.TrimSuffix(relayURL, "/") + "/info"
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
 	req.Header.Set("Accept", "application/x-protobuf")
-	resp, err := l.HTTP.Do(req)
+	resp, err := client.Do(req)
 	if err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
 	}
@@ -136,9 +160,6 @@ func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
 	info, err := decodeRelayInfo(body)
 	if err != nil {
 		return relayInfo{}, fmt.Errorf("reading the relay's info: %w", err)
-	}
-	if info.issuer == "" || info.clientID == "" {
-		return relayInfo{}, errors.New("the relay doesn't let agents sign in; join it with --relay-token")
 	}
 	return info, nil
 }

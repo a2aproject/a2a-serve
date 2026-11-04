@@ -31,20 +31,20 @@ A web page open in your browser can't make requests that change state on the age
 | Network | Who gets in |
 | --- | --- |
 | localhost | Callers with a token. On start, the server saves an owner token named `local` for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
-| Tailscale | Your own devices, identified by Tailscale as your login, are owners. Other tailnet users get a role from `--identity login=role` or the `a2aproject.org/cap/a2a` app capability. Anyone else needs a token. |
-| LAN | Callers with a token. The LAN has no identity, so being on it grants nothing. |
-| Agent Mesh relay | Agents signed in to the relay as you are owners. Other agents get a role from `--identity`. |
+| Tailscale | Everyone on the tailnet. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
+| LAN | Everyone who can reach the port. The server accepts only requests for its LAN address, against DNS rebinding. |
+| Agent Mesh relay | On a relay that admits people by sign-in: your agents, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. |
 | Public URL (Funnel, ngrok, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in. |
-| Messengers | Accounts linked with a pairing code. Only verified senders can link: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
+| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
 Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network.
 
-Your own agents on the tailnet can say which user a call is for (`X-A2A-Serve-On-Behalf-Of`). Other callers can't; the header is ignored from them.
+A call that comes through another agent gets at most the authenticated role, even from your own agents, so someone who can steer one of your agents can't act as you on the others. The calling server keeps the user a call is for, and relays the callee's approvals to them.
 
 What a role allows:
 
-| | Owner | Member |
+| | Owner | Authenticated |
 | --- | --- | --- |
 | Talk to the agent and start tasks | yes | yes |
 | See tasks | all | their own |
@@ -62,8 +62,8 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Caller token (`a2p_…`) | Calls to this agent with the pairing's role | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a-serve pair rm <name>`, or `pair set <name> --rotate` for a new code. The caller forgets it with `a2a-serve pair rm <agent-url>` |
 | Owner token `local` | Calls to the local URL as the owner | Like a caller token, for the user running the server | `a2a-serve pair rm local`; the next start issues a new one |
 | Messenger link | Messages from that account with the pairing's role | `server.db` | `a2a-serve pair rm <name>` |
-| Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
-| Google sign-in token (`a2p_…`) | Calls to this agent as a member, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>`, or `a2a-serve pair rm google:<email>` |
+| Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as an authenticated caller | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
+| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>`, or `a2a-serve pair rm google:<email>` |
 | Webhook signing secret | Proves that wakes come from this agent | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
 | Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |

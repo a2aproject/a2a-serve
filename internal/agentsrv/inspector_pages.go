@@ -90,7 +90,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 
 <h2>Pairings</h2>
 {{if .Tokens}}<table><tr><th>Name</th><th>Principal</th><th>Roles</th><th>Created</th><th>Last used</th></tr>
-{{range .Tokens}}<tr><td>{{.Name}}</td><td>{{.Principal}}</td><td>{{range .Roles}}{{.}} {{end}}</td><td>{{when .Created}}</td><td>{{when .LastUsed}}</td></tr>{{end}}
+{{range .Tokens}}<tr><td>{{.Name}}</td><td>{{.Principal}}</td><td>{{.Role}}</td><td>{{when .Created}}</td><td>{{when .LastUsed}}</td></tr>{{end}}
 </table>{{else}}<p class="muted">None; invite someone with <code>a2a-serve pair invite</code>.</p>{{end}}
 
 <h2>Webhook nodes</h2>

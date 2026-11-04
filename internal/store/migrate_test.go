@@ -200,3 +200,73 @@ func TestMigrateTasksToEvents(t *testing.T) {
 		t.Fatalf("task row = %s, want no history and artifacts", header)
 	}
 }
+
+func TestMigrateRolesToAccessModel(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 9 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO users (id, roles, created) VALUES ('user:owner', 'owner', 1), ('pair:anna', 'member', 1);
+INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES
+	('h1', 'local', 'user:owner', 'owner', 'http://local', 1),
+	('h2', 'phone', 'user:owner', 'owner', 'http://x', 1),
+	('h3', 'anna', 'pair:anna', 'member', 'http://x', 1);
+INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES
+	('telegram', 'tg:1', 'user:owner', 'dm1', 'owner', 1),
+	('telegram', 'tg:2', 'user:owner', 'dm2', 'phone', 1);
+INSERT INTO codes (hash, purpose, name, role, expires) VALUES ('c1', 'pair', 'bob', 'member', 4102444800000000000);
+`); err != nil {
+		t.Fatalf("inserting pairings: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	toks, err := s.Tokens(ctx)
+	if err != nil {
+		t.Fatalf("Tokens() error = %v", err)
+	}
+	var gotTokens []string
+	for _, tok := range toks {
+		gotTokens = append(gotTokens, tok.Name+" "+tok.Principal+" "+tok.Role)
+	}
+	wantTokens := []string{"local user:owner owner", "phone pair:phone owner", "anna pair:anna authenticated"}
+	if diff := cmp.Diff(wantTokens, gotTokens); diff != "" {
+		t.Fatalf("Tokens() wrong result (-want +got) diff = %s", diff)
+	}
+	for id, want := range map[string]string{"pair:phone": "owner", "pair:anna": "authenticated", "user:owner": "owner"} {
+		u, err := s.User(ctx, id)
+		if err != nil || u.Role != want {
+			t.Fatalf("User(%q) = %+v, %v, want role %s", id, u, err, want)
+		}
+	}
+	for identity, want := range map[string]string{"tg:1": "user:owner", "tg:2": "pair:phone"} {
+		l, err := s.LinkOf(ctx, "telegram", identity)
+		if err != nil || l.UserID != want {
+			t.Fatalf("LinkOf(%q) = %+v, %v, want user %s", identity, l, err, want)
+		}
+	}
+	codes, err := s.PendingCodes(ctx)
+	if err != nil || len(codes["bob"]) != 1 || codes["bob"][0].Role != "authenticated" {
+		t.Fatalf("PendingCodes() = %+v, %v, want bob's code as authenticated", codes, err)
+	}
+}

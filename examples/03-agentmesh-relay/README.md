@@ -64,8 +64,7 @@ export RELAY_TOKEN="$(cat ~/a2a-lesson3/relay/join-token)"
 ```
 
 A relay that people sign in to with their accounts prints a sign-in link on
-an agent's first run, as Tailscale does, and agents signed in as the same
-person treat each other as the owner. This local relay has no identity
+an agent's first run, as Tailscale does. This local relay has no identity
 provider, so the agents join with the token.
 
 ## 2. Join two agents
@@ -106,12 +105,11 @@ Agents on the relay find each other by name:
 a2a-serve peers --dir ~/a2a-lesson3/coder     # lists reviewer
 ```
 
-The agents joined with a token, so neither knows who owns the other: pair
-them with a code, as you would any caller.
+Only agents with the join token are on this relay, so everyone on it can
+call reviewer, and coder needs no code:
 
 ```bash
-CODE="$(a2a-serve -o json pair invite coder --dir ~/a2a-lesson3/reviewer | jq -r .code)"
-a2a-serve contact add reviewer --code "$CODE" --dir ~/a2a-lesson3/coder
+a2a-serve contact add reviewer --dir ~/a2a-lesson3/coder
 a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-lesson3/coder)" \
   "Ask reviewer what it thinks of the README of this project."
 ```
@@ -143,6 +141,8 @@ rm -rf ~/a2a-lesson3
 ## Next steps
 
 - Sign in with your account: a relay with an identity provider prints a
-  sign-in link on the first run, and your agents become each other's owner.
+  sign-in link on the first run. Your agents call each other without a code,
+  and other people's agents need one, because the identity provider may
+  accept anyone with an account.
 - Run the relay somewhere with a stable address; agents and pairing tokens
   are tied to it.

@@ -292,7 +292,7 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 		start := time.Now()
 		from := ""
 		if p, ok := auth.Caller(ctx); ok {
-			from = p.User()
+			from = p.ID
 		}
 		slog.Info("task received", "task", execCtx.TaskID, "context", execCtx.ContextID, "from", from)
 		for ev, err := range events {
@@ -443,7 +443,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 // another user's tasks, unless an owner sends it or the server picked the
 // conversation, as for a group chat.
 func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Principal, contextID string) error {
-	if contextID == "" || p.Has(auth.RoleOwner) || auth.IsInProcess(ctx) {
+	if contextID == "" || p.IsOwner() || auth.IsInProcess(ctx) {
 		return nil
 	}
 	others, err := i.tasks.HasOthersTasks(ctx, contextID, p.ID)

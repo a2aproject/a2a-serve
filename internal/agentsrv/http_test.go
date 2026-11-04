@@ -126,6 +126,42 @@ func TestLANListenerAcceptsOnlyItsHost(t *testing.T) {
 	}
 }
 
+func TestPrivateNetworkAccess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		provider *fakeProvider
+		want     int
+		wantBody string
+	}{
+		{name: "everyone on the private network", provider: &fakeProvider{}, want: http.StatusOK},
+		{name: "network that admits by sign-in", provider: &fakeProvider{signIn: true}, want: http.StatusForbidden, wantBody: "this agent doesn't accept the machine peer on the private network"},
+		{name: "caller the network doesn't identify", provider: &fakeProvider{unidentified: true}, want: http.StatusUnauthorized, wantBody: "this agent needs a token"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.provider.net, tc.provider.name = &fakeNet{agents: map[string]string{}}, "coder"
+			ts := startServer(t, serverOpts{private: tc.provider})
+			_, private, _ := ts.srv.URLs()
+			resp, err := http.Post(private+"/", "application/json", strings.NewReader(listTasksRPC))
+			if err != nil {
+				t.Fatalf("POST private error = %v", err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.want || !strings.Contains(string(body), tc.wantBody) {
+				t.Fatalf("POST private = %d %s, want %d with %q", resp.StatusCode, body, tc.want, tc.wantBody)
+			}
+		})
+	}
+}
+
 func TestInspectorOnPrivateListener(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -133,8 +169,8 @@ func TestInspectorOnPrivateListener(t *testing.T) {
 		want     int
 	}{
 		{provider: ProviderTailscale, want: http.StatusSeeOther},
-		{provider: ProviderLAN, want: http.StatusUnauthorized},
-		{provider: "agentmesh", want: http.StatusUnauthorized},
+		{provider: ProviderLAN, want: http.StatusNotFound},
+		{provider: network.ProviderRelay, want: http.StatusNotFound},
 	}
 	for _, tc := range tests {
 		t.Run(tc.provider, func(t *testing.T) {

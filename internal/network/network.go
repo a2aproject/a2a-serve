@@ -26,6 +26,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/mail"
 	"net/url"
 	"strings"
 	"sync"
@@ -44,14 +45,23 @@ var ErrNoIdentity = errors.New("caller has no verified network identity")
 
 // Peer is a verified caller on the private network.
 type Peer struct {
-	// ID is the login of the user who owns the calling machine.
-	ID      string
+	// Email is the verified email of the person the calling machine
+	// belongs to, if the network proves one.
+	Email string
+	// Node identifies the calling machine: a tailnet StableID, a relay
+	// peer ID or a LAN address.
+	Node    string
 	Machine string
-	// Caps are the caller's application capabilities granted by the
-	// network's policy, as raw JSON values per capability name.
-	Caps map[string][]json.RawMessage
 	// Self is true when the caller belongs to the same user as this server.
 	Self bool
+}
+
+// SignInNetwork is implemented by private networks which admit people who
+// sign in with an identity provider, which may accept anyone with an
+// account there.
+type SignInNetwork interface {
+	// AdmitsBySignIn reports whether the network admits people by sign-in.
+	AdmitsBySignIn() bool
 }
 
 // PeerInfo is another agent server found on the private network.
@@ -81,6 +91,14 @@ type Provider interface {
 	Close() error
 }
 
+// Provider names.
+const (
+	ProviderTailscale = "tailscale"
+	ProviderLAN       = "lan"
+	ProviderNgrok     = "ngrok"
+	ProviderRelay     = "agentmesh"
+)
+
 // Listener kinds, which tell authenticators how a request arrived.
 const (
 	ListenerInProcess = "inprocess"
@@ -90,6 +108,17 @@ const (
 	// ListenerHarness serves the agent's own harness its calls to other agents.
 	ListenerHarness = "harness"
 )
+
+// IsEmail reports whether s is a plain email address with a domain that
+// has a dot, such as anna@example.com. Logins such as anna@github aren't.
+func IsEmail(s string) bool {
+	a, err := mail.ParseAddress(s)
+	if err != nil || a.Address != s || a.Name != "" {
+		return false
+	}
+	_, domain, ok := strings.Cut(s, "@")
+	return ok && strings.Contains(strings.Trim(domain, "."), ".")
+}
 
 // ProbeAgents keeps the candidates which serve an A2A agent card, filling in
 // their name and description from it.

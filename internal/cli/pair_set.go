@@ -93,12 +93,12 @@ are signed with. Linked messenger accounts stay linked.
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "", "Role of a caller: `member|owner`; members answer the approvals of their own tasks, owners those of every task")
+	f.StringVar(&req.Role, "role", "", "Role of a caller: `authenticated|owner`; authenticated callers see and approve their own tasks, owners every task")
 	f.StringVar(&req.Webhook, "webhook", "", "The URL the agent POSTs wakes to, for a webhook node")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, replacing the current ones: `Name: value`; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	f.BoolVar(&req.Rotate, "rotate", false, "Revoke every token of the pairing and print a new code")
-	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
+	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleAuthenticated, agentdir.RoleOwner)))
 	return cmd
 }

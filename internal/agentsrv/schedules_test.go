@@ -66,7 +66,7 @@ func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
 	linkOwner(t, ts, "tg:1", "dm1")
-	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
 	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "push", Cron: "@daily", Prompt: "ask", As: "anna", Chat: "fake:anna"}); err != nil {
@@ -141,7 +141,7 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
-	linkAs(t, ts, "anna", auth.RoleMember, "tg:2", "dm2")
+	linkAs(t, ts, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
 	ctx := context.Background()
 	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "x"}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)

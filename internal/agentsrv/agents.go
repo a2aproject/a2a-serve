@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"iter"
@@ -119,8 +120,8 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
-		if claims.Hops+1 > auth.MaxHops {
-			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.Hops))
+		if claims.User.Hops+1 > auth.MaxHops {
+			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops))
 			return
 		}
 		rest := "/" + r.PathValue("rest")
@@ -216,7 +217,7 @@ func (p *Peers) agentHandler(ctx context.Context, c callClaims, name string) (a2
 		return nil, nil, err
 	}
 	if node {
-		pr := p.nodeCaller(c.OnBehalfOf, c.Hops)
+		pr := p.nodeCaller(c.User, c.User.Hops)
 		return p.nodes.Handler(name), &pr, nil
 	}
 	client, err := p.contactClient(ctx, name)
@@ -224,7 +225,7 @@ func (p *Peers) agentHandler(ctx context.Context, c callClaims, name string) (a2
 		return nil, nil, err
 	}
 	return &localsrv.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
-		return onBehalfOf(ctx, c.OnBehalfOf, c.Hops)
+		return viaAgent(ctx, c.User.Hops)
 	}}, nil, nil
 }
 
@@ -430,7 +431,15 @@ func (g *guardedHandler) after(ctx context.Context, task *a2a.Task) {
 		}
 		g.p.relay(g.p.ctx, g.claims, g.agent, task, q)
 	}
-	w := store.Watch{Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID, OnBehalfOf: g.claims.OnBehalfOf}
+	identity, err := json.Marshal(g.claims.User.Identity)
+	if err != nil {
+		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
+		return
+	}
+	w := store.Watch{
+		Contact: g.agent, TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: g.claims.ContextID,
+		OnBehalfOf: g.claims.User.ID, Identity: string(identity),
+	}
 	if err := g.p.store.PutWatch(ctx, w); err != nil {
 		slog.Error("storing watch", "agent", g.agent, "task", task.ID, "error", err)
 		return

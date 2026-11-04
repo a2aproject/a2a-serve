@@ -249,7 +249,7 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "pair", "get", "me", "--dir", dir); err != nil || !strings.Contains(out, "me (caller, owner)") || !strings.Contains(out, "tokens       1") {
 		t.Fatalf("a2a-serve pair get me = %q, %v, want an owner with one token", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "me", "--role", "member", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set me --role member") {
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "me", "--role", "authenticated", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set me --role authenticated") {
 		t.Fatalf("a2a-serve pair invite of an owner as a member error = %v, want a hint to pair set", err)
 	}
 	out, err = send(t, creds, status.Local, "hello")

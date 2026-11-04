@@ -76,6 +76,7 @@ type pendingSignIn struct {
 type issuedCode struct {
 	issuer    string
 	email     string
+	domain    string
 	clientID  string
 	redirect  string
 	challenge string
@@ -251,7 +252,7 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
 	o.mu.Lock()
-	o.codes[code] = issuedCode{issuer: p.issuer, email: strings.ToLower(claims.Email), clientID: p.clientID, redirect: p.clientRedirect, challenge: p.challenge, expires: time.Now().Add(oauthPendingTTL)}
+	o.codes[code] = issuedCode{issuer: p.issuer, email: strings.ToLower(claims.Email), domain: workspaceDomain(claims), clientID: p.clientID, redirect: p.clientRedirect, challenge: p.challenge, expires: time.Now().Add(oauthPendingTTL)}
 	o.mu.Unlock()
 	o.redirectClient(w, r, p, url.Values{"code": {code}})
 }
@@ -290,7 +291,7 @@ func (o *oauthServer) token(w http.ResponseWriter, r *http.Request, base string)
 		case googleauth.Challenge(r.FormValue("code_verifier")) != c.challenge:
 			oauthError(w, http.StatusBadRequest, "invalid_grant", "wrong code_verifier")
 		default:
-			o.issue(w, r, base, c.email)
+			o.issue(w, r, base, c.email, c.domain)
 		}
 	case grantTokenExchange:
 		o.exchange(w, r, base)
@@ -324,21 +325,27 @@ func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base stri
 		oauthError(w, http.StatusForbidden, "access_denied", claims.Email+" may not call this agent; ask its owner to allow it")
 		return
 	}
-	o.issue(w, r, base, strings.ToLower(claims.Email))
+	o.issue(w, r, base, strings.ToLower(claims.Email), workspaceDomain(claims))
 }
 
-// issue stores a new access token for email and returns it. The token is a
-// pairing token of the principal google:<email>, so `pair rm` revokes it,
-// and the allowlist is checked on every use.
-func (o *oauthServer) issue(w http.ResponseWriter, r *http.Request, base, email string) {
-	ctx := r.Context()
-	id := auth.GooglePrefix + email
-	if _, err := o.s.store.EnsureUser(ctx, id, []string{auth.RoleMember}); err != nil {
-		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
-		return
+// workspaceDomain is the Google Workspace domain of a signed-in email, when
+// it is the email's own domain, which domain patterns of --allow-email
+// match.
+func workspaceDomain(c googleauth.Claims) string {
+	if d := auth.DomainOf(c.Email); c.HostedDomain != "" && strings.EqualFold(c.HostedDomain, d) {
+		return d
 	}
+	return ""
+}
+
+// issue stores a new access token for email and returns it. The token is
+// named google:<email>, so `pair rm` revokes it, and the policy decides
+// each request it makes.
+func (o *oauthServer) issue(w http.ResponseWriter, r *http.Request, base, email, domain string) {
+	ctx := r.Context()
 	tok := auth.NewToken()
-	if err := o.s.store.PutToken(ctx, tok, store.Token{Name: id, Principal: id, Roles: []string{auth.RoleMember}, URL: base}); err != nil {
+	t := store.Token{Name: auth.GooglePrefix + email, Principal: auth.EmailPrefix + email, Role: auth.RoleAuthenticated, Domain: domain, URL: base}
+	if err := o.s.store.PutToken(ctx, tok, t); err != nil {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}

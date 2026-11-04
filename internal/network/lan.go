@@ -49,7 +49,7 @@ type LAN struct {
 var _ Provider = (*LAN)(nil)
 
 // Name implements [Provider].
-func (l *LAN) Name() string { return "lan" }
+func (l *LAN) Name() string { return ProviderLAN }
 
 // ListenPrivate implements [Provider]. Traffic is plain HTTP, so bearer
 // tokens are only as private as the network.
@@ -99,8 +99,15 @@ func (l *LAN) ListenPublic(context.Context) (net.Listener, *url.URL, error) {
 	return nil, nil, ErrUnsupported
 }
 
-// WhoIs implements [Provider].
-func (l *LAN) WhoIs(context.Context, string) (*Peer, error) { return nil, ErrNoIdentity }
+// WhoIs implements [Provider]. The LAN proves nothing beyond the caller's
+// address, which is its node.
+func (l *LAN) WhoIs(_ context.Context, remoteAddr string) (*Peer, error) {
+	host, _, err := net.SplitHostPort(remoteAddr)
+	if err != nil || host == "" {
+		return nil, ErrNoIdentity
+	}
+	return &Peer{Node: host, Machine: host}, nil
+}
 
 // Peers implements [Provider].
 func (l *LAN) Peers(ctx context.Context) ([]PeerInfo, error) {

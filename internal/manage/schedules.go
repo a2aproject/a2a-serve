@@ -19,6 +19,7 @@ package manage
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -57,7 +58,7 @@ func (m Schedules) changed() {
 
 // Add creates a schedule made by by. A schedule made in a conversation
 // (contextID set) runs as the conversation's user and continues it.
-func (m Schedules) Add(ctx context.Context, req schedule.Request, by, contextID string) (store.Schedule, error) {
+func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	if err := req.Validate(); err != nil {
 		return store.Schedule{}, err
 	}
@@ -74,13 +75,17 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by, contextID 
 	}
 	s := store.Schedule{
 		Name: req.Name, Cron: when.Cron, At: when.At, TZ: when.TZ, Prompt: req.Prompt,
-		Conversation: req.Thread, ContextID: contextID, CreatedBy: by, NextRun: next,
+		Conversation: req.Thread, ContextID: contextID, CreatedBy: by.ID, NextRun: next,
 	}
 	if s.Conversation == "" {
 		s.Conversation = schedule.ThreadNew
 	}
 	if contextID != "" {
-		s.UserID, s.Conversation = by, schedule.ThreadSame
+		identity, err := json.Marshal(by.Identity)
+		if err != nil {
+			return store.Schedule{}, err
+		}
+		s.UserID, s.UserIdentity, s.Conversation = by.ID, string(identity), schedule.ThreadSame
 	} else if s.UserID, err = ResolveUser(ctx, m.Store, req.As); err != nil {
 		return store.Schedule{}, err
 	}
@@ -143,7 +148,7 @@ func (m Schedules) Visible(ctx context.Context, by auth.Principal) ([]store.Sche
 }
 
 func canManage(s store.Schedule, by auth.Principal) bool {
-	return by.Has(auth.RoleOwner) || by.ID == s.UserID || by.ID == s.CreatedBy
+	return by.IsOwner() || by.ID == s.UserID || by.ID == s.CreatedBy
 }
 
 // ScheduleInfo describes a schedule for the control API.

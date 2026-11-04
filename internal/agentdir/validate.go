@@ -40,14 +40,14 @@ var ReservedHarnesses = []string{"echo", "proxy", "script"}
 
 // Values of the enum settings.
 const (
-	SandboxDocker    = "docker"
-	SandboxLocal     = "local"
-	NetworkTailscale = "tailscale"
-	NetworkLAN       = "lan"
-	NetworkNgrok     = "ngrok"
-	NetworkNone      = "none"
-	RoleOwner        = "owner"
-	RoleMember       = "member"
+	SandboxDocker     = "docker"
+	SandboxLocal      = "local"
+	NetworkTailscale  = "tailscale"
+	NetworkLAN        = "lan"
+	NetworkNgrok      = "ngrok"
+	NetworkNone       = "none"
+	RoleOwner         = "owner"
+	RoleAuthenticated = "authenticated"
 )
 
 var (
@@ -126,11 +126,6 @@ func (c *Config) Validate() error {
 	}
 	checkPort("--port", c.Port)
 	checkPort("network.lan_port", c.Network.LANPort)
-	for login, role := range c.Network.Identities {
-		if login == "" || (role != RoleOwner && role != RoleMember) {
-			add("invalid --identity %s=%s: want login=member or login=owner", login, role)
-		}
-	}
 	if m := c.Limits.Memory; m != "" && !memory.MatchString(m) {
 		add("invalid --memory %q: want a size such as 4g or 512m", m)
 	}
@@ -210,7 +205,7 @@ func matchesToolKind(p string) bool {
 func validEmailEntry(entry string) error {
 	local, domain, ok := strings.Cut(entry, "@")
 	if !ok || local == "" || domain == "" || strings.ContainsAny(domain, "@* ") || (strings.Contains(local, "*") && local != "*") {
-		return fmt.Errorf("invalid --allow-email %q: want an email, or *@domain for a Google Workspace domain", entry)
+		return fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", entry)
 	}
 	return nil
 }

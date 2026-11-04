@@ -28,8 +28,10 @@ type Schedule struct {
 	At     time.Time
 	TZ     string
 	Prompt string
-	// UserID is the principal the runs are for.
-	UserID string
+	// UserID is the principal the runs are for, and UserIdentity its
+	// identity as JSON, or empty when the ID says it all.
+	UserID       string
+	UserIdentity string
 	// DeliverChannel and DeliverUser pick the chat the runs are shown in:
 	// DeliverUser's direct chat on DeliverChannel.
 	DeliverChannel string
@@ -47,7 +49,7 @@ type Schedule struct {
 	LastError string
 }
 
-const scheduleColumns = `name, cron, at, tz, prompt, user_id, deliver_channel, deliver_user, conversation, context_id,
+const scheduleColumns = `name, cron, at, tz, prompt, user_id, user_identity, deliver_channel, deliver_user, conversation, context_id,
 	created_by, created, next_run, last_run, last_error`
 
 func nanos(t time.Time) int64 {
@@ -59,9 +61,9 @@ func nanos(t time.Time) int64 {
 
 // AddSchedule stores a new schedule, or returns [ErrExists].
 func (s *Store) AddSchedule(ctx context.Context, sc Schedule) error {
-	res, err := s.exec(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	res, err := s.exec(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO NOTHING`,
-		sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.DeliverChannel, sc.DeliverUser, sc.Conversation, sc.ContextID,
+		sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.UserIdentity, sc.DeliverChannel, sc.DeliverUser, sc.Conversation, sc.ContextID,
 		sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
 	if err != nil {
 		return err
@@ -81,7 +83,7 @@ func scanSchedule(row interface{ Scan(...any) error }) (Schedule, error) {
 		sc                            Schedule
 		at, created, nextRun, lastRun int64
 	)
-	err := row.Scan(&sc.Name, &sc.Cron, &at, &sc.TZ, &sc.Prompt, &sc.UserID, &sc.DeliverChannel, &sc.DeliverUser, &sc.Conversation, &sc.ContextID,
+	err := row.Scan(&sc.Name, &sc.Cron, &at, &sc.TZ, &sc.Prompt, &sc.UserID, &sc.UserIdentity, &sc.DeliverChannel, &sc.DeliverUser, &sc.Conversation, &sc.ContextID,
 		&sc.CreatedBy, &created, &nextRun, &lastRun, &sc.LastError)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Schedule{}, ErrNotFound

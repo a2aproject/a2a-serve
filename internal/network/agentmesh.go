@@ -52,8 +52,11 @@ type meshSession interface {
 type agentMesh struct {
 	cfg RelayConfig
 
-	mu         sync.Mutex
-	started    atomic.Bool
+	mu      sync.Mutex
+	started atomic.Bool
+	// tokenOnly is set once the relay is known to admit agents only with
+	// tokens.
+	tokenOnly  atomic.Bool
 	srv        meshSession
 	epClose    func() error
 	private    *splitListener
@@ -72,7 +75,10 @@ func NewRelay(cfg RelayConfig) (Provider, error) {
 	return &agentMesh{cfg: cfg}, nil
 }
 
-func (a *agentMesh) Name() string { return "agentmesh" }
+// AdmitsBySignIn implements [SignInNetwork].
+func (a *agentMesh) AdmitsBySignIn() bool { return !a.tokenOnly.Load() }
+
+func (a *agentMesh) Name() string { return ProviderRelay }
 
 func (a *agentMesh) ListenPrivate(ctx context.Context) (net.Listener, *url.URL, error) {
 	if err := a.start(ctx); err != nil {
@@ -146,6 +152,7 @@ func (a *agentMesh) start(ctx context.Context) error {
 		return errors.Join(errors.New("the relay didn't give this agent a public URL: its policy doesn't allow it, or it has no ingress"), ep.Close(), srv.Close())
 	}
 	a.srv, a.epClose, a.peerID = srv, ep.Close, st.PeerID
+	a.tokenOnly.Store(a.cfg.Token != "" && !RelayAdmitsBySignIn(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg.URL))
 	// Agents which joined with a token don't say who owns them.
 	if a.cfg.Token == "" {
 		a.owner = SavedOwner(a.cfg.StateDir)
@@ -198,29 +205,29 @@ func (a *agentMesh) session() meshSession {
 	return a.srv
 }
 
-// WhoIs identifies an agent on the relay. Agents signed in as the same
-// person as this one are the owner; the others are members of the relay,
-// who get a role like other callers of a private network.
+// WhoIs identifies an agent on the relay by its peer ID. A principal shaped
+// like an email is its email, as Agent Mesh keeps an email unless the
+// identity provider marked it unverified. The caller is this agent's user
+// when that email is the one this agent signed in with.
 func (a *agentMesh) WhoIs(_ context.Context, remoteAddr string) (*Peer, error) {
 	srv := a.session()
 	if srv == nil {
 		return nil, ErrNoIdentity
 	}
 	info, ok := srv.WhoIs(remoteAddr)
-	if !ok || info == nil {
+	if !ok || info == nil || info.PeerID == "" {
 		return nil, ErrNoIdentity
 	}
-	id := info.Principal
-	if id == "" {
-		id = info.PeerID
+	p := &Peer{Node: info.PeerID, Machine: info.PeerID}
+	if !IsEmail(info.Principal) {
+		return p, nil
 	}
-	if id == "" {
-		return nil, ErrNoIdentity
-	}
+	p.Email = info.Principal
 	a.mu.Lock()
 	owner := a.owner
 	a.mu.Unlock()
-	return &Peer{ID: id, Machine: info.PeerID, Self: owner != "" && strings.EqualFold(info.Principal, owner)}, nil
+	p.Self = owner != "" && strings.EqualFold(p.Email, owner)
+	return p, nil
 }
 
 func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {

@@ -68,10 +68,10 @@ func TestConfigCommands(t *testing.T) {
 	}{
 		{
 			name:    "set",
-			args:    []string{"config", "set", "--sandbox", "local", "--allow-tools", "read,search", "--env", "DEBUG=0", "--memory", "8g", "--identity", "anna=member"},
+			args:    []string{"config", "set", "--sandbox", "local", "--allow-tools", "read,search", "--env", "DEBUG=0", "--memory", "8g"},
 			wantOut: []string{"sandbox      (default) → local", "allow-tools  + search", "env          − DEBUG=1, + DEBUG=0", "memory       (default) → 8g", "✓ saved"},
 			wantConfig: func(c *agentdir.Config) {
-				c.Sandbox, c.Approvals.Allow, c.Env, c.Limits.Memory, c.Network.Identities = "local", []string{"read", "search"}, []string{"DEBUG=0"}, "8g", map[string]string{"anna": "member"}
+				c.Sandbox, c.Approvals.Allow, c.Env, c.Limits.Memory = "local", []string{"read", "search"}, []string{"DEBUG=0"}, "8g"
 			},
 		},
 		{

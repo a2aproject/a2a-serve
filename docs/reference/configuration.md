@@ -17,7 +17,6 @@ network:
   private: tailscale
   public: ngrok
   ngrok_url: https://coder.ngrok.app
-  identities: {anna@example.com: member}
 channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:

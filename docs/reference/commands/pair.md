@@ -82,7 +82,7 @@ a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
 |---|---|---|
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
-| `--role member\|owner` | `member` | Role: member\|owner; members answer the approvals of their own tasks, owners those of every task |
+| `--role authenticated\|owner` | `authenticated` | Role: authenticated\|owner; authenticated callers see and approve their own tasks, owners every task |
 | `--webhook string` |  | Host a webhook node: the URL the agent POSTs wakes to |
 | `--webhook-header Name: value` |  | Header sent with every wake: Name: value, such as "Authorization: Bearer env:TOKEN"; the value may end in env:VAR or - (repeatable) |
 
@@ -166,7 +166,7 @@ a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 |---|---|---|
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
-| `--role member\|owner` |  | Role of a caller: member\|owner; members answer the approvals of their own tasks, owners those of every task |
+| `--role authenticated\|owner` |  | Role of a caller: authenticated\|owner; authenticated callers see and approve their own tasks, owners every task |
 | `--rotate` |  | Revoke every token of the pairing and print a new code |
 | `--webhook string` |  | The URL the agent POSTs wakes to, for a webhook node |
 | `--webhook-header Name: value` |  | Header sent with every wake, replacing the current ones: Name: value; the value may end in env:VAR or - (repeatable) |

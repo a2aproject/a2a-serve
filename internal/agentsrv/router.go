@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -253,7 +254,7 @@ func (r *Router) ownerHintWith(ctx context.Context, ch channel.Channel, code *st
 		return ""
 	}
 	if *code == "" {
-		c, _, err := auth.MintSoleCode(ctx, r.store, auth.PurposePair, "owner", auth.RoleOwner)
+		c, _, err := auth.MintSoleCode(ctx, r.store, auth.PurposePair, auth.OwnerLink, auth.RoleOwner)
 		if err != nil {
 			slog.Error("minting owner code", "error", err)
 			return ""
@@ -365,18 +366,18 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 			r.reply(ctx, ch, in, "That code is invalid or has expired. Ask the owner for a new one.")
 			return
 		}
-		r.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", strings.Join(p.Roles, ", "), r.agentName()))
+		r.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, r.agentName()))
 		return
 	}
-	p, ok, err := r.chain.Authenticate(ctx, auth.Request{Channel: &in})
-	if err != nil {
-		slog.Error("authenticating channel message", "error", err)
-		return
-	}
-	if !ok {
+	p, err := r.chain.Authenticate(ctx, auth.Request{Channel: &in})
+	if refused(err) {
 		if in.Direct && in.Authentic {
 			r.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a-serve pair invite <you>`), then send: join <code>")
 		}
+		return
+	}
+	if err != nil {
+		slog.Error("authenticating channel message", "error", err)
 		return
 	}
 	if in.Prepare != nil {
@@ -434,7 +435,7 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 // or is an owner. Others start a task of their own, so that a group
 // member's message doesn't land in another member's pending task.
 func (r *Router) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) bool {
-	if p.Has(auth.RoleOwner) {
+	if p.IsOwner() {
 		return true
 	}
 	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
@@ -443,6 +444,13 @@ func (r *Router) canContinue(ctx context.Context, p auth.Principal, taskID a2a.T
 		return false
 	}
 	return stored.User == p.ID
+}
+
+// refused reports whether err refuses a channel sender: one the policy
+// doesn't allow, or one whose message proves nothing.
+func refused(err error) bool {
+	var re *auth.RefusedError
+	return errors.As(err, &re) || errors.Is(err, auth.ErrNoCredential)
 }
 
 // isCommand reports whether text is the bot command /name, optionally
@@ -548,12 +556,12 @@ func (r *Router) handleAction(ctx context.Context, ch channel.Channel, in channe
 		r.reply(ctx, ch, in, "Already answered.")
 		return
 	}
-	p, ok, err := r.chain.Authenticate(ctx, auth.Request{Channel: &in})
-	if err != nil {
-		slog.Error("authenticating channel action", "error", err)
+	p, err := r.chain.Authenticate(ctx, auth.Request{Channel: &in})
+	if refused(err) {
 		return
 	}
-	if !ok {
+	if err != nil {
+		slog.Error("authenticating channel action", "error", err)
 		return
 	}
 	q := approvals.FromRecord(rec)
@@ -586,7 +594,7 @@ func (r *Router) typedAnswer(ctx context.Context, in channel.Inbound) (store.Que
 // answerIn answers a question from a conversation. If the question belongs
 // to the task of this conversation, the rest of the task is rendered here.
 func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.Inbound, p auth.Principal, rec store.Question, q *approvals.Question, opt approvals.Option) {
-	if q.Type == approvals.TypePermission && !r.approvals.MayAnswer(ctx, p, rec.User) {
+	if q.Type == approvals.TypePermission && !approvals.MayAnswer(p, rec.User) {
 		r.reply(ctx, ch, in, "Only the person who started the task or an owner can answer this.")
 		return
 	}
@@ -758,25 +766,34 @@ func (r *Router) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
 }
 
 // directChat returns the direct chat on a running channel of an owner: the
-// owner pairing who, or any owner if who is empty or "owner". Only owners
-// can answer the questions sent there.
+// owner pairing who, or else yours, or else any owner pairing's if who is
+// empty or "owner". Only owners can answer the questions sent there.
 func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.Chat, error) {
 	if r.channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
-	if who == "" || who == "owner" || who == auth.OwnerID {
+	anyOwner := who == "" || who == auth.OwnerLink || who == auth.OwnerID
+	if anyOwner {
 		conv, err := manage.DirectConv(ctx, r.store, chName, auth.OwnerID)
-		if err != nil {
-			return approvals.Chat{}, err
+		if err == nil {
+			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
 		}
-		return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
+		c, ok, ownerErr := r.ownerPairingChat(ctx, chName)
+		if ownerErr != nil || ok {
+			return c, ownerErr
+		}
+		return approvals.Chat{}, err
 	}
 	named, err := r.store.NamedLinks(ctx)
 	if err != nil {
 		return approvals.Chat{}, err
 	}
 	for _, l := range named[who] {
-		if l.UserID != auth.OwnerID {
+		owner, err := r.isOwnerUser(ctx, l.UserID)
+		if err != nil {
+			return approvals.Chat{}, err
+		}
+		if !owner {
 			return approvals.Chat{}, fmt.Errorf("%s is not an owner, so can't answer in the owner chat; make them one with `a2a-serve pair set %s --role owner`", who, who)
 		}
 		if l.Channel == chName && l.Conv != "" {
@@ -784,6 +801,43 @@ func (r *Router) directChat(ctx context.Context, chName, who string) (approvals.
 		}
 	}
 	return approvals.Chat{}, fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite %s`", who, chName, who)
+}
+
+// ownerPairingChat returns the direct chat on a channel of the first owner
+// pairing by name which has one.
+func (r *Router) ownerPairingChat(ctx context.Context, chName string) (approvals.Chat, bool, error) {
+	named, err := r.store.NamedLinks(ctx)
+	if err != nil {
+		return approvals.Chat{}, false, err
+	}
+	for _, name := range slices.Sorted(maps.Keys(named)) {
+		for _, l := range named[name] {
+			if l.Channel != chName || l.Conv == "" {
+				continue
+			}
+			owner, err := r.isOwnerUser(ctx, l.UserID)
+			if err != nil {
+				return approvals.Chat{}, false, err
+			}
+			if owner {
+				return approvals.Chat{Channel: chName, Conv: channel.ConvKey(l.Conv)}, true, nil
+			}
+		}
+	}
+	return approvals.Chat{}, false, nil
+}
+
+// isOwnerUser reports whether the user a chat account is linked to is an
+// owner: you, or an owner pairing.
+func (r *Router) isOwnerUser(ctx context.Context, id string) (bool, error) {
+	if id == auth.OwnerID {
+		return true, nil
+	}
+	u, err := r.store.User(ctx, id)
+	if errors.Is(err, store.ErrNotFound) {
+		return false, nil
+	}
+	return err == nil && u.Role == auth.RoleOwner, err
 }
 
 // Unattended reports whether a turn was posted to the context with no

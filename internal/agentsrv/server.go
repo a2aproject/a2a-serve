@@ -260,10 +260,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return err
 	}
 	s.ads = ads
-	s.chain = &auth.Chain{
-		Store: s.store, Net: s.private, Identities: s.config().Network.Identities,
-		GoogleAllowed: func(email string) bool { return googleauth.AllowedEmail(s.config().Auth.AllowEmails, email) },
-	}
+	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
@@ -302,7 +299,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 	}
-	s.schedules = newSchedules(ctx, s.store, s.router)
+	s.schedules = newSchedules(ctx, s.store, s.router, s.chain)
 	s.inspector = newInspector(s)
 	s.peers = &Peers{
 		store:     s.store,
@@ -311,6 +308,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		approvals: s.approvals,
 		chat:      s.router,
 		schedules: s.schedules,
+		chain:     s.chain,
 		ads:       s.ads,
 		agentName: agentName,
 		bridge:    s.bridge,
@@ -555,9 +553,20 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 // itself.
 func (s *Server) viewer(ctx context.Context) (string, bool, error) {
 	if p, ok := auth.Caller(ctx); ok {
-		return p.ID, p.Has(auth.RoleOwner), nil
+		return p.ID, p.IsOwner(), nil
 	}
 	return "", true, nil
+}
+
+// policy is the access policy in force. Everyone on the private network is
+// authenticated, unless the network admits people by sign-in: a relay's
+// identity provider may accept anyone with an account there.
+func (s *Server) policy() auth.Policy {
+	everyone := true
+	if sn, ok := s.private.(network.SignInNetwork); ok && sn.AdmitsBySignIn() {
+		everyone = false
+	}
+	return auth.DefaultPolicy(everyone, s.config().Auth.AllowEmails)
 }
 
 func pid() int { return os.Getpid() }

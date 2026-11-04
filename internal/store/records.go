@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
-	"slices"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
@@ -57,7 +56,7 @@ func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Se
 // User is a person known to the agent, identified across channels.
 type User struct {
 	ID      string
-	Roles   []string
+	Role    string
 	Created time.Time
 }
 
@@ -74,9 +73,9 @@ type Link struct {
 }
 
 // EnsureUser creates the user if it doesn't exist and returns it.
-func (s *Store) EnsureUser(ctx context.Context, id string, roles []string) (User, error) {
+func (s *Store) EnsureUser(ctx context.Context, id, role string) (User, error) {
 	if _, err := s.exec(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
-		id, joinRoles(roles), s.now().UnixNano()); err != nil {
+		id, role, s.now().UnixNano()); err != nil {
 		return User{}, err
 	}
 	return s.User(ctx, id)
@@ -85,17 +84,17 @@ func (s *Store) EnsureUser(ctx context.Context, id string, roles []string) (User
 // User returns a user.
 func (s *Store) User(ctx context.Context, id string) (User, error) {
 	var (
-		roles   string
+		role    string
 		created int64
 	)
-	err := s.db.QueryRowContext(ctx, `SELECT roles, created FROM users WHERE id = ?`, id).Scan(&roles, &created)
+	err := s.db.QueryRowContext(ctx, `SELECT roles, created FROM users WHERE id = ?`, id).Scan(&role, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return User{}, ErrNotFound
 	}
 	if err != nil {
 		return User{}, err
 	}
-	return User{ID: id, Roles: splitRoles(roles), Created: unixTime(created)}, nil
+	return User{ID: id, Role: role, Created: unixTime(created)}, nil
 }
 
 // Users lists users with role, or all users if role is empty.
@@ -109,21 +108,18 @@ func (s *Store) Users(ctx context.Context, role string) ([]User, error) {
 	for rows.Next() {
 		var (
 			u       User
-			roles   string
 			created int64
 		)
-		if err := rows.Scan(&u.ID, &roles, &created); err != nil {
+		if err := rows.Scan(&u.ID, &u.Role, &created); err != nil {
 			return nil, err
 		}
-		u.Roles, u.Created = splitRoles(roles), unixTime(created)
-		if role == "" || hasRole(u.Roles, role) {
+		u.Created = unixTime(created)
+		if role == "" || u.Role == role {
 			out = append(out, u)
 		}
 	}
 	return out, rows.Err()
 }
-
-func hasRole(roles []string, role string) bool { return slices.Contains(roles, role) }
 
 // PutLink links a channel identity to a user, replacing an existing link.
 func (s *Store) PutLink(ctx context.Context, l Link) error {
@@ -247,7 +243,10 @@ func (s *Store) TakeCode(ctx context.Context, code, purpose string) (Code, error
 type Token struct {
 	Name      string
 	Principal string
-	Roles     []string
+	Role      string
+	// Domain is the Google Workspace domain of the email of a Google
+	// sign-in token, when it is the email's domain.
+	Domain string
 	// URL is the agent URL the token was issued at.
 	URL      string
 	Created  time.Time
@@ -256,8 +255,8 @@ type Token struct {
 
 // PutToken stores a token by its hash.
 func (s *Store) PutToken(ctx context.Context, token string, t Token) error {
-	_, err := s.exec(ctx, `INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES (?, ?, ?, ?, ?, ?)`,
-		cryptoutil.Hash(token), t.Name, t.Principal, joinRoles(t.Roles), t.URL, s.now().UnixNano())
+	_, err := s.exec(ctx, `INSERT INTO tokens (hash, name, principal, roles, domain, url, created) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		cryptoutil.Hash(token), t.Name, t.Principal, t.Role, t.Domain, t.URL, s.now().UnixNano())
 	return err
 }
 
@@ -265,19 +264,18 @@ func (s *Store) PutToken(ctx context.Context, token string, t Token) error {
 func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 	var (
 		t                 Token
-		roles             string
 		created, lastUsed int64
 	)
 	h := cryptoutil.Hash(token)
-	err := s.db.QueryRowContext(ctx, `SELECT name, principal, roles, url, created, last_used FROM tokens WHERE hash = ?`, h).
-		Scan(&t.Name, &t.Principal, &roles, &t.URL, &created, &lastUsed)
+	err := s.db.QueryRowContext(ctx, `SELECT name, principal, roles, domain, url, created, last_used FROM tokens WHERE hash = ?`, h).
+		Scan(&t.Name, &t.Principal, &t.Role, &t.Domain, &t.URL, &created, &lastUsed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Token{}, ErrNotFound
 	}
 	if err != nil {
 		return Token{}, err
 	}
-	t.Roles, t.Created, t.LastUsed = splitRoles(roles), unixTime(created), unixTime(lastUsed)
+	t.Created, t.LastUsed = unixTime(created), unixTime(lastUsed)
 	if _, err := s.exec(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, s.now().UnixNano(), h); err != nil {
 		return Token{}, err
 	}
@@ -286,7 +284,7 @@ func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 
 // Tokens lists issued tokens.
 func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT name, principal, roles, url, created, last_used FROM tokens ORDER BY created`)
+	rows, err := s.db.QueryContext(ctx, `SELECT name, principal, roles, domain, url, created, last_used FROM tokens ORDER BY created`)
 	if err != nil {
 		return nil, err
 	}
@@ -295,13 +293,12 @@ func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
 	for rows.Next() {
 		var (
 			t                 Token
-			roles             string
 			created, lastUsed int64
 		)
-		if err := rows.Scan(&t.Name, &t.Principal, &roles, &t.URL, &created, &lastUsed); err != nil {
+		if err := rows.Scan(&t.Name, &t.Principal, &t.Role, &t.Domain, &t.URL, &created, &lastUsed); err != nil {
 			return nil, err
 		}
-		t.Roles, t.Created, t.LastUsed = splitRoles(roles), unixTime(created), unixTime(lastUsed)
+		t.Created, t.LastUsed = unixTime(created), unixTime(lastUsed)
 		out = append(out, t)
 	}
 	return out, rows.Err()
@@ -781,23 +778,26 @@ type Watch struct {
 	TaskID          string
 	RemoteContextID string
 	OriginContextID string
-	OnBehalfOf      string
-	Created         time.Time
+	// OnBehalfOf is the principal the result is posted as, and Identity
+	// its identity as JSON.
+	OnBehalfOf string
+	Identity   string
+	Created    time.Time
 	// FailingSince is when polling the task started failing, or zero.
 	FailingSince time.Time
 }
 
 // PutWatch stores a watch.
 func (s *Store) PutWatch(ctx context.Context, w Watch) error {
-	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created)
-		VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, s.now().UnixNano())
+	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created)
+		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, w.Identity, s.now().UnixNano())
 	return err
 }
 
 // Watches lists watches.
 func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created, failing_since FROM watches`)
+	rows, err := s.db.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since FROM watches`)
 	if err != nil {
 		return nil, err
 	}
@@ -808,7 +808,7 @@ func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
 			w                     Watch
 			created, failingSince int64
 		)
-		if err := rows.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &created, &failingSince); err != nil {
+		if err := rows.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &w.Identity, &created, &failingSince); err != nil {
 			return nil, err
 		}
 		w.Created, w.FailingSince = unixTime(created), unixTime(failingSince)

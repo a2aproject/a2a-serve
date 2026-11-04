@@ -153,23 +153,16 @@ func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	role := req.Role
 	switch {
 	case caller != nil && role != "" && role != caller.Role:
-		return nil, invalid("%s is %s %s; change the role with `a2a-serve pair set %s --role %s`", req.Name, article(caller.Role), caller.Role, req.Name, role)
+		return nil, invalid("%s is paired as %s; change the role with `a2a-serve pair set %s --role %s`", req.Name, caller.Role, req.Name, role)
 	case caller != nil:
 		role = caller.Role
 	case role == "":
-		role = auth.RoleMember
+		role = auth.RoleAuthenticated
 	}
-	if role != auth.RoleMember && role != auth.RoleOwner {
-		return nil, invalid("--role must be member or owner")
+	if role != auth.RoleAuthenticated && role != auth.RoleOwner {
+		return nil, invalid("--role must be authenticated or owner")
 	}
 	return s.callerCode(ctx, req.Name, role, false)
-}
-
-func article(role string) string {
-	if role == auth.RoleOwner {
-		return "an"
-	}
-	return "a"
 }
 
 func (s *Service) callerCode(ctx context.Context, name, role string, sole bool) (*controlapi.PairCodeResponse, error) {
@@ -281,13 +274,12 @@ func (s *Service) Update(ctx context.Context, name string, req controlapi.Pairin
 	if req.Webhook != "" || len(req.Headers) > 0 || req.Description != nil || req.Advertised != nil {
 		return nil, invalid("--webhook, --webhook-header, --description and --advertised apply to webhook nodes")
 	}
-	if req.Role != "" && req.Role != auth.RoleMember && req.Role != auth.RoleOwner {
-		return nil, invalid("--role must be member or owner")
+	if req.Role != "" && req.Role != auth.RoleAuthenticated && req.Role != auth.RoleOwner {
+		return nil, invalid("--role must be authenticated or owner")
 	}
 	role := caller.Role
 	if req.Role != "" && req.Role != role {
-		next := auth.PrincipalForCode(name, req.Role)
-		if err := s.Store.SetPairingRole(ctx, name, req.Role, next, caller.Principal); err != nil {
+		if err := s.Store.SetPairingRole(ctx, name, req.Role, caller.Principal); err != nil {
 			return nil, err
 		}
 		role = req.Role
@@ -374,7 +366,7 @@ func (s *Service) Remove(ctx context.Context, name string) (string, error) {
 	if !errors.Is(err, store.ErrNotFound) {
 		return "", err
 	}
-	n, err := s.Store.RevokeTokens(ctx, name, auth.PrincipalForCode(name, auth.RoleMember))
+	n, err := s.Store.RevokeTokens(ctx, name, auth.PrincipalForCode(name))
 	if err != nil {
 		return "", err
 	}
@@ -460,7 +452,7 @@ func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, 
 		p := out[name]
 		if p == nil {
 			p = &controlapi.Pairing{
-				Name: name, Kind: pairapi.KindCaller, Role: role, Principal: auth.PrincipalForCode(name, role),
+				Name: name, Kind: pairapi.KindCaller, Role: role, Principal: auth.PrincipalForCode(name),
 				Tokens: []controlapi.PairingToken{}, Accounts: []controlapi.LinkedAccount{}, PendingCodes: []time.Time{},
 			}
 			out[name] = p
@@ -472,7 +464,7 @@ func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, 
 		return nil, err
 	}
 	for _, t := range toks {
-		p := get(t.Name, roleOf(t.Roles))
+		p := get(t.Name, roleOf(t.Role))
 		p.Tokens = append(p.Tokens, controlapi.PairingToken{URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
 		if p.Created.IsZero() || t.Created.Before(p.Created) {
 			p.Created = t.Created
@@ -486,9 +478,13 @@ func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, 
 		return nil, err
 	}
 	for name, ls := range links {
-		role := auth.RoleMember
-		if ls[0].UserID == auth.OwnerID {
-			role = auth.RoleOwner
+		role := auth.RoleOwner
+		if ls[0].UserID != auth.OwnerID {
+			u, err := s.Store.User(ctx, ls[0].UserID)
+			if err != nil && !errors.Is(err, store.ErrNotFound) {
+				return nil, err
+			}
+			role = roleOf(u.Role)
 		}
 		p := get(name, role)
 		for _, l := range ls {
@@ -514,9 +510,9 @@ func (s *Service) callers(ctx context.Context) (map[string]*controlapi.Pairing, 
 	return out, nil
 }
 
-func roleOf(roles []string) string {
-	if slices.Contains(roles, auth.RoleOwner) {
+func roleOf(role string) string {
+	if role == auth.RoleOwner {
 		return auth.RoleOwner
 	}
-	return auth.RoleMember
+	return auth.RoleAuthenticated
 }

@@ -175,7 +175,7 @@ The person who started a task answers its approvals, in the place the task start
 
 - Set the **owner chat** with `--owner-chat <channel>[:<who>]`. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](#inspector).
 - In a group chat, only the person who started the task, or an owner, can answer.
-- Members approve their own tasks, so use `--deny-tools` to limit what members can run.
+- Authenticated callers approve their own tasks, so use `--deny-tools` to limit what they can run.
 - Email approvals link to a web page for the answer.
 
 ## Inspector
@@ -191,31 +191,35 @@ Not in this version: files, live logs, backups, and changing settings from the p
 | Caller | How it is recognized | Role |
 | --- | --- | --- |
 | You, on the machine running the agent | The token a2a-serve saves for you on start, listed as `local` | owner |
-| Your devices on the tailnet | Tailscale identity: the same user as the agent | owner |
-| Other tailnet users | `--identity login=role`, or the `a2aproject.org/cap/a2a` app capability | the role given |
+| Your devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device | owner |
+| Everyone else on the private network | The tailnet's or relay's identity, or the address on the LAN | authenticated |
 | Messenger accounts | Linked with a pairing code | the pairing's role |
+| People on the email allowlist | A verified email: [Google sign-in](#google-sign-in), a tailnet or relay login, or mail that passes DMARC | authenticated |
 | Anyone else | A token from a pairing code | the pairing's role |
-| People on the email allowlist | [Google sign-in](#google-sign-in) | member |
-| [Webhook nodes](#webhook-nodes) | Their node token | member |
+| [Webhook nodes](#webhook-nodes) | Their node token | authenticated |
 
-The [access model](concepts/access-model.md) describes the planned model.
+- A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
+- On a relay that admits people by sign-in, everyone else on the relay needs a pairing or a matching `--allow-email`.
+- A caller without a credential gets 401, with the steps to pair. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
+
+The [access model](concepts/access-model.md) describes the model, and which of its settings are planned.
 
 ```sh
-a2a-serve pair invite grok                 # member: can talk to the agent
-a2a-serve pair invite anna --role owner    # owner: also sees and answers every task
-a2a-serve pair invite anna                 # another code, for a second device
+a2a-serve pair invite grok                        # authenticated: can talk to the agent
+a2a-serve pair invite anna --role owner           # owner: also sees and answers every task
+a2a-serve pair invite anna                        # another code, for a second device
 a2a-serve pair list
-a2a-serve pair get anna                    # role, tokens, linked accounts, pending codes
-a2a-serve pair set anna --role member      # change the role
-a2a-serve pair set anna --rotate           # revoke her tokens and print a new code
-a2a-serve pair rm grok                     # revoke its tokens and messenger links
+a2a-serve pair get anna                           # role, tokens, linked accounts, pending codes
+a2a-serve pair set anna --role authenticated      # change the role
+a2a-serve pair set anna --rotate                  # revoke her tokens and print a new code
+a2a-serve pair rm grok                            # revoke its tokens and messenger links
 ```
 
 A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot. `a2a-serve pair list --joined` lists the agents you joined, and `pair rm <agent-url>` forgets one.
 
 ## Google sign-in
 
-People on an email allowlist can call the agent after signing in with Google, with no pairing code:
+People on an email allowlist can call the agent with no pairing code. On the public URL they sign in with Google:
 
 ```sh
 a2a-serve config set --allow-email mom@example.com,'*@example.com'
@@ -225,8 +229,8 @@ a2a send -a https://coder.example.com "hi"      # signs in once
 ```
 
 - Add `<agent-url>/oauth/callback` to the authorized redirect URIs of your Google app. Use the URL people call, usually the public one.
-- `*@example.com` matches only accounts of the example.com Google Workspace. Anyone can create a personal Google account with an @example.com address.
-- People who sign in are members. Removing an email from the allowlist cuts them off at their next request; `a2a-serve pair rm google:<email>` revokes their tokens.
+- `*@example.com` matches accounts of the example.com Google Workspace, and mail from example.com that passes DMARC. Anyone can create a personal Google account with an @example.com address, so such accounts don't match. Tailnet and relay logins match only full addresses.
+- People who sign in are authenticated. Removing an email from the allowlist cuts them off at their next request; `a2a-serve pair rm google:<email>` revokes their tokens.
 - Sign-in works on every network: Funnel, ngrok, a relay or your own domain.
 
 Not in this version: providers other than Google, and sign-in without your own Google app.
@@ -237,7 +241,7 @@ Not in this version: providers other than Google, and sign-in without your own G
 | --- | --- | --- |
 | *(none)* | localhost and messengers | pairing tokens |
 | `--private tailscale` | your tailnet, as `https://<name>.<tailnet>.ts.net` | Tailscale identity |
-| `--private lan` | the local network, over plain HTTP | pairing tokens |
+| `--private lan` | the local network, over plain HTTP | the caller's address |
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
 | `--public ngrok` | the internet; `--ngrok-url` sets a reserved domain | pairing tokens |
@@ -263,7 +267,7 @@ a2a-serve start opencode --private https://relay.example.com --public https://re
 a2a-serve config set --relay-token env:RELAY_TOKEN    # on servers: join with a token
 ```
 
-- Agents signed in as the same person treat each other as the owner. Other agents on the relay need a role, such as `--identity <email>=member`.
+- A relay that admits people by sign-in accepts anyone its identity provider accepts, so on it only your agents, your pairings and `--allow-email` matches can call. On a relay that agents join only with tokens, everyone on the relay can call.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 
@@ -346,7 +350,7 @@ a2a-serve pair rm grok
 
 The node reads its instructions at `<agent-url>/mailbox/skill.md` and answers with `a2a-serve mailbox reply <task> --final "…"`. A task with no reply for 10 minutes fails.
 
-Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent as a member with its token.
+Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as an authenticated caller.
 
 ### Advertised pairings
 
