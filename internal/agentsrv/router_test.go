@@ -156,6 +156,31 @@ func TestRouterTypedAnswer(t *testing.T) {
 	ts.ch.waitFor(t, "thread1", hasText("Push denied."))
 }
 
+func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
+	t.Parallel()
+	ch := newFakeChannel(ChannelEmail)
+	ch.buttons = false
+	ts := startServer(t, serverOpts{channel: ch, configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
+	linkOwner(t, ts, "me@example.com", "owner-thread")
+
+	ts.ch.write("stranger@example.org", "thread9", "ask")
+	ts.ch.waitFor(t, "thread9", hasText("Waiting for the owner's approval."))
+	_, q := ts.ch.waitFor(t, "owner-thread", hasText("needs your approval"))
+	if !strings.Contains(q.Text, "stranger@example.org") || !strings.Contains(q.Text, "Reply approve, always, deny") {
+		t.Fatalf("owner chat question = %q, want it to name the sender and how to answer", q.Text)
+	}
+	ts.ch.write("me@example.com", "owner-thread", "approve")
+	ts.ch.waitFor(t, "thread9", hasText("Pushed (allow)."))
+
+	ts.ch.mu.Lock()
+	defer ts.ch.mu.Unlock()
+	for _, m := range ts.ch.msgs {
+		if m.Conv == "thread9" && strings.Contains(m.Text, "/hitl/") {
+			t.Fatalf("message to the anonymous sender = %q, want no approval link", m.Text)
+		}
+	}
+}
+
 func TestRouterFollowUpAndNewConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})

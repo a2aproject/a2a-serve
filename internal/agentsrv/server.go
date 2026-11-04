@@ -291,6 +291,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.approvals = &approvals.Service{
 		Store:     s.store,
 		Tasks:     s.tasks,
+		Chain:     s.chain,
 		BaseURL:   s.bestURL,
 		AgentName: agentName,
 	}

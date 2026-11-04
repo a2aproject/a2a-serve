@@ -701,18 +701,29 @@ func (r *Router) follow(ctx context.Context, ch channel.Channel, conv channel.Co
 		unsubscribe()
 		return
 	}
-	go func() {
-		defer unsubscribe()
-		rd := newRenderer(r, ch, conv, channel.Ref{}, p)
-		timeout := time.NewTimer(25 * time.Hour)
-		defer timeout.Stop()
-		for {
-			ev, ok := events.next(ctx, timeout.C)
-			if !ok || rd.onEvent(ctx, ev) {
-				return
-			}
+	go r.render(ctx, ch, conv, p, events, unsubscribe)
+}
+
+// followTask renders the next turn of a task in a conversation, such as
+// the one an answer given elsewhere starts.
+func (r *Router) followTask(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID) {
+	events, unsubscribe := r.bus.subscribe(taskID)
+	go r.render(ctx, ch, conv, p, events, unsubscribe)
+}
+
+// render renders the events of a task in a conversation until the task
+// stops, and then unsubscribes.
+func (r *Router) render(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, events *subscription, unsubscribe func()) {
+	defer unsubscribe()
+	rd := newRenderer(r, ch, conv, channel.Ref{}, p)
+	timeout := time.NewTimer(25 * time.Hour)
+	defer timeout.Stop()
+	for {
+		ev, ok := events.next(ctx, timeout.C)
+		if !ok || rd.onEvent(ctx, ev) {
+			return
 		}
-	}()
+	}
 }
 
 // MarkAnswered replaces the buttons of a question with who answered it.
@@ -748,7 +759,7 @@ func (r *Router) Ask(ctx context.Context, to approvals.Chat, header string, rec 
 	if ch.Caps().Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), r.approvals.PageURL(rec))
+		out.Text += r.answerHint(ctx, rec, q)
 	}
 	ref, err := ch.Send(ctx, out)
 	if err != nil {
@@ -756,6 +767,20 @@ func (r *Router) Ask(ctx context.Context, to approvals.Chat, header string, rec 
 		return
 	}
 	r.remember(ctx, rec.ID, ch.Name(), to.Conv, ref, text)
+}
+
+// answerHint tells how to answer a question in a chat without buttons: by
+// typing an option, or on its page when the task's user may answer there.
+func (r *Router) answerHint(ctx context.Context, rec store.Question, q *approvals.Question) string {
+	hint := "\n\nReply " + q.Words()
+	link, err := r.approvals.PageURL(ctx, rec)
+	switch {
+	case err != nil:
+		slog.Warn("checking who may answer a question on its page", "question", rec.ID, "error", err)
+	case link != "":
+		hint += ", or open " + link
+	}
+	return hint
 }
 
 // ownerChatOrder is the order in which, without --owner-chat, the

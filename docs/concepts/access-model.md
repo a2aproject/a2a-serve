@@ -92,7 +92,7 @@ coder (opencode) running for 2h, pid 41233
 | Unlinked sender in a direct chat | anyone, with `--public-access anyone`; otherwise rejected with a hint on how to pair |
 | Unlinked sender in a group | ignored |
 
-Each chat is one conversation. Approvals appear in the chat where the task started, and only the person who started the task, or you, can answer them. Approvals of tasks nobody watches go to your owner chat.
+Each chat is one conversation. Approvals appear in the chat where the task started, and only the person who started the task, or you, can answer them. Approvals of anonymous senders and of tasks nobody watches go to your owner chat.
 
 ### Calls between agents
 

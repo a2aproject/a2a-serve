@@ -16,7 +16,6 @@ package agentsrv
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -28,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // editInterval throttles streaming edits; messengers rate-limit them.
@@ -341,11 +341,15 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, messageText(msg))
 		return
 	}
+	if rd.p.Role == auth.RoleAnonymous {
+		rd.askOwner(ctx, rec, q)
+		return
+	}
 	out := channel.Outbound{Conv: rd.conv, Text: q.Text, ReplyTo: rd.replyTo, Subject: rd.subject()}
 	if rd.caps.Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
-		out.Text += fmt.Sprintf("\n\nReply %s, or open %s", q.Words(), rd.r.approvals.PageURL(rec))
+		out.Text += rd.r.answerHint(ctx, rec, q)
 	}
 	ref, err := rd.ch.Send(ctx, out)
 	if err != nil {
@@ -353,6 +357,20 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		return
 	}
 	rd.r.remember(ctx, rec.ID, rd.ch.Name(), rd.conv, ref, q.Text)
+}
+
+// askOwner sends the question of an anonymous sender's task to the owner
+// chat, since anonymous senders can't answer approvals, and renders the
+// rest of the task here once an owner answers.
+func (rd *renderer) askOwner(ctx context.Context, rec store.Question, q *approvals.Question) {
+	rd.r.followTask(ctx, rd.ch, rd.conv, rd.p, a2a.TaskID(rec.TaskID))
+	rd.send(ctx, q.Display()+"\n\nWaiting for the owner's approval.")
+	to, ok := rd.r.OwnerChat(ctx)
+	if !ok {
+		slog.Info("approval waits in the inspector: no owner chat", "task", rec.TaskID, "question", rec.ID)
+		return
+	}
+	rd.r.Ask(ctx, to, approvals.DisplayPrincipal(rd.p.ID)+" needs your approval", rec)
 }
 
 func (rd *renderer) fail(ctx context.Context, err error) {
