@@ -391,12 +391,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	} else {
 		out.Text += rd.r.answerHint(ctx, rec, q)
 	}
-	ref, err := rd.ch.Send(ctx, out)
-	if err != nil {
-		slog.Warn("sending question", "channel", rd.ch.Name(), "error", err)
-		return
-	}
-	rd.r.remember(ctx, rec.ID, rd.ch.Name(), rd.conv, ref, q.Text)
+	rd.r.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text)
 }
 
 // askOwner sends the question of an anonymous sender's task to the owner

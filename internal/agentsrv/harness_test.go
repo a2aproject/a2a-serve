@@ -321,6 +321,8 @@ type fakeChannel struct {
 	maxText int
 	// failures is how many times Run fails before it connects.
 	failures int
+	// sendDelay is how long Send returns after the message is visible.
+	sendDelay time.Duration
 
 	mu    sync.Mutex
 	in    chan<- channel.Inbound
@@ -363,13 +365,14 @@ func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound) error 
 
 func (f *fakeChannel) Send(_ context.Context, m channel.Outbound) (channel.Ref, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
 	msgSeq.Lock()
 	msgSeq.n++
 	id := strconv.Itoa(msgSeq.n)
 	msgSeq.Unlock()
 	f.msgs[id] = m
 	f.order = append(f.order, id)
+	f.mu.Unlock()
+	time.Sleep(f.sendDelay)
 	return channel.Ref{Conv: m.Conv, ID: id}, nil
 }
 

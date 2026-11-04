@@ -765,12 +765,7 @@ func (r *Router) Ask(ctx context.Context, to approvals.Chat, header string, rec 
 	} else {
 		out.Text += r.answerHint(ctx, rec, q)
 	}
-	ref, err := ch.Send(ctx, out)
-	if err != nil {
-		slog.Warn("sending question", "channel", ch.Name(), "error", err)
-		return
-	}
-	r.remember(ctx, rec.ID, ch.Name(), to.Conv, ref, text)
+	r.sendQuestion(ctx, ch, out, rec.ID, text)
 }
 
 // answerHint tells how to answer a question in a chat without buttons: by
@@ -905,15 +900,22 @@ func (r *Router) setUnattended(contextID string) {
 	r.unattended[contextID] = true
 }
 
-// remember records a message which shows a question, so that it can be
-// updated once answered, and makes the question the one a typed reply in
-// the conversation answers.
-func (r *Router) remember(ctx context.Context, questionID, ch string, conv channel.ConvKey, ref channel.Ref, text string) {
-	if err := r.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Channel: ch, Conv: string(ref.Conv), MessageID: ref.ID, Text: text}); err != nil {
-		slog.Warn("recording a question message", "error", err)
-	}
-	if err := r.store.SetPendingQuestion(ctx, ch, string(conv), questionID); err != nil {
+// sendQuestion sends a question and records it. It is pending in the chat
+// before it is sent, so that a reply typed right after it arrives answers it.
+func (r *Router) sendQuestion(ctx context.Context, ch channel.Channel, out channel.Outbound, questionID, text string) {
+	if err := r.store.SetPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
 		slog.Warn("recording pending question", "error", err)
+	}
+	ref, err := ch.Send(ctx, out)
+	if err != nil {
+		slog.Warn("sending question", "channel", ch.Name(), "error", err)
+		if err := r.store.ClearPendingQuestion(ctx, ch.Name(), string(out.Conv)); err != nil {
+			slog.Warn("clearing pending question", "error", err)
+		}
+		return
+	}
+	if err := r.store.AddQuestionMessage(ctx, store.QuestionMessage{QuestionID: questionID, Channel: ch.Name(), Conv: string(ref.Conv), MessageID: ref.ID, Text: text}); err != nil {
+		slog.Warn("recording a question message", "error", err)
 	}
 }
 
