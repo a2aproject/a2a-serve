@@ -34,7 +34,7 @@ import (
 )
 
 // maxScheduleWait is the longest the scheduler sleeps between checks.
-var maxScheduleWait = time.Minute
+const maxScheduleWait = time.Minute
 
 // schedules runs the agent's schedules, and adds and removes them for the
 // owner and for the harness.
@@ -46,12 +46,14 @@ type schedules struct {
 	// chain gives the user a schedule runs as its role at each run.
 	chain *auth.Chain
 	now   func() time.Time
+	// minWait is the shortest wait between checks of the schedules.
+	minWait time.Duration
 	// wake makes the scheduler check the schedules again after a change.
 	wake chan struct{}
 }
 
-func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain, now func() time.Time) *schedules {
-	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: now, wake: make(chan struct{}, 1)}
+func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain, now func() time.Time, minWait time.Duration) *schedules {
+	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: now, minWait: minWait, wake: make(chan struct{}, 1)}
 }
 
 // run runs due schedules until ctx ends. A run missed while the agent was
@@ -116,11 +118,8 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 			wait = min(wait, next.Sub(now))
 		}
 	}
-	return max(wait, scheduleMinWait)
+	return max(wait, sc.minWait)
 }
-
-// scheduleMinWait is the shortest wait between checks of the schedules.
-var scheduleMinWait = time.Second
 
 func errText(err error) string {
 	if err == nil {

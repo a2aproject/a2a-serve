@@ -159,7 +159,7 @@ func TestSecondServerInSameDirFailsWithoutSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadConfig() error = %v", err)
 	}
-	err = Run(context.Background(), Options{Dir: ts.dir, Config: cfg, Secrets: agentdir.Secrets{}})
+	err = Run(context.Background(), Options{Dir: ts.dir, Config: cfg, Secrets: agentdir.Secrets{}, Timings: testTimings})
 	if err == nil || !strings.Contains(err.Error(), "already running") {
 		t.Fatalf("Run() error = %v, want an already running error", err)
 	}

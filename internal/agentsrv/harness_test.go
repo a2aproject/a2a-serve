@@ -51,6 +51,18 @@ import (
 
 var fakeACP string
 
+var testTimings = Timings{
+	WatchInterval:            50 * time.Millisecond,
+	WatchMaxInterval:         200 * time.Millisecond,
+	InjectRetry:              50 * time.Millisecond,
+	EditInterval:             50 * time.Millisecond,
+	ScheduleMinWait:          10 * time.Millisecond,
+	WebhookRetries:           []time.Duration{0, 100 * time.Millisecond},
+	ChannelRetryMin:          10 * time.Millisecond,
+	FirstBackupDelay:         50 * time.Millisecond,
+	AnonymousQuestionTimeout: 5 * time.Second,
+}
+
 func TestMain(m *testing.M) {
 	dir, err := os.MkdirTemp("", "fakeacp")
 	if err != nil {
@@ -64,14 +76,6 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "building fakeacp:", err)
 		os.Exit(1)
 	}
-	watchInterval, watchMaxInterval = 50*time.Millisecond, 200*time.Millisecond
-	injectRetry = 50 * time.Millisecond
-	editInterval = 50 * time.Millisecond
-	scheduleMinWait = 10 * time.Millisecond
-	nodeWebhookRetries = []time.Duration{0, 100 * time.Millisecond}
-	channelRetryMin = 10 * time.Millisecond
-	firstBackupDelay = 50 * time.Millisecond
-	anonymousQuestionTimeout = 5 * time.Second
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -146,7 +150,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Timings: testTimings, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

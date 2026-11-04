@@ -136,7 +136,7 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 
 	restarted := startServer(t, serverOpts{name: "assistant", dir: root, channel: newFakeChannel("fake")})
 	restarted.ch.waitReady(t)
-	time.Sleep(3 * watchMaxInterval)
+	time.Sleep(3 * testTimings.WatchMaxInterval)
 	if n := restarted.ch.questions(); n != 0 {
 		t.Fatalf("questions asked again after the restart = %d, want 0", n)
 	}

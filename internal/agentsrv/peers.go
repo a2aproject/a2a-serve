@@ -48,13 +48,6 @@ const (
 	ViaHTTPS   = manage.ViaHTTPS
 )
 
-// watchInterval is the first delay between checks of a watched task; it
-// grows to watchMaxInterval.
-var (
-	watchInterval    = 5 * time.Second
-	watchMaxInterval = 30 * time.Second
-)
-
 // Peers handles calls from this agent to other agents: contacts, agents on
 // the private network and webhook nodes hosted here. The harness reaches
 // them with the a2a CLI through the agents URL of its conversation.
@@ -70,6 +63,7 @@ type Peers struct {
 	ads       *gossip.Table
 	agentName func() string
 	bridge    harnessBridge
+	timings   Timings
 	// ctx ends when the server stops; watches run in it.
 	ctx context.Context
 
@@ -672,7 +666,7 @@ func (p *Peers) watch(w store.Watch) {
 			p.mu.Unlock()
 		}()
 		claims := callClaims{ContextID: w.OriginContextID, User: p.watchPrincipal(ctx, w)}
-		interval := watchInterval
+		interval := p.timings.WatchInterval
 		failingSince := w.FailingSince
 		for {
 			select {
@@ -680,8 +674,8 @@ func (p *Peers) watch(w store.Watch) {
 				return
 			case <-time.After(interval):
 			}
-			if interval < watchMaxInterval {
-				interval += watchInterval
+			if interval < p.timings.WatchMaxInterval {
+				interval += p.timings.WatchInterval
 			}
 			task, err := p.poll(ctx, w, claims.User)
 			if errors.Is(err, store.ErrNotFound) {

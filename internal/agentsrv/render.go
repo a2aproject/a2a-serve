@@ -31,9 +31,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 )
 
-// editInterval throttles streaming edits; messengers rate-limit them.
-var editInterval = time.Second
-
 // renderer shows one task in a conversation. Channels which stream get one
 // message edited as the agent writes; others get questions and the result.
 type renderer struct {
@@ -198,7 +195,7 @@ func (rd *renderer) flush(ctx context.Context, force bool) {
 		return
 	}
 	if !force {
-		if wait := editInterval - time.Since(rd.lastEdit); wait > 0 {
+		if wait := rd.r.timings.EditInterval - time.Since(rd.lastEdit); wait > 0 {
 			if rd.timer == nil {
 				rd.timer = time.AfterFunc(wait, func() {
 					rd.mu.Lock()
@@ -285,7 +282,7 @@ func (rd *renderer) send(ctx context.Context, text string) channel.Ref {
 }
 
 // maxRetryWait is the longest the renderer waits for a rate limit to end.
-var maxRetryWait = 30 * time.Second
+const maxRetryWait = 30 * time.Second
 
 // resend sends text as new messages after the last edit of the streaming
 // message failed, so that the user gets the final answer. A rate limit is
@@ -390,7 +387,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 			rd.onWaitForOwner(taskID)
 		}
 		rd.send(ctx, fmt.Sprintf("⏳ This needs the owner's approval, which I asked for. Without an answer in %s, it is rejected:\n\n%s",
-			approvals.ApprovalTimeout(anonymousQuestionTimeout), q.Display()))
+			approvals.ApprovalTimeout(rd.r.timings.AnonymousQuestionTimeout), q.Display()))
 		return
 	}
 	// An owner who answered an earlier question may be rendering the task,

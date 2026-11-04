@@ -453,7 +453,7 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 	if err := ts.srv.router.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
-	time.Sleep(3 * injectRetry)
+	time.Sleep(3 * testTimings.InjectRetry)
 	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))

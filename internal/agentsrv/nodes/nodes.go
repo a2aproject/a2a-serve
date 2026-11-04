@@ -46,10 +46,12 @@ import (
 )
 
 // nodeTaskTimeout fails a node task which posts no event for this long.
-var nodeTaskTimeout = 10 * time.Minute
+const nodeTaskTimeout = 10 * time.Minute
 
-// DefaultWebhookRetries are the delays before each wake delivery attempt.
-var DefaultWebhookRetries = []time.Duration{0, 2 * time.Second, 10 * time.Second, 30 * time.Second}
+// defaultWebhookRetries are the delays before each wake delivery attempt.
+func defaultWebhookRetries() []time.Duration {
+	return []time.Duration{0, 2 * time.Second, 10 * time.Second, 30 * time.Second}
+}
 
 const inboxSize = 200
 
@@ -66,7 +68,7 @@ type Config struct {
 	// context, or rejects it.
 	Authenticate func(listener string, next http.Handler) http.Handler
 	// WebhookRetries are the delays before each wake delivery attempt;
-	// nil uses DefaultWebhookRetries.
+	// nil uses the default retries.
 	WebhookRetries []time.Duration
 	// Advertised reports whether the node is advertised to the private
 	// network, which lets authenticated callers call it too. Nil
@@ -119,7 +121,7 @@ type nodeDelivery struct {
 // New returns a host whose background work runs until ctx ends.
 func New(ctx context.Context, cfg Config) *Host {
 	if cfg.WebhookRetries == nil {
-		cfg.WebhookRetries = DefaultWebhookRetries
+		cfg.WebhookRetries = defaultWebhookRetries()
 	}
 	return &Host{
 		cfg:      cfg,
