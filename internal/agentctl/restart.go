@@ -28,7 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
-// stopTimeout is how long Restart waits for the server to exit.
+// stopTimeout is how long WaitStopped waits for the server to exit.
 const stopTimeout = 2 * time.Minute
 
 // ErrForeground is returned by [Restart] for an agent which runs in the
@@ -70,7 +70,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 	if err := client.Stop(ctx); err != nil {
 		return err
 	}
-	if err := waitStopped(ctx, d); err != nil {
+	if err := WaitStopped(ctx, d); err != nil {
 		return err
 	}
 	if _, err := fmt.Fprintf(out, "✓ stopped %s\n", cfg.Name); err != nil {
@@ -79,9 +79,9 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 	return launch.Background(ctx, d, asService, quiet, out)
 }
 
-// waitStopped waits until the server releases the lock of the agent
+// WaitStopped waits until the server releases the lock of the agent
 // directory, which it holds until everything is shut down.
-func waitStopped(ctx context.Context, d agentdir.Dir) error {
+func WaitStopped(ctx context.Context, d agentdir.Dir) error {
 	deadline := time.Now().Add(stopTimeout)
 	for {
 		release, err := fsutil.TryLock(d.LockPath())

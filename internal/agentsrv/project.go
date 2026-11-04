@@ -59,7 +59,7 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 	found, err := project.LoadMCP(ws.Src)
 	if err != nil {
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
-		return a2aacp.SessionParams{}, nil
+		return a2aacp.SessionParams{Cwd: ws.Src}, nil
 	}
 	vars := project.Vars(cfg, s.secrets())
 	var servers []json.RawMessage
@@ -75,5 +75,5 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 		}
 		servers = append(servers, raw)
 	}
-	return a2aacp.SessionParams{MCPServers: servers}, nil
+	return a2aacp.SessionParams{Cwd: ws.Src, MCPServers: servers}, nil
 }
