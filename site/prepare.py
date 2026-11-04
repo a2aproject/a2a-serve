@@ -18,12 +18,14 @@ The markdown in the repository links between files the way GitHub resolves
 them. This copies docs/ to <out>/ and examples/ to <out>/examples/, renames
 README.md to index.md, and rewrites every relative link: links to pages and images in
 docs/ or examples/ point at the copies, and links to other files point at
-GitHub. Each page gets a meta description from its first paragraph, so the
+GitHub. Each page gets a meta description from its first paragraph, and the
+pages in HIDE_TOC keep their sections out of the navigation, so the
 repository's markdown needs no front matter, which GitHub renders as a table.
 
 Usage: site/prepare.py <out>
 """
 
+import fnmatch
 import json
 import os
 import re
@@ -42,6 +44,9 @@ FENCE = re.compile(r"^\s*(```|~~~)")
 # Lines that don't start a prose paragraph.
 NOT_PROSE = re.compile(r"^\s*([#>|!<*+-]|\d+\.|```|~~~)")
 DESCRIPTION_MAX = 160
+# Pages whose sections stay out of the navigation.
+HIDE_TOC = ("index.md", "getting-started.md", "examples/*", "reference/a2a-cli.md",
+            "guide/webhook-nodes.md", "guide/config.md", "guide/networks.md")
 
 
 def site_path(repo_path):
@@ -140,9 +145,14 @@ def main(out):
                 with open(os.path.join(REPO, repo_file)) as f:
                     text = f.read()
                 with open(target, "w") as f:
+                    meta = []
                     desc = description(text)
                     if desc:
-                        f.write(f"---\ndescription: {json.dumps(desc, ensure_ascii=False)}\n---\n\n")
+                        meta.append(f"description: {json.dumps(desc, ensure_ascii=False)}")
+                    if any(fnmatch.fnmatch(site_file, p) for p in HIDE_TOC):
+                        meta.append("hide: [toc]")
+                    if meta:
+                        f.write("---\n" + "\n".join(meta) + "\n---\n\n")
                     f.write(rewrite(text, repo_file, site_file))
 
 

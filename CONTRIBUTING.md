@@ -81,7 +81,7 @@ a2a-serve stop
 a2a-serve start opencode --sandbox local --command "opencode acp"
 ```
 
-[`examples/03-agentmesh-relay/demo.sh`](examples/03-agentmesh-relay/demo.sh) runs lesson 3 end to end against `agentmesh-one`, with a token-joined flow and OIDC sign-in. `--tunnel cloudflare` adds public ingress, `--vertex-project <gcp-project>` uses Gemini on Vertex AI, and `--model` with `--openai-base-url` uses any OpenAI-compatible endpoint:
+[`examples/03-agentmesh-relay/demo.sh`](examples/03-agentmesh-relay/demo.sh) runs the Agent Mesh relay example end to end against `agentmesh-one`, with a token-joined flow and OIDC sign-in. `--tunnel cloudflare` adds public ingress, `--vertex-project <gcp-project>` uses Gemini on Vertex AI, and `--model` with `--openai-base-url` uses any OpenAI-compatible endpoint:
 
 ```sh
 bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare

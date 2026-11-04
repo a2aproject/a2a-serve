@@ -1,5 +1,5 @@
 site_name: A2A Serve
-site_description: One command turns the coding agent in your project into a sandboxed A2A agent that people, scripts and other agents can call.
+site_description: One command turns the coding agent on your machine into a sandboxed A2A agent that people, scripts and other agents can call.
 site_url: https://a2aproject.github.io/a2a-serve/
 repo_url: https://github.com/a2aproject/a2a-serve
 repo_name: a2aproject/a2a-serve
@@ -21,7 +21,6 @@ theme:
   features:
     - navigation.top
     - navigation.footer
-    - navigation.indexes
     - search.suggest
     - content.code.copy
     - toc.integrate
@@ -66,20 +65,34 @@ markdown_extensions:
 
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
-  - Concepts:
-      - Architecture: concepts/architecture.md
-      - Access model: concepts/access-model.md
-      - Agent Mesh: concepts/agent-mesh.md
-      - Security: concepts/security.md
-  - Guide:
-      - User guide: guide.md
-      - Upgrades: upgrades.md
+  - Getting Started: getting-started.md
+  - User Guide:
+      - Supported Agents: guide/supported-agents.md
+      - Running: guide/running.md
+      - Config: guide/config.md
+      - Sandbox: guide/sandbox.md
+      - MCP and Skills: guide/mcp-and-skills.md
+      - Approvals: guide/approvals.md
+      - Inspector: guide/inspector.md
+      - Identities: guide/identities.md
+      - Email Sign-In: guide/email-sign-in.md
+      - Networks: guide/networks.md
+      - Messengers: guide/messengers.md
+      - Agent2Agent: guide/agent2agent.md
+      - Schedules: guide/schedules.md
+      - Webhook Nodes: guide/webhook-nodes.md
+      - Backups: guide/backups.md
+      - Shell Completion: guide/shell-completion.md
+  - Advanced:
+      - Architecture: advanced/architecture.md
+      - Agent Directory: advanced/agent-directory.md
+      - Access Model: advanced/access-model.md
+      - Agent Mesh: advanced/agent-mesh.md
+      - Security: advanced/security.md
   - Examples:
-      - examples/index.md
-      - Serve a coding agent: examples/01-agent-server/index.md
+      - Serve a Coding Agent: examples/01-agent-server/index.md
       - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
-      - Agent Mesh relay: examples/03-agentmesh-relay/index.md
+      - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
   - Reference:
       - Commands:
           - a2a-serve: reference/commands/a2a-serve.md
@@ -100,7 +113,7 @@ nav:
           - doctor: reference/commands/doctor.md
           - completion: reference/commands/completion.md
           - version: reference/commands/version.md
-      - Configuration file: reference/configuration.md
-      - Output and exit codes: reference/output.md
-      - HTTP routes: reference/http-routes.md
+      - Configuration File: reference/configuration.md
+      - Output and Exit Codes: reference/output.md
+      - HTTP Routes: reference/http-routes.md
       - The a2a CLI: reference/a2a-cli.md

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 """MkDocs hooks: versions the extra CSS URL by its content, so browsers
-fetch it again after every change."""
+fetch it again after every change, and drops the table of contents of pages
+that hide it, which the integrated navigation would otherwise still show."""
 
 import hashlib
 import os
@@ -26,6 +27,12 @@ def on_config(config):
     path = os.path.join(os.path.dirname(config.config_file_path), "overrides", _CSS)
     with open(path, "rb") as f:
         _version = hashlib.sha256(f.read()).hexdigest()[:10]
+
+
+def on_page_context(context, page, config, nav):
+    if "toc" in page.meta.get("hide", []):
+        page.toc.items = []
+    return context
 
 
 def on_post_page(output, page, config):

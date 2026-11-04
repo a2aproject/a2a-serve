@@ -1,4 +1,4 @@
-# Configuration file
+# Configuration File
 
 `config.yaml` holds what the flags set; each key is changed with the flag of
 the same name through `a2a-serve config set`. Secret values are references

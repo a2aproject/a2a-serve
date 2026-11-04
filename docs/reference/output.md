@@ -1,4 +1,4 @@
-# Output and exit codes
+# Output and Exit Codes
 
 Management commands take `-o json` or `-o jsonl`. List commands (`pair list`,
 `channel list`, `contact list`, `schedule list`, `peers`, `backup list`,

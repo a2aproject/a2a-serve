@@ -1,4 +1,4 @@
-# Getting started
+# Getting Started
 
 Install a2a-serve, start a coding agent in your project, and talk to it from your terminal and your phone.
 
@@ -67,7 +67,7 @@ If anything fails, run `a2a-serve doctor`. It checks your setup and prints a fix
 
 ## Next steps
 
-- [Lesson 1](../examples/01-agent-server/README.md) covers pairing, approvals and an agent that calls another agent.
-- [Lesson 2](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet with a Telegram bot and a Grok webhook node.
-- [Lesson 3](../examples/03-agentmesh-relay/README.md) runs two agents on an Agent Mesh relay.
-- The [user guide](guide.md) covers every feature.
+- [Serve a Coding Agent](../examples/01-agent-server/README.md) covers pairing, approvals and an agent that calls another agent.
+- [Tailscale, Telegram and a Grok Bot](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet with a Telegram bot and a Grok webhook node.
+- [Agent Mesh Relay](../examples/03-agentmesh-relay/README.md) runs two agents on an Agent Mesh relay.
+- The [user guide](index.md#user-guide) covers every feature.
