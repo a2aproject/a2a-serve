@@ -46,7 +46,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 				Hostname:   cfg.Name,
 				StateDir:   s.dir.TSNetDir(),
 				ControlURL: cfg.Network.TailscaleControlURL,
-				AuthKey:    s.secrets[SecretTailscaleAuthKey],
+				AuthKey:    s.secrets()[SecretTailscaleAuthKey],
 				Logf:       s.logf,
 			}
 		}
@@ -65,7 +65,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		var err error
 		relay, err = newRelay(network.RelayConfig{
 			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
-			StateDir: s.dir.AgentMeshDir(), Token: s.secrets[SecretRelayToken],
+			StateDir: s.dir.AgentMeshDir(), Token: s.secrets()[SecretRelayToken],
 			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),
 			Logf: s.logf,
 		})

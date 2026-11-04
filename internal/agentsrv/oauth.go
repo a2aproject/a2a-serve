@@ -229,7 +229,7 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cfg := o.s.config()
-	secret, err := o.s.secrets.Resolve(cfg.Auth.GoogleClientSecret)
+	secret, err := o.s.secrets().Resolve(cfg.Auth.GoogleClientSecret)
 	if err != nil {
 		slog.Error("signing in with Google", "error", err)
 		http.Error(w, "The agent's Google app isn't set up: "+err.Error(), http.StatusInternalServerError)

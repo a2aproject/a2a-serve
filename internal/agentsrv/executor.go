@@ -61,7 +61,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	env := append([]string{}, cfg.Env...)
 	for _, name := range cfg.Secrets {
-		v, ok := s.secrets[name]
+		v, ok := s.secrets()[name]
 		if !ok {
 			return nil, nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
 		}

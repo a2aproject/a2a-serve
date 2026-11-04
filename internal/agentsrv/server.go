@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -89,13 +90,13 @@ type Options struct {
 // Server is a running agent server.
 type Server struct {
 	dir     agentdir.Dir
-	secrets agentdir.Secrets
 	out     io.Writer
 	started time.Time
 	cancel  context.CancelFunc
 
+	// cfgMu serializes changes of rt.
 	cfgMu sync.Mutex
-	cfg   *agentdir.Config
+	rt    atomic.Pointer[runtimeConfig]
 
 	store   *store.Store
 	tasks   *store.TaskStore
@@ -132,6 +133,13 @@ type Server struct {
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
 	pairLimit      *pairLimiter
+}
+
+// runtimeConfig is the config and secrets the server runs with. Changes
+// replace it whole, so readers never see a partial update.
+type runtimeConfig struct {
+	cfg     *agentdir.Config
+	secrets agentdir.Secrets
 }
 
 // maxExecutions bounds the tasks running at once, and
@@ -176,8 +184,6 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	s := &Server{
 		dir:     opts.Dir,
-		cfg:     opts.Config,
-		secrets: opts.Secrets,
 		out:     opts.Out,
 		started: time.Now(),
 		cancel:  cancel,
@@ -192,6 +198,7 @@ func Run(ctx context.Context, opts Options) error {
 
 		pairLimit: newPairLimiter(),
 	}
+	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
 	defer func() {
 		cancel()
@@ -414,17 +421,36 @@ func closeListener(ln net.Listener) error {
 }
 
 func (s *Server) config() *agentdir.Config {
+	c := *s.rt.Load().cfg
+	return &c
+}
+
+// secrets are the secrets in use. Callers must not change them.
+func (s *Server) secrets() agentdir.Secrets { return s.rt.Load().secrets }
+
+// setSecrets replaces the secrets in use.
+func (s *Server) setSecrets(secrets agentdir.Secrets) {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
-	c := *s.cfg
-	return &c
+	s.rt.Store(&runtimeConfig{cfg: s.rt.Load().cfg, secrets: secrets})
+}
+
+// reloadConfig applies the live settings of saved to the config in use.
+func (s *Server) reloadConfig(saved *agentdir.Config) {
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	cur := s.rt.Load()
+	next := *cur.cfg
+	agentdir.CopyLive(&next, saved)
+	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 }
 
 // updateConfig applies fn to the config and saves it.
 func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
-	next := *s.cfg
+	cur := s.rt.Load()
+	next := *cur.cfg
 	if err := fn(&next); err != nil {
 		return err
 	}
@@ -439,7 +465,7 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := s.dir.SaveConfig(saved); err != nil {
 		return err
 	}
-	*s.cfg = next
+	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 	return nil
 }
 

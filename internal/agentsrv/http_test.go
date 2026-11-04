@@ -230,7 +230,8 @@ func TestCardDescription(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{cfg: &agentdir.Config{Name: "coder", Harness: tc.harness}}
+			s := &Server{}
+			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: tc.harness}})
 			if got := s.card(network.ListenerPrivate, "http://127.0.0.1:9000").Description; got != tc.want {
 				t.Fatalf("Server.card().Description = %q, want %q", got, tc.want)
 			}
@@ -257,7 +258,8 @@ func TestCardPairingScheme(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}, private: &fakeProvider{signIn: tc.signIn}}
+			s := &Server{private: &fakeProvider{signIn: tc.signIn}}
+			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
 			card := s.card(tc.kind, "http://127.0.0.1:9000")
 			_, got := card.SecuritySchemes["pairing"]
 			if got != tc.want || (len(card.SecurityRequirements) > 0) != tc.want {
