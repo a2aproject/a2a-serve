@@ -150,7 +150,7 @@ func loadConfig(t *testing.T, d agentdir.Dir) *agentdir.Config {
 func TestSetStopped(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}}, agentdir.Secrets{"KEY": "old"})
-	got, err := Set(t.Context(), d, agentdir.Settings{
+	got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{
 		Sandbox:      "local",
 		AllowTools:   []string{"read"},
 		Secrets:      []string{"KEY", "NEW"},
@@ -200,7 +200,7 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 			t.Parallel()
 			want := &agentdir.Config{Name: "coder", Harness: "opencode"}
 			d := newAgent(t, want, nil)
-			_, err := Set(t.Context(), d, tc.s, tc.dryRun)
+			_, err := Set(t.Context(), d, controlapi.NewClient(d), tc.s, tc.dryRun)
 			var se *agentdir.SettingsError
 			if tc.wantErr != errors.As(err, &se) {
 				t.Fatalf("Set() error = %v, want a SettingsError %v", err, tc.wantErr)
@@ -215,7 +215,7 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 func TestUnsetSecret(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY", "OTHER"}}, agentdir.Secrets{"KEY": "k", "OTHER": "o"})
-	got, err := Unset(t.Context(), d, "secret", []string{"KEY"}, false)
+	got, err := Unset(t.Context(), d, controlapi.NewClient(d), "secret", []string{"KEY"}, false)
 	if err != nil {
 		t.Fatalf("Unset() error = %v", err)
 	}
@@ -260,7 +260,7 @@ func TestSetRunning(t *testing.T) {
 			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
 			f := &fakeServer{noReload: tc.noReload}
 			serveFake(t, d, f)
-			got, err := Set(t.Context(), d, agentdir.Settings{Description: "x", Sandbox: "local", Telegram: "123:abc"}, false)
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Description: "x", Sandbox: "local", Telegram: "123:abc"}, false)
 			if err != nil {
 				t.Fatalf("Set() error = %v", err)
 			}
@@ -323,7 +323,7 @@ func TestSetAccess(t *testing.T) {
 			if tc.running {
 				serveFake(t, d, &fakeServer{running: &agentdir.Config{Name: "coder", Harness: "opencode"}, access: &controlapi.Access{Pairings: 3, OwnerPairings: 1}})
 			}
-			got, err := Set(t.Context(), d, tc.s, false)
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), tc.s, false)
 			if err != nil {
 				t.Fatalf("Set() error = %v", err)
 			}
@@ -338,7 +338,7 @@ func TestPending(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local"}, nil)
 	serveFake(t, d, &fakeServer{running: &agentdir.Config{Name: "coder", Harness: "opencode"}})
-	got, running, err := Pending(t.Context(), d)
+	got, running, err := Pending(t.Context(), d, controlapi.NewClient(d))
 	if err != nil {
 		t.Fatalf("Pending() error = %v", err)
 	}
@@ -368,7 +368,7 @@ func TestRestart(t *testing.T) {
 			if tc.running {
 				serveFake(t, d, f)
 			}
-			err := Restart(t.Context(), d, false, io.Discard)
+			err := Restart(t.Context(), d, controlapi.NewClient(d), false, io.Discard)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Restart() error = %v, want %q", err, tc.wantErr)
 			}

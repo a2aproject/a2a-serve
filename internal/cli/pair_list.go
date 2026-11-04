@@ -45,11 +45,11 @@ pairing, which is you. Outside one, or with --joined, list the agents you joined
 			if caller {
 				return listJoined(cfg)
 			}
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			all, err := c.Pairings(cmd.Context())
 			if err != nil {
 				return err

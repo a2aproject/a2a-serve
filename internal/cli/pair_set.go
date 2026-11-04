@@ -73,11 +73,11 @@ are signed with. Linked messenger accounts stay linked.
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
 			}
-			c, offline, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			resp, err := c.UpdatePairing(cmd.Context(), args[0], req)
 			if err != nil {
 				return err
@@ -95,7 +95,7 @@ are signed with. Linked messenger accounts stay linked.
 				if err := printPairCode(cfg, resp.Code); err != nil {
 					return err
 				}
-				if err := warnPairCode(cfg.Out, resp.Code, offline); err != nil {
+				if err := warnPairCode(cfg.Out, resp.Code, !c.Running()); err != nil {
 					return err
 				}
 			}

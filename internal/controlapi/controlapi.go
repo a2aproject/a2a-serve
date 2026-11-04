@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -381,14 +382,54 @@ func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning
 // NotRunning marks the error for the CLI's exit code.
 func (e *notRunningError) NotRunning() bool { return true }
 
-// requestError is a request the server refused because of what it names,
-// such as a pairing which doesn't exist.
-type requestError struct{ msg string }
+// errorBody is the body of a failed control call. Kind and Name are set
+// for an [agenterr.NotFoundError].
+type errorBody struct {
+	Error string `json:"error"`
+	Kind  string `json:"kind,omitempty"`
+	Name  string `json:"name,omitempty"`
+}
 
-func (e *requestError) Error() string { return e.msg }
+// WriteError writes err as the response of a failed control call, with the
+// status of its [agenterr] type; [Client] turns it back into that type.
+func WriteError(w http.ResponseWriter, err error) {
+	body := errorBody{Error: err.Error()}
+	status := http.StatusInternalServerError
+	var (
+		nf *agenterr.NotFoundError
+		in *agenterr.InvalidError
+		co *agenterr.ConflictError
+	)
+	switch {
+	case errors.As(err, &nf):
+		status, body.Kind, body.Name = http.StatusNotFound, nf.Kind, nf.Name
+	case errors.As(err, &in):
+		status = http.StatusBadRequest
+	case errors.As(err, &co):
+		status = http.StatusConflict
+	}
+	jsonhttp.Write(w, status, body)
+}
 
-// UsageError marks the error for the CLI's exit code.
-func (e *requestError) UsageError() bool { return true }
+// responseError returns the error of a failed control call, as the server
+// wrote it with [WriteError].
+func responseError(status string, code int, data []byte) error {
+	var body errorBody
+	if err := json.Unmarshal(data, &body); err != nil || body.Error == "" {
+		return errors.New(jsonhttp.ErrorMessage(status, data))
+	}
+	switch code {
+	case http.StatusNotFound:
+		if body.Kind != "" {
+			return &agenterr.NotFoundError{Kind: body.Kind, Name: body.Name}
+		}
+	case http.StatusBadRequest:
+		return agenterr.Invalid(errors.New(body.Error))
+	case http.StatusConflict:
+		return &agenterr.ConflictError{Err: errors.New(body.Error)}
+	}
+	return errors.New(body.Error)
+}
 
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
@@ -480,12 +521,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return ErrUnsupported
 	}
 	if resp.StatusCode/100 != 2 {
-		msg := jsonhttp.ErrorMessage(resp.Status, data)
-		switch resp.StatusCode {
-		case http.StatusNotFound, http.StatusConflict, http.StatusUnprocessableEntity:
-			return &requestError{msg: msg}
-		}
-		return errors.New(msg)
+		return responseError(resp.Status, resp.StatusCode, data)
 	}
 	if out == nil {
 		return nil

@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -46,7 +47,7 @@ type View struct {
 }
 
 // Show returns the effective config of the agent in d.
-func Show(ctx context.Context, d agentdir.Dir) (*View, error) {
+func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View, error) {
 	cfg, err := d.ReadConfig()
 	if err != nil {
 		return nil, err
@@ -69,7 +70,7 @@ func Show(ctx context.Context, d agentdir.Dir) (*View, error) {
 		v.Secrets[agentdir.SecretTailscaleKey] = SecretStateStored
 	}
 	v.Defaults = defaults(d, cfg)
-	if v.Pending, v.Running, err = Pending(ctx, d); err != nil {
+	if v.Pending, v.Running, err = Pending(ctx, d, client); err != nil {
 		return nil, err
 	}
 	return v, nil

@@ -25,6 +25,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -213,6 +214,9 @@ func (sc *schedules) manage() manage.Schedules {
 // next.
 func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, error) {
 	s, err := sc.store.Schedule(ctx, name)
+	if errors.Is(err, store.ErrNotFound) {
+		return store.Schedule{}, &agenterr.NotFoundError{Kind: "schedule", Name: name}
+	}
 	if err != nil {
 		return store.Schedule{}, err
 	}

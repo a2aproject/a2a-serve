@@ -114,7 +114,7 @@ func TestPairingsOnBothSides(t *testing.T) {
 	}
 	anna.run(anna.home, "a2a", "serve", "pair", "rm", coder.url)
 	coder.serve("pair", "delete", "anna")
-	coder.mustFail("no pairing named anna", "pair", "get", "anna")
+	coder.mustFail("no pairing anna", "pair", "get", "anna")
 }
 
 // TestWebhookNodeChangedInPlace covers the webhook node of PR 5: pair set

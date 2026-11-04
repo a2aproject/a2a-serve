@@ -36,7 +36,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/launch"
-	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
@@ -136,54 +135,18 @@ func (f *serverFlags) control() (*controlapi.Client, error) {
 	return f.controlClient(d), nil
 }
 
-// manager changes what an agent keeps in its database: pairings, contacts
-// and schedules. [controlapi.Client] does so through the running agent,
-// and [agentctl.Offline] in the database of a stopped one.
-type manager interface {
-	Pair(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error)
-	Pairings(ctx context.Context) ([]controlapi.Pairing, error)
-	Pairing(ctx context.Context, name string) (*controlapi.Pairing, error)
-	UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error)
-	Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error)
-	Contacts(ctx context.Context) ([]controlapi.ContactInfo, error)
-	AddContact(ctx context.Context, req controlapi.ContactRequest) (*controlapi.ContactInfo, error)
-	DeleteContact(ctx context.Context, name string) error
-	Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, error)
-	AddSchedule(ctx context.Context, req schedule.Request) (*controlapi.ScheduleInfo, error)
-	DeleteSchedule(ctx context.Context, name string) error
-}
-
-// manager returns the control client of the running agent, or else the
-// database of the stopped agent, which done closes. offline tells which.
-func (f *serverFlags) manager(ctx context.Context) (m manager, offline bool, done func() error, err error) {
+// manager returns the [agentctl.Manager] of the agent, which closer closes.
+func (f *serverFlags) manager(ctx context.Context) (_ agentctl.Manager, closer io.Closer, err error) {
 	d, err := f.agentDir()
 	if err != nil {
-		return nil, false, nil, err
+		return nil, nil, err
 	}
-	c := f.controlClient(d)
-	_, err = c.Status(ctx)
-	if err == nil {
-		return c, false, func() error { return nil }, nil
-	}
-	if !errors.Is(err, controlapi.ErrNotRunning) {
-		return nil, false, nil, err
-	}
-	o, err := agentctl.OpenOffline(d)
-	if err != nil {
-		return nil, false, nil, err
-	}
-	return o, true, o.Close, nil
+	return agentctl.Open(ctx, d, f.controlClient(d))
 }
 
-// joinClose adds the error of done to *err.
-func joinClose(err *error, done func() error) {
-	*err = errors.Join(*err, done())
-}
-
-// controlContext returns ctx, in which the calls of agentctl to the running
-// agent use --timeout.
-func (f *serverFlags) controlContext(ctx context.Context) context.Context {
-	return agentctl.WithControlOptions(ctx, controlapi.WithTimeout(f.timeout))
+// joinClose adds the error of closing c to *err.
+func joinClose(err *error, c io.Closer) {
+	*err = errors.Join(*err, c.Close())
 }
 
 // controlClient returns a client for the agent in d, with --timeout.

@@ -62,7 +62,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Set(sf.controlContext(cmd.Context()), d, s, dryRun)
+			res, err := agentctl.Set(cmd.Context(), d, sf.controlClient(d), s, dryRun)
 			if err != nil {
 				return err
 			}
@@ -72,7 +72,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(sf.controlContext(cmd.Context()), d, false, cfg.progress())
+			return agentctl.Restart(cmd.Context(), d, sf.controlClient(d), false, cfg.progress())
 		},
 	}
 	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)

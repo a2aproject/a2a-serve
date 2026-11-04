@@ -66,7 +66,7 @@ existing agent, the flags change them like ` + "`a2a-serve config set`" + `.`,
 				}
 			}
 			s.Harness = name
-			res, err := agentctl.Set(cmd.Context(), d, s, false)
+			res, err := agentctl.Set(cmd.Context(), d, sf.controlClient(d), s, false)
 			if err != nil {
 				return err
 			}

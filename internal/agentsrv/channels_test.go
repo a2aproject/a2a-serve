@@ -26,6 +26,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -106,8 +107,8 @@ func TestDeleteChannelNotConfigured(t *testing.T) {
 
 	err := controlapi.NewClient(ts.dir).DeleteChannel(context.Background(), "telegram")
 
-	if err == nil || !strings.Contains(err.Error(), "telegram is not configured") {
-		t.Fatalf("DeleteChannel() error = %v, want telegram is not configured", err)
+	if diff := cmp.Diff(&agenterr.NotFoundError{Kind: "channel", Name: "telegram"}, err); diff != "" {
+		t.Fatalf("DeleteChannel() wrong error (-want +got) diff = %s", diff)
 	}
 }
 

@@ -47,7 +47,7 @@ aren't in config.yaml: store them with ` + "`a2a-serve config set --secret NAME`
 			if err != nil {
 				return err
 			}
-			res, err := agentctl.Edit(sf.controlContext(cmd.Context()), d, func(path string) error {
+			res, err := agentctl.Edit(cmd.Context(), d, sf.controlClient(d), func(path string) error {
 				c := exec.CommandContext(cmd.Context(), editor[0], append(editor[1:], path)...)
 				c.Stdin, c.Stdout, c.Stderr = os.Stdin, os.Stdout, os.Stderr
 				if err := c.Run(); err != nil {
