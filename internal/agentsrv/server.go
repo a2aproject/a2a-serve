@@ -39,7 +39,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/turns"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -138,11 +140,11 @@ type Server struct {
 	nodes         *nodes.Host
 	pairings      *pairings.Service
 	approvals     *approvals.Service
-	oauth         *oauthServer
+	oauth         *oauth.Server
 	// ads are the advertised pairings of the private network.
 	ads       *gossip.Table
 	backups   backups
-	inspector *inspector
+	inspector *inspector.Inspector
 	// split runs anonymous conversations in their own agent process, and
 	// budget limits their tasks.
 	split  *splitExecutor
@@ -309,7 +311,13 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
 	}
-	s.oauth = newOAuthServer(s, google, opts.SharedGoogleClientID)
+	s.oauth = oauth.New(oauth.Deps{
+		Google:         google,
+		SharedClientID: opts.SharedGoogleClientID,
+		Tokens:         s.store,
+		Config:         s.config,
+		Secrets:        s.secrets,
+	})
 	s.nodes = nodes.New(ctx, nodes.Config{
 		Store:          s.store,
 		Viewer:         s.viewer,
@@ -392,7 +400,17 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	})
 	s.claims = newCallClaims(CallClaimsDeps{Store: s.store, Bridge: s.bridge})
 	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
-	s.inspector = newInspector(s)
+	s.inspector = inspector.New(inspector.Deps{
+		Store:        s.store,
+		Tasks:        s.tasks,
+		Approvals:    s.approvals,
+		ListPairings: s.pairings.List,
+		Sender:       s.sender,
+		AgentName:    agentName,
+		BaseURL:      s.bestURL,
+		Status:       s.status,
+		MarkAnswered: s.chatApprovals.MarkAnswered,
+	})
 
 	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, anonymous: s.split.Anonymous},
 		a2asrv.WithTaskStore(s.tasks),

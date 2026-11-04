@@ -25,13 +25,14 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -88,7 +89,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	mux.HandleFunc("DELETE /schedules/{name}", s.ctlDeleteSchedule)
 	mux.HandleFunc("GET /advertisements", s.ctlAds)
 	mux.HandleFunc("POST /inspector/login", func(w http.ResponseWriter, r *http.Request) {
-		jsonhttp.Write(w, http.StatusOK, controlapi.InspectorLogin{Path: InspectorPath + "/login?code=" + s.inspector.loginCode()})
+		jsonhttp.Write(w, http.StatusOK, controlapi.InspectorLogin{Path: inspector.Path + "/login?code=" + s.inspector.LoginCode()})
 	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) { jsonhttp.Write(w, http.StatusOK, s.config()) })
 	mux.HandleFunc("POST /config/reload", s.ctlReloadConfig)
@@ -156,7 +157,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
-	approvals, err := s.inspector.pendingApprovals(ctx)
+	approvals, err := s.inspector.PendingApprovals(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -171,9 +172,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	return st, nil
 }
 
-func stateName(s a2a.TaskState) string {
-	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(string(s), "TASK_STATE_")), "_", "-")
-}
+func stateName(s a2a.TaskState) string { return a2atext.StateName(s) }
 
 func (s *Server) ctlPair(w http.ResponseWriter, r *http.Request) {
 	var req controlapi.PairCodeRequest
