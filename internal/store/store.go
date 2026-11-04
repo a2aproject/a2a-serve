@@ -238,7 +238,7 @@ func (s *Store) migrate(ctx context.Context) error {
 		return err
 	}
 	if version > len(migrations) {
-		return fmt.Errorf("the database is at version %d, newer than this a2a supports (%d); upgrade a2a", version, len(migrations))
+		return fmt.Errorf("the database is at version %d, newer than this a2a-serve supports (%d); upgrade a2a-serve", version, len(migrations))
 	}
 	for v := version; v < len(migrations); v++ {
 		if err := s.runMigration(ctx, v); err != nil {

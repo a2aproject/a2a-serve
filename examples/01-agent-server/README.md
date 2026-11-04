@@ -1,9 +1,7 @@
-# Lesson 1 — serve a coding agent
+# Lesson 1 — Serve a coding agent
 
-Last updated: 2026.10.22
-
-This lesson serves a real coding agent, opencode or Claude Code, from its project directory with
-`a2a-serve start <harness>`, and talks to it like any other A2A agent.
+This lesson serves a coding agent, opencode or Claude Code, from its project
+directory and talks to it like any other A2A agent.
 
 ## What you'll learn
 
@@ -14,9 +12,9 @@ This lesson serves a real coding agent, opencode or Claude Code, from its projec
 
 ## Prerequisites
 
-- The `a2a` CLI and `a2a-serve` installed (see [Installation](../../docs/getting-started.md#install)).
+- The `a2a` CLI and `a2a-serve` installed (see [Getting started](../../docs/getting-started.md#install)).
 - Docker. Without it, add `--sandbox local` to the start commands below; the
-  harness then runs on your machine and needs to be installed there.
+  agent then runs on your machine and needs to be installed there.
 - An API key for the model, such as `OPENROUTER_API_KEY`, exported in your shell.
 
 ## 1. Create a workspace
@@ -42,7 +40,7 @@ a2a-serve start opencode --name coder --secret OPENROUTER_API_KEY
 For Claude Code, use `a2a-serve start claude` instead.
 
 The first run saves the flags to `.a2a/config.yaml` and the key to
-`.a2a/state/secrets`, pulls or builds the harness image, and stays in the
+`.a2a/state/secrets`, pulls or builds the agent image, and stays in the
 foreground. Later runs from this directory are just `a2a-serve start`.
 
 In **terminal B**, check that it runs and note its local URL:
@@ -58,35 +56,23 @@ coder (opencode) running for 12s, pid 41233
   local    http://127.0.0.1:46757
 ```
 
-## 3. Point the CLI at it
+## 3. Call it from this machine
 
 Every A2A request needs a token. On start, the server saves an owner token
-for its local URL in your `~/.config/a2a-serve/credentials.json`, so commands
-you run on this machine attach it without pairing once the `a2a` CLI uses
-a2a-serve's credential helper:
+for its local URL, and the `a2a` CLI attaches it through the credential helper
+that `a2a-serve doctor --fix` set up during install.
 
-```bash
-mkdir -p ~/.config/a2a-cli
-printf 'credential-helper:\n  - command: [a2a-serve, credential]\n' >> ~/.config/a2a-cli/config.yaml
-```
-
-Terminal A shows:
-
-```
-→ call it from this machine: a2a send -a http://127.0.0.1:46757 "…"
-```
-
-Other people and other machines need an invitation:
-`a2a-serve pair invite <name>` prints a one-time code, which they redeem
-with `a2a-serve pair join <agent-url> <code>`. Step 7 does the same for another
+Other people and machines need an invitation: `a2a-serve pair invite <name>`
+prints a one-time code, which they redeem with
+`a2a-serve pair join <agent-url> <code>`. Step 7 does the same for another
 agent.
 
-Set the agent card once so the commands below stay short, and give the agent
+Save the agent's URL so the commands below stay short, and give the agent
 time to think:
 
 ```bash
-cat > .env <<'EOF'
-A2ACLI_AGENT_CARD=http://127.0.0.1:46757
+cat > .env <<EOF
+A2ACLI_AGENT_CARD=$(a2a-serve status --url=local)
 A2ACLI_TIMEOUT=3m
 EOF
 ```
@@ -157,14 +143,15 @@ a2a send "Ask the reviewer agent what files it sees in its workspace, and tell m
 
 Coder runs `a2a send -a http://a2a/<handle>/reviewer ...` in its sandbox. Its
 server makes the call with the token it just stored, so no credential enters
-the sandbox. If reviewer needs an approval, the request reaches you, not coder.
+the sandbox. If reviewer needs an approval, the request comes to you.
 
 ## 8. Clean up
 
 ```bash
-cd ~/a2a-lesson1/coder && a2a-serve stop
+cd ~/a2a-lesson1/coder
+a2a-serve pair rm "$(a2a-serve status --url=local)"   # the owner token of this machine
+a2a-serve stop
 cd ~/a2a-lesson1/reviewer && a2a-serve stop
-a2a-serve pair rm http://127.0.0.1:46757      # the owner token of this machine
 ```
 
 Everything an agent keeps is in `.a2a/` in its workspace; delete the

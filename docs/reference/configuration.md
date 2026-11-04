@@ -11,7 +11,7 @@ command: [cloudcode, acp]        # optional: replaces the profile's command
 sandbox: docker                  # or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace
-secrets: [OPENROUTER_API_KEY]     # passed to the harness as environment variables
+secrets: [OPENROUTER_API_KEY]    # passed to the agent as environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
   private: tailscale

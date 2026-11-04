@@ -73,7 +73,19 @@ a2a-serve logs
 a2a-serve stop
 ```
 
-`internal/agentsrv/testdata/fakeacp/main.go` lists the prompts it understands.
+`internal/agentsrv/testdata/fakeacp/main.go` lists the prompts it understands. Building needs Go 1.26.
+
+`internal/agentsrv/conformance_test.go` runs the conformance scenarios against `fakeacp`: a text turn, tool progress, approve, deny, always-allow, cancel mid-tool, follow-up in context, restart and resume, agent crash, and a queued concurrent task. To try a real agent without Docker:
+
+```sh
+a2a-serve start opencode --sandbox local --command "opencode acp"
+```
+
+[`examples/03-agentmesh-relay/demo.sh`](examples/03-agentmesh-relay/demo.sh) runs lesson 3 end to end against `agentmesh-one`, with a token-joined flow and OIDC sign-in. `--tunnel cloudflare` adds public ingress, `--vertex-project <gcp-project>` uses Gemini on Vertex AI, and `--model` with `--openai-base-url` uses any OpenAI-compatible endpoint:
+
+```sh
+bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
+```
 
 ### End-to-end tests
 

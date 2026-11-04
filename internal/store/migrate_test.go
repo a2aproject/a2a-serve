@@ -117,8 +117,8 @@ func TestOpenNewerDatabaseFails(t *testing.T) {
 	if err := db.Close(); err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "newer") {
-		t.Fatalf("Open() error = %v, want a newer version error", err)
+	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "newer than this a2a-serve supports") {
+		t.Fatalf("Open() error = %v, want a newer version error naming a2a-serve", err)
 	}
 }
 

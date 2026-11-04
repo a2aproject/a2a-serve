@@ -6,7 +6,7 @@
 > current behavior. `--private-access`, `--public-access`, `pair invite --owner`,
 > `--owner` and `--allow` don't exist yet, and `status` has no `access` block.
 
-An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. Most people need only the first half: entities, the access flags, and common tasks. The second half documents the data model underneath, and how it maps onto [Agent Mesh](agent-mesh.md).
+An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
 
 ![Access model concepts](../graphs/access-model-concepts.png#gh-light-mode-only)
 ![Access model concepts](../graphs/access-model-concepts-dark.png#gh-dark-mode-only)
@@ -95,11 +95,11 @@ Each chat is one conversation. Approvals appear in the chat where the task start
 
 ### Calls between agents
 
-The harness calls other agents through its server, which holds the credentials. The receiving agent gives a call that came through another agent at most the rights of "everyone else who is allowed", even when the calling agent is yours. The task runs, and its approvals travel back to the person who started the conversation. Someone who can steer one of your agents therefore can't use it to act as you on your other agents.
+The agent calls other agents through its server, which holds the credentials. The receiving agent gives a call that came through another agent at most the rights of "everyone else who is allowed", even when the calling agent is yours. The task runs, and its approvals travel back to the person who started the conversation. Someone who can steer one of your agents therefore can't use it to act as you on your other agents.
 
 ### The shared sandbox
 
-All conversations of an agent run in one harness and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a harness of their own.
+All conversations of an agent run in one agent process and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a separate agent process.
 
 ## Data model reference
 
@@ -109,7 +109,7 @@ Every request yields one identity: verified claims, and where each came from.
 
 | Field | Source |
 |---|---|
-| network | local, private, public, chat or harness, and the provider |
+| network | local, private, public, chat or the agent's socket, and the provider |
 | email | tailnet login of an untagged user; relay principal, when it is a verified email; Google sign-in; email sender with DMARC pass |
 | node | tailnet `StableID` or mesh peer ID; tagged tailnet nodes have only this |
 | pairing | the pairing whose token or chat link was used |
@@ -158,17 +158,17 @@ A request is resolved in this order:
 
 A pairing is a record with a name, a kind (person, device, agent or webhook) and a role. Tokens and chat links point to it and carry no role of their own, so a role change applies to the next request. A webhook pairing's token opens the node's mailbox and lets the node call the agent as `authenticated`.
 
-## Agent Mesh
+## Relay
 
-On an Agent Mesh relay, the relay provides the private network, the public URL and the identity of every caller, and a2a-serve applies this policy on top. [a2a-serve on Agent Mesh](agent-mesh.md) maps each entity onto Agent Mesh.
+On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network, the public URL and the identity of every caller, and a2a-serve applies this policy on top. The Agent Mesh page maps each entity onto the relay.
 
 ## Guarantees
 
-- Every decision comes from one place, and only from verified inputs. Nothing the harness or a caller sends raises a role.
+- Every decision comes from one place, and only from verified inputs. Nothing the agent or a caller sends raises a role.
 - A call that comes through another agent gets at most `authenticated`.
 - An agents-URL handle works only for its conversation and turn, and only for the tasks it created.
 - The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
 - A message joins an existing conversation only if its sender owns it or is an owner.
-- Callers allowed by `--public-access anyone` have their own harness, a budget per listener, and approvals that time out.
+- Callers allowed by `--public-access anyone` have a separate agent process, a budget per listener, and approvals that time out.
 - Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused.
 - The local credential works only on the local listener. Loopback alone is never trusted.

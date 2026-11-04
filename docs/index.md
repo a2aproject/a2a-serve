@@ -8,15 +8,17 @@ a2a-serve start opencode --secret OPENROUTER_API_KEY --private tailscale --detac
 a2a-serve channel add telegram --token env:BOT_TOKEN
 ```
 
-This starts opencode in a Docker sandbox with the project mounted, gives it an HTTPS address on your tailnet, and connects a Telegram bot to it. Open the link it prints to make the chat yours, and edits and shell commands wait for your approval there. Send it work from a terminal, or invite someone else:
+This starts opencode in a Docker sandbox with the project mounted, gives it an HTTPS address on your tailnet, and connects a Telegram bot. Open the link it prints to link the chat to you. Edits and shell commands wait for your approval there.
+
+Send it work from a terminal, or invite someone else:
 
 ```bash
 a2a send -a "$(a2a-serve status --url=local)" "What does this project do?"
-a2a-serve pair invite anna   # a one-time code; anna runs: a2a-serve pair join <agent-url> <code>
+a2a-serve pair invite anna   # prints a one-time code for anna
 ```
 
 > [!WARNING]
-> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may still change; stored state always migrates forward. Read the [security page](concepts/security.md) before you expose an agent to other people.
+> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward ([upgrades](upgrades.md)). Read the [security page](concepts/security.md) before you expose an agent to other people.
 
 ## Features
 
@@ -32,8 +34,8 @@ a2a-serve pair invite anna   # a one-time code; anna runs: a2a-serve pair join <
 
 | | |
 |---|---|
-| [Getting started](getting-started.md) | Install a2a-serve and start a first agent |
-| [Concepts](concepts/access-model.md) | Who can call an agent, how it runs on Agent Mesh, the architecture and security |
-| [User guide](guide.md) | Sandbox, approvals, networks, messengers, agents calling agents, schedules, backups |
-| [Command reference](reference/commands/a2a-serve.md) | Every command and flag, the configuration file, exit codes and HTTP routes |
-| [Examples](../examples/README.md) | Runnable lessons, from a local agent to an Agent Mesh relay |
+| [Getting started](getting-started.md) | Install a2a-serve and talk to your first agent |
+| [User guide](guide.md) | Settings, sandbox, approvals, networks, messengers, agents calling agents, schedules and backups |
+| [Concepts](concepts/architecture.md) | The architecture, the access model, Agent Mesh and security |
+| [Examples](../examples/README.md) | Step-by-step lessons, from a local agent to an Agent Mesh relay |
+| [Reference](reference/commands/a2a-serve.md) | Every command and flag, the configuration file, exit codes and HTTP routes |

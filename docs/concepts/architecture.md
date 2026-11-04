@@ -1,186 +1,60 @@
 # Architecture
 
-> [!WARNING]
-> Pre-1.0. This describes the current design; it may change.
+a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), such as opencode or Claude Code, into an A2A agent. This page explains how it works. The [user guide](../guide.md) explains how to use it.
 
-How to use it is in the [user guide](../guide.md). This page is
-about how it works.
+## Overview
 
-## Summary
-
-`a2a-serve start <harness>` turns a coding agent that speaks the
-[Agent Client Protocol](https://agentclientprotocol.com) (opencode, Claude
-Code, or any `--command`) into an A2A agent:
-
-- **One agent per process, per directory.** The agent is its project
-  directory: `.a2a/config.yaml` holds its definition and `.a2a/state/` its
-  database, secrets, network identity and harness home. Management commands
-  find it the way git finds a repository and talk to it over a control socket.
-- **Sandboxed.** The harness runs in Docker as your user, with the workspace
-  mounted at its own path. Every tool call that changes something asks first.
-- **Reachable.** Over A2A on localhost, on a private network (its own tailnet
-  machine through tsnet, or the LAN), on a public URL (Funnel or ngrok), and
-  from Telegram, Discord and email. A chat thread is an A2A context.
-- **Paired, not configured.** Access is a one-time code from the owner, which
-  becomes a token, a messenger link, a contact or a webhook node. On the
-  tailnet your own machines need no code.
-- **Approvals stay with people.** A tool call pauses the task in
-  `input-required`; whoever started the task answers where it came from, and
-  owners can answer any.
-- **Agents call agents through the server.** The harness uses the `a2a` CLI
-  against `http://a2a/<handle>/<agent>`. The server makes the call with its
-  own identity, relays the other agent's approvals to the user, and posts late
-  results back into the conversation. Credentials never enter the sandbox.
-- **Webhook nodes.** Agents that only run when woken, such as a Grok routine,
-  get an A2A address on the server, which holds their tasks and wakes them
-  with signed POSTs.
+- **One agent per directory.** `.a2a/config.yaml` holds the agent's settings, and `.a2a/state/` its database, secrets, network identity and home directory. One a2a-serve process serves one agent.
+- **The agent runs in a sandbox.** a2a-serve starts the agent in a Docker container with the workspace mounted, and talks to it over ACP.
+- **The server faces the world.** Callers reach the server over A2A on localhost, a private network, a public URL or a messenger. The server checks who they are and passes their messages to the agent.
+- **People approve changes.** Every tool call that changes something pauses the task until the person who started it, or an owner, answers.
+- **Calls to other agents go through the server.** The agent uses the `a2a` CLI. The server makes the call with its own credentials, so no token enters the sandbox.
 
 ## Components
 
-| Component | What it does | Code |
-| --- | --- | --- |
-| Listeners | localhost, private (tsnet, LAN with mDNS, or an Agent Mesh relay), public (Funnel, ngrok, or a relay), the control socket, and the harness listener. | `internal/network`, `agentsrv/netsetup.go`, `agentsrv/control.go`; the control API is `internal/controlapi` |
-| Auth chain | Turns a request into a principal: a channel link, Tailscale `WhoIs` on the private listener, or a pairing token, including the tokens the agent issues after a Google sign-in, which it checks against the allowlist on every use. | `internal/auth`, `agentsrv/oauth.go`, `internal/googleauth` |
-| A2A handler | JSON-RPC and REST, the agent card, `/pair`, `/hitl/<token>`, `/n/<node>`, `/mailbox/api`. Tasks are stored in SQLite as an append-only event log, materialized on read; terminal tasks are cached as snapshots, and tasks idle longer than `task_ttl` are deleted. | `agentsrv/http.go`, `internal/pairapi`, `internal/store` |
-| Router | Runs the messenger channels, maps a conversation to an A2A context, renders streaming answers and approval buttons. | `agentsrv/router.go`, `internal/channel/*` |
-| Executor | `a2aacp` from a2a-go: one ACP session per A2A context, created with the MCP servers of the project's `.mcp.json`, task updates from ACP notifications, permission requests and forms as Structured Input extension requests. The server wraps it to add the `[a2a agents]` line. | `agentsrv/executor.go`, `agentsrv/instructions.go`, `agentsrv/project.go`, `internal/project` |
-| Approvals | Stores questions, decides who may answer, sends answers to the task here or at another agent, serves `/hitl/<token>`. | `agentsrv/approvals` |
-| Sandbox | `docker run` with the workspace, `state/home` as `/home/agent`, dropped capabilities and limits; or the host with `--sandbox local`. Images are pulled, or built from Dockerfiles in the binary. `harness.Prepare` turns a spec into the command to start. | `internal/harness` |
-| Peers proxy | Serves contacts and nodes to the harness as A2A agents under `/<handle>/<agent>`, guards approvals, watches tasks. Keeps one A2A client per contact. | `agentsrv/agents.go`, `agentsrv/peers.go` |
-| Webhook nodes | A2A agents whose tasks the server holds; it wakes them with signed POSTs, and they answer through the mailbox API. | `agentsrv/nodes`, `internal/mailboxapi` |
-| Schedules | Run a prompt as a user on a cron expression or once, posted into a conversation as a new turn. The harness manages its own through the built-in `schedules` agent at its agents URL. | `agentsrv/schedules.go`, `agentsrv/schedules_agent.go`, `internal/schedule` |
-| Advertised pairings | A gossiped table of the webhook nodes agents advertise to the private network, kept in `state/ads.json`; `contact add <node>@<agent>` calls one through its host. | `internal/gossip`, `agentsrv/ads.go` |
-| Backups | Encrypted snapshots of the database (`VACUUM INTO`), config, secrets, harness home and network identity, taken at an interval to a directory, GCS or S3, and restored with `a2a-serve backup restore`. | `internal/backup`, `agentsrv/backups.go` |
-| Inspector | A read-only web page of conversations, tasks and state, where the owner also answers approvals. `a2a-serve inspect` mints a one-time login code over the control socket; the session is a cookie with a CSRF token. Served on the local and private listeners only. | `agentsrv/inspector.go`, `agentsrv/inspector_pages.go` |
-| CLI | `a2a-serve ...` on the server side, `a2a-serve pair join` and `a2a-serve mailbox` on the caller and node side. | `internal/cli`, `internal/launch` |
+| Component | What it does |
+| --- | --- |
+| Listeners | Accept requests on localhost, the private network (Tailscale, LAN or an Agent Mesh relay), the public URL (Funnel, ngrok or a relay), the control socket and the agent's socket. |
+| Auth | Turns each request into a caller: a pairing token, a messenger link, a Tailscale or relay identity, or a Google sign-in. |
+| A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
+| Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |
+| Executor | Keeps one ACP session per conversation, and turns ACP updates into A2A task updates and approval requests. |
+| Approvals | Decide who may answer a question, and deliver the answer to the task. |
+| Sandbox | Runs the agent in Docker, or on the host with `--sandbox local`. |
+| Agents proxy | Lets the agent call contacts and webhook nodes, and relays their approvals and late results. |
+| Webhook nodes | Hold the tasks of agents that run only when woken, and wake them with signed POSTs. |
+| Schedules | Run prompts at set times as new turns in a conversation. |
+| Backups | Take encrypted snapshots of the agent directory. |
+| Inspector | A web page where the owner sees conversations and answers approvals. |
 
-The state is all in the agent directory:
+## Pairing
 
-```
-.a2a/
-├── config.yaml        # flags of the first run; secrets as secret:NAME references
-└── state/
-    ├── server.db      # tasks, ACP sessions, tokens, links, contacts, nodes, questions, handles, watches, schedules
-    ├── secrets        # mode 0600
-    ├── tsnet/         # the agent's tailnet machine
-    ├── home/          # the harness's /home/agent
-    ├── harness/a2a.sock
-    └── server.sock
-```
+Access starts with a one-time code from `a2a-serve pair invite`. Only someone with access to the agent directory can mint one, since the command goes through the control socket.
 
-## Pairing and identity
+The caller redeems the code for a token. People run `a2a-serve pair join`, chat accounts send `join <code>` to the bot, other agents run `contact add --code`, and webhook nodes get a node token. The `a2a` CLI attaches saved tokens through a2a-serve's credential helper.
 
-Every way in starts with a code minted over the control socket
-(`a2a-serve pair invite`), so only someone with access to the agent
-directory can hand out access. The one exception is the user running the
-server: on start, it saves an owner token named `local` for its local URL in
-that user's `~/.config/a2a-serve/credentials.json`. Loopback connections aren't
-trusted instead, because tunnels such as ngrok reach the server from
-loopback too.
-
-- **Callers** run `a2a-serve pair join <agent-url> <code>`. The token (`a2p_...`) is
-  saved in `~/.config/a2a-serve/credentials.json`. The `a2a` CLI asks the
-  credential helper `a2a-serve credential` for the headers of each agent URL
-  ([Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)),
-  so later `a2a send`, `a2a task` and `a2a card` commands attach the token for
-  that URL only.
-- **Messenger accounts** send `join <code>` to the bot. The server links the
-  channel identity to the principal; only verified senders can link (for
-  email, DMARC or aligned DKIM from the trusted server).
-- **Other agents** redeem a code with `a2a-serve contact add --url --code`
-  and keep the token in their own database. On the same tailnet no code is
-  needed: the callee identifies the caller with `WhoIs`.
-- **Webhook nodes** redeem a node code with the same `a2a-serve pair join`. Their
-  token (`a2rn.<api url>.<id>.<secret>`) carries the agent's URL, opens the
-  `/mailbox/api`, and authenticates the node's own A2A calls to the agent as a
-  member.
-
-Principals are `user:owner`, `pair:<name>` (member or owner role),
-`user:<login>` for other tailnet users allowed in `config.yaml`, and
-`node:<id>`. `a2a-serve pair rm <name>` revokes a name's tokens and the
-messenger links made with its codes, including links with the owner role, or
-removes a node.
+The user who starts the server gets an owner token for the local URL. On a tailnet or relay, your own devices and agents are recognized by their network identity and need no code.
 
 ## A turn
 
-1. A message arrives from a chat (through the router) or as an A2A request.
-   The auth chain gives it a principal, which becomes the A2A user.
-2. The executor maps the A2A context to an ACP session (kept in SQLite, so
-   conversations survive restarts) and sends the message as a prompt. New
-   prompts start with the `[a2a agents]` line; answers to the harness's own
-   questions don't, because the executor parses them.
-3. The harness is configured to ask before every tool call that changes
-   something. `--allow-tools` and `--deny-tools` answer by ACP tool kind;
-   anything else pauses the task in `input-required` with a structured input
-   request.
-4. Whoever started the task answers: an A2A caller on the task itself, a
-   messenger user in the same conversation, with buttons or the
-   `/hitl/<token>` page. Questions of tasks nobody watches, such as the runs
-   of a schedule without a chat, go to the owner chat (`--owner-chat`).
+1. A message arrives over A2A or from a messenger. Auth decides who sent it.
+2. The executor sends it to the agent's ACP session for that conversation. Sessions are stored, so conversations survive restarts.
+3. When the agent wants to run a tool that changes something, the task pauses with an approval request.
+4. The person who started the task answers, in the same place. The agent continues and finishes the task.
 
-## Agent to agent
+## Agents calling agents
 
-The harness calls other agents with the plain `a2a` CLI. Everything that
-makes the call trustworthy happens in the server:
+The agent runs `a2a send` against a URL such as `http://a2a/k3/reviewer`. The request reaches the server through a socket only the agent can use. The handle `k3` tells the server which conversation and user the call belongs to. The agent's image carries the `a2a` version the server needs.
 
-- **Reaching the server.** The harness listener is a Unix socket, mounted into
-  the container at `/run/a2a/a2a.sock`. `A2ACLI_UNIX_SOCKET=<socket>` sends
-  every request of the harness's `a2a` through it, so the host `a2a` of
-  agents URLs only names the server. The container's `a2a` comes from the
-  harness image, whose tag names the `a2a` version the server needs, so the
-  harness runs that version on every host. Docker Desktop can't mount the
-  socket, so there the listener is TCP and the harness sends a key, returned
-  by a credential helper script the server writes into the harness home and
-  scopes to that host with `A2ACLI_CREDENTIAL_HELPER=<host>=<path>`.
-- **Which conversation.** One harness process serves every conversation, and
-  a shell command carries nothing that ties it to one. So each prompt's
-  `[a2a agents]` line gives a short handle, `http://a2a/k3`, which the server
-  maps to the A2A context, the user the turn is for and the hop count. A
-  handle is not a secret: only the harness reaches the listener.
-- **Making the call.** For a contact, the server resolves its card and calls
-  it with its stored token or over tsnet, adding `X-A2A-Serve-On-Behalf-Of` and
-  `X-A2A-Serve-Hops` (at most 3). The callee counts hops from every caller, and
-  honors `X-A2A-Serve-On-Behalf-Of` only from agents of
-  its own owner, because the user it names is in the caller's namespace. A
-  node is called in-process.
-- **Approvals.** If the called agent asks for an approval, the server relays
-  it to the user in the chat they are in, and refuses an answer from the
-  harness itself. The user's answer goes to the remote task.
-- **Late results.** A task the harness didn't wait for (`--async`, a dropped
-  stream, or one paused on an approval) is watched, and its result is posted
-  into the conversation as a new turn, so the agent picks it up and tells the
-  user.
-- **Instructions.** The how-to (`skills/a2a-agents`) and the list of agents
-  are kept in a marked section of the harness's global instructions,
-  `~/.config/opencode/AGENTS.md` and `~/.claude/CLAUDE.md` in `state/home`.
+The server then:
 
-Webhook nodes are the other direction: the server wakes the node with a POST
-signed with `X-A2A-Serve-Signature: t=<time>,v1=<HMAC-SHA256 of "<t>.<body>">`
-(`mailboxapi.Verify` checks it), and
-the node answers with `a2a-serve mailbox reply`, which posts events to the task. A
-task with no event for 10 minutes fails.
+- calls the other agent with its own token or network identity;
+- relays the other agent's approval requests to the user;
+- posts results that arrive later into the conversation as a new turn;
+- stops chains of calls after 3 hops.
 
 ## Design notes
 
-- **Why the CLI instead of MCP tools.** ACP passes nothing per session except
-  MCP servers, which needed a Node bridge on Linux and a tool surface the
-  harness had to learn. The CLI is already in the sandbox and covers the whole
-  protocol (streaming, tasks, follow-ups); the handle carries what the MCP
-  session token used to.
-- **Why calls go through the server.** The sandbox can't reach the tailnet,
-  which runs inside the server process, and shouldn't hold contact tokens.
-  Going through the server also keeps approvals with people and lets late
-  results come back.
-- **What survives a restart.** Conversations, questions, the messages that
-  show them, agents URL handles and watches are in `server.db`, so a question
-  asked before a restart can still be answered and is not asked again. Open
-  tasks are failed on start; a webhook node's open tasks, inbox and
-  idempotency keys are kept in memory only, because none would be valid after
-  a restart. The database schema is versioned with `PRAGMA user_version`.
-- **Why one code for everything.** `/pair` redeems caller and node codes
-  alike, and `a2a-serve pair join` stores whichever token it gets, so there is one
-  command to learn on each side.
-
-Not in this version: an egress proxy and credential injection for the
-harness's own network access. API keys passed with `--secret` are visible
-inside the container.
+- **Why the `a2a` CLI.** It is already in the sandbox and covers the whole A2A protocol. ACP can pass only MCP servers to a session, and an MCP bridge added a tool surface for the agent to learn.
+- **Why calls go through the server.** The private network runs inside the server process, contact tokens stay out of the sandbox, and the server can route approvals and late results to people.
+- **What survives a restart.** Conversations, pending questions and watched tasks are in `server.db`, so a question asked before a restart can still be answered. Open tasks fail on restart.

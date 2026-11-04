@@ -68,13 +68,18 @@ nav:
   - Home: index.md
   - Getting started: getting-started.md
   - Concepts:
+      - Architecture: concepts/architecture.md
       - Access model: concepts/access-model.md
       - Agent Mesh: concepts/agent-mesh.md
-      - Architecture: concepts/architecture.md
       - Security: concepts/security.md
   - Guide:
       - User guide: guide.md
       - Upgrades: upgrades.md
+  - Examples:
+      - examples/index.md
+      - Serve a coding agent: examples/01-agent-server/index.md
+      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
+      - Agent Mesh relay: examples/03-agentmesh-relay/index.md
   - Reference:
       - Commands:
           - a2a-serve: reference/commands/a2a-serve.md
@@ -99,8 +104,3 @@ nav:
       - Output and exit codes: reference/output.md
       - HTTP routes: reference/http-routes.md
       - The a2a CLI: reference/a2a-cli.md
-  - Examples:
-      - examples/index.md
-      - Serve a coding agent: examples/01-agent-server/index.md
-      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
-      - Agent Mesh relay: examples/03-agentmesh-relay/index.md

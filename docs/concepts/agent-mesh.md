@@ -1,4 +1,4 @@
-# a2a-serve on Agent Mesh
+# Agent Mesh
 
 > [!NOTE]
 > Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. The access flags, verified-email mapping and egress through the relay are planned, and marked as such below.
@@ -9,7 +9,7 @@ The boundary between them:
 
 | a2a-serve | Agent Mesh |
 |---|---|
-| The harness and its ACP executor | The network between agents: routers, relaying, discovery |
+| The agent and its ACP executor | The network between agents: routers, relaying, discovery |
 | The Docker sandbox | Identity: enrollment, node keys, credentials |
 | Pairing, contacts and the access policy | Public ingress |
 | Approvals | Egress to the internet |
@@ -17,18 +17,14 @@ The boundary between them:
 
 a2a-serve decides who may do what with an agent. Agent Mesh decides who is on the network and proves who each caller is. a2a-serve writes everything Agent Mesh needs from its own settings, so users never edit Agent Mesh configuration.
 
-![a2a-serve on Agent Mesh](../graphs/agentmesh.png#gh-light-mode-only)
-![a2a-serve on Agent Mesh](../graphs/agentmesh-dark.png#gh-dark-mode-only)
+![a2a-serve on an Agent Mesh relay](../graphs/agentmesh.png#gh-light-mode-only)
+![a2a-serve on an Agent Mesh relay](../graphs/agentmesh-dark.png#gh-dark-mode-only)
 
 ## Joining a relay
 
-```bash
-a2a-serve start opencode --private https://relay.example.com --public https://relay.example.com
-# first run: → sign in to the relay https://relay.example.com: https://…
-a2a-serve config set --relay-token env:RELAY_TOKEN    # servers: join with a token, no sign-in
-```
+[Agent Mesh relays](../guide.md#agent-mesh-relays-experimental) in the user guide shows the commands. How it works:
 
-- The agent is a `meshnet` node running inside the a2a-serve process, with no sidecar. Its key and peer ID are kept in `.a2a/state/agentmesh`, so it keeps its URLs across restarts and backups.
+- a2a-serve runs a `meshnet` node inside its own process, with no sidecar. The node's key and peer ID are kept in `.a2a/state/agentmesh`, so it keeps its URLs across restarts and backups.
 - It enrolls by signing in to the relay's identity provider, or with a join token (`--relay-token`).
 - It publishes the A2A service `a2a://<name>`. Other agents on the relay find it in the directory and dial it with their own node identity.
 - With `--public <relay-url>`, the relay also gives `a2a://<name>` a public URL. Ingress runs in `passthrough` mode and forwards the `Authorization` header unchanged, so pairing tokens and Google sign-in work there.
@@ -62,7 +58,7 @@ A relay whose sign-in accepts any account of a public identity provider admits a
 
 ## Calls between agents
 
-The harness calls other agents with the `a2a` CLI, through the server. On a relay the server dials contacts through `meshnet`, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most `authenticated`, whoever started it.
+The agent calls other agents with the `a2a` CLI, through the server. On a relay the server dials contacts through `meshnet`, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most `authenticated`, whoever started it.
 
 Advertised webhook nodes become directory entries: Ben's agent publishes `a2a://grok@ben`, and Anna's agent finds it with `peers` and adds it with `contact add grok@ben`. Calls still go through Ben's agent, which keeps the webhook's credentials and checks Anna's agent against its own policy (planned; on a tailnet, advertisements spread by gossip today).
 
@@ -75,17 +71,3 @@ The sandbox reaches the network only through the server (planned). On a relay, t
 The relay is `agentmesh-one` at the version this a2a-serve joins with (v0.2.0): one binary that serves the control plane, routers and ingress on one HTTPS port, with SQLite in a data directory. On a VM with a disk it needs nothing else. On Cloud Run it runs as a single instance with Postgres, since the filesystem is wiped on every new revision. `--tunnel cloudflare` runs it on a laptop for demos, but the URL changes on every restart.
 
 Source builds need `-tags agentmesh`. It adds about 36 MB to the binary, so release binaries leave it out until `meshnet` is its own Go module. `doctor` checks that the build supports relays and, with `--online`, that the relay answers.
-
-## Asks for Agent Mesh
-
-| Ask | Why |
-|---|---|
-| A verified `Email` field in `CallerInfo` | `self` and `--allow-email` need an email the relay attests, kept apart from free-form principals |
-| Per-request attenuated credentials | A call made on behalf of a user should carry no more than that call needs |
-| Narrow node-minted bootstrap tokens | `pair invite` could hand out a token that enrolls one node for one service |
-| Hybrid `edge` and `passthrough` ingress | One public URL for OAuth callers verified by the relay and for pairing tokens checked by a2a-serve |
-| `meshnet` as its own Go module | Embedding it today pulls libp2p, envoy and biscuit-go into every build |
-| An exported hub package | `agentmesh-one` lives under `internal/`, so a2a-serve can only run the binary or image |
-| A custom dialer for `meshnet` | It would let `meshnet` run over tsnet, putting a relay inside a tailnet |
-| Version compatibility before 1.0 | a2a-serve pins one `meshnet` version and has to know which relays it can join |
-| Stable ingress names | Public URLs carry 52-character peer IDs |
