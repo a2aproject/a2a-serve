@@ -23,7 +23,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net/url"
 	"sync"
 	"sync/atomic"
@@ -42,8 +41,6 @@ type Store struct {
 	db    *sql.DB
 	reads *sql.DB
 	now   func() time.Time
-	// pruned is when FirstSeen last pruned the database, in Unix nanoseconds.
-	pruned atomic.Int64
 	// taskTTL is how long tasks are kept after their last update.
 	taskTTL atomic.Int64
 
@@ -215,6 +212,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	// pairing is the user running the agent.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, schemaV11)
+		return err
+	},
+	// 12: pruning deletes expired dedup keys by time.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS seen_at ON seen (at)`)
 		return err
 	},
 }
@@ -480,24 +482,15 @@ func (cs ChannelState) Set(ctx context.Context, key, value string) error {
 const seenRetention = 7 * 24 * time.Hour
 
 // FirstSeen records key and reports whether it was new. Channels use it to
-// drop redelivered messages.
+// drop redelivered messages. [Store.Prune] forgets old keys.
 func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
-	now := s.now()
-	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, now.UnixNano())
+	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, s.now().UnixNano())
 	if err != nil {
 		return false, err
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
 		return false, err
-	}
-	if _, err := s.exec(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
-		return false, err
-	}
-	if last := s.pruned.Load(); now.UnixNano()-last >= int64(pruneInterval) && s.pruned.CompareAndSwap(last, now.UnixNano()) {
-		if err := s.Prune(ctx); err != nil {
-			slog.Error("pruning the database", "error", err)
-		}
 	}
 	return n == 1, nil
 }

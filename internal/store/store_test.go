@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -1072,5 +1073,70 @@ func TestLookupTokenSucceedsWhenRecordingUseFails(t *testing.T) {
 	}
 	if got.Pairing != "grok" {
 		t.Fatalf("LookupToken().Pairing = %q, want grok", got.Pairing)
+	}
+}
+
+func TestPruneForgetsOldSeenKeys(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	if _, err := s.FirstSeen(ctx, "old"); err != nil {
+		t.Fatalf("FirstSeen() error = %v", err)
+	}
+	now = start.Add(seenRetention + time.Hour)
+	if _, err := s.FirstSeen(ctx, "fresh"); err != nil {
+		t.Fatalf("FirstSeen() error = %v", err)
+	}
+	var rows int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM seen`).Scan(&rows); err != nil {
+		t.Fatalf("counting seen keys: %v", err)
+	}
+	if rows != 2 {
+		t.Fatalf("seen keys after FirstSeen() = %d, want 2: only Prune forgets old keys", rows)
+	}
+
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	for _, tc := range []struct {
+		key  string
+		want bool
+	}{{"old", true}, {"fresh", false}} {
+		got, err := s.FirstSeen(ctx, tc.key)
+		if err != nil {
+			t.Fatalf("FirstSeen(%q) error = %v", tc.key, err)
+		}
+		if got != tc.want {
+			t.Fatalf("FirstSeen(%q) after Prune() = %v, want %v", tc.key, got, tc.want)
+		}
+	}
+}
+
+func TestSeenKeysAreIndexedByTime(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN DELETE FROM seen WHERE at < 1`)
+	if err != nil {
+		t.Fatalf("explaining the delete: %v", err)
+	}
+	defer closeRows(rows)
+	var plan []string
+	for rows.Next() {
+		var id, parent, unused int
+		var detail string
+		if err := rows.Scan(&id, &parent, &unused, &detail); err != nil {
+			t.Fatalf("reading the plan: %v", err)
+		}
+		plan = append(plan, detail)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("reading the plan: %v", err)
+	}
+	if got := strings.Join(plan, "; "); !strings.Contains(got, "seen_at") {
+		t.Fatalf("query plan of deleting old seen keys = %q, want it to use the seen_at index", got)
 	}
 }

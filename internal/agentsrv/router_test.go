@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"sync"
 	"testing"
@@ -366,4 +367,68 @@ func TestRouterGroupMessageDoesNotJoinOthersPendingTask(t *testing.T) {
 	ts.ch.click("telegram:2", "grp", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "grp", hasText("Hello from fakeacp."))
+}
+
+func TestRouterDoesNotRecordMessagesOfUnknownSenders(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	db, err := sql.Open("sqlite", ts.dir.DBPath())
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := db.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	stranger := ts.ch.message("telegram:9", "dm9", "hello")
+	ts.ch.deliver(stranger)
+	ts.ch.waitFor(t, "dm9", hasText("I don't know you yet"))
+	linkOwner(t, ts, "telegram:1", "dm1")
+	owner := ts.ch.message("telegram:1", "dm1", "hello")
+	ts.ch.deliver(owner)
+	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
+
+	tests := []struct {
+		name string
+		in   channel.Inbound
+		want int
+	}{
+		{name: "unknown sender", in: stranger, want: 0},
+		{name: "owner", in: owner, want: 1},
+	}
+	for _, tc := range tests {
+		var got int
+		if err := db.QueryRow(`SELECT COUNT(*) FROM seen WHERE key = ?`, tc.in.Channel+"|"+tc.in.MessageID).Scan(&got); err != nil {
+			t.Fatalf("counting seen keys of %s: %v", tc.name, err)
+		}
+		if got != tc.want {
+			t.Fatalf("seen keys of the message of %s = %d, want %d", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRouterDropsRedeliveredMessages(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	in := ts.ch.message("telegram:1", "dm1", "hello")
+	ts.ch.deliver(in)
+	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
+
+	ts.ch.deliver(in)
+	ts.ch.write("telegram:1", "dm1", "/start")
+	ts.ch.waitFor(t, "dm1", hasText("Hi! I'm"))
+
+	ts.ch.mu.Lock()
+	defer ts.ch.mu.Unlock()
+	var replies int
+	for _, m := range ts.ch.msgs {
+		if m.Conv == "dm1" && strings.Contains(m.Text, "Hello from fakeacp.") {
+			replies++
+		}
+	}
+	if replies != 1 {
+		t.Fatalf("replies to a message delivered twice = %d, want 1", replies)
+	}
 }

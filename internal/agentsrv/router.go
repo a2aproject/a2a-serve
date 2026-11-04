@@ -340,6 +340,18 @@ func (r *Router) reply(ctx context.Context, ch channel.Channel, in channel.Inbou
 	}
 }
 
+// firstSeen reports whether the message is new, so that redelivered ones are
+// dropped. It runs after the checks that refuse a sender, so that strangers
+// don't make the server write.
+func (r *Router) firstSeen(ctx context.Context, in channel.Inbound) bool {
+	first, err := r.store.FirstSeen(ctx, in.Channel+"|"+in.MessageID)
+	if err != nil {
+		slog.Error("dedup", "error", err)
+		return false
+	}
+	return first
+}
+
 func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) {
 	if t != nil {
 		defer r.release(t)
@@ -348,19 +360,16 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	if ch == nil {
 		return
 	}
-	first, err := r.store.FirstSeen(ctx, in.Channel+"|"+in.MessageID)
-	if err != nil {
-		slog.Error("dedup", "error", err)
-		return
-	}
-	if !first {
-		return
-	}
 	if in.Action != nil {
-		r.handleAction(ctx, ch, in)
+		if r.firstSeen(ctx, in) {
+			r.handleAction(ctx, ch, in)
+		}
 		return
 	}
 	if code, ok := auth.LinkCode(in.Text); ok {
+		if !r.firstSeen(ctx, in) {
+			return
+		}
 		p, err := auth.Link(ctx, r.store, &in, code)
 		if err != nil {
 			r.reply(ctx, ch, in, "That code is invalid or has expired. Ask the owner for a new one.")
@@ -383,6 +392,9 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 	// --public-access anyone admits unlinked senders in direct chats only;
 	// groups keep ignoring them.
 	if p.Role == auth.RoleAnonymous && !in.Direct {
+		return
+	}
+	if !r.firstSeen(ctx, in) {
 		return
 	}
 	if in.Prepare != nil {

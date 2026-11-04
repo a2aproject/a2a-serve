@@ -25,22 +25,22 @@ import (
 // [Store.SetTaskTTL] sets another time.
 const DefaultTaskTTL = 30 * 24 * time.Hour
 
-// pruneInterval is how often [Store.FirstSeen] prunes the database.
-const pruneInterval = time.Hour
-
 // SetTaskTTL sets how long tasks are kept after their last update.
 func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 
 // Prune deletes expired codes, and the pairings nobody redeemed a code of
 // when their last code expires; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; answered questions of remote
-// agents as old; and the handles and call tasks of contexts left without
-// tasks.
+// agents as old; the handles and call tasks of contexts left without tasks;
+// and the dedup keys of messages older than the retention.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE expires < ?`, now.UnixNano()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM pairings WHERE kind = '' AND name NOT IN (SELECT pairing FROM codes)`); err != nil {
