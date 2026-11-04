@@ -46,8 +46,7 @@ type Identity struct {
 	// Domain is the domain of Email when its source proves it: the Google
 	// Workspace domain, or the domain which passed DMARC.
 	Domain string `json:"domain,omitempty"`
-	// Node is the calling machine: a tailnet StableID, a relay peer ID or
-	// a LAN address.
+	// Node is the calling machine: a tailnet StableID or a relay peer ID.
 	Node string `json:"node,omitempty"`
 	// Pairing is the pairing whose token or chat link was used, and
 	// PairingRole its role.
@@ -168,8 +167,6 @@ func where(id Identity) string {
 		switch id.Provider {
 		case network.ProviderTailscale:
 			return " on the tailnet"
-		case network.ProviderLAN:
-			return " on the LAN"
 		case network.ProviderRelay:
 			return " on the relay"
 		}

@@ -43,7 +43,6 @@ const (
 	SandboxDocker    = "docker"
 	SandboxLocal     = "local"
 	NetworkTailscale = "tailscale"
-	NetworkLAN       = "lan"
 	NetworkNone      = "none"
 )
 
@@ -79,8 +78,11 @@ func (c *Config) Validate() error {
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
 		add("invalid --sandbox %q: want docker or local", c.Sandbox)
 	}
-	if !isRelayURL(c.Network.Private) {
-		checkEnum("private", c.Network.Private, NetworkTailscale, NetworkLAN)
+	switch {
+	case c.Network.Private == "lan":
+		add("--private lan was removed: want tailscale, a relay URL or none")
+	case !isRelayURL(c.Network.Private):
+		checkEnum("private", c.Network.Private, NetworkTailscale)
 	}
 	if !isRelayURL(c.Network.Public) {
 		checkEnum("public", c.Network.Public, NetworkTailscale)
@@ -122,7 +124,6 @@ func (c *Config) Validate() error {
 		}
 	}
 	checkPort("--port", c.Port)
-	checkPort("network.lan_port", c.Network.LANPort)
 	if m := c.Limits.Memory; m != "" && !memory.MatchString(m) {
 		add("invalid --memory %q: want a size such as 4g or 512m", m)
 	}

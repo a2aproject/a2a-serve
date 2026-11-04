@@ -48,8 +48,8 @@ type Peer struct {
 	// Email is the verified email of the person the calling machine
 	// belongs to, if the network proves one.
 	Email string
-	// Node identifies the calling machine: a tailnet StableID, a relay
-	// peer ID or a LAN address.
+	// Node identifies the calling machine: a tailnet StableID or a relay
+	// peer ID.
 	Node    string
 	Machine string
 	// Self is true when the caller belongs to the same user as this server.
@@ -94,7 +94,6 @@ type Provider interface {
 // Provider names.
 const (
 	ProviderTailscale = "tailscale"
-	ProviderLAN       = "lan"
 	ProviderRelay     = "agentmesh"
 )
 

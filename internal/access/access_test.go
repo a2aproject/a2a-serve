@@ -73,7 +73,6 @@ func TestNetworkOf(t *testing.T) {
 	}{
 		{name: "none"},
 		{name: "tailscale", cfg: agentdir.NetworkConfig{Private: "tailscale", Public: "tailscale"}, want: Network{Private: network.ProviderTailscale, Public: true}},
-		{name: "lan", cfg: agentdir.NetworkConfig{Private: "lan"}, want: Network{Private: network.ProviderLAN}},
 		{name: "relay", cfg: agentdir.NetworkConfig{Private: "https://relay.example.com"}, want: Network{Private: network.ProviderRelay}},
 	}
 	for _, tc := range tests {

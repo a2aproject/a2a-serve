@@ -54,7 +54,7 @@ Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 | [Inspector](./docs/guide/inspector.md) | A web page with conversations, tasks and approvals |
 | [Identities](./docs/guide/identities.md) | Callers, roles and pairing codes |
 | [Email Sign-In](./docs/guide/email-sign-in.md) | Let people on an email allowlist call the agent |
-| [Networks](./docs/guide/networks.md) | Tailscale, the local network, Agent Mesh relays and public URLs |
+| [Networks](./docs/guide/networks.md) | Tailscale, Agent Mesh relays and public URLs |
 | [Messengers](./docs/guide/messengers.md) | Telegram, Discord and email |
 | [Agent2Agent](./docs/guide/agent2agent.md) | Contacts, peers and calls between agents |
 | [Schedules](./docs/guide/schedules.md) | Run prompts at set times |

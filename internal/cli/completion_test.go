@@ -51,7 +51,7 @@ func TestCompletion(t *testing.T) {
 		args []string
 		want []string
 	}{
-		{name: "private", args: []string{"config", "set", "--private", ""}, want: []string{"tailscale", "lan", "none"}},
+		{name: "private", args: []string{"config", "set", "--private", ""}, want: []string{"tailscale", "none"}},
 		{name: "public", args: []string{"start", "opencode", "--public", ""}, want: []string{"tailscale", "none"}},
 		{name: "private access", args: []string{"start", "opencode", "--private-access", ""}, want: []string{"everyone", "paired"}},
 		{name: "public access", args: []string{"config", "set", "--public-access", ""}, want: []string{"paired", "anyone"}},

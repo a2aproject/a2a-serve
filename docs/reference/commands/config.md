@@ -98,7 +98,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | Flag | Default | Description |
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
-| `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
+| `--private string` |  | Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
 | `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
 | `--relay-token string` |  | Join token of an Agent Mesh relay, to join without the sign-in link (secret value: env:VAR, -, or the value) |
 | `--tailscale-authkey string` |  | Tailscale auth key, to join without the login link (secret value: env:VAR, -, or the value) |

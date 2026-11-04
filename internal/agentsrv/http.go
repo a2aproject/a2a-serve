@@ -52,26 +52,15 @@ type listener struct {
 	// baseURL is the URL the listener is reached at; empty derives it from
 	// the request.
 	baseURL string
-	// host, if set, is the only Host the listener accepts. A plain HTTP
-	// listener on the LAN sets it against DNS rebinding, which defeats the
-	// browser checks.
-	host string
 	// inspector serves the web inspector, on listeners where its login link
 	// and session cookie stay private.
 	inspector bool
 }
 
-// privateListener describes the private listener reached at u: the
-// inspector only over Tailscale's HTTPS, and the LAN only at its address.
+// privateListener describes the private listener reached at u, which
+// serves the inspector only over Tailscale's HTTPS.
 func (s *Server) privateListener(u *url.URL) listener {
-	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
-	switch s.private.Name() {
-	case ProviderTailscale:
-		l.inspector = true
-	case ProviderLAN:
-		l.host = u.Host
-	}
-	return l
+	return listener{kind: network.ListenerPrivate, baseURL: u.String(), inspector: s.private.Name() == ProviderTailscale}
 }
 
 // routes returns the HTTP handler of one listener.
@@ -114,22 +103,7 @@ func (s *Server) routes(l listener) http.Handler {
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
 	mux.Handle("POST /{$}", jsonhttp.RequireJSON(s.authenticate(l.kind, jsonrpc)))
 	mux.Handle("/", jsonhttp.RequireJSON(s.authenticate(l.kind, rest)))
-	h := http.NewCrossOriginProtection().Handler(mux)
-	if l.host != "" {
-		h = onlyHost(l.host, h)
-	}
-	return h
-}
-
-// onlyHost refuses requests for any other host than host.
-func onlyHost(host string, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.EqualFold(r.Host, host) {
-			jsonhttp.Error(w, http.StatusMisdirectedRequest, "this agent is reached at "+host)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
+	return http.NewCrossOriginProtection().Handler(mux)
 }
 
 // base returns the configured base URL or derives it from the request.

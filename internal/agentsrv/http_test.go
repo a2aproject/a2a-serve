@@ -19,7 +19,6 @@ import (
 	"io"
 	"maps"
 	"net/http"
-	"net/url"
 	"strings"
 	"testing"
 
@@ -99,33 +98,6 @@ func TestBrowserRequestChecks(t *testing.T) {
 	}
 }
 
-func TestLANListenerAcceptsOnlyItsHost(t *testing.T) {
-	t.Parallel()
-	lan := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: ProviderLAN}
-	ts := startServer(t, serverOpts{private: lan})
-	_, private, _ := ts.srv.URLs()
-	u, err := url.Parse(private)
-	if err != nil {
-		t.Fatal(err)
-	}
-	tests := []struct {
-		name string
-		host string
-		want int
-	}{
-		{name: "the LAN address", host: u.Host, want: http.StatusOK},
-		{name: "a rebound name", host: "rebound.example:" + u.Port(), want: http.StatusMisdirectedRequest},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := statusOf(t, http.MethodGet, private+"/.well-known/agent-card.json", "", http.Header{"Host": {tc.host}}); got != tc.want {
-				t.Fatalf("GET card with Host %q status = %d, want %d", tc.host, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestPrivateNetworkAccess(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -172,7 +144,6 @@ func TestInspectorOnPrivateListener(t *testing.T) {
 		want     int
 	}{
 		{provider: ProviderTailscale, want: http.StatusSeeOther},
-		{provider: ProviderLAN, want: http.StatusNotFound},
 		{provider: network.ProviderRelay, want: http.StatusNotFound},
 	}
 	for _, tc := range tests {

@@ -8,8 +8,8 @@ messengers, pairings, webhook nodes and contacts.
 
 The link logs in once and works for 5 minutes; the session lasts 12 hours.
 The page is served on the local URL, and with --private on the private URL
-of a tailnet, which is HTTPS. It is never served on the LAN, a relay or the
-public URL.
+of a tailnet, which is HTTPS. It is never served on a relay or the public
+URL.
 
 ```
 a2a-serve inspect [flags]

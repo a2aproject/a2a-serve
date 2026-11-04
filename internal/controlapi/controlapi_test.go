@@ -265,12 +265,12 @@ func TestStatusURL(t *testing.T) {
 		wantErr string
 	}{
 		{name: "best is public", status: all, want: "https://coder.example.com"},
-		{name: "best is private without public", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://coder.lan:4000"}, want: "http://coder.lan:4000"},
+		{name: "best is private without public", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, want: "https://coder.tail.ts.net"},
 		{name: "best is local without networks", status: localOnly, want: "http://127.0.0.1:4000"},
 		{name: "local", status: all, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
 		{name: "private", status: all, scope: ScopePrivate, want: "http://coder.tail.ts.net"},
 		{name: "public", status: all, scope: ScopePublic, want: "https://coder.example.com"},
-		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`"},
+		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
 		{name: "no public URL", status: localOnly, scope: ScopePublic, wantErr: "coder has no public URL; add one with `a2a-serve config set --public tailscale` (or a relay URL), then `a2a-serve restart`"},
 	}
 	for _, tc := range tests {
@@ -305,8 +305,8 @@ func TestStatusInspectorURL(t *testing.T) {
 	}{
 		{name: "local", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, want: "http://127.0.0.1:4000"},
 		{name: "tailnet", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, private: true, want: "https://coder.tail.ts.net"},
-		{name: "LAN", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, private: true, wantErr: plainHTTP},
-		{name: "no private URL", status: &Status{Name: "coder", Local: "http://127.0.0.1:4000"}, private: true, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or lan), then `a2a-serve restart`"},
+		{name: "plain HTTP", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, private: true, wantErr: plainHTTP},
+		{name: "no private URL", status: &Status{Name: "coder", Local: "http://127.0.0.1:4000"}, private: true, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

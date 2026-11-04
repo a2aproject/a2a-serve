@@ -86,26 +86,6 @@ func TestSplitListenerUnclaimedClosesConnections(t *testing.T) {
 	<-done
 }
 
-func TestLANListensOnAdvertisedAddress(t *testing.T) {
-	t.Parallel()
-	if _, err := lanIP(); err != nil {
-		t.Skipf("lanIP() error = %v", err)
-	}
-	l := &LAN{AgentName: "coder"}
-	ln, u, err := l.ListenPrivate(t.Context())
-	if err != nil {
-		t.Fatalf("ListenPrivate() error = %v", err)
-	}
-	t.Cleanup(func() {
-		if err := errors.Join(ln.Close(), l.Close()); err != nil {
-			t.Errorf("Close() error = %v", err)
-		}
-	})
-	if got, want := ln.Addr().String(), u.Host; got != want {
-		t.Fatalf("ListenPrivate() listens on %v, want %v", got, want)
-	}
-}
-
 func TestLoginPromptShow(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
