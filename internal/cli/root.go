@@ -64,6 +64,15 @@ func (g *globalConfig) stderr() io.Writer {
 	return os.Stderr
 }
 
+// progress is where progress lines of long operations go. JSON modes keep
+// stdout for the result, so the lines go to stderr there.
+func (g *globalConfig) progress() io.Writer {
+	if g.IsJSON() {
+		return g.stderr()
+	}
+	return g.Out
+}
+
 // secretReader returns a reader of secret values which prompts on prompt.
 func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
 	in := os.Stdin

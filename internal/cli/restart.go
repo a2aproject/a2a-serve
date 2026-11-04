@@ -36,7 +36,18 @@ Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 			if err != nil {
 				return err
 			}
-			return agentctl.Restart(sf.controlContext(cmd.Context()), d, quiet, cfg.Out)
+			ctx := sf.controlContext(cmd.Context())
+			if err := agentctl.Restart(ctx, d, quiet, cfg.progress()); err != nil {
+				return err
+			}
+			if !cfg.IsJSON() {
+				return nil
+			}
+			st, err := sf.controlClient(d).Status(ctx)
+			if err != nil {
+				return err
+			}
+			return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st})
 		},
 	}
 	cmd.Flags().BoolVar(&quiet, "quiet", false, quietUsage)
