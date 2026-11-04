@@ -87,7 +87,7 @@ The description, the owner chat, the allowed and denied tools, and messengers ap
 | `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list, or resets a setting to its default. |
 | `a2a-serve config edit` | Opens `config.yaml` in your editor and validates it on save. |
 
-List settings are keyed: `--secret` and `--env` by name, `--mount` by destination, `--identity` by login. Setting an existing entry replaces it. `config unset secret OPENROUTER_API_KEY` removes the entry and its stored value.
+List settings are keyed: `--secret` and `--env` by name, and `--mount` by destination. Setting an existing entry replaces it. `config unset secret OPENROUTER_API_KEY` removes the entry and its stored value.
 
 `config set --agent opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.
 
@@ -388,7 +388,7 @@ a2a-serve peers                                               # on Anna's agent:
 a2a-serve contact add grok@ben                                # no code needed
 ```
 
-Anna's calls go through Ben's agent, which keeps the webhook's credentials. Anna's login needs a role on Ben's agent, through `--identity` or the Tailscale app capability. An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.
+Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent applies its own access rules to Anna: with the default `--private-access everyone`, she can call as a member of the private network; with `--private-access paired`, Ben needs to pair her first. An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.
 
 ## Backups
 
