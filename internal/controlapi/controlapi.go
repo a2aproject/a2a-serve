@@ -26,6 +26,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -140,18 +141,22 @@ func (s *Status) URL(scope string) (string, error) {
 	return "", fmt.Errorf("unknown URL scope %q", scope)
 }
 
-// InspectorURL returns the URL to open the web inspector at: the local URL,
-// or with private the private URL, where it is served only over HTTPS.
-func (s *Status) InspectorURL(private bool) (string, error) {
-	if !private {
+// InspectorURL returns the URL to open the web inspector at in scope: the
+// local URL, or the private URL, where it is served only over HTTPS.
+func (s *Status) InspectorURL(scope string) (string, error) {
+	switch scope {
+	case ScopeLocal:
 		return s.Local, nil
+	case ScopePrivate:
+	default:
+		return "", fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
 	}
 	u, err := s.URL(ScopePrivate)
 	if err != nil {
 		return "", err
 	}
 	if !strings.HasPrefix(u, "https://") {
-		return "", fmt.Errorf("the inspector isn't served on %s, because its login link and session would cross the network unencrypted; run `a2a-serve inspect` without --private on the agent's machine", u)
+		return "", fmt.Errorf("the inspector isn't served on %s, because its login link and session would cross the network unencrypted; run `a2a-serve inspect --url local` on the agent's machine", u)
 	}
 	return u, nil
 }
@@ -175,6 +180,22 @@ type ChannelStatus struct {
 	Account string `json:"account,omitempty"`
 	// Error is set while the channel is failing and waits to restart.
 	Error string `json:"error,omitempty"`
+	// OwnerLink is set when a channel is added and nobody is linked on it
+	// as owner yet.
+	OwnerLink *OwnerLink `json:"ownerLink,omitempty"`
+}
+
+// OwnerLink is how the user running the agent links a messenger account as
+// owner: Hint, such as a bot link, carries the one-time Code.
+type OwnerLink struct {
+	Hint    string    `json:"hint"`
+	Code    string    `json:"code"`
+	Expires time.Time `json:"expires"`
+}
+
+// Line is the line that tells the user how to link as owner.
+func (l *OwnerLink) Line() string {
+	return fmt.Sprintf("→ link yourself as owner: %s   (%d min)", l.Hint, int(math.Round(time.Until(l.Expires).Minutes())))
 }
 
 // PairCodeRequest asks for a pairing code, for a new pairing or another

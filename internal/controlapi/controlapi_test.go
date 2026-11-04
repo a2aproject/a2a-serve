@@ -339,34 +339,35 @@ func TestStatusURL(t *testing.T) {
 
 func TestStatusInspectorURL(t *testing.T) {
 	t.Parallel()
-	const plainHTTP = "the inspector isn't served on http://192.168.1.5:4000, because its login link and session would cross the network unencrypted; run `a2a-serve inspect` without --private on the agent's machine"
+	const plainHTTP = "the inspector isn't served on http://192.168.1.5:4000, because its login link and session would cross the network unencrypted; run `a2a-serve inspect --url local` on the agent's machine"
 	tests := []struct {
 		name    string
 		status  *Status
-		private bool
+		scope   string
 		want    string
 		wantErr string
 	}{
-		{name: "local", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, want: "http://127.0.0.1:4000"},
-		{name: "tailnet", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, private: true, want: "https://coder.tail.ts.net"},
-		{name: "plain HTTP", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, private: true, wantErr: plainHTTP},
-		{name: "no private URL", status: &Status{Name: "coder", Local: "http://127.0.0.1:4000"}, private: true, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
+		{name: "local", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
+		{name: "public", status: &Status{Local: "http://127.0.0.1:4000", Public: "https://coder.example.com"}, scope: ScopePublic, wantErr: "the inspector isn't served on the public URL; want local or private"},
+		{name: "tailnet", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, scope: ScopePrivate, want: "https://coder.tail.ts.net"},
+		{name: "plain HTTP", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: ScopePrivate, wantErr: plainHTTP},
+		{name: "no private URL", status: &Status{Name: "coder", Local: "http://127.0.0.1:4000"}, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := tc.status.InspectorURL(tc.private)
+			got, err := tc.status.InspectorURL(tc.scope)
 			if tc.wantErr != "" {
 				if err == nil || err.Error() != tc.wantErr {
-					t.Fatalf("Status.InspectorURL(%v) error = %v, want %q", tc.private, err, tc.wantErr)
+					t.Fatalf("Status.InspectorURL(%q) error = %v, want %q", tc.scope, err, tc.wantErr)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("Status.InspectorURL(%v) error = %v, want nil", tc.private, err)
+				t.Fatalf("Status.InspectorURL(%q) error = %v, want nil", tc.scope, err)
 			}
 			if got != tc.want {
-				t.Fatalf("Status.InspectorURL(%v) = %q, want %q", tc.private, got, tc.want)
+				t.Fatalf("Status.InspectorURL(%q) = %q, want %q", tc.scope, got, tc.want)
 			}
 		})
 	}

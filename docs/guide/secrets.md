@@ -19,6 +19,8 @@ Your shell needs the variable only when you run the command. Later starts, resta
 
 `--secret` takes the name of the variable, and the agent sees the same name. `start` and `config set` both take it, and it repeats: `--secret OPENROUTER_API_KEY --secret GITHUB_TOKEN`.
 
+`--secret NAME=value` sets the value in any of the [forms](#value-forms) the server's tokens take. `--secret OPENROUTER_API_KEY=-` reads it from a prompt or stdin, `--secret GITHUB_TOKEN=env:GH_TOKEN` reads another variable, and `--secret KEY=secret:OLD_KEY` copies a stored value.
+
 | Task | Command |
 | --- | --- |
 | Add a key | `a2a-serve config set --secret GITHUB_TOKEN` |
@@ -36,6 +38,8 @@ A changed key reaches the agent after `a2a-serve restart`, or with `--restart` o
 ## Tokens for the server
 
 Flags that give the server a token or password, such as `channel add --token` or `config set --tailscale-authkey`, store the value in `state/secrets` too. The agent never sees these values.
+
+### Value forms
 
 They accept these forms:
 

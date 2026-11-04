@@ -16,6 +16,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -47,13 +49,21 @@ Recreate the agent on another host with "a2a-serve backup restore".`,
 		},
 	}
 	sf.addDirFlag(cmd.PersistentFlags())
-	cmd.PersistentFlags().DurationVar(&sf.timeout, "timeout", 10*time.Minute, "Timeout of the command, which writes to or lists the backup destination, a `duration` such as 30s or 15m")
+	cmd.PersistentFlags().DurationVar(&sf.deadline, "deadline", 10*time.Minute, "Time limit of the command, which writes to or lists the backup destination, a `duration` such as 30s or 15m")
 	cmd.AddCommand(
 		newBackupNowCmd(cfg, sf),
 		newBackupListCmd(cfg, sf),
 		newBackupRestoreCmd(cfg, sf),
 	)
 	return cmd
+}
+
+// deadlineError points a backup command that ran out of time at --deadline.
+func deadlineError(err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return clierr.Timeout(err, "deadline")
+	}
+	return err
 }
 
 // agentBackups returns the agent of the current directory and the
@@ -85,11 +95,11 @@ func newBackupNowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.deadline)
 			defer cancel()
 			snap, err := backup.Take(ctx, d, dest, bcfg, time.Now())
 			if err != nil {
-				return err
+				return deadlineError(err)
 			}
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(snap)
@@ -111,11 +121,11 @@ func newBackupListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.deadline)
 			defer cancel()
 			snaps, err := backup.List(ctx, dest, bcfg.Agent)
 			if err != nil {
-				return err
+				return deadlineError(err)
 			}
 			if cfg.IsJSON() {
 				return output.PrintList(cfg.Printer, snaps)

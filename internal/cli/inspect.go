@@ -21,11 +21,15 @@ import (
 	"runtime"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/spf13/cobra"
 )
 
 func newInspectCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	var private, noBrowser bool
+	var (
+		scope     string
+		noBrowser bool
+	)
 	cmd := &cobra.Command{
 		Use:   "inspect",
 		Short: "Open the web inspector of the agent",
@@ -34,8 +38,8 @@ and tasks, pending approvals with Approve and Deny, and the state of its
 messengers, pairings, webhook nodes and contacts.
 
 The link logs in once and works for 5 minutes; the session lasts 12 hours.
-The page is served on the local URL, and with --private on the private URL
-of a tailnet, which is HTTPS. It is never served on a relay or the public
+The page is served on the local URL, and with --url private on the private
+URL of a tailnet, which is HTTPS. It is never served on a relay or the public
 URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -47,7 +51,7 @@ URL.`,
 			if err != nil {
 				return err
 			}
-			base, err := st.InspectorURL(private)
+			base, err := st.InspectorURL(scope)
 			if err != nil {
 				return err
 			}
@@ -69,7 +73,8 @@ URL.`,
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVar(&private, "private", false, "Use the agent's URL on its tailnet")
+	f.StringVar(&scope, "url", controlapi.ScopeLocal, "Open the inspector at the agent's `scope` URL: local, or private on a tailnet")
+	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(controlapi.ScopeLocal, controlapi.ScopePrivate)))
 	f.BoolVar(&noBrowser, "no-browser", false, "Print the link without opening a browser")
 	sf.addControlFlags(f)
 	return cmd

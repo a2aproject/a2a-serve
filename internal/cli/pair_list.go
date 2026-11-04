@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"time"
@@ -26,46 +27,109 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
+// Sides of a pair list entry.
+const (
+	sideInvited = "invited"
+	sideJoined  = "joined"
+)
+
+// invitedPairing and joinedPairing are the entries of `pair list -o json`.
+type invitedPairing struct {
+	Side string `json:"side"`
+	controlapi.Pairing
+}
+
+type joinedPairing struct {
+	Side string `json:"side"`
+	joinedAgent
+}
+
 func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	var joined bool
+	var joined, invited bool
 	cmd := &cobra.Command{
 		Use:     "list",
 		Aliases: []string{"ls"},
-		Short:   "List the pairings of the agent, or the agents you joined",
-		Long: `In an agent directory, list the pairings of the agent with their kind and
-role: people, devices, other agents and webhook nodes, and the built-in local
-pairing, which is you. Outside one, or with --joined, list the agents you joined with
-` + "`a2a-serve pair join`" + `.`,
+		Short:   "List the pairings of the agent and the agents you joined",
+		Long: `List the pairings of the agent with their kind and role: people, devices,
+other agents and webhook nodes, and the built-in local pairing, which is you.
+Then list the agents you joined with ` + "`a2a-serve pair join`" + `. Run it in an agent
+directory; --joined lists only the agents you joined, from any directory.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			caller, err := sf.callerView(joined)
-			if err != nil {
-				return err
+			var pairings []controlapi.Pairing
+			if !joined {
+				c, closer, err := sf.manager(cmd.Context())
+				if err != nil {
+					return err
+				}
+				defer joinClose(&err, closer)
+				if pairings, err = c.Pairings(cmd.Context()); err != nil {
+					return err
+				}
 			}
-			if caller {
-				return listJoined(cfg)
-			}
-			c, closer, err := sf.manager(cmd.Context())
-			if err != nil {
-				return err
-			}
-			defer joinClose(&err, closer)
-			all, err := c.Pairings(cmd.Context())
-			if err != nil {
-				return err
+			var agents []joinedAgent
+			if !invited {
+				if agents, err = listJoined(cfg); err != nil {
+					return err
+				}
 			}
 			if cfg.IsJSON() {
-				return output.PrintList(cfg.Printer, all)
+				out := make([]any, 0, len(pairings)+len(agents))
+				for _, p := range pairings {
+					out = append(out, invitedPairing{Side: sideInvited, Pairing: p})
+				}
+				for _, a := range agents {
+					out = append(out, joinedPairing{Side: sideJoined, joinedAgent: a})
+				}
+				return output.PrintList(cfg.Printer, out)
 			}
-			rows := make([][]string, 0, len(all))
-			for _, p := range all {
-				rows = append(rows, []string{p.Name, orDash(p.Kind), p.Role, linkedChannels(p), lastUsed(p)})
+			sections := !joined && !invited
+			if !joined {
+				if err := printInvited(cfg, pairings, sections); err != nil {
+					return err
+				}
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a-serve pair invite <name>`")
+			if sections {
+				if _, err := fmt.Fprintln(cfg.Out); err != nil {
+					return err
+				}
+			}
+			if invited {
+				return nil
+			}
+			return printJoined(cfg, agents, sections)
 		},
 	}
-	cmd.Flags().BoolVar(&joined, "joined", false, "List the agents you joined, also in an agent directory")
+	cmd.Flags().BoolVar(&joined, "joined", false, "List only the agents you joined")
+	cmd.Flags().BoolVar(&invited, "invited", false, "List only the pairings of the agent")
+	cmd.MarkFlagsMutuallyExclusive("joined", "invited")
 	return cmd
+}
+
+func printInvited(cfg *globalConfig, all []controlapi.Pairing, heading bool) error {
+	if heading {
+		if _, err := fmt.Fprintln(cfg.Out, "Invited to this agent:"); err != nil {
+			return err
+		}
+	}
+	rows := make([][]string, 0, len(all))
+	for _, p := range all {
+		rows = append(rows, []string{p.Name, orDash(p.Kind), p.Role, linkedChannels(p), lastUsed(p)})
+	}
+	return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a-serve pair invite <name>`")
+}
+
+func printJoined(cfg *globalConfig, all []joinedAgent, heading bool) error {
+	if heading {
+		if _, err := fmt.Fprintln(cfg.Out, "Joined by you:"); err != nil {
+			return err
+		}
+	}
+	rows := make([][]string, 0, len(all))
+	for _, j := range all {
+		rows = append(rows, []string{j.URL, j.Agent, j.Principal, j.Joined.Format(time.DateTime)})
+	}
+	return cfg.PrintTableOrEmpty([]string{"URL", "AGENT", "AS", "JOINED"}, rows, "no joined agents; join one with `a2a-serve pair join <agent-url> <code>`")
 }
 
 // joinedAgent is a saved token, as pair list and get show it.
@@ -85,26 +149,20 @@ func joinedOf(c credstore.Credential) joinedAgent {
 	return joinedAgent{URL: c.URL, Kind: kind, Agent: c.Agent, Principal: c.Principal, Joined: c.Created}
 }
 
-func listJoined(cfg *globalConfig) error {
+func listJoined(cfg *globalConfig) ([]joinedAgent, error) {
 	store, err := cfg.credentialStore()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	creds, err := store.List()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	out := make([]joinedAgent, 0, len(creds))
-	rows := make([][]string, 0, len(creds))
 	for _, c := range creds {
-		j := joinedOf(c)
-		out = append(out, j)
-		rows = append(rows, []string{j.URL, j.Agent, j.Principal, j.Joined.Format(time.DateTime)})
+		out = append(out, joinedOf(c))
 	}
-	if cfg.IsJSON() {
-		return output.PrintList(cfg.Printer, out)
-	}
-	return cfg.PrintTableOrEmpty([]string{"URL", "AGENT", "AS", "JOINED"}, rows, "no joined agents; join one with `a2a-serve pair join <agent-url> <code>`")
+	return out, nil
 }
 
 // linkedChannels names the messengers of the accounts linked to p.

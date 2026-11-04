@@ -31,10 +31,12 @@ type Settings struct {
 	Description string
 	Command     []string
 	// Secrets are names of environment variables passed to the harness.
-	// Their values are taken from SecretValues, or else read from the CLI's
-	// environment, and stored.
-	Secrets      []string
-	SecretValues Secrets
+	// Their values are taken from SecretValues, copied from the stored
+	// secret SecretSources names, or else read from the CLI's environment,
+	// and stored.
+	Secrets       []string
+	SecretValues  Secrets
+	SecretSources map[string]string
 	// Workspace is a src[:dst][:ro] spec; Mounts are mounted besides it.
 	Workspace string
 	Mounts    []string
@@ -46,9 +48,6 @@ type Settings struct {
 	PublicAccess  string
 	// AllowEmails are added to the people who may call by a verified email.
 	AllowEmails []string
-	// Owner and Allow are members added to the owner and authenticated roles.
-	Owner []string
-	Allow []string
 	// Telegram and Discord are bot tokens: env:VAR, secret:NAME or the value.
 	Telegram string
 	Discord  string
@@ -178,20 +177,26 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	for _, v := range s.AllowEmails {
 		cfg.Policy.AllowEmails = putKeyed(cfg.Policy.AllowEmails, strings.TrimSpace(v), strings.ToLower)
 	}
-	for _, v := range s.Owner {
-		cfg.Policy.Owner = putKeyed(cfg.Policy.Owner, strings.TrimSpace(v), strings.ToLower)
-	}
-	for _, v := range s.Allow {
-		cfg.Policy.Allow = putKeyed(cfg.Policy.Allow, strings.TrimSpace(v), strings.ToLower)
-	}
 	if name, ok := strings.CutPrefix(s.GoogleClientID, "env:"); ok {
 		if s.GoogleClientID = os.Getenv(name); s.GoogleClientID == "" {
 			return nil, fmt.Errorf("--google-client-id: environment variable %s is empty", name)
 		}
 	}
 	set(&cfg.Auth.GoogleClientID, s.GoogleClientID)
+	var stored Secrets
 	for _, name := range s.Secrets {
 		v := s.SecretValues[name]
+		if src, ok := s.SecretSources[name]; ok {
+			if stored == nil {
+				var err error
+				if stored, err = d.LoadSecrets(); err != nil {
+					return nil, err
+				}
+			}
+			if v = stored[src]; v == "" {
+				return nil, fmt.Errorf("--secret %s: no stored secret %s", name, src)
+			}
+		}
 		if v == "" {
 			v = os.Getenv(name)
 		}
