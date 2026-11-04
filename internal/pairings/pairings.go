@@ -120,20 +120,20 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	if err != nil {
 		return nil, err
 	}
-	webhook := exists && p.Kind == pairapi.PairingWebhook
+	isWebhook := exists && p.Kind == pairapi.PairingWebhook
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil
 	switch {
-	case nodeFlags && webhook:
+	case nodeFlags && isWebhook:
 		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
 	case nodeFlags && exists:
 		return nil, agenterr.Conflictf("%s is already paired; pick another name, or run `a2a-serve pair rm %s` first", req.Name, req.Name)
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
-	case (nodeFlags || webhook) && req.Owner:
+	case (nodeFlags || isWebhook) && req.Owner:
 		return nil, invalid("--owner doesn't apply to webhook nodes")
 	case nodeFlags:
 		return s.addNode(ctx, req)
-	case webhook:
+	case isWebhook:
 		node, err := s.Store.Node(ctx, req.Name)
 		if err != nil {
 			return nil, err
