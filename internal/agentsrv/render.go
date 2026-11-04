@@ -393,7 +393,13 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 			approvals.ApprovalTimeout(anonymousQuestionTimeout), q.Display()))
 		return
 	}
-	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", rd.p.ID, q)
+	// An owner who answered an earlier question may be rendering the task,
+	// and its starter must still be able to answer this one.
+	user := rd.r.approvals.Starter(ctx, taskID)
+	if user == "" {
+		user = rd.p.ID
+	}
+	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", user, q)
 	if err != nil {
 		slog.Error("storing question", "error", err)
 		rd.send(ctx, messageText(msg))

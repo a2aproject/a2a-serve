@@ -359,12 +359,17 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 			from = p.ID
 		}
 		slog.Info("task received", "task", execCtx.TaskID, "context", execCtx.ContextID, "from", from)
+		closed := false
 		for ev, err := range events {
 			if err != nil {
 				slog.Info("task failed", "task", execCtx.TaskID, "duration", time.Since(start).Round(time.Millisecond), "error", err)
 			}
 			if err == nil {
 				logTransition(execCtx.TaskID, ev, start)
+				if state, ok := eventState(ev); ok && state != a2a.TaskStateInputRequired && !closed {
+					closed = true
+					e.approvals.CloseQuestions(ctx, execCtx.TaskID)
+				}
 				e.bus.publish(execCtx.TaskID, ev)
 				if q := approvals.FromEvent(ev); q != nil {
 					e.approvals.OnQuestion(ctx, execCtx, q)
@@ -380,19 +385,25 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 // logTransition logs a task reaching a state where it stops: it finished or
 // waits for input.
 func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
-	var state a2a.TaskState
-	switch e := ev.(type) {
-	case *a2a.Task:
-		state = e.Status.State
-	case *a2a.TaskStatusUpdateEvent:
-		state = e.Status.State
-	default:
+	state, ok := eventState(ev)
+	if !ok {
 		return
 	}
 	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
 		return
 	}
 	slog.Info("task "+stateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
+}
+
+// eventState returns the task state an event reports, if it reports one.
+func eventState(ev a2a.Event) (a2a.TaskState, bool) {
+	switch e := ev.(type) {
+	case *a2a.Task:
+		return e.Status.State, true
+	case *a2a.TaskStatusUpdateEvent:
+		return e.Status.State, true
+	}
+	return "", false
 }
 
 // eventBus fans out task events to in-process followers, such as a channel

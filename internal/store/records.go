@@ -21,6 +21,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 )
 
@@ -413,6 +414,46 @@ func (s *Store) PendingQuestion(ctx context.Context, channel, conv string) (stri
 func (s *Store) ClearPendingQuestion(ctx context.Context, channel, conv string) error {
 	_, err := s.exec(ctx, `DELETE FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv)
 	return err
+}
+
+// ForgetPendingQuestion stops a question from being pending in any
+// conversation.
+func (s *Store) ForgetPendingQuestion(ctx context.Context, questionID string) error {
+	_, err := s.exec(ctx, `DELETE FROM pending_questions WHERE question_id = ?`, questionID)
+	return err
+}
+
+// UnansweredQuestionsOf returns the IDs of the unanswered questions of a
+// task of this agent.
+func (s *Store) UnansweredQuestionsOf(ctx context.Context, taskID string) ([]string, error) {
+	return s.questionIDs(ctx, `SELECT id FROM questions WHERE task_id = ? AND contact = '' AND answered_by = ''`, taskID)
+}
+
+// StaleQuestions returns the IDs of the unanswered questions of this
+// agent's tasks which no longer wait for input, and which are still pending
+// in a conversation or shown in a message.
+func (s *Store) StaleQuestions(ctx context.Context) ([]string, error) {
+	return s.questionIDs(ctx, `SELECT q.id FROM questions q WHERE q.contact = '' AND q.answered_by = ''
+		AND (EXISTS (SELECT 1 FROM pending_questions p WHERE p.question_id = q.id)
+			OR EXISTS (SELECT 1 FROM question_messages m WHERE m.question_id = q.id))
+		AND NOT EXISTS (SELECT 1 FROM tasks t WHERE t.scope = '' AND t.id = q.task_id AND t.state = ?)`, string(a2a.TaskStateInputRequired))
+}
+
+func (s *Store) questionIDs(ctx context.Context, query string, args ...any) ([]string, error) {
+	rows, err := s.reads.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer closeRows(rows)
+	var out []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, id)
+	}
+	return out, rows.Err()
 }
 
 // Handle is the short name of the agents URL of one conversation.

@@ -48,6 +48,12 @@ type Notifier interface {
 	OwnerChat(ctx context.Context) (Chat, bool)
 	// MarkAnswered shows who answered a question where it was asked.
 	MarkAnswered(ctx context.Context, questionID, label, who string)
+	// MarkClosed shows where a question was asked that it can no longer be
+	// answered.
+	MarkClosed(ctx context.Context, questionID string)
+	// Follow calls deliver to send p's answer to the task of rec, and shows
+	// the rest of the task in the conversation of its context, if it has one.
+	Follow(ctx context.Context, rec store.Question, p auth.Principal, deliver func() error) error
 }
 
 // RemoteAnswerer forwards answers to the questions of other agents' tasks.
@@ -86,6 +92,9 @@ type Service struct {
 
 // ErrNotApprover is returned when someone who may not approve answers an approval.
 var ErrNotApprover = errors.New("only the person who started the task or an owner can answer this")
+
+// ErrClosed is returned when the task of a question no longer waits for its answer.
+var ErrClosed = errors.New("the task no longer waits for an answer to this question")
 
 // NewRecord stores a question so that buttons and pages can answer it.
 // contact is the agent whose task asked, or empty for this agent; user is
@@ -155,7 +164,7 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
-	starter := s.starter(ctx, execCtx.TaskID)
+	starter := s.Starter(ctx, execCtx.TaskID)
 	go func() {
 		rec, err := s.NewRecord(ctx, execCtx.TaskID, execCtx.ContextID, "", starter, q)
 		if err != nil {
@@ -214,7 +223,7 @@ func (s *Service) expire(ctx context.Context, id string) {
 	}
 	err = s.Answer(ctx, rec, timeoutPrincipal, opt)
 	switch {
-	case errors.Is(err, store.ErrAnswered):
+	case errors.Is(err, store.ErrAnswered), errors.Is(err, ErrClosed):
 		return
 	case err != nil:
 		slog.Warn("rejecting an expired question", "question", id, "error", err)
@@ -224,8 +233,8 @@ func (s *Service) expire(ctx context.Context, id string) {
 	s.Notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
 }
 
-// starter returns the user who started the task.
-func (s *Service) starter(ctx context.Context, taskID a2a.TaskID) string {
+// Starter returns the user who started the task.
+func (s *Service) Starter(ctx context.Context, taskID a2a.TaskID) string {
 	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err == nil {
 		return stored.User
@@ -234,6 +243,60 @@ func (s *Service) starter(ctx context.Context, taskID a2a.TaskID) string {
 		return p.ID
 	}
 	return ""
+}
+
+// Waiting reports whether the task of a question still waits for its
+// answer. Questions of remote agents wait until they are answered.
+func (s *Service) Waiting(ctx context.Context, rec store.Question) (bool, error) {
+	if rec.Contact != "" {
+		return true, nil
+	}
+	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), a2a.TaskID(rec.TaskID))
+	if errors.Is(err, a2a.ErrTaskNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking task %s: %w", rec.TaskID, err)
+	}
+	q := FromStatus(stored.Task.Status)
+	return q != nil && q.ID == rec.HitlID, nil
+}
+
+// CloseQuestions closes the unanswered questions of a task which no longer
+// waits for input. The questions are listed before it returns, so that a
+// question the task asks next stays open, and closed in the background.
+func (s *Service) CloseQuestions(ctx context.Context, taskID a2a.TaskID) {
+	ids, err := s.Store.UnansweredQuestionsOf(ctx, string(taskID))
+	if err != nil {
+		slog.Warn("listing the questions of a task", "task", taskID, "error", err)
+		return
+	}
+	if len(ids) == 0 {
+		return
+	}
+	go s.Close(context.WithoutCancel(ctx), ids...)
+}
+
+// CloseStale closes the questions of tasks which stopped waiting for input
+// while the server didn't run.
+func (s *Service) CloseStale(ctx context.Context) {
+	ids, err := s.Store.StaleQuestions(ctx)
+	if err != nil {
+		slog.Warn("listing stale questions", "error", err)
+		return
+	}
+	s.Close(ctx, ids...)
+}
+
+// Close stops questions from taking typed replies, and shows where they
+// were asked that they can no longer be answered.
+func (s *Service) Close(ctx context.Context, ids ...string) {
+	for _, id := range ids {
+		if err := s.Store.ForgetPendingQuestion(ctx, id); err != nil {
+			slog.Warn("forgetting a closed question", "question", id, "error", err)
+		}
+		s.Notifier.MarkClosed(ctx, id)
+	}
 }
 
 // CheckAnswer rejects a reply to the agent's pending permission question
@@ -262,16 +325,24 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 
 // Answer answers a stored question with option on behalf of p. Questions of
 // remote agents are forwarded to them. An answer which can't be delivered
-// isn't kept, so that the question can be answered again.
+// isn't kept, so that the question can be answered again. It returns
+// [ErrClosed] if the task no longer waits for the answer.
 func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option) error {
 	q := FromRecord(rec)
 	if q.Type == TypePermission && !MayAnswer(p, rec.User) {
 		return ErrNotApprover
 	}
+	waiting, err := s.Waiting(ctx, rec)
+	if err != nil {
+		return err
+	}
+	if !waiting {
+		return ErrClosed
+	}
 	if err := s.Store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
 		return err
 	}
-	err := s.deliver(ctx, rec, q, p, option)
+	err = s.Notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) })
 	if err == nil {
 		return nil
 	}
@@ -334,7 +405,12 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown option.", http.StatusBadRequest)
 			return
 		}
-		if err := s.Answer(r.Context(), rec, p, opt); err != nil && !errors.Is(err, store.ErrAnswered) {
+		err := s.Answer(r.Context(), rec, p, opt)
+		if errors.Is(err, ErrClosed) {
+			http.Error(w, "This question is no longer open.", http.StatusConflict)
+			return
+		}
+		if err != nil && !errors.Is(err, store.ErrAnswered) {
 			slog.Error("answering question from the web", "question", rec.ID, "error", err)
 			http.Error(w, "Couldn't send the answer. Try again.", http.StatusInternalServerError)
 			return

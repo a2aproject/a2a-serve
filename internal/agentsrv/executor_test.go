@@ -19,6 +19,7 @@ import (
 	"context"
 	"iter"
 	"log/slog"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -31,7 +32,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
@@ -85,10 +88,24 @@ func (e *turnExecutor) turnCanceled() bool {
 	return e.canceled
 }
 
+func openTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return st
+}
+
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: newEventBus()}
+	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: &approvals.Service{Store: openTestStore(t)}}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState

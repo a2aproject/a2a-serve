@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -844,6 +845,91 @@ func TestPrune(t *testing.T) {
 	}
 	if blobs != 0 {
 		t.Fatalf("blobs after pruning = %d, want 0", blobs)
+	}
+}
+
+func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	s.SetTaskTTL(24 * time.Hour)
+	for _, q := range []Question{
+		{ID: "q-unanswered", Token: "t1", TaskID: "r1", Contact: "helper", HitlID: "h1"},
+		{ID: "q-answered", Token: "t2", TaskID: "r2", Contact: "helper", HitlID: "h2"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion() error = %v", err)
+		}
+	}
+	if err := s.AnswerQuestion(ctx, "q-answered", "owner", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+	now = start.Add(time.Hour)
+	if err := s.PutQuestion(ctx, Question{ID: "q-fresh", Token: "t3", TaskID: "r3", Contact: "helper", HitlID: "h3"}); err != nil {
+		t.Fatalf("PutQuestion() error = %v", err)
+	}
+
+	now = start.Add(24*time.Hour + time.Minute)
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+
+	for id, wantErr := range map[string]error{"q-unanswered": ErrNotFound, "q-answered": ErrNotFound, "q-fresh": nil} {
+		if _, err := s.QuestionByID(ctx, id); !errors.Is(err, wantErr) {
+			t.Fatalf("QuestionByID(%s) after Prune() error = %v, want %v", id, err, wantErr)
+		}
+	}
+}
+
+func TestStaleQuestions(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	for id, state := range map[string]a2a.TaskState{"waiting": a2a.TaskStateInputRequired, "failed": a2a.TaskStateFailed, "shown": a2a.TaskStateCanceled, "answered": a2a.TaskStateFailed, "quiet": a2a.TaskStateFailed} {
+		task := newTask(id, "c-"+id)
+		task.Status.State = state
+		if _, err := ts.Create(owner, task); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
+	for _, q := range []Question{
+		{ID: "q-waiting", Token: "t1", TaskID: "waiting"},
+		{ID: "q-failed", Token: "t2", TaskID: "failed"},
+		{ID: "q-shown", Token: "t3", TaskID: "shown"},
+		{ID: "q-answered", Token: "t4", TaskID: "answered"},
+		{ID: "q-quiet", Token: "t5", TaskID: "quiet"},
+		{ID: "q-pruned", Token: "t6", TaskID: "pruned"},
+		{ID: "q-remote", Token: "t7", TaskID: "remote", Contact: "helper", HitlID: "h1"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion() error = %v", err)
+		}
+	}
+	for conv, id := range map[string]string{"1": "q-waiting", "2": "q-failed", "3": "q-answered", "4": "q-pruned", "5": "q-remote"} {
+		if err := s.SetPendingQuestion(ctx, "telegram", conv, id); err != nil {
+			t.Fatalf("SetPendingQuestion() error = %v", err)
+		}
+	}
+	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q-shown", Channel: "telegram", Conv: "6", MessageID: "m1", Text: "git push?"}); err != nil {
+		t.Fatalf("AddQuestionMessage() error = %v", err)
+	}
+	if err := s.AnswerQuestion(ctx, "q-answered", "owner", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+
+	got, err := s.StaleQuestions(ctx)
+
+	if err != nil {
+		t.Fatalf("StaleQuestions() error = %v", err)
+	}
+	slices.Sort(got)
+	if diff := cmp.Diff([]string{"q-failed", "q-pruned", "q-shown"}, got); diff != "" {
+		t.Fatalf("StaleQuestions() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
