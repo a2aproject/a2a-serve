@@ -120,6 +120,10 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
+		if claims.User.Role == auth.RoleAnonymous {
+			jsonhttp.Error(w, http.StatusForbidden, "anonymous conversations can't call other agents")
+			return
+		}
 		if claims.User.Hops+1 > auth.MaxHops {
 			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops))
 			return

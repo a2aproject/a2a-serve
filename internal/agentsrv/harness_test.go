@@ -72,6 +72,7 @@ func TestMain(m *testing.M) {
 	channelRetryMin = 10 * time.Millisecond
 	googleauth.SharedClientID = "shared-app"
 	firstBackupDelay = 50 * time.Millisecond
+	anonymousQuestionTimeout = 5 * time.Second
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)

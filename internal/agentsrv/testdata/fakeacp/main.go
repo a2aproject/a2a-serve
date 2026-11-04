@@ -326,6 +326,9 @@ func (a *agent) prompt(m message) {
 	case "scheduled":
 		a.chunk(sid, "ran "+text)
 		end("end_turn")
+	case "pid":
+		a.chunk(sid, fmt.Sprintf("pid %d", os.Getpid()))
+		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")
 		os.Exit(3)

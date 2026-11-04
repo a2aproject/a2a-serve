@@ -35,6 +35,7 @@ Each agent lives in its project directory and runs as its own process, with its 
         ├── tsnet/         # Tailscale identity, so the URL survives restarts
         ├── agentmesh/     # Agent Mesh identity
         ├── home/          # the agent's home directory
+        ├── home-anonymous/ # the home of the agent process for anonymous callers
         ├── server.log
         └── server.sock    # control socket for a2a-serve commands
 ```
@@ -117,7 +118,7 @@ By default the agent runs in Docker:
 
 - The workspace, the directory that holds `.a2a`, is mounted at the same path. `--workspace` picks another directory, and `--mount src[:dst][:ro]` adds more.
 - `.a2a` appears empty, so the agent can't read its own secrets, tokens or config.
-- `state/home` is the agent's home directory.
+- `state/home` is the agent's home directory. [Anonymous callers](#anonymous-callers) get a second container with its own home.
 - The container runs as your user, with all capabilities dropped and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 
 The image is pulled from `ghcr.io/a2aproject`. If the pull fails, a2a-serve builds it from a Dockerfile in its binary. `--image` uses another image, which needs a compatible `a2a` CLI.
@@ -172,6 +173,7 @@ The person who started a task answers its approvals, in the place the task start
 | A webhook node | the node | in the task |
 | A schedule with `--chat` | the schedule's `--as` user | that chat |
 | A schedule without `--chat` | an owner | the owner chat |
+| An [anonymous caller](#anonymous-callers) | an owner, within 10 minutes | the owner chat |
 
 - Set the **owner chat** with `--owner-chat <channel>[:<who>]`. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](#inspector).
 - In a group chat, only the person who started the task, or an owner, can answer.
@@ -207,6 +209,7 @@ Not in this version: files, live logs, backups, and changing settings from the p
 | Anyone else | A token from a pairing code | the pairing's role |
 | [Webhook nodes](#webhook-nodes) | Their node token | authenticated |
 | Unlinked senders in direct chats, with `--public-access anyone` | Their chat account | anonymous |
+| Anyone on the public URL, with `--public-access anyone` | Nothing | anonymous |
 
 These settings are flags of `start` and `config set` ([reference](reference/commands/config.md)). A running agent applies them at once, and every change prints who can call afterwards:
 
@@ -214,16 +217,16 @@ These settings are flags of `start` and `config set` ([reference](reference/comm
 a2a-serve config set --private-access paired           # on the private network, only you and your pairings
 a2a-serve config set --allow-email '*@example.com'     # people with a matching verified email
 a2a-serve config set --owner email:me@example.com      # another account of yours, as an owner
-a2a-serve config set --public-access anyone            # anyone in a direct chat, as an anonymous caller
+a2a-serve config set --public-access anyone            # anyone on the public URL or in a direct chat, as an anonymous caller
 a2a-serve config unset owner email:me@example.com
 ```
 
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
 - On a relay that admits people by sign-in, `--private-access` defaults to `paired` until you set it.
-- Anonymous callers start tasks in their own conversation and never answer approvals. They share the agent's sandbox for now.
+- [Anonymous callers](#anonymous-callers) start tasks in their own conversation and never answer approvals.
 - A caller without a credential gets 401, with the steps to pair. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
 
-The [access model](concepts/access-model.md) describes the model, and which of its parts are planned, such as anonymous callers on the public URL.
+The [access model](concepts/access-model.md) describes the model and its guarantees.
 
 ```sh
 a2a-serve pair invite grok                        # authenticated: can talk to the agent
@@ -243,6 +246,16 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 - A change of role applies to the next request of every token and messenger account of the pairing.
 - `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
 - The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
+
+### Anonymous callers
+
+With `--public-access anyone`, anyone on the public URL, and anyone who writes to the agent's bot in a direct chat, can start tasks. The agent still ignores unlinked senders in group chats.
+
+- Their conversations run in a separate agent process. With Docker it is a second container with its own home directory, `state/home-anonymous`, so it can't read the history of other conversations. It works on the same workspace, and it isn't backed up.
+- Their approvals go to the owner chat, or wait in the inspector. Only owners answer them. An approval that nobody answers in 10 minutes is rejected.
+- Their conversations can't call other agents or use the schedules agent.
+- The public URL and each messenger take at most 20 new anonymous tasks an hour, and run at most 2 at a time.
+- A caller on the public URL without a token proves nothing about themselves. The task and conversation IDs that the server returns let them read and continue their own tasks. Anyone who has those IDs can do the same.
 
 ## Google sign-in
 
