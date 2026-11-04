@@ -17,6 +17,7 @@ package telegram
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -42,6 +43,13 @@ type fakeBotAPI struct {
 	files map[string][]byte
 	// getMeError, if set, is the Bot API error answered to getMe.
 	getMeError string
+	// failures are the Bot API errors answered to a method.
+	failures map[string]apiFailure
+}
+
+type apiFailure struct {
+	status int
+	body   string
 }
 
 func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -57,6 +65,15 @@ func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.mu.Lock()
 	f.calls[method] = append(f.calls[method], string(body))
 	var result string
+	if fail, ok := f.failures[method]; ok {
+		f.mu.Unlock()
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(fail.status)
+		if _, err := io.WriteString(w, fail.body); err != nil {
+			f.t.Errorf("writing %s: %v", method, err)
+		}
+		return
+	}
 	switch method {
 	case "getMe":
 		if f.getMeError != "" {
@@ -335,6 +352,41 @@ func TestValidateInvalidToken(t *testing.T) {
 			err := c.Validate(t.Context())
 			if err == nil || err.Error() != "invalid Telegram bot token" {
 				t.Fatalf("Validate() error = %v, want invalid Telegram bot token", err)
+			}
+		})
+	}
+}
+
+func TestSendAndEditRateLimit(t *testing.T) {
+	t.Parallel()
+	limited := apiFailure{status: http.StatusTooManyRequests, body: `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 3","parameters":{"retry_after":3}}`}
+	tests := []struct {
+		name string
+		call func(c *Channel) error
+	}{
+		{name: "send", call: func(c *Channel) error {
+			_, err := c.Send(t.Context(), channel.Outbound{Conv: "42", Text: "hi"})
+			return err
+		}},
+		{name: "edit", call: func(c *Channel) error {
+			return c.Edit(t.Context(), channel.Ref{Conv: "42", ID: "7"}, channel.Outbound{Conv: "42", Text: "hi"})
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := &fakeBotAPI{t: t, calls: map[string][]string{}, failures: map[string]apiFailure{"sendMessage": limited, "editMessageText": limited}}
+			srv := httptest.NewServer(api)
+			defer srv.Close()
+			c := New("123:abc")
+			c.ServerURL = srv.URL
+			var limit *channel.RateLimitError
+			err := tc.call(c)
+			if !errors.As(err, &limit) {
+				t.Fatalf("Channel error = %v, want a *channel.RateLimitError", err)
+			}
+			if want := 3 * time.Second; limit.RetryAfter != want {
+				t.Fatalf("RateLimitError.RetryAfter = %v, want %v", limit.RetryAfter, want)
 			}
 		})
 	}
