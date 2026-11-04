@@ -89,9 +89,9 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
-		// Approvals reject questions after anonymousQuestionTimeout; this
+		// Approvals reject questions after AnonymousQuestionTimeout; this
 		// stops the turn if that answer doesn't arrive.
-		QuestionTimeout: anonymousQuestionTimeout + time.Minute,
+		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.prepared.Stop(ctx))

@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -319,7 +320,7 @@ func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(last.History) == 0 || !strings.Contains(messageText(last.History[0]), "grok says: what's new?") {
+	if len(last.History) == 0 || !strings.Contains(a2atext.Message(last.History[0]), "grok says: what's new?") {
 		t.Fatalf("injected turn history = %v, want the node's result", last.History)
 	}
 }

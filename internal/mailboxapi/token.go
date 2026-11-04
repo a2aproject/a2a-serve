@@ -33,6 +33,9 @@ func EnvToken() string {
 	return os.Getenv(EnvNodeToken)
 }
 
+// NodeURL is the A2A URL of node id hosted at agentURL.
+func NodeURL(agentURL, id string) string { return strings.TrimSuffix(agentURL, "/") + "/n/" + id }
+
 // APIBase turns an agent URL into its node API base.
 func APIBase(agentURL string) string {
 	u := strings.TrimSuffix(agentURL, "/")

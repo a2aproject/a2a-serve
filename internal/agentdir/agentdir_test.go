@@ -381,3 +381,14 @@ func TestSettingsApplyGoogleSignIn(t *testing.T) {
 		t.Fatalf("Apply() with an unset --google-client-id variable error = nil, want error")
 	}
 }
+
+func TestServiceName(t *testing.T) {
+	t.Parallel()
+	dir, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if got, want := dir.ServiceName(), "a2a-"+dir.ID(); got != want {
+		t.Fatalf("Dir.ServiceName() = %q, want %q", got, want)
+	}
+}

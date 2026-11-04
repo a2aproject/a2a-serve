@@ -19,18 +19,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/network"
-)
-
-// Network provider names.
-const (
-	ProviderTailscale = network.ProviderTailscale
-)
-
-// Secrets read by network providers.
-const (
-	SecretTailscaleAuthKey = "TS_AUTHKEY"
-	SecretRelayToken       = "RELAY_TOKEN"
 )
 
 // setupNetwork creates the private and public providers from the config.
@@ -44,7 +34,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 				Hostname:   cfg.Name,
 				StateDir:   s.dir.TSNetDir(),
 				ControlURL: cfg.Network.TailscaleControlURL,
-				AuthKey:    s.secrets()[SecretTailscaleAuthKey],
+				AuthKey:    s.secrets()[agentdir.SecretTailscaleKey],
 				Logf:       s.logf,
 			}
 		}
@@ -63,7 +53,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		var err error
 		relay, err = newRelay(network.RelayConfig{
 			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
-			StateDir: s.dir.AgentMeshDir(), Token: s.secrets()[SecretRelayToken],
+			StateDir: s.dir.AgentMeshDir(), Token: s.secrets()[agentdir.SecretRelayToken],
 			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),
 			Logf: s.logf,
 		})
@@ -77,7 +67,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		if s.private, err = relayAt(cfg.Network.Private); err != nil {
 			return err
 		}
-	case cfg.Network.Private == ProviderTailscale:
+	case cfg.Network.Private == network.ProviderTailscale:
 		s.private = tailscale()
 	default:
 		return fmt.Errorf("unknown private network %q: want tailscale or a relay URL", cfg.Network.Private)
@@ -89,7 +79,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		if s.public, err = relayAt(cfg.Network.Public); err != nil {
 			return err
 		}
-	case cfg.Network.Public == ProviderTailscale:
+	case cfg.Network.Public == network.ProviderTailscale:
 		t := tailscale()
 		t.Funnel = true
 		s.public = t

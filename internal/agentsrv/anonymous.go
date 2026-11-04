@@ -30,12 +30,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
-// The budget of anonymous callers on each listener, and how long their
-// approvals wait for an owner.
-var (
+// The budget of anonymous callers on each listener.
+const (
 	anonymousTasksPerHour    = 20
 	anonymousConcurrentTasks = 2
-	anonymousQuestionTimeout = 10 * time.Minute
 )
 
 // anonymousAgentKey is the agent key a2aacp stores with the sessions of
