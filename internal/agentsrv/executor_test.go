@@ -109,6 +109,57 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	}
 }
 
+// statusExecutor yields one status update.
+type statusExecutor struct {
+	state a2a.TaskState
+	msg   *a2a.Message
+}
+
+func (e statusExecutor) Execute(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		yield(a2a.NewStatusUpdateEvent(execCtx, e.state, e.msg), nil)
+	}
+}
+
+func (statusExecutor) Cancel(context.Context, *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {}
+}
+
+func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ctx := auth.WithPrincipal(context.Background(), auth.Owner())
+	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
+	contextID := a2a.NewContextID()
+	ts.srv.router.setUnattended(contextID)
+	exec := &observedExecutor{
+		inner:     statusExecutor{state: a2a.TaskStateInputRequired, msg: asked.Status.Message},
+		bus:       newEventBus(),
+		peers:     ts.srv.peers,
+		approvals: ts.srv.approvals,
+		anonymous: func(context.Context, string) bool { return false },
+	}
+	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
+
+	// a2a-go processes an event after the executor yields it. An answer sent
+	// before the execution is done with the event fails as concurrent.
+	var result *a2a.Task
+	for ev, err := range exec.Execute(ctx, execCtx) {
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		time.Sleep(200 * time.Millisecond)
+		if got := ts.ch.questions(); got != 0 {
+			t.Fatalf("questions sent while the execution handles the event = %d, want 0; messages:\n%s", got, ts.ch.dump())
+		}
+		u := ev.(*a2a.TaskStatusUpdateEvent)
+		result = &a2a.Task{ID: u.TaskID, ContextID: u.ContextID, Status: u.Status}
+	}
+	exec.Cleanup(ctx, execCtx, result, nil)
+	ts.ch.waitFor(t, "dm1", hasQuestion)
+}
+
 func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{}
