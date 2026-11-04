@@ -218,10 +218,11 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 		}
 		n.cfg.Authenticate(kind, inner).ServeHTTP(w, r2)
 	}
-	mux.HandleFunc("/n/{node}", serveNode)
-	mux.HandleFunc("/n/{node}/{rest...}", serveNode)
+	node := jsonhttp.RequireJSON(http.HandlerFunc(serveNode))
+	mux.Handle("/n/{node}", node)
+	mux.Handle("/n/{node}/{rest...}", node)
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))
-	mux.HandleFunc("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", n.nodeAPI(base, n.handleEvent))
+	mux.Handle("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", jsonhttp.RequireJSON(n.nodeAPI(base, n.handleEvent)))
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
 }

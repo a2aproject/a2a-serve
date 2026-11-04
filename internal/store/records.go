@@ -699,20 +699,16 @@ func (s *Store) ClearPendingQuestion(ctx context.Context, channel, conv string) 
 	return err
 }
 
-// Handle is the short name of an agents URL: calls from the harness in one
-// context, on behalf of one user, at one depth of an agent chain.
+// Handle is the short name of the agents URL of one conversation.
 type Handle struct {
-	Handle     string
-	ContextID  string
-	OnBehalfOf string
-	Hops       int
+	Handle    string
+	ContextID string
 }
 
 // PutHandle stores a handle. It returns [ErrExists] if the handle is taken
-// or its claims already have one.
+// or its context already has one.
 func (s *Store) PutHandle(ctx context.Context, h Handle) error {
-	res, err := s.exec(ctx, `INSERT INTO handles (handle, context_id, on_behalf_of, hops) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		h.Handle, h.ContextID, h.OnBehalfOf, h.Hops)
+	res, err := s.exec(ctx, `INSERT INTO handles (handle, context_id) VALUES (?, ?) ON CONFLICT DO NOTHING`, h.Handle, h.ContextID)
 	if err != nil {
 		return err
 	}
@@ -731,25 +727,51 @@ func (s *Store) HandleByName(ctx context.Context, handle string) (Handle, error)
 	return s.handle(ctx, `handle = ?`, handle)
 }
 
-// HandleFor returns the handle of the claims of h, ignoring h.Handle.
-func (s *Store) HandleFor(ctx context.Context, h Handle) (Handle, error) {
-	return s.handle(ctx, `context_id = ? AND on_behalf_of = ? AND hops = ?`, h.ContextID, h.OnBehalfOf, h.Hops)
-}
-
-// DeleteHandle deletes a handle.
-func (s *Store) DeleteHandle(ctx context.Context, handle string) error {
-	_, err := s.exec(ctx, `DELETE FROM handles WHERE handle = ?`, handle)
-	return err
+// HandleOf returns the handle of a context.
+func (s *Store) HandleOf(ctx context.Context, contextID string) (Handle, error) {
+	return s.handle(ctx, `context_id = ?`, contextID)
 }
 
 func (s *Store) handle(ctx context.Context, where string, args ...any) (Handle, error) {
 	var h Handle
-	err := s.db.QueryRowContext(ctx, `SELECT handle, context_id, on_behalf_of, hops FROM handles WHERE `+where, args...).
-		Scan(&h.Handle, &h.ContextID, &h.OnBehalfOf, &h.Hops)
+	err := s.db.QueryRowContext(ctx, `SELECT handle, context_id FROM handles WHERE `+where, args...).Scan(&h.Handle, &h.ContextID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Handle{}, ErrNotFound
 	}
 	return h, err
+}
+
+// CallTask is a task a conversation started at another agent through its
+// agents URL.
+type CallTask struct {
+	ContextID       string
+	Agent           string
+	TaskID          string
+	RemoteContextID string
+}
+
+// PutCallTask records a call task; recording it again does nothing.
+func (s *Store) PutCallTask(ctx context.Context, t CallTask) error {
+	_, err := s.exec(ctx, `INSERT INTO call_tasks (context_id, agent, task_id, remote_context_id) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		t.ContextID, t.Agent, t.TaskID, t.RemoteContextID)
+	return err
+}
+
+// HasCallTask reports whether a conversation started a task at an agent.
+func (s *Store) HasCallTask(ctx context.Context, contextID, agent, taskID string) (bool, error) {
+	return s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM call_tasks WHERE context_id = ? AND agent = ? AND task_id = ?)`, contextID, agent, taskID)
+}
+
+// HasCallContext reports whether a conversation started a task in a context
+// of an agent.
+func (s *Store) HasCallContext(ctx context.Context, contextID, agent, remoteContextID string) (bool, error) {
+	return s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM call_tasks WHERE context_id = ? AND agent = ? AND remote_context_id = ?)`, contextID, agent, remoteContextID)
+}
+
+func (s *Store) exists(ctx context.Context, query string, args ...any) (bool, error) {
+	var found bool
+	err := s.db.QueryRowContext(ctx, query, args...).Scan(&found)
+	return found, err
 }
 
 // Watch is a remote task started by a2a.send that outlived the call. When

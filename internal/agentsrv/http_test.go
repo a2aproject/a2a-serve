@@ -15,12 +15,143 @@
 package agentsrv
 
 import (
+	"context"
+	"io"
+	"maps"
+	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
+
+// listTasksRPC is a JSON-RPC request any caller may send.
+const listTasksRPC = `{"jsonrpc":"2.0","id":1,"method":"ListTasks","params":{}}`
+
+// statusOf sends a request without following redirects and returns its status.
+func statusOf(t *testing.T, method, u, body string, header http.Header) int {
+	t.Helper()
+	req, err := http.NewRequest(method, u, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	maps.Copy(req.Header, header)
+	if host := header.Get("Host"); host != "" {
+		req.Host = host
+	}
+	noRedirect := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := noRedirect.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s error = %v", method, u, err)
+	}
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+func TestBrowserRequestChecks(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	addNode(t, ts, "grok", 0)
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		header http.Header
+		want   int
+	}{
+		{name: "JSON-RPC as JSON", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"application/json"}}, want: http.StatusOK},
+		{name: "JSON-RPC as A2A JSON", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"application/a2a+json; charset=utf-8"}}, want: http.StatusOK},
+		{name: "JSON-RPC as text with A2A-Version", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"text/plain"}, "A2a-Version": {"1.0"}}, want: http.StatusOK},
+		{name: "JSON-RPC as text", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"text/plain"}}, want: http.StatusUnsupportedMediaType},
+		{name: "JSON-RPC without a content type", method: http.MethodPost, path: "/", want: http.StatusUnsupportedMediaType},
+		{name: "REST as a form", method: http.MethodPost, path: "/message:send", header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, want: http.StatusUnsupportedMediaType},
+		{name: "pairing as text", method: http.MethodPost, path: "/pair", header: http.Header{"Content-Type": {"text/plain"}}, want: http.StatusUnsupportedMediaType},
+		{name: "node as text", method: http.MethodPost, path: "/n/grok", header: http.Header{"Content-Type": {"text/plain"}}, want: http.StatusUnsupportedMediaType},
+		{name: "mailbox as text", method: http.MethodPost, path: "/mailbox/api/tasks/t1/events", header: http.Header{"Content-Type": {"text/plain"}}, want: http.StatusUnsupportedMediaType},
+		{name: "same-origin JSON-RPC", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"application/json"}, "Sec-Fetch-Site": {"same-origin"}}, want: http.StatusOK},
+		{name: "cross-site JSON-RPC", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"application/json"}, "Sec-Fetch-Site": {"cross-site"}}, want: http.StatusForbidden},
+		{name: "cross-origin JSON-RPC without fetch metadata", method: http.MethodPost, path: "/", header: http.Header{"Content-Type": {"application/json"}, "Origin": {"https://evil.example"}}, want: http.StatusForbidden},
+		{name: "cross-site question form", method: http.MethodPost, path: "/hitl/unknown", header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}, "Sec-Fetch-Site": {"cross-site"}}, want: http.StatusForbidden},
+		{name: "cross-site card", method: http.MethodGet, path: "/.well-known/agent-card.json", header: http.Header{"Sec-Fetch-Site": {"cross-site"}}, want: http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			header := tc.header.Clone()
+			if header == nil {
+				header = http.Header{}
+			}
+			header.Set("Authorization", bearer)
+			if got := statusOf(t, tc.method, ts.localURL()+tc.path, listTasksRPC, header); got != tc.want {
+				t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLANListenerAcceptsOnlyItsHost(t *testing.T) {
+	t.Parallel()
+	lan := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: ProviderLAN}
+	ts := startServer(t, serverOpts{private: lan})
+	_, private, _ := ts.srv.URLs()
+	u, err := url.Parse(private)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		name string
+		host string
+		want int
+	}{
+		{name: "the LAN address", host: u.Host, want: http.StatusOK},
+		{name: "a rebound name", host: "rebound.example:" + u.Port(), want: http.StatusMisdirectedRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := statusOf(t, http.MethodGet, private+"/.well-known/agent-card.json", "", http.Header{"Host": {tc.host}}); got != tc.want {
+				t.Fatalf("GET card with Host %q status = %d, want %d", tc.host, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestInspectorOnPrivateListener(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		provider string
+		want     int
+	}{
+		{provider: ProviderTailscale, want: http.StatusSeeOther},
+		{provider: ProviderLAN, want: http.StatusUnauthorized},
+		{provider: "agentmesh", want: http.StatusUnauthorized},
+	}
+	for _, tc := range tests {
+		t.Run(tc.provider, func(t *testing.T) {
+			t.Parallel()
+			p := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: tc.provider}
+			ts := startServer(t, serverOpts{private: p})
+			_, private, _ := ts.srv.URLs()
+			link, err := controlapi.NewClient(ts.dir).InspectorLogin(context.Background())
+			if err != nil {
+				t.Fatalf("InspectorLogin() error = %v", err)
+			}
+			if got := statusOf(t, http.MethodGet, private+link.Path, "", nil); got != tc.want {
+				t.Fatalf("GET the login link on the private URL of %s = %d, want %d", tc.provider, got, tc.want)
+			}
+		})
+	}
+}
 
 func TestUnauthorizedHint(t *testing.T) {
 	t.Parallel()

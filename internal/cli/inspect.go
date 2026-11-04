@@ -22,8 +22,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 func newInspectCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -36,8 +34,9 @@ and tasks, pending approvals with Approve and Deny, and the state of its
 messengers, pairings, webhook nodes and contacts.
 
 The link logs in once and works for 5 minutes; the session lasts 12 hours.
-The page is served on the local URL, and with --private on the private
-network, never on the public URL.`,
+The page is served on the local URL, and with --private on the private URL
+of a tailnet, which is HTTPS. It is never served on the LAN, a relay or the
+public URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()
@@ -48,18 +47,9 @@ network, never on the public URL.`,
 			if err != nil {
 				return err
 			}
-			scope := controlapi.ScopeLocal
-			if private {
-				scope = controlapi.ScopePrivate
-			}
-			base, err := st.URL(scope)
+			base, err := st.InspectorURL(private)
 			if err != nil {
 				return err
-			}
-			if private && st.PrivateNote != "" {
-				if _, err := fmt.Fprintf(cfg.stderr(), "note: a browser can't open this private URL (%s); run a2a-serve inspect without --private\n", st.Private); err != nil {
-					return err
-				}
 			}
 			login, err := c.InspectorLogin(cmd.Context())
 			if err != nil {
@@ -79,7 +69,7 @@ network, never on the public URL.`,
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVar(&private, "private", false, "Use the agent's URL on the private network")
+	f.BoolVar(&private, "private", false, "Use the agent's URL on its tailnet")
 	f.BoolVar(&noBrowser, "no-browser", false, "Print the link without opening a browser")
 	sf.addControlFlags(f)
 	return cmd

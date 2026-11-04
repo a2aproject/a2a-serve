@@ -491,27 +491,90 @@ func TestHandles(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	h := Handle{Handle: "k3", ContextID: "c1", OnBehalfOf: "user:owner", Hops: 1}
+	h := Handle{Handle: "k3", ContextID: "c1"}
 	if err := s.PutHandle(ctx, h); err != nil {
 		t.Fatalf("PutHandle() error = %v", err)
 	}
 	for name, dup := range map[string]Handle{
 		"taken handle": {Handle: "k3", ContextID: "c2"},
-		"same claims":  {Handle: "zz", ContextID: "c1", OnBehalfOf: "user:owner", Hops: 1},
+		"same context": {Handle: "zz", ContextID: "c1"},
 	} {
 		if err := s.PutHandle(ctx, dup); !errors.Is(err, ErrExists) {
 			t.Fatalf("PutHandle(%s) error = %v, want %v", name, err, ErrExists)
 		}
 	}
-	got, err := s.HandleFor(ctx, Handle{ContextID: "c1", OnBehalfOf: "user:owner", Hops: 1})
+	got, err := s.HandleOf(ctx, "c1")
 	if err != nil {
-		t.Fatalf("HandleFor() error = %v", err)
+		t.Fatalf("HandleOf() error = %v", err)
 	}
 	if diff := cmp.Diff(h, got); diff != "" {
-		t.Fatalf("HandleFor() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("HandleOf() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := s.HandleFor(ctx, Handle{ContextID: "c1"}); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("HandleFor() of other claims error = %v, want %v", err, ErrNotFound)
+	if _, err := s.HandleOf(ctx, "c2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("HandleOf() of another context error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestCallTasks(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for range 2 {
+		if err := s.PutCallTask(ctx, CallTask{ContextID: "c1", Agent: "coder", TaskID: "t1", RemoteContextID: "r1"}); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+	tests := []struct {
+		name  string
+		check func() (bool, error)
+		want  bool
+	}{
+		{name: "its task", check: func() (bool, error) { return s.HasCallTask(ctx, "c1", "coder", "t1") }, want: true},
+		{name: "task of another conversation", check: func() (bool, error) { return s.HasCallTask(ctx, "c2", "coder", "t1") }},
+		{name: "task at another agent", check: func() (bool, error) { return s.HasCallTask(ctx, "c1", "reviewer", "t1") }},
+		{name: "its context", check: func() (bool, error) { return s.HasCallContext(ctx, "c1", "coder", "r1") }, want: true},
+		{name: "context of another conversation", check: func() (bool, error) { return s.HasCallContext(ctx, "c2", "coder", "r1") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tc.check()
+			if err != nil {
+				t.Fatalf("check error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("check = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHasOthersTasks(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	anna := s.Tasks("", func(context.Context) (string, bool, error) { return "pair:anna", false, nil })
+	if _, err := anna.Create(ctx, &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	tests := []struct {
+		user string
+		want bool
+	}{
+		{user: "pair:anna"},
+		{user: "pair:ben", want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.user, func(t *testing.T) {
+			t.Parallel()
+			got, err := anna.HasOthersTasks(ctx, "c1", tc.user)
+			if err != nil {
+				t.Fatalf("HasOthersTasks() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("HasOthersTasks(%q) = %v, want %v", tc.user, got, tc.want)
+			}
+		})
 	}
 }
 

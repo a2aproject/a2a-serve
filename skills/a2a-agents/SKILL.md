@@ -3,8 +3,9 @@
 You run inside an agent server, and you can delegate work to other agents
 over A2A with the `a2a` CLI. Each user message starts with an `[a2a agents]`
 line with the agents URL of this conversation, such as `http://a2a/k3`, and
-the agents you can call. Use the URL from the latest message: it tells the
-server which conversation and user the call is for.
+the agents you can call. The URL stays the same for the whole conversation,
+and works only while you answer a message: the server makes the call for the
+user who sent it.
 
     a2a send -a http://a2a/k3/<name> "Review the open PR in this repo"
 
@@ -28,6 +29,7 @@ Continue a task or a conversation with the other agent:
   posted into this conversation once the user decides.
 - Only the agents in the `[a2a agents]` line are reachable. The owner adds
   more with `a2a-serve contact add`.
+- Only the tasks and contexts this conversation started are reachable.
 
 ## Schedules
 

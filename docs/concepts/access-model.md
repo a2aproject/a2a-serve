@@ -166,9 +166,9 @@ On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network,
 
 - Every decision comes from one place, and only from verified inputs. Nothing the agent or a caller sends raises a role.
 - A call that comes through another agent gets at most `authenticated`.
-- An agents-URL handle works only for its conversation and turn, and only for the tasks it created.
+- An agents-URL handle works only for its conversation, while one of its turns runs, and only for the tasks its conversation created.
 - The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
 - A message joins an existing conversation only if its sender owns it or is an owner.
 - Callers allowed by `--public-access anyone` have a separate agent process, a budget per listener, and approvals that time out.
-- Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused.
+- Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused. The question and inspector forms rely on the cross-site check and the inspector's CSRF token.
 - The local credential works only on the local listener. Loopback alone is never trusted.

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"iter"
 	"log/slog"
 	"net/http"
 	"strconv"
@@ -72,6 +73,14 @@ type Peers struct {
 
 	handleMu sync.Mutex
 
+	turnsMu sync.Mutex
+	// turns has the claims of the running turn of each conversation; a2aacp
+	// runs one turn of a conversation at a time.
+	turns map[string]*callClaims
+	// paused has the claims of the turn of each conversation which waits
+	// for an answer, so that the answer resumes it for the same user.
+	paused map[string]pausedTurn
+
 	// buildMu serializes building contact clients, so that two calls don't
 	// build one each and destroy the other's.
 	buildMu sync.Mutex
@@ -107,8 +116,8 @@ type contactClient struct {
 	client  *a2aclient.Client
 }
 
-// callClaims is what an agents URL stands for: calls from the harness in one
-// context, on behalf of the user who started the turn.
+// callClaims is who calls through the agents URL of a conversation: the
+// harness in the conversation's running turn, for the user who started it.
 type callClaims struct {
 	ContextID  string
 	OnBehalfOf string
@@ -122,48 +131,133 @@ const handleAlphabet = "abcdefghijkmnpqrstuvwxyz23456789"
 // conversation, so a handle must not be guessable from another one.
 const handleLen = 16
 
-// handle returns the handle of the agents URL for c. The same claims keep
-// their handle, also across restarts. Shorter handles of older versions are
-// replaced.
-func (p *Peers) handle(ctx context.Context, c callClaims) (string, error) {
-	want := store.Handle{ContextID: c.ContextID, OnBehalfOf: c.OnBehalfOf, Hops: c.Hops}
+// handle returns the handle of the agents URL of a conversation, the same
+// one for its whole life, also across restarts.
+func (p *Peers) handle(ctx context.Context, contextID string) (string, error) {
 	p.handleMu.Lock()
 	defer p.handleMu.Unlock()
-	h, err := p.store.HandleFor(ctx, want)
-	switch {
-	case err == nil && len(h.Handle) >= handleLen:
-		return h.Handle, nil
-	case err == nil:
-		if err := p.store.DeleteHandle(ctx, h.Handle); err != nil {
+	for {
+		h, err := p.store.HandleOf(ctx, contextID)
+		if err == nil {
+			return h.Handle, nil
+		}
+		if !errors.Is(err, store.ErrNotFound) {
 			return "", err
 		}
-	case !errors.Is(err, store.ErrNotFound):
-		return "", err
-	}
-	for {
-		want.Handle = cryptoutil.RandomString(handleLen, handleAlphabet)
-		err := p.store.PutHandle(ctx, want)
+		h = store.Handle{Handle: cryptoutil.RandomString(handleLen, handleAlphabet), ContextID: contextID}
+		err = p.store.PutHandle(ctx, h)
 		if errors.Is(err, store.ErrExists) {
 			continue
 		}
-		return want.Handle, err
+		return h.Handle, err
 	}
 }
 
-// claimsOf returns the claims of a handle.
-func (p *Peers) claimsOf(ctx context.Context, name string) (callClaims, bool) {
-	h, err := p.store.HandleByName(ctx, name)
+var (
+	errUnknownHandle = errors.New("unknown agents URL: use the one from the [a2a agents] line of this conversation")
+	errNoTurn        = errors.New("this conversation has no running turn, and its agents URL works only while one runs")
+)
+
+// claimsOf returns the claims of the running turn of a handle's
+// conversation: [errUnknownHandle] for an unknown handle, and [errNoTurn]
+// when no turn runs.
+func (p *Peers) claimsOf(ctx context.Context, handle string) (callClaims, error) {
+	h, err := p.store.HandleByName(ctx, handle)
 	if errors.Is(err, store.ErrNotFound) {
-		return callClaims{}, false
+		return callClaims{}, errUnknownHandle
 	}
 	if err != nil {
-		slog.Error("loading agents URL handle", "error", err)
-		return callClaims{}, false
+		return callClaims{}, fmt.Errorf("loading agents URL handle: %w", err)
 	}
-	if len(h.Handle) < handleLen {
-		return callClaims{}, false
+	p.turnsMu.Lock()
+	defer p.turnsMu.Unlock()
+	c := p.turns[h.ContextID]
+	if c == nil {
+		return callClaims{}, errNoTurn
 	}
-	return callClaims{ContextID: h.ContextID, OnBehalfOf: h.OnBehalfOf, Hops: h.Hops}, true
+	return *c, nil
+}
+
+// pausedTurn is a turn which waits for an answer to a question of its task.
+type pausedTurn struct {
+	task   a2a.TaskID
+	claims callClaims
+}
+
+// beginTurn opens the agents URL of c's conversation to calls with c, until
+// end is called.
+func (p *Peers) beginTurn(c callClaims) (end func()) {
+	turn := &c
+	p.turnsMu.Lock()
+	p.turns[c.ContextID] = turn
+	p.turnsMu.Unlock()
+	return func() {
+		p.turnsMu.Lock()
+		defer p.turnsMu.Unlock()
+		if p.turns[c.ContextID] == turn {
+			delete(p.turns, c.ContextID)
+		}
+	}
+}
+
+// duringTurn opens the agents URL of the conversation while the harness
+// runs a turn of it: from the turn's working update, which a2aacp sends once
+// the turn holds the conversation, until its events end. A turn which stops
+// for a question resumes for its user, whoever answers.
+func (p *Peers) duringTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	c := p.turnClaims(ctx, execCtx)
+	return func(yield func(a2a.Event, error) bool) {
+		var (
+			end   func()
+			state a2a.TaskState
+		)
+		defer func() {
+			if end != nil {
+				end()
+			}
+			if state == a2a.TaskStateInputRequired {
+				p.turnsMu.Lock()
+				p.paused[c.ContextID] = pausedTurn{task: execCtx.TaskID, claims: c}
+				p.turnsMu.Unlock()
+			}
+		}()
+		for ev, err := range events {
+			switch e := ev.(type) {
+			case *a2a.Task:
+				state = e.Status.State
+			case *a2a.TaskStatusUpdateEvent:
+				state = e.Status.State
+				if end == nil && state == a2a.TaskStateWorking {
+					end = p.beginTurn(c)
+				}
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+// turnClaims returns the claims of the turn execCtx runs: those of the
+// paused turn it answers, or else of its caller.
+func (p *Peers) turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callClaims {
+	p.turnsMu.Lock()
+	paused, ok := p.paused[execCtx.ContextID]
+	ok = ok && paused.task == execCtx.TaskID
+	if ok {
+		delete(p.paused, execCtx.ContextID)
+	}
+	p.turnsMu.Unlock()
+	if ok && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired {
+		return paused.claims
+	}
+	c := callClaims{ContextID: execCtx.ContextID}
+	if caller, ok := auth.Caller(ctx); ok {
+		c.OnBehalfOf, c.Hops = caller.User(), caller.Hops
+	} else if execCtx.User != nil {
+		c.OnBehalfOf = execCtx.User.Name
+	}
+	return c
 }
 
 // discover lists agents on the private network, cached briefly.

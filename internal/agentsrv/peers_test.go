@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"iter"
 	"net"
 	"net/http"
@@ -243,34 +244,52 @@ func TestAgentsURLHandles(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	p := ts.srv.peers
 	ctx := context.Background()
-	owner := callClaims{ContextID: "ctx1", OnBehalfOf: auth.OwnerID, Hops: 1}
-	h, err := p.handle(ctx, owner)
+	h, err := p.handle(ctx, "ctx1")
 	if err != nil {
 		t.Fatalf("handle() error = %v", err)
 	}
-	if again, err := p.handle(ctx, owner); err != nil || again != h {
+	if again, err := p.handle(ctx, "ctx1"); err != nil || again != h {
 		t.Fatalf("handle() again = %q, %v, want %q", again, err, h)
 	}
-	other, err := p.handle(ctx, callClaims{ContextID: "ctx1", OnBehalfOf: "pair:anna"})
-	if err != nil {
-		t.Fatalf("handle() error = %v", err)
-	}
-	if other == h {
-		t.Fatalf("handle() for another user = %q, want a different handle", other)
-	}
-	got, ok := p.claimsOf(ctx, h)
-	if !ok {
-		t.Fatalf("claimsOf(%q) ok = false, want true", h)
-	}
-	if diff := cmp.Diff(owner, got); diff != "" {
-		t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
+	if other, err := p.handle(ctx, "ctx2"); err != nil || other == h {
+		t.Fatalf("handle() of another conversation = %q, %v, want a different handle", other, err)
 	}
 	if len(h) != handleLen {
 		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
 	}
-	if _, ok := p.claimsOf(ctx, "unknown"); ok {
-		t.Fatalf("claimsOf(unknown) ok = true, want false")
+	if _, err := p.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, errNoTurn)
 	}
+
+	turn := callClaims{ContextID: "ctx1", OnBehalfOf: "pair:anna", Hops: 1}
+	end := p.beginTurn(turn)
+	got, err := p.claimsOf(ctx, h)
+	if err != nil {
+		t.Fatalf("claimsOf() during a turn error = %v", err)
+	}
+	if diff := cmp.Diff(turn, got); diff != "" {
+		t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
+	}
+	end()
+
+	if _, err := p.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+		t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	}
+	if _, err := p.claimsOf(ctx, "unknown"); !errors.Is(err, errUnknownHandle) {
+		t.Fatalf("claimsOf(unknown) error = %v, want %v", err, errUnknownHandle)
+	}
+}
+
+// turnURL returns the agents URL of a conversation with a running turn of
+// the owner, which ends with the test.
+func turnURL(t *testing.T, ts *testServer, contextID string) string {
+	t.Helper()
+	u, err := ts.srv.peers.agentsURL(context.Background(), contextID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, OnBehalfOf: auth.OwnerID}))
+	return u
 }
 
 // harnessClient returns a client which reaches ts the way its harness does.
@@ -281,8 +300,8 @@ func harnessClient(ts *testServer) *http.Client {
 	}}}
 }
 
-// callAgent sends text through an agents URL and waits for a settled task.
-func callAgent(t *testing.T, hc *http.Client, agentURL, text string) (*a2a.Task, error) {
+// agentClient returns a client of an agent behind an agents URL.
+func agentClient(t *testing.T, hc *http.Client, agentURL string) (*a2aclient.Client, error) {
 	t.Helper()
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, agentURL)
@@ -292,6 +311,22 @@ func callAgent(t *testing.T, hc *http.Client, agentURL, text string) (*a2a.Task,
 	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
 	if err != nil {
 		t.Fatalf("NewFromCard() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := client.Destroy(); err != nil {
+			t.Errorf("Destroy() error = %v", err)
+		}
+	})
+	return client, nil
+}
+
+// callAgent sends text through an agents URL and waits for a settled task.
+func callAgent(t *testing.T, hc *http.Client, agentURL, text string) (*a2a.Task, error) {
+	t.Helper()
+	ctx := context.Background()
+	client, err := agentClient(t, hc, agentURL)
+	if err != nil {
+		return nil, err
 	}
 	res, err := client.SendMessage(ctx, &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))})
 	if err != nil {
@@ -315,7 +350,8 @@ func TestAgentsProxy(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	u, err := ts.srv.peers.agentsURL(context.Background(), callClaims{ContextID: "c1", OnBehalfOf: auth.OwnerID})
+	u := turnURL(t, ts, "c1")
+	idle, err := ts.srv.peers.agentsURL(context.Background(), "c2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -328,6 +364,7 @@ func TestAgentsProxy(t *testing.T) {
 		{name: "node", url: u + "/grok", want: "grok says: hi"},
 		{name: "unknown agent", url: u + "/nobody", wantErr: true},
 		{name: "unknown handle", url: socketHost + "/unknown/grok", wantErr: true},
+		{name: "conversation without a running turn", url: idle + "/grok", wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -348,10 +385,7 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 	addNode(t, ts, "grok", 0)
 	hs := httptest.NewServer(ts.srv.peers.harnessRoutes("harness-key"))
 	t.Cleanup(hs.Close)
-	h, err := ts.srv.peers.handle(context.Background(), callClaims{ContextID: "c1", OnBehalfOf: auth.OwnerID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	h := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
 	tests := []struct {
 		name   string
 		header string
@@ -433,10 +467,7 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	u, err := assistant.srv.peers.agentsURL(context.Background(), callClaims{ContextID: "c1", OnBehalfOf: auth.OwnerID})
-	if err != nil {
-		t.Fatal(err)
-	}
+	u := turnURL(t, assistant, "c1")
 	hc := harnessClient(assistant)
 	task, err := callAgent(t, hc, u+"/coder", "ask")
 	if err != nil {
@@ -584,24 +615,107 @@ func TestConcurrentContactClientsAreOne(t *testing.T) {
 	}
 }
 
-func TestLegacyShortHandleIsReplaced(t *testing.T) {
+func TestAgentsURLReachesOnlyItsTasks(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, ts, "grok", 0)
+	hc := harnessClient(ts)
+	task, err := callAgent(t, hc, turnURL(t, ts, "c1")+"/grok", "hi")
+	if err != nil {
+		t.Fatalf("callAgent() error = %v", err)
+	}
+	own, err := agentClient(t, hc, turnURL(t, ts, "c1")+"/grok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := agentClient(t, hc, turnURL(t, ts, "c2")+"/grok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	tests := []struct {
+		name    string
+		call    func() error
+		wantErr bool
+	}{
+		{name: "get from its conversation", call: func() error {
+			_, err := own.GetTask(ctx, &a2a.GetTaskRequest{ID: task.ID})
+			return err
+		}},
+		{name: "get from another conversation", wantErr: true, call: func() error {
+			_, err := other.GetTask(ctx, &a2a.GetTaskRequest{ID: task.ID})
+			return err
+		}},
+		{name: "continue from another conversation", wantErr: true, call: func() error {
+			_, err := other.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("more", string(task.ID), task.ContextID)})
+			return err
+		}},
+		{name: "join its context from another conversation", wantErr: true, call: func() error {
+			_, err := other.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("more", "", task.ContextID)})
+			return err
+		}},
+		{name: "cancel from another conversation", wantErr: true, call: func() error {
+			_, err := other.CancelTask(ctx, &a2a.CancelTaskRequest{ID: task.ID})
+			return err
+		}},
+		{name: "list from another conversation", call: func() error {
+			res, err := other.ListTasks(ctx, &a2a.ListTasksRequest{})
+			if err == nil && len(res.Tasks) > 0 {
+				return fmt.Errorf("listed %d tasks of another conversation", len(res.Tasks))
+			}
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := tc.call(); (err != nil) != tc.wantErr {
+				t.Fatalf("call error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+// turnEvents yields the status updates of task in states, checking the
+// claims of handle after each working update.
+func turnEvents(t *testing.T, p *Peers, handle string, task *a2a.Task, check func(callClaims), states ...a2a.TaskState) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		for _, s := range states {
+			if !yield(a2a.NewStatusUpdateEvent(task, s, nil), nil) {
+				return
+			}
+			if s != a2a.TaskStateWorking {
+				continue
+			}
+			c, err := p.claimsOf(context.Background(), handle)
+			if err != nil {
+				t.Errorf("claimsOf() during the turn error = %v", err)
+				continue
+			}
+			check(c)
+		}
+	}
+}
+
+func TestAnsweredTurnKeepsItsUser(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	p, ctx := ts.srv.peers, context.Background()
-	claims := callClaims{ContextID: "ctx1", OnBehalfOf: auth.OwnerID}
-	if err := p.store.PutHandle(ctx, store.Handle{Handle: "ab", ContextID: claims.ContextID, OnBehalfOf: claims.OnBehalfOf}); err != nil {
+	h, err := p.handle(ctx, "c1")
+	if err != nil {
 		t.Fatal(err)
 	}
-
-	h, err := p.handle(ctx, claims)
-	if err != nil {
-		t.Fatalf("handle() error = %v", err)
+	task := &a2a.Task{ID: "t1", ContextID: "c1"}
+	anna := auth.Principal{ID: "pair:anna", Roles: []string{auth.RoleMember}}
+	wantAnna := func(c callClaims) {
+		if c.OnBehalfOf != anna.ID {
+			t.Errorf("claimsOf() user = %q, want %q", c.OnBehalfOf, anna.ID)
+		}
 	}
 
-	if len(h) != handleLen {
-		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
+	prompt := &a2asrv.ExecutorContext{TaskID: task.ID, ContextID: "c1"}
+	for range p.duringTurn(auth.InProcess(ctx, anna), prompt, turnEvents(t, p, h, task, wantAnna, a2a.TaskStateWorking, a2a.TaskStateInputRequired)) {
 	}
-	if _, ok := p.claimsOf(ctx, "ab"); ok {
-		t.Fatalf("claimsOf(legacy handle) ok = true, want false")
+	answer := &a2asrv.ExecutorContext{TaskID: task.ID, ContextID: "c1", StoredTask: &a2a.Task{ID: task.ID, ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}}
+	for range p.duringTurn(auth.InProcess(ctx, auth.Owner()), answer, turnEvents(t, p, h, task, wantAnna, a2a.TaskStateWorking, a2a.TaskStateCompleted)) {
 	}
 }

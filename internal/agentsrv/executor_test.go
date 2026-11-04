@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
@@ -164,5 +165,31 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 	want := []string{"task received", "task input-required", "task received", "task completed"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("task log wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
+	owner := ts.client(ts.pair("me", auth.RoleOwner))
+	contextID := send(t, anna, userText("hello", "", "")).ContextID
+	tests := []struct {
+		name    string
+		client  *a2aclient.Client
+		wantErr bool
+	}{
+		{name: "the conversation's user", client: anna},
+		{name: "another user", client: ben, wantErr: true},
+		{name: "an owner", client: owner},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := tc.client.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", contextID)})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("SendMessage() into anna's conversation error = %v, want error %v", err, tc.wantErr)
+			}
+		})
 	}
 }

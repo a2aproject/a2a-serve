@@ -26,15 +26,17 @@ What the sandbox doesn't protect yet:
 
 Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes and limits failed attempts), `/skill.md`, `/download/…` and `/hitl/<token>`.
 
+A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
+
 | Network | Who gets in |
 | --- | --- |
-| localhost | Callers with a token. On start, the server saves an owner token named `local` for the user running it. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
+| localhost | Callers with a token. On start, the server saves an owner token named `local` for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
 | Tailscale | Your own devices, identified by Tailscale as your login, are owners. Other tailnet users get a role from `--identity login=role` or the `a2aproject.org/cap/a2a` app capability. Anyone else needs a token. |
 | LAN | Callers with a token. The LAN has no identity, so being on it grants nothing. |
 | Agent Mesh relay | Agents signed in to the relay as you are owners. Other agents get a role from `--identity`. |
 | Public URL (Funnel, ngrok, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in. |
 | Messengers | Accounts linked with a pairing code. Only verified senders can link: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
-| The agent's socket | Only the agent. A call there acts for the user of the conversation it came from. |
+| The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
 Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network.
 
@@ -47,6 +49,7 @@ What a role allows:
 | Talk to the agent and start tasks | yes | yes |
 | See tasks | all | their own |
 | Answer tool approvals | all | their own tasks; `--deny-tools` limits what they can run |
+| Send a message into another user's conversation (A2A `contextId`) | yes | no |
 | Continue another user's waiting task in a shared chat | yes | no |
 
 Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.

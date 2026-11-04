@@ -82,6 +82,10 @@ func TestChainAuthenticate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("IssueToken() error = %v", err)
 	}
+	localToken, _, err := IssueToken(ctx, s, store.Code{Name: LocalPairing, Role: RoleOwner}, "http://127.0.0.1:4000")
+	if err != nil {
+		t.Fatalf("IssueToken() error = %v", err)
+	}
 	nodeToken := mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "secret")
 	if err := s.PutNode(ctx, store.Node{ID: "grok-node", Name: "Grok", TokenHash: cryptoutil.Hash(nodeToken)}); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
@@ -152,6 +156,20 @@ func TestChainAuthenticate(t *testing.T) {
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+token, HeaderHops, "2")},
 			want:   Principal{ID: "pair:grok", Roles: []string{RoleMember}, Hops: 2},
 			wantOK: true,
+		},
+		{
+			name:   "local token on the local listener",
+			req:    Request{Listener: network.ListenerLocal, Header: header("Authorization", "Bearer "+localToken)},
+			want:   Principal{ID: OwnerID, Roles: []string{RoleOwner}},
+			wantOK: true,
+		},
+		{
+			name: "local token on the private listener",
+			req:  Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.4:5000", Header: header("Authorization", "Bearer "+localToken)},
+		},
+		{
+			name: "local token on the public listener",
+			req:  Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+localToken)},
 		},
 		{
 			name: "unknown token",

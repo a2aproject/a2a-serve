@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -72,6 +73,30 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	}
 	task = send(t, ts.client(renewed), userText("hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
+func TestOwnerTokenWorksOnlyOnLocalURL(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	ts := startServer(t, serverOpts{credentials: creds, private: (&fakeNet{agents: map[string]string{}}).provider("coder")})
+	header := http.Header{"Authorization": {"Bearer " + lookupOwnerToken(t, creds, ts.localURL())}, "Content-Type": {"application/json"}}
+	_, private, _ := ts.srv.URLs()
+	tests := []struct {
+		name string
+		url  string
+		want int
+	}{
+		{name: "local", url: ts.localURL(), want: http.StatusOK},
+		{name: "private", url: private, want: http.StatusUnauthorized},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := statusOf(t, http.MethodPost, tc.url+"/", listTasksRPC, header); got != tc.want {
+				t.Fatalf("POST %s with the owner token of this machine status = %d, want %d", tc.name, got, tc.want)
+			}
+		})
+	}
 }
 
 func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {

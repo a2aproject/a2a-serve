@@ -47,6 +47,10 @@ const (
 // OwnerID is the principal of the agent's owner, whichever way they arrive.
 const OwnerID = "user:owner"
 
+// LocalPairing names the owner token the server saves for the user running
+// it. It works only on the local listener.
+const LocalPairing = "local"
+
 // Headers set by agent servers calling each other.
 const (
 	HeaderOnBehalfOf = "X-A2A-Serve-On-Behalf-Of"
@@ -156,6 +160,9 @@ func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, bool, e
 		}
 		if err != nil {
 			return Principal{}, false, err
+		}
+		if t.Name == LocalPairing && r.Listener != network.ListenerLocal {
+			return Principal{}, false, nil
 		}
 		// Removing an email from the allowlist cuts it off at once.
 		if email, ok := strings.CutPrefix(t.Principal, GooglePrefix); ok && (a.GoogleAllowed == nil || !a.GoogleAllowed(email)) {

@@ -37,6 +37,8 @@ type inspectorClient struct {
 	t    *testing.T
 	ts   *testServer
 	http *http.Client
+	// site is the Sec-Fetch-Site header a browser sends, if set.
+	site string
 }
 
 func newInspectorClient(t *testing.T, ts *testServer) *inspectorClient {
@@ -50,6 +52,9 @@ func newInspectorClient(t *testing.T, ts *testServer) *inspectorClient {
 
 func (c *inspectorClient) do(req *http.Request) (int, string) {
 	c.t.Helper()
+	if c.site != "" {
+		req.Header.Set("Sec-Fetch-Site", c.site)
+	}
 	resp, err := c.http.Do(req)
 	if err != nil {
 		c.t.Fatalf("%s %s error = %v", req.Method, req.URL, err)
@@ -187,6 +192,11 @@ func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 	if code, _ := c.post(action[1], url.Values{"option": {"allow"}}); code != http.StatusForbidden {
 		t.Fatalf("POST answer without the CSRF token = %d, want %d", code, http.StatusForbidden)
 	}
+	c.site = "cross-site"
+	if code, _ := c.post(action[1], url.Values{"option": {"allow"}, "csrf": {m[1]}}); code != http.StatusForbidden {
+		t.Fatalf("cross-site POST answer = %d, want %d", code, http.StatusForbidden)
+	}
+	c.site = "same-origin"
 	if code, body := c.post(action[1], url.Values{"option": {"allow"}, "csrf": {m[1]}}); code != http.StatusOK || strings.Contains(body, "git push origin main") {
 		t.Fatalf("POST answer = %d %q, want the overview without the approval", code, body)
 	}

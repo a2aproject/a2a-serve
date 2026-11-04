@@ -39,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // harnessSocketName is the name of the Unix socket the harness reaches the
@@ -188,7 +189,7 @@ var _ a2asrv.AgentExecutor = (*observedExecutor)(nil)
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	withLine := e.peers.withAgentsLine(ctx, execCtx)
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.inner.Execute(ctx, withLine)))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}
@@ -406,10 +407,12 @@ func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
 }
 
 // callerInterceptor makes the authenticated principal the A2A user and
-// enforces who may answer approvals and how deep agent chains go.
+// enforces who may join a conversation, who may answer approvals and how
+// deep agent chains go.
 type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
+	tasks     *store.TaskStore
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -421,10 +424,34 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		return ctx, nil, fmt.Errorf("%w: too many agents in this chain (%d)", a2a.ErrUnauthorized, p.Hops)
 	}
 	auth.SetCallUser(callCtx, p)
-	if msg, ok := req.Payload.(*a2a.SendMessageRequest); ok && msg.Message != nil && msg.Message.TaskID != "" {
+	msg, ok := req.Payload.(*a2a.SendMessageRequest)
+	if !ok || msg.Message == nil {
+		return ctx, nil, nil
+	}
+	if err := i.checkConversation(ctx, p, msg.Message.ContextID); err != nil {
+		return ctx, nil, err
+	}
+	if msg.Message.TaskID != "" {
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
 	}
 	return ctx, nil, nil
+}
+
+// checkConversation refuses a message into a conversation that holds
+// another user's tasks, unless an owner sends it or the server picked the
+// conversation, as for a group chat.
+func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Principal, contextID string) error {
+	if contextID == "" || p.Has(auth.RoleOwner) || auth.IsInProcess(ctx) {
+		return nil
+	}
+	others, err := i.tasks.HasOthersTasks(ctx, contextID, p.ID)
+	if err != nil {
+		return fmt.Errorf("checking conversation %s: %w", contextID, err)
+	}
+	if others {
+		return fmt.Errorf("%w: conversation %s belongs to someone else; leave out the context ID to start a new one", a2a.ErrUnauthorized, contextID)
+	}
+	return nil
 }
