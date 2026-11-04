@@ -412,7 +412,13 @@ func (in *inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ insp
 		http.Error(w, "Unknown option.", http.StatusBadRequest)
 		return
 	}
-	if err := in.s.approvals.Answer(ctx, rec, auth.Owner(), opt); err != nil && !errors.Is(err, store.ErrAnswered) {
+	err = in.s.approvals.Answer(ctx, rec, auth.Owner(), opt)
+	if errors.Is(err, approvals.ErrClosed) {
+		in.s.approvals.Close(ctx, rec.ID)
+		http.Error(w, "This approval is no longer open.", http.StatusConflict)
+		return
+	}
+	if err != nil && !errors.Is(err, store.ErrAnswered) {
 		slog.Error("answering a question from the inspector", "question", rec.ID, "error", err)
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
 		return

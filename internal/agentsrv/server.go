@@ -426,6 +426,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	for _, ch := range chans {
 		s.router.add(ch)
 	}
+	go s.approvals.CloseStale(ctx)
 	s.peers.resumeWatches(ctx)
 	go s.pruneLoop(ctx)
 	go s.schedules.run(ctx)
