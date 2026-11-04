@@ -31,12 +31,14 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -46,13 +48,6 @@ import (
 const (
 	ViaPrivate = manage.ViaPrivate
 	ViaHTTPS   = manage.ViaHTTPS
-)
-
-// watchInterval is the first delay between checks of a watched task; it
-// grows to watchMaxInterval.
-var (
-	watchInterval    = 5 * time.Second
-	watchMaxInterval = 30 * time.Second
 )
 
 // Peers handles calls from this agent to other agents: contacts, agents on
@@ -70,6 +65,7 @@ type Peers struct {
 	ads       *gossip.Table
 	agentName func() string
 	bridge    harnessBridge
+	timings   Timings
 	// ctx ends when the server stops; watches run in it.
 	ctx context.Context
 
@@ -371,7 +367,7 @@ func (p *Peers) advertisedURL(ctx context.Context, key, name, host string) (stri
 	}
 	for _, pi := range peers {
 		if strings.EqualFold(pi.Name, host) {
-			return trimSlash(pi.URL) + "/n/" + name, nil
+			return mailboxapi.NodeURL(pi.URL, name), nil
 		}
 	}
 	return "", fmt.Errorf("%s advertises %s, but isn't on the private network now", host, key)
@@ -603,7 +599,7 @@ func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task
 		slog.Info("remote approval waits in the inspector: no chat", "agent", agent, "user", user, "question", rec.ID)
 		return
 	}
-	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", approvals.DisplayPrincipal(user)), rec)
+	p.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", auth.DisplayPrincipal(user)), rec)
 }
 
 // directChat returns the first direct chat of user in a messenger.
@@ -672,7 +668,7 @@ func (p *Peers) watch(w store.Watch) {
 			p.mu.Unlock()
 		}()
 		claims := callClaims{ContextID: w.OriginContextID, User: p.watchPrincipal(ctx, w)}
-		interval := watchInterval
+		interval := p.timings.WatchInterval
 		failingSince := w.FailingSince
 		for {
 			select {
@@ -680,8 +676,8 @@ func (p *Peers) watch(w store.Watch) {
 				return
 			case <-time.After(interval):
 			}
-			if interval < watchMaxInterval {
-				interval += watchInterval
+			if interval < p.timings.WatchMaxInterval {
+				interval += p.timings.WatchInterval
 			}
 			task, err := p.poll(ctx, w, claims.User)
 			if errors.Is(err, store.ErrNotFound) {
@@ -718,7 +714,7 @@ func (p *Peers) watch(w store.Watch) {
 			text := fmt.Sprintf("[%s finished task %s: %s]\n%s", w.Contact, w.TaskID, stateName(task.Status.State), resultText(task))
 			if task.Status.State == a2a.TaskStateInputRequired {
 				text = fmt.Sprintf("[%s asks, on task %s]\n%s\nAnswer with: a2a send -a <agents URL>/%s --task-id %s \"...\"",
-					w.Contact, w.TaskID, messageText(task.Status.Message), w.Contact, w.TaskID)
+					w.Contact, w.TaskID, a2atext.Message(task.Status.Message), w.Contact, w.TaskID)
 			}
 			p.finishWatch(ctx, w, text)
 			return
@@ -789,7 +785,7 @@ func resultText(t *a2a.Task) string {
 		}
 	}
 	if len(parts) == 0 {
-		return messageText(t.Status.Message)
+		return a2atext.Message(t.Status.Message)
 	}
 	return strings.Join(parts, "\n\n")
 }

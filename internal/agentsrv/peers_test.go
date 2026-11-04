@@ -41,6 +41,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -75,8 +76,8 @@ func TestAgentCallsContact(t *testing.T) {
 	if !strings.Contains(resultText(task), "tool result") {
 		t.Fatalf("task result = %q, want the called agent's result", resultText(task))
 	}
-	if strings.Contains(messageText(task.History[0]), agentsLinePrefix) {
-		t.Fatalf("task history = %q, want the caller's message without the agents line", messageText(task.History[0]))
+	if strings.Contains(a2atext.Message(task.History[0]), agentsLinePrefix) {
+		t.Fatalf("task history = %q, want the caller's message without the agents line", a2atext.Message(task.History[0]))
 	}
 
 	unknown := send(t, c, userText("call nobody hi", "", ""))
@@ -109,7 +110,7 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(last.History) > 0 && strings.Contains(messageText(last.History[0]), "Pushed (allow).") {
+		if len(last.History) > 0 && strings.Contains(a2atext.Message(last.History[0]), "Pushed (allow).") {
 			return
 		}
 		if time.Now().After(deadline) {
@@ -136,7 +137,7 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 
 	restarted := startServer(t, serverOpts{name: "assistant", dir: root, channel: newFakeChannel("fake")})
 	restarted.ch.waitReady(t)
-	time.Sleep(3 * watchMaxInterval)
+	time.Sleep(3 * testTimings.WatchMaxInterval)
 	if n := restarted.ch.questions(); n != 0 {
 		t.Fatalf("questions asked again after the restart = %d, want 0", n)
 	}

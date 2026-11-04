@@ -34,21 +34,24 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
 
 // nodeTaskTimeout fails a node task which posts no event for this long.
-var nodeTaskTimeout = 10 * time.Minute
+const nodeTaskTimeout = 10 * time.Minute
 
-// DefaultWebhookRetries are the delays before each wake delivery attempt.
-var DefaultWebhookRetries = []time.Duration{0, 2 * time.Second, 10 * time.Second, 30 * time.Second}
+// defaultWebhookRetries are the delays before each wake delivery attempt.
+func defaultWebhookRetries() []time.Duration {
+	return []time.Duration{0, 2 * time.Second, 10 * time.Second, 30 * time.Second}
+}
 
 const inboxSize = 200
 
@@ -65,7 +68,7 @@ type Config struct {
 	// context, or rejects it.
 	Authenticate func(listener string, next http.Handler) http.Handler
 	// WebhookRetries are the delays before each wake delivery attempt;
-	// nil uses DefaultWebhookRetries.
+	// nil uses the default retries.
 	WebhookRetries []time.Duration
 	// Advertised reports whether the node is advertised to the private
 	// network, which lets authenticated callers call it too. Nil
@@ -118,7 +121,7 @@ type nodeDelivery struct {
 // New returns a host whose background work runs until ctx ends.
 func New(ctx context.Context, cfg Config) *Host {
 	if cfg.WebhookRetries == nil {
-		cfg.WebhookRetries = DefaultWebhookRetries
+		cfg.WebhookRetries = defaultWebhookRetries()
 	}
 	return &Host{
 		cfg:      cfg,
@@ -231,7 +234,7 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 }
 
 func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
-	u := trimSlash(baseURL) + "/n/" + node.ID
+	u := mailboxapi.NodeURL(baseURL, node.ID)
 	desc := node.Description
 	if desc == "" {
 		desc = node.Name + " is a webhook node hosted by " + n.cfg.AgentName() + "."
@@ -251,14 +254,6 @@ func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
 			ID: "node", Name: node.Name, Tags: []string{"async"},
 			Description: "Works asynchronously: a task stays submitted until the agent wakes up.",
 		}},
-	}
-}
-
-// Info describes a node for the control API.
-func (n *Host) Info(node store.Node) controlapi.NodeInfo {
-	return controlapi.NodeInfo{
-		ID: node.ID, Name: node.Name, URL: trimSlash(n.cfg.BaseURL()) + "/n/" + node.ID,
-		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
@@ -297,14 +292,14 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 	}
 	slog.Info("node paired", "node", node.ID)
 	jsonhttp.Write(w, http.StatusOK, pairapi.Response{
-		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: trimSlash(baseURL) + "/n/" + node.ID,
+		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: mailboxapi.NodeURL(baseURL, node.ID),
 	})
 }
 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	return mailboxapi.NodeInfo{
-		ID: node.ID, Name: node.Name, Description: node.Description, URL: trimSlash(baseURL) + "/n/" + node.ID,
-		Webhook: RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
+		ID: node.ID, Name: node.Name, Description: node.Description, URL: mailboxapi.NodeURL(baseURL, node.ID),
+		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
 }
 
@@ -463,7 +458,7 @@ func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) 
 
 		n.wake(e.node, mailboxapi.Envelope{
 			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.AgentName()),
-			Message: ec.Message, Text: mailboxapi.TextOf(ec.Message), State: mailboxapi.StateName(state),
+			Message: ec.Message, Text: a2atext.Message(ec.Message), State: mailboxapi.StateName(state),
 		})
 
 		timer := time.NewTimer(nodeTaskTimeout)
@@ -646,7 +641,7 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 			slog.Info("woke node", "node", node.ID, "kind", env.Kind, "task", env.TaskID)
 			return
 		}
-		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", RedactURL(node.Webhook), "attempt", i+1, "error", err)
+		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", webhook.RedactURL(node.Webhook), "attempt", i+1, "error", err)
 	}
 }
 
@@ -711,27 +706,3 @@ func instructions(env mailboxapi.Envelope) string {
 	}
 	return ""
 }
-
-// ValidateWebhook checks the URL of a webhook node.
-func ValidateWebhook(u string) error {
-	p, err := url.Parse(u)
-	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
-		return fmt.Errorf("--webhook must be an http(s) URL, got %q", u)
-	}
-	return nil
-}
-
-// RedactURL drops the query, which webhook providers often use for secrets.
-func RedactURL(u string) string {
-	p, err := url.Parse(u)
-	if err != nil {
-		return ""
-	}
-	if p.RawQuery != "" {
-		p.RawQuery = "…"
-	}
-	p.User = nil
-	return p.String()
-}
-
-func trimSlash(u string) string { return strings.TrimSuffix(u, "/") }

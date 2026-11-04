@@ -27,8 +27,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -233,7 +233,7 @@ func (o *offline) AddChannel(ctx context.Context, req controlapi.ChannelRequest)
 		return nil, err
 	}
 	maps.Copy(secrets, req.Secrets)
-	if err := agentsrv.ValidateChannel(ctx, cfg, secrets, req.Kind); err != nil {
+	if err := configured.Validate(ctx, cfg, secrets, req.Kind); err != nil {
 		return nil, err
 	}
 	if err := o.dir.SaveSecrets(req.Secrets); err != nil {

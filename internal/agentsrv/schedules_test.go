@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -59,7 +60,7 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LatestInContext() error = %v", err)
 	}
-	if got := messageText(last.History[0]); !strings.Contains(got, "brief me") {
+	if got := a2atext.Message(last.History[0]); !strings.Contains(got, "brief me") {
 		t.Fatalf("the chat's conversation has %q, want the scheduled run, so that replying continues it", got)
 	}
 }

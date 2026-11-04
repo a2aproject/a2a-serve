@@ -24,6 +24,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 func TestReloadConfigKeepsPendingChanges(t *testing.T) {
@@ -79,7 +80,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 func TestStatusAccess(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
-		private: &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: ProviderTailscale},
+		private: &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderTailscale},
 		public:  publicNet(),
 	})
 	ts.pair("phone", auth.RoleOwner)
