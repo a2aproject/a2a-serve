@@ -155,23 +155,17 @@ func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 		return s.nodeCode(ctx, node, false)
 	case exists && req.Owner && p.Role != auth.RoleOwner:
 		return nil, invalid("%s is paired as %s; make it an owner with `a2a-serve pair set %s --owner`", req.Name, p.Role, req.Name)
-	case !exists:
-		role := auth.RoleAuthenticated
-		if req.Owner {
-			role = auth.RoleOwner
-		}
-		if _, err := s.Store.EnsurePairing(ctx, store.Pairing{Name: req.Name, Role: role}); err != nil {
-			return nil, err
-		}
 	}
-	return s.callerCode(ctx, req.Name, false)
+	role := auth.RoleAuthenticated
+	if req.Owner {
+		role = auth.RoleOwner
+	}
+	return s.callerCode(ctx, req.Name, func(ctx context.Context, st *store.Store, name string) (string, time.Time, error) {
+		return auth.MintInviteCode(ctx, st, store.Pairing{Name: name, Role: role})
+	})
 }
 
-func (s *Service) callerCode(ctx context.Context, name string, sole bool) (*controlapi.PairCodeResponse, error) {
-	mint := auth.MintCode
-	if sole {
-		mint = auth.MintSoleCode
-	}
+func (s *Service) callerCode(ctx context.Context, name string, mint func(context.Context, *store.Store, string) (string, time.Time, error)) (*controlapi.PairCodeResponse, error) {
 	code, expires, err := mint(ctx, s.Store, name)
 	if err != nil {
 		return nil, err
@@ -306,7 +300,7 @@ func (s *Service) Update(ctx context.Context, name string, req controlapi.Pairin
 		if err := s.Store.DeleteTokens(ctx, name); err != nil {
 			return nil, err
 		}
-		if resp.Code, err = s.callerCode(ctx, name, true); err != nil {
+		if resp.Code, err = s.callerCode(ctx, name, auth.MintSoleCode); err != nil {
 			return nil, err
 		}
 	}

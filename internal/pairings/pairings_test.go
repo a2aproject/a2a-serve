@@ -17,6 +17,7 @@ package pairings
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -284,5 +285,41 @@ func TestRemove(t *testing.T) {
 	}
 	if _, err := s.Remove(ctx, "anna"); kindOf(err) != NotFound {
 		t.Fatalf("Remove(anna) again error = %v, want not found", err)
+	}
+}
+
+func TestInviteRacesPrune(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	done := make(chan struct{})
+	pruned := make(chan error, 1)
+	go func() {
+		for {
+			select {
+			case <-done:
+				pruned <- nil
+				return
+			default:
+			}
+			if err := s.Store.Prune(ctx); err != nil {
+				pruned <- err
+				return
+			}
+		}
+	}()
+
+	var err error
+	for i := range 200 {
+		if _, err = s.Invite(ctx, controlapi.PairCodeRequest{Name: fmt.Sprintf("p%d", i)}); err != nil {
+			break
+		}
+	}
+	close(done)
+	if pruneErr := <-pruned; pruneErr != nil {
+		t.Fatalf("Prune() error = %v", pruneErr)
+	}
+	if err != nil {
+		t.Fatalf("Invite() while pruning error = %v, want nil", err)
 	}
 }

@@ -41,6 +41,8 @@ type Pairing struct {
 }
 
 // EnsurePairing creates the pairing if it doesn't exist and returns it.
+// Pruning deletes a pairing with no kind and no codes, so a new pairing
+// that waits for its first code gets it with [Store.InviteCode].
 func (s *Store) EnsurePairing(ctx context.Context, p Pairing) (Pairing, error) {
 	if _, err := s.exec(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 		p.Name, p.Kind, p.Role, s.now().UnixNano()); err != nil {
@@ -283,6 +285,21 @@ func (s *Store) PutCode(ctx context.Context, code string, c Code) error {
 	_, err := s.exec(ctx, `INSERT INTO codes (hash, pairing, expires) VALUES (?, ?, ?)`,
 		cryptoutil.Hash(code), c.Pairing, c.Expires.UnixNano())
 	return err
+}
+
+// InviteCode creates the pairing if it doesn't exist and stores a code of
+// it, in one transaction, so that pruning never finds a new pairing without
+// its code.
+func (s *Store) InviteCode(ctx context.Context, p Pairing, code string, expires time.Time) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+			p.Name, p.Kind, p.Role, s.now().UnixNano()); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO codes (hash, pairing, expires) VALUES (?, ?, ?)`,
+			cryptoutil.Hash(code), p.Name, expires.UnixNano())
+		return err
+	})
 }
 
 // ReplaceCode stores a code by its hash and deletes the other codes of its

@@ -370,6 +370,17 @@ func MintCode(ctx context.Context, s *store.Store, pairing string) (string, time
 	return code, expires, nil
 }
 
+// MintInviteCode is MintCode which first creates the pairing p if it
+// doesn't exist.
+func MintInviteCode(ctx context.Context, s *store.Store, p store.Pairing) (string, time.Time, error) {
+	code := NewCode()
+	expires := time.Now().Add(CodeTTL)
+	if err := s.InviteCode(ctx, p, NormalizeCode(code), expires); err != nil {
+		return "", time.Time{}, err
+	}
+	return code, expires, nil
+}
+
 // MintSoleCode is MintCode which also revokes the other pending codes of
 // the pairing.
 func MintSoleCode(ctx context.Context, s *store.Store, pairing string) (string, time.Time, error) {
