@@ -46,7 +46,7 @@ NOT_PROSE = re.compile(r"^\s*([#>|!<*+-]|\d+\.|```|~~~)")
 DESCRIPTION_MAX = 160
 # Pages whose sections stay out of the navigation.
 HIDE_TOC = ("index.md", "getting-started.md", "examples/*", "reference/a2a-cli.md",
-            "guide/webhook-nodes.md", "guide/config.md", "guide/networks.md")
+            "guide/webhook-nodes.md", "guide/networks.md")
 
 
 def site_path(repo_path):

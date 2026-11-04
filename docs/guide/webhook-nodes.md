@@ -27,4 +27,4 @@ a2a-serve peers                                               # on Anna's agent:
 a2a-serve contact add grok@ben                                # no code needed
 ```
 
-Anna's calls go through Ben's agent, which keeps the webhook's credentials. Anna's login needs a role on Ben's agent, through `--identity` or the Tailscale app capability. An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.
+Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.

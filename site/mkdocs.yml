@@ -70,6 +70,7 @@ nav:
       - Supported Agents: guide/supported-agents.md
       - Running: guide/running.md
       - Config: guide/config.md
+      - Secrets: guide/secrets.md
       - Sandbox: guide/sandbox.md
       - MCP and Skills: guide/mcp-and-skills.md
       - Approvals: guide/approvals.md

@@ -1,34 +1,59 @@
 # The a2a CLI
 
-With `a2a-serve` on your `PATH`, every `a2a-serve` command also runs as `a2a serve`.
+a2a-serve works with the [a2a CLI](https://github.com/a2aproject/a2a-cli), the command-line A2A client of the A2A project. People and nodes call agents with it, the agent calls other agents with it, and it can run a2a-serve as `a2a serve`.
 
-a2a-serve needs these features of the `a2a` CLI:
+`a2a-serve doctor` checks that the installed `a2a` is recent enough and prints the command to upgrade it. `a2a-serve doctor --fix` does the setup on this page.
 
-- Command plugins: `a2a-<name>` on `PATH` runs as `a2a <name>`.
-- `--unix-socket` (`A2ACLI_UNIX_SOCKET=<path>`): on Linux and with
-  `--sandbox local`, the agent's `a2a` sends every request through the
-  server's Unix socket.
-- Credential helpers (`credential-helper`, the
-  [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec)):
-  `a2a-serve credential` returns the token `a2a-serve pair join` saved in
-  `~/.config/a2a-serve/credentials.json` for the longest matching agent URL,
-  or `$A2A_NODE_TOKEN` for its agent. `a2a-serve doctor --fix` lists it once
-  under `credential-helper` in `~/.config/a2a-cli/config.yaml` as
-  `{command: [a2a-serve, credential]}`. On Docker Desktop the agent gets its
-  key from a helper script scoped to the bridge host
-  (`A2ACLI_CREDENTIAL_HELPER=host.docker.internal=<path>`).
-- `a2a skill` and `a2a version -o json`, which the server serves at
-  `/skill.md` and `a2a-serve doctor` uses to check the installed version.
+## How a2a-serve uses the a2a CLI
 
-## Manual setup
+### Calls from the agent
 
-`a2a-serve doctor --fix` does this for you:
+The agent calls other agents with `a2a send`. The server sets these variables for it:
+
+| Variable | Value |
+| --- | --- |
+| `A2ACLI_UNIX_SOCKET` | The server's control socket. The `a2a` CLI sends every request through it, whatever the host of the URL. Set on Linux and with `--sandbox local`. |
+| `A2ACLI_CREDENTIAL_HELPER` | `host.docker.internal=<path>` on Docker Desktop, where the agent reaches the server over a TCP bridge. The helper script prints the bridge key, and only for that host. |
+| `A2ACLI_TIMEOUT` | `5m`, unless `--env` sets it. |
+
+The agent images carry the `a2a` version that this a2a-serve needs. With `--sandbox local`, the agent uses the `a2a` on your `PATH`.
+
+### Tokens for callers
+
+`a2a-serve credential` is a credential helper in the [Bazel credential helper protocol](https://github.com/EngFlow/credential-helper-spec). For a URL, it returns:
+
+- the token that `a2a-serve pair join` saved in `~/.config/a2a-serve/credentials.json` for the longest matching agent URL, or
+- `$A2A_NODE_TOKEN`, for requests a webhook node sends to its agent.
+
+The `a2a` CLI runs it when it is listed in `~/.config/a2a-cli/config.yaml`. `a2a-serve doctor --fix` adds it. To add it by hand:
 
 ```bash
-a2a plugin set-enabled true   # let `a2a` run a2a-serve as `a2a serve`
 mkdir -p ~/.config/a2a-cli
 grep -q '^credential-helper:' ~/.config/a2a-cli/config.yaml 2>/dev/null ||
   printf 'credential-helper:\n  - command: [a2a-serve, credential]\n' >> ~/.config/a2a-cli/config.yaml
 ```
 
-If `a2a serve` fails with `unknown command "serve" for "a2a"`, command plugins are disabled or `a2a-serve` is not on `PATH`.
+### Served files
+
+| Route | Content |
+| --- | --- |
+| `GET /skill.md` | The output of `a2a skill`, for agents that call this one. |
+| `GET /download/a2a` | The `a2a` binary next to the server, for webhook nodes. |
+
+### Version check
+
+`a2a-serve doctor` reads `a2a version -o json` and fails on versions older than the one this a2a-serve needs. Those versions lack `--unix-socket` or the credential helper format above, so their calls get a 401. With `--sandbox local`, the server also logs a warning on start.
+
+## Running a2a-serve as `a2a serve`
+
+The `a2a` CLI runs any `a2a-<name>` on `PATH` as `a2a <name>` when command plugins are enabled. With `a2a-serve` on `PATH`, `a2a serve start` runs `a2a-serve start`, and the same holds for every other command.
+
+Command plugins are off by default. `a2a-serve doctor --fix` turns them on. To turn them on by hand:
+
+```bash
+a2a plugin set-enabled true
+```
+
+`A2ACLI_PLUGINS_ENABLED=true` turns them on for one shell.
+
+If `a2a serve` fails with `unknown command "serve" for "a2a"`, command plugins are off or `a2a-serve` is not on `PATH`.

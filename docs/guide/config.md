@@ -22,28 +22,6 @@ The description, the owner chat, the allowed and denied tools, and messengers ap
 | `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list, or resets a setting to its default. |
 | `a2a-serve config edit` | Opens `config.yaml` in your editor and validates it on save. |
 
-List settings are keyed: `--secret` and `--env` by name, `--mount` by destination, `--identity` by login. Setting an existing entry replaces it. `config unset secret OPENROUTER_API_KEY` removes the entry and its stored value.
+List settings are keyed: `--secret` and `--env` by name, `--mount` by destination, and other lists by value. Setting an existing entry replaces it. [Secrets](secrets.md) covers `--secret` and the flags that take tokens.
 
 `config set --agent opencode` creates an agent without starting it. Use it when the first start needs settings that `start` doesn't take, such as `--tailscale-authkey`.
-
-## Secret values
-
-Flags that take a secret read the value when you run the command and store it in `state/secrets`, so an agent running in the background doesn't need your shell's environment.
-
-Every flag that takes a secret accepts these forms:
-
-| Form | Meaning |
-| --- | --- |
-| `env:VAR` | The value of the environment variable `VAR`. |
-| `-` | A hidden prompt on a terminal, or else all of stdin. |
-| `secret:NAME` | A value already stored in `state/secrets`. |
-| anything else | The value itself. |
-
-`-` keeps tokens out of your shell history:
-
-```sh
-a2a-serve channel add telegram --token -
-pass show coder/bot | a2a-serve channel add discord --token -
-```
-
-`pair invite --webhook-header` takes a whole header, which may end in `env:VAR` or `-`: `"Authorization: Bearer env:TOKEN"`.

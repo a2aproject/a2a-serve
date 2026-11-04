@@ -23,14 +23,15 @@ Visit [Getting Started](getting-started.md) to see how a single command turns th
 |---|---|
 | [Supported Agents](guide/supported-agents.md) | The supported agents, images and platforms |
 | [Running](guide/running.md) | Start, stop, restart and check on an agent |
-| [Config](guide/config.md) | Change settings and pass secrets |
+| [Config](guide/config.md) | Change settings |
+| [Secrets](guide/secrets.md) | API keys for the agent and tokens for the server |
 | [Sandbox](guide/sandbox.md) | What the Docker sandbox mounts and limits |
 | [MCP and Skills](guide/mcp-and-skills.md) | Give the agent the MCP servers and skills of its project |
 | [Approvals](guide/approvals.md) | Answer tool calls, and who answers them |
 | [Inspector](guide/inspector.md) | A web page with conversations, tasks and approvals |
 | [Identities](guide/identities.md) | Callers, roles and pairing codes |
 | [Email Sign-In](guide/email-sign-in.md) | Let people on an email allowlist call the agent |
-| [Networks](guide/networks.md) | Tailscale, the local network, Agent Mesh relays, ngrok and public URLs |
+| [Networks](guide/networks.md) | Tailscale, the local network, Agent Mesh relays and public URLs |
 | [Messengers](guide/messengers.md) | Telegram, Discord and email |
 | [Agent2Agent](guide/agent2agent.md) | Contacts, peers and calls between agents |
 | [Schedules](guide/schedules.md) | Run prompts at set times |

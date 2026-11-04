@@ -67,14 +67,15 @@ The documentation site is <https://a2aproject.github.io/a2a-serve/>.
 |---|---|
 | [Supported Agents](./docs/guide/supported-agents.md) | The supported agents, images and platforms |
 | [Running](./docs/guide/running.md) | Start, stop, restart and check on an agent |
-| [Config](./docs/guide/config.md) | Change settings and pass secrets |
+| [Config](./docs/guide/config.md) | Change settings |
+| [Secrets](./docs/guide/secrets.md) | API keys for the agent and tokens for the server |
 | [Sandbox](./docs/guide/sandbox.md) | What the Docker sandbox mounts and limits |
 | [MCP and Skills](./docs/guide/mcp-and-skills.md) | Give the agent the MCP servers and skills of its project |
 | [Approvals](./docs/guide/approvals.md) | Answer tool calls, and who answers them |
 | [Inspector](./docs/guide/inspector.md) | A web page with conversations, tasks and approvals |
 | [Identities](./docs/guide/identities.md) | Callers, roles and pairing codes |
 | [Email Sign-In](./docs/guide/email-sign-in.md) | Let people on an email allowlist call the agent |
-| [Networks](./docs/guide/networks.md) | Tailscale, the local network, Agent Mesh relays, ngrok and public URLs |
+| [Networks](./docs/guide/networks.md) | Tailscale, the local network, Agent Mesh relays and public URLs |
 | [Messengers](./docs/guide/messengers.md) | Telegram, Discord and email |
 | [Agent2Agent](./docs/guide/agent2agent.md) | Contacts, peers and calls between agents |
 | [Schedules](./docs/guide/schedules.md) | Run prompts at set times |
