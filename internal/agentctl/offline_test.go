@@ -21,7 +21,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 // fakeRelay serves a relay's /info, whose protobuf names the identity
@@ -40,25 +42,26 @@ func fakeRelay(t *testing.T, issuer string) string {
 	return srv.URL
 }
 
-func TestOthersAllowedOnRelay(t *testing.T) {
+func TestNetworkOfRelay(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		issuer  string
-		secrets agentdir.Secrets
-		want    []string
+		name       string
+		issuer     string
+		secrets    agentdir.Secrets
+		wantSignIn bool
 	}{
-		{name: "token-only relay", secrets: agentdir.Secrets{agentdir.SecretRelayToken: "tok"}, want: []string{"everyone on the relay"}},
-		{name: "sign-in relay joined with a token", issuer: "https://accounts.example.com", secrets: agentdir.Secrets{agentdir.SecretRelayToken: "tok"}},
-		{name: "relay joined by sign-in", secrets: agentdir.Secrets{}},
+		{name: "token-only relay", secrets: agentdir.Secrets{agentdir.SecretRelayToken: "tok"}},
+		{name: "sign-in relay joined with a token", issuer: "https://accounts.example.com", secrets: agentdir.Secrets{agentdir.SecretRelayToken: "tok"}, wantSignIn: true},
+		{name: "relay joined by sign-in", secrets: agentdir.Secrets{}, wantSignIn: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Network: agentdir.NetworkConfig{Private: fakeRelay(t, tc.issuer)}}
 			d := newAgent(t, cfg, tc.secrets)
-			if diff := cmp.Diff(tc.want, othersAllowed(t.Context(), d, cfg)); diff != "" {
-				t.Fatalf("othersAllowed() wrong result (-want +got) diff = %s", diff)
+			want := access.Network{Private: network.ProviderRelay, SignIn: tc.wantSignIn}
+			if diff := cmp.Diff(want, networkOf(t.Context(), d, cfg)); diff != "" {
+				t.Fatalf("networkOf() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

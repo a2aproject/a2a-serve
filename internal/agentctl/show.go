@@ -65,10 +65,8 @@ func Show(ctx context.Context, d agentdir.Dir) (*View, error) {
 			v.Secrets[name] = SecretStateStored
 		}
 	}
-	for _, name := range []string{agentdir.SecretTailscaleKey, agentdir.SecretNgrokToken} {
-		if stored[name] != "" {
-			v.Secrets[name] = SecretStateStored
-		}
+	if stored[agentdir.SecretTailscaleKey] != "" {
+		v.Secrets[agentdir.SecretTailscaleKey] = SecretStateStored
 	}
 	v.Defaults = defaults(d, cfg)
 	if v.Pending, v.Running, err = Pending(ctx, d); err != nil {

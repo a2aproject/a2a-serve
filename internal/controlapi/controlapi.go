@@ -67,6 +67,29 @@ type Status struct {
 	// ProjectError is why the project's MCP servers or skills couldn't be read.
 	ProjectError string        `json:"projectError,omitempty"`
 	Backup       *BackupStatus `json:"backup,omitempty"`
+	Access       *Access       `json:"access,omitempty"`
+}
+
+// Access describes who may call the agent.
+type Access struct {
+	// PrivateAccess is everyone or paired, set with a private network;
+	// PublicAccess is paired or anyone, set with a public URL.
+	PrivateAccess string `json:"privateAccess,omitempty"`
+	PublicAccess  string `json:"publicAccess,omitempty"`
+	// Owner, Authenticated and Anonymous are the members of each role.
+	Owner         []string `json:"owner"`
+	Authenticated []string `json:"authenticated"`
+	Anonymous     []string `json:"anonymous"`
+	// Pairings counts the pairings besides the local one, and OwnerPairings
+	// those of them that are owners.
+	Pairings      int `json:"pairings"`
+	OwnerPairings int `json:"ownerPairings"`
+	// Others describes who may call without a pairing, such as everyone on
+	// the tailnet.
+	Others []string `json:"others,omitempty"`
+	// Summary says who may call, one line each for you, everyone else and
+	// the networks that need a pairing, as `a2a-serve status` shows it.
+	Summary []string `json:"summary"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.
@@ -109,7 +132,7 @@ func (s *Status) URL(scope string) (string, error) {
 		return s.Private, nil
 	case ScopePublic:
 		if s.Public == "" {
-			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`", s.Name)
+			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
 		}
 		return s.Public, nil
 	}
@@ -186,6 +209,8 @@ type PairCodeResponse struct {
 	// Instructions, set for node codes, is the message for the agent behind
 	// the webhook: where the node's skill is and the code to pair with.
 	Instructions string `json:"instructions,omitempty"`
+	// Access is who may call the agent afterwards.
+	Access *Access `json:"access,omitempty"`
 }
 
 // Pairing describes someone paired with the agent: a person, a device,
@@ -255,6 +280,8 @@ type PairingUpdate struct {
 type PairingUpdateResponse struct {
 	Pairing Pairing           `json:"pairing"`
 	Code    *PairCodeResponse `json:"code,omitempty"`
+	// Access is who may call the agent afterwards.
+	Access *Access `json:"access,omitempty"`
 }
 
 // RevokeResponse tells what `pair rm` removed.
@@ -268,6 +295,8 @@ type RevokeResponse struct {
 	// Kept is set when the pairing stays and only its credentials were
 	// revoked, as for the local pairing.
 	Kept bool `json:"kept,omitempty"`
+	// Access is who may call the agent afterwards.
+	Access *Access `json:"access,omitempty"`
 }
 
 // Peer is an agent found on the private network.

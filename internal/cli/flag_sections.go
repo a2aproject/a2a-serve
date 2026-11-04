@@ -31,11 +31,12 @@ const (
 	sectionWorkspace = "Workspace"
 	sectionSandbox   = "Sandbox"
 	sectionNetwork   = "Network"
+	sectionAccess    = "Access"
 	sectionApprovals = "Approvals"
 	sectionRun       = "Run (not saved)"
 )
 
-var sections = []string{sectionGeneral, sectionWorkspace, sectionSandbox, sectionNetwork, sectionApprovals, sectionRun}
+var sections = []string{sectionGeneral, sectionWorkspace, sectionSandbox, sectionNetwork, sectionAccess, sectionApprovals, sectionRun}
 
 // setSection puts the named flags in a help section.
 func setSection(f *pflag.FlagSet, section string, names ...string) {

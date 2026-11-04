@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -48,7 +49,8 @@ const (
 	oauthPendingTTL = 10 * time.Minute
 )
 
-// oauthServer signs people in with Google, limited to the allowlist.
+// oauthServer signs people in with Google at the public URL, limited to the
+// emails the policy names.
 type oauthServer struct {
 	s        *Server
 	google   googleauth.Endpoints
@@ -92,7 +94,7 @@ func newOAuthServer(s *Server, google googleauth.Endpoints) *oauthServer {
 	}
 }
 
-func (o *oauthServer) enabled() bool { return len(o.s.config().Auth.AllowEmails) > 0 }
+func (o *oauthServer) enabled() bool { return len(o.s.config().Policy.Emails()) > 0 }
 
 func (o *oauthServer) register(mux *http.ServeMux, base func(*http.Request) string) {
 	mux.HandleFunc("GET "+protectedResourcePath, o.on(func(w http.ResponseWriter, r *http.Request) {
@@ -136,10 +138,11 @@ func (o *oauthServer) on(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// challengeHeader is the WWW-Authenticate header of a 401, which points
-// clients to the agent's auth metadata when sign-in is on.
-func (o *oauthServer) challengeHeader(base string) string {
-	if !o.enabled() {
+// challengeHeader is the WWW-Authenticate header of a 401 on the listener
+// kind, which points clients to the agent's auth metadata when sign-in is
+// on there.
+func (o *oauthServer) challengeHeader(kind, base string) string {
+	if kind != network.ListenerPublic || !o.enabled() {
 		return `Bearer realm="a2a"`
 	}
 	return `Bearer realm="a2a", resource_metadata="` + base + protectedResourcePath + `"`
@@ -245,7 +248,7 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {err.Error()}})
 		return
 	}
-	if !googleauth.Allowed(cfg.Auth.AllowEmails, claims) {
+	if !googleauth.Allowed(cfg.Policy.Emails(), claims) {
 		slog.Warn("refused a Google sign-in", "email", claims.Email)
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {claims.Email + " may not call this agent; ask its owner to allow it"}})
 		return
@@ -321,7 +324,7 @@ func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base stri
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the Google token was requested for another agent")
 		return
 	}
-	if !googleauth.Allowed(o.s.config().Auth.AllowEmails, claims) {
+	if !googleauth.Allowed(o.s.config().Policy.Emails(), claims) {
 		oauthError(w, http.StatusForbidden, "access_denied", claims.Email+" may not call this agent; ask its owner to allow it")
 		return
 	}

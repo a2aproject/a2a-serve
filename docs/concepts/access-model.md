@@ -1,10 +1,11 @@
 # Access model: who can call an agent
 
 > [!NOTE]
-> This page describes the access model a2a-serve is moving to. Until it lands,
-> [Who can call the agent](../guide.md#who-can-call-the-agent) describes the
-> current behavior. `--private-access`, `--public-access`, `--owner` and
-> `--allow` don't exist yet, and `status` has no `access` block.
+> Parts of this page are planned: callers on the public URL with
+> `--public-access anyone`, the separate agent process, budget and approval
+> timeouts of anonymous callers, and the sandbox reaching the network only
+> through the server. [Who can call the agent](../guide.md#who-can-call-the-agent)
+> describes what works today.
 
 An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
 
@@ -64,9 +65,9 @@ coder (opencode) running for 2h, pid 41233
   local    http://127.0.0.1:46757
   private  https://coder.tail1234.ts.net
   public   https://coder.tail1234.ts.net
-  access   you: this machine and your tailnet devices (you@example.com)
-           everyone on the tailnet (3 users), *@example.com with Google sign-in, 2 pairings
-           the public URL needs a pairing or sign-in
+  access   you: this machine and your tailnet devices
+           everyone on the tailnet, emails matching *@example.com, 2 pairings
+           the public URL needs a pairing or Google sign-in
 ```
 
 - Every change to access prints who can call afterwards.
@@ -145,7 +146,9 @@ policy:
 | `pair invite --owner` | the pairing's role is `owner` |
 | `--owner M`, `--allow M` | add member `M` to `owner` or `authenticated` |
 
-Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards from the tailnet or a relay need an explicit opt-in, since those networks don't prove a domain the way Google sign-in does.
+Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
+
+`config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting bindings in [`access`](../reference/output.md).
 
 A request is resolved in this order:
 

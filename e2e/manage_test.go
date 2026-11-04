@@ -181,6 +181,35 @@ func TestScheduleChatVocabulary(t *testing.T) {
 	}
 }
 
+// TestAccessSettings covers the access settings: a running agent applies
+// them at once, and status and every change say who may call.
+func TestAccessSettings(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+
+	out := coder.serve("config", "set", "--private-access", "paired", "--allow-email", "*@example.com", "--owner", "email:me@example.com")
+	for _, want := range []string{"applied to the running agent: private-access, allow-email, owner", "who may call:\n  you: this machine\n  emails matching me@example.com as owners, emails matching *@example.com\n"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a2a-serve config set --private-access = %q, want %q", out, want)
+		}
+	}
+	if out := coder.serve("status"); !strings.Contains(out, "  access   you: this machine\n") {
+		t.Fatalf("a2a-serve status = %q, want the access block", out)
+	}
+	var status struct {
+		Access struct {
+			Owner []string `json:"owner"`
+		} `json:"access"`
+	}
+	coder.serveJSON(&status, "status")
+	if diff := cmp.Diff([]string{"self", "email:me@example.com"}, status.Access.Owner); diff != "" {
+		t.Fatalf("a2a-serve status -o json access.owner wrong result (-want +got) diff = %s", diff)
+	}
+	coder.mustFail("--allow self: you are always an owner", "config", "set", "--allow", "self")
+	coder.mustFail(`invalid --public "ngrok"`, "config", "set", "--public", "ngrok")
+}
+
 // TestManageStoppedAgent covers PR 8: pairings and schedules change while
 // the agent is stopped, and the agent picks them up when it starts.
 func TestManageStoppedAgent(t *testing.T) {

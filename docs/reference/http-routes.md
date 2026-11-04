@@ -4,11 +4,11 @@ An a2a-serve agent serves these routes on every listener.
 
 | Route | |
 | --- | --- |
-| `GET /`, `GET /.well-known/agent-card.json` | the agent card |
+| `GET /`, `GET /.well-known/agent-card.json` | the agent card, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-access paired`, and on the public URL unless `--public-access anyone` |
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |
-| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in, when `--allow-email` is set |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in on the public URL, when `--allow-email`, `--owner` or `--allow` names an email |
 | `/hitl/<token>` | answer a question in a browser |
 | `/inspect/…` | the owner's web inspector (`a2a-serve inspect`); on the local listener, and on the private listener of a tailnet |
 | `/n/<node>/…` | webhook nodes |

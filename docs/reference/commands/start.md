@@ -85,7 +85,17 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
 | `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+
+**Access flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
 **Approvals flags**
 
@@ -151,7 +161,17 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
 | `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+
+**Access flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
 **Approvals flags**
 
@@ -289,7 +309,17 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
 | `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
+
+**Access flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
 **Approvals flags**
 

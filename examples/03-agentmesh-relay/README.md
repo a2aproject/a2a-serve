@@ -143,6 +143,7 @@ rm -rf ~/a2a-lesson3
 - Sign in with your account: a relay with an identity provider prints a
   sign-in link on the first run. Your agents call each other without a code,
   and other people's agents need one, because the identity provider may
-  accept anyone with an account.
+  accept anyone with an account. `--private-access everyone` lets everyone
+  on such a relay call.
 - Run the relay somewhere with a stable address; agents and pairing tokens
   are tied to it.

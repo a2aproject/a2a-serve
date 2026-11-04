@@ -32,7 +32,7 @@ const localOwnerName = pairings.LocalOwner
 // saveLocalOwnerToken makes sure the user running the server has an owner
 // token for its local URL, so `a2a send` from this machine works without
 // pairing. Loopback connections aren't trusted instead, because tunnels
-// such as ngrok reach the server from loopback too.
+// and proxies reach the server from loopback too.
 func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	local, _, _ := s.URLs()
 	saved, ok, err := s.credentials.Lookup(local)

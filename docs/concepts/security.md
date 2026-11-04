@@ -31,11 +31,11 @@ A web page open in your browser can't make requests that change state on the age
 | Network | Who gets in |
 | --- | --- |
 | localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
-| Tailscale | Everyone on the tailnet. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
-| LAN | Everyone who can reach the port. The server accepts only requests for its LAN address, against DNS rebinding. |
-| Agent Mesh relay | On a relay that admits people by sign-in: your agents, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. |
-| Public URL (Funnel, ngrok, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in. |
-| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
+| Tailscale | Everyone on the tailnet, or with `--private-access paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
+| LAN | Everyone who can reach the port, or with `--private-access paired` only callers with a token. The server accepts only requests for its LAN address, against DNS rebinding. |
+| Agent Mesh relay | On a relay that admits people by sign-in: you, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. `--private-access` overrides both. |
+| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. |
+| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
 Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network.
@@ -69,7 +69,7 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |
 | Inspector link and session | The inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
 | Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
-| `--secret` values, bot tokens, email password, Tailscale and ngrok keys, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve channel rm <kind>`, then rotate at the service |
+| `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve channel rm <kind>`, then rotate at the service |
 
 `state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. Backups contain `state/secrets` and are always encrypted with the backup key.
 

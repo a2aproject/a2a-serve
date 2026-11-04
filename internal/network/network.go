@@ -95,7 +95,6 @@ type Provider interface {
 const (
 	ProviderTailscale = "tailscale"
 	ProviderLAN       = "lan"
-	ProviderNgrok     = "ngrok"
 	ProviderRelay     = "agentmesh"
 )
 

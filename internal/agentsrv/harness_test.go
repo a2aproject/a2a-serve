@@ -99,6 +99,7 @@ type serverOpts struct {
 	configure func(*agentdir.Config)
 	google    *googleauth.Endpoints
 	private   network.Provider
+	public    network.Provider
 	newRelay  func(network.RelayConfig) (network.Provider, error)
 }
 
@@ -142,7 +143,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, NewRelay: o.newRelay, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}
@@ -212,6 +213,11 @@ func (ts *testServer) stop() {
 func (ts *testServer) localURL() string {
 	local, _, _ := ts.srv.URLs()
 	return local
+}
+
+func (ts *testServer) publicURL() string {
+	_, _, public := ts.srv.URLs()
+	return public
 }
 
 // pair mints a code over the control socket and exchanges it for a token.

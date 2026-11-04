@@ -16,11 +16,15 @@ package cli
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func TestStatusStoppedJSON(t *testing.T) {
@@ -39,5 +43,24 @@ func TestStatusStoppedJSON(t *testing.T) {
 	want := map[string]any{"name": "coder", "agent": "opencode", "dir": d.Root, "running": false}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("a2a-serve status -o json wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPrintStatusAccess(t *testing.T) {
+	t.Parallel()
+	var out strings.Builder
+	cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+	st := &controlapi.Status{
+		Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000", Private: "https://coder.tail1234.ts.net",
+		Access: &controlapi.Access{Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 2 pairings", "the public URL needs a pairing"}},
+	}
+	if err := printStatus(cfg, st, nil); err != nil {
+		t.Fatalf("printStatus() error = %v", err)
+	}
+	want := "  access   you: this machine and your tailnet devices\n" +
+		"           everyone on the tailnet, 2 pairings\n" +
+		"           the public URL needs a pairing\n"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("printStatus() = %q, want the access block %q", out.String(), want)
 	}
 }

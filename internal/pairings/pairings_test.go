@@ -251,7 +251,8 @@ func TestRemove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
-	s.Others = func(context.Context) []string { return []string{"everyone on the tailnet"} }
+	everyone := &controlapi.Access{Others: []string{"everyone on the tailnet"}, Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet"}}
+	s.Access = func(context.Context) (*controlapi.Access, error) { return everyone, nil }
 	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
@@ -263,8 +264,8 @@ func TestRemove(t *testing.T) {
 		name string
 		want *controlapi.RevokeResponse
 	}{
-		{name: "anna", want: &controlapi.RevokeResponse{Kind: pairapi.PairingPerson, StillAllowed: []string{"everyone on the tailnet"}}},
-		{name: "grok", want: &controlapi.RevokeResponse{Kind: pairapi.PairingWebhook}},
+		{name: "anna", want: &controlapi.RevokeResponse{Kind: pairapi.PairingPerson, StillAllowed: []string{"everyone on the tailnet"}, Access: everyone}},
+		{name: "grok", want: &controlapi.RevokeResponse{Kind: pairapi.PairingWebhook, Access: everyone}},
 		{name: LocalOwner, want: &controlapi.RevokeResponse{Kind: pairapi.PairingPerson, Kept: true}},
 	}
 	for _, tc := range tests {

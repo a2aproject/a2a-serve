@@ -97,12 +97,19 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.StringVar(&sf.command, "command", "", commandUsage)
 	f.IntVar(&s.Port, "port", 0, "Localhost port, 1-65535 (default: a free port, kept across runs)")
 	f.StringVar(&s.Private, "private", "", "Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com")
-	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay")
+	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay")
+	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in)")
+	f.StringVar(&s.PublicAccess, "public-access", "", "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired)")
+	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL", true))
+	f.StringArrayVar(&s.Owner, "owner", nil, listUsage("Make a `member` an owner, who sees every task and answers every approval: private for everyone on the private network, email:<address> or email:*@<domain>", false))
+	f.StringArrayVar(&s.Allow, "allow", nil, listUsage("Let a `member` call the agent: email:<address> or email:*@<domain>", false))
 	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
 	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, listUsage("ACP tool `kinds` denied without asking, like --allow-tools", true))
 	f.StringVar(&s.OwnerChat, "owner-chat", "", "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)")
 	must(cmd.RegisterFlagCompletionFunc("private", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkLAN, agentdir.NetworkNone)))
-	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNgrok, agentdir.NetworkNone)))
+	must(cmd.RegisterFlagCompletionFunc("public", fixedCompletions(agentdir.NetworkTailscale, agentdir.NetworkNone)))
+	must(cmd.RegisterFlagCompletionFunc("private-access", fixedCompletions(agentdir.AccessEveryone, agentdir.AccessPaired)))
+	must(cmd.RegisterFlagCompletionFunc("public-access", fixedCompletions(agentdir.AccessPaired, agentdir.AccessAnyone)))
 	must(cmd.RegisterFlagCompletionFunc("sandbox", fixedCompletions(agentdir.SandboxDocker, agentdir.SandboxLocal)))
 	must(cmd.RegisterFlagCompletionFunc("allow-tools", fixedCompletions(agentdir.ToolKinds...)))
 	must(cmd.RegisterFlagCompletionFunc("deny-tools", fixedCompletions(agentdir.ToolKinds...)))
@@ -110,6 +117,7 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	setSection(f, sectionWorkspace, "workspace", "mount", "env", "secret")
 	setSection(f, sectionSandbox, "sandbox", "image", "command")
 	setSection(f, sectionNetwork, "port", "private", "public")
+	setSection(f, sectionAccess, "private-access", "public-access", "allow-email", "owner", "allow")
 	setSection(f, sectionApprovals, "allow-tools", "deny-tools", "owner-chat")
 	must(cmd.RegisterFlagCompletionFunc("owner-chat", fixedCompletions(agentdir.ChannelKinds...)))
 }
@@ -122,10 +130,7 @@ func (sf *settingsFlags) registerOperational(cmd *cobra.Command) {
 	f.IntVar(&s.PIDs, "pids", 0, "Container process limit (default 512)")
 	f.StringVar(&s.TailscaleControlURL, "tailscale-control-url", "", "Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server")
 	f.StringVar(&s.TailscaleAuthKey, "tailscale-authkey", "", secretUsage("Tailscale auth key, to join without the login link"))
-	f.StringVar(&s.NgrokURL, "ngrok-url", "", "Reserved ngrok domain, such as https://coder.ngrok.app")
-	f.StringVar(&s.NgrokAuthToken, "ngrok-authtoken", "", secretUsage("ngrok authtoken"))
 	f.StringVar(&s.RelayToken, "relay-token", "", secretUsage("Join token of an Agent Mesh relay, to join without the sign-in link"))
-	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent by a verified email, on any network: an `email`, or *@domain for a Google Workspace domain or mail that passes DMARC; turns on Google sign-in", true))
 	f.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of your own Google app for sign-in (optional)")
 	f.StringVar(&s.GoogleClientSecret, "google-client-secret", "", secretUsage("Client secret of your own Google app"))
 	f.StringVar(&s.Backup, "backup", "", "Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix")
@@ -135,7 +140,8 @@ func (sf *settingsFlags) registerOperational(cmd *cobra.Command) {
 	f.StringVar(&s.TaskTTL, "task-ttl", "", "How long tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d)")
 	setSection(f, sectionGeneral, "backup", "backup-key", "backup-interval", "backup-retention", "task-ttl")
 	setSection(f, sectionSandbox, "memory", "cpus", "pids")
-	setSection(f, sectionNetwork, "tailscale-control-url", "tailscale-authkey", "ngrok-url", "ngrok-authtoken", "relay-token", "allow-email", "google-client-id", "google-client-secret")
+	setSection(f, sectionNetwork, "tailscale-control-url", "tailscale-authkey", "relay-token")
+	setSection(f, sectionAccess, "google-client-id", "google-client-secret")
 }
 
 // registerEmailFlags adds the --email-* flags of `channel add email`.
@@ -166,7 +172,6 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 		dst  *string
 	}{
 		{"tailscale-authkey", &s.TailscaleAuthKey},
-		{"ngrok-authtoken", &s.NgrokAuthToken},
 		{"google-client-secret", &s.GoogleClientSecret},
 		{"relay-token", &s.RelayToken},
 		{"backup-key", &s.BackupKey},

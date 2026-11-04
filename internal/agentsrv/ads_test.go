@@ -72,7 +72,11 @@ func (p *fakeProvider) ListenPrivate(context.Context) (net.Listener, *url.URL, e
 }
 
 func (p *fakeProvider) ListenPublic(context.Context) (net.Listener, *url.URL, error) {
-	return nil, nil, network.ErrUnsupported
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, nil, err
+	}
+	return ln, &url.URL{Scheme: "http", Host: ln.Addr().String()}, nil
 }
 
 func (p *fakeProvider) WhoIs(context.Context, string) (*network.Peer, error) {

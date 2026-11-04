@@ -20,7 +20,7 @@ digraph readme_overview {
   subgraph cluster_server {
     label="a2a-serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
     { rank=same;
-      Listeners [label="Listeners\nlocalhost, tailnet or LAN,\nFunnel or ngrok"];
+      Listeners [label="Listeners\nlocalhost, tailnet, LAN or relay,\nFunnel or relay"];
       Control   [label="Control socket"];
       Router    [label="Channels"];
     }

@@ -344,19 +344,35 @@ func TestSettingsApplyNetworkSecrets(t *testing.T) {
 	}
 }
 
+func TestSettingsApplyAccess(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Policy: PolicyConfig{PrivateAccess: AccessEveryone, AllowEmails: []string{"Mom@example.com"}, Owner: []string{"email:Me@example.com"}}}
+	s := Settings{
+		PrivateAccess: AccessPaired, PublicAccess: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
+		Owner: []string{"email:me@example.com", MemberPrivate}, Allow: []string{"email:ben@example.org"},
+	}
+	if _, err := s.Apply(cfg, Dir{Root: "/x"}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := PolicyConfig{
+		PrivateAccess: AccessPaired, PublicAccess: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
+		Owner: []string{"email:me@example.com", MemberPrivate}, Allow: []string{"email:ben@example.org"},
+	}
+	if diff := cmp.Diff(want, cfg.Policy); diff != "" {
+		t.Fatalf("Apply() wrong policy (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSettingsApplyGoogleSignIn(t *testing.T) {
 	t.Setenv("A2A_TEST_GOOGLE_ID", "1234.apps.googleusercontent.com")
 	t.Setenv("A2A_TEST_GOOGLE_SECRET", "s3cret")
-	cfg := &Config{Auth: AuthConfig{AllowEmails: []string{"Mom@example.com"}}}
-	s := Settings{
-		Harness: "opencode", AllowEmails: []string{"mom@example.com", "*@example.com"},
-		GoogleClientID: "env:A2A_TEST_GOOGLE_ID", GoogleClientSecret: "env:A2A_TEST_GOOGLE_SECRET",
-	}
+	cfg := &Config{}
+	s := Settings{Harness: "opencode", GoogleClientID: "env:A2A_TEST_GOOGLE_ID", GoogleClientSecret: "env:A2A_TEST_GOOGLE_SECRET"}
 	secrets, err := s.Apply(cfg, Dir{Root: "/x"})
 	if err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	want := AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "1234.apps.googleusercontent.com", GoogleClientSecret: "secret:A2A_TEST_GOOGLE_SECRET"}
+	want := AuthConfig{GoogleClientID: "1234.apps.googleusercontent.com", GoogleClientSecret: "secret:A2A_TEST_GOOGLE_SECRET"}
 	if diff := cmp.Diff(want, cfg.Auth); diff != "" {
 		t.Fatalf("Apply() wrong auth config (-want +got) diff = %s", diff)
 	}

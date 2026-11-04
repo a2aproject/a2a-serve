@@ -4,8 +4,8 @@
 
 Run a coding agent as an A2A server: one agent per process, started from its
 project directory, sandboxed in Docker, reachable over A2A on localhost, a
-private network (Tailscale, LAN) and the internet (Funnel, ngrok), and from
-Telegram, Discord and email.
+private network (Tailscale, LAN, an Agent Mesh relay) and the internet
+(Funnel, a relay), and from Telegram, Discord and email.
 
 ```
 a2a-serve start opencode --name coder     first run in a project: saves .a2a/config.yaml
@@ -23,7 +23,7 @@ git finds a repository, or take --dir.
 | [`logs`](logs.md) | Print the agent's log |
 | [`restart`](restart.md) | Stop the agent and start it again in the same mode, detached or as a service |
 | [`start`](start.md) | Start the agent, or a local test server |
-| [`status`](status.md) | Show whether the agent runs, its URLs and channels, or print one of its URLs |
+| [`status`](status.md) | Show whether the agent runs, its URLs, channels and who may call it, or print one of its URLs |
 | [`stop`](stop.md) | Stop the agent |
 
 ## Configure the agent

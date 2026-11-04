@@ -449,13 +449,6 @@ func networkChecks(d agentdir.Dir, cfg *agentdir.Config) []Result {
 		}
 		results = append(results, r)
 	}
-	if n.Public == agentdir.NetworkNgrok {
-		r := Result{ID: "ngrok", Status: StatusOK, Message: "ngrok authtoken stored"}
-		if secrets[agentdir.SecretNgrokToken] == "" {
-			r.Status, r.Message, r.Fix = StatusFail, "ngrok authtoken not stored", "a2a-serve config set --ngrok-authtoken -"
-		}
-		results = append(results, r)
-	}
 	for i := range results {
 		results[i].Group = GroupNetwork
 	}

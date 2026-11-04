@@ -27,13 +27,11 @@ import (
 const (
 	ProviderTailscale = network.ProviderTailscale
 	ProviderLAN       = network.ProviderLAN
-	ProviderNgrok     = network.ProviderNgrok
 )
 
 // Secrets read by network providers.
 const (
 	SecretTailscaleAuthKey = "TS_AUTHKEY"
-	SecretNgrokAuthToken   = "NGROK_AUTHTOKEN"
 	SecretRelayToken       = "RELAY_TOKEN"
 )
 
@@ -89,6 +87,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		return fmt.Errorf("unknown private network %q: want tailscale, lan or a relay URL", cfg.Network.Private)
 	}
 	switch {
+	case s.public != nil:
 	case cfg.Network.Public == "":
 	case network.IsRelayURL(cfg.Network.Public):
 		if s.public, err = relayAt(cfg.Network.Public); err != nil {
@@ -98,10 +97,8 @@ func (s *Server) setupNetwork(closers *stack) error {
 		t := tailscale()
 		t.Funnel = true
 		s.public = t
-	case cfg.Network.Public == ProviderNgrok:
-		s.public = &network.Ngrok{AuthToken: s.secrets[SecretNgrokAuthToken], URL: cfg.Network.NgrokURL, Description: "a2a-serve " + cfg.Name}
 	default:
-		return fmt.Errorf("unknown public network %q: want tailscale, ngrok or a relay URL", cfg.Network.Public)
+		return fmt.Errorf("unknown public network %q: want tailscale or a relay URL", cfg.Network.Public)
 	}
 	if s.private != nil {
 		closers.push(func(context.Context) error { return s.private.Close() })

@@ -71,8 +71,8 @@ func newServeCmd(cfg *globalConfig) *cobra.Command {
 		Short: serveShort,
 		Long: `Run a coding agent as an A2A server: one agent per process, started from its
 project directory, sandboxed in Docker, reachable over A2A on localhost, a
-private network (Tailscale, LAN) and the internet (Funnel, ngrok), and from
-Telegram, Discord and email.
+private network (Tailscale, LAN, an Agent Mesh relay) and the internet
+(Funnel, a relay), and from Telegram, Discord and email.
 
   a2a-serve start opencode --name coder     first run in a project: saves .a2a/config.yaml
   a2a-serve start                           later runs, from the project or a subdirectory

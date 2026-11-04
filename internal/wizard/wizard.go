@@ -175,17 +175,8 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale", "lan"}, "none"); err != nil {
 		return res, err
 	}
-	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale", "ngrok"}, "none"); err != nil {
+	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale"}, "none"); err != nil {
 		return res, err
-	}
-	if s.Public == "ngrok" {
-		def := ""
-		if getenv("NGROK_AUTHTOKEN") != "" {
-			def = "env:NGROK_AUTHTOKEN"
-		}
-		if s.NgrokAuthToken, err = p.ask("ngrok authtoken (env:VAR or the token)", def); err != nil {
-			return res, err
-		}
 	}
 	const telegram = "Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)"
 	if opts.ReadSecret != nil {

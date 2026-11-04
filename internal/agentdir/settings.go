@@ -41,6 +41,14 @@ type Settings struct {
 	Env       []string
 	Private   string
 	Public    string
+	// PrivateAccess is everyone or paired, and PublicAccess paired or anyone.
+	PrivateAccess string
+	PublicAccess  string
+	// AllowEmails are added to the people who may call by a verified email.
+	AllowEmails []string
+	// Owner and Allow are members added to the owner and authenticated roles.
+	Owner []string
+	Allow []string
 	// Telegram and Discord are bot tokens: env:VAR, secret:NAME or the value.
 	Telegram string
 	Discord  string
@@ -58,16 +66,12 @@ type Settings struct {
 	OwnerChat string
 
 	TailscaleControlURL string
-	NgrokURL            string
-	// TailscaleAuthKey and NgrokAuthToken are env:VAR, secret:NAME or the value.
+	// TailscaleAuthKey is env:VAR, secret:NAME or the value.
 	TailscaleAuthKey string
-	NgrokAuthToken   string
 	// RelayToken joins an Agent Mesh relay without signing in: env:VAR,
 	// secret:NAME or the value.
 	RelayToken string
 
-	// AllowEmails are added to the people who may sign in with Google.
-	AllowEmails    []string
 	GoogleClientID string
 	// GoogleClientSecret is env:VAR, secret:NAME or the value.
 	GoogleClientSecret string
@@ -99,7 +103,6 @@ const (
 	SecretDiscord       = "DISCORD_BOT_TOKEN"
 	SecretEmailPassword = "EMAIL_PASSWORD"
 	SecretTailscaleKey  = "TS_AUTHKEY"
-	SecretNgrokToken    = "NGROK_AUTHTOKEN"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 	SecretRelayToken    = "RELAY_TOKEN"
 	SecretBackupKey     = "BACKUP_KEY"
@@ -126,7 +129,8 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	setNetwork(&cfg.Network.Private, s.Private)
 	setNetwork(&cfg.Network.Public, s.Public)
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
-	set(&cfg.Network.NgrokURL, s.NgrokURL)
+	set(&cfg.Policy.PrivateAccess, s.PrivateAccess)
+	set(&cfg.Policy.PublicAccess, s.PublicAccess)
 	set(&cfg.Backup.To, s.Backup)
 	set(&cfg.Backup.Interval, s.BackupInterval)
 	set(&cfg.Backup.Retention, s.BackupRetention)
@@ -172,7 +176,13 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		cfg.Approvals.OwnerChat = s.OwnerChat
 	}
 	for _, v := range s.AllowEmails {
-		cfg.Auth.AllowEmails = putKeyed(cfg.Auth.AllowEmails, strings.TrimSpace(v), strings.ToLower)
+		cfg.Policy.AllowEmails = putKeyed(cfg.Policy.AllowEmails, strings.TrimSpace(v), strings.ToLower)
+	}
+	for _, v := range s.Owner {
+		cfg.Policy.Owner = putKeyed(cfg.Policy.Owner, strings.TrimSpace(v), strings.ToLower)
+	}
+	for _, v := range s.Allow {
+		cfg.Policy.Allow = putKeyed(cfg.Policy.Allow, strings.TrimSpace(v), strings.ToLower)
 	}
 	if name, ok := strings.CutPrefix(s.GoogleClientID, "env:"); ok {
 		if s.GoogleClientID = os.Getenv(name); s.GoogleClientID == "" {
@@ -248,7 +258,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		cfg.Channels.Email = &next
 	}
 	// Network providers read their secrets by well-known names.
-	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretNgrokToken: s.NgrokAuthToken, SecretRelayToken: s.RelayToken} {
+	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretRelayToken: s.RelayToken} {
 		if v == "" {
 			continue
 		}

@@ -25,6 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -38,8 +39,8 @@ func newConfigCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Show and change the agent's settings",
 		Long: `Show and change the settings in .a2a/config.yaml with the flags of
 ` + "`a2a-serve start <agent>`" + `. Every change is validated and printed as a diff. A
-running agent applies the description and the approval settings at once;
-other settings wait for ` + "`a2a-serve restart`" + `.
+running agent applies the description, the access settings and the
+approval settings at once; other settings wait for ` + "`a2a-serve restart`" + `.
 
 Without a subcommand, shows the settings.`,
 		Args: cobra.NoArgs,
@@ -113,8 +114,28 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 	if len(res.Restart) > 0 {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
+	writeAccess(&sb, res.Access)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
+}
+
+// printAccess prints who may call the agent after a change, if known.
+func printAccess(cfg *globalConfig, a *controlapi.Access) error {
+	var sb strings.Builder
+	writeAccess(&sb, a)
+	_, err := fmt.Fprint(cfg.Out, sb.String())
+	return err
+}
+
+// writeAccess writes who may call the agent after a change, if known.
+func writeAccess(sb *strings.Builder, a *controlapi.Access) {
+	if a == nil {
+		return
+	}
+	sb.WriteString("who may call:\n")
+	for _, line := range a.Summary {
+		fmt.Fprintf(sb, "  %s\n", line)
+	}
 }
 
 // inSecretDiff reports whether the diff of --secret names the secret.

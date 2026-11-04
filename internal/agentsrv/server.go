@@ -34,11 +34,13 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -76,8 +78,9 @@ type Options struct {
 	SetupProblems func(context.Context) []string
 	// Ready is called with the server once it serves requests.
 	Ready func(*Server)
-	// Private replaces the private network of the config, for tests.
+	// Private and Public replace the networks of the config, for tests.
 	Private network.Provider
+	Public  network.Provider
 	// NewRelay replaces network.NewRelay, for tests.
 	NewRelay func(network.RelayConfig) (network.Provider, error)
 }
@@ -173,6 +176,7 @@ func Run(ctx context.Context, opts Options) error {
 		telegramServerURL: opts.TelegramServerURL,
 		setupProblems:     opts.SetupProblems,
 		private:           opts.Private,
+		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
 		pairFailures: newFailureLimiter(10, time.Minute),
@@ -298,7 +302,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		LinkHints: s.router.linkHints,
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
-		Others:    s.othersAllowed,
+		Access:    s.access,
 	}
 	s.schedules = newSchedules(ctx, s.store, s.router, s.chain)
 	s.inspector = newInspector(s)
@@ -559,24 +563,29 @@ func (s *Server) viewer(ctx context.Context) (string, bool, error) {
 	return "", true, nil
 }
 
-// policy is the access policy in force. Everyone on the private network is
-// authenticated, unless the network admits people by sign-in: a relay's
-// identity provider may accept anyone with an account there.
+// policy is the access policy in force.
 func (s *Server) policy() auth.Policy {
-	everyone := true
-	if sn, ok := s.private.(network.SignInNetwork); ok && sn.AdmitsBySignIn() {
-		everyone = false
-	}
-	return auth.DefaultPolicy(everyone, s.config().Auth.AllowEmails)
+	return access.Policy(s.config().Policy, s.signIn())
 }
 
-// othersAllowed describes who may call the agent without a pairing.
-func (s *Server) othersAllowed(context.Context) []string {
-	provider := ""
-	if s.private != nil {
-		provider = s.private.Name()
+// signIn reports whether the private network admits people by sign-in,
+// whose identity provider may accept anyone with an account there.
+func (s *Server) signIn() bool {
+	sn, ok := s.private.(network.SignInNetwork)
+	return ok && sn.AdmitsBySignIn()
+}
+
+// access describes who may call the agent now.
+func (s *Server) access(ctx context.Context) (*controlapi.Access, error) {
+	all, err := s.store.Pairings(ctx)
+	if err != nil {
+		return nil, err
 	}
-	return s.policy().Others(provider)
+	networks := access.Network{Public: s.public != nil, SignIn: s.signIn()}
+	if s.private != nil {
+		networks.Private = s.private.Name()
+	}
+	return access.Describe(s.config().Policy, networks, access.CountPairings(all)), nil
 }
 
 func pid() int { return os.Getpid() }

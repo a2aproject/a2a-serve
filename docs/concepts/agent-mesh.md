@@ -1,7 +1,7 @@
 # Agent Mesh
 
 > [!NOTE]
-> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. The access flags and egress through the relay are planned, and marked as such below.
+> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. Egress through the relay and the directory of advertised nodes are planned, and marked as such below.
 
 [Agent Mesh](https://google.github.io/agentmesh/) is a zero-trust network for agents: nodes enroll with a control plane, get short-lived credentials bound to their own keys, reach each other through routers from behind NAT, and can be reached from the internet through ingress. a2a-serve runs on top of it.
 
@@ -52,9 +52,9 @@ Every request passes three steps:
 2. **a2a-serve resolves.** It builds the caller's identity from `WhoIs`, or from a pairing token or sign-in on the public URL, and gives it a role: `owner`, `authenticated` or `anonymous`.
 3. **a2a-serve acts.** The role decides what the caller may do with tasks and approvals.
 
-`--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network (planned). Removing someone from the private network happens at the relay, by revoking their enrollment.
+`--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, by revoking their enrollment.
 
-A relay that admits people by sign-in admits anyone its identity provider accepts. On such a relay only you, your pairings and `--allow-email` matches can call; a relay that agents join only with tokens lets everyone on it call. Setting this with `--private-access` is planned.
+A relay that admits people by sign-in admits anyone its identity provider accepts, so on such a relay `--private-access` defaults to `paired`: only you, your pairings and `--allow-email` matches can call. A relay that agents join only with tokens defaults to `everyone`. `--private-access` set explicitly overrides both.
 
 ## Calls between agents
 

@@ -14,7 +14,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 
 | Component | What it does |
 | --- | --- |
-| Listeners | Accept requests on localhost, the private network (Tailscale, LAN or an Agent Mesh relay), the public URL (Funnel, ngrok or a relay), the control socket and the agent's socket. |
+| Listeners | Accept requests on localhost, the private network (Tailscale, LAN or an Agent Mesh relay), the public URL (Funnel or a relay), the control socket and the agent's socket. |
 | Auth | Turns each request into an identity, from a pairing token, a messenger link, a Tailscale or relay identity, a Google sign-in or a verified email sender, and gives it one role with the access policy. |
 | A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
 | Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |

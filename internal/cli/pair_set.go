@@ -88,16 +88,18 @@ are signed with. Linked messenger accounts stay linked.
 			if _, err := fmt.Fprintf(cfg.Out, "✓ updated %s\n", args[0]); err != nil {
 				return err
 			}
-			if resp.Code == nil {
-				return nil
+			if resp.Code != nil {
+				if _, err := fmt.Fprintln(cfg.Out, "  its tokens were revoked; pair again with the new code:"); err != nil {
+					return err
+				}
+				if err := printPairCode(cfg, resp.Code); err != nil {
+					return err
+				}
+				if err := warnPairCode(cfg.Out, resp.Code, offline); err != nil {
+					return err
+				}
 			}
-			if _, err := fmt.Fprintln(cfg.Out, "  its tokens were revoked; pair again with the new code:"); err != nil {
-				return err
-			}
-			if err := printPairCode(cfg, resp.Code); err != nil {
-				return err
-			}
-			return warnPairCode(cfg.Out, resp.Code, offline)
+			return printAccess(cfg, resp.Access)
 		},
 	}
 	f := cmd.Flags()

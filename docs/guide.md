@@ -188,21 +188,42 @@ Not in this version: files, live logs, backups, and changing settings from the p
 
 ## Who can call the agent
 
+`a2a-serve status` says who can call right now:
+
+```
+  access   you: this machine and your tailnet devices
+           everyone on the tailnet, emails matching *@example.com, 2 pairings
+           the public URL needs a pairing or Google sign-in
+```
+
 | Caller | How it is recognized | Role |
 | --- | --- | --- |
 | You, on the machine running the agent | The token a2a-serve saves for you on start, listed as `local` | owner |
 | Your devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device | owner |
-| Everyone else on the private network | The tailnet's or relay's identity, or the address on the LAN | authenticated |
+| Everyone else on the private network, unless `--private-access paired` | The tailnet's or relay's identity, or the address on the LAN | authenticated |
 | Messenger accounts | Linked with a pairing code | the pairing's role |
-| People on the email allowlist | A verified email: [Google sign-in](#google-sign-in), a tailnet or relay login, or mail that passes DMARC | authenticated |
+| People whose email matches `--allow-email` | A verified email: [Google sign-in](#google-sign-in), a tailnet or relay login, or mail that passes DMARC | authenticated |
+| Members of `--owner` and `--allow` | A verified email as above, or everyone on the private network with `--owner private` | owner, authenticated |
 | Anyone else | A token from a pairing code | the pairing's role |
 | [Webhook nodes](#webhook-nodes) | Their node token | authenticated |
+| Unlinked senders in direct chats, with `--public-access anyone` | Their chat account | anonymous |
+
+These settings are flags of `start` and `config set` ([reference](reference/commands/config.md)). A running agent applies them at once, and every change prints who can call afterwards:
+
+```sh
+a2a-serve config set --private-access paired           # on the private network, only you and your pairings
+a2a-serve config set --allow-email '*@example.com'     # people with a matching verified email
+a2a-serve config set --owner email:me@example.com      # another account of yours, as an owner
+a2a-serve config set --public-access anyone            # anyone in a direct chat, as an anonymous caller
+a2a-serve config unset owner email:me@example.com
+```
 
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
-- On a relay that admits people by sign-in, everyone else on the relay needs a pairing or a matching `--allow-email`.
+- On a relay that admits people by sign-in, `--private-access` defaults to `paired` until you set it.
+- Anonymous callers start tasks in their own conversation and never answer approvals. They share the agent's sandbox for now.
 - A caller without a credential gets 401, with the steps to pair. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
 
-The [access model](concepts/access-model.md) describes the model, and which of its settings are planned.
+The [access model](concepts/access-model.md) describes the model, and which of its parts are planned, such as anonymous callers on the public URL.
 
 ```sh
 a2a-serve pair invite grok                        # authenticated: can talk to the agent
@@ -225,7 +246,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 ## Google sign-in
 
-People on an email allowlist can call the agent with no pairing code. On the public URL they sign in with Google:
+People on an email allowlist can call the agent with no pairing code. On the public URL they sign in with Google. The allowlist is `--allow-email`, and the emails of `--owner` and `--allow`:
 
 ```sh
 a2a-serve config set --allow-email mom@example.com,'*@example.com'
@@ -236,8 +257,8 @@ a2a send -a https://coder.example.com "hi"      # signs in once
 
 - Add `<agent-url>/oauth/callback` to the authorized redirect URIs of your Google app. Use the URL people call, usually the public one.
 - `*@example.com` matches accounts of the example.com Google Workspace, and mail from example.com that passes DMARC. Anyone can create a personal Google account with an @example.com address, so such accounts don't match. Tailnet and relay logins match only full addresses.
-- People who sign in are authenticated. Their tokens carry the email, so removing it from the allowlist cuts them off at their next request.
-- Sign-in works on every network: Funnel, ngrok, a relay or your own domain.
+- People who sign in get the role their email has: authenticated, or owner with `--owner email:<address>`. Their tokens carry the email, so removing it from the allowlist cuts them off at their next request.
+- Only the public URL serves sign-in: Funnel or a relay. On the local URL and the private network, people use pairings or their network identity.
 
 Not in this version: providers other than Google, and sign-in without your own Google app.
 
@@ -250,7 +271,6 @@ Not in this version: providers other than Google, and sign-in without your own G
 | `--private lan` | the local network, over plain HTTP | the caller's address |
 | `--private <relay-url>` | other a2a-serve agents on an [Agent Mesh relay](#agent-mesh-relays-experimental) | the relay's identity |
 | `--public tailscale` | the internet through Funnel, at the same URL | pairing tokens |
-| `--public ngrok` | the internet; `--ngrok-url` sets a reserved domain | pairing tokens |
 | `--public <relay-url>` | the internet, at a URL on the relay | pairing tokens |
 
 ### Tailscale
@@ -273,7 +293,7 @@ a2a-serve start opencode --private https://relay.example.com --public https://re
 a2a-serve config set --relay-token env:RELAY_TOKEN    # on servers: join with a token
 ```
 
-- A relay that admits people by sign-in accepts anyone its identity provider accepts, so on it only your agents, your pairings and `--allow-email` matches can call. On a relay that agents join only with tokens, everyone on the relay can call.
+- A relay that admits people by sign-in accepts anyone its identity provider accepts, so on it `--private-access` defaults to `paired`: only you, your pairings and `--allow-email` matches can call. On a relay that agents join only with tokens, everyone on the relay can call.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 

@@ -58,10 +58,24 @@ func TestValidate(t *testing.T) {
 		{name: "removed approvers", modify: func(c *Config) { c.Approvals.RemovedApprovers = []string{"pair:anna"} }, wantErr: "approvals.approvers was removed"},
 		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "the telegram channel needs a token"},
 		{name: "sign-in", modify: func(c *Config) {
-			c.Auth = AuthConfig{AllowEmails: []string{"mom@example.com", "*@example.com"}, GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
+			c.Policy.AllowEmails = []string{"mom@example.com", "*@example.com"}
+			c.Auth = AuthConfig{GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
 		}},
-		{name: "allow-email domain without star", modify: func(c *Config) { c.Auth.AllowEmails = []string{"example.com"} }, wantErr: `invalid --allow-email "example.com"`},
-		{name: "allow-email wildcard domain", modify: func(c *Config) { c.Auth.AllowEmails = []string{"*@*.com"} }, wantErr: `invalid --allow-email "*@*.com"`},
+		{name: "allow-email domain without star", modify: func(c *Config) { c.Policy.AllowEmails = []string{"example.com"} }, wantErr: `invalid --allow-email "example.com"`},
+		{name: "allow-email wildcard domain", modify: func(c *Config) { c.Policy.AllowEmails = []string{"*@*.com"} }, wantErr: `invalid --allow-email "*@*.com"`},
+		{name: "access", modify: func(c *Config) {
+			c.Policy = PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone, Owner: []string{MemberPrivate, "email:me@example.com"}, Allow: []string{"email:*@example.com"}}
+		}},
+		{name: "private-access", modify: func(c *Config) { c.Policy.PrivateAccess = AccessAnyone }, wantErr: `invalid --private-access "anyone": want everyone or paired`},
+		{name: "public-access", modify: func(c *Config) { c.Policy.PublicAccess = AccessEveryone }, wantErr: `invalid --public-access "everyone": want paired or anyone`},
+		{name: "self is always an owner", modify: func(c *Config) { c.Policy.Owner = []string{MemberSelf} }, wantErr: "--owner self: you are always an owner"},
+		{name: "self allowed", modify: func(c *Config) { c.Policy.Allow = []string{MemberSelf} }, wantErr: "--allow self: you are always an owner"},
+		{name: "anyone as owner", modify: func(c *Config) { c.Policy.Owner = []string{MemberAnyone} }, wantErr: "--owner anyone: anyone can call only with --public-access anyone"},
+		{name: "anyone allowed", modify: func(c *Config) { c.Policy.Allow = []string{MemberAnyone} }, wantErr: "--allow anyone: anyone can call only with --public-access anyone"},
+		{name: "private allowed", modify: func(c *Config) { c.Policy.Allow = []string{MemberPrivate} }, wantErr: "--private-access everyone"},
+		{name: "member without a kind", modify: func(c *Config) { c.Policy.Allow = []string{"anna@example.com"} }, wantErr: `invalid --allow "anna@example.com": want private, email:<address> or email:*@<domain>`},
+		{name: "invalid email member", modify: func(c *Config) { c.Policy.Owner = []string{"email:example.com"} }, wantErr: `invalid --owner "email:example.com"`},
+		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale or none`},
 		{name: "google client without secret", modify: func(c *Config) { c.Auth.GoogleClientID = "id" }, wantErr: "go together"},
 		{name: "relay", modify: func(c *Config) {
 			c.Network = NetworkConfig{Private: "https://relay.example.com", Public: "https://relay.example.com/"}
