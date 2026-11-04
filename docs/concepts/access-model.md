@@ -1,0 +1,174 @@
+# Access model: who can call an agent
+
+> [!NOTE]
+> This page describes the access model a2a-serve is moving to. Until it lands,
+> [Who can call the agent](../guide.md#who-can-call-the-agent) describes the
+> current behavior. `--private-access`, `--public-access`, `pair invite --owner`,
+> `--owner` and `--allow` don't exist yet, and `status` has no `access` block.
+
+An agent is reachable from your machine, a private network, a public URL and messengers. This page explains who can call it from each of those, and what each caller may do. The [data model reference](#data-model-reference) at the end describes the model underneath.
+
+![Access model concepts](../graphs/access-model-concepts.png#gh-light-mode-only)
+![Access model concepts](../graphs/access-model-concepts-dark.png#gh-dark-mode-only)
+
+## Entities
+
+| Entity | What it is | Commands and flags |
+|---|---|---|
+| **Agent** | Your coding agent in its sandbox | `start`, `stop`, `status`, `config` |
+| **Private network** | Where your machines and team reach the agent: a tailnet, an Agent Mesh relay, or the LAN. Everyone on it is trusted | `--private tailscale\|<relay-url>\|lan\|none` |
+| **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL | `--public tailscale\|<relay-url>\|none` |
+| **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. Created with a one-time code; the credential works on every network | `pair invite\|join\|list\|get\|set\|rm` |
+| **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm` |
+| **Channel** | A messenger the agent answers in: Telegram, Discord or email. Anyone can write to it, so chat accounts reach the agent once linked to a pairing | `channel add\|list\|rm`; `join <code>` in the chat |
+
+A pairing and a contact point in opposite directions. When agent `coder` should call agent `reviewer`, `reviewer` pairs `coder` (who may call me) and `coder` adds `reviewer` as a contact (whom I may call):
+
+```bash
+a2a-serve pair invite coder --dir ~/reviewer                     # prints a code
+a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
+```
+
+## Who may call
+
+| Flag | Values | Default |
+|---|---|---|
+| `--private-access` | `everyone`: everyone on the private network. `paired`: only you and your pairings | `everyone` |
+| `--public-access` | `paired`: only you and your pairings. `anyone`: open to the internet | `paired` |
+| `--allow-email <pattern>` | People who sign in with a matching email, such as `*@example.com`, on any network. Turns on Google sign-in at the public URL | none |
+| `pair invite <name> --owner` | The pairing can also see every task and answer every approval | off |
+
+You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
+
+The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there. A relay whose sign-in accepts any account of a public identity provider admits anyone with such an account, so on such a relay `--private-access` defaults to `paired` until you set it.
+
+### Common tasks
+
+| Task | Command |
+|---|---|
+| Share with a friend | `a2a-serve pair invite anna`; Anna runs `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the bot |
+| Call from my phone | On the tailnet: nothing. Elsewhere: `a2a-serve pair invite phone --owner` |
+| Let another agent call this one | `pair invite` here, `contact add --code` there (see above) |
+| Team on a relay | `--private <relay-url>`: everyone the relay admits can call |
+| Only company emails | `--allow-email '*@example.com'` |
+| Close the private network | `--private-access paired` |
+| Public bot | `--public tailscale --public-access anyone` |
+| Revoke a pairing | `a2a-serve pair rm anna` |
+
+### What you see
+
+`a2a-serve status` says who can call right now:
+
+```
+coder (opencode) running for 2h, pid 41233
+  local    http://127.0.0.1:46757
+  private  https://coder.tail1234.ts.net
+  public   https://coder.tail1234.ts.net
+  access   you: this machine and your tailnet devices (you@example.com)
+           everyone on the tailnet (3 users), *@example.com with Google sign-in, 2 pairings
+           the public URL needs a pairing or sign-in
+```
+
+- Every change to access prints who can call afterwards.
+- `pair rm` says when the person can still call through the private network or an email rule.
+- A caller without a credential gets 401, with the steps to pair.
+- A known caller the agent doesn't allow gets 403, naming who they were seen as.
+
+## What callers may do
+
+| Caller | Can |
+|---|---|
+| **You**, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
+| **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, and let their conversations call this agent's contacts |
+| **Anyone**, with `--public-access anyone` | Start tasks in their own conversation. Their approvals go to your owner chat. Their conversations can't call other agents |
+
+### Channels
+
+| Sender | Treated as |
+|---|---|
+| Chat account linked to a pairing (`join <code>`, or the link printed at start) | the pairing. The link printed at start links you |
+| Email sender whose address passes DMARC at your trusted mail server (`--email-trusted-authserv`) | that email address, so `--allow-email anna@example.com` lets Anna email the agent without linking |
+| Unlinked sender in a direct chat | anyone, with `--public-access anyone`; otherwise rejected with a hint on how to pair |
+| Unlinked sender in a group | ignored |
+
+Each chat is one conversation. Approvals appear in the chat where the task started, and only the person who started the task, or you, can answer them. Approvals of tasks nobody watches go to your owner chat.
+
+### Calls between agents
+
+The agent calls other agents through its server, which holds the credentials. The receiving agent gives a call that came through another agent at most the rights of "everyone else who is allowed", even when the calling agent is yours. The task runs, and its approvals travel back to the person who started the conversation. Someone who can steer one of your agents therefore can't use it to act as you on your other agents.
+
+### The shared sandbox
+
+All conversations of an agent run in one agent process and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a separate agent process.
+
+## Data model reference
+
+### Identity
+
+Every request yields one identity: verified claims, and where each came from.
+
+| Field | Source |
+|---|---|
+| network | local, private, public, chat or the agent's socket, and the provider |
+| email | tailnet login of an untagged user; relay principal, when it is a verified email; Google sign-in; email sender with DMARC pass |
+| node | tailnet `StableID` or mesh peer ID; tagged tailnet nodes have only this |
+| pairing | the pairing whose token or chat link was used |
+| chat account | `telegram:<user id>`, `discord:<user id>`, or the email address |
+| self | Tailscale: the same user on an untagged device. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
+| via agent | the request came from another agent server, with a hop count of 1 or more |
+
+### Roles
+
+| Role | Rights |
+|---|---|
+| `owner` | Sees every task, answers any approval, uses the inspector |
+| `authenticated` | Starts tasks, sees and approves its own tasks; its conversations may call contacts |
+| `anonymous` | Starts tasks in its own conversation; never answers approvals, calls agents or uses the schedules agent |
+
+### Policy
+
+The policy gives each role a list of members, as an Agent Mesh binding does.
+
+```yaml
+policy:
+  owner: [self]
+  authenticated: [private]
+  anonymous: []
+```
+
+| Flag | Policy |
+|---|---|
+| defaults | `owner: [self]`, `authenticated: [private]`; the built-in `local` pairing is owner |
+| `--private-access paired` | removes `private` from `authenticated` |
+| `--public-access anyone` | `anonymous: [anyone]`, on the public URL and in direct chats |
+| `--allow-email P` | adds `email:P` to `authenticated` |
+| `pair invite --owner` | the pairing's role is `owner` |
+| `--owner M`, `--allow M` | add member `M` to `owner` or `authenticated` |
+
+Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards from the tailnet or a relay need an explicit opt-in, since those networks don't prove a domain the way Google sign-in does.
+
+A request is resolved in this order:
+
+1. It gets the highest role it matches, across the bindings and its pairing.
+2. A request via another agent gets at most `authenticated`.
+3. An identified caller that matches nothing gets `anonymous`, if `anonymous` has members.
+4. Anyone else is rejected.
+
+### Pairings
+
+A pairing is a record with a name, a kind (person, device, agent or webhook) and a role. Tokens and chat links point to it and carry no role of their own, so a role change applies to the next request. A webhook pairing's token opens the node's mailbox and lets the node call the agent as `authenticated`.
+
+## Relay
+
+On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network, the public URL and the identity of every caller, and a2a-serve applies this policy on top. The Agent Mesh page maps each entity onto the relay.
+
+## Guarantees
+
+- Every decision comes from one place, and only from verified inputs. Nothing the agent or a caller sends raises a role.
+- A call that comes through another agent gets at most `authenticated`.
+- An agents-URL handle works only for its conversation and turn, and only for the tasks it created.
+- The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
+- A message joins an existing conversation only if its sender owns it or is an owner.
+- Callers allowed by `--public-access anyone` have a separate agent process, a budget per listener, and approvals that time out.
+- Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused.
+- The local credential works only on the local listener. Loopback alone is never trusted.

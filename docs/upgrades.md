@@ -6,8 +6,7 @@ new version on its next start.
 
 ## Stored state migrates forward
 
-- **`server.db`** carries its schema version in SQLite's `PRAGMA
-  user_version`. On start, the server applies every migration from that
+- **`server.db`** carries its schema version in SQLite's `PRAGMA user_version`. On start, the server applies every migration from that
   version to the current one, each in its own transaction, so a failed
   migration leaves the database as it was. Released migrations never change;
   new versions add new ones.
@@ -20,18 +19,18 @@ new version on its next start.
 
 A database migrated by a newer version can't be used by an older one: the
 older server refuses to start with "the database is at version N, newer than
-this a2a supports". To be able to go back, take a snapshot before upgrading,
+this a2a-serve supports". To be able to go back, take a snapshot before upgrading,
 and restore it into the agent directory after downgrading:
 
 ```sh
 a2a-serve backup now                 # with --backup set, or copy .a2a/ while the agent is stopped
 ```
 
-## Harness images
+## Agent images
 
-The harness image tag names the `a2a` CLI version the server needs
+The agent image tag names the `a2a` CLI version the server needs
 (`ghcr.io/a2aproject/harness-<harness>:a2a-<version>`), so a new `a2a-serve`
-that needs a newer `a2a` pulls a new image on its next start. The harness
+that needs a newer `a2a` pulls a new image on its next start. The agent's
 home in `state/home` is kept, with its sessions and config.
 
 ## The a2a CLI

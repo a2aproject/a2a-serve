@@ -48,7 +48,7 @@ func (ss SessionStore) Get(ctx context.Context, contextID string) (a2aacp.Sessio
 
 // Put records the ACP session of an A2A context.
 func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Session) error {
-	_, err := ss.s.db.ExecContext(ctx, `INSERT INTO sessions (context_id, session_id, agent_key) VALUES (?, ?, ?)
+	_, err := ss.s.exec(ctx, `INSERT INTO sessions (context_id, session_id, agent_key) VALUES (?, ?, ?)
 		ON CONFLICT (context_id) DO UPDATE SET session_id = excluded.session_id, agent_key = excluded.agent_key`,
 		contextID, sess.ID, sess.AgentKey)
 	return err
@@ -75,7 +75,7 @@ type Link struct {
 
 // EnsureUser creates the user if it doesn't exist and returns it.
 func (s *Store) EnsureUser(ctx context.Context, id string, roles []string) (User, error) {
-	if _, err := s.db.ExecContext(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
+	if _, err := s.exec(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT DO NOTHING`,
 		id, joinRoles(roles), s.now().UnixNano()); err != nil {
 		return User{}, err
 	}
@@ -127,7 +127,7 @@ func hasRole(roles []string, role string) bool { return slices.Contains(roles, r
 
 // PutLink links a channel identity to a user, replacing an existing link.
 func (s *Store) PutLink(ctx context.Context, l Link) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES (?, ?, ?, ?, ?, ?)
+	_, err := s.exec(ctx, `INSERT INTO links (channel, identity, user_id, conv, name, created) VALUES (?, ?, ?, ?, ?, ?)
 		ON CONFLICT (channel, identity) DO UPDATE SET user_id = excluded.user_id, conv = excluded.conv, name = excluded.name`,
 		l.Channel, l.Identity, l.UserID, l.Conv, l.Name, s.now().UnixNano())
 	return err
@@ -174,7 +174,7 @@ func (s *Store) ContextOf(ctx context.Context, channel, conv string) (string, er
 
 // SetContext binds a channel conversation to an A2A context.
 func (s *Store) SetContext(ctx context.Context, channel, conv, contextID string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO convs (channel, conv, context_id, updated) VALUES (?, ?, ?, ?)
+	_, err := s.exec(ctx, `INSERT INTO convs (channel, conv, context_id, updated) VALUES (?, ?, ?, ?)
 		ON CONFLICT (channel, conv) DO UPDATE SET context_id = excluded.context_id, updated = excluded.updated`,
 		channel, conv, contextID, s.now().UnixNano())
 	return err
@@ -202,7 +202,7 @@ type Code struct {
 
 // PutCode stores a code by its hash.
 func (s *Store) PutCode(ctx context.Context, code string, c Code) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO codes (hash, purpose, name, role, expires) VALUES (?, ?, ?, ?, ?)`,
+	_, err := s.exec(ctx, `INSERT INTO codes (hash, purpose, name, role, expires) VALUES (?, ?, ?, ?, ?)`,
 		cryptoutil.Hash(code), c.Purpose, c.Name, c.Role, c.Expires.UnixNano())
 	return err
 }
@@ -256,7 +256,7 @@ type Token struct {
 
 // PutToken stores a token by its hash.
 func (s *Store) PutToken(ctx context.Context, token string, t Token) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES (?, ?, ?, ?, ?, ?)`,
+	_, err := s.exec(ctx, `INSERT INTO tokens (hash, name, principal, roles, url, created) VALUES (?, ?, ?, ?, ?, ?)`,
 		cryptoutil.Hash(token), t.Name, t.Principal, joinRoles(t.Roles), t.URL, s.now().UnixNano())
 	return err
 }
@@ -278,7 +278,7 @@ func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 		return Token{}, err
 	}
 	t.Roles, t.Created, t.LastUsed = splitRoles(roles), unixTime(created), unixTime(lastUsed)
-	if _, err := s.db.ExecContext(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, s.now().UnixNano(), h); err != nil {
+	if _, err := s.exec(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, s.now().UnixNano(), h); err != nil {
 		return Token{}, err
 	}
 	return t, nil
@@ -309,7 +309,7 @@ func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
 
 // DeleteTokens deletes the tokens issued to name, keeping its user and links.
 func (s *Store) DeleteTokens(ctx context.Context, name string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM tokens WHERE name = ?`, name)
+	_, err := s.exec(ctx, `DELETE FROM tokens WHERE name = ?`, name)
 	return err
 }
 
@@ -317,6 +317,11 @@ func (s *Store) DeleteTokens(ctx context.Context, name string) error {
 // name, and the user of principal with its links. It returns the number of
 // tokens and links deleted.
 func (s *Store) RevokeTokens(ctx context.Context, name, principal string) (n int, err error) {
+	done, err := s.beginWrite()
+	if err != nil {
+		return 0, err
+	}
+	defer done()
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -365,7 +370,7 @@ type Contact struct {
 
 // PutContact creates or replaces a contact.
 func (s *Store) PutContact(ctx context.Context, c Contact) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO contacts (name, url, token, via, created) VALUES (?, ?, ?, ?, ?)
+	_, err := s.exec(ctx, `INSERT INTO contacts (name, url, token, via, created) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT (name) DO UPDATE SET url = excluded.url, token = excluded.token, via = excluded.via`,
 		c.Name, c.URL, c.Token, c.Via, s.now().UnixNano())
 	return err
@@ -435,7 +440,7 @@ func (s *Store) PutNode(ctx context.Context, n Node) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO nodes (id, name, description, webhook, headers, secret, token_hash, created)
+	_, err = s.exec(ctx, `INSERT INTO nodes (id, name, description, webhook, headers, secret, token_hash, created)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (id) DO UPDATE SET name = excluded.name, description = excluded.description,
 		webhook = excluded.webhook, headers = excluded.headers, secret = excluded.secret, token_hash = excluded.token_hash`,
 		n.ID, n.Name, n.Description, n.Webhook, string(headers), n.Secret, n.TokenHash, s.now().UnixNano())
@@ -531,7 +536,7 @@ func (s *Store) PutQuestion(ctx context.Context, q Question) error {
 	if err != nil {
 		return err
 	}
-	res, err := s.db.ExecContext(ctx, `INSERT INTO questions (id, token, task_id, context_id, contact, hitl_id, user_id, data, created)
+	res, err := s.exec(ctx, `INSERT INTO questions (id, token, task_id, context_id, contact, hitl_id, user_id, data, created)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id, hitl_id) WHERE contact != '' DO NOTHING`,
 		q.ID, q.Token, q.TaskID, q.ContextID, q.Contact, q.HitlID, q.User, string(data), s.now().UnixNano())
 	if err != nil {
@@ -604,7 +609,7 @@ var ErrAnswered = errors.New("the question was already answered")
 
 // AnswerQuestion records the answer once.
 func (s *Store) AnswerQuestion(ctx context.Context, id, by, answer string) error {
-	res, err := s.db.ExecContext(ctx, `UPDATE questions SET answered_by = ?, answer = ? WHERE id = ? AND answered_by = ''`, by, answer, id)
+	res, err := s.exec(ctx, `UPDATE questions SET answered_by = ?, answer = ? WHERE id = ? AND answered_by = ''`, by, answer, id)
 	if err != nil {
 		return err
 	}
@@ -624,7 +629,7 @@ func (s *Store) AnswerQuestion(ctx context.Context, id, by, answer string) error
 // UnanswerQuestion clears an answer by, so that a question whose answer
 // couldn't be delivered can be answered again.
 func (s *Store) UnanswerQuestion(ctx context.Context, id, by string) error {
-	_, err := s.db.ExecContext(ctx, `UPDATE questions SET answered_by = '', answer = '' WHERE id = ? AND answered_by = ?`, id, by)
+	_, err := s.exec(ctx, `UPDATE questions SET answered_by = '', answer = '' WHERE id = ? AND answered_by = ?`, id, by)
 	return err
 }
 
@@ -640,13 +645,18 @@ type QuestionMessage struct {
 
 // AddQuestionMessage records a message which shows a question.
 func (s *Store) AddQuestionMessage(ctx context.Context, m QuestionMessage) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO question_messages (question_id, channel, conv, message_id, text) VALUES (?, ?, ?, ?, ?)
+	_, err := s.exec(ctx, `INSERT INTO question_messages (question_id, channel, conv, message_id, text) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT DO UPDATE SET text = excluded.text`, m.QuestionID, m.Channel, m.Conv, m.MessageID, m.Text)
 	return err
 }
 
 // TakeQuestionMessages returns and forgets the messages which show a question.
 func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]QuestionMessage, error) {
+	done, err := s.beginWrite()
+	if err != nil {
+		return nil, err
+	}
+	defer done()
 	rows, err := s.db.QueryContext(ctx, `DELETE FROM question_messages WHERE question_id = ?
 		RETURNING question_id, channel, conv, message_id, text`, questionID)
 	if err != nil {
@@ -667,7 +677,7 @@ func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]
 // SetPendingQuestion makes a question the one a typed reply in a
 // conversation answers.
 func (s *Store) SetPendingQuestion(ctx context.Context, channel, conv, questionID string) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO pending_questions (channel, conv, question_id) VALUES (?, ?, ?)
+	_, err := s.exec(ctx, `INSERT INTO pending_questions (channel, conv, question_id) VALUES (?, ?, ?)
 		ON CONFLICT (channel, conv) DO UPDATE SET question_id = excluded.question_id`, channel, conv, questionID)
 	return err
 }
@@ -685,7 +695,7 @@ func (s *Store) PendingQuestion(ctx context.Context, channel, conv string) (stri
 
 // ClearPendingQuestion forgets the pending question of a conversation.
 func (s *Store) ClearPendingQuestion(ctx context.Context, channel, conv string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv)
+	_, err := s.exec(ctx, `DELETE FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv)
 	return err
 }
 
@@ -701,7 +711,7 @@ type Handle struct {
 // PutHandle stores a handle. It returns [ErrExists] if the handle is taken
 // or its claims already have one.
 func (s *Store) PutHandle(ctx context.Context, h Handle) error {
-	res, err := s.db.ExecContext(ctx, `INSERT INTO handles (handle, context_id, on_behalf_of, hops) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+	res, err := s.exec(ctx, `INSERT INTO handles (handle, context_id, on_behalf_of, hops) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 		h.Handle, h.ContextID, h.OnBehalfOf, h.Hops)
 	if err != nil {
 		return err
@@ -728,7 +738,7 @@ func (s *Store) HandleFor(ctx context.Context, h Handle) (Handle, error) {
 
 // DeleteHandle deletes a handle.
 func (s *Store) DeleteHandle(ctx context.Context, handle string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM handles WHERE handle = ?`, handle)
+	_, err := s.exec(ctx, `DELETE FROM handles WHERE handle = ?`, handle)
 	return err
 }
 
@@ -757,7 +767,7 @@ type Watch struct {
 
 // PutWatch stores a watch.
 func (s *Store) PutWatch(ctx context.Context, w Watch) error {
-	_, err := s.db.ExecContext(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created)
+	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, created)
 		VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
 		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, s.now().UnixNano())
 	return err
@@ -792,13 +802,13 @@ func (s *Store) SetWatchFailing(ctx context.Context, contact, taskID string, sin
 	if !since.IsZero() {
 		n = since.UnixNano()
 	}
-	_, err := s.db.ExecContext(ctx, `UPDATE watches SET failing_since = ? WHERE contact = ? AND task_id = ?`, n, contact, taskID)
+	_, err := s.exec(ctx, `UPDATE watches SET failing_since = ? WHERE contact = ? AND task_id = ?`, n, contact, taskID)
 	return err
 }
 
 // DeleteWatch removes a watch.
 func (s *Store) DeleteWatch(ctx context.Context, contact, taskID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM watches WHERE contact = ? AND task_id = ?`, contact, taskID)
+	_, err := s.exec(ctx, `DELETE FROM watches WHERE contact = ? AND task_id = ?`, contact, taskID)
 	return err
 }
 

@@ -64,3 +64,8 @@ aiwt-*
 
 # Local builds
 bin/
+
+# Documentation site builds
+site/.build/
+site/.out/
+__pycache__/

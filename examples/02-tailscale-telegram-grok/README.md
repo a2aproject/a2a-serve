@@ -1,6 +1,4 @@
-# Lesson 2 — Tailscale, Telegram, and a Grok bot
-
-Last updated: 2026.10.22
+# Lesson 2 — Tailscale, Telegram and a Grok bot
 
 Lesson 1 served a coding agent on localhost. This one makes it a personal
 agent you can reach from anywhere: on your tailnet, from a Telegram chat, and
@@ -44,8 +42,7 @@ on the internet. Both need a one-time change in the Tailscale admin console:
    }
    ```
 
-   If the policy already has a `nodeAttrs` list, add the entry to it instead
-   of adding a second key. Check whether an existing entry already grants
+   If the policy already has a `nodeAttrs` list, add the entry to it. Check whether an existing entry already grants
    `funnel`. Then save the policy.
 
 ## 2. Create a Telegram bot
@@ -83,8 +80,8 @@ tailscale: open https://login.tailscale.com/a/... to add "coder" to your tailnet
 
 Open the link and approve the machine. In the admin console, **disable key
 expiry** for it, or the agent drops off the tailnet when the key expires. On
-a headless machine, pass `--tailscale-authkey env:TS_AUTHKEY` instead of
-using the link.
+a headless machine, pass `--tailscale-authkey env:TS_AUTHKEY` to
+`config set`.
 
 Then it prints its URLs and the Telegram bot:
 
@@ -243,7 +240,7 @@ a2a-serve logs -f
 
 ## Next steps
 
-The [agent server guide](../../docs/agent-server.md) covers Discord and email,
+The [user guide](../../docs/guide.md) covers Discord and email,
 who answers approvals, and contacts between agents on the same tailnet. The
-[architecture](../../docs/agent-server-architecture.md) shows how the pieces
+[architecture](../../docs/concepts/architecture.md) shows how the pieces
 fit together.

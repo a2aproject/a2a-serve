@@ -1,0 +1,106 @@
+site_name: A2A Serve
+site_description: One command turns the coding agent in your project into a sandboxed A2A agent that people, scripts and other agents can call.
+site_url: https://a2aproject.github.io/a2a-serve/
+repo_url: https://github.com/a2aproject/a2a-serve
+repo_name: a2aproject/a2a-serve
+edit_uri: ""
+docs_dir: .build/docs
+site_dir: .out/site
+copyright: Copyright 2026 The A2A Authors
+
+validation:
+  links:
+    anchors: warn
+    unrecognized_links: warn
+
+theme:
+  name: material
+  custom_dir: overrides
+  logo: assets/a2a_icon_color.svg
+  favicon: assets/a2a_icon_color.svg
+  features:
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.suggest
+    - content.code.copy
+    - toc.integrate
+  palette:
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Light mode
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Dark mode
+  font:
+    text: Inter
+    code: JetBrains Mono
+  icon:
+    repo: fontawesome/brands/github
+
+hooks:
+  - hooks.py
+
+extra_css:
+  - css/extra.css
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      toc_depth: 2
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences
+  - github-callouts
+
+nav:
+  - Home: index.md
+  - Getting started: getting-started.md
+  - Concepts:
+      - Architecture: concepts/architecture.md
+      - Access model: concepts/access-model.md
+      - Agent Mesh: concepts/agent-mesh.md
+      - Security: concepts/security.md
+  - Guide:
+      - User guide: guide.md
+      - Upgrades: upgrades.md
+  - Examples:
+      - examples/index.md
+      - Serve a coding agent: examples/01-agent-server/index.md
+      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
+      - Agent Mesh relay: examples/03-agentmesh-relay/index.md
+  - Reference:
+      - Commands:
+          - a2a-serve: reference/commands/a2a-serve.md
+          - start: reference/commands/start.md
+          - status: reference/commands/status.md
+          - logs: reference/commands/logs.md
+          - stop: reference/commands/stop.md
+          - restart: reference/commands/restart.md
+          - inspect: reference/commands/inspect.md
+          - config: reference/commands/config.md
+          - channel: reference/commands/channel.md
+          - schedule: reference/commands/schedule.md
+          - backup: reference/commands/backup.md
+          - pair: reference/commands/pair.md
+          - contact: reference/commands/contact.md
+          - peers: reference/commands/peers.md
+          - mailbox: reference/commands/mailbox.md
+          - doctor: reference/commands/doctor.md
+          - completion: reference/commands/completion.md
+          - version: reference/commands/version.md
+      - Configuration file: reference/configuration.md
+      - Output and exit codes: reference/output.md
+      - HTTP routes: reference/http-routes.md
+      - The a2a CLI: reference/a2a-cli.md

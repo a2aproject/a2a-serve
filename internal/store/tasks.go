@@ -259,7 +259,7 @@ func (ts *TaskStore) events(ctx context.Context, taskID a2a.TaskID, version int6
 func (ts *TaskStore) snapshot(ctx context.Context, task *a2a.Task, version int64) {
 	data, err := json.Marshal(task)
 	if err == nil {
-		_, err = ts.s.db.ExecContext(ctx, `INSERT INTO task_snapshots (scope, task_id, version, data) VALUES (?, ?, ?, ?)
+		_, err = ts.s.exec(ctx, `INSERT INTO task_snapshots (scope, task_id, version, data) VALUES (?, ?, ?, ?)
 			ON CONFLICT (scope, task_id) DO UPDATE SET version = excluded.version, data = excluded.data`,
 			ts.scope, string(task.ID), version, string(data))
 	}

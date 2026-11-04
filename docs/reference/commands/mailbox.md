@@ -1,0 +1,95 @@
+# a2a-serve mailbox
+
+<!-- Generated from the command definitions; do not edit. -->
+
+Commands a webhook node runs: an agent which only runs when woken, such as a
+Grok Bot routine, hosted by an agent server ("a2a-serve pair invite --webhook" on its side).
+The agent server holds the node's tasks in a mailbox until the node wakes. The node
+pairs once with "a2a-serve pair join &lt;agent-url&gt; &lt;code&gt;", then answers each wake
+with reply.
+
+The node token comes from --token, $A2A_NODE_TOKEN, or the token
+"a2a-serve pair join" saved. It includes the agent's URL.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox <command>
+```
+
+## a2a-serve mailbox get
+
+Show a task addressed to the node, with history and artifacts.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox get <task-id> [flags]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
+
+## a2a-serve mailbox list
+
+Show the node, and wakes not delivered yet or tasks still waiting for a reply.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox list [flags]
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--all` |  | List the last 200 wakes |
+| `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
+
+## a2a-serve mailbox reply
+
+Post progress, a question or the result of a task.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox reply <task-id> [flags]
+```
+
+**Examples**
+
+```bash
+a2a-serve mailbox reply <task> --status working --text "on it"
+a2a-serve mailbox reply <task> --input-required "Which branch?"
+a2a-serve mailbox reply <task> --final "Done" --artifact report.pdf
+a2a-serve mailbox reply <task> --fail "Could not reach the repo"
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--artifact stringArray` |  | Attach a file as an artifact (repeatable) |
+| `--fail string` |  | Fail the task with this reason |
+| `--final string` |  | Complete the task with this result |
+| `--input-required string` |  | Ask the caller this question |
+| `--key string` |  | Idempotency key (default: derived from the task and the event content) |
+| `--status string` |  | Task state: working, input-required, completed, failed, rejected |
+| `--text string` |  | Status message, or the result for completed (with --status) |
+| `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |

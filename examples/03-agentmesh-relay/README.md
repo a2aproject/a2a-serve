@@ -1,7 +1,7 @@
-# Lesson 3 — An Agent Mesh relay (experimental)
+# Lesson 3 — Agent Mesh relay (experimental)
 
 Lesson 2 put an agent on a tailnet. This lesson puts two agents on an
-[Agent Mesh](https://github.com/google/agentmesh) relay instead: no Tailscale
+[Agent Mesh](https://google.github.io/agentmesh/) relay: no Tailscale
 account, agents reachable from behind NAT, and a public URL for each on the
 relay. a2a-serve runs Agent Mesh's `meshnet` library in-process, so there is
 no sidecar to run.
@@ -15,14 +15,14 @@ no sidecar to run.
 
 ## Prerequisites
 
-- `a2a-serve` built with Agent Mesh support, and the `a2a` CLI (see the
-  [installation guide](../../docs/agent-server.md#installation)):
+- `a2a-serve` built with Agent Mesh support, and the `a2a` CLI (see
+  [Getting started](../../docs/getting-started.md#install)):
 
   ```bash
   go install -tags agentmesh github.com/a2aproject/a2a-serve@latest
   ```
 
-- Docker, and an API key for the harness, as in lesson 1
+- Docker, and an API key for the agent, as in lesson 1
 - The relay, at the Agent Mesh version this a2a-serve joins with:
 
   ```bash
@@ -32,7 +32,7 @@ no sidecar to run.
 ## 1. Run the relay
 
 The relay's policy decides what agents may do. This one lets agents publish
-A2A services and get public URLs which forward requests unchanged
+A2A services and get public URLs that forward requests unchanged
 (`PASSTHROUGH`), so a2a-serve's own pairing codes work there:
 
 ```bash
@@ -131,7 +131,7 @@ a2a-serve pair join "$PUBLIC" <code>
 a2a send -a "$PUBLIC" "What does this project do?"
 ```
 
-## Clean up
+## 5. Clean up
 
 ```bash
 a2a-serve stop --dir ~/a2a-lesson3/coder
@@ -140,26 +140,9 @@ a2a-serve stop --dir ~/a2a-lesson3/reviewer
 rm -rf ~/a2a-lesson3
 ```
 
-## Automated end-to-end validation
+## Next steps
 
-[`demo.sh`](./demo.sh) runs both the token-joined flow above (with optional
-`--tunnel cloudflare` public ingress) and OIDC device-flow sign-in with
-same-owner recognition against `agentmesh-one` `v0.2.0` and Docker-sandboxed
-`opencode` agents:
-
-```bash
-bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
-```
-
-The agents use opencode's free `opencode/big-pickle` model unless you pick
-another. It can be slow or rate-limited, and a delegation which doesn't
-answer within 3 minutes fails the run; `--vertex-project <gcp-project>` uses
-Gemini on Vertex AI with your application-default credentials instead, and
-`--model` with `--openai-base-url` any OpenAI-compatible endpoint.
-
-## What's next
-
-- Sign in instead of tokens: a relay with an identity provider prints a
+- Sign in with your account: a relay with an identity provider prints a
   sign-in link on the first run, and your agents become each other's owner.
 - Run the relay somewhere with a stable address; agents and pairing tokens
   are tied to it.
