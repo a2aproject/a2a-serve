@@ -70,7 +70,6 @@ func TestMain(m *testing.M) {
 	scheduleMinWait = 10 * time.Millisecond
 	nodeWebhookRetries = []time.Duration{0, 100 * time.Millisecond}
 	channelRetryMin = 10 * time.Millisecond
-	googleauth.SharedClientID = "shared-app"
 	firstBackupDelay = 50 * time.Millisecond
 	anonymousQuestionTimeout = 5 * time.Second
 	code := m.Run()
@@ -99,6 +98,8 @@ type serverOpts struct {
 	// configure changes the config before the server starts.
 	configure func(*agentdir.Config)
 	google    *googleauth.Endpoints
+	// sharedClientID is the client ID of the shared Google app.
+	sharedClientID string
 	private   network.Provider
 	public    network.Provider
 	newRelay  func(network.RelayConfig) (network.Provider, error)
@@ -145,7 +146,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

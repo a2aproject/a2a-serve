@@ -77,7 +77,17 @@ func TestValidate(t *testing.T) {
 		{name: "member without a kind", modify: func(c *Config) { c.Policy.Allow = []string{"anna@example.com"} }, wantErr: `invalid --allow "anna@example.com": want private, email:<address> or email:*@<domain>`},
 		{name: "invalid email member", modify: func(c *Config) { c.Policy.Owner = []string{"email:example.com"} }, wantErr: `invalid --owner "email:example.com"`},
 		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale or none`},
-		{name: "google client without secret", modify: func(c *Config) { c.Auth.GoogleClientID = "id" }, wantErr: "go together"},
+		{name: "google client without secret", modify: func(c *Config) {
+			c.Policy.AllowEmails = []string{"mom@example.org"}
+			c.Auth.GoogleClientID = "id"
+		}, wantErr: "go together"},
+		{name: "google client without allowed emails", modify: func(c *Config) {
+			c.Auth = AuthConfig{GoogleClientID: "id", GoogleClientSecret: "secret"}
+		}, wantErr: "--google-client-id needs --allow-email"},
+		{name: "google client with an email member", modify: func(c *Config) {
+			c.Policy.Owner = []string{"email:mom@example.org"}
+			c.Auth = AuthConfig{GoogleClientID: "id", GoogleClientSecret: "secret"}
+		}},
 		{name: "relay", modify: func(c *Config) {
 			c.Network = NetworkConfig{Private: "https://relay.example.com", Public: "https://relay.example.com/"}
 		}},
