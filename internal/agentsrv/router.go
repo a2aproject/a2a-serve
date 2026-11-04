@@ -546,6 +546,7 @@ func (r *Router) stream(ctx context.Context, ch channel.Channel, conv channel.Co
 // message, with its first event, or with the error it was refused with.
 func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channel.ConvKey, replyTo channel.Ref, p auth.Principal, req *a2a.SendMessageRequest, accepted func(error)) {
 	rd := newRenderer(r, ch, conv, replyTo, p)
+	rd.onWaitForOwner = func(taskID a2a.TaskID) { r.followOwnerAnswer(ctx, ch, conv, p, taskID) }
 	first := true
 	for ev, err := range r.handler.SendStreamingMessage(auth.InProcess(ctx, p), req) {
 		if first {
@@ -557,9 +558,6 @@ func (r *Router) streamThen(ctx context.Context, ch channel.Channel, conv channe
 			return
 		}
 		if rd.onEvent(ctx, ev) {
-			if taskID, ok := rd.waitingForOwner(); ok {
-				r.followOwnerAnswer(ctx, ch, conv, p, taskID)
-			}
 			return
 		}
 	}

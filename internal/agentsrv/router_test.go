@@ -160,6 +160,7 @@ func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
 	t.Parallel()
 	ch := newFakeChannel(ChannelEmail)
 	ch.buttons = false
+	ch.sendDelay = 200 * time.Millisecond
 	ts := startServer(t, serverOpts{channel: ch, configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
 	linkOwner(t, ts, "me@example.com", "owner-thread")
 

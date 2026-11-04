@@ -63,6 +63,10 @@ type renderer struct {
 	// waitsForOwner is set once the task waits for an owner to answer its
 	// question elsewhere, as for anonymous conversations.
 	waitsForOwner bool
+	// onWaitForOwner, if set, is called when the task starts waiting for an
+	// owner, before the conversation is told, so that an answer given
+	// meanwhile isn't missed.
+	onWaitForOwner func(a2a.TaskID)
 }
 
 type artifactText struct {
@@ -382,6 +386,9 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.mu.Lock()
 		rd.waitsForOwner = true
 		rd.mu.Unlock()
+		if rd.onWaitForOwner != nil {
+			rd.onWaitForOwner(taskID)
+		}
 		rd.send(ctx, fmt.Sprintf("⏳ This needs the owner's approval, which I asked for. Without an answer in %s, it is rejected:\n\n%s",
 			approvals.ApprovalTimeout(anonymousQuestionTimeout), q.Display()))
 		return
