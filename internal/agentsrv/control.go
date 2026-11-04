@@ -165,6 +165,9 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
+	if st.Access, err = s.access(ctx); err != nil {
+		return nil, err
+	}
 	return st, nil
 }
 
@@ -368,7 +371,7 @@ func (s *Server) ctlReloadConfig(w http.ResponseWriter, r *http.Request) {
 	s.cfgMu.Lock()
 	agentdir.CopyLive(s.cfg, saved)
 	s.cfgMu.Unlock()
-	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat"}})
+	jsonhttp.Write(w, http.StatusOK, controlapi.ReloadResponse{Applied: []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email", "owner", "allow"}})
 }
 
 func (s *Server) ctlSchedules(w http.ResponseWriter, r *http.Request) {

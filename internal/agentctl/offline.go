@@ -19,9 +19,11 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
@@ -70,34 +72,64 @@ func OpenOffline(d agentdir.Dir) (*Offline, error) {
 		base = placeholderURL
 	}
 	return &Offline{
-		store:     st,
-		pairings:  &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads, Others: func(ctx context.Context) []string { return othersAllowed(ctx, d, cfg) }},
+		store: st,
+		pairings: &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads, Access: func(ctx context.Context) (*controlapi.Access, error) {
+			all, err := st.Pairings(ctx)
+			if err != nil {
+				return nil, err
+			}
+			return access.Describe(cfg.Policy, networkOf(ctx, d, cfg), access.CountPairings(all)), nil
+		}},
 		contacts:  manage.Contacts{Store: st},
 		schedules: manage.Schedules{Store: st},
 	}, nil
 }
 
-// othersAllowed describes who may call the agent in d without a pairing.
-// Like the running server, it takes a relay to admit everyone only when the
-// agent joins it with a token and the relay's /info names no identity
-// provider.
-func othersAllowed(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config) []string {
-	provider, everyone := "", true
-	switch {
-	case cfg.Network.Private == agentdir.NetworkTailscale:
-		provider = network.ProviderTailscale
-	case cfg.Network.Private == agentdir.NetworkLAN:
-		provider = network.ProviderLAN
-	case cfg.Network.Private != "":
-		provider = network.ProviderRelay
-		secrets, err := d.LoadSecrets()
-		if err != nil {
-			slog.Warn("reading the secrets to check the relay", "error", err)
-		}
-		everyone = secrets[agentdir.SecretRelayToken] != "" &&
-			!network.RelayAdmitsBySignIn(ctx, &http.Client{Timeout: relayInfoTimeout}, cfg.Network.Private)
+// networkOf returns the networks of the agent in d, which runs with cfg.
+// Like the running server, it takes a relay to admit people by sign-in
+// unless the agent joins it with a token and the relay's /info names no
+// identity provider.
+func networkOf(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config) access.Network {
+	net := access.NetworkOf(cfg)
+	if net.Private != network.ProviderRelay {
+		return net
 	}
-	return auth.DefaultPolicy(everyone, cfg.Auth.AllowEmails).Others(provider)
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		slog.Warn("reading the secrets to check the relay", "error", err)
+	}
+	net.SignIn = secrets[agentdir.SecretRelayToken] == "" ||
+		network.RelayAdmitsBySignIn(ctx, &http.Client{Timeout: relayInfoTimeout}, cfg.Network.Private)
+	return net
+}
+
+// savedAccess describes who may call the agent in d with its saved config
+// cfg. The pairings come from the running server, or from the database of
+// a stopped agent.
+func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, client *controlapi.Client, running bool) (_ *controlapi.Access, err error) {
+	var n access.Pairings
+	switch _, statErr := os.Stat(d.DBPath()); {
+	case running:
+		st, err := client.Status(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if st.Access != nil {
+			n = access.Pairings{All: st.Access.Pairings, Owners: st.Access.OwnerPairings}
+		}
+	case statErr == nil:
+		st, err := store.Open(d.DBPath())
+		if err != nil {
+			return nil, err
+		}
+		defer func() { err = errors.Join(err, st.Close()) }()
+		all, err := st.Pairings(ctx)
+		if err != nil {
+			return nil, err
+		}
+		n = access.CountPairings(all)
+	}
+	return access.Describe(cfg.Policy, networkOf(ctx, d, cfg), n), nil
 }
 
 // relayInfoTimeout bounds the read of a relay's /info.

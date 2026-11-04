@@ -63,17 +63,66 @@ type Config struct {
 
 	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
 	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
+	Policy    PolicyConfig    `yaml:"policy,omitempty" json:"policy,omitzero"`
 	Approvals ApprovalsConfig `yaml:"approvals,omitempty" json:"approvals,omitzero"`
 	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
 }
 
-// AuthConfig lets people call the agent after signing in with Google.
-type AuthConfig struct {
-	// AllowEmails are the emails, or *@domain for a Google Workspace domain,
-	// of the people who may sign in. Empty turns sign-in off.
+// PolicyConfig decides who may call the agent besides the user running it,
+// who is always an owner.
+type PolicyConfig struct {
+	// PrivateAccess is everyone or paired. Empty is everyone, or paired on
+	// a private network which admits people by sign-in.
+	PrivateAccess string `yaml:"private_access,omitempty" json:"privateAccess,omitempty"`
+	// PublicAccess is paired or anyone. Empty is paired.
+	PublicAccess string `yaml:"public_access,omitempty" json:"publicAccess,omitempty"`
+	// AllowEmails are the emails, or *@domain, of people who may call.
 	AllowEmails []string `yaml:"allow_emails,omitempty" json:"allowEmails,omitempty"`
+	// Owner and Allow are members added to the owner and authenticated
+	// roles: private, email:<address> or email:*@<domain>.
+	Owner []string `yaml:"owner,omitempty" json:"owner,omitempty"`
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
+}
+
+// Values of --private-access and --public-access.
+const (
+	AccessEveryone = "everyone"
+	AccessPaired   = "paired"
+	AccessAnyone   = "anyone"
+)
+
+// Members of a role. They mirror the members of the auth package, which
+// gives them meaning.
+const (
+	MemberSelf        = "self"
+	MemberPrivate     = "private"
+	MemberAnyone      = "anyone"
+	MemberEmailPrefix = "email:"
+)
+
+// Emails returns the email patterns the policy names: --allow-email, and
+// the email members of --owner and --allow.
+func (p PolicyConfig) Emails() []string {
+	out := slices.Clone(p.AllowEmails)
+	for _, m := range slices.Concat(p.Owner, p.Allow) {
+		if e, ok := strings.CutPrefix(m, MemberEmailPrefix); ok {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+func (p PolicyConfig) clone() PolicyConfig {
+	p.AllowEmails = slices.Clone(p.AllowEmails)
+	p.Owner = slices.Clone(p.Owner)
+	p.Allow = slices.Clone(p.Allow)
+	return p
+}
+
+// AuthConfig is the owner's own Google app, which people sign in with.
+type AuthConfig struct {
 	// GoogleClientID and GoogleClientSecret are the owner's own Google app.
 	// The secret is a secret reference.
 	GoogleClientID     string `yaml:"google_client_id,omitempty" json:"googleClientID,omitempty"`
@@ -150,12 +199,10 @@ func (b BackupConfig) BackupRetention() time.Duration {
 type NetworkConfig struct {
 	// Private is tailscale, lan or empty.
 	Private string `yaml:"private,omitempty" json:"private,omitempty"`
-	// Public is tailscale, ngrok or empty.
+	// Public is tailscale, a relay URL or empty.
 	Public string `yaml:"public,omitempty" json:"public,omitempty"`
 
 	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty" json:"tailscaleControlURL,omitempty"`
-	// NgrokURL is a reserved ngrok domain, such as https://coder.ngrok.app.
-	NgrokURL string `yaml:"ngrok_url,omitempty" json:"ngrokURL,omitempty"`
 	// LANPort is the port of the LAN listener. Zero picks one on first run.
 	LANPort int `yaml:"lan_port,omitempty" json:"lanPort,omitempty"`
 }
@@ -365,7 +412,7 @@ func (c *Config) Clone() *Config {
 	out.Env = slices.Clone(c.Env)
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
-	out.Auth.AllowEmails = slices.Clone(c.Auth.AllowEmails)
+	out.Policy = c.Policy.clone()
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
 	}

@@ -32,7 +32,8 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:   "Revoke a pairing, remove a webhook node, or forget an agent you joined",
 		Long: `Delete a pairing with its tokens, linked messenger accounts and pending
 codes, or remove a webhook node. The person may still call the agent through
-the private network or an --allow-email rule; the command says so.
+the private network or an --allow-email rule; the command says so, and
+prints who may call afterwards.
 
 ` + "`a2a-serve pair rm local`" + ` revokes the token of this machine and your linked
 chat accounts, and keeps the pairing; the next start issues a new token.
@@ -72,10 +73,15 @@ With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" +
 				if len(resp.StillAllowed) > 0 {
 					out["stillAllowed"] = resp.StillAllowed
 				}
+				if resp.Access != nil {
+					out["access"] = resp.Access
+				}
 				return cfg.PrintJSON(out)
 			}
-			_, err = fmt.Fprint(cfg.Out, removedText(args[0], resp))
-			return err
+			if _, err := fmt.Fprint(cfg.Out, removedText(args[0], resp)); err != nil {
+				return err
+			}
+			return printAccess(cfg, resp.Access)
 		},
 	}
 }

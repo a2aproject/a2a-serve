@@ -133,9 +133,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 	network := []string{fmt.Sprintf("%-23s public %s", "private "+orNone(c.Network.Private), orNone(c.Network.Public))}
 	for _, extra := range []struct{ label, value string }{
 		{"tailscale-control-url", c.Network.TailscaleControlURL},
-		{"ngrok-url", c.Network.NgrokURL},
 		{agentdir.SecretTailscaleKey, v.Secrets[agentdir.SecretTailscaleKey]},
-		{agentdir.SecretNgrokToken, v.Secrets[agentdir.SecretNgrokToken]},
 		{agentdir.SecretRelayToken, v.Secrets[agentdir.SecretRelayToken]},
 	} {
 		if extra.value != "" {
@@ -143,6 +141,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 		}
 	}
 	line("network", strings.Join(network, ", "))
+	line("access", formatPolicy(c.Policy))
 	var channels []string
 	secretState := func(ref string) string {
 		name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix)
@@ -214,6 +213,23 @@ func formatMount(spec string) string {
 		out += " (ro)"
 	}
 	return out
+}
+
+// formatPolicy formats the access settings that are set.
+func formatPolicy(p agentdir.PolicyConfig) string {
+	var parts []string
+	for _, a := range []struct {
+		label  string
+		values []string
+	}{
+		{"private", nonEmpty(p.PrivateAccess)}, {"public", nonEmpty(p.PublicAccess)},
+		{"emails", p.AllowEmails}, {"owners", p.Owner}, {"allowed", p.Allow},
+	} {
+		if len(a.values) > 0 {
+			parts = append(parts, a.label+" "+strings.Join(a.values, ", "))
+		}
+	}
+	return strings.Join(parts, "; ")
 }
 
 func formatLimits(l, def agentdir.LimitsConfig) string {

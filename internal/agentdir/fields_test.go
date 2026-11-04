@@ -31,6 +31,7 @@ func fullConfig() *Config {
 		Env:         []string{"DEBUG=1", "MODE=fast"},
 		Port:        4000,
 		Network:     NetworkConfig{Private: "tailscale"},
+		Policy:      PolicyConfig{PrivateAccess: AccessPaired, AllowEmails: []string{"mom@example.com", "*@example.com"}, Owner: []string{"email:me@example.com"}},
 		Channels: ChannelsConfig{
 			Telegram: &TelegramConfig{Token: "secret:TELEGRAM_BOT_TOKEN"},
 			Email:    &EmailConfig{Address: "a@x", IMAP: "i:993", SMTP: "s:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx"},
@@ -53,6 +54,10 @@ func TestUnset(t *testing.T) {
 		{setting: "name", modify: func(c *Config) { c.Name = "app" }},
 		{setting: "port", modify: func(c *Config) { c.Port = 0 }},
 		{setting: "private", modify: func(c *Config) { c.Network.Private = "" }},
+		{setting: "private-access", modify: func(c *Config) { c.Policy.PrivateAccess = "" }},
+		{setting: "allow-email", entries: []string{"Mom@example.com"}, modify: func(c *Config) { c.Policy.AllowEmails = []string{"*@example.com"} }},
+		{setting: "owner", modify: func(c *Config) { c.Policy.Owner = nil }},
+		{setting: "ngrok-authtoken", wantErr: true},
 		{setting: "memory", modify: func(c *Config) { c.Limits.Memory = "" }},
 		{setting: "workspace", modify: func(c *Config) { c.Workspace = "" }},
 		{setting: "env", entries: []string{"DEBUG"}, modify: func(c *Config) { c.Env = []string{"MODE=fast"} }},
@@ -101,10 +106,12 @@ func TestDiff(t *testing.T) {
 	next.Description = "reviews code"
 	next.Approvals.Allow = []string{"read", "edit"}
 	next.Channels.Telegram = nil
+	next.Policy.Owner = append(next.Policy.Owner, MemberPrivate)
 	got := Diff(old, next)
 	want := []Change{
 		{Setting: "description", Old: "writes code", New: "reviews code", Live: true},
 		{Setting: "sandbox", New: "local"},
+		{Setting: "owner", Added: []string{MemberPrivate}, Live: true},
 		{Setting: "telegram", Old: "secret:TELEGRAM_BOT_TOKEN", Live: true},
 		{Setting: "allow-tools", Added: []string{"edit"}, Removed: []string{"search"}, Live: true},
 	}
@@ -123,17 +130,18 @@ func TestCommands(t *testing.T) {
 		Harness:  "acp",
 		Command:  []string{"gemini", "--experimental-acp"},
 		Secrets:  []string{"KEY"},
-		Network:  NetworkConfig{Public: "ngrok"},
+		Network:  NetworkConfig{Public: "tailscale"},
+		Policy:   PolicyConfig{PublicAccess: AccessAnyone, AllowEmails: []string{"*@example.com"}, Owner: []string{"email:me@example.com"}},
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 		Backup:   BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
 	}
 	var got []string
-	for _, args := range cfg.Commands(Secrets{SecretNgrokToken: "n"}) {
+	for _, args := range cfg.Commands(Secrets{SecretTailscaleKey: "k"}) {
 		got = append(got, ShellJoin(args))
 	}
 	want := []string{
-		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public ngrok",
-		"a2a-serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --ngrok-authtoken env:NGROK_AUTHTOKEN",
+		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-access anyone --allow-email '*@example.com' --owner email:me@example.com",
+		"a2a-serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --tailscale-authkey env:TS_AUTHKEY",
 		"a2a-serve channel add telegram --token env:BOT",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

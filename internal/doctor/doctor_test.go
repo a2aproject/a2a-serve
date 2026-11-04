@@ -664,12 +664,12 @@ func TestAgentChecks(t *testing.T) {
 			name: "network",
 			cfg: agentdir.Config{
 				Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
-				Network: agentdir.NetworkConfig{Private: agentdir.NetworkTailscale, Public: agentdir.NetworkNgrok},
+				Network: agentdir.NetworkConfig{Private: agentdir.NetworkTailscale},
 			},
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
 			},
-			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"tailscale", StatusWarn}, {"ngrok", StatusFail}},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"tailscale", StatusWarn}},
 		},
 		{
 			name: "network credentials stored",

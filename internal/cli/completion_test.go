@@ -52,7 +52,9 @@ func TestCompletion(t *testing.T) {
 		want []string
 	}{
 		{name: "private", args: []string{"config", "set", "--private", ""}, want: []string{"tailscale", "lan", "none"}},
-		{name: "public", args: []string{"start", "opencode", "--public", ""}, want: []string{"tailscale", "ngrok", "none"}},
+		{name: "public", args: []string{"start", "opencode", "--public", ""}, want: []string{"tailscale", "none"}},
+		{name: "private access", args: []string{"start", "opencode", "--private-access", ""}, want: []string{"everyone", "paired"}},
+		{name: "public access", args: []string{"config", "set", "--public-access", ""}, want: []string{"paired", "anyone"}},
 		{name: "sandbox", args: []string{"start", "claude", "--sandbox", ""}, want: []string{"docker", "local"}},
 		{name: "agent", args: []string{"config", "set", "--agent", ""}, want: []string{"claude", "opencode", "acp"}},
 		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},

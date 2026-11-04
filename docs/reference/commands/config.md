@@ -4,8 +4,8 @@
 
 Show and change the settings in .a2a/config.yaml with the flags of
 `a2a-serve start <agent>`. Every change is validated and printed as a diff. A
-running agent applies the description and the approval settings at once;
-other settings wait for `a2a-serve restart`.
+running agent applies the description, the access settings and the
+approval settings at once; other settings wait for `a2a-serve restart`.
 
 Without a subcommand, shows the settings.
 
@@ -39,9 +39,9 @@ options, backups and Google sign-in. Messengers are set with
 `a2a-serve channel add`. With --agent, config set also creates an
 agent, to be started with `a2a-serve start`. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
---secret by name, --env by NAME, --mount by destination, --identity by login,
-and --allow-tools and --deny-tools by value. Remove entries with
-`a2a-serve config unset`.
+--secret by name, --env by NAME, --mount by destination, and the other
+lists by value. Remove entries with `a2a-serve config unset`. A change to who
+may call the agent, or to its networks, prints who may call afterwards.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -97,17 +97,24 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for a Google Workspace domain or mail that passes DMARC; turns on Google sign-in (repeatable; commas also separate values) |
-| `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
-| `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
-| `--ngrok-authtoken string` |  | ngrok authtoken (secret value: env:VAR, -, or the value) |
-| `--ngrok-url string` |  | Reserved ngrok domain, such as https://coder.ngrok.app |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
 | `--private string` |  | Private network: tailscale, lan, none, or the URL of an Agent Mesh relay such as https://relay.example.com |
-| `--public string` |  | Public URL: tailscale (Funnel), ngrok, none, or the URL of an Agent Mesh relay |
+| `--public string` |  | Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay |
 | `--relay-token string` |  | Join token of an Agent Mesh relay, to join without the sign-in link (secret value: env:VAR, -, or the value) |
 | `--tailscale-authkey string` |  | Tailscale auth key, to join without the login link (secret value: env:VAR, -, or the value) |
 | `--tailscale-control-url string` |  | Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server |
+
+**Access flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--allow member` |  | Let a member call the agent: email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
+| `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
+| `--owner member` |  | Make a member an owner, who sees every task and answers every approval: private for everyone on the private network, email:&lt;address&gt; or email:\*@&lt;domain&gt; (repeatable) |
+| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
 **Approvals flags**
 
@@ -152,10 +159,10 @@ a2a-serve config show --as-command
 Remove entries from a list setting, or the whole list without entries, or
 reset a setting to its default. The setting is the flag name without --.
 Entries are named by their key: a secret or env by name, a mount by its
-destination, an identity by login. Unsetting a secret also deletes its value
+destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
 
-Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, image, memory, mount, name, ngrok-authtoken, ngrok-url, owner-chat, pids, port, private, public, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, image, memory, mount, name, owner, owner-chat, pids, port, private, private-access, public, public-access, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]
@@ -167,6 +174,7 @@ a2a-serve config unset <setting> [<entry>...] [flags]
 a2a-serve config unset secret OPENROUTER_API_KEY
 a2a-serve config unset env DEBUG
 a2a-serve config unset mount /docs
+a2a-serve config unset allow-email '*@example.com'
 a2a-serve config unset private
 ```
 

@@ -51,22 +51,6 @@ type Policy struct {
 	Anonymous     []string
 }
 
-// DefaultPolicy is the policy of an agent: the user running it is owner;
-// everyone on the private network, if privateEveryone, and the emails of
-// allowEmails are authenticated.
-func DefaultPolicy(privateEveryone bool, allowEmails []string) Policy {
-	p := Policy{Owner: []string{MemberSelf}}
-	if privateEveryone {
-		p.Authenticated = append(p.Authenticated, MemberPrivate)
-	}
-	for _, e := range allowEmails {
-		if e = strings.TrimSpace(e); e != "" {
-			p.Authenticated = append(p.Authenticated, MemberEmailPrefix+e)
-		}
-	}
-	return p
-}
-
 // Resolve returns the role of an identity, or "" if the policy refuses it:
 //
 //  1. the highest role it matches, across the bindings and its pairing;
@@ -118,8 +102,9 @@ func matches(member string, id Identity) bool {
 }
 
 // EmailMatches reports whether an email matches an --allow-email pattern:
-// an address, or *@<domain> for an email whose source proves domain, such
-// as a Google Workspace or mail which passed DMARC.
+// an address, or *@<domain> for an email whose source proves the domain:
+// Google Workspace sign-in, or mail which passed DMARC. Tailnet and relay
+// emails come without such a proof, so they match full addresses only.
 func EmailMatches(pattern, email, domain string) bool {
 	pattern, email = strings.ToLower(strings.TrimSpace(pattern)), strings.ToLower(email)
 	if d, ok := strings.CutPrefix(pattern, "*@"); ok {
@@ -128,24 +113,32 @@ func EmailMatches(pattern, email, domain string) bool {
 	return pattern == email
 }
 
+const ownerSuffix = " as owners"
+
 // Others describes who may call under the policy without a pairing, such
-// as "everyone on the tailnet". provider is the private network's provider,
-// or empty without one.
+// as "everyone on the tailnet" or "emails matching *@example.com as
+// owners". provider is the private network's provider, or empty without
+// one.
 func (p Policy) Others(provider string) []string {
 	var out []string
-	for _, m := range slices.Concat(p.Owner, p.Authenticated, p.Anonymous) {
-		var who string
-		switch pattern, email := strings.CutPrefix(m, MemberEmailPrefix); {
-		case m == MemberPrivate && provider != "":
-			who = "everyone" + where(Identity{Network: network.ListenerPrivate, Provider: provider})
-		case m == MemberAnyone:
-			who = "anyone on the public URL or in a direct chat"
-		case email:
-			who = "emails matching " + pattern
-		}
-		if who != "" && !slices.Contains(out, who) {
-			out = append(out, who)
+	add := func(members []string, suffix string) {
+		for _, m := range members {
+			var who string
+			switch pattern, email := strings.CutPrefix(m, MemberEmailPrefix); {
+			case m == MemberPrivate && provider != "":
+				who = "everyone" + where(Identity{Network: network.ListenerPrivate, Provider: provider})
+			case m == MemberAnyone:
+				who = "anyone on the public URL or in a direct chat"
+			case email:
+				who = "emails matching " + pattern
+			}
+			if who != "" && !slices.Contains(out, who+suffix) && !slices.Contains(out, who+ownerSuffix) {
+				out = append(out, who+suffix)
+			}
 		}
 	}
+	add(p.Owner, ownerSuffix)
+	add(p.Authenticated, "")
+	add(p.Anonymous, "")
 	return out
 }

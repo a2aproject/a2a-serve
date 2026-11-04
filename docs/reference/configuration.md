@@ -15,8 +15,13 @@ secrets: [OPENROUTER_API_KEY]    # passed to the agent as environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
   private: tailscale
-  public: ngrok
-  ngrok_url: https://coder.ngrok.app
+  public: tailscale
+policy:                          # --private-access, --public-access, --allow-email, --owner, --allow
+  private_access: paired         # default everyone; paired on a relay that admits people by sign-in
+  public_access: paired          # or anyone
+  allow_emails: [mom@example.com, "*@example.com"]
+  owner: [email:me@example.com]
+  allow: [email:ben@example.org]
 channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:
@@ -24,8 +29,7 @@ approvals:
   owner_chat: telegram:anna      # --owner-chat
 limits: {memory: 8g, cpus: "4", pids: 1024}
 task_ttl: 30d                    # --task-ttl: tasks idle this long are deleted
-auth:                            # --allow-email, --google-client-id, --google-client-secret
-  allow_emails: [mom@example.com, "*@example.com"]
+auth:                            # --google-client-id, --google-client-secret
   google_client_id: 1234.apps.googleusercontent.com
   google_client_secret: secret:GOOGLE_CLIENT_SECRET
 backup:                          # --backup, --backup-key, --backup-interval, --backup-retention

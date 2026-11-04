@@ -29,7 +29,7 @@ import (
 
 func TestRun(t *testing.T) {
 	t.Parallel()
-	env := map[string]string{"OPENROUTER_API_KEY": "x", "NGROK_AUTHTOKEN": "y"}
+	env := map[string]string{"OPENROUTER_API_KEY": "x"}
 	getenv := func(k string) string { return env[k] }
 	command := func(s agentdir.Settings) ([]string, error) {
 		lines := []string{"a2a-serve start " + s.Harness + " --name " + s.Name}
@@ -57,12 +57,12 @@ func TestRun(t *testing.T) {
 		},
 		{
 			name:      "choices with retries without Docker",
-			input:     "claude\ncoder\n\nMISSING\nOPENROUTER_API_KEY\nwifi\ntailscale\nngrok\n\nservice\ny\n",
+			input:     "claude\ncoder\n\nMISSING\nOPENROUTER_API_KEY\nwifi\ntailscale\nngrok\ntailscale\nservice\ny\n",
 			dockerErr: errors.New("docker is not running"),
 			secret:    "123:telegram-token",
 			want: Result{Mode: ModeService, Settings: agentdir.Settings{
-				Harness: "claude", Name: "coder", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}, Private: "tailscale", Public: "ngrok",
-				NgrokAuthToken: "env:NGROK_AUTHTOKEN", Telegram: "123:telegram-token",
+				Harness: "claude", Name: "coder", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}, Private: "tailscale", Public: "tailscale",
+				Telegram: "123:telegram-token",
 			}},
 			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a-serve start claude --name coder --service\n  a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN\n"},
 			wantNotOut: "123:telegram-token",

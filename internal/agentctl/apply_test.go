@@ -47,6 +47,7 @@ type fakeServer struct {
 	running  *agentdir.Config
 	noReload bool
 	channels []controlapi.ChannelStatus
+	access   *controlapi.Access
 }
 
 func (f *fakeServer) record(r *http.Request) {
@@ -87,7 +88,7 @@ func serveFake(t *testing.T, d agentdir.Dir, f *fakeServer) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
-		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder", PID: f.pid, Channels: f.channels})
+		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder", PID: f.pid, Channels: f.channels, Access: f.access})
 	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
@@ -285,6 +286,49 @@ func TestSetRunning(t *testing.T) {
 			}
 			if cfg := loadConfig(t, d); cfg.Sandbox != "local" || cfg.Description != "x" {
 				t.Fatalf("saved config = %+v, want sandbox local and description x", cfg)
+			}
+		})
+	}
+}
+
+func TestSetAccess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		running bool
+		s       agentdir.Settings
+		want    *controlapi.Access
+	}{
+		{name: "other setting", s: agentdir.Settings{Sandbox: "local"}},
+		{
+			name: "stopped agent", s: agentdir.Settings{Private: "tailscale", PrivateAccess: agentdir.AccessPaired},
+			want: &controlapi.Access{
+				PrivateAccess: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
+				Summary: []string{"you: this machine and your tailnet devices", "nobody else", "the tailnet needs a pairing"},
+			},
+		},
+		{
+			name: "running agent", running: true, s: agentdir.Settings{AllowEmails: []string{"*@example.com"}},
+			want: &controlapi.Access{
+				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
+				Pairings: 3, OwnerPairings: 1, Others: []string{"emails matching *@example.com"},
+				Summary: []string{"you: this machine", "emails matching *@example.com, 3 pairings (1 owner)"},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			if tc.running {
+				serveFake(t, d, &fakeServer{running: &agentdir.Config{Name: "coder", Harness: "opencode"}, access: &controlapi.Access{Pairings: 3, OwnerPairings: 1}})
+			}
+			got, err := Set(t.Context(), d, tc.s, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got.Access); diff != "" {
+				t.Fatalf("Set().Access wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

@@ -158,8 +158,12 @@ var fields = []field{
 	intField("port", func(c *Config) *int { return &c.Port }),
 	scalar("private", false, func(c *Config) *string { return &c.Network.Private }),
 	scalar("public", false, func(c *Config) *string { return &c.Network.Public }),
+	scalar("private-access", true, func(c *Config) *string { return &c.Policy.PrivateAccess }),
+	scalar("public-access", true, func(c *Config) *string { return &c.Policy.PublicAccess }),
+	list("allow-email", true, func(c *Config) *[]string { return &c.Policy.AllowEmails }, strings.ToLower),
+	list("owner", true, func(c *Config) *[]string { return &c.Policy.Owner }, strings.ToLower),
+	list("allow", true, func(c *Config) *[]string { return &c.Policy.Allow }, strings.ToLower),
 	operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL })),
-	operational(scalar("ngrok-url", false, func(c *Config) *string { return &c.Network.NgrokURL })),
 	tokenField(ChannelTelegram, func(c *Config, v string) {
 		c.Channels.Telegram = nil
 		if v != "" {
@@ -185,7 +189,6 @@ var fields = []field{
 	operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory })),
 	operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs })),
 	operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs })),
-	operational(list("allow-email", true, func(c *Config) *[]string { return &c.Auth.AllowEmails }, strings.ToLower)),
 	operational(scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID })),
 	operational(scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret })),
 	operational(scalar("backup", false, func(c *Config) *string { return &c.Backup.To })),
@@ -200,7 +203,6 @@ var fields = []field{
 var unsetOnly = map[string]string{
 	"tailscale-authkey": SecretTailscaleKey,
 	"relay-token":       SecretRelayToken,
-	"ngrok-authtoken":   SecretNgrokToken,
 }
 
 func lookupField(flag string) (field, bool) {
@@ -404,5 +406,11 @@ func CopyLive(dst, src *Config) {
 	dst.Approvals.OwnerChat = src.Approvals.OwnerChat
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
-	dst.Auth.AllowEmails = slices.Clone(src.Auth.AllowEmails)
+	dst.Policy = src.Policy.clone()
+}
+
+// IsAccess reports whether the setting changes who may call the agent: an
+// access setting, or a network.
+func IsAccess(setting string) bool {
+	return slices.Contains([]string{"private", "public", "private-access", "public-access", "allow-email", "owner", "allow"}, setting)
 }

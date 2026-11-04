@@ -168,7 +168,7 @@ func TestRelaySignInClosesPrivateNetworkUntilEmailAllowed(t *testing.T) {
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
-			c.Auth.AllowEmails = []string{"anna@example.com"}
+			c.Policy.AllowEmails = []string{"anna@example.com"}
 		},
 	})
 	anna := startServer(t, serverOpts{

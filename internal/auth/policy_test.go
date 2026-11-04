@@ -22,6 +22,19 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
+// testPolicy is the policy where the user running the agent is owner, and
+// everyone on the private network, if private, and emails are authenticated.
+func testPolicy(private bool, emails []string) Policy {
+	p := Policy{Owner: []string{MemberSelf}}
+	if private {
+		p.Authenticated = append(p.Authenticated, MemberPrivate)
+	}
+	for _, e := range emails {
+		p.Authenticated = append(p.Authenticated, MemberEmailPrefix+e)
+	}
+	return p
+}
+
 func TestPolicyResolve(t *testing.T) {
 	t.Parallel()
 	private := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork}
@@ -32,12 +45,12 @@ func TestPolicyResolve(t *testing.T) {
 		id     Identity
 		want   string
 	}{
-		{name: "self", policy: DefaultPolicy(true, nil), id: Identity{Network: network.ListenerPrivate, Self: true}, want: RoleOwner},
-		{name: "self through another agent", policy: DefaultPolicy(true, nil), id: Identity{Network: network.ListenerPrivate, Self: true, Hops: 1}, want: RoleAuthenticated},
-		{name: "self never on the public URL", policy: DefaultPolicy(false, nil), id: Identity{Network: network.ListenerPublic, Self: true}},
-		{name: "private network", policy: DefaultPolicy(true, nil), id: private, want: RoleAuthenticated},
-		{name: "closed private network", policy: DefaultPolicy(false, nil), id: private},
-		{name: "allowed email", policy: DefaultPolicy(false, []string{"Anna@Example.com"}), id: private, want: RoleAuthenticated},
+		{name: "self", policy: testPolicy(true, nil), id: Identity{Network: network.ListenerPrivate, Self: true}, want: RoleOwner},
+		{name: "self through another agent", policy: testPolicy(true, nil), id: Identity{Network: network.ListenerPrivate, Self: true, Hops: 1}, want: RoleAuthenticated},
+		{name: "self never on the public URL", policy: testPolicy(false, nil), id: Identity{Network: network.ListenerPublic, Self: true}},
+		{name: "private network", policy: testPolicy(true, nil), id: private, want: RoleAuthenticated},
+		{name: "closed private network", policy: testPolicy(false, nil), id: private},
+		{name: "allowed email", policy: testPolicy(false, []string{"Anna@Example.com"}), id: private, want: RoleAuthenticated},
 		{
 			name:   "owner email",
 			policy: Policy{Owner: []string{"email:anna@example.com"}},
@@ -46,24 +59,25 @@ func TestPolicyResolve(t *testing.T) {
 		},
 		{
 			name:   "domain pattern with a proven domain",
-			policy: DefaultPolicy(false, []string{"*@example.com"}),
+			policy: testPolicy(false, []string{"*@example.com"}),
 			id:     Identity{Network: network.ListenerPublic, Email: "anna@example.com", EmailSource: EmailFromGoogle, Domain: "example.com"},
 			want:   RoleAuthenticated,
 		},
 		{
 			name:   "domain pattern with another proven domain",
-			policy: DefaultPolicy(false, []string{"*@example.com"}),
+			policy: testPolicy(false, []string{"*@example.com"}),
 			id:     Identity{Network: network.ListenerPublic, Email: "anna@example.com", EmailSource: EmailFromGoogle, Domain: "other.com"},
 		},
-		{name: "domain pattern without a proven domain", policy: DefaultPolicy(false, []string{"*@example.com"}), id: private},
-		{name: "owner pairing", policy: DefaultPolicy(false, nil), id: Identity{Pairing: "phone", PairingRole: RoleOwner}, want: RoleOwner},
+		{name: "domain pattern without a proven domain", policy: testPolicy(false, []string{"*@example.com"}), id: private},
+		{name: "full address from the relay", policy: testPolicy(false, []string{"anna@example.com"}), id: Identity{Network: network.ListenerPrivate, Provider: network.ProviderRelay, Email: "anna@example.com", EmailSource: EmailFromNetwork}, want: RoleAuthenticated},
+		{name: "owner pairing", policy: testPolicy(false, nil), id: Identity{Pairing: "phone", PairingRole: RoleOwner}, want: RoleOwner},
 		{name: "highest of pairing and bindings", policy: Policy{Owner: []string{MemberPrivate}}, id: Identity{Network: network.ListenerPrivate, Pairing: "anna", PairingRole: RoleAuthenticated}, want: RoleOwner},
-		{name: "webhook node", policy: DefaultPolicy(false, nil), id: Identity{Network: network.ListenerPublic, WebhookNode: "grok"}, want: RoleAuthenticated},
+		{name: "webhook node", policy: testPolicy(false, nil), id: Identity{Network: network.ListenerPublic, WebhookNode: "grok"}, want: RoleAuthenticated},
 		{name: "anyone on the public URL", policy: open, id: Identity{Network: network.ListenerPublic}, want: RoleAnonymous},
 		{name: "anyone in a direct chat", policy: open, id: Identity{Network: NetworkChat, ChatAccount: "telegram:1", Direct: true}, want: RoleAnonymous},
 		{name: "identified caller that matches nothing", policy: open, id: private, want: RoleAnonymous},
 		{name: "unidentified caller on the private network", policy: open, id: Identity{Network: network.ListenerPrivate}},
-		{name: "anonymous without members", policy: DefaultPolicy(false, nil), id: Identity{Network: network.ListenerPublic}},
+		{name: "anonymous without members", policy: testPolicy(false, nil), id: Identity{Network: network.ListenerPublic}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -115,14 +129,18 @@ func TestPolicyOthers(t *testing.T) {
 		provider string
 		want     []string
 	}{
-		{name: "private network", policy: DefaultPolicy(true, nil), provider: network.ProviderTailscale, want: []string{"everyone on the tailnet"}},
-		{name: "no private network", policy: DefaultPolicy(true, nil)},
-		{name: "closed private network", policy: DefaultPolicy(false, nil), provider: network.ProviderRelay},
+		{name: "private network", policy: testPolicy(true, nil), provider: network.ProviderTailscale, want: []string{"everyone on the tailnet"}},
+		{name: "no private network", policy: testPolicy(true, nil)},
+		{name: "closed private network", policy: testPolicy(false, nil), provider: network.ProviderRelay},
 		{
-			name: "emails", policy: DefaultPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderLAN,
+			name: "emails", policy: testPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderLAN,
 			want: []string{"everyone on the LAN", "emails matching *@example.com", "emails matching anna@example.org"},
 		},
 		{name: "anyone", policy: Policy{Owner: []string{MemberSelf}, Anonymous: []string{MemberAnyone}}, want: []string{"anyone on the public URL or in a direct chat"}},
+		{
+			name: "owners", policy: Policy{Owner: []string{MemberSelf, "email:me@example.com", MemberPrivate}, Authenticated: []string{MemberPrivate}}, provider: network.ProviderTailscale,
+			want: []string{"emails matching me@example.com as owners", "everyone on the tailnet as owners"},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -58,6 +58,34 @@ func TestRouterUnknownSenderGetsPairingHint(t *testing.T) {
 	ts.ch.waitFor(t, "dm9", hasText("invalid or has expired"))
 }
 
+func TestRouterPublicAccessAnyone(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
+	ts.ch.write("telegram:9", "dm9", "hello")
+	ts.ch.waitFor(t, "dm9", hasText("Hello from fakeacp."))
+
+	linkOwner(t, ts, "telegram:1", "dm1")
+	inGroup := func(identity, text string) {
+		in := ts.ch.message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.deliver(in)
+	}
+	inGroup("telegram:9", "hello")
+	inGroup("telegram:1", "hello")
+	ts.ch.waitFor(t, "grp", hasText("Hello from fakeacp."))
+	ts.ch.mu.Lock()
+	defer ts.ch.mu.Unlock()
+	var replies int
+	for _, m := range ts.ch.msgs {
+		if m.Conv == "grp" {
+			replies++
+		}
+	}
+	if replies != 1 {
+		t.Fatalf("replies in the group = %d, want 1, to the owner only; messages:\n%v", replies, ts.ch.msgs)
+	}
+}
+
 func TestRouterRestartsFailingChannel(t *testing.T) {
 	t.Parallel()
 	ch := newFakeChannel("fake")

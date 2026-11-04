@@ -293,8 +293,8 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+person\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+webhook\s+authenticated`).MatchString(out) {
 		t.Fatalf("a2a-serve pair list = %q, %v, want me and grok", out, err)
 	}
-	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || out != `{"kind":"webhook","name":"grok","removed":true}`+"\n" {
-		t.Fatalf("a2a-serve -o jsonl pair rm grok = %q, %v, want the node removed", out, err)
+	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || !strings.HasPrefix(out, `{"access":{`) || !strings.HasSuffix(out, `"kind":"webhook","name":"grok","removed":true}`+"\n") {
+		t.Fatalf("a2a-serve -o jsonl pair rm grok = %q, %v, want the node removed, with who may call afterwards", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "pair", "set", "me", "--rotate", "--dir", dir); err != nil || !strings.Contains(out, "its tokens were revoked") {
 		t.Fatalf("a2a-serve pair set --rotate = %q, %v, want a new code", out, err)

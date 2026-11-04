@@ -37,8 +37,8 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var scope string
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether the agent runs, its URLs and channels, or print one of its URLs",
-		Long: `Show whether the agent runs, its URLs and channels.
+		Short: "Show whether the agent runs, its URLs, channels and who may call it, or print one of its URLs",
+		Long: `Show whether the agent runs, its URLs, channels and who may call it.
 
 --url prints only the agent's URL which reaches furthest: public, then
 private, then local. --url=local, --url=private and --url=public pick one.
@@ -157,6 +157,15 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	}
 	if len(st.Owners) > 0 {
 		fmt.Fprintf(&sb, "  owner    %s\n", strings.Join(st.Owners, ", "))
+	}
+	if a := st.Access; a != nil {
+		for i, line := range a.Summary {
+			label := ""
+			if i == 0 {
+				label = "access"
+			}
+			fmt.Fprintf(&sb, "  %-8s %s\n", label, line)
+		}
 	}
 	states := make([]string, 0, len(st.Tasks))
 	for _, s := range slices.Sorted(maps.Keys(st.Tasks)) {

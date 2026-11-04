@@ -55,6 +55,9 @@ type Result struct {
 	Applied []string `json:"applied,omitempty"`
 	// Restart are the settings which wait for a restart of the running server.
 	Restart []string `json:"restart,omitempty"`
+	// Access is who may call the agent with the saved settings, set when
+	// an access or network setting changed.
+	Access *controlapi.Access `json:"access,omitempty"`
 }
 
 // Empty reports whether nothing changed.
@@ -173,6 +176,11 @@ func apply(ctx context.Context, d agentdir.Dir, mutate Mutation, dryRun bool, ra
 			return nil, err
 		}
 	}
+	if slices.ContainsFunc(res.Changes, func(c agentdir.Change) bool { return agentdir.IsAccess(c.Setting) }) {
+		if res.Access, err = savedAccess(ctx, d, next, client, res.Running); err != nil {
+			return nil, err
+		}
+	}
 	return res, nil
 }
 
@@ -275,7 +283,7 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 		}
 	}
 	for _, s := range res.Secrets {
-		if slices.Contains(next.Secrets, s.Name) || s.Name == agentdir.SecretTailscaleKey || s.Name == agentdir.SecretNgrokToken {
+		if slices.Contains(next.Secrets, s.Name) || s.Name == agentdir.SecretTailscaleKey {
 			res.Restart = appendNew(res.Restart, "secret")
 		}
 	}

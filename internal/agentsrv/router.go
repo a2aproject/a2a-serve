@@ -380,6 +380,11 @@ func (r *Router) handle(ctx context.Context, in channel.Inbound, t *convTicket) 
 		slog.Error("authenticating channel message", "error", err)
 		return
 	}
+	// --public-access anyone admits unlinked senders in direct chats only;
+	// groups keep ignoring them.
+	if p.Role == auth.RoleAnonymous && !in.Direct {
+		return
+	}
 	if in.Prepare != nil {
 		if err := in.Prepare(ctx, &in); err != nil {
 			slog.Warn("preparing channel message", "channel", in.Channel, "error", err)

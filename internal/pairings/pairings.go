@@ -67,9 +67,9 @@ type Service struct {
 	Mailbox func(id string) (waiting, open int)
 	// Changed is called after a node is added or removed. Optional.
 	Changed func(ctx context.Context)
-	// Others describes who may call the agent without a pairing, such as
-	// everyone on the private network. Optional.
-	Others func(ctx context.Context) []string
+	// Access describes who may call the agent, which responses to changes
+	// carry. Optional.
+	Access func(ctx context.Context) (*controlapi.Access, error)
 }
 
 // Kind classifies an [Error].
@@ -126,6 +126,14 @@ func (s *Service) pairing(ctx context.Context, name string) (store.Pairing, bool
 // account of an existing one, whose tokens keep working. With Webhook, it
 // creates a webhook node.
 func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
+	resp, err := s.invite(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, s.withAccess(ctx, &resp.Access)
+}
+
+func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if err := validateName(req.Name); err != nil {
 		return nil, err
@@ -257,6 +265,14 @@ func (s *Service) changed(ctx context.Context) {
 // Update changes the pairing called name in place. Rotate revokes its tokens
 // and issues a new code, which the response carries.
 func (s *Service) Update(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
+	resp, err := s.update(ctx, name, req)
+	if err != nil {
+		return nil, err
+	}
+	return resp, s.withAccess(ctx, &resp.Access)
+}
+
+func (s *Service) update(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
 	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
 		return nil, err
@@ -387,12 +403,28 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 			}
 		}
 		s.changed(ctx)
-		return resp, nil
+		return resp, s.withAccess(ctx, &resp.Access)
 	}
-	if s.Others != nil {
-		resp.StillAllowed = s.Others(ctx)
+	if err := s.withAccess(ctx, &resp.Access); err != nil {
+		return nil, err
+	}
+	if resp.Access != nil {
+		resp.StillAllowed = resp.Access.Others
 	}
 	return resp, nil
+}
+
+// withAccess sets dst to who may call the agent, if the service knows.
+func (s *Service) withAccess(ctx context.Context, dst **controlapi.Access) error {
+	if s.Access == nil {
+		return nil
+	}
+	a, err := s.Access(ctx)
+	if err != nil {
+		return err
+	}
+	*dst = a
+	return nil
 }
 
 // Get describes the pairing called name.

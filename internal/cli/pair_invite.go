@@ -97,7 +97,10 @@ them like any other caller from the private network.`,
 			if err := printPairCode(cfg, resp); err != nil {
 				return err
 			}
-			return warnPairCode(cfg.Out, resp, offline)
+			if err := warnPairCode(cfg.Out, resp, offline); err != nil {
+				return err
+			}
+			return printAccess(cfg, resp.Access)
 		},
 	}
 	f := cmd.Flags()
@@ -159,6 +162,6 @@ func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) 
 		return nil
 	}
 	_, err := fmt.Fprint(w, "! this URL only works on this machine; to invite someone on another one, add a private or public URL with\n"+
-		"  `a2a-serve config set --private tailscale` (or lan) or `a2a-serve config set --public tailscale` (or ngrok), then `a2a-serve restart`\n")
+		"  `a2a-serve config set --private tailscale` (or lan) or `a2a-serve config set --public tailscale`, then `a2a-serve restart`\n")
 	return err
 }

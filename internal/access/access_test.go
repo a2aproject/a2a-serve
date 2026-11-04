@@ -1,0 +1,167 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package access
+
+import (
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/store"
+)
+
+func TestPolicy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		settings agentdir.PolicyConfig
+		signIn   bool
+		want     auth.Policy
+	}{
+		{name: "defaults", want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}}},
+		{name: "network that admits by sign-in", signIn: true, want: auth.Policy{Owner: []string{"self"}}},
+		{
+			name: "everyone on a network that admits by sign-in", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessEveryone}, signIn: true,
+			want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}},
+		},
+		{name: "closed private network", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: auth.Policy{Owner: []string{"self"}}},
+		{
+			name: "public URL open to anyone", settings: agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone},
+			want: auth.Policy{Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{"anyone"}},
+		},
+		{
+			name: "emails and members",
+			settings: agentdir.PolicyConfig{
+				PrivateAccess: agentdir.AccessPaired, AllowEmails: []string{"*@example.com"},
+				Owner: []string{"email:me@example.com"}, Allow: []string{"email:ben@example.org"},
+			},
+			want: auth.Policy{Owner: []string{"self", "email:me@example.com"}, Authenticated: []string{"email:*@example.com", "email:ben@example.org"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, Policy(tc.settings, tc.signIn)); diff != "" {
+				t.Fatalf("Policy() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestNetworkOf(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		cfg  agentdir.NetworkConfig
+		want Network
+	}{
+		{name: "none"},
+		{name: "tailscale", cfg: agentdir.NetworkConfig{Private: "tailscale", Public: "tailscale"}, want: Network{Private: network.ProviderTailscale, Public: true}},
+		{name: "lan", cfg: agentdir.NetworkConfig{Private: "lan"}, want: Network{Private: network.ProviderLAN}},
+		{name: "relay", cfg: agentdir.NetworkConfig{Private: "https://relay.example.com"}, want: Network{Private: network.ProviderRelay}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, NetworkOf(&agentdir.Config{Network: tc.cfg})); diff != "" {
+				t.Fatalf("NetworkOf() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestCountPairings(t *testing.T) {
+	t.Parallel()
+	got := CountPairings([]store.Pairing{
+		{Name: auth.LocalPairing, Role: auth.RoleOwner},
+		{Name: "phone", Role: auth.RoleOwner},
+		{Name: "anna", Role: auth.RoleAuthenticated},
+	})
+	if diff := cmp.Diff(Pairings{All: 2, Owners: 1}, got); diff != "" {
+		t.Fatalf("CountPairings() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestDescribe(t *testing.T) {
+	t.Parallel()
+	tailnet := Network{Private: network.ProviderTailscale, Public: true}
+	tests := []struct {
+		name     string
+		settings agentdir.PolicyConfig
+		net      Network
+		pairings Pairings
+		want     *controlapi.Access
+	}{
+		{
+			name: "this machine only",
+			want: &controlapi.Access{
+				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{},
+				Summary: []string{"you: this machine", "nobody else"},
+			},
+		},
+		{
+			name: "tailnet with a public URL", settings: agentdir.PolicyConfig{AllowEmails: []string{"*@example.com"}}, net: tailnet, pairings: Pairings{All: 2, Owners: 1},
+			want: &controlapi.Access{
+				PrivateAccess: "everyone", PublicAccess: "paired",
+				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
+				Pairings: 2, OwnerPairings: 1, Others: []string{"everyone on the tailnet", "emails matching *@example.com"},
+				Summary: []string{
+					"you: this machine and your tailnet devices",
+					"everyone on the tailnet, emails matching *@example.com, 2 pairings (1 owner)",
+					"the public URL needs a pairing or Google sign-in",
+				},
+			},
+		},
+		{
+			name: "closed tailnet, public URL open to anyone", settings: agentdir.PolicyConfig{PrivateAccess: "paired", PublicAccess: "anyone"}, net: tailnet, pairings: Pairings{All: 1},
+			want: &controlapi.Access{
+				PrivateAccess: "paired", PublicAccess: "anyone",
+				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{"anyone"},
+				Pairings: 1, Others: []string{"anyone on the public URL or in a direct chat"},
+				Summary: []string{
+					"you: this machine and your tailnet devices",
+					"anyone on the public URL or in a direct chat, 1 pairing",
+					"the tailnet needs a pairing",
+					"the public URL is open to anyone",
+				},
+			},
+		},
+		{
+			name: "relay that admits by sign-in", net: Network{Private: network.ProviderRelay, Public: true, SignIn: true},
+			want: &controlapi.Access{
+				PrivateAccess: "paired", PublicAccess: "paired",
+				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
+				Summary: []string{
+					"you: this machine and your devices on the relay",
+					"nobody else",
+					"the relay needs a pairing, since it admits people by sign-in (--private-access everyone opens it)",
+					"the public URL needs a pairing",
+				},
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, Describe(tc.settings, tc.net, tc.pairings)); diff != "" {
+				t.Fatalf("Describe() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}

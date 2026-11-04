@@ -31,13 +31,14 @@ func newConfigUnsetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Remove entries from a list setting, or the whole list without entries, or
 reset a setting to its default. The setting is the flag name without --.
 Entries are named by their key: a secret or env by name, a mount by its
-destination, an identity by login. Unsetting a secret also deletes its value
+destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with ` + "`a2a-serve channel rm`" + `.
 
 Settings: ` + strings.Join(agentdir.SettingNames(), ", "),
 		Example: `  a2a-serve config unset secret OPENROUTER_API_KEY
   a2a-serve config unset env DEBUG
   a2a-serve config unset mount /docs
+  a2a-serve config unset allow-email '*@example.com'
   a2a-serve config unset private`,
 		Args:      cobra.MinimumNArgs(1),
 		ValidArgs: agentdir.SettingNames(),

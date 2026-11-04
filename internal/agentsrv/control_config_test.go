@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
@@ -36,6 +37,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	}
 	saved.Description = "reviews code"
 	saved.Approvals.OwnerChat = "telegram"
+	saved.Policy.PrivateAccess = agentdir.AccessPaired
 	saved.Sandbox = harness.SandboxDocker
 	if err := ts.dir.SaveConfig(saved); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -45,7 +47,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReloadConfig() error = %v", err)
 	}
-	if diff := cmp.Diff([]string{"description", "allow-tools", "deny-tools", "owner-chat"}, res.Applied); diff != "" {
+	if diff := cmp.Diff([]string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email", "owner", "allow"}, res.Applied); diff != "" {
 		t.Fatalf("ReloadConfig() wrong result (-want +got) diff = %s", diff)
 	}
 	running, err := client.Config(ctx)
@@ -71,5 +73,46 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	}
 	if got.Sandbox != harness.SandboxDocker || got.Channels.Telegram == nil {
 		t.Fatalf("config.yaml after AddChannel = %+v, want the pending sandbox and the channel", got)
+	}
+}
+
+func TestStatusAccess(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{
+		private: &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: ProviderTailscale},
+		public:  publicNet(),
+	})
+	ts.pair("phone", auth.RoleOwner)
+	ctx := context.Background()
+	client := controlapi.NewClient(ts.dir)
+	saved, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	saved.Policy = agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone, AllowEmails: []string{"*@example.com"}}
+	if err := ts.dir.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if _, err := client.ReloadConfig(ctx); err != nil {
+		t.Fatalf("ReloadConfig() error = %v", err)
+	}
+
+	st, err := client.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	want := &controlapi.Access{
+		PrivateAccess: agentdir.AccessEveryone, PublicAccess: agentdir.AccessAnyone,
+		Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{"anyone"},
+		Pairings: 1, OwnerPairings: 1,
+		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL or in a direct chat"},
+		Summary: []string{
+			"you: this machine and your tailnet devices",
+			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL or in a direct chat, 1 pairing (1 owner)",
+			"the public URL is open to anyone",
+		},
+	}
+	if diff := cmp.Diff(want, st.Access); diff != "" {
+		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)
 	}
 }

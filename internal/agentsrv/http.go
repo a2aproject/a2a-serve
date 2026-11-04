@@ -33,6 +33,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/access"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -100,7 +102,9 @@ func (s *Server) routes(l listener) http.Handler {
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
 	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })))
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
-	s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
+	if l.kind == network.ListenerPublic {
+		s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
+	}
 	if l.kind == network.ListenerPrivate {
 		s.registerGossip(mux)
 	}
@@ -167,7 +171,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			jsonhttp.Error(w, http.StatusForbidden, refused.Error()+"; "+pairHint)
 			return
 		case errors.Is(err, auth.ErrNoCredential):
-			w.Header().Set("WWW-Authenticate", s.oauth.challengeHeader(base(s.listenerURL(kind), r)))
+			w.Header().Set("WWW-Authenticate", s.oauth.challengeHeader(kind, base(s.listenerURL(kind), r)))
 			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
 			return
 		case err != nil:
@@ -220,13 +224,28 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 			Tags:        []string{"coding", cfg.Harness},
 		}},
 	}
-	if kind != network.ListenerPrivate {
+	if s.needsPairing(kind) {
 		card.SecuritySchemes = a2a.NamedSecuritySchemes{
 			"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a-serve pair join <agent-url> <code>`, with a code from the owner."},
 		}
 		card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
 	}
 	return card
+}
+
+// needsPairing reports whether callers at the listener kind need a pairing
+// token, which the agent card then advertises: the local listener always,
+// the private one with --private-access paired, and the public one unless
+// --public-access anyone.
+func (s *Server) needsPairing(kind string) bool {
+	p := s.config().Policy
+	switch kind {
+	case network.ListenerPrivate:
+		return access.PrivateAccess(p, s.signIn()) == agentdir.AccessPaired
+	case network.ListenerPublic:
+		return p.PublicAccess != agentdir.AccessAnyone
+	}
+	return true
 }
 
 // handlePair exchanges a pair code for a caller token, or a node code for a

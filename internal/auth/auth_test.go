@@ -122,7 +122,7 @@ func TestChainAuthenticate(t *testing.T) {
 	}{
 		{
 			name:   "tailnet self",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.1:5000", Header: http.Header{}},
 			want: Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "nMe", Self: true,
@@ -130,7 +130,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "tailnet self through another agent",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.1:5000", Header: header(HeaderHops, "1", "X-A2A-Serve-On-Behalf-Of", OwnerID)},
 			want: Principal{ID: "email:me@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "nMe", Self: true, Hops: 1,
@@ -138,7 +138,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "everyone on the tailnet",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: http.Header{}},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "nAnna",
@@ -146,7 +146,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "tagged tailnet node",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.3:5000", Header: http.Header{}},
 			want: Principal{ID: "node:tailscale:nTagged", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Node: "nTagged",
@@ -154,13 +154,13 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:        "tailnet user without a pairing when the private network is closed",
-			policy:      DefaultPolicy(false, nil),
+			policy:      testPolicy(false, nil),
 			req:         Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: http.Header{}},
 			wantRefused: "anna@example.com on the tailnet",
 		},
 		{
 			name:   "allowed tailnet email when the private network is closed",
-			policy: DefaultPolicy(false, []string{"anna@example.com"}),
+			policy: testPolicy(false, []string{"anna@example.com"}),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: http.Header{}},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "nAnna",
@@ -168,19 +168,19 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:        "domain pattern doesn't match a tailnet email",
-			policy:      DefaultPolicy(false, []string{"*@example.com"}),
+			policy:      testPolicy(false, []string{"*@example.com"}),
 			req:         Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: http.Header{}},
 			wantRefused: "anna@example.com on the tailnet",
 		},
 		{
 			name:    "network identity ignored on public listener",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, RemoteAddr: "100.1.1.1:5000", Header: http.Header{}},
 			wantErr: ErrNoCredential,
 		},
 		{
 			name:   "pairing token",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+token)},
 			want: Principal{ID: "pair:grok", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPublic, Pairing: "grok", PairingRole: RoleAuthenticated,
@@ -188,7 +188,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "owner pairing token keeps its own principal",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken)},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
 				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner,
@@ -196,7 +196,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "owner pairing token through another agent",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderHops, "2")},
 			want: Principal{ID: "pair:phone", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner, Hops: 2,
@@ -204,7 +204,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "pairing token on the tailnet takes the higher role",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: header("Authorization", "Bearer "+ownerToken)},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "nAnna",
@@ -213,7 +213,7 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "negative hops ignored",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderHops, "-1000")},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
 				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner,
@@ -221,31 +221,31 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:   "local token on the local listener",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerLocal, Header: header("Authorization", "Bearer "+localToken)},
 			want:   Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Network: network.ListenerLocal, Self: true}},
 		},
 		{
 			name:    "local token on the public listener",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+localToken)},
 			wantErr: ErrNoCredential,
 		},
 		{
 			name:        "local token on the private listener",
-			policy:      DefaultPolicy(false, nil),
+			policy:      testPolicy(false, nil),
 			req:         Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.3:5000", Header: header("Authorization", "Bearer "+localToken)},
 			wantRefused: "the machine nTagged on the tailnet",
 		},
 		{
 			name:    "unknown token",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerLocal, Header: http.Header{"Authorization": {"Bearer a2p_nope"}}},
 			wantErr: ErrNoCredential,
 		},
 		{
 			name:   "allowed Google sign-in",
-			policy: DefaultPolicy(true, []string{"*@example.com"}),
+			policy: testPolicy(true, []string{"*@example.com"}),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+googleToken)},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPublic, Email: "anna@example.com", EmailSource: EmailFromGoogle, Domain: "example.com",
@@ -253,13 +253,13 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:        "Google sign-in no longer allowed",
-			policy:      DefaultPolicy(true, []string{"bob@example.com"}),
+			policy:      testPolicy(true, []string{"bob@example.com"}),
 			req:         Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+googleToken)},
 			wantRefused: "anna@example.com with Google sign-in",
 		},
 		{
 			name:   "node token",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+nodeToken, HeaderHops, "1")},
 			want: Principal{ID: "node:grok-node", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPublic, WebhookNode: "grok-node", Hops: 1,
@@ -267,13 +267,13 @@ func TestChainAuthenticate(t *testing.T) {
 		},
 		{
 			name:    "node token with a wrong secret",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "stale"))},
 			wantErr: ErrNoCredential,
 		},
 		{
 			name:    "token of an unknown node",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "nobody", "secret"))},
 			wantErr: ErrNoCredential,
 		},
@@ -339,7 +339,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 	}{
 		{
 			name:   "owner link",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:1", Direct: true, Authentic: true},
 			want: Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:1", Direct: true, Self: true,
@@ -347,7 +347,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		},
 		{
 			name:   "linked pairing",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:2", Authentic: true},
 			want: Principal{ID: "pair:anna", Role: RoleAuthenticated, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:2", Pairing: "anna", PairingRole: RoleAuthenticated,
@@ -355,7 +355,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		},
 		{
 			name:   "linked owner pairing",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:3", Authentic: true},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:3", Pairing: "phone", PairingRole: RoleOwner,
@@ -363,13 +363,13 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		},
 		{
 			name:        "unlinked account",
-			policy:      DefaultPolicy(true, nil),
+			policy:      testPolicy(true, nil),
 			in:          channel.Inbound{Channel: "telegram", Identity: "telegram:4", Direct: true, Authentic: true},
 			wantRefused: "telegram:4 on telegram",
 		},
 		{
 			name:   "allowed email sender that passed DMARC",
-			policy: DefaultPolicy(true, []string{"*@example.com"}),
+			policy: testPolicy(true, []string{"*@example.com"}),
 			in:     channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: NetworkChat, Provider: "email", ChatAccount: "anna@example.com", Direct: true,
@@ -378,13 +378,13 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		},
 		{
 			name:        "email sender not allowed",
-			policy:      DefaultPolicy(true, []string{"bob@example.com"}),
+			policy:      testPolicy(true, []string{"bob@example.com"}),
 			in:          channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			wantRefused: "anna@example.com by email",
 		},
 		{
 			name:    "unverified sender",
-			policy:  DefaultPolicy(true, []string{"anna@example.com"}),
+			policy:  testPolicy(true, []string{"anna@example.com"}),
 			in:      channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true},
 			wantErr: ErrNoCredential,
 		},
@@ -435,32 +435,32 @@ func TestChainRefresh(t *testing.T) {
 	}{
 		{
 			name:   "you",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			id:     OwnerID,
 			want:   Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Self: true}},
 		},
 		{
 			name:   "pairing with its current role",
-			policy: DefaultPolicy(true, nil),
+			policy: testPolicy(true, nil),
 			id:     "pair:phone",
 			want:   Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{Pairing: "phone", PairingRole: RoleOwner}},
 		},
 		{
 			name:    "removed pairing",
-			policy:  DefaultPolicy(true, nil),
+			policy:  testPolicy(true, nil),
 			id:      "pair:gone",
 			wantErr: ErrNoCredential,
 		},
 		{
 			name:     "tailnet user while the private network is open",
-			policy:   DefaultPolicy(true, nil),
+			policy:   testPolicy(true, nil),
 			id:       "email:anna@example.com",
 			identity: tailnet,
 			want:     Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: tailnet},
 		},
 		{
 			name:        "tailnet user once the private network is closed",
-			policy:      DefaultPolicy(false, nil),
+			policy:      testPolicy(false, nil),
 			id:          "email:anna@example.com",
 			identity:    tailnet,
 			wantRefused: true,
@@ -491,7 +491,7 @@ func TestLink(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	chain := &Chain{Store: s, Policy: func() Policy { return DefaultPolicy(true, nil) }}
+	chain := &Chain{Store: s, Policy: func() Policy { return testPolicy(true, nil) }}
 	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
 
 	if _, err := chain.Authenticate(ctx, Request{Channel: in}); err == nil {
@@ -528,7 +528,7 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	chain := &Chain{Store: s, Policy: func() Policy { return DefaultPolicy(false, nil) }}
+	chain := &Chain{Store: s, Policy: func() Policy { return testPolicy(false, nil) }}
 	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
 	pair(t, s, "phone", RoleAuthenticated)
 	code, _, err := MintCode(ctx, s, "phone")

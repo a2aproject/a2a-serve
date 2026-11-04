@@ -39,9 +39,9 @@ options, backups and Google sign-in. Messengers are set with
 ` + "`a2a-serve channel add`" + `. With --agent, config set also creates an
 agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
---secret by name, --env by NAME, --mount by destination, --identity by login,
-and --allow-tools and --deny-tools by value. Remove entries with
-` + "`a2a-serve config unset`" + `.
+--secret by name, --env by NAME, --mount by destination, and the other
+lists by value. Remove entries with ` + "`a2a-serve config unset`" + `. A change to who
+may call the agent, or to its networks, prints who may call afterwards.
 
 ` + secretref.Help,
 		Example: `  a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY

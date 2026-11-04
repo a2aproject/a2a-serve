@@ -44,7 +44,6 @@ const (
 	SandboxLocal     = "local"
 	NetworkTailscale = "tailscale"
 	NetworkLAN       = "lan"
-	NetworkNgrok     = "ngrok"
 	NetworkNone      = "none"
 )
 
@@ -84,7 +83,7 @@ func (c *Config) Validate() error {
 		checkEnum("private", c.Network.Private, NetworkTailscale, NetworkLAN)
 	}
 	if !isRelayURL(c.Network.Public) {
-		checkEnum("public", c.Network.Public, NetworkTailscale, NetworkNgrok)
+		checkEnum("public", c.Network.Public, NetworkTailscale)
 	}
 	for flag, v := range map[string]string{"private": c.Network.Private, "public": c.Network.Public} {
 		if !isRelayURL(v) {
@@ -160,11 +159,7 @@ func (c *Config) Validate() error {
 			add("the email channel needs %s", strings.Join(missing, ", "))
 		}
 	}
-	for _, e := range c.Auth.AllowEmails {
-		if err := validEmailEntry(e); err != nil {
-			errs = append(errs, err)
-		}
-	}
+	errs = append(errs, c.Policy.validate()...)
 	for flag, patterns := range map[string][]string{"allow-tools": c.Approvals.Allow, "deny-tools": c.Approvals.Deny} {
 		for _, p := range patterns {
 			if !matchesToolKind(p) {
@@ -199,13 +194,57 @@ func matchesToolKind(p string) bool {
 	})
 }
 
-// validEmailEntry checks an --allow-email entry: an email or *@domain.
-func validEmailEntry(entry string) error {
-	local, domain, ok := strings.Cut(entry, "@")
-	if !ok || local == "" || domain == "" || strings.ContainsAny(domain, "@* ") || (strings.Contains(local, "*") && local != "*") {
-		return fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", entry)
+func (p PolicyConfig) validate() []error {
+	var errs []error
+	if v := p.PrivateAccess; v != "" && v != AccessEveryone && v != AccessPaired {
+		errs = append(errs, fmt.Errorf("invalid --private-access %q: want everyone or paired", v))
 	}
-	return nil
+	if v := p.PublicAccess; v != "" && v != AccessPaired && v != AccessAnyone {
+		errs = append(errs, fmt.Errorf("invalid --public-access %q: want paired or anyone", v))
+	}
+	for _, e := range p.AllowEmails {
+		if !validEmailPattern(e) {
+			errs = append(errs, fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", e))
+		}
+	}
+	for _, m := range p.Owner {
+		if err := validMember("owner", m); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, m := range p.Allow {
+		if err := validMember("allow", m); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
+}
+
+// validMember checks a member of --owner or --allow. The user running the
+// agent is always an owner, anyone comes only from --public-access, and
+// the private network joins authenticated only with --private-access.
+func validMember(flag, m string) error {
+	switch m {
+	case MemberSelf:
+		return fmt.Errorf("--%s self: you are always an owner", flag)
+	case MemberAnyone:
+		return fmt.Errorf("--%s anyone: anyone can call only with --public-access anyone", flag)
+	case MemberPrivate:
+		if flag == "allow" {
+			return errors.New("--allow private: let everyone on the private network call with --private-access everyone")
+		}
+		return nil
+	}
+	if e, ok := strings.CutPrefix(m, MemberEmailPrefix); ok && validEmailPattern(e) {
+		return nil
+	}
+	return fmt.Errorf("invalid --%s %q: want private, email:<address> or email:*@<domain>", flag, m)
+}
+
+// validEmailPattern reports whether entry is an email or *@domain.
+func validEmailPattern(entry string) bool {
+	local, domain, ok := strings.Cut(entry, "@")
+	return ok && local != "" && domain != "" && !strings.ContainsAny(domain, "@* ") && (!strings.Contains(local, "*") || local == "*")
 }
 
 // isRelayURL reports whether a --private or --public value names an Agent
