@@ -19,6 +19,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"maps"
 	"slices"
@@ -29,6 +30,9 @@ import (
 // blobKey is the part metadata key under which a stored raw part refers to
 // its bytes in the blobs table.
 const blobKey = "a2a-serve.blob"
+
+// missingBlobText stands in for an attachment whose bytes are no longer stored.
+const missingBlobText = "[attachment unavailable]"
 
 type blob struct {
 	hash string
@@ -42,7 +46,13 @@ type externalizer struct{ blobs []blob }
 func (x *externalizer) part(p *a2a.Part) *a2a.Part {
 	raw := p.Raw()
 	if len(raw) == 0 {
-		return p
+		if _, ok := p.Metadata[blobKey]; !ok {
+			return p
+		}
+		ref := *p
+		ref.Metadata = maps.Clone(p.Metadata)
+		delete(ref.Metadata, blobKey)
+		return &ref
 	}
 	sum := sha256.Sum256(raw)
 	h := hex.EncodeToString(sum[:])
@@ -135,6 +145,10 @@ func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
 	refs := map[string][]*a2a.Part{}
 	collect := func(parts []*a2a.Part) {
 		for _, p := range parts {
+			raw, isRaw := p.Content.(a2a.Raw)
+			if !isRaw || len(raw) > 0 {
+				continue
+			}
 			if h, ok := p.Metadata[blobKey].(string); ok {
 				refs[h] = append(refs[h], p)
 			}
@@ -157,11 +171,16 @@ func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
 	}
 	for h, parts := range refs {
 		var data []byte
-		if err := s.db.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data); err != nil {
+		err := s.db.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data)
+		missing := errors.Is(err, sql.ErrNoRows)
+		if err != nil && !missing {
 			return fmt.Errorf("loading blob %s: %w", h, err)
 		}
 		for _, p := range parts {
 			p.Content = a2a.Raw(data)
+			if missing {
+				p.Content = a2a.Text(missingBlobText)
+			}
 			delete(p.Metadata, blobKey)
 			if len(p.Metadata) == 0 {
 				p.Metadata = nil

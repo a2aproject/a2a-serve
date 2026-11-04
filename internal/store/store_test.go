@@ -17,7 +17,9 @@ package store
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"errors"
 	"os"
 	"path/filepath"
@@ -869,5 +871,80 @@ func TestReplaceCode(t *testing.T) {
 		if _, err := s.TakeCode(ctx, tc.code, AnyCode); !errors.Is(err, tc.wantErr) {
 			t.Fatalf("TakeCode(%s) error = %v, want %v", tc.code, err, tc.wantErr)
 		}
+	}
+}
+
+func TestCallerBlobReferencesStripped(t *testing.T) {
+	t.Parallel()
+	secret := []byte("another task's attachment")
+	sum := sha256.Sum256(secret)
+	real := hex.EncodeToString(sum[:])
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{name: "unknown hash", ref: "deadbeef"},
+		{name: "stored hash", ref: real},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ts := s.Tasks("", testViewer)
+			owner := asUser("owner")
+			victim := newTask("victim", "c0")
+			victim.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart(secret))}
+			if _, err := ts.Create(owner, victim); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			part := a2a.NewTextPart("hello")
+			part.Metadata = map[string]any{blobKey: tc.ref, "keep": "me"}
+			task := newTask("t1", "c1")
+			task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, part)}
+			if _, err := ts.Create(owner, task); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			got, err := ts.Get(owner, "t1")
+			if err != nil {
+				t.Fatalf("Get() error = %v", err)
+			}
+			wantPart := a2a.NewTextPart("hello")
+			wantPart.Metadata = map[string]any{"keep": "me"}
+			if diff := cmp.Diff(a2a.ContentParts{wantPart}, got.Task.History[0].Parts); diff != "" {
+				t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+			}
+			list, err := ts.List(owner, &a2a.ListTasksRequest{})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+			if len(list.Tasks) != 2 {
+				t.Fatalf("List() returned %d tasks, want 2", len(list.Tasks))
+			}
+		})
+	}
+}
+
+func TestMissingBlobDoesNotFailReads(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("see"), a2a.NewRawPart([]byte("lost")))}
+	if _, err := ts.Create(owner, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if _, err := s.db.Exec(`DELETE FROM blobs`); err != nil {
+		t.Fatalf("deleting blobs: %v", err)
+	}
+
+	got, err := ts.Get(owner, "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	want := a2a.ContentParts{a2a.NewTextPart("see"), a2a.NewTextPart(missingBlobText)}
+	if diff := cmp.Diff(want, got.Task.History[0].Parts); diff != "" {
+		t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
 	}
 }
