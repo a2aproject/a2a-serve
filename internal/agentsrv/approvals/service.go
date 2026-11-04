@@ -22,6 +22,7 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -72,6 +73,11 @@ type Service struct {
 	// such as the runs of a schedule without a chat. Their questions go to
 	// the owner chat.
 	Unattended func(contextID string) bool
+	// Anonymous reports whether a conversation is anonymous. Its starter
+	// can't answer its questions, so they go to the owner chat, and are
+	// rejected after AnonymousTimeout.
+	Anonymous        func(ctx context.Context, contextID string) bool
+	AnonymousTimeout time.Duration
 	// BaseURL returns the URL people reach the agent at.
 	BaseURL func() string
 	// AgentName returns the name of the agent.
@@ -136,11 +142,16 @@ func (s *Service) pageUser(ctx context.Context, rec store.Question) (auth.Princi
 	return p, err
 }
 
-// OnQuestion sends a permission question of a task nobody watches to the
-// owner chat. Whoever started any other task answers in the place it came
-// from: inline in an A2A task, or in its conversation.
+// OnQuestion sends a permission question of a task nobody watches, or of
+// an anonymous conversation, to the owner chat. Whoever started any other
+// task answers in the place it came from: inline in an A2A task, or in its
+// conversation.
 func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *Question) {
-	if q.Type != TypePermission || s.Unattended == nil || !s.Unattended(execCtx.ContextID) {
+	if q.Type != TypePermission {
+		return
+	}
+	anonymous := s.Anonymous != nil && s.Anonymous(ctx, execCtx.ContextID)
+	if !anonymous && (s.Unattended == nil || !s.Unattended(execCtx.ContextID)) {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
@@ -151,14 +162,66 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 			slog.Error("storing question", "error", err)
 			return
 		}
+		header := fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter))
+		if anonymous {
+			time.AfterFunc(s.AnonymousTimeout, func() { s.expire(ctx, rec.ID) })
+			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", anonymousName(starter), ApprovalTimeout(s.AnonymousTimeout))
+		}
 		to, ok := s.Notifier.OwnerChat(ctx)
 		if !ok {
 			slog.Info("approval waits in the inspector: no owner chat", "task", execCtx.TaskID, "question", rec.ID)
 			return
 		}
 		slog.Info("approval sent to the owner chat", "task", execCtx.TaskID, "from", starter, "question", rec.ID, "channel", to.Channel)
-		s.Notifier.Ask(ctx, to, fmt.Sprintf("%s needs your approval", DisplayPrincipal(starter)), rec)
+		s.Notifier.Ask(ctx, to, header, rec)
 	}()
+}
+
+// anonymousName names an anonymous caller in the owner chat.
+func anonymousName(id string) string {
+	if id == auth.AnonymousID || id == "" {
+		return "An anonymous caller"
+	}
+	return id + ", an anonymous caller,"
+}
+
+// ApprovalTimeout describes how long an approval waits, such as "10 min".
+func ApprovalTimeout(d time.Duration) string {
+	if d < time.Minute {
+		return d.String()
+	}
+	return fmt.Sprintf("%d min", int(d.Minutes()))
+}
+
+// timeoutPrincipal answers the questions nobody answered in time.
+var timeoutPrincipal = auth.Principal{ID: "timeout", Role: auth.RoleOwner}
+
+// expire rejects a question if nobody answered it yet.
+func (s *Service) expire(ctx context.Context, id string) {
+	rec, err := s.Store.QuestionByID(ctx, id)
+	if err != nil {
+		slog.Warn("loading an expired question", "question", id, "error", err)
+		return
+	}
+	if rec.AnsweredBy != "" {
+		return
+	}
+	q := FromRecord(rec)
+	opt, ok := q.Match("reject")
+	if !ok {
+		slog.Warn("an expired question has no option to reject it", "question", id)
+		return
+	}
+	err = s.Answer(ctx, rec, timeoutPrincipal, opt)
+	switch {
+	case errors.Is(err, store.ErrAnswered):
+		return
+	case err != nil:
+		slog.Warn("rejecting an expired question", "question", id, "error", err)
+		return
+	}
+	slog.Info("rejected an unanswered approval", "task", rec.TaskID, "question", id)
+	s.Notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
 }
 
 // starter returns the user who started the task.

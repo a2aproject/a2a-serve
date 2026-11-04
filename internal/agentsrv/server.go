@@ -131,6 +131,10 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector
+	// split runs anonymous conversations in their own agent process, and
+	// budget limits their tasks.
+	split  *splitExecutor
+	budget *anonymousBudget
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -363,10 +367,18 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		closers.push(closeACP)
 		exec = acp
 	}
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: exec, bus: s.bus, peers: s.peers, approvals: s.approvals},
+	s.budget = newAnonymousBudget()
+	s.split = &splitExecutor{main: exec, sessions: s.store.Sessions(), budget: s.budget, ctx: ctx}
+	if opts.Executor == nil {
+		s.split.start = func(ctx context.Context) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			return s.newAnonymousExecutor(ctx, opts.HarnessLog)
+		}
+	}
+	closers.push(s.split.close)
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, peers: s.peers, approvals: s.approvals, anonymous: s.split.Anonymous},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks}),
+		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 		a2asrv.WithLogger(slog.Default()),
@@ -378,6 +390,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.approvals.Handler = s.handler
 	s.approvals.Notifier = s.router
 	s.approvals.Unattended = s.router.Unattended
+	s.approvals.Anonymous = s.split.Anonymous
+	s.approvals.AnonymousTimeout = anonymousQuestionTimeout
+	s.router.anonymous = s.split.Anonymous
 	s.approvals.Remote = s.peers
 	return nil
 }

@@ -1,6 +1,6 @@
-# Lesson 2 — Tailscale, Telegram and a Grok bot
+# Tailscale, Telegram and a Grok Bot
 
-Lesson 1 served a coding agent on localhost. This one makes it a personal
+[Serve a Coding Agent](../01-agent-server/README.md) served a coding agent on localhost. This one makes it a personal
 agent you can reach from anywhere: on your tailnet, from a Telegram chat, and
 with a public URL so a Grok bot can work for it as a webhook node.
 
@@ -15,7 +15,7 @@ with a public URL so a Grok bot can work for it as a webhook node.
 
 ## Prerequisites
 
-- Lesson 1's setup: the `a2a` CLI, `a2a-serve`, Docker, and an API key such as
+- The setup of [Serve a Coding Agent](../01-agent-server/README.md#prerequisites): the `a2a` CLI, `a2a-serve`, Docker, and an API key such as
   `OPENROUTER_API_KEY` exported in your shell.
 - A [Tailscale](https://tailscale.com) account, with the machine you work
   from on the tailnet.
@@ -60,7 +60,7 @@ export CODER_BOT_TOKEN=<token from BotFather>
 From the agent's project directory:
 
 ```bash
-mkdir -p ~/a2a-lesson2/coder && cd ~/a2a-lesson2/coder
+mkdir -p ~/a2a-example2/coder && cd ~/a2a-example2/coder
 a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
   --private tailscale --public tailscale
 a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
@@ -128,7 +128,7 @@ own tasks. `a2a-serve status` lists who can call, and
 `a2a-serve config set --private-access paired` limits the tailnet to you and
 your pairings.
 
-Other people get a code from you, as in lesson 1:
+Other people get a code from you, as in [Serve a Coding Agent](../01-agent-server/README.md):
 `a2a-serve pair invite anna`, and then they run `a2a-serve pair join` with it.
 
 ## 6. Add the Grok bot as a webhook node
@@ -245,7 +245,8 @@ a2a-serve logs -f
 
 ## Next steps
 
-The [user guide](../../docs/guide.md) covers Discord and email,
-who answers approvals, and contacts between agents on the same tailnet. The
-[architecture](../../docs/concepts/architecture.md) shows how the pieces
+The user guide covers [Discord and email](../../docs/guide/messengers.md),
+[who answers approvals](../../docs/guide/approvals.md), and
+[contacts between agents](../../docs/guide/agent2agent.md) on the same tailnet. The
+[architecture](../../docs/advanced/architecture.md) shows how the pieces
 fit together.

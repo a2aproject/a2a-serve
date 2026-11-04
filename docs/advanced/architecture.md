@@ -1,6 +1,6 @@
 # Architecture
 
-a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), such as opencode or Claude Code, into an A2A agent. This page explains how it works. The [user guide](../guide.md) explains how to use it.
+a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com) (ACP), such as opencode or Claude Code, into an A2A agent. This page explains how it works. The [user guide](../index.md#user-guide) explains how to use it.
 
 ## Overview
 
@@ -18,7 +18,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 | Auth | Turns each request into an identity, from a pairing token, a messenger link, a Tailscale or relay identity, a Google sign-in or a verified email sender, and gives it one role with the access policy. |
 | A2A handler | Serves the agent card and the A2A protocol, and stores tasks in SQLite. |
 | Messengers | Connect Telegram, Discord and email. Each chat or thread is one A2A conversation. |
-| Executor | Keeps one ACP session per conversation, and turns ACP updates into A2A task updates and approval requests. |
+| Executor | Keeps one ACP session per conversation, and turns ACP updates into A2A task updates and approval requests. Anonymous conversations run in a second agent process. |
 | Approvals | Decide who may answer a question, and deliver the answer to the task. |
 | Sandbox | Runs the agent in Docker, or on the host with `--sandbox local`. |
 | Agents proxy | Lets the agent call contacts and webhook nodes, and relays their approvals and late results. |

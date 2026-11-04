@@ -50,25 +50,86 @@ const harnessSocketName = "a2a.sock"
 // newExecutor starts the harness as an ACP agent in its sandbox. close stops
 // the harness and cleans up its sandbox.
 func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.Writer) (exec a2asrv.AgentExecutor, close func(context.Context) error, err error) {
-	cfg := s.config()
-	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	h, err := s.prepareHarness(ctx, imageProgress, false)
 	if err != nil {
 		return nil, nil, err
 	}
-	mounts, err := s.dir.Mounts(cfg)
+	s.logf("✓ %s", h.prepared.Summary)
+	mountDesc := make([]string, len(h.mounts))
+	for i, m := range h.mounts {
+		mountDesc[i] = m.String()
+	}
+	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
+
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
+		AutoAnswer:   liveToolRules(s.config),
+		SessionStore: s.store.Sessions(),
+		Session:      s.sessionParams,
+	})
+	if err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
+	}
+	s.logf("✓ %s is running (ACP)", h.profile.Name())
+	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+}
+
+// newAnonymousExecutor prepares the separate harness of anonymous
+// conversations. Its agent starts on the first task, and stops when idle.
+// It gets no way to call other agents: no socket, credential helper or CLI.
+// With Docker it runs in its own container with its own home.
+func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	h, err := s.prepareHarness(ctx, harnessLog, true)
 	if err != nil {
 		return nil, nil, err
+	}
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
+		Pool: &a2aacp.PoolConfig{
+			Key: func(context.Context, string) (string, error) { return anonymousAgentKey, nil },
+		},
+		AutoAnswer:   liveToolRules(s.config),
+		SessionStore: s.store.Sessions(),
+		Session:      s.sessionParams,
+		// Approvals reject questions after anonymousQuestionTimeout; this
+		// stops the turn if that answer doesn't arrive.
+		QuestionTimeout: anonymousQuestionTimeout + time.Minute,
+	})
+	if err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
+	}
+	slog.Info("prepared the agent of anonymous callers", "sandbox", h.prepared.Summary)
+	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+}
+
+// preparedHarness is a harness ready to start as an ACP agent.
+type preparedHarness struct {
+	profile  harness.Profile
+	mounts   []agentdir.Mount
+	prepared *harness.Prepared
+}
+
+func (h *preparedHarness) process(stderr io.Writer) a2aacp.Process {
+	return a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr}
+}
+
+// prepareHarness prepares the harness of the agent, or the separate one of
+// anonymous callers.
+func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, anonymous bool) (*preparedHarness, error) {
+	cfg := s.config()
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return nil, err
+	}
+	mounts, err := s.dir.Mounts(cfg)
+	if err != nil {
+		return nil, err
 	}
 	env := append([]string{}, cfg.Env...)
 	for _, name := range cfg.Secrets {
 		v, ok := s.secrets()[name]
 		if !ok {
-			return nil, nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
+			return nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
 		}
 		env = append(env, name+"="+v)
-	}
-	if s.bridge.helperEnv != "" {
-		env = append(env, s.bridge.helperEnv)
 	}
 	spec := harness.Spec{
 		Profile:  profile,
@@ -81,34 +142,30 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		Image:    cfg.Image,
 		Limits:   harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
-		Socket:   s.bridge.socket,
 		Progress: imageProgress,
 	}
-	if cfg.Sandbox == harness.SandboxLocal {
-		spec.CLI = s.localCLI(ctx)
+	switch {
+	case anonymous:
+		spec.Home = s.dir.AnonymousHomeDir()
+		spec.Name += "-anonymous"
+		spec.Labels["a2a.role"] = auth.RoleAnonymous
+		if err := fsutil.MkdirPrivate(spec.Home); err != nil {
+			return nil, err
+		}
+	default:
+		spec.Socket = s.bridge.socket
+		if s.bridge.helperEnv != "" {
+			spec.Env = append(spec.Env, s.bridge.helperEnv)
+		}
+		if cfg.Sandbox == harness.SandboxLocal {
+			spec.CLI = s.localCLI(ctx)
+		}
 	}
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-	s.logf("✓ %s", prepared.Summary)
-	mountDesc := make([]string, len(mounts))
-	for i, m := range mounts {
-		mountDesc[i] = m.String()
-	}
-	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
-
-	agent := a2aacp.Process{Argv: prepared.Args, Dir: mounts[0].Src, Env: prepared.Env, Stderr: harnessLog}
-	acp, err := a2aacp.NewExecutor(ctx, agent, &a2aacp.Config{
-		AutoAnswer:   liveToolRules(s.config),
-		SessionStore: s.store.Sessions(),
-		Session:      s.sessionParams,
-	})
-	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", profile.Name(), err), prepared.Stop(ctx))
-	}
-	s.logf("✓ %s is running (ACP)", profile.Name())
-	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), prepared.Stop(ctx)) }, nil
+	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared}, nil
 }
 
 // localCLI returns the a2a CLI on PATH, with which a harness without a
@@ -184,12 +241,18 @@ type observedExecutor struct {
 	bus       *eventBus
 	peers     *Peers
 	approvals *approvals.Service
+	// anonymous reports whether a conversation is anonymous. Its prompts
+	// get no agents line, since it can't call other agents.
+	anonymous func(ctx context.Context, contextID string) bool
 }
 
 var _ a2asrv.AgentExecutor = (*observedExecutor)(nil)
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	withLine := e.peers.withAgentsLine(ctx, execCtx)
+	withLine := execCtx
+	if !e.anonymous(ctx, execCtx.ContextID) {
+		withLine = e.peers.withAgentsLine(ctx, execCtx)
+	}
 	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.duringTurn(ctx, execCtx, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
@@ -408,12 +471,13 @@ func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
 }
 
 // callerInterceptor makes the authenticated principal the A2A user and
-// enforces who may join a conversation, who may answer approvals and how
-// deep agent chains go.
+// enforces who may join a conversation, who may answer approvals, how deep
+// agent chains go and the budget of anonymous callers.
 type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
 	tasks     *store.TaskStore
+	budget    *anonymousBudget
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -428,12 +492,22 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	if !p.IsOwner() {
 		ctx = limiter.AttachScope(ctx, p.ID)
 	}
+	// Anonymous callers who proved nothing share one principal, so they
+	// list only the conversation they name, whose ID proves it is theirs.
+	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.AnonymousID && list.ContextID == "" {
+		return ctx, &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, PageSize: list.PageSize}, nil
+	}
 	msg, ok := req.Payload.(*a2a.SendMessageRequest)
 	if !ok || msg.Message == nil {
 		return ctx, nil, nil
 	}
 	if err := i.checkConversation(ctx, p, msg.Message.ContextID); err != nil {
 		return ctx, nil, err
+	}
+	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
+		if err := i.budget.admit(budgetListener(p)); err != nil {
+			return ctx, nil, fmt.Errorf("%w: %w", a2a.ErrUnauthorized, err)
+		}
 	}
 	if msg.Message.TaskID != "" {
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {

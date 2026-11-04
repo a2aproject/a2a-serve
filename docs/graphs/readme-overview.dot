@@ -1,57 +1,45 @@
 // README overview: a simplified agent-server-overview.dot. Top to bottom:
-// callers, the server, the sandboxed harness; the harness calls other agents
+// callers, the server, the sandboxed agent; the agent calls other agents
 // back through the server.
-// Render: dot -Tpng -Gdpi=110 readme-overview.dot -o readme-overview.png
+// Render: docs/graphs/render.sh readme-overview.dot
 digraph readme_overview {
   rankdir=TB;
   graph [fontname="Helvetica", nodesep=0.4, ranksep=0.45, pad=0.3, newrank=true];
   node  [fontname="Helvetica", fontsize=13, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
   edge  [fontname="Helvetica", fontsize=11, color="#555555", fontcolor="#333333"];
 
-  subgraph cluster_callers {
-    label="Callers"; style="rounded,filled"; fillcolor="#eef5ff"; color="#9bb7e0";
-    { rank=same;
-      Client    [label="A2A clients\na2a CLI, other agents", shape=ellipse, fillcolor="#dbe8ff"];
-      Owner     [label="Owner\na2a-serve ...", shape=ellipse, fillcolor="#dbe8ff"];
-      Messenger [label="Messengers\nTelegram, Discord, email", shape=ellipse, fillcolor="#dbe8ff"];
-    }
+  { rank=same;
+    Client   [label="A2A clients", shape=ellipse, fillcolor="#dbe8ff"];
+    Telegram [label="Telegram", shape=ellipse, fillcolor="#dbe8ff"];
+    Email    [label="Email", shape=ellipse, fillcolor="#dbe8ff"];
   }
 
   subgraph cluster_server {
     label="a2a-serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
-    { rank=same;
-      Listeners [label="Listeners\nlocalhost, tailnet, LAN or relay,\nFunnel or relay"];
-      Control   [label="Control socket"];
-      Router    [label="Channels"];
-    }
-    { rank=same;
-      Core  [label="A2A server\npairing, tasks, approvals"];
-      Proxy [label="Peers proxy\napproval guard"];
-    }
+    // Pad keeps the incoming edges clear of the cluster label.
+    { rank=same; Pad [label="", style=invis, width=0.6]; Net [label="Network"]; Channels [label="Channels"]; }
+    { rank=same; Core [label="A2A server"]; Proxy [label="Peers proxy"]; }
   }
 
-  subgraph cluster_sandbox {
-    label="Docker sandbox"; labeljust=l; style="rounded,filled"; fillcolor="#f3eefb"; color="#b9a4dd";
-    { rank=same;
-      Harness [label="Coding agent\nopencode, Claude Code, ACP"];
-      CLI     [label="a2a CLI"];
-    }
-  }
+  Agent [fillcolor="#f3eefb", color="#b9a4dd", margin="0.15,0.08", label=<
+    <table border="0" cellspacing="0" cellpadding="2">
+      <tr><td align="left">Sandbox</td></tr>
+      <tr><td cellpadding="6">Agent<br/>(OpenCode, Claude Code, etc.)</td></tr>
+    </table>>];
 
   { rank=same;
-    Remote  [label="Contacts\nother agent servers", shape=ellipse, fillcolor="#e3f4e3"];
+    Remote  [label="Other agents", shape=ellipse, fillcolor="#e3f4e3"];
     Webhook [label="Webhook nodes", shape=ellipse, fillcolor="#e3f4e3"];
   }
 
-  Client -> Listeners;
-  Owner -> Control;
-  Messenger -> Router;
-  Listeners -> Core;
-  Control -> Core [style=dashed];
-  Router -> Core;
-  Core -> Harness [label="ACP"];
-  Harness -> CLI [label="a2a send"];
-  Proxy -> CLI [dir=back];
+  Client -> Net;
+  Telegram -> Channels;
+  Email -> Channels;
+  Net -> Core;
+  Pad -> Core [style=invis];
+  Channels -> Core [tailport=s];
+  Core -> Agent [label=" ACP"];
+  Agent -> Proxy [label=" a2a CLI"];
   Proxy -> Remote;
   Proxy -> Webhook;
 }

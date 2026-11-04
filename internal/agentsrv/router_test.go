@@ -160,13 +160,12 @@ func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
 	t.Parallel()
 	ch := newFakeChannel(ChannelEmail)
 	ch.buttons = false
-	ch.sendDelay = 200 * time.Millisecond
 	ts := startServer(t, serverOpts{channel: ch, configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
 	linkOwner(t, ts, "me@example.com", "owner-thread")
 
 	ts.ch.write("stranger@example.org", "thread9", "ask")
-	ts.ch.waitFor(t, "thread9", hasText("Waiting for the owner's approval."))
-	_, q := ts.ch.waitFor(t, "owner-thread", hasText("needs your approval"))
+	ts.ch.waitFor(t, "thread9", hasText("This needs the owner's approval"))
+	_, q := ts.ch.waitFor(t, "owner-thread", hasText("an anonymous caller, needs your approval"))
 	if !strings.Contains(q.Text, "stranger@example.org") || !strings.Contains(q.Text, "Reply approve, always, deny") {
 		t.Fatalf("owner chat question = %q, want it to name the sender and how to answer", q.Text)
 	}

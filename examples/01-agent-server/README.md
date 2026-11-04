@@ -1,6 +1,6 @@
-# Lesson 1 — Serve a coding agent
+# Serve a Coding Agent
 
-This lesson serves a coding agent, opencode or Claude Code, from its project
+This example serves a coding agent, opencode or Claude Code, from its project
 directory and talks to it like any other A2A agent.
 
 ## What you'll learn
@@ -12,7 +12,7 @@ directory and talks to it like any other A2A agent.
 
 ## Prerequisites
 
-- The `a2a` CLI and `a2a-serve` installed (see [Getting started](../../docs/getting-started.md#install)).
+- The `a2a` CLI and `a2a-serve` installed (see [Getting Started](../../docs/getting-started.md#install)).
 - Docker. Without it, add `--sandbox local` to the start commands below; the
   agent then runs on your machine and needs to be installed there.
 - An API key for the model, such as `OPENROUTER_API_KEY`, exported in your shell.
@@ -23,7 +23,7 @@ The agent works in its project directory. Make a small one, with a hint that
 keeps the answers short:
 
 ```bash
-mkdir -p ~/a2a-lesson1/coder && cd ~/a2a-lesson1/coder
+mkdir -p ~/a2a-example1/coder && cd ~/a2a-example1/coder
 cat > AGENTS.md <<'EOF'
 You are reached over A2A. Keep answers to one short sentence.
 EOF
@@ -46,13 +46,13 @@ foreground. Later runs from this directory are just `a2a-serve start`.
 In **terminal B**, check that it runs and note its local URL:
 
 ```bash
-cd ~/a2a-lesson1/coder
+cd ~/a2a-example1/coder
 a2a-serve status
 ```
 
 ```
 coder (opencode) running for 12s, pid 41233
-  dir      /home/you/a2a-lesson1/coder
+  dir      /home/you/a2a-example1/coder
   local    http://127.0.0.1:46757
 ```
 
@@ -119,7 +119,7 @@ a2a send --context-id <context-id> "Which file did you just create?"
 Start a second agent in **terminal C**:
 
 ```bash
-mkdir -p ~/a2a-lesson1/reviewer && cd ~/a2a-lesson1/reviewer
+mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer
 a2a-serve start opencode --name reviewer --secret OPENROUTER_API_KEY
 ```
 
@@ -127,11 +127,11 @@ In **terminal B**, let `coder` call it: mint a code on the reviewer's side
 and redeem it as a contact on coder's side.
 
 ```bash
-cd ~/a2a-lesson1/reviewer
+cd ~/a2a-example1/reviewer
 a2a-serve status                  # note reviewer's local URL
 a2a-serve pair invite coder       # prints a code
 
-cd ~/a2a-lesson1/coder
+cd ~/a2a-example1/coder
 a2a-serve contact add reviewer --url <reviewer-url> --code <code>
 ```
 
@@ -148,10 +148,10 @@ the sandbox. If reviewer needs an approval, the request comes to you.
 ## 8. Clean up
 
 ```bash
-cd ~/a2a-lesson1/coder
+cd ~/a2a-example1/coder
 a2a-serve pair rm "$(a2a-serve status --url=local)"   # the owner token of this machine
 a2a-serve stop
-cd ~/a2a-lesson1/reviewer && a2a-serve stop
+cd ~/a2a-example1/reviewer && a2a-serve stop
 ```
 
 Everything an agent keeps is in `.a2a/` in its workspace; delete the
@@ -159,8 +159,8 @@ directories to start over.
 
 ## Next steps
 
-[Lesson 2](../02-tailscale-telegram-grok/) puts the agent on your tailnet and
+[Tailscale, Telegram and a Grok Bot](../02-tailscale-telegram-grok/README.md) puts the agent on your tailnet and
 in Telegram, and adds a Grok bot as a webhook node. The
-[user guide](../../docs/guide.md) covers the rest, and the
-[architecture](../../docs/concepts/architecture.md) explains how the
+[user guide](../../docs/index.md#user-guide) covers the rest, and the
+[architecture](../../docs/advanced/architecture.md) explains how the
 pieces fit together.
