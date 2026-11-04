@@ -76,12 +76,8 @@ func TestMigrateFromPrototype(t *testing.T) {
 		}
 	})
 	ctx := context.Background()
-	h, err := s.HandleByName(ctx, "k3")
-	if err != nil {
-		t.Fatalf("HandleByName() error = %v", err)
-	}
-	if diff := cmp.Diff(Handle{Handle: "k3", ContextID: "ctx1", OnBehalfOf: "user:owner", Hops: 1}, h); diff != "" {
-		t.Fatalf("HandleByName() wrong result (-want +got) diff = %s", diff)
+	if _, err := s.HandleByName(ctx, "k3"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("HandleByName() of a handle with a user error = %v, want %v", err, ErrNotFound)
 	}
 	if id, err := s.PendingQuestion(ctx, "telegram", "42:7"); err != nil || id != "q1" {
 		t.Fatalf("PendingQuestion() = %q, %v, want q1", id, err)

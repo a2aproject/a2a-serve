@@ -41,11 +41,18 @@ type fakeNet struct {
 type fakeProvider struct {
 	net  *fakeNet
 	name string
+	// kind is the provider name it reports; empty is "fake".
+	kind string
 }
 
 func (n *fakeNet) provider(name string) *fakeProvider { return &fakeProvider{net: n, name: name} }
 
-func (p *fakeProvider) Name() string { return "fake" }
+func (p *fakeProvider) Name() string {
+	if p.kind == "" {
+		return "fake"
+	}
+	return p.kind
+}
 
 func (p *fakeProvider) ListenPrivate(context.Context) (net.Listener, *url.URL, error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

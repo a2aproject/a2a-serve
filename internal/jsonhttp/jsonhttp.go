@@ -21,6 +21,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"strings"
 )
@@ -58,6 +59,29 @@ func Write(w http.ResponseWriter, code int, v any) {
 // Error writes an [APIError] response.
 func Error(w http.ResponseWriter, code int, msg string) {
 	Write(w, code, APIError{Error: msg})
+}
+
+// RequireJSON refuses state-changing requests that a browser could send
+// cross-site without a CORS preflight: they need a JSON content type or the
+// A2A-Version header.
+func RequireJSON(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead, http.MethodOptions:
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Header.Get("A2A-Version") != "" || isJSON(r.Header.Get("Content-Type")) {
+			next.ServeHTTP(w, r)
+			return
+		}
+		Error(w, http.StatusUnsupportedMediaType, "send the request body as application/json")
+	})
+}
+
+func isJSON(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && (mediaType == "application/json" || mediaType == "application/a2a+json")
 }
 
 // maxErrorBody is how much of a non-JSON error body ErrorMessage includes.

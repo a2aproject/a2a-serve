@@ -160,6 +160,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV8)
 		return err
 	},
+	// 9: an agents URL handle stands for a conversation only, and the tasks
+	// each conversation started at other agents are recorded. Old handles
+	// are dropped.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV9)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -266,6 +273,15 @@ INSERT INTO task_events (scope, task_id, version, kind, created, data)
 UPDATE tasks SET data = json_remove(data, '$.history', '$.artifacts');
 DROP INDEX tasks_state_updated;
 CREATE INDEX tasks_updated_any_scope ON tasks (updated);
+`
+
+const schemaV9 = `
+DROP TABLE handles;
+CREATE TABLE handles (handle TEXT PRIMARY KEY, context_id TEXT NOT NULL UNIQUE);
+CREATE TABLE call_tasks (
+	context_id TEXT NOT NULL, agent TEXT NOT NULL, task_id TEXT NOT NULL, remote_context_id TEXT NOT NULL,
+	PRIMARY KEY (context_id, agent, task_id));
+CREATE INDEX call_tasks_remote_context ON call_tasks (context_id, agent, remote_context_id);
 `
 
 func (s *Store) migrate(ctx context.Context) error {

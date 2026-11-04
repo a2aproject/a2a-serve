@@ -15,6 +15,8 @@
 package jsonhttp
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -36,6 +38,40 @@ func TestErrorMessage(t *testing.T) {
 			t.Parallel()
 			if got := ErrorMessage("404 Not Found", []byte(tc.body)); got != tc.want {
 				t.Fatalf("ErrorMessage() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRequireJSON(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		method string
+		header http.Header
+		want   int
+	}{
+		{name: "GET", method: http.MethodGet, want: http.StatusOK},
+		{name: "JSON", method: http.MethodPost, header: http.Header{"Content-Type": {"application/json; charset=utf-8"}}, want: http.StatusOK},
+		{name: "A2A JSON", method: http.MethodPut, header: http.Header{"Content-Type": {"application/a2a+json"}}, want: http.StatusOK},
+		{name: "A2A-Version", method: http.MethodDelete, header: http.Header{"A2a-Version": {"1.0"}}, want: http.StatusOK},
+		{name: "form", method: http.MethodPost, header: http.Header{"Content-Type": {"application/x-www-form-urlencoded"}}, want: http.StatusUnsupportedMediaType},
+		{name: "text", method: http.MethodPost, header: http.Header{"Content-Type": {"text/plain"}}, want: http.StatusUnsupportedMediaType},
+		{name: "no content type", method: http.MethodPost, want: http.StatusUnsupportedMediaType},
+	}
+	h := RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := httptest.NewRequest(tc.method, "/", nil)
+			r.Header = tc.header
+			if r.Header == nil {
+				r.Header = http.Header{}
+			}
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("RequireJSON() status = %d, want %d", w.Code, tc.want)
 			}
 		})
 	}

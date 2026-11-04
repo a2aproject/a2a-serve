@@ -36,7 +36,7 @@ import (
 )
 
 // LocalOwner names the owner token the server saves for this machine.
-const LocalOwner = "local"
+const LocalOwner = auth.LocalPairing
 
 // SchedulesAgent is the agent the harness manages schedules with, which no
 // webhook node or contact can be called.

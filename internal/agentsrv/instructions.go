@@ -26,7 +26,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
-	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/skills"
 )
@@ -162,13 +161,7 @@ func (p *Peers) withAgentsLine(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	if len(agents) == 0 {
 		return execCtx
 	}
-	claims := callClaims{ContextID: execCtx.ContextID}
-	if caller, ok := auth.Caller(ctx); ok {
-		claims.OnBehalfOf, claims.Hops = caller.User(), caller.Hops
-	} else if execCtx.User != nil {
-		claims.OnBehalfOf = execCtx.User.Name
-	}
-	u, err := p.agentsURL(ctx, claims)
+	u, err := p.agentsURL(ctx, execCtx.ContextID)
 	if err != nil {
 		slog.Warn("creating the agents URL", "error", err)
 		return execCtx

@@ -474,6 +474,11 @@ func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2
 	return task, nil
 }
 
+// HasOthersTasks reports whether a context has tasks of another owner than user.
+func (ts *TaskStore) HasOthersTasks(ctx context.Context, contextID, user string) (bool, error) {
+	return ts.s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE scope = ? AND context_id = ? AND owner != ?)`, ts.scope, contextID, user)
+}
+
 // TaskCounts returns the number of tasks of the scope per state.
 func (ts *TaskStore) TaskCounts(ctx context.Context) (map[a2a.TaskState]int, error) {
 	rows, err := ts.s.db.QueryContext(ctx, `SELECT state, COUNT(*) FROM tasks WHERE scope = ? GROUP BY state`, ts.scope)

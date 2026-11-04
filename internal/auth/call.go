@@ -42,10 +42,20 @@ func Caller(ctx context.Context) (Principal, bool) {
 	return Principal{}, false
 }
 
+type inProcessKey struct{}
+
 // InProcess returns a context for calling an A2A handler directly as p.
+// The server itself picks the conversation of such calls, such as a group
+// chat's, so they may join conversations of other users.
 func InProcess(ctx context.Context, p Principal) context.Context {
-	ctx = WithPrincipal(ctx, p)
+	ctx = context.WithValue(WithPrincipal(ctx, p), inProcessKey{}, true)
 	ctx, cc := a2asrv.NewCallContext(ctx, a2asrv.NewServiceParams(nil))
 	SetCallUser(cc, p)
 	return ctx
+}
+
+// IsInProcess reports whether ctx comes from [InProcess].
+func IsInProcess(ctx context.Context) bool {
+	in, _ := ctx.Value(inProcessKey{}).(bool)
+	return in
 }

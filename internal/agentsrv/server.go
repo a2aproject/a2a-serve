@@ -317,6 +317,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		ctx:       ctx,
 		watching:  map[string]bool{},
 		clients:   map[string]*contactClient{},
+		turns:     map[string]*callClaims{},
+		paused:    map[string]pausedTurn{},
 	}
 	closers.push(s.peers.close)
 
@@ -337,7 +339,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.handler = a2asrv.NewHandler(&observedExecutor{inner: exec, bus: s.bus, peers: s.peers, approvals: s.approvals},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals}),
+		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),
 	)
@@ -359,7 +361,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	errc := make(chan error, 1)
 	s.router.start(ctx)
 	closers.push(s.router.stopAll)
-	closers.push(s.serveHTTP(ctx, harnessLn, network.ListenerHarness, "", errc))
+	closers.push(s.serveHTTP(ctx, harnessLn, listener{kind: network.ListenerHarness}, errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}
@@ -450,21 +452,21 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 	s.urlMu.Lock()
 	s.localURL = u
 	s.urlMu.Unlock()
-	closers.push(s.serveHTTP(ctx, ln, network.ListenerLocal, u, errc))
+	closers.push(s.serveHTTP(ctx, ln, listener{kind: network.ListenerLocal, baseURL: u, inspector: true}, errc))
 	return nil
 }
 
-// serveHTTP serves the routes of a listener kind in the background and
-// returns the function which shuts the listener down.
-func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, kind, baseURL string, errc chan<- error) func(context.Context) error {
+// serveHTTP serves the routes of a listener in the background and returns
+// the function which shuts the listener down.
+func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
 	srv := &http.Server{
-		Handler:           s.routes(kind, baseURL),
+		Handler:           s.routes(l),
 		ReadHeaderTimeout: 30 * time.Second,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-			reportFatal(errc, fmt.Errorf("%s listener: %w", kind, err))
+			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))
 		}
 	}()
 	return func(ctx context.Context) error {

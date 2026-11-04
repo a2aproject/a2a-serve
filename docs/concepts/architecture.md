@@ -44,7 +44,7 @@ The user who starts the server gets an owner token for the local URL. On a tailn
 
 ## Agents calling agents
 
-The agent runs `a2a send` against a URL such as `http://a2a/k3/reviewer`. The request reaches the server through a socket only the agent can use. The handle `k3` tells the server which conversation and user the call belongs to. The agent's image carries the `a2a` version the server needs.
+The agent runs `a2a send` against a URL such as `http://a2a/k3/reviewer`. The request reaches the server through a socket only the agent can use. The handle `k3` stands for the conversation. The server accepts it only while the agent answers a message in that conversation, makes the call for the user who sent that message, and lets the conversation reach only the tasks it started. The agent's image carries the `a2a` version the server needs.
 
 The server then:
 

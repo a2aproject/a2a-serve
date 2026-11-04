@@ -67,8 +67,8 @@ func writeHarnessHelper(home, host, key string) (string, error) {
 
 // agentsURL is where the harness calls other agents in one conversation:
 // <agents URL>/<name> is an A2A agent. The handle in the path stands for the
-// conversation, the user and the hop count.
-func (p *Peers) agentsURL(ctx context.Context, c callClaims) (string, error) {
+// conversation; the user and the hop count are those of its running turn.
+func (p *Peers) agentsURL(ctx context.Context, contextID string) (string, error) {
 	base := p.bridge.url
 	if p.bridge.socket != "" {
 		base = socketHost
@@ -76,7 +76,7 @@ func (p *Peers) agentsURL(ctx context.Context, c callClaims) (string, error) {
 	if base == "" {
 		return "", errors.New("the harness listener is not running")
 	}
-	h, err := p.handle(ctx, c)
+	h, err := p.handle(ctx, contextID)
 	if err != nil {
 		return "", err
 	}
@@ -106,9 +106,17 @@ func (p *Peers) agentsHandler(key string) http.Handler {
 			}
 		}
 		handle, name := r.PathValue("handle"), r.PathValue("agent")
-		claims, ok := p.claimsOf(r.Context(), handle)
-		if !ok {
-			jsonhttp.Error(w, http.StatusNotFound, "unknown agents URL: use the one from the latest [a2a agents] line")
+		claims, err := p.claimsOf(r.Context(), handle)
+		switch {
+		case errors.Is(err, errUnknownHandle):
+			jsonhttp.Error(w, http.StatusNotFound, err.Error())
+			return
+		case errors.Is(err, errNoTurn):
+			jsonhttp.Error(w, http.StatusForbidden, err.Error())
+			return
+		case err != nil:
+			slog.Error("resolving an agents URL", "error", err)
+			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
 		if claims.Hops+1 > auth.MaxHops {
@@ -220,10 +228,11 @@ func (p *Peers) agentHandler(ctx context.Context, c callClaims, name string) (a2
 	}}, nil, nil
 }
 
-// guardedHandler keeps approvals with the user: the harness can't answer
-// another agent's permission question, which is relayed to the user's chat
-// instead. Tasks the harness doesn't wait for are watched, and their result
-// is posted into the conversation.
+// guardedHandler keeps a conversation to the tasks it started, and
+// approvals with the user: the harness can't answer another agent's
+// permission question, which is relayed to the user's chat instead. Tasks
+// the harness doesn't wait for are watched, and their result is posted into
+// the conversation.
 type guardedHandler struct {
 	a2asrv.RequestHandler
 	p      *Peers
@@ -232,28 +241,34 @@ type guardedHandler struct {
 }
 
 func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
-	if err := g.checkAnswer(ctx, req); err != nil {
+	if err := g.checkMessage(ctx, req); err != nil {
 		return nil, err
 	}
 	res, err := g.RequestHandler.SendMessage(ctx, req)
 	if task, ok := res.(*a2a.Task); ok && err == nil {
+		g.record(ctx, task.ID, task.ContextID)
 		g.after(ctx, task)
 	}
 	return res, err
 }
 
 func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
-	if err := g.checkAnswer(ctx, req); err != nil {
+	if err := g.checkMessage(ctx, req); err != nil {
 		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
 	}
 	return func(yield func(a2a.Event, error) bool) {
 		var last *a2a.Task
+		recorded := false
 		for ev, err := range g.RequestHandler.SendStreamingMessage(ctx, req) {
 			switch e := ev.(type) {
 			case *a2a.Task:
 				last = &a2a.Task{ID: e.ID, ContextID: e.ContextID, Status: e.Status}
 			case *a2a.TaskStatusUpdateEvent:
 				last = &a2a.Task{ID: e.TaskID, ContextID: e.ContextID, Status: e.Status}
+			}
+			if last != nil && !recorded {
+				g.record(ctx, last.ID, last.ContextID)
+				recorded = true
 			}
 			if !yield(ev, err) {
 				break
@@ -267,9 +282,121 @@ func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.Send
 	}
 }
 
+func (g *guardedHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
+	if err := g.checkTask(ctx, req.ID); err != nil {
+		return nil, err
+	}
+	return g.RequestHandler.GetTask(ctx, req)
+}
+
+// ListTasks lists the tasks of the page which this conversation started.
+func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	res, err := g.RequestHandler.ListTasks(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	out := *res
+	out.Tasks = nil
+	for _, t := range res.Tasks {
+		ok, err := g.p.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
+		if err != nil {
+			return nil, err
+		}
+		if ok {
+			out.Tasks = append(out.Tasks, t)
+		}
+	}
+	return &out, nil
+}
+
+func (g *guardedHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	if err := g.checkTask(ctx, req.ID); err != nil {
+		return nil, err
+	}
+	return g.RequestHandler.CancelTask(ctx, req)
+}
+
+func (g *guardedHandler) SubscribeToTask(ctx context.Context, req *a2a.SubscribeToTaskRequest) iter.Seq2[a2a.Event, error] {
+	if err := g.checkTask(ctx, req.ID); err != nil {
+		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
+	}
+	return g.RequestHandler.SubscribeToTask(ctx, req)
+}
+
+func (g *guardedHandler) GetTaskPushConfig(ctx context.Context, req *a2a.GetTaskPushConfigRequest) (*a2a.PushConfig, error) {
+	if err := g.checkTask(ctx, req.TaskID); err != nil {
+		return nil, err
+	}
+	return g.RequestHandler.GetTaskPushConfig(ctx, req)
+}
+
+func (g *guardedHandler) ListTaskPushConfigs(ctx context.Context, req *a2a.ListTaskPushConfigRequest) (*a2a.ListTaskPushConfigResponse, error) {
+	if err := g.checkTask(ctx, req.TaskID); err != nil {
+		return nil, err
+	}
+	return g.RequestHandler.ListTaskPushConfigs(ctx, req)
+}
+
+func (g *guardedHandler) CreateTaskPushConfig(ctx context.Context, req *a2a.PushConfig) (*a2a.PushConfig, error) {
+	if err := g.checkTask(ctx, req.TaskID); err != nil {
+		return nil, err
+	}
+	return g.RequestHandler.CreateTaskPushConfig(ctx, req)
+}
+
+func (g *guardedHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.DeleteTaskPushConfigRequest) error {
+	if err := g.checkTask(ctx, req.TaskID); err != nil {
+		return err
+	}
+	return g.RequestHandler.DeleteTaskPushConfig(ctx, req)
+}
+
+// record notes that this conversation started a task.
+func (g *guardedHandler) record(ctx context.Context, id a2a.TaskID, contextID string) {
+	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID}
+	if err := g.p.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
+		slog.Error("recording a call task", "agent", g.agent, "task", id, "error", err)
+	}
+}
+
+// checkTask refuses a task this conversation didn't start.
+func (g *guardedHandler) checkTask(ctx context.Context, id a2a.TaskID) error {
+	ok, err := g.p.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(id))
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: this conversation didn't start task %s at %s", a2a.ErrTaskNotFound, id, g.agent)
+	}
+	return nil
+}
+
+// checkMessage refuses a message to a task or a context this conversation
+// didn't start, and a reply to a pending permission question.
+func (g *guardedHandler) checkMessage(ctx context.Context, req *a2a.SendMessageRequest) error {
+	if req.Message == nil {
+		return nil
+	}
+	switch m := req.Message; {
+	case m.TaskID != "":
+		if err := g.checkTask(ctx, m.TaskID); err != nil {
+			return err
+		}
+	case m.ContextID != "":
+		ok, err := g.p.store.HasCallContext(ctx, g.claims.ContextID, g.agent, m.ContextID)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return fmt.Errorf("%w: this conversation has no tasks in context %s of %s", a2a.ErrUnauthorized, m.ContextID, g.agent)
+		}
+	}
+	return g.checkAnswer(ctx, req)
+}
+
 // checkAnswer rejects a reply to a pending permission question.
 func (g *guardedHandler) checkAnswer(ctx context.Context, req *a2a.SendMessageRequest) error {
-	if req.Message == nil || req.Message.TaskID == "" {
+	if req.Message.TaskID == "" {
 		return nil
 	}
 	task, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: req.Message.TaskID})

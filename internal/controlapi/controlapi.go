@@ -116,6 +116,22 @@ func (s *Status) URL(scope string) (string, error) {
 	return "", fmt.Errorf("unknown URL scope %q", scope)
 }
 
+// InspectorURL returns the URL to open the web inspector at: the local URL,
+// or with private the private URL, where it is served only over HTTPS.
+func (s *Status) InspectorURL(private bool) (string, error) {
+	if !private {
+		return s.Local, nil
+	}
+	u, err := s.URL(ScopePrivate)
+	if err != nil {
+		return "", err
+	}
+	if !strings.HasPrefix(u, "https://") {
+		return "", fmt.Errorf("the inspector isn't served on %s, because its login link and session would cross the network unencrypted; run `a2a-serve inspect` without --private on the agent's machine", u)
+	}
+	return u, nil
+}
+
 // LocalOnly reports whether rawURL only works on this machine.
 func LocalOnly(rawURL string) bool {
 	u, err := url.Parse(rawURL)

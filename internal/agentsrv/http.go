@@ -20,6 +20,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -40,15 +41,44 @@ import (
 	"github.com/a2aproject/a2a-serve/skills"
 )
 
-// routes returns the HTTP handler of one listener. baseURL is the URL the
-// listener is reached at; empty derives it from the request.
-func (s *Server) routes(kind, baseURL string) http.Handler {
-	mux := http.NewServeMux()
-	if kind == network.ListenerHarness {
+// listener is one listener the server serves its routes on.
+type listener struct {
+	// kind is one of the network.Listener* kinds.
+	kind string
+	// baseURL is the URL the listener is reached at; empty derives it from
+	// the request.
+	baseURL string
+	// host, if set, is the only Host the listener accepts. A plain HTTP
+	// listener on the LAN sets it against DNS rebinding, which defeats the
+	// browser checks.
+	host string
+	// inspector serves the web inspector, on listeners where its login link
+	// and session cookie stay private.
+	inspector bool
+}
+
+// privateListener describes the private listener reached at u: the
+// inspector only over Tailscale's HTTPS, and the LAN only at its address.
+func (s *Server) privateListener(u *url.URL) listener {
+	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
+	switch s.private.Name() {
+	case ProviderTailscale:
+		l.inspector = true
+	case ProviderLAN:
+		l.host = u.Host
+	}
+	return l
+}
+
+// routes returns the HTTP handler of one listener.
+func (s *Server) routes(l listener) http.Handler {
+	if l.kind == network.ListenerHarness {
 		return s.peers.harnessRoutes(s.bridge.key)
 	}
+	baseURL := l.baseURL
+	mux := http.NewServeMux()
 	card := func(w http.ResponseWriter, r *http.Request) {
-		a2asrv.NewStaticAgentCardHandler(s.card(kind, base(baseURL, r))).ServeHTTP(w, r)
+		a2asrv.NewStaticAgentCardHandler(s.card(l.kind, base(baseURL, r))).ServeHTTP(w, r)
 	}
 	jsonrpc := a2asrv.NewJSONRPCHandler(s.handler, a2asrv.WithTransportKeepAlive(15*time.Second))
 	rest := a2asrv.NewRESTHandler(s.handler, a2asrv.WithTransportKeepAlive(15*time.Second))
@@ -66,21 +96,34 @@ func (s *Server) routes(kind, baseURL string) http.Handler {
 	})
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
-	mux.HandleFunc("POST "+pairapi.Path, func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })
+	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r)) })))
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
 	s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
-	if kind == network.ListenerPrivate {
+	if l.kind == network.ListenerPrivate {
 		s.registerGossip(mux)
 	}
-	// The inspector is for the owner, who reaches it on this machine or the
-	// private network, not from the internet.
-	if kind == network.ListenerLocal || kind == network.ListenerPrivate {
+	if l.inspector {
 		s.inspector.register(mux)
 	}
-	s.nodes.Register(mux, kind, func(r *http.Request) string { return base(baseURL, r) })
-	mux.Handle("POST /{$}", s.authenticate(kind, jsonrpc))
-	mux.Handle("/", s.authenticate(kind, rest))
-	return mux
+	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
+	mux.Handle("POST /{$}", jsonhttp.RequireJSON(s.authenticate(l.kind, jsonrpc)))
+	mux.Handle("/", jsonhttp.RequireJSON(s.authenticate(l.kind, rest)))
+	h := http.NewCrossOriginProtection().Handler(mux)
+	if l.host != "" {
+		h = onlyHost(l.host, h)
+	}
+	return h
+}
+
+// onlyHost refuses requests for any other host than host.
+func onlyHost(host string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !strings.EqualFold(r.Host, host) {
+			jsonhttp.Error(w, http.StatusMisdirectedRequest, "this agent is reached at "+host)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // base returns the configured base URL or derives it from the request.

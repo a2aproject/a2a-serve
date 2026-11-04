@@ -33,7 +33,8 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 
 // Prune deletes expired codes; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; answered questions of remote
-// agents as old; and the handles of contexts left without tasks.
+// agents as old; and the handles and call tasks of contexts left without
+// tasks.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
@@ -56,8 +57,10 @@ func (s *Store) Prune(ctx context.Context) error {
 			}
 		}
 		for c := range contexts {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM handles WHERE context_id = ? AND NOT EXISTS (SELECT 1 FROM tasks WHERE context_id = ?)`, c, c); err != nil {
-				return err
+			for _, table := range []string{"handles", "call_tasks"} {
+				if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE context_id = ? AND NOT EXISTS (SELECT 1 FROM tasks WHERE context_id = ?)`, c, c); err != nil {
+					return err
+				}
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND answered_by != '' AND created < ?`, cutoff); err != nil {
