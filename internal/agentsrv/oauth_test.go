@@ -30,20 +30,23 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
 )
 
+const sharedClientID = "shared-app"
+
 // publicNet is a public URL on loopback.
 func publicNet() *fakeProvider {
 	return &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder"}
 }
 
-func startSignInServer(t *testing.T, g *googletest.Google, allow ...string) *testServer {
+func startSignInServer(t *testing.T, g *googletest.Google, policy agentdir.PolicyConfig) *testServer {
 	t.Helper()
 	endpoints := g.Endpoints()
 	return startServer(t, serverOpts{
-		google:  &endpoints,
-		secrets: agentdir.Secrets{"GOOGLE_CLIENT_SECRET": g.Secret},
-		public:  publicNet(),
+		google:         &endpoints,
+		sharedClientID: sharedClientID,
+		secrets:        agentdir.Secrets{"GOOGLE_CLIENT_SECRET": g.Secret},
+		public:         publicNet(),
 		configure: func(c *agentdir.Config) {
-			c.Policy.AllowEmails = allow
+			c.Policy = policy
 			c.Auth = agentdir.AuthConfig{GoogleClientID: "owner-app", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
 		},
 	})
@@ -116,7 +119,7 @@ func signIn(t *testing.T, ts *testServer, verifier string) (url.Values, string) 
 func TestGoogleSignIn(t *testing.T) {
 	t.Parallel()
 	g := googletest.New(t, googletest.Account{Email: "Mom@example.org", Verified: true})
-	ts := startSignInServer(t, g, "mom@example.org", "*@example.com")
+	ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"mom@example.org", "*@example.com"}})
 	ctx := context.Background()
 
 	resp, err := http.Post(ts.publicURL()+"/", "application/json", strings.NewReader(`{}`))
@@ -180,7 +183,7 @@ func TestGoogleSignInRefusals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			g := googletest.New(t, tc.account)
-			ts := startSignInServer(t, g, "mom@example.org", "*@example.com")
+			ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"mom@example.org", "*@example.com"}})
 			got, _ := signIn(t, ts, "verifier-0123456789-0123456789-0123456789")
 			if got.Get("error") != "access_denied" || got.Get("code") != "" {
 				t.Fatalf("client redirect = %v, want access_denied", got)
@@ -192,7 +195,7 @@ func TestGoogleSignInRefusals(t *testing.T) {
 func TestGoogleTokenExchange(t *testing.T) {
 	t.Parallel()
 	g := googletest.New(t, googletest.Account{Email: "ben@example.com", Verified: true, HostedDomain: "example.com"})
-	ts := startSignInServer(t, g, "*@example.com")
+	ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"*@example.com"}})
 	exchange := func(idToken string) (int, map[string]string) {
 		return postToken(t, ts, url.Values{"grant_type": {grantTokenExchange}, "subject_token": {idToken}, "subject_token_type": {tokenTypeIDToken}})
 	}
@@ -201,8 +204,8 @@ func TestGoogleTokenExchange(t *testing.T) {
 		token      string
 		wantStatus int
 	}{
-		{name: "bound to this agent", token: g.IDToken(googleauth.SharedClientID, googleauth.URLBinding(ts.publicURL())), wantStatus: http.StatusOK},
-		{name: "bound to another agent", token: g.IDToken(googleauth.SharedClientID, googleauth.URLBinding("https://other.example.com")), wantStatus: http.StatusBadRequest},
+		{name: "bound to this agent", token: g.IDToken(sharedClientID, googleauth.URLBinding(ts.publicURL())), wantStatus: http.StatusOK},
+		{name: "bound to another agent", token: g.IDToken(sharedClientID, googleauth.URLBinding("https://other.example.com")), wantStatus: http.StatusBadRequest},
 		{name: "another app", token: g.IDToken("someone-else", googleauth.URLBinding(ts.publicURL())), wantStatus: http.StatusBadRequest},
 	}
 	for _, tc := range tests {
@@ -278,13 +281,7 @@ func TestSignInForOwnerAndAllowedMembers(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			g := googletest.New(t, googletest.Account{Email: "mom@example.org", Verified: true})
-			ts := startSignInServer(t, g)
-			if err := ts.srv.updateConfig(func(c *agentdir.Config) error {
-				c.Policy = tc.policy
-				return nil
-			}); err != nil {
-				t.Fatal(err)
-			}
+			ts := startSignInServer(t, g, tc.policy)
 			if got, _ := signIn(t, ts, "verifier-0123456789-0123456789-0123456789"); got.Get("code") == "" {
 				t.Fatalf("client redirect = %v, want a code", got)
 			}

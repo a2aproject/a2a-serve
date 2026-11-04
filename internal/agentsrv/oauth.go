@@ -26,6 +26,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -56,6 +58,9 @@ type oauthServer struct {
 	google   googleauth.Endpoints
 	verifier *googleauth.Verifier
 	hc       *http.Client
+	// sharedClientID is the client ID of the shared app, or empty when
+	// there is none.
+	sharedClientID string
 
 	mu sync.Mutex
 	// pending are sign-ins sent to Google, by the state sent there.
@@ -85,10 +90,10 @@ type issuedCode struct {
 	expires   time.Time
 }
 
-func newOAuthServer(s *Server, google googleauth.Endpoints) *oauthServer {
+func newOAuthServer(s *Server, google googleauth.Endpoints, sharedClientID string) *oauthServer {
 	hc := &http.Client{Timeout: 30 * time.Second}
 	return &oauthServer{
-		s: s, google: google, hc: hc,
+		s: s, google: google, hc: hc, sharedClientID: sharedClientID,
 		verifier: &googleauth.Verifier{Endpoints: google, HTTP: hc},
 		pending:  map[string]pendingSignIn{}, codes: map[string]issuedCode{},
 	}
@@ -106,25 +111,85 @@ func (o *oauthServer) register(mux *http.ServeMux, base func(*http.Request) stri
 		})
 	}))
 	mux.HandleFunc("GET "+authServerPath, o.on(func(w http.ResponseWriter, r *http.Request) {
-		b := base(r)
-		grants := []string{grantTokenExchange}
-		meta := map[string]any{
-			"issuer":                                b,
-			"token_endpoint":                        b + tokenPath,
-			"token_endpoint_auth_methods_supported": []string{"none"},
-			"code_challenge_methods_supported":      []string{"S256"},
-		}
-		if o.s.config().Auth.GoogleClientID != "" {
-			grants = append(grants, "authorization_code")
-			meta["authorization_endpoint"] = b + authorizePath
-			meta["response_types_supported"] = []string{"code"}
-		}
-		meta["grant_types_supported"] = grants
-		jsonhttp.Write(w, http.StatusOK, meta)
+		jsonhttp.Write(w, http.StatusOK, o.metadata(base(r)))
 	}))
 	mux.HandleFunc("GET "+authorizePath, o.on(func(w http.ResponseWriter, r *http.Request) { o.authorize(w, r, base(r)) }))
 	mux.HandleFunc("GET "+callbackPath, o.on(o.callback))
 	mux.HandleFunc("POST "+tokenPath, o.on(func(w http.ResponseWriter, r *http.Request) { o.token(w, r, base(r)) }))
+}
+
+// signInFlow is how callers sign in with Google at the public listener.
+type signInFlow int
+
+const (
+	signInOff signInFlow = iota
+	// signInShared is Google's sign-in with the shared app, followed by the
+	// token exchange at the agent.
+	signInShared
+	// signInOwnerApp is the authorization code flow against the agent, which
+	// signs in at Google with the owner's app.
+	signInOwnerApp
+)
+
+// flow returns the sign-in the agent offers, which the agent card and the
+// authorization server metadata advertise.
+func (o *oauthServer) flow() signInFlow {
+	switch {
+	case !o.enabled():
+		return signInOff
+	case o.s.config().Auth.GoogleClientID != "":
+		return signInOwnerApp
+	case o.sharedClientID != "":
+		return signInShared
+	}
+	return signInOff
+}
+
+// metadata is the authorization server metadata at base (RFC 8414). The
+// token exchange stays on with the owner's app, for clients that signed in
+// with the shared one.
+func (o *oauthServer) metadata(base string) map[string]any {
+	grants := []string{}
+	if o.sharedClientID != "" {
+		grants = append(grants, grantTokenExchange)
+	}
+	meta := map[string]any{
+		"issuer":                                base,
+		"token_endpoint":                        base + tokenPath,
+		"token_endpoint_auth_methods_supported": []string{"none"},
+		"code_challenge_methods_supported":      []string{"S256"},
+	}
+	if o.flow() == signInOwnerApp {
+		grants = append(grants, "authorization_code")
+		meta["authorization_endpoint"] = base + authorizePath
+		meta["response_types_supported"] = []string{"code"}
+	}
+	meta["grant_types_supported"] = grants
+	return meta
+}
+
+// cardScheme is the security scheme of the agent card for the sign-in at
+// base, or nil when sign-in is off.
+func (o *oauthServer) cardScheme(base string) a2a.SecurityScheme {
+	switch o.flow() {
+	case signInShared:
+		return a2a.OpenIDConnectSecurityScheme{
+			Description:      "Google sign-in with the A2A project's shared app and the nonce URLBinding(agent URL), followed by the token exchange at " + base + tokenPath + ". Only emails the owner allows may sign in.",
+			OpenIDConnectURL: googleauth.OpenIDConfiguration,
+		}
+	case signInOwnerApp:
+		return a2a.OAuth2SecurityScheme{
+			Description:       "Google sign-in through the agent. Only emails the owner allows may sign in.",
+			Oauth2MetadataURL: base + authServerPath,
+			Flows: a2a.AuthorizationCodeOAuthFlow{
+				AuthorizationURL: base + authorizePath,
+				TokenURL:         base + tokenPath,
+				Scopes:           map[string]string{},
+				PKCERequired:     true,
+			},
+		}
+	}
+	return nil
 }
 
 // on serves h while sign-in is on, and 404 otherwise.
@@ -307,7 +372,7 @@ func (o *oauthServer) token(w http.ResponseWriter, r *http.Request, base string)
 // token. The token's nonce must bind it to this agent's URL, so another
 // agent of the same app can't use a caller's token here.
 func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base string) {
-	if googleauth.SharedClientID == "" {
+	if o.sharedClientID == "" {
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "the shared Google app isn't available yet; the agent's owner can register their own with --google-client-id")
 		return
 	}
@@ -315,7 +380,7 @@ func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base stri
 		oauthError(w, http.StatusBadRequest, "invalid_request", "want subject_token_type "+tokenTypeIDToken)
 		return
 	}
-	claims, err := o.verifier.Verify(r.Context(), r.FormValue("subject_token"), []string{googleauth.SharedClientID})
+	claims, err := o.verifier.Verify(r.Context(), r.FormValue("subject_token"), []string{o.sharedClientID})
 	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
