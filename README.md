@@ -25,6 +25,21 @@ Visit [Getting Started](https://a2aproject.github.io/a2a-serve/getting-started/)
   <img src="./docs/graphs/readme-overview-dark.png#gh-dark-mode-only" alt="Callers reach a2a-serve, which runs the coding agent in a sandbox; the agent calls other agents through the server" width="680">
 </p>
 
+## 🚀 Install
+
+```bash
+brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux
+a2a-serve doctor --fix                       # set up the a2a CLI and check Docker
+```
+
+Without Homebrew, use the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
+```
+
+Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
+
 ## 📚 User Guide
 
 | | |
