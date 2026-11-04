@@ -30,11 +30,11 @@ import (
 // Binary is the name of the a2a CLI on PATH.
 const Binary = "a2a"
 
-// PinnedVersion is the a2a CLI module version this build needs: main with
-// --unix-socket <path> and credential helpers listed as {scope, command} in
-// config files. Harness images carry it, and it stands in for an installed
-// version which is unknown or a development build.
-const PinnedVersion = "v0.3.2-0.20261030153310-f90e4eb628cd"
+// MinVersion is the oldest a2a CLI module version this build works with: the
+// first with --unix-socket <path> and credential helpers listed as
+// {scope, command} in config files. It stands in for an installed version
+// which is unknown or a development build.
+const MinVersion = "v0.4.0"
 
 // Path returns the path of the a2a CLI on PATH.
 func Path() (string, error) {
@@ -51,27 +51,27 @@ func Skill(ctx context.Context) (string, error) {
 }
 
 // Version returns the version of the installed a2a CLI as a Go module
-// version, such as v0.4.0, or [PinnedVersion] when it is unknown or a
+// version, such as v0.4.0, or [MinVersion] when it is unknown or a
 // development build.
 func Version(ctx context.Context) string {
 	out, err := run(ctx, "version", "-o", "json")
 	if err != nil {
-		return PinnedVersion
+		return MinVersion
 	}
 	var info struct {
 		Version string `json:"version"`
 	}
 	if err := json.Unmarshal([]byte(out), &info); err != nil {
-		return PinnedVersion
+		return MinVersion
 	}
 	return ModuleVersion(info.Version)
 }
 
 // ModuleVersion turns the version `a2a version -o json` reports into a Go
-// module version, or [PinnedVersion] for an unknown or development build.
+// module version, or [MinVersion] for an unknown or development build.
 func ModuleVersion(v string) string {
 	if v == "" || v == "dev" || v == "(devel)" {
-		return PinnedVersion
+		return MinVersion
 	}
 	if !strings.HasPrefix(v, "v") {
 		return "v" + v
@@ -80,9 +80,9 @@ func ModuleVersion(v string) string {
 }
 
 // Outdated reports whether the a2a CLI module version v predates
-// [PinnedVersion].
+// [MinVersion].
 func Outdated(v string) bool {
-	return semver.Compare(v, PinnedVersion) < 0
+	return semver.Compare(v, MinVersion) < 0
 }
 
 func run(ctx context.Context, args ...string) (string, error) {

@@ -21,9 +21,9 @@ func TestModuleVersion(t *testing.T) {
 	tests := []struct {
 		in, want string
 	}{
-		{in: "", want: PinnedVersion},
-		{in: "dev", want: PinnedVersion},
-		{in: "(devel)", want: PinnedVersion},
+		{in: "", want: MinVersion},
+		{in: "dev", want: MinVersion},
+		{in: "(devel)", want: MinVersion},
 		{in: "0.4.0", want: "v0.4.0"},
 		{in: "v0.4.0", want: "v0.4.0"},
 		{in: "v0.4.1-0.20261022125340-9a4ea7697c42", want: "v0.4.1-0.20261022125340-9a4ea7697c42"},
@@ -45,10 +45,10 @@ func TestOutdated(t *testing.T) {
 		want    bool
 	}{
 		{version: "v0.3.1", want: true},
-		{version: "v0.3.2-0.20261027071959-4abaf842d69f", want: true},
-		{version: PinnedVersion, want: false},
-		{version: "v0.3.2", want: false},
-		{version: "v0.4.0", want: false},
+		{version: "v0.3.2-0.20261030153310-f90e4eb628cd", want: true},
+		{version: "v0.4.0-rc.1", want: true},
+		{version: MinVersion, want: false},
+		{version: "v0.4.1", want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.version, func(t *testing.T) {
