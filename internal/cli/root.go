@@ -103,7 +103,7 @@ func Execute(args []string) int {
 	if isPluginInfoCall(args, os.Stdout) {
 		return printPluginInfo(os.Stdout)
 	}
-	cfg := &globalConfig{Printer: &output.Printer{Out: os.Stdout}}
+	cfg := &globalConfig{Printer: output.NewPrinter(os.Stdout, output.ModeText)}
 	root := newRootCmd(cfg)
 	root.SetArgs(args)
 	if err := root.Execute(); err != nil {

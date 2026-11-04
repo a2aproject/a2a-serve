@@ -42,12 +42,6 @@ func TestClassify(t *testing.T) {
 			wantExit: 2,
 		},
 		{
-			name:     "already-classified card error passes through",
-			err:      CardResolution(errors.New("not found")),
-			wantCode: CodeCardInvalid,
-			wantExit: 4,
-		},
-		{
 			name:     "error marked as a usage error",
 			err:      fmt.Errorf("loading: %w", markedUsage{}),
 			wantCode: CodeUsage,
@@ -158,46 +152,6 @@ func TestUsage(t *testing.T) {
 	}
 	if got.Hint != UsageHint {
 		t.Errorf("Usage().Hint = %q, want %q", got.Hint, UsageHint)
-	}
-}
-
-func TestCardResolution(t *testing.T) {
-	t.Parallel()
-
-	tests := []struct {
-		name     string
-		err      error
-		wantCode string
-		wantExit int
-	}{
-		{
-			name:     "transport failure is io",
-			err:      fmt.Errorf("card request failed: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}),
-			wantCode: CodeIO,
-			wantExit: 3,
-		},
-		{
-			name:     "non-transport failure is card-invalid",
-			err:      errors.New("card request failed, status: 404 Not Found"),
-			wantCode: CodeCardInvalid,
-			wantExit: 4,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			got := CardResolution(tt.err)
-			if got.Code != tt.wantCode {
-				t.Errorf("CardResolution(%v).Code = %q, want %q", tt.err, got.Code, tt.wantCode)
-			}
-			if got.Exit != tt.wantExit {
-				t.Errorf("CardResolution(%v).Exit = %d, want %d", tt.err, got.Exit, tt.wantExit)
-			}
-			if !errors.Is(got, tt.err) {
-				t.Errorf("CardResolution(%v) does not wrap the cause", tt.err)
-			}
-		})
 	}
 }
 

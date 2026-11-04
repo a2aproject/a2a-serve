@@ -132,15 +132,6 @@ func (p *Printer) PrintTableOrEmpty(headers []string, rows [][]string, empty str
 	return err
 }
 
-// PrintCard writes an agent card in the configured Mode.
-func (p *Printer) PrintCard(card *a2a.AgentCard) error {
-	if p.IsJSON() {
-		return p.PrintJSON(card)
-	}
-	_, err := io.WriteString(p.Out, formatCard(card))
-	return err
-}
-
 // PrintEvent writes a streaming event in the configured Mode. In ModeJson each
 // event is an indented record; in ModeJSONL each event is one compact object per
 // line.
@@ -219,52 +210,6 @@ func (p *Printer) Flush() error {
 	return err
 }
 
-// PrintTaskList writes a list of tasks in the configured Mode.
-func (p *Printer) PrintTaskList(resp *a2a.ListTasksResponse) error {
-	if p.IsJSON() {
-		return p.PrintJSON(resp)
-	}
-	_, err := io.WriteString(p.Out, formatTaskList(resp))
-	return err
-}
-
-// PrintPushConfig writes a single push-notification configuration in the
-// configured Mode. In text mode the auth credentials are redacted.
-func (p *Printer) PrintPushConfig(pc *a2a.PushConfig) error {
-	if p.IsJSON() {
-		return p.PrintJSON(pc)
-	}
-	_, err := io.WriteString(p.Out, formatPushConfig(pc))
-	return err
-}
-
-// PrintPushConfigList writes a list of push-notification configurations in the
-// configured Mode.
-func (p *Printer) PrintPushConfigList(configs []*a2a.PushConfig) error {
-	if p.IsJSON() {
-		return p.PrintJSON(configs)
-	}
-	tw := tabwriter.NewWriter(p.Out, 0, 4, 2, ' ', 0)
-	if _, err := io.WriteString(tw, "ID\tTASK\tURL\n"); err != nil {
-		return err
-	}
-	for _, pc := range configs {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\n", pc.ID, pc.TaskID, pc.URL); err != nil {
-			return err
-		}
-	}
-	return tw.Flush()
-}
-
-// PrintPushConfigDeleted confirms deletion of a push-notification configuration.
-func (p *Printer) PrintPushConfigDeleted(taskID, configID string) error {
-	if p.IsJSON() {
-		return p.PrintJSON(map[string]any{"deleted": true, "taskId": taskID, "id": configID})
-	}
-	_, err := fmt.Fprintf(p.Out, "Deleted:  %s (task %s)\n", configID, taskID)
-	return err
-}
-
 // PrintRemoved confirms the removal of name, of kind: as text, or else as
 // JSON.
 func (p *Printer) PrintRemoved(kind, name, text string) error {
@@ -273,65 +218,6 @@ func (p *Printer) PrintRemoved(kind, name, text string) error {
 	}
 	_, err := fmt.Fprintln(p.Out, text)
 	return err
-}
-
-func formatPushConfig(pc *a2a.PushConfig) string {
-	var sb strings.Builder
-	if pc.ID != "" {
-		fmt.Fprintf(&sb, "Config:   %s\n", pc.ID)
-	}
-	fmt.Fprintf(&sb, "Task:     %s\n", pc.TaskID)
-	fmt.Fprintf(&sb, "URL:      %s\n", pc.URL)
-	if pc.Token != "" {
-		fmt.Fprintf(&sb, "Token:    %s\n", pc.Token)
-	}
-	if pc.Auth != nil {
-		fmt.Fprintf(&sb, "Auth:     %s", pc.Auth.Scheme)
-		if pc.Auth.Credentials != "" {
-			sb.WriteString(" <redacted>")
-		}
-		sb.WriteString("\n")
-	}
-	return sb.String()
-}
-
-func formatCard(card *a2a.AgentCard) string {
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "Name:         %s\n", card.Name)
-	if card.Description != "" {
-		fmt.Fprintf(&sb, "Description:  %s\n", card.Description)
-	}
-	fmt.Fprintf(&sb, "Version:      %s\n", card.Version)
-
-	if len(card.SupportedInterfaces) > 0 {
-		sb.WriteString("Interfaces:\n")
-		for _, iface := range card.SupportedInterfaces {
-			sb.WriteString(formatInterface(iface))
-		}
-	}
-
-	fmt.Fprintf(&sb, "Streaming:    %v\n", card.Capabilities.Streaming)
-
-	if len(card.Skills) > 0 {
-		sb.WriteString("Skills:\n")
-		for _, s := range card.Skills {
-			fmt.Fprintf(&sb, "  %-20s %s\n", s.ID, s.Name)
-		}
-	}
-
-	return sb.String()
-}
-
-func formatInterface(iface *a2a.AgentInterface) string {
-	binding := string(iface.ProtocolBinding)
-	if iface.ProtocolVersion != "" {
-		binding = fmt.Sprintf("%s (A2A v%s)", binding, iface.ProtocolVersion)
-	}
-	line := fmt.Sprintf("  %-22s %s", binding, iface.URL)
-	if iface.Tenant != "" {
-		line += fmt.Sprintf("  (tenant: %s)", iface.Tenant)
-	}
-	return line + "\n"
 }
 
 func formatTask(task *a2a.Task) string {
@@ -391,20 +277,6 @@ func formatMessage(msg *a2a.Message) string {
 		role = "agent"
 	}
 	return fmt.Sprintf("[%s] %s\n", role, MessageText(msg))
-}
-
-func formatTaskList(resp *a2a.ListTasksResponse) string {
-	var sb strings.Builder
-	tw := tabwriter.NewWriter(&sb, 0, 4, 2, ' ', 0)
-	_, _ = io.WriteString(tw, "ID\tSTATUS\tCONTEXT\n")
-	for _, t := range resp.Tasks {
-		_, _ = io.WriteString(tw, fmt.Sprintf("%s\t%s\t%s\n", t.ID, shortState(t.Status.State), t.ContextID))
-	}
-	_ = tw.Flush()
-	if resp.NextPageToken != "" {
-		fmt.Fprintf(&sb, "\nNext page token: %s\n", resp.NextPageToken)
-	}
-	return sb.String()
 }
 
 // MessageText returns the concatenated textual representation of a message's parts.

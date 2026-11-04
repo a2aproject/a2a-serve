@@ -35,7 +35,7 @@ func ReferencePages() map[string]string {
 }
 
 func referenceRoot() *cobra.Command {
-	return newRootCmd(&globalConfig{Printer: &output.Printer{Out: io.Discard}})
+	return newRootCmd(&globalConfig{Printer: output.NewPrinter(io.Discard, output.ModeText)})
 }
 
 var referenceOptions = clidoc.Options{
