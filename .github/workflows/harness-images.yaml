@@ -1,13 +1,16 @@
 # Publishes the harness images that `a2a-serve start <harness>` pulls by default,
-# ghcr.io/a2aproject/harness-<name>:a2a-<A2A_CLI_VERSION of the Dockerfile>.
-# Without them every first run builds the image locally.
+# ghcr.io/a2aproject/harness-<name>:latest. Without them every first run builds
+# the image locally.
 name: Harness images
 
 on:
   push:
     branches: [ "main" ]
+    paths:
+      - 'internal/harness/images/**'
+      - '.github/workflows/harness-images.yaml'
   schedule:
-    # Weekly, to pick up new harness releases installed at build time.
+    # Weekly, to pick up new harness and a2a CLI releases installed at build time.
     - cron: '0 6 * * 1'
   workflow_dispatch:
 
@@ -31,11 +34,9 @@ jobs:
         TOKEN: ${{ github.token }}
       run: |
         set -eu
-        cli=$(sed -n 's/^ARG A2A_CLI_VERSION=//p' "$CONTEXT/Dockerfile")
-        test -n "$cli"
         printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
         docker run --privileged --rm tonistiigi/binfmt --install arm64
         docker buildx create --use
         docker buildx build --push --platform linux/amd64,linux/arm64 \
-          -t "$IMAGE:a2a-$cli" -t "$IMAGE:latest" -t "$IMAGE:sha-${GITHUB_SHA::12}" \
+          -t "$IMAGE:latest" -t "$IMAGE:sha-${GITHUB_SHA::12}" \
           "$CONTEXT"

@@ -178,7 +178,7 @@ func (s *Server) localCLI(ctx context.Context) string {
 		return ""
 	}
 	if v := a2acli.Version(ctx); a2acli.Outdated(v) {
-		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a-serve doctor", v, cli, a2acli.PinnedVersion)
+		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a-serve doctor", v, cli, a2acli.MinVersion)
 	}
 	return cli
 }
