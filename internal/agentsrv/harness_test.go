@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -313,7 +314,7 @@ func waitState(t *testing.T, c *a2aclient.Client, id a2a.TaskID, state a2a.TaskS
 func wantResult(t *testing.T, task *a2a.Task, state a2a.TaskState, text string) {
 	t.Helper()
 	if task.Status.State != state {
-		t.Fatalf("task state = %s (%s), want %s", task.Status.State, messageText(task.Status.Message), state)
+		t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), state)
 	}
 	if got := resultText(task); !strings.Contains(got, text) {
 		t.Fatalf("task result = %q, want it to contain %q", got, text)

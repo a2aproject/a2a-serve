@@ -34,8 +34,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -234,7 +234,7 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 }
 
 func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
-	u := trimSlash(baseURL) + "/n/" + node.ID
+	u := mailboxapi.NodeURL(baseURL, node.ID)
 	desc := node.Description
 	if desc == "" {
 		desc = node.Name + " is a webhook node hosted by " + n.cfg.AgentName() + "."
@@ -254,14 +254,6 @@ func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
 			ID: "node", Name: node.Name, Tags: []string{"async"},
 			Description: "Works asynchronously: a task stays submitted until the agent wakes up.",
 		}},
-	}
-}
-
-// Info describes a node for the control API.
-func (n *Host) Info(node store.Node) controlapi.NodeInfo {
-	return controlapi.NodeInfo{
-		ID: node.ID, Name: node.Name, URL: trimSlash(n.cfg.BaseURL()) + "/n/" + node.ID,
-		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
@@ -300,13 +292,13 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 	}
 	slog.Info("node paired", "node", node.ID)
 	jsonhttp.Write(w, http.StatusOK, pairapi.Response{
-		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: trimSlash(baseURL) + "/n/" + node.ID,
+		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: mailboxapi.NodeURL(baseURL, node.ID),
 	})
 }
 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	return mailboxapi.NodeInfo{
-		ID: node.ID, Name: node.Name, Description: node.Description, URL: trimSlash(baseURL) + "/n/" + node.ID,
+		ID: node.ID, Name: node.Name, Description: node.Description, URL: mailboxapi.NodeURL(baseURL, node.ID),
 		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
 }
@@ -466,7 +458,7 @@ func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) 
 
 		n.wake(e.node, mailboxapi.Envelope{
 			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.AgentName()),
-			Message: ec.Message, Text: mailboxapi.TextOf(ec.Message), State: mailboxapi.StateName(state),
+			Message: ec.Message, Text: a2atext.Message(ec.Message), State: mailboxapi.StateName(state),
 		})
 
 		timer := time.NewTimer(nodeTaskTimeout)
@@ -714,5 +706,3 @@ func instructions(env mailboxapi.Envelope) string {
 	}
 	return ""
 }
-
-func trimSlash(u string) string { return strings.TrimSuffix(u, "/") }

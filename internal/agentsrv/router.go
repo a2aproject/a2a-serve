@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
@@ -878,7 +879,7 @@ func (r *Router) answerHint(ctx context.Context, rec store.Question, q *approval
 
 // ownerChatOrder is the order in which, without --owner-chat, the
 // messengers are tried for the owner chat.
-var ownerChatOrder = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
+var ownerChatOrder = []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}
 
 // OwnerChat returns the chat of --owner-chat, or else the direct chat of an
 // owner on the first running messenger, in ownerChatOrder.

@@ -20,13 +20,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 )
 
-// Channel kinds.
-const (
-	ChannelTelegram = agentdir.ChannelTelegram
-	ChannelDiscord  = agentdir.ChannelDiscord
-	ChannelEmail    = agentdir.ChannelEmail
-)
-
 // buildChannels creates the channels of the config.
 func (s *Server) buildChannels() ([]channel.Channel, error) {
 	return configured.All(s.config(), s.secrets(), s.channelOptions())

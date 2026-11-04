@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/webhook"
@@ -218,7 +219,7 @@ func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*co
 // NodeInfo describes a node hosted at the agent URL base.
 func NodeInfo(base string, node store.Node) controlapi.NodeInfo {
 	return controlapi.NodeInfo{
-		ID: node.ID, Name: node.Name, URL: strings.TrimSuffix(base, "/") + "/n/" + node.ID,
+		ID: node.ID, Name: node.Name, URL: mailboxapi.NodeURL(base, node.ID),
 		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
@@ -468,7 +469,7 @@ func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
 		if n, ok := nodesByID[p.Name]; ok {
 			cp.Principal = auth.NodePrincipal(n.ID)
 			cp.Node = &controlapi.NodeDetails{
-				URL: NodeInfo(base, n).URL, Webhook: webhook.RedactURL(n.Webhook), Description: n.Description,
+				URL: mailboxapi.NodeURL(base, n.ID), Webhook: webhook.RedactURL(n.Webhook), Description: n.Description,
 				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
 				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
 			}

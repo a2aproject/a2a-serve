@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -256,7 +257,7 @@ func TestConformanceAnswerFollowsQuestionInHistory(t *testing.T) {
 
 	var got []string
 	for _, m := range done.History {
-		got = append(got, string(m.Role)+": "+messageText(m))
+		got = append(got, string(m.Role)+": "+a2atext.Message(m))
 	}
 	question := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == task.Status.Message.ID })
 	answered := slices.IndexFunc(done.History, func(m *a2a.Message) bool { return m.ID == answer.ID })

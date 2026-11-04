@@ -26,6 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -97,7 +98,7 @@ func (rd *renderer) onEvent(ctx context.Context, ev a2a.Event) bool {
 		rd.setTask(e.TaskID, e.ContextID)
 		return rd.onStatus(ctx, e.Status)
 	case *a2a.Message:
-		rd.send(ctx, textOf(e.Parts))
+		rd.send(ctx, a2atext.Parts(e.Parts))
 		return true
 	}
 	return false
@@ -149,7 +150,7 @@ func (rd *renderer) onStatus(ctx context.Context, st a2a.TaskStatus) bool {
 		return false
 	case a2a.TaskStateWorking:
 		if st.Message != nil {
-			if text := textOf(st.Message.Parts); text != "" {
+			if text := a2atext.Parts(st.Message.Parts); text != "" {
 				rd.mu.Lock()
 				rd.progress = text
 				rd.mu.Unlock()
@@ -163,7 +164,7 @@ func (rd *renderer) onStatus(ctx context.Context, st a2a.TaskStatus) bool {
 		return true
 	case a2a.TaskStateAuthRequired:
 		rd.flush(ctx, true)
-		rd.send(ctx, "The agent needs authorization: "+messageText(st.Message))
+		rd.send(ctx, "The agent needs authorization: "+a2atext.Message(st.Message))
 		return true
 	case a2a.TaskStateCompleted, a2a.TaskStateFailed, a2a.TaskStateCanceled, a2a.TaskStateRejected:
 		rd.final(ctx, st)
@@ -316,7 +317,7 @@ func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
 		rd.timer = nil
 	}
 	text := rd.text()
-	status := messageText(st.Message)
+	status := a2atext.Message(st.Message)
 	switch st.State {
 	case a2a.TaskStateCompleted:
 		if text == "" {
@@ -376,7 +377,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	}
 	q := approvals.FromMessage(msg)
 	if q == nil || q.Type != approvals.TypePermission {
-		rd.send(ctx, messageText(msg))
+		rd.send(ctx, a2atext.Message(msg))
 		return
 	}
 	if rd.p.Role == auth.RoleAnonymous || rd.r.anonymous(ctx, contextID) {
@@ -399,7 +400,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", user, q)
 	if err != nil {
 		slog.Error("storing question", "error", err)
-		rd.send(ctx, messageText(msg))
+		rd.send(ctx, a2atext.Message(msg))
 		return
 	}
 	out := channel.Outbound{Conv: rd.conv, Text: q.Text, ReplyTo: rd.replyTo, Subject: rd.subject()}
@@ -458,21 +459,4 @@ func joinText(a, b string) string {
 		return b
 	}
 	return a + "\n\n" + b
-}
-
-func textOf(parts []*a2a.Part) string {
-	var out []string
-	for _, p := range parts {
-		if t := p.Text(); t != "" {
-			out = append(out, t)
-		}
-	}
-	return strings.Join(out, "\n")
-}
-
-func messageText(m *a2a.Message) string {
-	if m == nil {
-		return ""
-	}
-	return textOf(m.Parts)
 }
