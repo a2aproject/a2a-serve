@@ -86,15 +86,13 @@ type Action struct {
 	Option     int
 }
 
-// MailPrefix starts the identity of an email sender: mail:<addr>.
-const MailPrefix = "mail:"
-
 // Inbound is a message from a channel.
 type Inbound struct {
 	Channel string
 	// MessageID is the dedup key; it becomes the A2A messageId.
 	MessageID string
-	// Identity is tg:<user>, dc:<user> or mail:<addr>.
+	// Identity is the sender's chat account: telegram:<user id>,
+	// discord:<user id>, or an email sender's address.
 	Identity string
 	// Name is the sender's display name.
 	Name string

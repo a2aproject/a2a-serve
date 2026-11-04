@@ -338,14 +338,12 @@ func workspaceDomain(c googleauth.Claims) string {
 	return ""
 }
 
-// issue stores a new access token for email and returns it. The token is
-// named google:<email>, so `pair rm` revokes it, and the policy decides
-// each request it makes.
+// issue stores a new access token for email and returns it. The token
+// carries the email, and the policy decides each request it makes.
 func (o *oauthServer) issue(w http.ResponseWriter, r *http.Request, base, email, domain string) {
 	ctx := r.Context()
 	tok := auth.NewToken()
-	t := store.Token{Name: auth.GooglePrefix + email, Principal: auth.EmailPrefix + email, Role: auth.RoleAuthenticated, Domain: domain, URL: base}
-	if err := o.s.store.PutToken(ctx, tok, t); err != nil {
+	if err := o.s.store.PutToken(ctx, tok, store.Token{Email: email, Domain: domain, URL: base}, ""); err != nil {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}

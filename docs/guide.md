@@ -206,16 +206,22 @@ The [access model](concepts/access-model.md) describes the model, and which of i
 
 ```sh
 a2a-serve pair invite grok                        # authenticated: can talk to the agent
-a2a-serve pair invite anna --role owner           # owner: also sees and answers every task
+a2a-serve pair invite anna --owner                # owner: also sees and answers every task
 a2a-serve pair invite anna                        # another code, for a second device
-a2a-serve pair list
-a2a-serve pair get anna                           # role, tokens, linked accounts, pending codes
-a2a-serve pair set anna --role authenticated      # change the role
+a2a-serve pair list                               # kind, role, linked messengers, last use
+a2a-serve pair get anna                           # kind, role, tokens, linked accounts, pending codes
+a2a-serve pair set anna --owner=false             # change the role
+a2a-serve pair set laptop --kind device           # change the kind: person, device or agent
 a2a-serve pair set anna --rotate                  # revoke her tokens and print a new code
-a2a-serve pair rm grok                            # revoke its tokens and messenger links
+a2a-serve pair rm grok                            # delete the pairing, its tokens and messenger links
 ```
 
 A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot. `a2a-serve pair list --joined` lists the agents you joined, and `pair rm <agent-url>` forgets one.
+
+- The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
+- A change of role applies to the next request of every token and messenger account of the pairing.
+- `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
+- The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
 
 ## Google sign-in
 
@@ -230,7 +236,7 @@ a2a send -a https://coder.example.com "hi"      # signs in once
 
 - Add `<agent-url>/oauth/callback` to the authorized redirect URIs of your Google app. Use the URL people call, usually the public one.
 - `*@example.com` matches accounts of the example.com Google Workspace, and mail from example.com that passes DMARC. Anyone can create a personal Google account with an @example.com address, so such accounts don't match. Tailnet and relay logins match only full addresses.
-- People who sign in are authenticated. Removing an email from the allowlist cuts them off at their next request; `a2a-serve pair rm google:<email>` revokes their tokens.
+- People who sign in are authenticated. Their tokens carry the email, so removing it from the allowlist cuts them off at their next request.
 - Sign-in works on every network: Funnel, ngrok, a relay or your own domain.
 
 Not in this version: providers other than Google, and sign-in without your own Google app.

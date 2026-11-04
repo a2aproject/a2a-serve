@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
 func newPairJoinCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -41,7 +42,7 @@ instead, which the a2a-serve mailbox commands use.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
 			defer cancel()
-			c, err := credstore.Pair(ctx, &http.Client{Transport: cfg.httpTransport}, args[0], args[1])
+			c, err := credstore.Pair(ctx, &http.Client{Transport: cfg.httpTransport}, args[0], args[1], pairapi.PairingPerson)
 			if err != nil {
 				return err
 			}

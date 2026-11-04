@@ -165,9 +165,12 @@ func ScheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
 
 // DirectConv returns the direct chat of user on a channel.
 func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
-	links, err := st.LinksOf(ctx, user)
-	if err != nil {
-		return "", err
+	var links []store.Link
+	if name, ok := auth.PrincipalPairing(user); ok {
+		var err error
+		if links, err = st.LinksOf(ctx, name); err != nil {
+			return "", err
+		}
 	}
 	for _, l := range links {
 		if l.Channel == ch && l.Conv != "" {
@@ -177,16 +180,20 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 	return "", fmt.Errorf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", approvals.DisplayPrincipal(user), ch)
 }
 
-// ResolveUser turns owner or a pairing name into a principal ID which has
-// a user. Principal IDs pass through.
+// ResolveUser turns owner or a pairing name into the principal ID of a
+// pairing. Principal IDs of pairings pass through.
 func ResolveUser(ctx context.Context, st *store.Store, who string) (string, error) {
 	switch {
-	case who == "" || who == "owner" || who == auth.OwnerID:
+	case who == "" || who == auth.OwnerName || who == auth.OwnerID:
 		return auth.OwnerID, nil
 	case !strings.Contains(who, ":"):
-		who = "pair:" + who
+		who = auth.PairPrincipal(who)
 	}
-	if _, err := st.User(ctx, who); err != nil {
+	name, ok := auth.PrincipalPairing(who)
+	if !ok {
+		return "", fmt.Errorf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
+	}
+	if _, err := st.Pairing(ctx, name); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			return "", fmt.Errorf("unknown user %s: pair them first with `a2a-serve pair invite`", approvals.DisplayPrincipal(who))
 		}

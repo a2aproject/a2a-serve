@@ -43,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -120,13 +121,13 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	task := send(t, ownerClient, userText("call reviewer hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
-	linkOwner(t, coder, "tg:1", "dm1")
-	coder.ch.write("tg:1", "dm1", "call reviewer ask")
+	linkOwner(t, coder, "telegram:1", "dm1")
+	coder.ch.write("telegram:1", "dm1", "call reviewer ask")
 	ref, q := coder.ch.waitFor(t, "dm1", hasQuestion)
 	if !strings.Contains(q.Text, "reviewer wants to run git push") {
 		t.Fatalf("relayed question = %q, want reviewer and git push", q.Text)
 	}
-	coder.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	coder.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 	coder.ch.waitFor(t, "dm1", hasText("✓ Allow by owner"))
 
 	contextID, err := coder.srv.store.ContextOf(ctx, "fake", "dm1")
@@ -256,11 +257,11 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 		t.Fatalf("http.Post(public unauthenticated) status = %d, want %d", unauthResp.StatusCode, http.StatusUnauthorized)
 	}
 
-	extCode, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "external", Role: auth.RoleAuthenticated})
+	extCode, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "external"})
 	if err != nil {
 		t.Fatalf("reviewerCtl.Pair(external) error = %v, want nil", err)
 	}
-	extCred, err := credstore.Pair(ctx, http.DefaultClient, pubURL, extCode.Code)
+	extCred, err := credstore.Pair(ctx, http.DefaultClient, pubURL, extCode.Code, pairapi.PairingPerson)
 	if err != nil {
 		t.Fatalf("credstore.Pair() error = %v, want nil", err)
 	}

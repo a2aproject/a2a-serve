@@ -57,6 +57,11 @@ func TestAgentCallsContact(t *testing.T) {
 	coder, reviewer := owner.startAgent("coder"), owner.startAgent("reviewer")
 
 	coder.serve("contact", "add", "reviewer", "--url", reviewer.url, "--code", reviewer.invite("coder"))
+	var paired pairing
+	reviewer.serveJSON(&paired, "pair", "get", "coder")
+	if paired.Kind != "agent" || paired.Role != "authenticated" {
+		t.Fatalf("a2a-serve pair get coder on the reviewer = %+v, want an authenticated agent", paired)
+	}
 
 	got := resultOf(owner.mustSend(coder.url, "call reviewer hello"))
 	if got.State != a2a.TaskStateCompleted || !strings.HasSuffix(got.Text, "TASK_STATE_COMPLETED: Hello from fakeacp.") {

@@ -305,7 +305,7 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 	in := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: m.ID,
-		Identity:  "dc:" + m.Author.ID,
+		Identity:  "discord:" + m.Author.ID,
 		Name:      m.Author.Username,
 		Conv:      channel.ConvKey(m.ChannelID),
 		Direct:    direct,
@@ -390,7 +390,7 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	in := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: "int:" + i.ID,
-		Identity:  "dc:" + user.ID,
+		Identity:  "discord:" + user.ID,
 		Name:      user.Username,
 		Conv:      channel.ConvKey(i.ChannelID),
 		Direct:    i.GuildID == "",

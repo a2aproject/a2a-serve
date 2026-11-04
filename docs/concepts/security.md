@@ -30,7 +30,7 @@ A web page open in your browser can't make requests that change state on the age
 
 | Network | Who gets in |
 | --- | --- |
-| localhost | Callers with a token. On start, the server saves an owner token named `local` for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
+| localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
 | Tailscale | Everyone on the tailnet. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
 | LAN | Everyone who can reach the port. The server accepts only requests for its LAN address, against DNS rebinding. |
 | Agent Mesh relay | On a relay that admits people by sign-in: your agents, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. |
@@ -59,11 +59,11 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Token | Grants | Stored | Revoke |
 | --- | --- | --- | --- |
 | Pairing code (`K7Q2-9XF4`) | One exchange for a token or a messenger link, within 15 minutes | Hashed in `server.db` | Expires; `a2a-serve pair rm <name>` or `pair set <name> --rotate` |
-| Caller token (`a2p_…`) | Calls to this agent with the pairing's role | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a-serve pair rm <name>`, or `pair set <name> --rotate` for a new code. The caller forgets it with `a2a-serve pair rm <agent-url>` |
-| Owner token `local` | Calls to the local URL as the owner | Like a caller token, for the user running the server | `a2a-serve pair rm local`; the next start issues a new one |
-| Messenger link | Messages from that account with the pairing's role | `server.db` | `a2a-serve pair rm <name>` |
+| Caller token (`a2p_…`) | Calls to this agent with the pairing's current role | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a-serve pair rm <name>`, or `pair set <name> --rotate` for a new code. The caller forgets it with `a2a-serve pair rm <agent-url>` |
+| Token of the `local` pairing | Calls to the local URL as the owner | Like a caller token, for the user running the server | `a2a-serve pair rm local`, which also unlinks your messenger accounts; the next start issues a new token |
+| Messenger link | Messages from that account with the pairing's current role | `server.db` | `a2a-serve pair rm <name>` |
 | Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as an authenticated caller | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
-| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>`, or `a2a-serve pair rm google:<email>` |
+| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>` |
 | Webhook signing secret | Proves that wakes come from this agent | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
 | Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |

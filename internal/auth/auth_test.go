@@ -68,30 +68,39 @@ func header(kv ...string) http.Header {
 	return h
 }
 
+func pair(t *testing.T, s *store.Store, name, role string) {
+	t.Helper()
+	if _, err := s.EnsurePairing(context.Background(), store.Pairing{Name: name, Role: role}); err != nil {
+		t.Fatalf("EnsurePairing(%s) error = %v", name, err)
+	}
+}
+
+func issueToken(t *testing.T, s *store.Store, name, kind string) string {
+	t.Helper()
+	tok, _, err := IssueToken(context.Background(), s, name, "https://agent", kind)
+	if err != nil {
+		t.Fatalf("IssueToken(%s) error = %v", name, err)
+	}
+	return tok
+}
+
 func TestChainAuthenticate(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	code, _, err := MintCode(ctx, s, PurposePair, "grok", RoleAuthenticated)
+	pair(t, s, "grok", RoleAuthenticated)
+	code, _, err := MintCode(ctx, s, "grok")
 	if err != nil {
 		t.Fatalf("MintCode() error = %v", err)
 	}
-	c, err := s.TakeCode(ctx, NormalizeCode(strings.ToLower(code)), PurposePair)
+	c, err := s.TakeCode(ctx, NormalizeCode(strings.ToLower(code)), store.AnyCode)
 	if err != nil {
 		t.Fatalf("TakeCode() error = %v", err)
 	}
-	token, _, err := IssueToken(ctx, s, c, "https://agent")
-	if err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
-	ownerToken, _, err := IssueToken(ctx, s, store.Code{Name: "phone", Role: RoleOwner}, "https://agent")
-	if err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
-	localToken, _, err := IssueToken(ctx, s, store.Code{Name: LocalPairing, Role: RoleOwner}, "http://127.0.0.1:4000")
-	if err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
+	token := issueToken(t, s, c.Pairing, "agent")
+	pair(t, s, "phone", RoleOwner)
+	ownerToken := issueToken(t, s, "phone", "device")
+	localToken := issueToken(t, s, LocalPairing, "")
 	nodeToken := mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "secret")
 	if err := s.PutNode(ctx, store.Node{ID: "grok-node", Name: "Grok", TokenHash: cryptoutil.Hash(nodeToken)}); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
@@ -296,7 +305,7 @@ func TestChainAuthenticate(t *testing.T) {
 func putGoogleToken(t *testing.T, s *store.Store, email, domain string) string {
 	t.Helper()
 	tok := NewToken()
-	if err := s.PutToken(context.Background(), tok, store.Token{Name: GooglePrefix + email, Principal: EmailPrefix + email, Role: RoleAuthenticated, Domain: domain}); err != nil {
+	if err := s.PutToken(context.Background(), tok, store.Token{Email: email, Domain: domain}, ""); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
 	return tok
@@ -307,7 +316,8 @@ func TestChainAuthenticateChannel(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	link := func(identity, name, role string) {
-		code, _, err := MintCode(ctx, s, PurposePair, name, role)
+		pair(t, s, name, role)
+		code, _, err := MintCode(ctx, s, name)
 		if err != nil {
 			t.Fatalf("MintCode() error = %v", err)
 		}
@@ -315,9 +325,9 @@ func TestChainAuthenticateChannel(t *testing.T) {
 			t.Fatalf("Link() error = %v", err)
 		}
 	}
-	link("tg:1", OwnerLink, RoleOwner)
-	link("tg:2", "anna", RoleAuthenticated)
-	link("tg:3", "phone", RoleOwner)
+	link("telegram:1", LocalPairing, RoleOwner)
+	link("telegram:2", "anna", RoleAuthenticated)
+	link("telegram:3", "phone", RoleOwner)
 
 	tests := []struct {
 		name        string
@@ -330,52 +340,52 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:   "owner link",
 			policy: DefaultPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "tg:1", Direct: true, Authentic: true},
+			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:1", Direct: true, Authentic: true},
 			want: Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{
-				Network: NetworkChat, Provider: "telegram", ChatAccount: "tg:1", Direct: true, Self: true,
+				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:1", Direct: true, Self: true,
 			}},
 		},
 		{
 			name:   "linked pairing",
 			policy: DefaultPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "tg:2", Authentic: true},
+			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:2", Authentic: true},
 			want: Principal{ID: "pair:anna", Role: RoleAuthenticated, Identity: Identity{
-				Network: NetworkChat, Provider: "telegram", ChatAccount: "tg:2", Pairing: "anna", PairingRole: RoleAuthenticated,
+				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:2", Pairing: "anna", PairingRole: RoleAuthenticated,
 			}},
 		},
 		{
 			name:   "linked owner pairing",
 			policy: DefaultPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "tg:3", Authentic: true},
+			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:3", Authentic: true},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
-				Network: NetworkChat, Provider: "telegram", ChatAccount: "tg:3", Pairing: "phone", PairingRole: RoleOwner,
+				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:3", Pairing: "phone", PairingRole: RoleOwner,
 			}},
 		},
 		{
 			name:        "unlinked account",
 			policy:      DefaultPolicy(true, nil),
-			in:          channel.Inbound{Channel: "telegram", Identity: "tg:4", Direct: true, Authentic: true},
-			wantRefused: "tg:4 on telegram",
+			in:          channel.Inbound{Channel: "telegram", Identity: "telegram:4", Direct: true, Authentic: true},
+			wantRefused: "telegram:4 on telegram",
 		},
 		{
 			name:   "allowed email sender that passed DMARC",
 			policy: DefaultPolicy(true, []string{"*@example.com"}),
-			in:     channel.Inbound{Channel: "email", Identity: "mail:anna@example.com", Direct: true, Authentic: true},
+			in:     channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
-				Network: NetworkChat, Provider: "email", ChatAccount: "mail:anna@example.com", Direct: true,
+				Network: NetworkChat, Provider: "email", ChatAccount: "anna@example.com", Direct: true,
 				Email: "anna@example.com", EmailSource: EmailFromMail, Domain: "example.com",
 			}},
 		},
 		{
 			name:        "email sender not allowed",
 			policy:      DefaultPolicy(true, []string{"bob@example.com"}),
-			in:          channel.Inbound{Channel: "email", Identity: "mail:anna@example.com", Direct: true, Authentic: true},
+			in:          channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			wantRefused: "anna@example.com by email",
 		},
 		{
 			name:    "unverified sender",
 			policy:  DefaultPolicy(true, []string{"anna@example.com"}),
-			in:      channel.Inbound{Channel: "email", Identity: "mail:anna@example.com", Direct: true},
+			in:      channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true},
 			wantErr: ErrNoCredential,
 		},
 	}
@@ -407,11 +417,10 @@ func TestChainRefresh(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if _, _, err := IssueToken(ctx, s, store.Code{Name: "phone", Role: RoleAuthenticated}, "https://agent"); err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
-	}
-	if err := s.SetPairingRole(ctx, "phone", RoleOwner, PairPrincipal("phone")); err != nil {
-		t.Fatalf("SetPairingRole() error = %v", err)
+	pair(t, s, "phone", RoleAuthenticated)
+	issueToken(t, s, "phone", "device")
+	if err := s.UpdatePairing(ctx, store.Pairing{Name: "phone", Kind: "device", Role: RoleOwner}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
 	}
 	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork}
 
@@ -483,16 +492,16 @@ func TestLink(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	chain := &Chain{Store: s, Policy: func() Policy { return DefaultPolicy(true, nil) }}
-	in := &channel.Inbound{Channel: "telegram", Identity: "tg:42", Conv: "42", Direct: true, Authentic: true}
+	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
 
 	if _, err := chain.Authenticate(ctx, Request{Channel: in}); err == nil {
 		t.Fatalf("Authenticate() before link error = nil, want a refusal")
 	}
-	code, _, err := MintCode(ctx, s, PurposePair, OwnerLink, RoleOwner)
+	code, _, err := MintCode(ctx, s, LocalPairing)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("MintCode() error = %v", err)
 	}
-	if _, err := Link(ctx, s, &channel.Inbound{Channel: "telegram", Identity: "tg:43"}, code); err == nil {
+	if _, err := Link(ctx, s, &channel.Inbound{Channel: "telegram", Identity: "telegram:43"}, code); err == nil {
 		t.Fatalf("Link() unauthentic sender error = nil, want error")
 	}
 	p, err := Link(ctx, s, in, code)
@@ -509,48 +518,68 @@ func TestLink(t *testing.T) {
 	if got.ID != OwnerID || !got.IsOwner() {
 		t.Fatalf("Authenticate() after link = %v, want %v as owner", got, OwnerID)
 	}
-	links, err := s.LinksOf(ctx, OwnerID)
+	links, err := s.LinksOf(ctx, LocalPairing)
 	if err != nil || len(links) != 1 || links[0].Conv != "42" {
 		t.Fatalf("LinksOf() = %v, %v, want one link with conv 42", links, err)
 	}
 }
 
-func TestRevokeRemovesLinksOfPairing(t *testing.T) {
+func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name string
-		role string
-	}{
-		{name: "authenticated", role: RoleAuthenticated},
-		{name: "owner", role: RoleOwner},
+	s := openStore(t)
+	ctx := context.Background()
+	chain := &Chain{Store: s, Policy: func() Policy { return DefaultPolicy(false, nil) }}
+	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
+	pair(t, s, "phone", RoleAuthenticated)
+	code, _, err := MintCode(ctx, s, "phone")
+	if err != nil {
+		t.Fatalf("MintCode() error = %v", err)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			s := openStore(t)
-			ctx := context.Background()
-			chain := &Chain{Store: s, Policy: func() Policy { return DefaultPolicy(true, nil) }}
-			in := &channel.Inbound{Channel: "telegram", Identity: "tg:42", Conv: "42", Direct: true, Authentic: true}
-			code, _, err := MintCode(ctx, s, PurposePair, "phone", tc.role)
-			if err != nil {
-				t.Fatalf("MintCode() error = %v", err)
-			}
-			if _, err := Link(ctx, s, in, code); err != nil {
-				t.Fatalf("Link() error = %v", err)
-			}
+	if _, err := Link(ctx, s, in, code); err != nil {
+		t.Fatalf("Link() error = %v", err)
+	}
+	tok := issueToken(t, s, "phone", "device")
+	byToken := Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+tok)}
 
-			n, err := s.RevokeTokens(ctx, "phone", PrincipalForCode("phone"))
-			if err != nil {
-				t.Fatalf("RevokeTokens() error = %v", err)
-			}
-			if n != 1 {
-				t.Fatalf("RevokeTokens() = %d, want 1", n)
-			}
-			var refused *RefusedError
-			if _, err := chain.Authenticate(ctx, Request{Channel: in}); !errors.As(err, &refused) {
-				t.Fatalf("Authenticate() after revoke error = %v, want a refusal", err)
-			}
-		})
+	if err := s.UpdatePairing(ctx, store.Pairing{Name: "phone", Kind: "person", Role: RoleOwner}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+	for _, r := range []Request{{Channel: in}, byToken} {
+		got, err := chain.Authenticate(ctx, r)
+		if err != nil || got.Role != RoleOwner {
+			t.Fatalf("Authenticate() after the role change = %+v, %v, want owner", got, err)
+		}
+	}
+
+	if err := s.DeletePairing(ctx, "phone"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+	var refused *RefusedError
+	if _, err := chain.Authenticate(ctx, Request{Channel: in}); !errors.As(err, &refused) {
+		t.Fatalf("Authenticate() of a chat link after DeletePairing() error = %v, want a refusal", err)
+	}
+	if _, err := chain.Authenticate(ctx, byToken); !errors.Is(err, ErrNoCredential) {
+		t.Fatalf("Authenticate() of a token after DeletePairing() error = %v, want %v", err, ErrNoCredential)
+	}
+}
+
+func TestLinkRefusesWebhookCodes(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	if err := s.PutNode(ctx, store.Node{ID: "grok", Name: "grok"}); err != nil {
+		t.Fatalf("PutNode() error = %v", err)
+	}
+	code, _, err := MintCode(ctx, s, "grok")
+	if err != nil {
+		t.Fatalf("MintCode() error = %v", err)
+	}
+	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Authentic: true}
+	if _, err := Link(ctx, s, in, code); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("Link() with a webhook code error = %v, want %v", err, ErrInvalidCode)
+	}
+	if _, err := s.TakeCode(ctx, NormalizeCode(code), store.AnyCode); err != nil {
+		t.Fatalf("TakeCode() of the webhook code after Link() error = %v, want it still pending", err)
 	}
 }
 
@@ -580,19 +609,19 @@ func TestLinkCode(t *testing.T) {
 func TestMintSoleCodeRevokesPendingCode(t *testing.T) {
 	t.Parallel()
 	s, ctx := openStore(t), context.Background()
-	first, _, err := MintSoleCode(ctx, s, PurposePair, "owner", RoleOwner)
+	first, _, err := MintSoleCode(ctx, s, LocalPairing)
 	if err != nil {
 		t.Fatalf("MintSoleCode() error = %v", err)
 	}
-	second, _, err := MintSoleCode(ctx, s, PurposePair, "owner", RoleOwner)
+	second, _, err := MintSoleCode(ctx, s, LocalPairing)
 	if err != nil {
 		t.Fatalf("MintSoleCode() error = %v", err)
 	}
 
-	if _, err := s.TakeCode(ctx, NormalizeCode(first), PurposePair); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.TakeCode(ctx, NormalizeCode(first), store.AnyCode); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("TakeCode(first) error = %v, want %v", err, store.ErrNotFound)
 	}
-	if _, err := s.TakeCode(ctx, NormalizeCode(second), PurposePair); err != nil {
+	if _, err := s.TakeCode(ctx, NormalizeCode(second), store.AnyCode); err != nil {
 		t.Fatalf("TakeCode(second) error = %v, want nil", err)
 	}
 }

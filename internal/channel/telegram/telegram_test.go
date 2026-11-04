@@ -144,8 +144,8 @@ func TestChannel(t *testing.T) {
 		}
 	}
 	want := []channel.Inbound{
-		{Channel: "telegram", MessageID: "42:5", Identity: "tg:42", Name: "@anna", Conv: "42", Direct: true, Text: "/start K7Q2-9XF4", Authentic: true},
-		{Channel: "telegram", MessageID: "cb:cb1", Identity: "tg:42", Name: "Anna", Conv: "42", Direct: true, Authentic: true,
+		{Channel: "telegram", MessageID: "42:5", Identity: "telegram:42", Name: "@anna", Conv: "42", Direct: true, Text: "/start K7Q2-9XF4", Authentic: true},
+		{Channel: "telegram", MessageID: "cb:cb1", Identity: "telegram:42", Name: "Anna", Conv: "42", Direct: true, Authentic: true,
 			Action: &channel.Action{QuestionID: "abcd1234", Option: 1}, ReplyTo: channel.Ref{Conv: "42", ID: "7"}},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

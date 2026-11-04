@@ -49,7 +49,7 @@ import (
 func addContact(t *testing.T, caller, callee *testServer, name, role string) {
 	t.Helper()
 	ctx := context.Background()
-	code, err := controlapi.NewClient(callee.dir).Pair(ctx, controlapi.PairCodeRequest{Name: caller.srv.config().Name, Role: role})
+	code, err := controlapi.NewClient(callee.dir).Pair(ctx, controlapi.PairCodeRequest{Name: caller.srv.config().Name, Owner: role == auth.RoleOwner})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,14 +87,14 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	linkOwner(t, assistant, "tg:1", "dm1")
+	linkOwner(t, assistant, "telegram:1", "dm1")
 
-	assistant.ch.write("tg:1", "dm1", "call coder ask")
+	assistant.ch.write("telegram:1", "dm1", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
-	assistant.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	assistant.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 	assistant.ch.waitFor(t, "dm1", hasText("✓ Allow by owner"))
 
 	ctx := context.Background()
@@ -123,9 +123,9 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	linkOwner(t, assistant, "tg:1", "dm1")
+	linkOwner(t, assistant, "telegram:1", "dm1")
 
-	assistant.ch.write("tg:1", "dm1", "call coder ask")
+	assistant.ch.write("telegram:1", "dm1", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
 	waitPendingQuestion(t, assistant, "fake", "dm1", q.Question.ID)
 	root := assistant.dir.Root
@@ -137,7 +137,7 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	if n := restarted.ch.questions(); n != 0 {
 		t.Fatalf("questions asked again after the restart = %d, want 0", n)
 	}
-	restarted.ch.click("tg:1", "dm1", ref, q.Question, 0)
+	restarted.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 	restarted.ch.waitEdited(t, ref, "✓ Allow by owner")
 }
 
@@ -497,15 +497,15 @@ func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	linkOwner(t, assistant, "tg:1", "dm1")
-	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
+	linkOwner(t, assistant, "telegram:1", "dm1")
+	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 
-	assistant.ch.write("tg:2", "dm2", "call coder ask")
+	assistant.ch.write("telegram:2", "dm2", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm2", hasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
-	assistant.ch.click("tg:2", "dm2", ref, q.Question, 0)
+	assistant.ch.click("telegram:2", "dm2", ref, q.Question, 0)
 	assistant.ch.waitEdited(t, ref, "✓ Allow by")
 }
 

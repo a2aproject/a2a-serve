@@ -17,6 +17,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -26,9 +27,17 @@ import (
 
 func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
-		Use:               "rm <name|agent-url>",
-		Aliases:           []string{"delete"},
-		Short:             "Revoke a pairing, remove a webhook node, or forget an agent you joined",
+		Use:     "rm <name|agent-url>",
+		Aliases: []string{"delete"},
+		Short:   "Revoke a pairing, remove a webhook node, or forget an agent you joined",
+		Long: `Delete a pairing with its tokens, linked messenger accounts and pending
+codes, or remove a webhook node. The person may still call the agent through
+the private network or an --allow-email rule; the command says so.
+
+` + "`a2a-serve pair rm local`" + ` revokes the token of this machine and your linked
+chat accounts, and keeps the pairing; the next start issues a new token.
+
+With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" + `.`,
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -55,12 +64,32 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			if resp.Kind == pairapi.KindNode {
-				return cfg.PrintRemoved(resp.Kind, args[0], fmt.Sprintf("✓ removed node %s; the agent can no longer wake it", args[0]))
+			if cfg.IsJSON() {
+				out := map[string]any{"removed": true, "kind": resp.Kind, "name": args[0]}
+				if resp.Kept {
+					out["kept"] = true
+				}
+				if len(resp.StillAllowed) > 0 {
+					out["stillAllowed"] = resp.StillAllowed
+				}
+				return cfg.PrintJSON(out)
 			}
-			return cfg.PrintRemoved(pairapi.KindCaller, args[0], fmt.Sprintf("✓ %s can no longer call the agent", args[0]))
+			_, err = fmt.Fprint(cfg.Out, removedText(args[0], resp))
+			return err
 		},
 	}
+}
+
+func removedText(name string, resp *controlapi.RevokeResponse) string {
+	switch {
+	case resp.Kind == pairapi.PairingWebhook:
+		return fmt.Sprintf("✓ removed node %s; the agent can no longer wake it\n", name)
+	case resp.Kept:
+		return fmt.Sprintf("✓ revoked the token and chat links of %s; the next start issues a new token for this machine\n", name)
+	case len(resp.StillAllowed) > 0:
+		return fmt.Sprintf("✓ removed the pairing %s\n! %s may still call the agent as one of: %s\n", name, name, strings.Join(resp.StillAllowed, "; "))
+	}
+	return fmt.Sprintf("✓ %s can no longer call the agent\n", name)
 }
 
 // pairingCompletions completes the pairings of the running agent, and the

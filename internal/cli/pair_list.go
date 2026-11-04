@@ -32,8 +32,9 @@ func newPairListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:     "list",
 		Aliases: []string{"ls"},
 		Short:   "List the pairings of the agent, or the agents you joined",
-		Long: `In an agent directory, list the callers and webhook nodes paired with the
-agent. Outside one, or with --joined, list the agents you joined with
+		Long: `In an agent directory, list the pairings of the agent with their kind and
+role: people, devices, other agents and webhook nodes, and the built-in local
+pairing, which is you. Outside one, or with --joined, list the agents you joined with
 ` + "`a2a-serve pair join`" + `.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -58,7 +59,7 @@ agent. Outside one, or with --joined, list the agents you joined with
 			}
 			rows := make([][]string, 0, len(all))
 			for _, p := range all {
-				rows = append(rows, []string{p.Name, p.Kind, orDash(p.Role), linkedChannels(p), lastUsed(p)})
+				rows = append(rows, []string{p.Name, orDash(p.Kind), p.Role, linkedChannels(p), lastUsed(p)})
 			}
 			return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a-serve pair invite <name>`")
 		},
@@ -125,8 +126,10 @@ func lastUsed(p controlapi.Pairing) string {
 		return "-"
 	case !p.LastUsed.IsZero():
 		return p.LastUsed.Format(time.DateTime)
-	case len(p.Tokens) == 0 && len(p.Accounts) == 0:
+	case len(p.Tokens) == 0 && len(p.Accounts) == 0 && len(p.PendingCodes) > 0:
 		return "code pending"
+	case len(p.Tokens) == 0 && len(p.Accounts) == 0:
+		return "no credentials"
 	}
 	return "never"
 }

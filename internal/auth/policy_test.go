@@ -17,6 +17,8 @@ package auth
 import (
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -58,7 +60,7 @@ func TestPolicyResolve(t *testing.T) {
 		{name: "highest of pairing and bindings", policy: Policy{Owner: []string{MemberPrivate}}, id: Identity{Network: network.ListenerPrivate, Pairing: "anna", PairingRole: RoleAuthenticated}, want: RoleOwner},
 		{name: "webhook node", policy: DefaultPolicy(false, nil), id: Identity{Network: network.ListenerPublic, WebhookNode: "grok"}, want: RoleAuthenticated},
 		{name: "anyone on the public URL", policy: open, id: Identity{Network: network.ListenerPublic}, want: RoleAnonymous},
-		{name: "anyone in a direct chat", policy: open, id: Identity{Network: NetworkChat, ChatAccount: "tg:1", Direct: true}, want: RoleAnonymous},
+		{name: "anyone in a direct chat", policy: open, id: Identity{Network: NetworkChat, ChatAccount: "telegram:1", Direct: true}, want: RoleAnonymous},
 		{name: "identified caller that matches nothing", policy: open, id: private, want: RoleAnonymous},
 		{name: "unidentified caller on the private network", policy: open, id: Identity{Network: network.ListenerPrivate}},
 		{name: "anonymous without members", policy: DefaultPolicy(false, nil), id: Identity{Network: network.ListenerPublic}},
@@ -100,6 +102,33 @@ func TestIdentityPrincipalID(t *testing.T) {
 			}
 			if back := IdentityOf(got).PrincipalID(); back != got {
 				t.Fatalf("IdentityOf(%q).PrincipalID() = %q, want %q", got, back, got)
+			}
+		})
+	}
+}
+
+func TestPolicyOthers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		policy   Policy
+		provider string
+		want     []string
+	}{
+		{name: "private network", policy: DefaultPolicy(true, nil), provider: network.ProviderTailscale, want: []string{"everyone on the tailnet"}},
+		{name: "no private network", policy: DefaultPolicy(true, nil)},
+		{name: "closed private network", policy: DefaultPolicy(false, nil), provider: network.ProviderRelay},
+		{
+			name: "emails", policy: DefaultPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderLAN,
+			want: []string{"everyone on the LAN", "emails matching *@example.com", "emails matching anna@example.org"},
+		},
+		{name: "anyone", policy: Policy{Owner: []string{MemberSelf}, Anonymous: []string{MemberAnyone}}, want: []string{"anyone on the public URL or in a direct chat"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, tc.policy.Others(tc.provider)); diff != "" {
+				t.Fatalf("Policy.Others() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

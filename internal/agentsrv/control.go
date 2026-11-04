@@ -140,12 +140,12 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	for state, n := range counts {
 		st.Tasks[stateName(state)] = n
 	}
-	links, err := s.store.LinksOf(ctx, auth.OwnerID)
+	links, err := s.store.LinksOf(ctx, auth.LocalPairing)
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range links {
-		st.Owners = append(st.Owners, l.Channel+":"+l.Identity)
+		st.Owners = append(st.Owners, l.Identity)
 	}
 	contacts, err := s.store.Contacts(ctx)
 	if err != nil {
@@ -216,15 +216,15 @@ func (s *Server) ctlUpdatePairing(w http.ResponseWriter, r *http.Request) {
 	jsonhttp.Write(w, http.StatusOK, resp)
 }
 
-// ctlRevoke removes the webhook node called name, or revokes the tokens,
-// links and codes issued to it.
+// ctlRevoke removes the pairing called name with its tokens, links and
+// codes.
 func (s *Server) ctlRevoke(w http.ResponseWriter, r *http.Request) {
-	kind, err := s.pairings.Remove(r.Context(), r.PathValue("name"))
+	resp, err := s.pairings.Remove(r.Context(), r.PathValue("name"))
 	if err != nil {
 		writePairingError(w, err)
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, controlapi.RevokeResponse{Kind: kind})
+	jsonhttp.Write(w, http.StatusOK, resp)
 }
 
 func writePairingError(w http.ResponseWriter, err error) {

@@ -159,8 +159,9 @@ type ChannelStatus struct {
 // With Webhook, Name is a new webhook node. A Name which already is a node
 // gets a new node code.
 type PairCodeRequest struct {
-	Name        string            `json:"name"`
-	Role        string            `json:"role,omitempty"`
+	Name string `json:"name"`
+	// Owner makes a new pairing an owner.
+	Owner       bool              `json:"owner,omitempty"`
 	Webhook     string            `json:"webhook,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Description string            `json:"description,omitempty"`
@@ -187,13 +188,15 @@ type PairCodeResponse struct {
 	Instructions string `json:"instructions,omitempty"`
 }
 
-// Pairing describes a caller or a webhook node paired with the agent.
+// Pairing describes someone paired with the agent: a person, a device,
+// another agent or a webhook node.
 type Pairing struct {
 	Name string `json:"name"`
-	// Kind is [pairapi.KindCaller] or [pairapi.KindNode].
+	// Kind is one of the pairapi.Pairing* kinds, or empty until the first
+	// code is redeemed.
 	Kind string `json:"kind"`
-	// Role is authenticated or owner, for callers.
-	Role      string          `json:"role,omitempty"`
+	// Role is authenticated or owner.
+	Role      string          `json:"role"`
 	Principal string          `json:"principal"`
 	Created   time.Time       `json:"created,omitzero"`
 	LastUsed  time.Time       `json:"lastUsed,omitzero"`
@@ -235,7 +238,10 @@ type NodeDetails struct {
 
 // PairingUpdate changes a pairing in place. Unset fields are kept.
 type PairingUpdate struct {
-	Role        string            `json:"role,omitempty"`
+	// Owner, when set, makes the pairing an owner or not.
+	Owner *bool `json:"owner,omitempty"`
+	// Kind changes the kind of a pairing other than a webhook node.
+	Kind        string            `json:"kind,omitempty"`
 	Webhook     string            `json:"webhook,omitempty"`
 	Headers     map[string]string `json:"headers,omitempty"`
 	Description *string           `json:"description,omitempty"`
@@ -253,8 +259,15 @@ type PairingUpdateResponse struct {
 
 // RevokeResponse tells what `pair rm` removed.
 type RevokeResponse struct {
-	// Kind is [pairapi.KindCaller] or [pairapi.KindNode].
+	// Kind is the kind of the pairing.
 	Kind string `json:"kind"`
+	// StillAllowed describes who may call the agent without a pairing,
+	// such as everyone on the private network, which can include the
+	// person whose pairing was removed.
+	StillAllowed []string `json:"stillAllowed,omitempty"`
+	// Kept is set when the pairing stays and only its credentials were
+	// revoked, as for the local pairing.
+	Kept bool `json:"kept,omitempty"`
 }
 
 // Peer is an agent found on the private network.

@@ -17,7 +17,10 @@ package agentctl
 import (
 	"context"
 	"errors"
+	"log/slog"
+	"net/http"
 	"path/filepath"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -25,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/manage"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -67,11 +71,37 @@ func OpenOffline(d agentdir.Dir) (*Offline, error) {
 	}
 	return &Offline{
 		store:     st,
-		pairings:  &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads},
+		pairings:  &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads, Others: func(ctx context.Context) []string { return othersAllowed(ctx, d, cfg) }},
 		contacts:  manage.Contacts{Store: st},
 		schedules: manage.Schedules{Store: st},
 	}, nil
 }
+
+// othersAllowed describes who may call the agent in d without a pairing.
+// Like the running server, it takes a relay to admit everyone only when the
+// agent joins it with a token and the relay's /info names no identity
+// provider.
+func othersAllowed(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config) []string {
+	provider, everyone := "", true
+	switch {
+	case cfg.Network.Private == agentdir.NetworkTailscale:
+		provider = network.ProviderTailscale
+	case cfg.Network.Private == agentdir.NetworkLAN:
+		provider = network.ProviderLAN
+	case cfg.Network.Private != "":
+		provider = network.ProviderRelay
+		secrets, err := d.LoadSecrets()
+		if err != nil {
+			slog.Warn("reading the secrets to check the relay", "error", err)
+		}
+		everyone = secrets[agentdir.SecretRelayToken] != "" &&
+			!network.RelayAdmitsBySignIn(ctx, &http.Client{Timeout: relayInfoTimeout}, cfg.Network.Private)
+	}
+	return auth.DefaultPolicy(everyone, cfg.Auth.AllowEmails).Others(provider)
+}
+
+// relayInfoTimeout bounds the read of a relay's /info.
+const relayInfoTimeout = 10 * time.Second
 
 // Close closes the database.
 func (o *Offline) Close() error { return o.store.Close() }
@@ -98,11 +128,7 @@ func (o *Offline) UpdatePairing(ctx context.Context, name string, req controlapi
 
 // Revoke revokes a pairing.
 func (o *Offline) Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
-	kind, err := o.pairings.Remove(ctx, name)
-	if err != nil {
-		return nil, err
-	}
-	return &controlapi.RevokeResponse{Kind: kind}, nil
+	return o.pairings.Remove(ctx, name)
 }
 
 // Contacts lists the contacts.

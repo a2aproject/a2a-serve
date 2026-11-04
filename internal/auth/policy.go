@@ -15,6 +15,7 @@
 package auth
 
 import (
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -125,4 +126,26 @@ func EmailMatches(pattern, email, domain string) bool {
 		return d != "" && strings.EqualFold(domain, d) && strings.HasSuffix(email, "@"+d)
 	}
 	return pattern == email
+}
+
+// Others describes who may call under the policy without a pairing, such
+// as "everyone on the tailnet". provider is the private network's provider,
+// or empty without one.
+func (p Policy) Others(provider string) []string {
+	var out []string
+	for _, m := range slices.Concat(p.Owner, p.Authenticated, p.Anonymous) {
+		var who string
+		switch pattern, email := strings.CutPrefix(m, MemberEmailPrefix); {
+		case m == MemberPrivate && provider != "":
+			who = "everyone" + where(Identity{Network: network.ListenerPrivate, Provider: provider})
+		case m == MemberAnyone:
+			who = "anyone on the public URL or in a direct chat"
+		case email:
+			who = "emails matching " + pattern
+		}
+		if who != "" && !slices.Contains(out, who) {
+			out = append(out, who)
+		}
+	}
+	return out
 }

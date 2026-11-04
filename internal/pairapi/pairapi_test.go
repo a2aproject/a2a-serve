@@ -39,7 +39,7 @@ func TestPair(t *testing.T) {
 			name: "valid code",
 			handler: func(w http.ResponseWriter, r *http.Request) {
 				var req Request
-				if r.Method != http.MethodPost || r.URL.Path != Path || r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&req) != nil || req.Code != "K7Q2-9XF4" {
+				if r.Method != http.MethodPost || r.URL.Path != Path || r.Header.Get("Content-Type") != "application/json" || json.NewDecoder(r.Body).Decode(&req) != nil || req.Code != "K7Q2-9XF4" || req.Kind != PairingAgent {
 					jsonhttp.Error(w, http.StatusBadRequest, "unexpected request")
 					return
 				}
@@ -75,7 +75,7 @@ func TestPair(t *testing.T) {
 			srv := httptest.NewServer(tc.handler)
 			t.Cleanup(srv.Close)
 
-			got, err := Pair(t.Context(), srv.Client(), srv.URL+"/", "K7Q2-9XF4")
+			got, err := Pair(t.Context(), srv.Client(), srv.URL+"/", "K7Q2-9XF4", PairingAgent)
 
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {

@@ -176,7 +176,7 @@ type inspectorOverview struct {
 	Status        *controlapi.Status
 	Approvals     []inspectorApproval
 	Conversations []inspectorConversation
-	Tokens        []store.Token
+	Pairings      []controlapi.Pairing
 	Nodes         []controlapi.NodeInfo
 	Contacts      []store.Contact
 }
@@ -206,7 +206,7 @@ func (in *inspector) overview(ctx context.Context) (*inspectorOverview, error) {
 	if page.Conversations, err = in.conversations(ctx); err != nil {
 		return nil, err
 	}
-	if page.Tokens, err = s.store.Tokens(ctx); err != nil {
+	if page.Pairings, err = s.pairings.List(ctx); err != nil {
 		return nil, err
 	}
 	nodes, err := s.store.Nodes(ctx)

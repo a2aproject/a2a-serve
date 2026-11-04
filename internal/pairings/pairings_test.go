@@ -51,14 +51,15 @@ func newService(t *testing.T) *Service {
 	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}}
 }
 
-// redeem exchanges code for a token, as POST /pair does.
-func redeem(t *testing.T, s *Service, code string) {
+// redeem exchanges code for a token as a redeemer of kind, as POST /pair
+// does.
+func redeem(t *testing.T, s *Service, code, kind string) {
 	t.Helper()
-	c, err := s.Store.TakeCode(context.Background(), auth.NormalizeCode(code), auth.PurposePair)
+	c, err := s.Store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode)
 	if err != nil {
 		t.Fatalf("TakeCode() error = %v", err)
 	}
-	if _, _, err := auth.IssueToken(context.Background(), s.Store, c, s.BaseURL()); err != nil {
+	if _, _, err := auth.IssueToken(context.Background(), s.Store, c.Pairing, s.BaseURL(), kind); err != nil {
 		t.Fatalf("IssueToken() error = %v", err)
 	}
 }
@@ -89,21 +90,22 @@ func TestInvite(t *testing.T) {
 	}{
 		{name: "new caller", req: controlapi.PairCodeRequest{Name: "bob"}},
 		{name: "another device of a caller", req: controlapi.PairCodeRequest{Name: "anna"}},
-		{name: "same role", req: controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleAuthenticated}},
-		{name: "another role", req: controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleOwner}, wantKind: Invalid},
+		{name: "new owner", req: controlapi.PairCodeRequest{Name: "bob", Owner: true}},
+		{name: "owner for an authenticated pairing", req: controlapi.PairCodeRequest{Name: "anna", Owner: true}, wantKind: Invalid},
 		{name: "node code", req: controlapi.PairCodeRequest{Name: "grok"}},
 		{name: "webhook of an existing node", req: controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/new"}, wantKind: Invalid},
-		{name: "webhook for a caller's name", req: controlapi.PairCodeRequest{Name: "anna", Webhook: "https://example.com/hook"}, wantKind: Conflict},
-		{name: "role of a node", req: controlapi.PairCodeRequest{Name: "grok", Role: auth.RoleOwner}, wantKind: Invalid},
+		{name: "webhook for a person's name", req: controlapi.PairCodeRequest{Name: "anna", Webhook: "https://example.com/hook"}, wantKind: Conflict},
+		{name: "owner of a node", req: controlapi.PairCodeRequest{Name: "grok", Owner: true}, wantKind: Invalid},
 		{name: "description without a webhook", req: controlapi.PairCodeRequest{Name: "bob", Description: "x"}, wantKind: Invalid},
-		{name: "reserved name", req: controlapi.PairCodeRequest{Name: LocalOwner}, wantKind: Invalid},
+		{name: "local pairing", req: controlapi.PairCodeRequest{Name: LocalOwner}, wantKind: Invalid},
+		{name: "owner", req: controlapi.PairCodeRequest{Name: auth.OwnerName}, wantKind: Invalid},
 		{name: "invalid name", req: controlapi.PairCodeRequest{Name: "a b"}, wantKind: Invalid},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := newService(t)
-			redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code)
+			redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 			invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
 
 			_, err := s.Invite(context.Background(), tc.req)
@@ -128,8 +130,10 @@ func TestInvite(t *testing.T) {
 func TestGetAndList(t *testing.T) {
 	t.Parallel()
 	s := newService(t)
-	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleOwner}).Code)
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna", Owner: true}).Code, pairapi.PairingPerson)
 	invite(t, s, controlapi.PairCodeRequest{Name: "anna"})
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingAgent)
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "reviewer"}).Code, pairapi.PairingAgent)
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook?key=secret", Headers: map[string]string{"Authorization": "Bearer x"}, Description: "searches", Advertised: &on})
 
@@ -147,45 +151,43 @@ func TestGetAndList(t *testing.T) {
 		got = append(got, summary{p.Name, p.Kind, p.Role, p.Principal, len(p.Tokens), len(p.PendingCodes), p.Node})
 	}
 	want := []summary{
-		{Name: "anna", Kind: pairapi.KindCaller, Role: auth.RoleOwner, Principal: "pair:anna", Tokens: 1, Codes: 1},
-		{Name: "grok", Kind: pairapi.KindNode, Principal: "node:grok", Codes: 1, Node: &controlapi.NodeDetails{
+		{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleOwner, Principal: "pair:anna", Tokens: 2, Codes: 1},
+		{Name: "grok", Kind: pairapi.PairingWebhook, Role: auth.RoleAuthenticated, Principal: "node:grok", Codes: 1, Node: &controlapi.NodeDetails{
 			URL: "https://coder.example.com/n/grok", Webhook: "https://example.com/hook?…", Description: "searches",
 			HeaderNames: []string{"Authorization"}, Advertised: true,
 		}},
+		{Name: LocalOwner, Kind: pairapi.PairingPerson, Role: auth.RoleOwner, Principal: auth.OwnerID},
+		{Name: "reviewer", Kind: pairapi.PairingAgent, Role: auth.RoleAuthenticated, Principal: "pair:reviewer", Tokens: 1},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
 	}
 	invite(t, s, controlapi.PairCodeRequest{Name: "bob"})
 	pending, err := s.Get(context.Background(), "bob")
-	if err != nil || pending.Created.IsZero() || len(pending.Tokens) != 0 {
-		t.Fatalf("Get(grok) = %+v, %v, want the creation time of a pairing whose code isn't used yet", pending, err)
+	if err != nil || pending.Created.IsZero() || pending.Kind != "" || len(pending.Tokens) != 0 {
+		t.Fatalf("Get(bob) = %+v, %v, want a pairing without a kind until its code is used", pending, err)
 	}
 	if _, err := s.Get(context.Background(), "nobody"); kindOf(err) != NotFound {
 		t.Fatalf("Get(nobody) error = %v, want not found", err)
 	}
 }
 
-func TestUpdateCaller(t *testing.T) {
+func TestUpdate(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
-	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code)
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
+	on, off := true, false
 
-	resp, err := s.Update(ctx, "anna", controlapi.PairingUpdate{Role: auth.RoleOwner})
+	resp, err := s.Update(ctx, "anna", controlapi.PairingUpdate{Owner: &on, Kind: pairapi.PairingDevice})
 	if err != nil {
-		t.Fatalf("Update(role owner) error = %v", err)
+		t.Fatalf("Update(owner, kind) error = %v", err)
 	}
-	if resp.Pairing.Role != auth.RoleOwner || resp.Pairing.Principal != "pair:anna" || len(resp.Pairing.Tokens) != 1 || resp.Code != nil {
-		t.Fatalf("Update(role owner) = %+v, want anna as an owner with her token", resp)
+	if p := resp.Pairing; p.Role != auth.RoleOwner || p.Kind != pairapi.PairingDevice || p.Principal != "pair:anna" || len(p.Tokens) != 1 || resp.Code != nil {
+		t.Fatalf("Update(owner, kind) = %+v, want anna as an owner device with her token", resp)
 	}
-	toks, err := s.Store.Tokens(ctx)
-	if err != nil || len(toks) != 1 || toks[0].Principal != "pair:anna" || toks[0].Role != auth.RoleOwner {
-		t.Fatalf("Tokens() after Update(role owner) = %+v, %v, want anna's token as an owner", toks, err)
-	}
-	u, err := s.Store.User(ctx, "pair:anna")
-	if err != nil || u.Role != auth.RoleOwner {
-		t.Fatalf("User(pair:anna) after Update(role owner) = %+v, %v, want an owner", u, err)
+	if resp, err = s.Update(ctx, "anna", controlapi.PairingUpdate{Owner: &off}); err != nil || resp.Pairing.Role != auth.RoleAuthenticated {
+		t.Fatalf("Update(owner=false) = %+v, %v, want anna authenticated", resp, err)
 	}
 
 	resp, err = s.Update(ctx, "anna", controlapi.PairingUpdate{Rotate: true})
@@ -196,10 +198,13 @@ func TestUpdateCaller(t *testing.T) {
 		t.Fatalf("Update(rotate) = %+v, want no tokens and one new code", resp)
 	}
 
-	for _, req := range []controlapi.PairingUpdate{{Webhook: "https://example.com/hook"}, {Role: "admin"}} {
+	for _, req := range []controlapi.PairingUpdate{{Webhook: "https://example.com/hook"}, {Kind: "robot"}, {Kind: pairapi.PairingWebhook}} {
 		if _, err := s.Update(ctx, "anna", req); kindOf(err) != Invalid {
 			t.Fatalf("Update(%+v) error = %v, want invalid", req, err)
 		}
+	}
+	if _, err := s.Update(ctx, LocalOwner, controlapi.PairingUpdate{Owner: &off}); kindOf(err) != Invalid {
+		t.Fatalf("Update(local) error = %v, want invalid", err)
 	}
 	if _, err := s.Update(ctx, "nobody", controlapi.PairingUpdate{Rotate: true}); kindOf(err) != NotFound {
 		t.Fatalf("Update(nobody) error = %v, want not found", err)
@@ -236,8 +241,8 @@ func TestUpdateNode(t *testing.T) {
 	if resp.Pairing.Node.Paired || resp.Code == nil || resp.Code.Node == nil {
 		t.Fatalf("Update(rotate) = %+v, want the token revoked and a node code", resp)
 	}
-	if _, err := s.Update(ctx, "grok", controlapi.PairingUpdate{Role: auth.RoleOwner}); kindOf(err) != Invalid {
-		t.Fatalf("Update(role) of a node error = %v, want invalid", err)
+	if _, err := s.Update(ctx, "grok", controlapi.PairingUpdate{Owner: &on}); kindOf(err) != Invalid {
+		t.Fatalf("Update(owner) of a node error = %v, want invalid", err)
 	}
 }
 
@@ -245,21 +250,37 @@ func TestRemove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
-	invite(t, s, controlapi.PairCodeRequest{Name: "anna"})
+	s.Others = func(context.Context) []string { return []string{"everyone on the tailnet"} }
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
+	if _, _, err := auth.IssueToken(ctx, s.Store, LocalOwner, "http://127.0.0.1:4000", ""); err != nil {
+		t.Fatalf("IssueToken(local) error = %v", err)
+	}
 
-	for name, want := range map[string]string{"anna": pairapi.KindCaller, "grok": pairapi.KindNode} {
-		got, err := s.Remove(ctx, name)
-		if err != nil || got != want {
-			t.Fatalf("Remove(%q) = %q, %v, want %q", name, got, err, want)
+	tests := []struct {
+		name string
+		want *controlapi.RevokeResponse
+	}{
+		{name: "anna", want: &controlapi.RevokeResponse{Kind: pairapi.PairingPerson, StillAllowed: []string{"everyone on the tailnet"}}},
+		{name: "grok", want: &controlapi.RevokeResponse{Kind: pairapi.PairingWebhook}},
+		{name: LocalOwner, want: &controlapi.RevokeResponse{Kind: pairapi.PairingPerson, Kept: true}},
+	}
+	for _, tc := range tests {
+		got, err := s.Remove(ctx, tc.name)
+		if err != nil {
+			t.Fatalf("Remove(%q) error = %v", tc.name, err)
+		}
+		if diff := cmp.Diff(tc.want, got); diff != "" {
+			t.Fatalf("Remove(%q) wrong result (-want +got) diff = %s", tc.name, diff)
 		}
 	}
 	if s.Ads.Advertised("grok") {
 		t.Fatalf("Remove(grok) kept its advertisement")
 	}
-	if all, err := s.List(ctx); err != nil || len(all) != 0 {
-		t.Fatalf("List() after Remove() = %v, %v, want none", all, err)
+	all, err := s.List(ctx)
+	if err != nil || len(all) != 1 || all[0].Name != LocalOwner || len(all[0].Tokens) != 0 {
+		t.Fatalf("List() after Remove() = %+v, %v, want only the local pairing, without tokens", all, err)
 	}
 	if _, err := s.Remove(ctx, "anna"); kindOf(err) != NotFound {
 		t.Fatalf("Remove(anna) again error = %v, want not found", err)

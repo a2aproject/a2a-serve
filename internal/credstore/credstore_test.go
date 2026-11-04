@@ -168,14 +168,14 @@ func TestPair(t *testing.T) {
 	}))
 	defer srv.Close()
 	ctx := context.Background()
-	c, err := Pair(ctx, srv.Client(), srv.URL+"/", "K7Q2-9XF4")
+	c, err := Pair(ctx, srv.Client(), srv.URL+"/", "K7Q2-9XF4", pairapi.PairingPerson)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
 	if c.Token != "a2p_x" || c.Agent != "assistant" || c.URL != srv.URL {
 		t.Fatalf("Pair() = %+v, want token a2p_x for %s", c, srv.URL)
 	}
-	if _, err := Pair(ctx, srv.Client(), srv.URL, "WRONG"); err == nil {
+	if _, err := Pair(ctx, srv.Client(), srv.URL, "WRONG", pairapi.PairingPerson); err == nil {
 		t.Fatalf("Pair() with a wrong code error = nil, want error")
 	}
 }
@@ -189,7 +189,7 @@ func TestPairNode(t *testing.T) {
 		}
 	}))
 	defer srv.Close()
-	got, err := Pair(context.Background(), srv.Client(), srv.URL, "K7Q2-9XF4")
+	got, err := Pair(context.Background(), srv.Client(), srv.URL, "K7Q2-9XF4", pairapi.PairingPerson)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}

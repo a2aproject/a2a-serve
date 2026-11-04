@@ -37,9 +37,9 @@ func TestDeletingAgentDeletesItsWatches(t *testing.T) {
 			delete: func(s *Store) error { return s.DeleteContact(context.Background(), "coder") },
 		},
 		{
-			name:   "node",
+			name:   "webhook pairing",
 			put:    func(s *Store) error { return s.PutNode(context.Background(), Node{ID: "coder", Name: "coder"}) },
-			delete: func(s *Store) error { return s.DeleteNode(context.Background(), "coder") },
+			delete: func(s *Store) error { return s.DeletePairing(context.Background(), "coder") },
 		},
 	}
 	for _, tc := range tests {

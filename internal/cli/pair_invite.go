@@ -22,7 +22,6 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
@@ -40,8 +39,10 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Create a pairing called <name> and print its code: 8 characters, valid once
 for 15 minutes. The caller redeems it for a token with
 ` + "`a2a-serve pair join <agent-url> <code>`" + `, or links a messenger account by
-sending "join <code>" to the agent's bot. Inviting an existing name issues
-another code, for another device or account; its tokens keep working.
+sending "join <code>" to the agent's bot. Another agent redeems it with
+` + "`a2a-serve contact add --code`" + `. The first redemption sets the pairing's kind:
+person, or agent for a contact. Inviting an existing name issues another
+code, for another device or account; its tokens keep working.
 ` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,
@@ -60,16 +61,13 @@ list it in ` + "`a2a-serve peers`" + ` as <name>@<this agent> and can add it wit
 through this agent, which keeps the webhook's credentials, and it treats
 them like any other caller from the private network.`,
 		Example: `  a2a-serve pair invite grok
-  a2a-serve pair invite anna --role owner
+  a2a-serve pair invite anna --owner
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
-			if !cmd.Flags().Changed("role") {
-				req.Role = ""
-			}
 			if req.Webhook == "" && (len(headers) > 0 || req.Description != "" || cmd.Flags().Changed("advertised")) {
 				return clierr.Usage("--webhook-header, --description and --advertised go with --webhook")
 			}
@@ -103,12 +101,11 @@ them like any other caller from the private network.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "authenticated", "Role: `authenticated|owner`; authenticated callers see and approve their own tasks, owners every task")
+	f.BoolVar(&req.Owner, "owner", false, "Make the pairing an owner, who sees and approves every task; others see and approve their own")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
-	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleAuthenticated, agentdir.RoleOwner)))
 	return cmd
 }
 
