@@ -45,7 +45,7 @@ func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
 			t.Parallel()
 			ch := newFakeChannel("fake")
 			ch.maxText = tc.maxText
-			rd := newRenderer(nil, ch, "conv", channel.Ref{}, auth.Principal{})
+			rd := newRenderer(&Router{}, ch, "conv", channel.Ref{}, auth.Principal{})
 			done := make(chan struct{})
 			go func() {
 				defer close(done)

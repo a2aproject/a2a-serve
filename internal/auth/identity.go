@@ -105,6 +105,18 @@ const (
 // PairPrincipal is the principal of the pairing name.
 func PairPrincipal(name string) string { return PairPrefix + name }
 
+// DisplayPrincipal is a principal's name for people: pair:anna is anna.
+func DisplayPrincipal(id string) string {
+	if id == "" {
+		return "A caller"
+	}
+	_, name, ok := strings.Cut(id, ":")
+	if !ok {
+		return id
+	}
+	return name
+}
+
 // IdentityOf rebuilds the identity of a stored principal ID, for
 // principals stored before their identity was. It holds what the ID itself
 // proves: the user running the agent, a pairing, an email or a machine.

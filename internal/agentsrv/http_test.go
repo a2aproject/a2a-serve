@@ -153,7 +153,7 @@ func TestInspectorOnPrivateListener(t *testing.T) {
 		provider string
 		want     int
 	}{
-		{provider: ProviderTailscale, want: http.StatusSeeOther},
+		{provider: network.ProviderTailscale, want: http.StatusSeeOther},
 		{provider: network.ProviderRelay, want: http.StatusNotFound},
 	}
 	for _, tc := range tests {

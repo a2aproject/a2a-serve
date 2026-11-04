@@ -197,15 +197,3 @@ func AnswerMessage(taskID a2a.TaskID, contextID, questionID, option string) (*a2
 	msg.TaskID, msg.ContextID = taskID, contextID
 	return msg, nil
 }
-
-// DisplayPrincipal is a principal's name for people: pair:anna is anna.
-func DisplayPrincipal(id string) string {
-	if id == "" {
-		return "A caller"
-	}
-	_, name, ok := strings.Cut(id, ":")
-	if !ok {
-		return id
-	}
-	return name
-}

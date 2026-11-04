@@ -29,10 +29,12 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -214,7 +216,7 @@ func (in *inspector) overview(ctx context.Context) (*inspectorOverview, error) {
 		return nil, err
 	}
 	for _, n := range nodes {
-		page.Nodes = append(page.Nodes, s.nodes.Info(n))
+		page.Nodes = append(page.Nodes, pairings.NodeInfo(s.bestURL(), n))
 	}
 	if page.Contacts, err = s.store.Contacts(ctx); err != nil {
 		return nil, err
@@ -275,7 +277,7 @@ func (in *inspector) conversations(ctx context.Context) ([]inspectorConversation
 		if i, ok := index[t.ContextID]; ok {
 			out[i].Tasks++
 			if len(t.History) > 0 {
-				out[i].Snippet = snippet(messageText(t.History[0]))
+				out[i].Snippet = snippet(a2atext.Message(t.History[0]))
 			}
 			continue
 		}
@@ -283,12 +285,12 @@ func (in *inspector) conversations(ctx context.Context) ([]inspectorConversation
 		if err != nil {
 			return nil, err
 		}
-		c := inspectorConversation{ContextID: t.ContextID, User: approvals.DisplayPrincipal(stored.User), State: stateName(t.Status.State), Tasks: 1}
+		c := inspectorConversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(stored.User), State: stateName(t.Status.State), Tasks: 1}
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
 		if len(t.History) > 0 {
-			c.Snippet = snippet(messageText(t.History[0]))
+			c.Snippet = snippet(a2atext.Message(t.History[0]))
 		}
 		if ch, _, err := in.s.store.ConvOf(ctx, t.ContextID); err == nil {
 			c.Chat = ch
@@ -349,7 +351,7 @@ func (in *inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 	for _, t := range slices.Backward(resp.Tasks) {
 		it := inspectorTask{ID: string(t.ID), State: stateName(t.Status.State)}
 		if stored, err := in.s.tasks.Get(ctx, t.ID); err == nil {
-			it.User = approvals.DisplayPrincipal(stored.User)
+			it.User = auth.DisplayPrincipal(stored.User)
 		}
 		if t.Status.Timestamp != nil {
 			it.Updated = *t.Status.Timestamp

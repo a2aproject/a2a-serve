@@ -173,14 +173,3 @@ func TestRotateLog(t *testing.T) {
 		})
 	}
 }
-
-func TestServiceName(t *testing.T) {
-	t.Parallel()
-	dir, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
-	}
-	if got, want := ServiceName(dir), "a2a-"+dir.ID(); got != want {
-		t.Fatalf("ServiceName() = %q, want %q", got, want)
-	}
-}

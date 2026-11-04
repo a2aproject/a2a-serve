@@ -22,7 +22,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/launch"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -47,7 +46,7 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 				return err
 			}
-			name := launch.ServiceName(d)
+			name := d.ServiceName()
 			installed := service.Installed(name)
 			if installed && uninstall {
 				if err := service.Uninstall(name); err != nil {

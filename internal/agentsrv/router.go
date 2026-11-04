@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
@@ -53,6 +54,7 @@ type Router struct {
 	// router starts.
 	anonymous func(ctx context.Context, contextID string) bool
 	logf      func(format string, args ...any)
+	timings   Timings
 	// handler is the agent's A2A handler. It is set before the router starts.
 	handler a2asrv.RequestHandler
 
@@ -84,10 +86,9 @@ type convTicket struct {
 	once sync.Once
 }
 
-// Channel restarts back off from channelRetryMin to channelRetryMax, and
-// start over after a run of channelHealthy.
-var (
-	channelRetryMin = 5 * time.Second
+// Channel restarts back off from Timings.ChannelRetryMin to
+// channelRetryMax, and start over after a run of channelHealthy.
+const (
 	channelRetryMax = 5 * time.Minute
 	channelHealthy  = time.Minute
 )
@@ -116,7 +117,7 @@ func (r *Router) add(ch channel.Channel) {
 
 func (r *Router) run(ctx context.Context, rc *runningChannel) {
 	defer close(rc.done)
-	retry := backoff.New(channelRetryMin, channelRetryMax, channelHealthy)
+	retry := backoff.New(r.timings.ChannelRetryMin, channelRetryMax, channelHealthy)
 	for {
 		started := time.Now()
 		err := rc.ch.Run(ctx, r.in)
@@ -576,7 +577,7 @@ func (r *Router) followOwnerAnswer(ctx context.Context, ch channel.Channel, conv
 		defer unsubscribe()
 		for {
 			rd := newRenderer(r, ch, conv, channel.Ref{}, p)
-			if !renderUntilStop(ctx, rd, events, anonymousQuestionTimeout+time.Minute) {
+			if !renderUntilStop(ctx, rd, events, r.timings.AnonymousQuestionTimeout+time.Minute) {
 				return
 			}
 			if _, waits := rd.waitingForOwner(); !waits {
@@ -694,7 +695,7 @@ func (r *Router) answerIn(ctx context.Context, ch channel.Channel, in channel.In
 	}
 	who := in.Name
 	if who == "" {
-		who = approvals.DisplayPrincipal(p.ID)
+		who = auth.DisplayPrincipal(p.ID)
 	}
 	own, err := r.store.ContextOf(ctx, in.Channel, string(in.Conv))
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
@@ -878,7 +879,7 @@ func (r *Router) answerHint(ctx context.Context, rec store.Question, q *approval
 
 // ownerChatOrder is the order in which, without --owner-chat, the
 // messengers are tried for the owner chat.
-var ownerChatOrder = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
+var ownerChatOrder = []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}
 
 // OwnerChat returns the chat of --owner-chat, or else the direct chat of an
 // owner on the first running messenger, in ownerChatOrder.
@@ -1056,9 +1057,6 @@ func (r *Router) injectTurn(ctx context.Context, contextID string, p auth.Princi
 	return nil
 }
 
-// injectRetry is how often a held-back turn checks whether it can be posted.
-var injectRetry = 2 * time.Second
-
 func (r *Router) waitingForInput(ctx context.Context, contextID string) bool {
 	last, err := r.tasks.LatestInContext(ctx, contextID)
 	return err == nil && last.Status.State == a2a.TaskStateInputRequired
@@ -1070,7 +1068,7 @@ func (r *Router) waitInput(ctx context.Context) bool {
 	select {
 	case <-ctx.Done():
 		return false
-	case <-time.After(injectRetry):
+	case <-time.After(r.timings.InjectRetry):
 		return true
 	}
 }

@@ -68,7 +68,7 @@ type listener struct {
 func (s *Server) privateListener(u *url.URL) listener {
 	l := listener{kind: network.ListenerPrivate, baseURL: u.String()}
 	switch s.private.Name() {
-	case ProviderTailscale:
+	case network.ProviderTailscale:
 		l.inspector = true
 	case network.ProviderRelay:
 		l.tunneled = true

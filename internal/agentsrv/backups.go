@@ -25,10 +25,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
-// firstBackupDelay keeps the first snapshot of a run, when one is due, from
-// slowing down the start.
-var firstBackupDelay = time.Minute
-
 // backups takes the agent's snapshots at its backup interval and remembers
 // how the last one went, for status.
 type backups struct {
@@ -64,7 +60,7 @@ func (s *Server) startBackups(ctx context.Context) {
 		s.logf("! backups are off: %v", err)
 		return
 	}
-	next := time.Now().Add(firstBackupDelay)
+	next := time.Now().Add(s.timings.FirstBackupDelay)
 	s.backups.update(func(st *controlapi.BackupStatus) {
 		st.To = cfg.Backup.To
 		st.Next = next

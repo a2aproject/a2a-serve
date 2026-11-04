@@ -32,8 +32,10 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 // Status is the outcome of a check.
@@ -125,7 +127,9 @@ func System() (Env, error) {
 		Status: func(ctx context.Context, d agentdir.Dir) (*controlapi.Status, error) {
 			return controlapi.NewClient(d).Status(ctx)
 		},
-		PortFree: portFree,
+		PortFree:        portFree,
+		ServiceUnit:     serviceUnit,
+		ValidateChannel: configured.Validate,
 	}, nil
 }
 
@@ -154,6 +158,14 @@ func portFree(port int) bool {
 		slog.Debug("closing the port probe", "error", err)
 	}
 	return true
+}
+
+func serviceUnit(d agentdir.Dir) (string, error) {
+	name := d.ServiceName()
+	if !service.Installed(name) {
+		return "", nil
+	}
+	return service.UnitFile(name)
 }
 
 // Options select the checks of [Run].

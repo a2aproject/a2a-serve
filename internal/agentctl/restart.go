@@ -57,7 +57,7 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 	if err != nil {
 		return err
 	}
-	asService := service.Installed(launch.ServiceName(d))
+	asService := service.Installed(d.ServiceName())
 	if !asService {
 		leader, err := sessionLeader(st.PID)
 		if err != nil {
