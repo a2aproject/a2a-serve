@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 func TestEdit(t *testing.T) {
@@ -66,7 +67,7 @@ func TestEdit(t *testing.T) {
 				}
 				return os.WriteFile(path, []byte(next), 0o600)
 			}
-			res, err := Edit(t.Context(), d, edit, func(error) (bool, error) { return tc.retry, nil })
+			res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return tc.retry, nil })
 			var se *agentdir.SettingsError
 			if tc.wantErr != errors.As(err, &se) {
 				t.Fatalf("Edit() error = %v, want a SettingsError %v", err, tc.wantErr)

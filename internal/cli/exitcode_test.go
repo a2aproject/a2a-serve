@@ -36,6 +36,7 @@ func TestExitCodes(t *testing.T) {
 		{name: "schedule run on a stopped agent", args: []string{"schedule", "run", "brief", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "restart of a stopped agent", args: []string{"restart", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "channel rm of an unconfigured channel", args: []string{"channel", "rm", "telegram", "--dir", stopped}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "status without an agent", args: []string{"status", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
 		{name: "start without an agent", args: []string{"start", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
 	}

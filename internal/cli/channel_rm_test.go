@@ -29,7 +29,7 @@ func TestChannelRmOffline(t *testing.T) {
 		wantErr string
 	}{
 		{name: "configured", kind: "telegram"},
-		{name: "not configured", kind: "discord", wantErr: "discord is not configured"},
+		{name: "not configured", kind: "discord", wantErr: "no channel discord"},
 		{name: "unknown kind", kind: "fax", wantErr: "unknown channel"},
 	}
 	for _, tc := range tests {

@@ -56,11 +56,11 @@ With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" +
 				}
 				return cfg.PrintRemoved("joined", args[0], "✓ deleted the token for "+args[0])
 			}
-			c, _, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			resp, err := c.Revoke(cmd.Context(), args[0])
 			if err != nil {
 				return err

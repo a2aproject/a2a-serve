@@ -38,7 +38,7 @@ var ErrForeground = errors.New("it runs in the foreground of another terminal; p
 // Restart stops the running agent and starts it again in the same mode,
 // detached or as a user service. The config is checked first, so that an
 // agent which couldn't start again isn't stopped.
-func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) error {
+func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, quiet bool, out io.Writer) error {
 	cfg, err := d.LoadConfig()
 	if err != nil {
 		return err
@@ -50,7 +50,6 @@ func Restart(ctx context.Context, d agentdir.Dir, quiet bool, out io.Writer) err
 	if err := d.CheckConfig(cfg, secrets); err != nil {
 		return &agentdir.SettingsError{Err: err}
 	}
-	client := controlClient(ctx, d)
 	st, err := client.Status(ctx)
 	if errors.Is(err, controlapi.ErrNotRunning) {
 		return controlapi.NotRunning(cfg.Name)

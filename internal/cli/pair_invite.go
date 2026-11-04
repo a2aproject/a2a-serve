@@ -79,17 +79,17 @@ them like any other caller from the private network.`,
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
 			}
-			c, offline, done, err := sf.manager(cmd.Context())
+			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
-			defer joinClose(&err, done)
+			defer joinClose(&err, closer)
 			resp, err := c.Pair(cmd.Context(), req)
 			if err != nil {
 				return err
 			}
 			if cfg.IsJSON() {
-				if err := warnPairCode(cfg.stderr(), resp, offline); err != nil {
+				if err := warnPairCode(cfg.stderr(), resp, !c.Running()); err != nil {
 					return err
 				}
 				return cfg.PrintJSON(resp)
@@ -97,7 +97,7 @@ them like any other caller from the private network.`,
 			if err := printPairCode(cfg, resp); err != nil {
 				return err
 			}
-			if err := warnPairCode(cfg.Out, resp, offline); err != nil {
+			if err := warnPairCode(cfg.Out, resp, !c.Running()); err != nil {
 				return err
 			}
 			return printAccess(cfg, resp.Access)

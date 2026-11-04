@@ -18,6 +18,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net"
 	"net/http"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -214,6 +216,48 @@ func TestClientErrors(t *testing.T) {
 			}
 			if tc.wantErr != "" && err.Error() != tc.wantErr {
 				t.Fatalf("Client.DeleteChannel() error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestClientRequestErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		err     error
+		wantErr error
+	}{
+		{
+			name:    "not found",
+			err:     fmt.Errorf("removing: %w", &agenterr.NotFoundError{Kind: "channel", Name: "telegram"}),
+			wantErr: &agenterr.NotFoundError{Kind: "channel", Name: "telegram"},
+		},
+		{
+			name:    "invalid",
+			err:     agenterr.Invalidf("unknown channel irc"),
+			wantErr: agenterr.Invalidf("unknown channel irc"),
+		},
+		{
+			name:    "conflict",
+			err:     agenterr.Conflictf("anna is already paired"),
+			wantErr: agenterr.Conflictf("anna is already paired"),
+		},
+		{
+			name:    "other",
+			err:     errors.New("database is locked"),
+			wantErr: errors.New("database is locked"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, tc.err) }))
+
+			err := NewClient(dir).DeleteChannel(t.Context(), "telegram")
+
+			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return fmt.Sprintf("%T %v", a, a) == fmt.Sprintf("%T %v", b, b) })); diff != "" {
+				t.Fatalf("Client.DeleteChannel() wrong error (-want +got) diff = %s", diff)
 			}
 		})
 	}

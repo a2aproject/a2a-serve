@@ -27,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -72,36 +73,12 @@ type Service struct {
 	Access func(ctx context.Context) (*controlapi.Access, error)
 }
 
-// Kind classifies an [Error].
-type Kind int
-
-const (
-	// Invalid requests are usage errors.
-	Invalid Kind = iota + 1
-	// Conflict requests name a pairing of another kind.
-	Conflict
-	// NotFound requests name no pairing.
-	NotFound
-)
-
-// Error is a request the service refuses.
-type Error struct {
-	Kind Kind
-	Msg  string
-}
-
-func (e *Error) Error() string { return e.Msg }
-
-// UsageError marks the error for the CLI's exit code: every refused request
-// names something invalid or missing.
-func (e *Error) UsageError() bool { return true }
-
 func invalid(format string, args ...any) error {
-	return &Error{Kind: Invalid, Msg: fmt.Sprintf(format, args...)}
+	return agenterr.Invalidf(format, args...)
 }
 
 func notFound(name string) error {
-	return &Error{Kind: NotFound, Msg: "no pairing named " + name}
+	return &agenterr.NotFoundError{Kind: "pairing", Name: name}
 }
 
 func validateName(name string) error {
@@ -148,7 +125,7 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	case nodeFlags && webhook:
 		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
 	case nodeFlags && exists:
-		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired; pick another name, or run `a2a-serve pair rm " + req.Name + "` first"}
+		return nil, agenterr.Conflictf("%s is already paired; pick another name, or run `a2a-serve pair rm %s` first", req.Name, req.Name)
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
 	case (nodeFlags || webhook) && req.Owner:
@@ -194,7 +171,7 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 		return nil, invalid("%v", err)
 	}
 	if _, err := s.Store.Contact(ctx, req.Name); err == nil {
-		return nil, &Error{Kind: Conflict, Msg: fmt.Sprintf("%q is already a contact", req.Name)}
+		return nil, agenterr.Conflictf("%q is already a contact", req.Name)
 	}
 	node := store.Node{
 		ID: req.Name, Name: req.Name, Description: req.Description, Webhook: req.Webhook, Headers: req.Headers,
@@ -202,7 +179,7 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 	}
 	err := s.Store.PutNode(ctx, node)
 	if errors.Is(err, store.ErrExists) {
-		return nil, &Error{Kind: Conflict, Msg: req.Name + " is already paired; pick another name"}
+		return nil, agenterr.Conflictf("%s is already paired; pick another name", req.Name)
 	}
 	if err != nil {
 		return nil, err

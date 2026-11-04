@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -25,8 +26,9 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/manage"
@@ -40,23 +42,23 @@ import (
 // first start picked a port.
 const placeholderURL = "<agent-url>"
 
-// Offline manages the pairings, contacts and schedules of a stopped agent in
-// its database, with the methods of [controlapi.Client] that do so. The
-// agent picks the changes up when it starts.
-type Offline struct {
+// offline is the [Manager] of a stopped agent, which changes its database
+// and config.yaml while it holds the agent directory locked. The agent
+// picks the changes up when it starts.
+type offline struct {
+	dir       agentdir.Dir
+	release   func() error
 	store     *store.Store
 	pairings  *pairings.Service
 	contacts  manage.Contacts
 	schedules manage.Schedules
 }
 
-// OpenOffline opens the database of the agent in d.
-func OpenOffline(d agentdir.Dir) (*Offline, error) {
+// openOffline opens the database of the agent in d, whose directory lock
+// release releases.
+func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 	cfg, err := d.LoadConfig()
 	if err != nil {
-		return nil, err
-	}
-	if err := d.Init(); err != nil {
 		return nil, err
 	}
 	st, err := store.Open(d.DBPath())
@@ -71,8 +73,10 @@ func OpenOffline(d agentdir.Dir) (*Offline, error) {
 	if base == "" {
 		base = placeholderURL
 	}
-	return &Offline{
-		store: st,
+	return &offline{
+		dir:     d,
+		release: release,
+		store:   st,
 		pairings: &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads, Access: func(ctx context.Context) (*controlapi.Access, error) {
 			all, err := st.Pairings(ctx)
 			if err != nil {
@@ -135,42 +139,44 @@ func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, clie
 // relayInfoTimeout bounds the read of a relay's /info.
 const relayInfoTimeout = 10 * time.Second
 
-// Close closes the database.
-func (o *Offline) Close() error { return o.store.Close() }
+// Close closes the database and releases the agent directory.
+func (o *offline) Close() error { return errors.Join(o.store.Close(), o.release()) }
+
+func (o *offline) Running() bool { return false }
 
 // Pair issues a pairing code.
-func (o *Offline) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
+func (o *offline) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
 	return o.pairings.Invite(ctx, req)
 }
 
 // Pairings lists the pairings.
-func (o *Offline) Pairings(ctx context.Context) ([]controlapi.Pairing, error) {
+func (o *offline) Pairings(ctx context.Context) ([]controlapi.Pairing, error) {
 	return o.pairings.List(ctx)
 }
 
 // Pairing describes a pairing.
-func (o *Offline) Pairing(ctx context.Context, name string) (*controlapi.Pairing, error) {
+func (o *offline) Pairing(ctx context.Context, name string) (*controlapi.Pairing, error) {
 	return o.pairings.Get(ctx, name)
 }
 
 // UpdatePairing changes a pairing.
-func (o *Offline) UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
+func (o *offline) UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
 	return o.pairings.Update(ctx, name, req)
 }
 
 // Revoke revokes a pairing.
-func (o *Offline) Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
+func (o *offline) Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
 	return o.pairings.Remove(ctx, name)
 }
 
 // Contacts lists the contacts.
-func (o *Offline) Contacts(ctx context.Context) ([]controlapi.ContactInfo, error) {
+func (o *offline) Contacts(ctx context.Context) ([]controlapi.ContactInfo, error) {
 	return o.contacts.List(ctx)
 }
 
 // AddContact adds a contact with a URL; finding one by name needs the
 // private network of the running agent.
-func (o *Offline) AddContact(ctx context.Context, req controlapi.ContactRequest) (*controlapi.ContactInfo, error) {
+func (o *offline) AddContact(ctx context.Context, req controlapi.ContactRequest) (*controlapi.ContactInfo, error) {
 	c, err := o.contacts.Add(ctx, req)
 	if err != nil {
 		return nil, err
@@ -180,16 +186,12 @@ func (o *Offline) AddContact(ctx context.Context, req controlapi.ContactRequest)
 }
 
 // DeleteContact removes a contact.
-func (o *Offline) DeleteContact(ctx context.Context, name string) error {
-	err := o.contacts.Remove(ctx, name)
-	if errors.Is(err, store.ErrNotFound) {
-		return clierr.Usage("no contact " + name)
-	}
-	return err
+func (o *offline) DeleteContact(ctx context.Context, name string) error {
+	return o.contacts.Remove(ctx, name)
 }
 
 // Schedules lists the schedules.
-func (o *Offline) Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, error) {
+func (o *offline) Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, error) {
 	all, err := o.schedules.Visible(ctx, auth.Owner())
 	if err != nil {
 		return nil, err
@@ -202,7 +204,7 @@ func (o *Offline) Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, err
 }
 
 // AddSchedule adds a schedule made by the owner.
-func (o *Offline) AddSchedule(ctx context.Context, req schedule.Request) (*controlapi.ScheduleInfo, error) {
+func (o *offline) AddSchedule(ctx context.Context, req schedule.Request) (*controlapi.ScheduleInfo, error) {
 	s, err := o.schedules.Add(ctx, req, auth.Owner(), "")
 	if err != nil {
 		return nil, err
@@ -212,10 +214,49 @@ func (o *Offline) AddSchedule(ctx context.Context, req schedule.Request) (*contr
 }
 
 // DeleteSchedule removes a schedule.
-func (o *Offline) DeleteSchedule(ctx context.Context, name string) error {
-	err := o.schedules.Remove(ctx, name, auth.Owner())
-	if errors.Is(err, store.ErrNotFound) {
-		return clierr.Usage("no schedule " + name)
+func (o *offline) DeleteSchedule(ctx context.Context, name string) error {
+	return o.schedules.Remove(ctx, name, auth.Owner())
+}
+
+// AddChannel checks the channel's credentials and saves it for the next
+// start.
+func (o *offline) AddChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error) {
+	cfg, err := o.dir.LoadConfig()
+	if err != nil {
+		return nil, err
 	}
-	return err
+	if err := cfg.SetChannel(req.Kind, req.Token, req.Email); err != nil {
+		return nil, agenterr.Invalid(err)
+	}
+	secrets, err := o.dir.LoadSecrets()
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(secrets, req.Secrets)
+	if err := agentsrv.ValidateChannel(ctx, cfg, secrets, req.Kind); err != nil {
+		return nil, err
+	}
+	if err := o.dir.SaveSecrets(req.Secrets); err != nil {
+		return nil, err
+	}
+	if err := o.dir.SaveConfig(cfg); err != nil {
+		return nil, err
+	}
+	return &controlapi.ChannelStatus{Name: req.Kind}, nil
+}
+
+// DeleteChannel removes a channel from config.yaml.
+func (o *offline) DeleteChannel(_ context.Context, kind string) error {
+	cfg, err := o.dir.LoadConfig()
+	if err != nil {
+		return err
+	}
+	had := cfg.HasChannel(kind)
+	if err := cfg.SetChannel(kind, "", nil); err != nil {
+		return agenterr.Invalid(err)
+	}
+	if !had {
+		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
+	}
+	return o.dir.SaveConfig(cfg)
 }
