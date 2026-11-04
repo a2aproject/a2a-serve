@@ -1016,3 +1016,61 @@ func TestOpenSetsSynchronousNormal(t *testing.T) {
 		t.Fatalf("PRAGMA synchronous = %d, want %d (NORMAL)", got, normal)
 	}
 }
+
+func TestLookupTokenRecordsUseOncePerMinute(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		at   time.Duration
+		want time.Duration
+	}{
+		{name: "first use", at: 0, want: 0},
+		{name: "within a minute", at: 30 * time.Second, want: 0},
+		{name: "after a minute", at: 61 * time.Second, want: 61 * time.Second},
+		{name: "again within a minute", at: 90 * time.Second, want: 61 * time.Second},
+	}
+	for _, tc := range tests {
+		now = start.Add(tc.at)
+		if _, err := s.LookupToken(ctx, "a2p_secret"); err != nil {
+			t.Fatalf("LookupToken() at %s error = %v", tc.name, err)
+		}
+		tokens, err := s.Tokens(ctx)
+		if err != nil {
+			t.Fatalf("Tokens() error = %v", err)
+		}
+		want := start.Add(tc.want)
+		if got := tokens[0].LastUsed; !got.Equal(want) {
+			t.Fatalf("Tokens()[0].LastUsed at %s = %v, want %v", tc.name, got, want)
+		}
+	}
+}
+
+func TestLookupTokenSucceedsWhenRecordingUseFails(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	if _, err := s.db.Exec(`CREATE TRIGGER no_updates BEFORE UPDATE ON tokens BEGIN SELECT RAISE(ABORT, 'database is locked'); END`); err != nil {
+		t.Fatalf("creating the trigger: %v", err)
+	}
+
+	got, err := s.LookupToken(ctx, "a2p_secret")
+	if err != nil {
+		t.Fatalf("LookupToken() error = %v", err)
+	}
+	if got.Pairing != "grok" {
+		t.Fatalf("LookupToken().Pairing = %q, want grok", got.Pairing)
+	}
+}

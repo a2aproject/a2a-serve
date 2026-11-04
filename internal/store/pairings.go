@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -172,15 +173,24 @@ func scanToken(row interface{ Scan(...any) error }) (Token, error) {
 	return t, err
 }
 
-// LookupToken returns the token record and records its use.
+// lastUsedGranularity is how stale a token's last use gets before a lookup
+// records a new one, which keeps lookups from writing on every request.
+const lastUsedGranularity = time.Minute
+
+// LookupToken returns the token record and records its use. A failure to
+// record the use is logged and doesn't fail the lookup.
 func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 	h := cryptoutil.Hash(token)
 	t, err := scanToken(s.reads.QueryRowContext(ctx, `SELECT `+tokenColumns+` FROM tokens WHERE hash = ?`, h))
 	if err != nil {
 		return Token{}, err
 	}
-	if _, err := s.exec(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, s.now().UnixNano(), h); err != nil {
-		return Token{}, err
+	now := s.now()
+	if now.Sub(t.LastUsed) <= lastUsedGranularity {
+		return t, nil
+	}
+	if _, err := s.exec(ctx, `UPDATE tokens SET last_used = ? WHERE hash = ?`, now.UnixNano(), h); err != nil {
+		slog.Warn("recording the use of a token", "pairing", t.Pairing, "error", err)
 	}
 	return t, nil
 }
