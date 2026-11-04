@@ -65,6 +65,8 @@ type Peers struct {
 	approvals *approvals.Service
 	chat      chat
 	schedules *schedules
+	// chain gives principals stored to act later their role.
+	chain     *auth.Chain
 	ads       *gossip.Table
 	agentName func() string
 	bridge    harnessBridge
@@ -119,9 +121,8 @@ type contactClient struct {
 // callClaims is who calls through the agents URL of a conversation: the
 // harness in the conversation's running turn, for the user who started it.
 type callClaims struct {
-	ContextID  string
-	OnBehalfOf string
-	Hops       int
+	ContextID string
+	User      auth.Principal
 }
 
 // handleAlphabet avoids characters that are easy to confuse.
@@ -253,9 +254,9 @@ func (p *Peers) turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 	}
 	c := callClaims{ContextID: execCtx.ContextID}
 	if caller, ok := auth.Caller(ctx); ok {
-		c.OnBehalfOf, c.Hops = caller.User(), caller.Hops
+		c.User = caller
 	} else if execCtx.User != nil {
-		c.OnBehalfOf = execCtx.User.Name
+		c.User = auth.Principal{ID: execCtx.User.Name}
 	}
 	return c
 }
@@ -357,17 +358,14 @@ func (p *Peers) httpClient(c store.Contact) *http.Client {
 	return manage.TokenClient(base, c)
 }
 
-// onBehalfOf returns ctx for calling another agent on behalf of a user, at
-// hops agents deep.
-func onBehalfOf(ctx context.Context, user string, hops int) context.Context {
-	params := a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(hops + 1)}}
-	if user != "" {
-		params[auth.HeaderOnBehalfOf] = []string{user}
-	}
-	return a2aclient.AttachServiceParams(ctx, params)
+// viaAgent returns ctx for calling another agent from a conversation hops
+// agents deep. The agent called caps what the call may do by the hop count;
+// the user stays with this server, which relays the approvals.
+func viaAgent(ctx context.Context, hops int) context.Context {
+	return a2aclient.AttachServiceParams(ctx, a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(hops + 1)}})
 }
 
-// target is an agent the server calls on behalf of a user.
+// target is an agent the server calls for a user.
 type target interface {
 	send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error)
 	get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
@@ -375,16 +373,15 @@ type target interface {
 
 type remoteTarget struct {
 	c    *a2aclient.Client
-	user string
 	hops int
 }
 
 func (t remoteTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error) {
-	return t.c.SendMessage(onBehalfOf(ctx, t.user, t.hops), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+	return t.c.SendMessage(viaAgent(ctx, t.hops), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
 }
 
 func (t remoteTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
-	return t.c.GetTask(onBehalfOf(ctx, t.user, t.hops), &a2a.GetTaskRequest{ID: id})
+	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id})
 }
 
 type localTarget struct {
@@ -403,8 +400,9 @@ func (t localTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) 
 // ErrOffline is returned when a contact can't be reached.
 var ErrOffline = errors.New("offline")
 
-// target resolves an agent name to a contact or a hosted node.
-func (p *Peers) target(ctx context.Context, name, user string, hops int) (target, error) {
+// target resolves an agent name to a contact or a hosted node, called for
+// user hops agents deep.
+func (p *Peers) target(ctx context.Context, name string, user auth.Principal, hops int) (target, error) {
 	node, err := p.isNode(ctx, name)
 	if err != nil {
 		return nil, err
@@ -416,7 +414,7 @@ func (p *Peers) target(ctx context.Context, name, user string, hops int) (target
 	if err != nil {
 		return nil, err
 	}
-	return remoteTarget{c: client, user: user, hops: hops}, nil
+	return remoteTarget{c: client, hops: hops}, nil
 }
 
 // isNode reports whether name is a webhook node hosted here.
@@ -428,9 +426,14 @@ func (p *Peers) isNode(ctx context.Context, name string) (bool, error) {
 	return err == nil, err
 }
 
-// nodeCaller is the principal this agent calls its nodes as.
-func (p *Peers) nodeCaller(user string, hops int) auth.Principal {
-	return auth.Principal{ID: "agent:" + p.agentName(), Roles: []string{auth.RoleOwner}, OnBehalfOf: user, Hops: hops + 1}
+// nodeCaller is the principal this agent calls its nodes as, for user hops
+// agents deep. Its harness is another agent to the node, so it is capped
+// at authenticated; the node admits the agent hosting it explicitly.
+func (p *Peers) nodeCaller(user auth.Principal, hops int) auth.Principal {
+	return auth.Principal{
+		ID: "agent:" + p.agentName(), Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
+		Identity: auth.Identity{Network: network.ListenerHarness, Hops: hops + 1},
+	}
 }
 
 // contactClient returns the client of a contact, one per contact: the user
@@ -523,7 +526,7 @@ func destroyClient(c *a2aclient.Client) {
 // conversation the call came from, or else in the user's direct chat, or
 // else in the owner chat.
 func (p *Peers) relay(ctx context.Context, claims callClaims, agent string, task *a2a.Task, q *approvals.Question) {
-	user := claims.OnBehalfOf
+	user := claims.User.ID
 	if user == "" {
 		user = auth.OwnerID
 	}
@@ -576,7 +579,7 @@ func (p *Peers) directChat(ctx context.Context, user string) (approvals.Chat, bo
 
 // AnswerRemote forwards an answer to a remote agent's question.
 func (p *Peers) AnswerRemote(ctx context.Context, rec store.Question, q *approvals.Question, opt approvals.Option, by auth.Principal) error {
-	t, err := p.target(ctx, rec.Contact, by.ID, 0)
+	t, err := p.target(ctx, rec.Contact, by, 0)
 	if err != nil {
 		return err
 	}
@@ -620,7 +623,7 @@ func (p *Peers) watch(w store.Watch) {
 			delete(p.watching, key)
 			p.mu.Unlock()
 		}()
-		claims := callClaims{ContextID: w.OriginContextID, OnBehalfOf: w.OnBehalfOf}
+		claims := callClaims{ContextID: w.OriginContextID, User: p.watchPrincipal(ctx, w)}
 		interval := watchInterval
 		failingSince := w.FailingSince
 		for {
@@ -632,7 +635,7 @@ func (p *Peers) watch(w store.Watch) {
 			if interval < watchMaxInterval {
 				interval += watchInterval
 			}
-			task, err := p.poll(ctx, w)
+			task, err := p.poll(ctx, w, claims.User)
 			if errors.Is(err, store.ErrNotFound) {
 				slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
 				if err := p.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
@@ -684,10 +687,10 @@ func (p *Peers) setWatchFailing(ctx context.Context, w store.Watch, since time.T
 	}
 }
 
-func (p *Peers) poll(ctx context.Context, w store.Watch) (*a2a.Task, error) {
+func (p *Peers) poll(ctx context.Context, w store.Watch, user auth.Principal) (*a2a.Task, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	t, err := p.target(ctx, w.Contact, w.OnBehalfOf, 0)
+	t, err := p.target(ctx, w.Contact, user, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -698,18 +701,31 @@ func (p *Peers) poll(ctx context.Context, w store.Watch) (*a2a.Task, error) {
 	return task, err
 }
 
+// finishWatch posts the result of a watched task as its user, if they may
+// still call this agent.
 func (p *Peers) finishWatch(ctx context.Context, w store.Watch, text string) {
 	if err := p.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
 		slog.Error("deleting watch", "error", err)
 	}
-	if err := p.chat.injectTurn(ctx, w.OriginContextID, p.watchPrincipal(ctx, w), text); err != nil {
+	user := p.watchPrincipal(ctx, w)
+	if user.Role == "" {
+		slog.Warn("dropped a watched result: its user can no longer call this agent", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf)
+		return
+	}
+	if err := p.chat.injectTurn(ctx, w.OriginContextID, user, text); err != nil {
 		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
 	}
 }
 
-// watchPrincipal is the user a watched task's result is posted as.
+// watchPrincipal is the user a watched task's result is posted as, with
+// the role they have now; no role if they can no longer call this agent.
 func (p *Peers) watchPrincipal(ctx context.Context, w store.Watch) auth.Principal {
-	return userPrincipal(ctx, p.store, w.OnBehalfOf)
+	user, err := storedPrincipal(ctx, p.chain, w.OnBehalfOf, w.Identity)
+	if err != nil {
+		slog.Warn("resolving the user of a watch", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf, "error", err)
+		return auth.Principal{ID: w.OnBehalfOf}
+	}
+	return user
 }
 
 // resultText is the text of a finished task: its artifacts, or its status message.

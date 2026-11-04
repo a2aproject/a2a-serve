@@ -233,13 +233,13 @@ func TestTokens(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if _, err := s.EnsureUser(ctx, "pair:grok", []string{"member"}); err != nil {
+	if _, err := s.EnsureUser(ctx, "pair:grok", "authenticated"); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "tg:1", UserID: "pair:grok"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutToken(ctx, "a2p_secret", Token{Name: "grok", Principal: "pair:grok", Roles: []string{"member"}, URL: "http://x"}); err != nil {
+	if err := s.PutToken(ctx, "a2p_secret", Token{Name: "grok", Principal: "pair:grok", Role: "authenticated", URL: "http://x"}); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
 	got, err := s.LookupToken(ctx, "a2p_secret")

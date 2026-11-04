@@ -133,11 +133,6 @@ func first(v []string) string {
 
 func identity(s string) string { return s }
 
-func loginKey(s string) string {
-	login, _, _ := strings.Cut(s, "=")
-	return login
-}
-
 func mountArgKey(s string) string {
 	if strings.Contains(s, ":") {
 		return mountKey(s)
@@ -165,26 +160,6 @@ var fields = []field{
 	scalar("public", false, func(c *Config) *string { return &c.Network.Public }),
 	operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL })),
 	operational(scalar("ngrok-url", false, func(c *Config) *string { return &c.Network.NgrokURL })),
-	{
-		flag: "identity", list: true, key: loginKey,
-		get: func(c *Config) []string {
-			out := []string{}
-			for _, login := range slices.Sorted(maps.Keys(c.Network.Identities)) {
-				out = append(out, login+"="+c.Network.Identities[login])
-			}
-			return out
-		},
-		put: func(c *Config, v []string) {
-			c.Network.Identities = nil
-			for _, kv := range v {
-				login, role, _ := strings.Cut(kv, "=")
-				if c.Network.Identities == nil {
-					c.Network.Identities = map[string]string{}
-				}
-				c.Network.Identities[login] = role
-			}
-		},
-	},
 	tokenField(ChannelTelegram, func(c *Config, v string) {
 		c.Channels.Telegram = nil
 		if v != "" {

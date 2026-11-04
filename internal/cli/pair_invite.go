@@ -103,12 +103,12 @@ them like any other caller from the private network.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&req.Role, "role", "member", "Role: `member|owner`; members answer the approvals of their own tasks, owners those of every task")
+	f.StringVar(&req.Role, "role", "authenticated", "Role: `authenticated|owner`; authenticated callers see and approve their own tasks, owners every task")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
-	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleMember, agentdir.RoleOwner)))
+	must(cmd.RegisterFlagCompletionFunc("role", fixedCompletions(agentdir.RoleAuthenticated, agentdir.RoleOwner)))
 	return cmd
 }
 

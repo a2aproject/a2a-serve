@@ -97,10 +97,9 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-email email` |  | People who may call the agent after signing in with Google: an email, or \*@domain for a Google Workspace domain (repeatable; commas also separate values) |
+| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for a Google Workspace domain or mail that passes DMARC; turns on Google sign-in (repeatable; commas also separate values) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
-| `--identity login=member\|owner` |  | Role of another user's network login: login=member\|owner, such as anna@github=owner (repeatable) |
 | `--ngrok-authtoken string` |  | ngrok authtoken (secret value: env:VAR, -, or the value) |
 | `--ngrok-url string` |  | Reserved ngrok domain, such as https://coder.ngrok.app |
 | `--port int` |  | Localhost port, 1-65535 (default: a free port, kept across runs) |
@@ -156,7 +155,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, an identity by login. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
 
-Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, identity, image, memory, mount, name, ngrok-authtoken, ngrok-url, owner-chat, pids, port, private, public, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, image, memory, mount, name, ngrok-authtoken, ngrok-url, owner-chat, pids, port, private, public, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

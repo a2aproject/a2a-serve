@@ -70,6 +70,7 @@ func TestAgentMeshWhoIs(t *testing.T) {
 		"mine":   {PeerID: "p1", Principal: "Ben@example.com"},
 		"anna":   {PeerID: "p2", Principal: "anna@example.com"},
 		"server": {PeerID: "p3", Principal: "node:p3"},
+		"login":  {PeerID: "p4", Principal: "ben@github"},
 	}}
 	tests := []struct {
 		name  string
@@ -77,10 +78,11 @@ func TestAgentMeshWhoIs(t *testing.T) {
 		addr  string
 		want  *Peer
 	}{
-		{name: "same person", owner: "ben@example.com", addr: "mine", want: &Peer{ID: "Ben@example.com", Machine: "p1", Self: true}},
-		{name: "another person", owner: "ben@example.com", addr: "anna", want: &Peer{ID: "anna@example.com", Machine: "p2"}},
-		{name: "agent joined with a token", owner: "ben@example.com", addr: "server", want: &Peer{ID: "node:p3", Machine: "p3"}},
-		{name: "this agent joined with a token", owner: "", addr: "mine", want: &Peer{ID: "Ben@example.com", Machine: "p1"}},
+		{name: "same person", owner: "ben@example.com", addr: "mine", want: &Peer{Email: "Ben@example.com", Node: "p1", Machine: "p1", Self: true}},
+		{name: "another person", owner: "ben@example.com", addr: "anna", want: &Peer{Email: "anna@example.com", Node: "p2", Machine: "p2"}},
+		{name: "agent joined with a token", owner: "ben@example.com", addr: "server", want: &Peer{Node: "p3", Machine: "p3"}},
+		{name: "principal that isn't an email", owner: "ben@github", addr: "login", want: &Peer{Node: "p4", Machine: "p4"}},
+		{name: "this agent joined with a token", owner: "", addr: "mine", want: &Peer{Email: "Ben@example.com", Node: "p1", Machine: "p1"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

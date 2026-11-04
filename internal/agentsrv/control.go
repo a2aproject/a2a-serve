@@ -389,7 +389,7 @@ func (s *Server) ctlAddSchedule(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	sc, err := s.schedules.add(r.Context(), req, auth.OwnerID, "")
+	sc, err := s.schedules.add(r.Context(), req, auth.Owner(), "")
 	if err != nil {
 		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
 		return

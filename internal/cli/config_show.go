@@ -16,8 +16,6 @@ package cli
 
 import (
 	"fmt"
-	"maps"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -173,11 +171,6 @@ func renderConfig(v *agentctl.View, all bool) string {
 		}
 	}
 	line("approvals", strings.Join(approvals, "; "))
-	var identities []string
-	for _, login := range slices.Sorted(maps.Keys(c.Network.Identities)) {
-		identities = append(identities, login+"="+c.Network.Identities[login])
-	}
-	line("identities", strings.Join(identities, ", "))
 	line("limits", formatLimits(c.Limits, def.Limits))
 	port := "a free port, picked on the first start"
 	if c.Port != 0 {

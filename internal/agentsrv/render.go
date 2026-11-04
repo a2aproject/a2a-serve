@@ -335,7 +335,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, messageText(msg))
 		return
 	}
-	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", rd.p.User(), q)
+	rec, err := rd.r.approvals.NewRecord(ctx, taskID, contextID, "", rd.p.ID, q)
 	if err != nil {
 		slog.Error("storing question", "error", err)
 		rd.send(ctx, messageText(msg))

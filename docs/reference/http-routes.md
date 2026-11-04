@@ -26,4 +26,4 @@ The LAN listener accepts only requests for its own address in the `Host` header,
 
 ## Signatures and headers
 
-The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. Calls between your own agents carry `X-A2A-Serve-On-Behalf-Of`, naming the user a call is made for, and `X-A2A-Serve-Hops`.
+The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. Calls between agents carry `X-A2A-Serve-Hops`, the number of agent servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.

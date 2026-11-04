@@ -156,23 +156,6 @@ func Allowed(list []string, c Claims) bool {
 	return false
 }
 
-// AllowedEmail reports whether the allowlist still admits an email signed
-// in before, when the token holding it is used. A domain entry admits the
-// emails of its domain, which only a Workspace account could sign in with.
-func AllowedEmail(list []string, email string) bool {
-	email = strings.ToLower(email)
-	for _, entry := range list {
-		entry = strings.ToLower(strings.TrimSpace(entry))
-		if domain, ok := strings.CutPrefix(entry, "*@"); ok && strings.HasSuffix(email, "@"+domain) {
-			return true
-		}
-		if entry == email {
-			return true
-		}
-	}
-	return false
-}
-
 // keysTTL is how long Google's signing keys are cached.
 const keysTTL = time.Hour
 

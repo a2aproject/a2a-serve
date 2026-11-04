@@ -71,28 +71,18 @@ func (s *Store) DeleteCodes(ctx context.Context, purpose, name string) (int, err
 	return int(n), err
 }
 
-// SetPairingRole moves the tokens, links and pending codes of the pairing
-// name to principal with role, and deletes the user previous, which the
-// pairing no longer uses, unless it is principal.
-func (s *Store) SetPairingRole(ctx context.Context, name, role, principal, previous string) error {
+// SetPairingRole changes the role of the pairing name, whose principal is
+// principal, in its user, tokens and pending codes.
+func (s *Store) SetPairingRole(ctx context.Context, name, role, principal string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if _, err := tx.ExecContext(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT (id) DO NOTHING`,
+		if _, err := tx.ExecContext(ctx, `INSERT INTO users (id, roles, created) VALUES (?, ?, ?) ON CONFLICT (id) DO UPDATE SET roles = excluded.roles`,
 			principal, role, s.now().UnixNano()); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE tokens SET principal = ?, roles = ? WHERE name = ?`, principal, role, name); err != nil {
+		if _, err := tx.ExecContext(ctx, `UPDATE tokens SET roles = ? WHERE name = ?`, role, name); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `UPDATE links SET user_id = ? WHERE name = ?`, principal, name); err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx, `UPDATE codes SET role = ? WHERE purpose = 'pair' AND name = ?`, role, name); err != nil {
-			return err
-		}
-		if previous == principal {
-			return nil
-		}
-		_, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id = ? AND NOT EXISTS (SELECT 1 FROM links WHERE user_id = ?)`, previous, previous)
+		_, err := tx.ExecContext(ctx, `UPDATE codes SET role = ? WHERE purpose = 'pair' AND name = ?`, role, name)
 		return err
 	})
 }

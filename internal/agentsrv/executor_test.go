@@ -171,8 +171,8 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleMember))
-	ben := ts.client(ts.pair("ben", auth.RoleMember))
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 	contextID := send(t, anna, userText("hello", "", "")).ContextID
 	tests := []struct {

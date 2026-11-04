@@ -145,7 +145,7 @@ func (o *Offline) Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, err
 
 // AddSchedule adds a schedule made by the owner.
 func (o *Offline) AddSchedule(ctx context.Context, req schedule.Request) (*controlapi.ScheduleInfo, error) {
-	s, err := o.schedules.Add(ctx, req, auth.OwnerID, "")
+	s, err := o.schedules.Add(ctx, req, auth.Owner(), "")
 	if err != nil {
 		return nil, err
 	}

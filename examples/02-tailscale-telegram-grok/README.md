@@ -123,6 +123,9 @@ they need no pairing code:
 a2a send -a https://coder.your-tailnet.ts.net "What's in notes.md?"
 ```
 
+Other people on your tailnet can call it too. They see and approve only their
+own tasks.
+
 Other people get a code from you, as in lesson 1:
 `a2a-serve pair invite anna`, and then they run `a2a-serve pair join` with it.
 
@@ -175,7 +178,7 @@ wakes. Each wake is a JSON body with `kind`, `taskId`, `text` and
 a2a-serve mailbox reply <taskId> --final "Here is what I found: ..."
 ```
 
-The same token lets the bot call your agent, as a member, for example from a
+The same token lets the bot call your agent, as an authenticated caller, for example from a
 scheduled routine:
 
 ```bash

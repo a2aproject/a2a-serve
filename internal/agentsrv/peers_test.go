@@ -66,7 +66,7 @@ func TestAgentCallsContact(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleMember)
+	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
 
 	c := assistant.client(assistant.pair("me", auth.RoleOwner))
 	task := send(t, c, userText("call coder hello", "", ""))
@@ -169,13 +169,13 @@ func TestContactClientIsShared(t *testing.T) {
 	if err != nil {
 		t.Fatalf("contactClient() error = %v", err)
 	}
-	for _, user := range []string{auth.OwnerID, "pair:anna"} {
+	for _, user := range []auth.Principal{auth.Owner(), {ID: "pair:anna", Role: auth.RoleAuthenticated}} {
 		tg, err := p.target(ctx, "coder", user, 1)
 		if err != nil {
 			t.Fatalf("target() error = %v", err)
 		}
 		if got := tg.(remoteTarget).c; got != first {
-			t.Fatalf("target() for %s built a new client, want the contact's client", user)
+			t.Fatalf("target() for %s built a new client, want the contact's client", user.ID)
 		}
 	}
 
@@ -224,7 +224,7 @@ func TestContactCountsHops(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tg, err := p.target(ctx, "coder", auth.OwnerID, tc.hops)
+			tg, err := p.target(ctx, "coder", auth.Owner(), tc.hops)
 			if err != nil {
 				t.Fatalf("target() error = %v", err)
 			}
@@ -261,7 +261,7 @@ func TestAgentsURLHandles(t *testing.T) {
 		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, errNoTurn)
 	}
 
-	turn := callClaims{ContextID: "ctx1", OnBehalfOf: "pair:anna", Hops: 1}
+	turn := callClaims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
 	end := p.beginTurn(turn)
 	got, err := p.claimsOf(ctx, h)
 	if err != nil {
@@ -288,7 +288,7 @@ func turnURL(t *testing.T, ts *testServer, contextID string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, OnBehalfOf: auth.OwnerID}))
+	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, User: auth.Owner()}))
 	return u
 }
 
@@ -498,7 +498,7 @@ func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "tg:1", "dm1")
-	linkAs(t, assistant, "anna", auth.RoleMember, "tg:2", "dm2")
+	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "tg:2", "dm2")
 
 	assistant.ch.write("tg:2", "dm2", "call coder ask")
 	ref, q := assistant.ch.waitFor(t, "dm2", hasQuestion)
@@ -528,7 +528,7 @@ func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	g := &guardedHandler{RequestHandler: streamingHandler{}, p: ts.srv.peers, claims: callClaims{ContextID: "c1", OnBehalfOf: auth.OwnerID}, agent: "grok"}
+	g := &guardedHandler{RequestHandler: streamingHandler{}, p: ts.srv.peers, claims: callClaims{ContextID: "c1", User: auth.Owner()}, agent: "grok"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -705,10 +705,10 @@ func TestAnsweredTurnKeepsItsUser(t *testing.T) {
 		t.Fatal(err)
 	}
 	task := &a2a.Task{ID: "t1", ContextID: "c1"}
-	anna := auth.Principal{ID: "pair:anna", Roles: []string{auth.RoleMember}}
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
 	wantAnna := func(c callClaims) {
-		if c.OnBehalfOf != anna.ID {
-			t.Errorf("claimsOf() user = %q, want %q", c.OnBehalfOf, anna.ID)
+		if c.User.ID != anna.ID {
+			t.Errorf("claimsOf() user = %q, want %q", c.User.ID, anna.ID)
 		}
 	}
 

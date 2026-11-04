@@ -17,7 +17,6 @@ package agentdir
 import (
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"os"
 	"path/filepath"
@@ -159,8 +158,6 @@ type NetworkConfig struct {
 	NgrokURL string `yaml:"ngrok_url,omitempty" json:"ngrokURL,omitempty"`
 	// LANPort is the port of the LAN listener. Zero picks one on first run.
 	LANPort int `yaml:"lan_port,omitempty" json:"lanPort,omitempty"`
-	// Identities maps network logins of other users to roles.
-	Identities map[string]string `yaml:"identities,omitempty" json:"identities,omitempty"`
 }
 
 // ChannelsConfig configures the messengers the agent is reachable from.
@@ -366,7 +363,6 @@ func (c *Config) Clone() *Config {
 	out.Mounts = slices.Clone(c.Mounts)
 	out.Secrets = slices.Clone(c.Secrets)
 	out.Env = slices.Clone(c.Env)
-	out.Network.Identities = maps.Clone(c.Network.Identities)
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
 	out.Auth.AllowEmails = slices.Clone(c.Auth.AllowEmails)

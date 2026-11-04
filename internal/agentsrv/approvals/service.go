@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"maps"
 	"net/http"
-	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -102,19 +101,16 @@ func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 	return rec, s.Store.PutQuestion(ctx, rec)
 }
 
-// IsOwner reports whether p is an owner.
-func (s *Service) IsOwner(ctx context.Context, p auth.Principal) bool {
-	if p.ID == auth.OwnerID || p.Has(auth.RoleOwner) {
-		return true
-	}
-	u, err := s.Store.User(ctx, p.ID)
-	return err == nil && slices.Contains(u.Roles, auth.RoleOwner)
-}
-
 // MayAnswer reports whether p may answer a permission question of a task
-// user started: user themselves, or an owner.
-func (s *Service) MayAnswer(ctx context.Context, p auth.Principal, user string) bool {
-	return (user != "" && (p.ID == user || p.User() == user)) || s.IsOwner(ctx, p)
+// user started: user themselves, or an owner. Anonymous callers never do.
+func MayAnswer(p auth.Principal, user string) bool {
+	switch p.Role {
+	case auth.RoleOwner:
+		return true
+	case auth.RoleAuthenticated:
+		return user != "" && p.ID == user
+	}
+	return false
 }
 
 // PageURL is the page where a question can be answered.
@@ -154,7 +150,7 @@ func (s *Service) starter(ctx context.Context, taskID a2a.TaskID) string {
 		return stored.User
 	}
 	if p, ok := auth.Caller(ctx); ok {
-		return p.User()
+		return p.ID
 	}
 	return ""
 }
@@ -177,7 +173,7 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 	if q == nil || q.Type != TypePermission {
 		return nil
 	}
-	if s.MayAnswer(ctx, p, stored.User) {
+	if MayAnswer(p, stored.User) {
 		return nil
 	}
 	return fmt.Errorf("%w: only the person who started the task or an owner can answer this approval", a2a.ErrUnauthorized)
@@ -188,7 +184,7 @@ func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 // isn't kept, so that the question can be answered again.
 func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option) error {
 	q := FromRecord(rec)
-	if q.Type == TypePermission && !s.MayAnswer(ctx, p, rec.User) {
+	if q.Type == TypePermission && !MayAnswer(p, rec.User) {
 		return ErrNotApprover
 	}
 	if err := s.Store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {

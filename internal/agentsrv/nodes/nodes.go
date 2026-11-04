@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -68,7 +69,8 @@ type Config struct {
 	// nil uses DefaultWebhookRetries.
 	WebhookRetries []time.Duration
 	// Advertised reports whether the node is advertised to the private
-	// network, which lets members call it too. Nil advertises none.
+	// network, which lets authenticated callers call it too. Nil
+	// advertises none.
 	Advertised func(id string) bool
 }
 
@@ -173,9 +175,10 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	return h
 }
 
-// nodeCallerInterceptor lets owners call nodes; the agent calls them
-// in-process as an owner. An advertised node also takes members, such as
-// the agents of other people on the private network.
+// nodeCallerInterceptor lets owners and the hosting agent call nodes; the
+// agent calls them in-process from its harness. An advertised node also
+// takes authenticated callers, such as the agents of other people on the
+// private network.
 type nodeCallerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	node       string
@@ -187,8 +190,9 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
 	}
-	member := p.Has(auth.RoleMember) && c.advertised != nil && c.advertised(c.node)
-	if !p.Has(auth.RoleOwner) && !member {
+	hosting := p.Network == network.ListenerHarness
+	advertised := p.Role == auth.RoleAuthenticated && c.advertised != nil && c.advertised(c.node)
+	if !p.IsOwner() && !hosting && !advertised {
 		return ctx, nil, fmt.Errorf("%w: webhook nodes are reachable by the hosting agent and its owner", a2a.ErrUnauthorized)
 	}
 	auth.SetCallUser(callCtx, p)

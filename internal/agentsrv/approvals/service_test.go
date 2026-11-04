@@ -113,7 +113,7 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 
 func TestAnswer(t *testing.T) {
 	t.Parallel()
-	member := func(id string) auth.Principal { return auth.Principal{ID: id, Roles: []string{auth.RoleMember}} }
+	member := func(id string) auth.Principal { return auth.Principal{ID: id, Role: auth.RoleAuthenticated} }
 	tests := []struct {
 		name       string
 		by         auth.Principal
@@ -122,8 +122,9 @@ func TestAnswer(t *testing.T) {
 	}{
 		{name: "starter", by: member("pair:anna"), wantCaller: member("pair:anna")},
 		{name: "owner", by: auth.Owner(), wantCaller: auth.Owner()},
-		{name: "agent on behalf of the starter", by: auth.Principal{ID: "agent:assistant", OnBehalfOf: "pair:anna"}, wantCaller: auth.Principal{ID: "agent:assistant", OnBehalfOf: "pair:anna"}},
-		{name: "another member", by: member("pair:bob"), wantErr: ErrNotApprover},
+		{name: "agent naming the starter", by: auth.Principal{ID: "agent:assistant", Role: auth.RoleAuthenticated, OnBehalfOf: "pair:anna"}, wantErr: ErrNotApprover},
+		{name: "starter as anonymous", by: auth.Principal{ID: "pair:anna", Role: auth.RoleAnonymous}, wantErr: ErrNotApprover},
+		{name: "another authenticated caller", by: member("pair:bob"), wantErr: ErrNotApprover},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,7 +143,7 @@ func TestAnswer(t *testing.T) {
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Answer() by %s error = %v, want %v", tc.by.ID, err, tc.wantErr)
 			}
-			if tc.wantErr == nil && (h.caller.ID != tc.wantCaller.ID || h.caller.OnBehalfOf != tc.wantCaller.OnBehalfOf) {
+			if tc.wantErr == nil && h.caller.ID != tc.wantCaller.ID {
 				t.Fatalf("answer sent as %+v, want %+v", h.caller, tc.wantCaller)
 			}
 		})

@@ -138,8 +138,8 @@ func TestWebhookNodeAnswersAgent(t *testing.T) {
 
 	node.mu.Lock()
 	defer node.mu.Unlock()
-	if len(node.wakes) == 0 || node.wakes[0].Sender.Kind != mailboxapi.SenderAgent || node.wakes[0].Sender.OnBehalfOf != auth.OwnerID {
-		t.Fatalf("wakes = %+v, want a wake from the agent on behalf of the owner", node.wakes)
+	if len(node.wakes) == 0 || node.wakes[0].Sender.Kind != mailboxapi.SenderAgent || node.wakes[0].Sender.OnBehalfOf != "pair:me" {
+		t.Fatalf("wakes = %+v, want a wake from the agent on behalf of pair:me", node.wakes)
 	}
 	if node.badSig {
 		t.Fatalf("a wake had an invalid %s", mailboxapi.SignatureHeader)
@@ -227,7 +227,7 @@ func TestPairNodeOrCaller(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	ts.pair("anna", auth.RoleMember)
+	ts.pair("anna", auth.RoleAuthenticated)
 	tests := []struct {
 		name     string
 		req      controlapi.PairCodeRequest
@@ -257,7 +257,7 @@ func TestPairRmRemovesNodeOrCaller(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	ts.pair("anna", auth.RoleMember)
+	ts.pair("anna", auth.RoleAuthenticated)
 	ctx := context.Background()
 	for name, want := range map[string]string{"grok": pairapi.KindNode, "anna": pairapi.KindCaller} {
 		resp, err := controlapi.NewClient(ts.dir).Revoke(ctx, name)
@@ -280,7 +280,7 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	tok := ts.pair("grok-caller", auth.RoleMember)
+	tok := ts.pair("grok-caller", auth.RoleAuthenticated)
 	req, err := http.NewRequest(http.MethodPost, ts.localURL()+"/n/grok/", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m","role":"ROLE_USER","parts":[{"text":"hi"}]}}}`))
 	if err != nil {
 		t.Fatal(err)

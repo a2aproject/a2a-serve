@@ -91,7 +91,4 @@ func TestAllowed(t *testing.T) {
 			}
 		})
 	}
-	if !googleauth.AllowedEmail(list, "ben@example.com") || googleauth.AllowedEmail(list, "eve@example.net") {
-		t.Fatalf("AllowedEmail() disagrees with the allowlist %v", list)
-	}
 }

@@ -74,14 +74,15 @@ func (e *schedulesExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorCo
 	}
 }
 
-// user is who the commands act for. Calls that came through another agent
-// can't manage schedules: the user they name belongs to the caller.
+// user is who the commands act for: the user of the conversation's turn.
+// Conversations started through another agent and anonymous callers can't
+// manage schedules.
 func (e *schedulesExecutor) user() (auth.Principal, error) {
-	u := e.claims.OnBehalfOf
-	if e.claims.Hops > 0 || !(strings.HasPrefix(u, "user:") || strings.HasPrefix(u, "pair:")) {
+	u := e.claims.User
+	if u.Hops > 0 || (u.Role != auth.RoleOwner && u.Role != auth.RoleAuthenticated) {
 		return auth.Principal{}, errors.New("schedules can only be managed in a conversation with a user of this agent")
 	}
-	return auth.Principal{ID: u}, nil
+	return u, nil
 }
 
 func (e *schedulesExecutor) run(ctx context.Context, text string) (string, error) {
@@ -95,9 +96,6 @@ func (e *schedulesExecutor) run(ctx context.Context, text string) (string, error
 	who, err := e.user()
 	if err != nil {
 		return "", err
-	}
-	if who.ID == auth.OwnerID {
-		who = auth.Owner()
 	}
 	switch args[0] {
 	case "add":
@@ -131,7 +129,7 @@ func (e *schedulesExecutor) add(ctx context.Context, who auth.Principal, args []
 		return "", fmt.Errorf("add takes one name\n\n%s", schedulesUsage)
 	}
 	req.Name = fs.Arg(0)
-	s, err := e.sc.add(ctx, req, who.ID, e.claims.ContextID)
+	s, err := e.sc.add(ctx, req, who, e.claims.ContextID)
 	if err != nil {
 		return "", err
 	}

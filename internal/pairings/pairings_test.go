@@ -89,7 +89,7 @@ func TestInvite(t *testing.T) {
 	}{
 		{name: "new caller", req: controlapi.PairCodeRequest{Name: "bob"}},
 		{name: "another device of a caller", req: controlapi.PairCodeRequest{Name: "anna"}},
-		{name: "same role", req: controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleMember}},
+		{name: "same role", req: controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleAuthenticated}},
 		{name: "another role", req: controlapi.PairCodeRequest{Name: "anna", Role: auth.RoleOwner}, wantKind: Invalid},
 		{name: "node code", req: controlapi.PairCodeRequest{Name: "grok"}},
 		{name: "webhook of an existing node", req: controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/new"}, wantKind: Invalid},
@@ -147,7 +147,7 @@ func TestGetAndList(t *testing.T) {
 		got = append(got, summary{p.Name, p.Kind, p.Role, p.Principal, len(p.Tokens), len(p.PendingCodes), p.Node})
 	}
 	want := []summary{
-		{Name: "anna", Kind: pairapi.KindCaller, Role: auth.RoleOwner, Principal: auth.OwnerID, Tokens: 1, Codes: 1},
+		{Name: "anna", Kind: pairapi.KindCaller, Role: auth.RoleOwner, Principal: "pair:anna", Tokens: 1, Codes: 1},
 		{Name: "grok", Kind: pairapi.KindNode, Principal: "node:grok", Codes: 1, Node: &controlapi.NodeDetails{
 			URL: "https://coder.example.com/n/grok", Webhook: "https://example.com/hook?…", Description: "searches",
 			HeaderNames: []string{"Authorization"}, Advertised: true,
@@ -176,12 +176,16 @@ func TestUpdateCaller(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Update(role owner) error = %v", err)
 	}
-	if resp.Pairing.Role != auth.RoleOwner || resp.Pairing.Principal != auth.OwnerID || len(resp.Pairing.Tokens) != 1 || resp.Code != nil {
+	if resp.Pairing.Role != auth.RoleOwner || resp.Pairing.Principal != "pair:anna" || len(resp.Pairing.Tokens) != 1 || resp.Code != nil {
 		t.Fatalf("Update(role owner) = %+v, want anna as an owner with her token", resp)
 	}
 	toks, err := s.Store.Tokens(ctx)
-	if err != nil || len(toks) != 1 || toks[0].Principal != auth.OwnerID {
-		t.Fatalf("Tokens() after Update(role owner) = %+v, %v, want the token moved to the owner", toks, err)
+	if err != nil || len(toks) != 1 || toks[0].Principal != "pair:anna" || toks[0].Role != auth.RoleOwner {
+		t.Fatalf("Tokens() after Update(role owner) = %+v, %v, want anna's token as an owner", toks, err)
+	}
+	u, err := s.Store.User(ctx, "pair:anna")
+	if err != nil || u.Role != auth.RoleOwner {
+		t.Fatalf("User(pair:anna) after Update(role owner) = %+v, %v, want an owner", u, err)
 	}
 
 	resp, err = s.Update(ctx, "anna", controlapi.PairingUpdate{Rotate: true})

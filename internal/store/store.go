@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/url"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -167,6 +166,14 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV9)
 		return err
 	},
+	// 10: one role per user and token, named as in the access model; owner
+	// pairings get a principal of their own; Google sign-in tokens keep
+	// their Workspace domain; watches and schedules keep the identity of
+	// the user they act for.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV10)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -273,6 +280,21 @@ INSERT INTO task_events (scope, task_id, version, kind, created, data)
 UPDATE tasks SET data = json_remove(data, '$.history', '$.artifacts');
 DROP INDEX tasks_state_updated;
 CREATE INDEX tasks_updated_any_scope ON tasks (updated);
+`
+
+const schemaV10 = `
+ALTER TABLE tokens ADD COLUMN domain TEXT NOT NULL DEFAULT '';
+ALTER TABLE watches ADD COLUMN identity TEXT NOT NULL DEFAULT '';
+ALTER TABLE schedules ADD COLUMN user_identity TEXT NOT NULL DEFAULT '';
+UPDATE users SET roles = CASE WHEN ',' || roles || ',' LIKE '%,owner,%' THEN 'owner' ELSE 'authenticated' END;
+UPDATE tokens SET roles = CASE WHEN ',' || roles || ',' LIKE '%,owner,%' THEN 'owner' ELSE 'authenticated' END;
+UPDATE codes SET role = 'authenticated' WHERE purpose = 'pair' AND role != 'owner';
+INSERT INTO users (id, roles, created)
+	SELECT DISTINCT 'pair:' || name, 'owner', created FROM tokens WHERE principal = 'user:owner' AND name != 'local'
+	UNION SELECT DISTINCT 'pair:' || name, 'owner', created FROM links WHERE user_id = 'user:owner' AND name NOT IN ('', 'owner')
+	ON CONFLICT (id) DO UPDATE SET roles = 'owner';
+UPDATE tokens SET principal = 'pair:' || name WHERE principal = 'user:owner' AND name != 'local';
+UPDATE links SET user_id = 'pair:' || name WHERE user_id = 'user:owner' AND name NOT IN ('', 'owner');
 `
 
 const schemaV9 = `
@@ -404,13 +426,4 @@ func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
 		}
 	}
 	return n == 1, nil
-}
-
-func joinRoles(roles []string) string { return strings.Join(roles, ",") }
-
-func splitRoles(s string) []string {
-	if s == "" {
-		return nil
-	}
-	return strings.Split(s, ",")
 }

@@ -192,7 +192,7 @@ type Pairing struct {
 	Name string `json:"name"`
 	// Kind is [pairapi.KindCaller] or [pairapi.KindNode].
 	Kind string `json:"kind"`
-	// Role is member or owner, for callers.
+	// Role is authenticated or owner, for callers.
 	Role      string          `json:"role,omitempty"`
 	Principal string          `json:"principal"`
 	Created   time.Time       `json:"created,omitzero"`

@@ -30,7 +30,7 @@ func fullConfig() *Config {
 		Secrets:     []string{"KEY", "OTHER"},
 		Env:         []string{"DEBUG=1", "MODE=fast"},
 		Port:        4000,
-		Network:     NetworkConfig{Private: "tailscale", Identities: map[string]string{"anna": "member"}},
+		Network:     NetworkConfig{Private: "tailscale"},
 		Channels: ChannelsConfig{
 			Telegram: &TelegramConfig{Token: "secret:TELEGRAM_BOT_TOKEN"},
 			Email:    &EmailConfig{Address: "a@x", IMAP: "i:993", SMTP: "s:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx"},
@@ -59,7 +59,6 @@ func TestUnset(t *testing.T) {
 		{setting: "env", modify: func(c *Config) { c.Env = nil }},
 		{setting: "mount", entries: []string{"/docs"}, modify: func(c *Config) { c.Mounts = []string{"/data:/data"} }},
 		{setting: "allow-tools", entries: []string{"search"}, modify: func(c *Config) { c.Approvals.Allow = []string{"read"} }},
-		{setting: "identity", entries: []string{"anna"}, modify: func(c *Config) { c.Network.Identities = nil }},
 		{setting: "secret", entries: []string{"KEY"}, modify: func(c *Config) { c.Secrets = []string{"OTHER"} }, wantDeleted: []string{"KEY"}},
 		{setting: "telegram", wantErr: true},
 		{setting: "email", wantErr: true},

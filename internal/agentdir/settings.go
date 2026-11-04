@@ -49,12 +49,9 @@ type Settings struct {
 	Image    string
 	Port     int
 
-	Memory string
-	CPUs   string
-	PIDs   int
-	// Identities are login=role pairs for network logins of other users.
-	Identities []string
-
+	Memory     string
+	CPUs       string
+	PIDs       int
 	AllowTools []string
 	DenyTools  []string
 	// OwnerChat is <channel>[:<who>].
@@ -183,16 +180,6 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		}
 	}
 	set(&cfg.Auth.GoogleClientID, s.GoogleClientID)
-	for _, kv := range s.Identities {
-		login, role, ok := strings.Cut(kv, "=")
-		if !ok || login == "" {
-			return nil, fmt.Errorf("invalid --identity %q: want login=role", kv)
-		}
-		if cfg.Network.Identities == nil {
-			cfg.Network.Identities = map[string]string{}
-		}
-		cfg.Network.Identities[login] = role
-	}
 	for _, name := range s.Secrets {
 		v := s.SecretValues[name]
 		if v == "" {
