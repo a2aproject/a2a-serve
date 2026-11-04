@@ -246,7 +246,23 @@ type observedExecutor struct {
 	anonymous func(ctx context.Context, contextID string) bool
 }
 
-var _ a2asrv.AgentExecutor = (*observedExecutor)(nil)
+var (
+	_ a2asrv.AgentExecutor         = (*observedExecutor)(nil)
+	_ a2asrv.AgentExecutionCleaner = (*observedExecutor)(nil)
+)
+
+// Cleanup relays the question a task stopped on. a2a-go calls it once the
+// execution is done with its last event, so an answer to the question can
+// start the next execution.
+func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
+	task, ok := result.(*a2a.Task)
+	if err != nil || !ok {
+		return
+	}
+	if q := approvals.FromStatus(task.Status); q != nil {
+		e.approvals.OnQuestion(ctx, execCtx, q)
+	}
+}
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	withLine := execCtx
@@ -371,9 +387,6 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 					e.approvals.CloseQuestions(ctx, execCtx.TaskID)
 				}
 				e.bus.publish(execCtx.TaskID, ev)
-				if q := approvals.FromEvent(ev); q != nil {
-					e.approvals.OnQuestion(ctx, execCtx, q)
-				}
 			}
 			if !yield(ev, err) {
 				return

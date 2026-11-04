@@ -349,7 +349,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		watching:  map[string]bool{},
 		clients:   map[string]*contactClient{},
 		turns:     map[string]*callClaims{},
+		starting:  map[string]int{},
 		paused:    map[string]pausedTurn{},
+
+		turnsChanged: make(chan struct{}),
 	}
 	closers.push(s.peers.close)
 
