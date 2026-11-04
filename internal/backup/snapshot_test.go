@@ -107,3 +107,34 @@ func TestAddTreeMissingRoot(t *testing.T) {
 		t.Fatalf("addTree() error = %v, want nil for a missing root", err)
 	}
 }
+
+func TestAddTreeFilesChangingSize(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	writeFiles(t, root, map[string]string{"grow": "abc", "shrink": "defgh"})
+	w := &hookWriter{names: []string{"home/grow", "home/shrink"}}
+	w.onHeader = func(name string) {
+		path := filepath.Join(root, filepath.Base(name))
+		var err error
+		switch name {
+		case "home/grow":
+			err = os.WriteFile(path, []byte("abcdefgh"), 0o600)
+		case "home/shrink":
+			err = os.WriteFile(path, []byte("de"), 0o600)
+		}
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	tw := tar.NewWriter(w)
+	if err := addTree(context.Background(), tw, root, "home"); err != nil {
+		t.Fatalf("addTree() error = %v", err)
+	}
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"home/": "", "home/grow": "abc", "home/shrink": "de\x00\x00\x00"}
+	if diff := cmp.Diff(want, readTar(t, w.buf.Bytes())); diff != "" {
+		t.Fatalf("addTree() wrong entries (-want +got) diff = %s", diff)
+	}
+}

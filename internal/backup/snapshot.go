@@ -125,8 +125,19 @@ func addFile(tw *tar.Writer, src, name string) error {
 	if err := tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	_, err = io.Copy(tw, f)
+	n, err := io.CopyN(tw, f, hdr.Size)
+	if errors.Is(err, io.EOF) {
+		// The file shrank after the header was written.
+		_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
+	}
 	return err
+}
+
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	clear(p)
+	return len(p), nil
 }
 
 func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
