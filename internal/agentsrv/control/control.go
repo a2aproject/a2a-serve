@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 // Package control serves the control socket's API, through which
 // management commands change the running server without a restart.
 package control
