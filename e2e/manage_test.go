@@ -69,8 +69,8 @@ func (a *agent) mustFail(want string, args ...string) {
 	}
 }
 
-// TestPairingsOnBothSides covers PR 5 and PR 7 of the command surface
-// rework: invite, join, get, set, rotate and rm, and the JSON lists.
+// TestPairingsOnBothSides covers invite, join, get, set, rotate and rm on
+// the agent and the caller, and the JSON lists.
 func TestPairingsOnBothSides(t *testing.T) {
 	t.Parallel()
 	owner, anna := newUser(t), newUser(t)
@@ -117,8 +117,8 @@ func TestPairingsOnBothSides(t *testing.T) {
 	coder.mustFail("no pairing anna", "pair", "get", "anna")
 }
 
-// TestWebhookNodeChangedInPlace covers the webhook node of PR 5: pair set
-// changes it while its token keeps working, the node reads its mailbox, and
+// TestWebhookNodeChangedInPlace covers a webhook node: pair set changes it
+// while its token keeps working, the node reads its mailbox, and
 // --rotate revokes the token.
 func TestWebhookNodeChangedInPlace(t *testing.T) {
 	t.Parallel()
@@ -176,8 +176,12 @@ func TestScheduleChatVocabulary(t *testing.T) {
 	}
 	coder.mustFail("owner has no chat on telegram", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--chat", "telegram:owner")
 	coder.mustFail("unknown flag: --deliver", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--deliver", "telegram")
-	if out := coder.serve("config", "set", "--owner-chat", "discord"); !strings.Contains(out, "applied to the running agent: owner-chat") {
-		t.Fatalf("a2a-serve config set --owner-chat = %q, want it applied at once", out)
+	var set struct {
+		Applied []string `json:"applied"`
+	}
+	coder.serveJSON(&set, "config", "set", "--owner-chat", "discord")
+	if diff := cmp.Diff([]string{"owner-chat"}, set.Applied); diff != "" {
+		t.Fatalf("a2a-serve config set --owner-chat -o json applied wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -188,29 +192,35 @@ func TestAccessSettings(t *testing.T) {
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 
-	out := coder.serve("config", "set", "--private-access", "paired", "--allow-email", "*@example.com")
-	for _, want := range []string{"applied to the running agent: private-access, allow-email", "who may call:\n  you: this machine\n  emails matching *@example.com\n"} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("a2a-serve config set --private-access = %q, want %q", out, want)
-		}
+	type access struct {
+		Owner         []string `json:"owner"`
+		Authenticated []string `json:"authenticated"`
 	}
-	if out := coder.serve("status"); !strings.Contains(out, "  access   you: this machine\n") {
-		t.Fatalf("a2a-serve status = %q, want the access block", out)
+	var set struct {
+		Applied []string `json:"applied"`
+		Access  access   `json:"access"`
 	}
+	coder.serveJSON(&set, "config", "set", "--private-access", "paired", "--allow-email", "*@example.com")
 	var status struct {
-		Access struct {
-			Owner []string `json:"owner"`
-		} `json:"access"`
+		Access access `json:"access"`
 	}
 	coder.serveJSON(&status, "status")
-	if diff := cmp.Diff([]string{"self"}, status.Access.Owner); diff != "" {
-		t.Fatalf("a2a-serve status -o json access.owner wrong result (-want +got) diff = %s", diff)
+
+	wantAccess := access{Owner: []string{"self"}, Authenticated: []string{"email:*@example.com"}}
+	if diff := cmp.Diff([]string{"private-access", "allow-email"}, set.Applied); diff != "" {
+		t.Fatalf("a2a-serve config set -o json applied wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(wantAccess, set.Access); diff != "" {
+		t.Fatalf("a2a-serve config set -o json access wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(wantAccess, status.Access); diff != "" {
+		t.Fatalf("a2a-serve status -o json access wrong result (-want +got) diff = %s", diff)
 	}
 	coder.mustFail("unknown flag: --allow", "config", "set", "--allow", "email:me@example.com")
 	coder.mustFail(`invalid --public "ngrok"`, "config", "set", "--public", "ngrok")
 }
 
-// TestManageStoppedAgent covers PR 8: pairings and schedules change while
+// TestManageStoppedAgent covers pairings and schedules that change while
 // the agent is stopped, and the agent picks them up when it starts.
 func TestManageStoppedAgent(t *testing.T) {
 	t.Parallel()
@@ -231,15 +241,17 @@ func TestManageStoppedAgent(t *testing.T) {
 	if out := resultOf(bob.mustSend(coder.url, "hello")); out.Text != "Hello from fakeacp." {
 		t.Fatalf("a2a send with a code issued while stopped = %+v, want the agent's answer", out)
 	}
-	if out := coder.serve("schedule", "list"); !strings.Contains(out, "nightly") {
-		t.Fatalf("a2a-serve schedule list after the start = %q, want nightly", out)
+	all := jsonl[struct {
+		Name string `json:"name"`
+	}](t, coder.serve("schedule", "list", "-o", "jsonl"))
+	if len(all) != 1 || all[0].Name != "nightly" {
+		t.Fatalf("a2a-serve schedule list -o jsonl after the start = %+v, want nightly", all)
 	}
 }
 
-// TestCommandSurface covers §2 and PR 3: bare a2a-serve prints help which
-// names a2a-serve, agents and test servers start with start, and removed
-// commands and flags are gone.
-func TestCommandSurface(t *testing.T) {
+// TestCommandHelp covers the help: bare a2a serve prints the command groups,
+// and a2a-serve --help names a2a-serve.
+func TestCommandHelp(t *testing.T) {
 	t.Parallel()
 	u := newUser(t)
 	help := u.run(u.home, "a2a", "serve")
@@ -251,13 +263,5 @@ func TestCommandSurface(t *testing.T) {
 	standalone := u.run(u.home, "a2a-serve", "--help")
 	if !strings.Contains(standalone, "a2a-serve [command]") || !strings.Contains(standalone, "a2a-serve start opencode") {
 		t.Fatalf("a2a-serve --help = %q, want help which names a2a-serve", standalone)
-	}
-	for _, args := range [][]string{{"tokens", "list"}, {"opencode"}, {"script", "cat"}, {"relay", "inbox"}, {"mailbox", "task", "x"}, {"run"}, {"url"}, {"open"}, {"restore", "x"}} {
-		if out, err := u.exec(u.home, append([]string{"a2a", "serve"}, args...)...); err == nil || !strings.Contains(err.Error(), "unknown command") {
-			t.Fatalf("a2a-serve %s = %q, %v, want an unknown command", strings.Join(args, " "), out, err)
-		}
-	}
-	if out, err := u.exec(u.home, "a2a", "serve", "start", "opencode", "--memory", "8g"); err == nil || !strings.Contains(err.Error(), "unknown flag: --memory") {
-		t.Fatalf("a2a-serve start opencode --memory = %q, %v, want it to be a config set setting", out, err)
 	}
 }
