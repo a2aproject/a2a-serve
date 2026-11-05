@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
@@ -62,9 +61,6 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	if err := os.Chmod(path, 0o600); err != nil {
 		return errors.Join(err, ln.Close())
 	}
-	if err := os.WriteFile(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
-		return errors.Join(err, ln.Close())
-	}
 	mux := control.Handler(control.Deps{
 		Status:        s.status,
 		Stop:          s.Stop,
@@ -87,7 +83,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
-		return errors.Join(err, removeIfExists(path), removeIfExists(s.dir.PIDPath()))
+		return errors.Join(err, removeIfExists(path))
 	})
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

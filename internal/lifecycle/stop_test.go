@@ -17,6 +17,7 @@ package lifecycle
 import (
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -57,6 +58,53 @@ func TestStop(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantCalls, f.Calls()); diff != "" {
 				t.Fatalf("Stop() wrong calls (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestStopSignalsServerThatIsStarting(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	tests := []struct {
+		name        string
+		locked      bool
+		wantRunning bool
+		wantExited  bool
+	}{
+		{name: "lock held", locked: true, wantRunning: true, wantExited: true},
+		{name: "stale PID file", locked: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			var proc *fakeProcess
+			if tc.locked {
+				proc = startingServer(t, dir)
+			} else {
+				proc = pidFileProcess(t, dir)
+			}
+
+			got, err := Stop(t.Context(), dir, controlapi.NewClient(dir), StopOptions{})
+			if err != nil {
+				t.Fatalf("Stop() error = %v", err)
+			}
+			if got.Running != tc.wantRunning {
+				t.Fatalf("Stop().Running = %v, want %v", got.Running, tc.wantRunning)
+			}
+			if tc.wantExited {
+				if !proc.exited() {
+					t.Fatalf("Stop() did not signal the starting server")
+				}
+				return
+			}
+			select {
+			case <-proc.done:
+				t.Fatalf("Stop() signaled the process of a stale PID file")
+			case <-time.After(200 * time.Millisecond):
 			}
 		})
 	}

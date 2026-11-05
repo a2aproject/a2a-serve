@@ -158,7 +158,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	if err := d.DeleteSecrets(del...); err != nil {
 		return nil, err
 	}
-	if err := saveConfig(d, next, raw); err != nil {
+	if err := saveConfig(d, mutate, raw); err != nil {
 		return nil, err
 	}
 	if res.Running {
@@ -174,11 +174,23 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	return res, nil
 }
 
-func saveConfig(d agentdir.Dir, cfg *agentdir.Config, raw []byte) error {
-	if raw == nil {
+// saveConfig saves raw as config.yaml, or the config on disk with mutate
+// applied. The config is read again under its lock, so that changes saved
+// since apply read it, by other commands or the running server, are kept.
+func saveConfig(d agentdir.Dir, mutate Mutation, raw []byte) error {
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		if raw != nil {
+			return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644)
+		}
+		cfg, err := d.LoadOrNewConfig()
+		if err != nil {
+			return err
+		}
+		if _, _, err := mutate(cfg); err != nil {
+			return &agentdir.SettingsError{Err: err}
+		}
 		return d.SaveConfig(cfg)
-	}
-	return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644)
+	})
 }
 
 func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange {

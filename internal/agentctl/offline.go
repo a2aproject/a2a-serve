@@ -239,7 +239,7 @@ func (o *offline) AddChannel(ctx context.Context, req controlapi.ChannelRequest)
 	if err := o.dir.SaveSecrets(req.Secrets); err != nil {
 		return nil, err
 	}
-	if err := o.dir.SaveConfig(cfg); err != nil {
+	if err := o.dir.UpdateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
 		return nil, err
 	}
 	return &controlapi.ChannelStatus{Name: req.Kind}, nil
@@ -258,5 +258,5 @@ func (o *offline) DeleteChannel(_ context.Context, kind string) error {
 	if !had {
 		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
 	}
-	return o.dir.SaveConfig(cfg)
+	return o.dir.UpdateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) })
 }

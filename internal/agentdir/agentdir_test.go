@@ -392,3 +392,57 @@ func TestServiceName(t *testing.T) {
 		t.Fatalf("Dir.ServiceName() = %q, want %q", got, want)
 	}
 }
+
+func TestUpdateConfig(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		content     string
+		wantErr     bool
+		wantContent string
+	}{
+		{name: "valid", content: "name: coder\nharness: opencode\n"},
+		{name: "unparsable", content: "name: [unterminated\n", wantErr: true, wantContent: "name: [unterminated\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			if err := os.MkdirAll(d.Path(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = d.UpdateConfig(func(c *Config) error {
+				c.Description = "changed"
+				return nil
+			})
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Dir.UpdateConfig() error = %v, want error %v", err, tc.wantErr)
+			}
+			got, err := os.ReadFile(d.ConfigPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr {
+				if diff := cmp.Diff(tc.content, string(got)); diff != "" {
+					t.Fatalf("Dir.UpdateConfig() changed config.yaml (-want +got) diff = %s", diff)
+				}
+				return
+			}
+			cfg, err := d.ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Description != "changed" || cfg.Name != "coder" {
+				t.Fatalf("Dir.UpdateConfig() saved %+v, want the description changed and the name kept", cfg)
+			}
+		})
+	}
+}

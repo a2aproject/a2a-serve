@@ -374,6 +374,23 @@ func (d Dir) SaveConfig(cfg *Config) error {
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
 }
 
+// UpdateConfig applies fn to the saved config and saves the result, holding
+// the lock of config.yaml so that updates from several processes don't lose
+// changes. A config.yaml that fails to parse is left alone and returned as
+// the error.
+func (d Dir) UpdateConfig(fn func(*Config) error) error {
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		cfg, err := d.LoadOrNewConfig()
+		if err != nil {
+			return err
+		}
+		if err := fn(cfg); err != nil {
+			return err
+		}
+		return d.SaveConfig(cfg)
+	})
+}
+
 // Clone returns a deep copy of c.
 func (c *Config) Clone() *Config {
 	out := *c

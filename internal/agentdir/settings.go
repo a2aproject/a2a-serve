@@ -20,6 +20,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Settings are the flags of `a2a-serve start <agent>` and `a2a-serve config
@@ -359,14 +361,16 @@ func (d Dir) ApplySettings(s Settings) (*Config, Secrets, error) {
 
 // SaveSettings merges settings into the agent's config and secrets.
 func (d Dir) SaveSettings(s Settings) error {
-	conf, secrets, err := d.ApplySettings(s)
-	if err != nil {
-		return err
-	}
-	if err := d.SaveSecrets(secrets); err != nil {
-		return err
-	}
-	return d.SaveConfig(conf)
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		conf, secrets, err := d.ApplySettings(s)
+		if err != nil {
+			return err
+		}
+		if err := d.SaveSecrets(secrets); err != nil {
+			return err
+		}
+		return d.SaveConfig(conf)
+	})
 }
 
 // setNetwork sets a provider; "none" removes it.

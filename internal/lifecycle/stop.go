@@ -65,6 +65,11 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 		return res, err
 	}
 	res.Running = err == nil
+	pid, starting := 0, false
+	if !res.Running {
+		pid, starting = findStarting(dir)
+		res.Running = starting
+	}
 	name := dir.ServiceName()
 	res.ServiceInstalled = service.Installed(name)
 	if res.ServiceInstalled && opts.Uninstall {
@@ -74,7 +79,11 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 		res.ServiceRemoved = true
 	}
 	// A detached agent, or one the service manager didn't stop.
-	if err := client.Stop(ctx); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+	if starting {
+		if err := terminate(pid); err != nil {
+			return res, fmt.Errorf("stopping the agent server (pid %d): %w", pid, err)
+		}
+	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 		return res, err
 	}
 	if opts.Wait {

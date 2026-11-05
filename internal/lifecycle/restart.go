@@ -44,21 +44,18 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 	if err := d.CheckConfig(cfg, secrets); err != nil {
 		return &agentdir.SettingsError{Err: err}
 	}
-	st, err := client.Status(ctx)
-	if errors.Is(err, controlapi.ErrNotRunning) {
-		return controlapi.NotRunning(cfg.Name)
-	}
+	pid, err := runningPID(ctx, d, client, cfg.Name)
 	if err != nil {
 		return err
 	}
 	asService := service.Installed(d.ServiceName())
 	if !asService {
-		leader, err := sessionLeader(st.PID)
+		leader, err := sessionLeader(pid)
 		if err != nil {
 			return err
 		}
 		if !leader {
-			return fmt.Errorf("%s (pid %d) can't be restarted: %w", cfg.Name, st.PID, ErrForeground)
+			return fmt.Errorf("%s (pid %d) can't be restarted: %w", cfg.Name, pid, ErrForeground)
 		}
 	}
 	if _, err := Stop(ctx, d, client, StopOptions{Wait: WaitStopped}); err != nil {
@@ -68,4 +65,20 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 		return err
 	}
 	return background(ctx, d, asService, quiet, out)
+}
+
+// runningPID returns the PID of the server, which may still be starting.
+func runningPID(ctx context.Context, d agentdir.Dir, client *controlapi.Client, name string) (int, error) {
+	st, err := client.Status(ctx)
+	if err == nil {
+		return st.PID, nil
+	}
+	if !errors.Is(err, controlapi.ErrNotRunning) {
+		return 0, err
+	}
+	pid, starting := findStarting(d)
+	if !starting {
+		return 0, controlapi.NotRunning(name)
+	}
+	return pid, nil
 }
