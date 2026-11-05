@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -39,6 +40,10 @@ func fakeRelay(t *testing.T, ready bool, info *agentmesh.Info) string {
 		case "/readyz":
 			if !ready {
 				w.WriteHeader(http.StatusServiceUnavailable)
+			}
+		case signin.Path + "/.well-known/openid-configuration":
+			if err := json.NewEncoder(w).Encode(map[string]string{"issuer": "http://" + r.Host + signin.Path}); err != nil {
+				t.Errorf("writing: %v", err)
 			}
 		case agentmesh.InfoPath:
 			if info == nil {
@@ -112,6 +117,31 @@ func TestRunRelay(t *testing.T) {
 			status: &control.Status{URL: relayURL, PID: 7},
 			online: true,
 			want:   []check{{"relay-config", StatusOK}, {"agentmesh-one", StatusOK}, {"relay-data", StatusOK}, {"relay-running", StatusOK}, {"relay", StatusOK}},
+		},
+		{
+			name: "sign-in, running and online",
+			prepare: func(t *testing.T, d relaydir.Dir) {
+				if _, err := d.SaveSettings(relaydir.Settings{AllowEmails: []string{"*@example.com"}, GoogleClientID: "app", GoogleClientSecret: "gsecret"}); err != nil {
+					t.Fatal(err)
+				}
+			},
+			status: &control.Status{URL: relayURL, PID: 7},
+			online: true,
+			want:   []check{{"relay-config", StatusOK}, {"agentmesh-one", StatusOK}, {"relay-data", StatusOK}, {"relay-running", StatusOK}, {"relay", StatusOK}, {"relay-signin", StatusOK}},
+		},
+		{
+			name: "sign-in secret missing",
+			prepare: func(t *testing.T, d relaydir.Dir) {
+				conf, err := d.ReadConfig()
+				if err != nil {
+					t.Fatal(err)
+				}
+				conf.AllowEmails, conf.GoogleClientID, conf.GoogleClientSecret = []string{"*@example.com"}, "app", "secret:MISSING"
+				if err := d.SaveConfig(conf); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want: []check{{"relay-config", StatusFail}, {"agentmesh-one", StatusOK}, {"relay-data", StatusOK}, {"relay-running", StatusWarn}},
 		},
 		{
 			name: "state open to others",

@@ -64,6 +64,17 @@ const SharedClientID = ""
 // AuthCodeURL returns the URL of Google's sign-in page for a request with
 // PKCE, asking for the email of the account.
 func (e Endpoints) AuthCodeURL(clientID, redirectURI, state, nonce, challenge string) string {
+	return e.authCodeURL(clientID, redirectURI, state, nonce, challenge, false)
+}
+
+// OfflineAuthCodeURL is [Endpoints.AuthCodeURL] that also asks for a refresh
+// token, so the app can check the account again later. Google sends one only
+// when the person consents, so the page always asks.
+func (e Endpoints) OfflineAuthCodeURL(clientID, redirectURI, state, nonce, challenge string) string {
+	return e.authCodeURL(clientID, redirectURI, state, nonce, challenge, true)
+}
+
+func (e Endpoints) authCodeURL(clientID, redirectURI, state, nonce, challenge string, offline bool) string {
 	q := url.Values{
 		"response_type":         {"code"},
 		"client_id":             {clientID},
@@ -75,41 +86,81 @@ func (e Endpoints) AuthCodeURL(clientID, redirectURI, state, nonce, challenge st
 		"code_challenge_method": {"S256"},
 		"prompt":                {"select_account"},
 	}
+	if offline {
+		q.Set("access_type", "offline")
+		q.Set("prompt", "consent select_account")
+	}
 	return e.AuthURL + "?" + q.Encode()
 }
 
+// Tokens are what Google returns for a sign-in.
+type Tokens struct {
+	IDToken string
+	// RefreshToken is set for a sign-in from [Endpoints.OfflineAuthCodeURL].
+	RefreshToken string
+}
+
+// ErrInvalidGrant means Google refused a code or a refresh token: it was
+// used, it expired, or the person revoked the app's access.
+var ErrInvalidGrant = errors.New("google refused the grant")
+
 // Exchange trades an authorization code for the ID token of the account.
 func (e Endpoints) Exchange(ctx context.Context, hc *http.Client, clientID, clientSecret, code, redirectURI, verifier string) (string, error) {
-	form := url.Values{
+	t, err := e.ExchangeTokens(ctx, hc, clientID, clientSecret, code, redirectURI, verifier)
+	return t.IDToken, err
+}
+
+// ExchangeTokens trades an authorization code for the tokens of the account.
+func (e Endpoints) ExchangeTokens(ctx context.Context, hc *http.Client, clientID, clientSecret, code, redirectURI, verifier string) (Tokens, error) {
+	return e.token(ctx, hc, url.Values{
 		"grant_type":    {"authorization_code"},
 		"code":          {code},
 		"client_id":     {clientID},
 		"client_secret": {clientSecret},
 		"redirect_uri":  {redirectURI},
 		"code_verifier": {verifier},
-	}
+	})
+}
+
+// Refresh trades a refresh token for a new ID token of the account. It
+// returns [ErrInvalidGrant] when the account no longer lets the app in.
+func (e Endpoints) Refresh(ctx context.Context, hc *http.Client, clientID, clientSecret, refreshToken string) (string, error) {
+	t, err := e.token(ctx, hc, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refreshToken},
+		"client_id":     {clientID},
+		"client_secret": {clientSecret},
+	})
+	return t.IDToken, err
+}
+
+func (e Endpoints) token(ctx context.Context, hc *http.Client, form url.Values) (Tokens, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, e.TokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
-		return "", err
+		return Tokens{}, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", err
+		return Tokens{}, err
 	}
 	defer closeBody(resp)
 	var out struct {
-		IDToken string `json:"id_token"`
-		Error   string `json:"error"`
-		Desc    string `json:"error_description"`
+		IDToken      string `json:"id_token"`
+		RefreshToken string `json:"refresh_token"`
+		Error        string `json:"error"`
+		Desc         string `json:"error_description"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return "", fmt.Errorf("reading Google's token response: %w", err)
+		return Tokens{}, fmt.Errorf("reading Google's token response: %w", err)
+	}
+	if out.Error == "invalid_grant" {
+		return Tokens{}, fmt.Errorf("%w: %s", ErrInvalidGrant, out.Desc)
 	}
 	if resp.StatusCode != http.StatusOK || out.IDToken == "" {
-		return "", fmt.Errorf("google refused the sign-in: %s %s", out.Error, out.Desc)
+		return Tokens{}, fmt.Errorf("google refused the sign-in: %s %s", out.Error, out.Desc)
 	}
-	return out.IDToken, nil
+	return Tokens{IDToken: out.IDToken, RefreshToken: out.RefreshToken}, nil
 }
 
 // Challenge returns the S256 PKCE challenge of verifier.
@@ -128,6 +179,8 @@ func URLBinding(agentURL string) string {
 
 // Claims are the verified claims of an ID token.
 type Claims struct {
+	// Subject is the account's ID, which stays when its email changes.
+	Subject       string `json:"sub"`
 	Email         string `json:"email"`
 	EmailVerified bool   `json:"email_verified"`
 	// HostedDomain is the Google Workspace domain of the account, if any.

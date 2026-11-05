@@ -26,6 +26,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protowire"
 )
 
@@ -59,12 +60,27 @@ func encodeControlPlaneInfo(issuer, clientID, audience string, routerAddrs ...st
 	return b
 }
 
+// fakeIdP is a relay's /info and identity provider. Its device flow grants
+// the token after pending polls, with the refresh token "rt".
+type fakeIdP struct {
+	*httptest.Server
+	idToken string
+	pending int32
+	polls   atomic.Int32
+	// refreshes counts refresh grants; refused makes the relay refuse the
+	// refresh token, and down makes it unavailable.
+	refreshes atomic.Int32
+	refused   atomic.Bool
+	down      atomic.Bool
+	// badGateways is how many device polls a proxy answers with an HTML 502.
+	badGateways atomic.Int32
+}
+
 // fakeRelay serves a relay's /info and its identity provider's device flow,
 // which grants the token after pending polls.
-func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice bool) *httptest.Server {
+func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice bool) *fakeIdP {
 	t.Helper()
-	var polls atomic.Int32
-	var srv *httptest.Server
+	f := &fakeIdP{idToken: idToken, pending: int32(pending)}
 	mux := http.NewServeMux()
 	write := func(w http.ResponseWriter, v any) {
 		if err := json.NewEncoder(w).Encode(v); err != nil {
@@ -79,7 +95,7 @@ func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice b
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		var payload []byte
 		if withOIDC {
-			payload = encodeControlPlaneInfo(srv.URL+"/idp", "mesh-client", "mesh", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
+			payload = encodeControlPlaneInfo(f.URL+"/idp", "mesh-client", "mesh", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
 		} else {
 			payload = encodeControlPlaneInfo("", "", "", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
 		}
@@ -88,9 +104,9 @@ func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice b
 		}
 	})
 	mux.HandleFunc("GET /idp/.well-known/openid-configuration", func(w http.ResponseWriter, r *http.Request) {
-		conf := map[string]any{"token_endpoint": srv.URL + "/idp/token"}
+		conf := map[string]any{"token_endpoint": f.URL + "/idp/token"}
 		if withDevice {
-			conf["device_authorization_endpoint"] = srv.URL + "/idp/device"
+			conf["device_authorization_endpoint"] = f.URL + "/idp/device"
 		}
 		write(w, conf)
 	})
@@ -99,23 +115,45 @@ func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice b
 			http.Error(w, "bad client", http.StatusBadRequest)
 			return
 		}
-		write(w, map[string]any{"device_code": "dc", "user_code": "ABCD", "verification_uri_complete": srv.URL + "/idp/activate?code=ABCD", "interval": 0, "expires_in": 60})
+		write(w, map[string]any{"device_code": "dc", "user_code": "ABCD", "verification_uri_complete": f.URL + "/idp/activate?code=ABCD", "interval": 0, "expires_in": 60})
 	})
 	mux.HandleFunc("POST /idp/token", func(w http.ResponseWriter, r *http.Request) {
+		if r.FormValue("grant_type") == "refresh_token" {
+			f.refreshes.Add(1)
+			switch {
+			case f.down.Load():
+				w.WriteHeader(http.StatusServiceUnavailable)
+				write(w, map[string]string{"error": "temporarily_unavailable"})
+			case f.refused.Load() || r.FormValue("refresh_token") != "rt" || r.FormValue("client_id") != "mesh-client":
+				w.WriteHeader(http.StatusBadRequest)
+				write(w, map[string]string{"error": "invalid_grant", "error_description": "ben@example.com may no longer join this relay\x1b[2J"})
+			default:
+				write(w, map[string]string{"id_token": f.idToken, "refresh_token": "rt"})
+			}
+			return
+		}
 		if r.FormValue("device_code") != "dc" {
 			http.Error(w, "bad code", http.StatusBadRequest)
 			return
 		}
-		if int(polls.Add(1)) <= pending {
+		if f.badGateways.Add(-1) >= 0 {
+			w.Header().Set("Content-Type", "text/html")
+			w.WriteHeader(http.StatusBadGateway)
+			if _, err := w.Write([]byte("<html>502 Bad Gateway</html>")); err != nil {
+				t.Errorf("writing: %v", err)
+			}
+			return
+		}
+		if f.polls.Add(1) <= f.pending {
 			w.WriteHeader(http.StatusBadRequest)
 			write(w, map[string]string{"error": "authorization_pending"})
 			return
 		}
-		write(w, map[string]string{"id_token": idToken})
+		write(w, map[string]string{"id_token": f.idToken, "refresh_token": "rt"})
 	})
-	srv = httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-	return srv
+	f.Server = httptest.NewServer(mux)
+	t.Cleanup(f.Close)
+	return f
 }
 
 func TestRelayLogin(t *testing.T) {
@@ -159,10 +197,10 @@ func TestRelayLoginErrors(t *testing.T) {
 		wantErr   bool
 		wantOwner string
 	}{
-		{name: "no oidc on relay", relay: fakeRelay(t, unverified, 0, false, false), wantErr: true},
+		{name: "no oidc on relay", relay: fakeRelay(t, unverified, 0, false, false).Server, wantErr: true},
 		{name: "malformed protobuf info", relay: badWire, wantErr: true},
-		{name: "no device sign-in", relay: fakeRelay(t, unverified, 0, true, false), wantErr: true},
-		{name: "unverified email", relay: fakeRelay(t, unverified, 0, true, true)},
+		{name: "no device sign-in", relay: fakeRelay(t, unverified, 0, true, false).Server, wantErr: true},
+		{name: "unverified email", relay: fakeRelay(t, unverified, 0, true, true).Server},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -176,6 +214,104 @@ func TestRelayLoginErrors(t *testing.T) {
 				t.Fatalf("SavedOwner() = %q, want %q", owner, tc.wantOwner)
 			}
 		})
+	}
+}
+
+func TestRelayLoginRenewsWithTheRefreshToken(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	relay := fakeRelay(t, token, 0, true, true)
+	dir := t.TempDir()
+	var logs []string
+	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
+		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
+	if _, err := l.Token(context.Background()); err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+	logs = nil
+
+	got, err := l.Token(context.Background())
+
+	if err != nil {
+		t.Fatalf("RelayLogin.Token() renewal error = %v", err)
+	}
+	if got != token {
+		t.Fatalf("RelayLogin.Token() renewal = %q, want the ID token", got)
+	}
+	if relay.refreshes.Load() != 1 || relay.polls.Load() != 1 {
+		t.Fatalf("renewal used %d refresh grants and %d device polls in all, want 1 and 1", relay.refreshes.Load(), relay.polls.Load())
+	}
+	if len(logs) != 0 {
+		t.Fatalf("RelayLogin printed %q on renewal, want nothing", logs)
+	}
+}
+
+func TestRelayLoginSignsInAgainWhenTheRelayRefusesTheRefreshToken(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	relay := fakeRelay(t, token, 0, true, true)
+	dir := t.TempDir()
+	var logs []string
+	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond,
+		Logf: func(f string, a ...any) { logs = append(logs, fmt.Sprintf(f, a...)) }}
+	if _, err := l.Token(context.Background()); err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+	relay.refused.Store(true)
+	logs = nil
+
+	if _, err := l.Token(context.Background()); err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+
+	want := []string{
+		"! relay: ben@example.com may no longer join this relay[2J",
+		"→ sign in to the relay " + relay.URL + ": " + relay.URL + "/idp/activate?code=ABCD (code ABCD)",
+		"✓ signed in to the relay as ben@example.com",
+	}
+	if diff := cmp.Diff(want, logs); diff != "" {
+		t.Fatalf("RelayLogin printed wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRelayLoginKeepsTheRefreshTokenWhileTheRelayIsDown(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	relay := fakeRelay(t, token, 0, true, true)
+	dir := t.TempDir()
+	l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
+	if _, err := l.Token(context.Background()); err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+	relay.down.Store(true)
+
+	if _, err := l.Token(context.Background()); err == nil {
+		t.Fatalf("RelayLogin.Token() while the relay is down error = nil, want error")
+	}
+	relay.down.Store(false)
+	if _, err := l.Token(context.Background()); err != nil {
+		t.Fatalf("RelayLogin.Token() after the relay is back error = %v", err)
+	}
+
+	if got := relay.polls.Load(); got != 1 {
+		t.Fatalf("device polls = %d, want 1: the agent keeps its refresh token while the relay is down", got)
+	}
+}
+
+func TestRelayLoginWaitsThroughAFailedPoll(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	relay := fakeRelay(t, token, 0, true, true)
+	relay.badGateways.Store(2)
+	l := &RelayLogin{RelayURL: relay.URL, StateDir: t.TempDir(), HTTP: relay.Client(), Poll: time.Millisecond}
+
+	got, err := l.Token(context.Background())
+
+	if err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+	if got != token {
+		t.Fatalf("RelayLogin.Token() = %q, want the ID token", got)
 	}
 }
 

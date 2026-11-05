@@ -20,6 +20,8 @@ import (
 	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
 // coalesceQueue is how many events wait while the consumer is busy.
@@ -67,17 +69,24 @@ func coalesceArtifacts(events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, 
 				}
 				next = &item
 			}
-			for next.err == nil {
+			var chunks []*a2a.TaskArtifactUpdateEvent
+			if first, ok := next.ev.(*a2a.TaskArtifactUpdateEvent); ok && next.err == nil {
+				chunks = append(chunks, first)
+			}
+			for len(chunks) > 0 {
 				item, ok := tryReceive(queue)
 				if !ok {
 					break
 				}
-				merged, ok := mergeChunks(next.ev, item.ev)
-				if item.err != nil || !ok {
+				chunk, ok := continues(chunks[len(chunks)-1], item)
+				if !ok {
 					pending = &item
 					break
 				}
-				next.ev = merged
+				chunks = append(chunks, chunk)
+			}
+			if len(chunks) > 1 {
+				next.ev = mergeChunks(chunks)
 			}
 			if !yield(next.ev, next.err) {
 				return
@@ -95,34 +104,43 @@ func tryReceive(queue <-chan eventOrErr) (eventOrErr, bool) {
 	}
 }
 
-// mergeChunks returns b appended to a, if b continues the artifact of a.
-func mergeChunks(a, b a2a.Event) (a2a.Event, bool) {
-	ea, ok := a.(*a2a.TaskArtifactUpdateEvent)
-	if !ok || ea.Artifact == nil || ea.LastChunk {
+// continues returns the chunk of item if it appends to the artifact of prev.
+func continues(prev *a2a.TaskArtifactUpdateEvent, item eventOrErr) (*a2a.TaskArtifactUpdateEvent, bool) {
+	if item.err != nil || prev.Artifact == nil || prev.LastChunk {
 		return nil, false
 	}
-	eb, ok := b.(*a2a.TaskArtifactUpdateEvent)
-	if !ok || eb.Artifact == nil || !eb.Append || eb.Artifact.ID != ea.Artifact.ID || eb.TaskID != ea.TaskID {
+	next, ok := item.ev.(*a2a.TaskArtifactUpdateEvent)
+	if !ok || next.Artifact == nil || !next.Append || next.Artifact.ID != prev.Artifact.ID || next.TaskID != prev.TaskID {
 		return nil, false
 	}
-	art := *ea.Artifact
-	art.Parts = slices.Concat(ea.Artifact.Parts, eb.Artifact.Parts)
-	if eb.Artifact.Metadata != nil {
-		art.Metadata = maps.Clone(ea.Artifact.Metadata)
-		if art.Metadata == nil {
-			art.Metadata = map[string]any{}
-		}
-		maps.Copy(art.Metadata, eb.Artifact.Metadata)
+	return next, true
+}
+
+// mergeChunks returns chunks, each of which continues the one before, as one
+// event. Adjacent text parts become one part.
+func mergeChunks(chunks []*a2a.TaskArtifactUpdateEvent) *a2a.TaskArtifactUpdateEvent {
+	first := chunks[0]
+	merged, art := *first, *first.Artifact
+	parts := slices.Clone(first.Artifact.Parts)
+	art.Metadata, merged.Metadata = maps.Clone(first.Artifact.Metadata), maps.Clone(first.Metadata)
+	for _, c := range chunks[1:] {
+		parts = append(parts, c.Artifact.Parts...)
+		art.Metadata = addMetadata(art.Metadata, c.Artifact.Metadata)
+		merged.Metadata = addMetadata(merged.Metadata, c.Metadata)
+		merged.LastChunk = c.LastChunk
 	}
-	merged := *ea
+	art.Parts = a2atext.MergeChunks(parts, max(len(first.Artifact.Parts)-1, 0))
 	merged.Artifact = &art
-	merged.LastChunk = eb.LastChunk
-	if eb.Metadata != nil {
-		merged.Metadata = maps.Clone(ea.Metadata)
-		if merged.Metadata == nil {
-			merged.Metadata = map[string]any{}
-		}
-		maps.Copy(merged.Metadata, eb.Metadata)
+	return &merged
+}
+
+func addMetadata(m, more map[string]any) map[string]any {
+	if more == nil {
+		return m
 	}
-	return &merged, true
+	if m == nil {
+		m = make(map[string]any, len(more))
+	}
+	maps.Copy(m, more)
+	return m
 }

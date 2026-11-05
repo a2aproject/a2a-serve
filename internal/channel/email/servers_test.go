@@ -147,13 +147,24 @@ func (f saslFunc) Next(resp []byte) ([]byte, bool, error) { return f(resp) }
 // refresh token.
 func tokenServer(t *testing.T, refreshToken, accessToken string) *httptest.Server {
 	t.Helper()
+	return rotatingTokenServer(t, refreshToken, accessToken, "")
+}
+
+// rotatingTokenServer is tokenServer which also returns a new refresh
+// token, if rotated is set.
+func rotatingTokenServer(t *testing.T, refreshToken, accessToken, rotated string) *httptest.Server {
+	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseForm(); err != nil || r.Form.Get("grant_type") != "refresh_token" || r.Form.Get("refresh_token") != refreshToken {
 			http.Error(w, `{"error":"invalid_grant"}`, http.StatusBadRequest)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600}); err != nil {
+		resp := map[string]any{"access_token": accessToken, "token_type": "Bearer", "expires_in": 3600}
+		if rotated != "" {
+			resp["refresh_token"] = rotated
+		}
+		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			t.Errorf("encoding the token response: %v", err)
 		}
 	}))

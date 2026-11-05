@@ -16,6 +16,7 @@ package telegram
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -50,7 +51,7 @@ func TestChannel(t *testing.T) {
 	ctx := t.Context()
 	in := make(chan channel.Inbound, 4)
 	go func() {
-		if err := c.Run(ctx, in); err != nil {
+		if err := c.Run(ctx, in, func(error) {}); err != nil {
 			t.Errorf("Run() error = %v", err)
 		}
 	}()
@@ -116,7 +117,7 @@ func TestRunKeepsUpdateOrder(t *testing.T) {
 	ctx := t.Context()
 	in := make(chan channel.Inbound, n)
 	go func() {
-		if err := c.Run(ctx, in); err != nil {
+		if err := c.Run(ctx, in, func(error) {}); err != nil {
 			t.Errorf("Run() error = %v", err)
 		}
 	}()
@@ -131,6 +132,86 @@ func TestRunKeepsUpdateOrder(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Run() wrong message order (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRunLeavesUpdatesNotHandedOverForTheNextRun(t *testing.T) {
+	t.Parallel()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	for i := range 3 {
+		api.Push(fmt.Sprintf(`{"message":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"m%d"}}`, i+1, i))
+	}
+	run := func(ctx context.Context, in chan channel.Inbound) <-chan struct{} {
+		c := New("123:abc")
+		c.ServerURL = api.URL
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if err := c.Run(ctx, in, func(error) {}); err != nil {
+				t.Errorf("Run() error = %v", err)
+			}
+		}()
+		return done
+	}
+	receive := func(in chan channel.Inbound) string {
+		select {
+		case m := <-in:
+			return m.Text
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run() delivered nothing")
+			return ""
+		}
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	in := make(chan channel.Inbound)
+	done := run(ctx, in)
+	if got := receive(in); got != "m0" {
+		t.Fatalf("first Run() delivered %q, want m0", got)
+	}
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+
+	in = make(chan channel.Inbound)
+	run(t.Context(), in)
+
+	var got []string
+	for len(got) == 0 || got[len(got)-1] != "m2" {
+		got = append(got, receive(in))
+	}
+	if diff := cmp.Diff([]string{"m1", "m2"}, got[len(got)-2:]); diff != "" {
+		t.Fatalf("second Run() wrong messages (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRunReportsPollingState(t *testing.T) {
+	t.Parallel()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.Fail("getUpdates", telegramtest.Failure{Status: http.StatusUnauthorized, Body: `{"ok":false,"error_code":401,"description":"Unauthorized"}`})
+	c := New("123:abc")
+	c.ServerURL = api.URL
+	reports := make(chan error, 100)
+	go func() {
+		if err := c.Run(t.Context(), make(chan channel.Inbound, 1), func(err error) { reports <- err }); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+	next := func() error {
+		select {
+		case err := <-reports:
+			return err
+		case <-time.After(10 * time.Second):
+			t.Fatal("Run() reported nothing")
+			return nil
+		}
+	}
+
+	if err := next(); err == nil || !strings.Contains(err.Error(), "Unauthorized") || strings.Contains(err.Error(), "abc") {
+		t.Fatalf("Run() reported %v, want the refused token without the token", err)
+	}
+	api.Recover("getUpdates")
+	api.Push(`{"message":{"message_id":1,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"hi"}}`)
+	for next() != nil {
 	}
 }
 
@@ -159,7 +240,7 @@ func TestGroupMessages(t *testing.T) {
 
 	in := make(chan channel.Inbound, 10)
 	go func() {
-		if err := c.Run(t.Context(), in); err != nil {
+		if err := c.Run(t.Context(), in, func(error) {}); err != nil {
 			t.Errorf("Run() error = %v", err)
 		}
 	}()
@@ -398,7 +479,7 @@ func TestHandleMessageReportsFailedAttachments(t *testing.T) {
 	c.ServerURL = api.URL
 	in := make(chan channel.Inbound, 1)
 	go func() {
-		if err := c.Run(t.Context(), in); err != nil {
+		if err := c.Run(t.Context(), in, func(error) {}); err != nil {
 			t.Errorf("Run() error = %v", err)
 		}
 	}()

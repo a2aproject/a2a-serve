@@ -122,7 +122,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, principals ...st
 			if err != nil {
 				return err
 			}
-			if err := forgetTasks(ctx, tx, deleted, "convs", "sessions", "handles", "call_tasks"); err != nil {
+			if err := forgetTasks(ctx, tx, deleted); err != nil {
 				return err
 			}
 		}
