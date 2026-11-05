@@ -411,14 +411,16 @@ func withOriginalMessage(t *a2a.Task, withLine, original *a2a.Message) *a2a.Task
 }
 
 func (e *observedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.inner.Cancel(ctx, execCtx)))
+	// a2asrv cancels ctx once it has the canceled event, which comes before
+	// the inner Cancel runs, but the turn must still stop.
+	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.inner.Cancel(context.WithoutCancel(ctx), execCtx)))
 }
 
 // canceledFirst yields the canceled event before the inner Cancel runs.
 // a2aacp stops the turn before yielding it, which can end a running
-// execution and close its queue first, failing the cancel with "queue is
-// closed": https://github.com/a2aproject/a2a-go/issues/518. The inner
-// events still run for their side effects; its canceled event is dropped.
+// execution first, so that the cancel resolves to the state the execution
+// ended in, such as input-required. The inner events still run for their
+// side effects; its canceled event is dropped.
 func canceledFirst(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		open := yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
