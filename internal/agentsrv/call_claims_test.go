@@ -18,11 +18,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"iter"
 	"slices"
 	"sync"
 	"testing"
-	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -39,30 +37,12 @@ var (
 
 func newTestCallClaims(t *testing.T, bridge harnessBridge) *CallClaims {
 	t.Helper()
-	return newCallClaims(CallClaimsDeps{Store: openTestStore(t), Bridge: bridge})
+	st := openTestStore(t)
+	return newCallClaims(CallClaimsDeps{Store: st, Bridge: bridge, Sessions: st.Sessions()})
 }
 
 func inputRequiredTask(id a2a.TaskID, contextID string) *a2a.Task {
 	return &a2a.Task{ID: id, ContextID: contextID, Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}
-}
-
-func statusEvents(info a2a.TaskInfoProvider, states ...a2a.TaskState) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		for _, s := range states {
-			if !yield(a2a.NewStatusUpdateEvent(info, s, nil), nil) {
-				return
-			}
-		}
-	}
-}
-
-// probeClaims calls claimsOf with a short deadline, and reports whether it
-// returned in time.
-func probeClaims(cl *CallClaims, handle string) (callerClaims, error, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
-	defer cancel()
-	c, err := cl.claimsOf(ctx, handle)
-	return c, err, !errors.Is(err, context.DeadlineExceeded)
 }
 
 func TestCallClaimsHandle(t *testing.T) {
@@ -205,89 +185,6 @@ func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 	}
 }
 
-func TestCallClaimsClaimsOfWaitsForStartingTurn(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	cl := newTestCallClaims(t, harnessBridge{})
-	h, err := cl.handle(ctx, "ctx1")
-	if err != nil {
-		t.Fatalf("CallClaims.handle() error = %v", err)
-	}
-	turn := callerClaims{ContextID: "ctx1", User: anna}
-	done := cl.startingTurn("ctx1")
-	defer done()
-
-	if _, err, returned := probeClaims(cl, h); returned {
-		t.Fatalf("CallClaims.claimsOf() while a turn starts returned %v, want it to wait", err)
-	}
-	type result struct {
-		claims callerClaims
-		err    error
-	}
-	res := make(chan result, 1)
-	go func() {
-		c, err := cl.claimsOf(ctx, h)
-		res <- result{c, err}
-	}()
-	end := cl.beginTurn(turn)
-	defer end()
-
-	select {
-	case got := <-res:
-		if got.err != nil {
-			t.Fatalf("CallClaims.claimsOf() error = %v", got.err)
-		}
-		if diff := cmp.Diff(turn, got.claims); diff != "" {
-			t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("CallClaims.claimsOf() didn't return after the turn began")
-	}
-}
-
-func TestCallClaimsClaimsOfEndsWhenStartingTurnDoesNot(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	cl := newTestCallClaims(t, harnessBridge{})
-	h, err := cl.handle(ctx, "ctx1")
-	if err != nil {
-		t.Fatalf("CallClaims.handle() error = %v", err)
-	}
-	done := cl.startingTurn("ctx1")
-	errs := make(chan error, 1)
-	go func() {
-		_, err := cl.claimsOf(ctx, h)
-		errs <- err
-	}()
-	done()
-	done()
-
-	select {
-	case err := <-errs:
-		if !errors.Is(err, errNoTurn) {
-			t.Fatalf("CallClaims.claimsOf() after the starting turn ended error = %v, want %v", err, errNoTurn)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatalf("CallClaims.claimsOf() didn't return after the starting turn ended")
-	}
-}
-
-func TestCallClaimsClaimsOfStopsWithContext(t *testing.T) {
-	t.Parallel()
-	cl := newTestCallClaims(t, harnessBridge{})
-	h, err := cl.handle(context.Background(), "ctx1")
-	if err != nil {
-		t.Fatalf("CallClaims.handle() error = %v", err)
-	}
-	t.Cleanup(cl.startingTurn("ctx1"))
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, context.Canceled) {
-		t.Fatalf("CallClaims.claimsOf() with a canceled context error = %v, want %v", err, context.Canceled)
-	}
-}
-
 func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -315,7 +212,7 @@ func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 	}
 }
 
-func TestCallClaimsDuringTurnOpensURLFromWorkingUpdate(t *testing.T) {
+func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	cl := newTestCallClaims(t, harnessBridge{})
@@ -324,194 +221,61 @@ func TestCallClaimsDuringTurnOpensURLFromWorkingUpdate(t *testing.T) {
 		t.Fatalf("CallClaims.handle() error = %v", err)
 	}
 	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
-	want := callerClaims{ContextID: "ctx1", User: auth.Owner()}
-	var probes []string
-	probe := func(when string) {
-		c, err, returned := probeClaims(cl, h)
-		switch {
-		case !returned:
-			probes = append(probes, when+": waits")
-		case err != nil:
-			probes = append(probes, when+": "+err.Error())
-		case cmp.Diff(want, c) != "":
-			probes = append(probes, when+": claims "+fmt.Sprint(c))
-		default:
-			probes = append(probes, when+": claims")
-		}
-	}
 
-	for ev, err := range cl.duringTurn(auth.WithPrincipal(ctx, auth.Owner()), execCtx, statusEvents(execCtx, a2a.TaskStateSubmitted, a2a.TaskStateWorking, a2a.TaskStateCompleted)) {
-		if err != nil {
-			t.Fatalf("CallClaims.duringTurn() error = %v", err)
-		}
-		probe(string(ev.(*a2a.TaskStatusUpdateEvent).Status.State))
-	}
-	probe("after")
+	end := cl.turn(auth.InProcess(ctx, anna), execCtx)
+	got, err := cl.claimsOf(ctx, h)
+	end()
 
-	wantProbes := []string{
-		"TASK_STATE_SUBMITTED: waits",
-		"TASK_STATE_WORKING: claims",
-		"TASK_STATE_COMPLETED: claims",
-		"after: " + errNoTurn.Error(),
+	if err != nil {
+		t.Fatalf("CallClaims.claimsOf() during the turn error = %v", err)
 	}
-	if diff := cmp.Diff(wantProbes, probes); diff != "" {
-		t.Fatalf("CallClaims.claimsOf() during the turn wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: anna}, got); diff != "" {
+		t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
 	}
 }
 
-func TestCallClaimsDuringTurnClosesWhenEventsEndWithoutWorking(t *testing.T) {
+func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name   string
-		events func(info a2a.TaskInfoProvider) iter.Seq2[a2a.Event, error]
-		stop   bool
-	}{
-		{name: "rejected", events: func(info a2a.TaskInfoProvider) iter.Seq2[a2a.Event, error] {
-			return statusEvents(info, a2a.TaskStateRejected)
-		}},
-		{name: "no events", events: func(a2a.TaskInfoProvider) iter.Seq2[a2a.Event, error] {
-			return statusEvents(nil)
-		}},
-		{name: "stopped by the caller", stop: true, events: func(info a2a.TaskInfoProvider) iter.Seq2[a2a.Event, error] {
-			return statusEvents(info, a2a.TaskStateSubmitted, a2a.TaskStateWorking)
-		}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			cl := newTestCallClaims(t, harnessBridge{})
-			h, err := cl.handle(context.Background(), "ctx1")
-			if err != nil {
-				t.Fatalf("CallClaims.handle() error = %v", err)
-			}
-			execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
-			for range cl.duringTurn(auth.WithPrincipal(context.Background(), auth.Owner()), execCtx, tc.events(execCtx)) {
-				if tc.stop {
-					break
-				}
-			}
-			if _, err, returned := probeClaims(cl, h); !returned || !errors.Is(err, errNoTurn) {
-				t.Fatalf("CallClaims.claimsOf() after the events ended error = %v (returned %v), want %v", err, returned, errNoTurn)
-			}
-		})
-	}
-}
-
-func TestCallClaimsPausedTurnResumesForItsUser(t *testing.T) {
-	t.Parallel()
-	owner := auth.Owner()
+	anonymous := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous, Identity: auth.Identity{Hops: anna.Hops}}
 	tests := []struct {
 		name     string
-		answer   *a2asrv.ExecutorContext
-		answerBy auth.Principal
-		wantUser auth.Principal
+		agentKey func(context.Context, string) (string, error)
+		want     auth.Principal
 	}{
-		{
-			name:     "answer to the paused task",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", StoredTask: inputRequiredTask("t1", "ctx1")},
-			answerBy: owner,
-			wantUser: anna,
-		},
-		{
-			name:     "different task of the conversation",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t2", StoredTask: inputRequiredTask("t2", "ctx1")},
-			answerBy: owner,
-			wantUser: owner,
-		},
-		{
-			name:     "new task",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t3"},
-			answerBy: owner,
-			wantUser: owner,
-		},
-		{
-			name:     "paused task that no longer waits",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", StoredTask: &a2a.Task{ID: "t1", ContextID: "ctx1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
-			answerBy: owner,
-			wantUser: owner,
-		},
-		{
-			name:     "paused task without a stored task",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"},
-			answerBy: owner,
-			wantUser: owner,
-		},
-		{
-			name:     "same task id in another conversation",
-			answer:   &a2asrv.ExecutorContext{ContextID: "ctx2", TaskID: "t1", StoredTask: inputRequiredTask("t1", "ctx2")},
-			answerBy: owner,
-			wantUser: owner,
-		},
+		{name: "no processes", want: anna},
+		{name: "main process", agentKey: func(context.Context, string) (string, error) { return "", nil }, want: anna},
+		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return anonymousAgentKey, nil }, want: anonymous},
+		{name: "unknown process", agentKey: func(context.Context, string) (string, error) { return "", errors.New("boom") }, want: auth.Principal{ID: anna.ID}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			cl := newTestCallClaims(t, harnessBridge{})
-			prompt := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
-			for range cl.duringTurn(auth.InProcess(ctx, anna), prompt, statusEvents(prompt, a2a.TaskStateWorking, a2a.TaskStateInputRequired)) {
+			st := openTestStore(t)
+			cl := newCallClaims(CallClaimsDeps{Store: st, Sessions: st.Sessions(), AgentKey: tc.agentKey})
+			h, err := cl.handle(ctx, "ctx1")
+			if err != nil {
+				t.Fatalf("CallClaims.handle() error = %v", err)
 			}
 
-			got := cl.turnClaims(auth.InProcess(ctx, tc.answerBy), tc.answer)
+			end := cl.turn(auth.InProcess(ctx, anna), &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"})
+			got, err := cl.claimsOf(ctx, h)
+			end()
 
-			want := callerClaims{ContextID: tc.answer.ContextID, User: tc.wantUser}
-			if diff := cmp.Diff(want, got); diff != "" {
-				t.Fatalf("CallClaims.turnClaims() wrong result (-want +got) diff = %s", diff)
+			if err != nil {
+				t.Fatalf("CallClaims.claimsOf() error = %v", err)
+			}
+			if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
+				t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
 }
 
-func TestCallClaimsPausedTurnIsResumedOnce(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	cl := newTestCallClaims(t, harnessBridge{})
-	prompt := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
-	for range cl.duringTurn(auth.InProcess(ctx, anna), prompt, statusEvents(prompt, a2a.TaskStateWorking, a2a.TaskStateInputRequired)) {
-	}
-	answer := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", StoredTask: inputRequiredTask("t1", "ctx1")}
-
-	first := cl.turnClaims(auth.InProcess(ctx, auth.Owner()), answer)
-	second := cl.turnClaims(auth.InProcess(ctx, auth.Owner()), answer)
-
-	if first.User.ID != anna.ID || second.User.ID != auth.OwnerID {
-		t.Fatalf("CallClaims.turnClaims() users = %q then %q, want %q then %q", first.User.ID, second.User.ID, anna.ID, auth.OwnerID)
-	}
-}
-
-func TestCallClaimsAnsweredTurnActsForPausedUser(t *testing.T) {
-	t.Parallel()
-	ctx := context.Background()
-	cl := newTestCallClaims(t, harnessBridge{})
-	h, err := cl.handle(ctx, "ctx1")
-	if err != nil {
-		t.Fatalf("CallClaims.handle() error = %v", err)
-	}
-	prompt := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
-	for range cl.duringTurn(auth.InProcess(ctx, anna), prompt, statusEvents(prompt, a2a.TaskStateWorking, a2a.TaskStateInputRequired)) {
-	}
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() while paused error = %v, want %v", err, errNoTurn)
-	}
-
-	answer := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", StoredTask: inputRequiredTask("t1", "ctx1")}
-	var got callerClaims
-	for range cl.duringTurn(auth.InProcess(ctx, auth.Owner()), answer, func(yield func(a2a.Event, error) bool) {
-		if !yield(a2a.NewStatusUpdateEvent(answer, a2a.TaskStateWorking, nil), nil) {
-			return
-		}
-		got, err = cl.claimsOf(ctx, h)
-	}) {
-	}
-	if err != nil {
-		t.Fatalf("CallClaims.claimsOf() during the answered turn error = %v", err)
-	}
-	if want := (callerClaims{ContextID: "ctx1", User: anna}); cmp.Diff(want, got) != "" {
-		t.Fatalf("CallClaims.claimsOf() during the answered turn wrong result (-want +got) diff = %s", cmp.Diff(want, got))
-	}
-}
-
-func TestCallClaimsTurnClaimsUser(t *testing.T) {
+func TestTurnClaims(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -547,12 +311,11 @@ func TestCallClaimsTurnClaimsUser(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			cl := newTestCallClaims(t, harnessBridge{})
 
-			got := cl.turnClaims(tc.ctx, tc.execCtx)
+			got := turnClaims(tc.ctx, tc.execCtx)
 
 			if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
-				t.Fatalf("CallClaims.turnClaims() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("turnClaims() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -675,8 +438,11 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 				origParts = slices.Clone(tc.execCtx.Message.Parts)
 			}
 
-			got := cl.withAgentsLine(tc.ctx, tc.execCtx)
+			ctx, got := cl.withAgentsLine(tc.ctx, tc.execCtx)
 
+			if hadAgentsLine(ctx) != tc.wantLine {
+				t.Fatalf("CallClaims.withAgentsLine() context marked %v, want %v", hadAgentsLine(ctx), tc.wantLine)
+			}
 			if !tc.wantLine {
 				if got != tc.execCtx {
 					t.Fatalf("CallClaims.withAgentsLine() = %+v, want the execution context unchanged", got)

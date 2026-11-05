@@ -11,7 +11,7 @@ By default the agent runs in Docker with:
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
 - a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. On Docker Desktop the socket is a TCP port on the host's loopback, and the agent sends a key.
 
-[Anonymous callers](../guide/identities.md#anonymous-callers) get a second container, with `state/home-anonymous` as its home and no socket to the server. It shares the workspace, the `--mount` directories and the `--secret` values with the agent's container.
+Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server. All containers share the workspace, the `--mount` directories and the `--secret` values.
 
 Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide/approvals.md)). The agent can't answer the approvals of agents it calls; the server relays them to the user.
 
@@ -22,7 +22,7 @@ What the sandbox doesn't protect yet:
 - **The workspace is writable** unless mounted `:ro`, including `.git`, `.mcp.json` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
 - **Docker is the boundary.** Kernel and Docker escapes are out of scope for this project.
 
-`--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token. Use it only for agents and callers you trust completely.
+`--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token and the conversations of every user. Use it only for agents and callers you trust completely.
 
 ## Who can call the agent
 

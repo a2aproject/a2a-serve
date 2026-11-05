@@ -27,8 +27,9 @@ import (
 	"github.com/a2aproject/a2a-serve/skills"
 )
 
-// agentsLinePrefix starts the line added to every prompt with the agents the
-// harness can call and the agents URL of the conversation.
+// agentsLinePrefix starts the line added to the first prompt of an ACP
+// session with the agents the harness can call and the agents URL of the
+// conversation.
 const agentsLinePrefix = "[a2a agents]"
 
 // instructionFiles are the global instruction files of the known harnesses,
@@ -73,9 +74,25 @@ func callableAgents(ctx context.Context, st *store.Store) ([]AgentRef, error) {
 }
 
 // writeInstructions puts the a2a-agents skill and the agents the harness can
-// call into the global instruction files in the harness home. A local
-// harness uses your own home, which is left alone.
+// call into the global instruction files in the homes of the owner's and the
+// users' agent processes.
 func (s *Server) writeInstructions(ctx context.Context) error {
+	homes := []string{s.dir.HomeDir()}
+	entries, err := os.ReadDir(s.dir.UserHomesDir())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			homes = append(homes, filepath.Join(s.dir.UserHomesDir(), e.Name()))
+		}
+	}
+	return s.writeInstructionsIn(ctx, homes...)
+}
+
+// writeInstructionsIn writes the instruction files into homes. A local
+// harness uses your own home, which is left alone.
+func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
 	if s.config().Sandbox == harness.SandboxLocal {
 		return nil
 	}
@@ -99,8 +116,10 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 		sb.WriteString("\n")
 	}
 	var errs []error
-	for _, f := range instructionFiles {
-		errs = append(errs, writeSection(filepath.Join(s.dir.HomeDir(), f), sb.String()))
+	for _, home := range homes {
+		for _, f := range instructionFiles {
+			errs = append(errs, writeSection(filepath.Join(home, f), sb.String()))
+		}
 	}
 	return errors.Join(errs...)
 }

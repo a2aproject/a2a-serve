@@ -66,7 +66,7 @@ func TestTaskMaterializedFromEvents(t *testing.T) {
 			ID:        "t1",
 			ContextID: "c1",
 			Status:    done.Status,
-			History:   []*a2a.Message{question, followUp, thinking},
+			History:   []*a2a.Message{question, thinking, followUp},
 			Artifacts: []*a2a.Artifact{{ID: "a1", Parts: []*a2a.Part{a2a.NewTextPart("cat "), a2a.NewRawPart([]byte("png"))}}},
 		},
 		Version: 6,

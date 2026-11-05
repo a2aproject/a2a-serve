@@ -15,7 +15,7 @@ Each agent lives in its project directory and runs as its own process, with its 
 | `a2a-serve status` | Shows URLs, messengers, owner links and task counts. |
 | `a2a-serve status --url` | Prints only the URL that reaches furthest: public, then private, then local. `--url=local\|private\|public` picks one. |
 | `a2a-serve logs [-f]` | Shows the log. |
-| `a2a-serve stop [--uninstall]` | Stops it. `--uninstall` also removes the service. |
+| `a2a-serve stop [--uninstall]` | Stops it, and waits until it exits. `--uninstall` also removes the service. |
 | `a2a-serve restart` | Stops it and starts it again in the same mode. |
 
 Commands that only change stored data, such as `pair`, `contact add --url`, `contact rm`, `schedule add`, `channel add` and `channel rm`, also work while the agent is stopped. It picks up the changes on its next start. While the agent starts or stops, these commands fail with exit code 8; run them again once `a2a-serve status` shows it running or stopped.

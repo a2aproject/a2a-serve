@@ -28,7 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-go/v2/executor/a2aacp"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -155,7 +155,6 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 		bus:       newEventBus(),
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
-		anonymous: func(context.Context, string) bool { return false },
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
 

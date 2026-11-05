@@ -89,11 +89,12 @@ func writeHarnessHelper(home, host, key string) (string, error) {
 }
 
 // harnessBridge is how the harness reaches the server: through the Unix
-// socket, or over TCP at url with key, which the credential helper of
-// helperEnv gives the harness's a2a CLI.
+// socket, or over TCP at url, on host dial, with key, which the credential
+// helper of helperEnv gives the harness's a2a CLI.
 type harnessBridge struct {
 	socket    string
 	url       string
+	dial      string
 	key       string
 	helperEnv string
 }

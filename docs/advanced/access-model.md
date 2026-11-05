@@ -97,9 +97,13 @@ Each chat is one conversation. Approvals appear in the chat where the task start
 
 The agent calls other agents through its server, which holds the credentials. The receiving agent gives a call that came through another agent at most the rights of "everyone else who is allowed", even when the calling agent is yours. The task runs, and its approvals travel back to the person who started the conversation. Someone who can steer one of your agents therefore can't use it to act as you on your other agents.
 
-### The shared sandbox
+### Agent processes
 
-All conversations of an agent run in one agent process and workspace. Anyone who can call the agent and approve their own commands can read what the agent can read, including other conversations' history. Pair people and choose a private network with that in mind. Callers allowed by `--public-access anyone` get a separate agent process. In Docker it has its own home directory, so it can't read the history of other conversations. It works on the same workspace.
+Each authenticated user's conversations run in an agent process of their own. Your conversations run in the owner's process, and all anonymous callers share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. All processes work on the same workspace. Anyone who can call the agent and approve their own commands can read and change what is in it.
+
+A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
+
+With `--sandbox local`, the processes run on the host as you, and nothing separates them. The server warns at start when others may call such an agent.
 
 ## Data model reference
 
@@ -174,6 +178,6 @@ On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network,
 - An agents-URL handle works only for its conversation, while one of its turns runs, and only for the tasks its conversation created.
 - The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
 - A message joins an existing conversation only if its sender owns it or is an owner.
-- Callers allowed by `--public-access anyone` have a separate agent process, a budget per listener, and approvals that time out.
+- Each authenticated user has their own agent process. Callers allowed by `--public-access anyone` share one agent process, with a budget per listener and approvals that time out.
 - Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused. The question and inspector forms rely on the cross-site check and the inspector's CSRF token.
 - The local credential works only on the local listener. Loopback alone is never trusted.

@@ -50,6 +50,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -145,8 +146,9 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector.Inspector
-	// split runs anonymous conversations in their own agent process, and
-	// budget limits their tasks.
+	// split runs the conversations of anonymous callers and of each
+	// authenticated user in their own agent processes, and budget limits
+	// the tasks of anonymous callers.
 	split  *splitExecutor
 	budget *anonymousBudget
 
@@ -339,6 +341,15 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	}
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)
+	s.claims = newCallClaims(CallClaimsDeps{
+		Store:  s.store,
+		Bridge: s.bridge,
+		Chain:  s.chain,
+		// The executor's turns use the claims, so they come first; split
+		// exists before the first turn.
+		AgentKey: func(ctx context.Context, contextID string) (string, error) { return s.split.agentKey(ctx, contextID) },
+		Sessions: s.store.Sessions(),
+	})
 	s.refreshInstructions(ctx)
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
 		return err
@@ -398,7 +409,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Chain:   s.chain,
 		Timings: s.timings,
 	})
-	s.claims = newCallClaims(CallClaimsDeps{Store: s.store, Bridge: s.bridge})
 	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.inspector = inspector.New(inspector.Deps{
 		Store:        s.store,
@@ -412,7 +422,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, anonymous: s.split.Anonymous},
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -443,8 +453,11 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 	s.budget = newAnonymousBudget()
 	s.split = &splitExecutor{main: exec, sessions: s.store.Sessions(), budget: s.budget, ctx: ctx}
 	if opts.Executor == nil {
-		s.split.start = func(ctx context.Context) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-			return s.newAnonymousExecutor(ctx, opts.HarnessLog)
+		s.split.start = func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			if pool == anonymousPool {
+				return s.newAnonymousExecutor(ctx, opts.HarnessLog)
+			}
+			return s.newUsersExecutor(ctx, opts.HarnessLog)
 		}
 	}
 	closers.push(s.split.close)
@@ -665,7 +678,24 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 			s.logf("! %s", p)
 		}
 	}
+	a, err := s.access(ctx)
+	if err != nil {
+		return err
+	}
+	if w := localSandboxWarning(s.config().Sandbox, a); w != "" {
+		s.logf("! %s", w)
+	}
 	return s.supervisor.announce(ctx)
+}
+
+// localSandboxWarning warns when an agent without a sandbox may be called
+// by others than you: their conversations run in separate processes, but
+// on the host as you, so they can read each other's files and yours.
+func localSandboxWarning(sandbox string, a *controlapi.Access) string {
+	if sandbox != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
+		return ""
+	}
+	return "the agent runs without a sandbox, so everyone who may call it can read your files and the conversations of others; use --sandbox docker unless you trust them all"
 }
 
 // viewer is the task store's view of the caller: owners see every task,

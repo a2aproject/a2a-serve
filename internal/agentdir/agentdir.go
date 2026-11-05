@@ -117,6 +117,23 @@ func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }
 // callers.
 func (d Dir) AnonymousHomeDir() string { return filepath.Join(d.StateDir(), "home-anonymous") }
 
+// UserHomesDir holds the homes of the agent processes of authenticated
+// users, one per user.
+func (d Dir) UserHomesDir() string { return filepath.Join(d.StateDir(), "homes") }
+
+// UserHomeDir is the home of the agent process of the authenticated user
+// with the principal ID id.
+func (d Dir) UserHomeDir(id string) string {
+	return filepath.Join(d.UserHomesDir(), UserKey(id))
+}
+
+// UserKey is a short stable name of the principal ID id, for paths and
+// container names.
+func UserKey(id string) string {
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
 // LogPath returns the path of the server log.
 func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log") }
 

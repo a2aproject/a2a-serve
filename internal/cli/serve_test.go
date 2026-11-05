@@ -32,9 +32,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/testutil"
@@ -309,6 +311,17 @@ func TestServerPairAndSend(t *testing.T) {
 	out, err = runCMDWithCreds(t, creds, "stop", "--uninstall", "--dir", dir)
 	if err != nil || !strings.Contains(out, "stopped coder") || !strings.Contains(out, "no service was installed") {
 		t.Fatalf("a2a-serve stop --uninstall = %q, %v, want the agent stopped and no service removed", out, err)
+	}
+	d, err := agentdir.Open(dir)
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	release, err := fsutil.TryLock(d.LockPath())
+	if err != nil {
+		t.Fatalf("fsutil.TryLock() after a2a-serve stop error = %v, want the server to have exited", err)
+	}
+	if err := release(); err != nil {
+		t.Fatalf("release() error = %v", err)
 	}
 	select {
 	case err := <-done:

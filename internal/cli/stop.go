@@ -38,7 +38,7 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			res, err := lifecycle.Stop(cmd.Context(), d, sf.controlClient(d), lifecycle.StopOptions{Uninstall: uninstall})
+			res, err := lifecycle.Stop(cmd.Context(), d, sf.controlClient(d), lifecycle.StopOptions{Wait: lifecycle.WaitStopped, Uninstall: uninstall})
 			if err != nil {
 				return err
 			}
