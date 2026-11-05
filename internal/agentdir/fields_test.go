@@ -174,7 +174,7 @@ func TestDeleteSecrets(t *testing.T) {
 
 func TestLiveSettings(t *testing.T) {
 	t.Parallel()
-	want := []string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "owner-chat"}
+	want := []string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}
 	got := LiveSettings()
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("LiveSettings() wrong result (-want +got) diff = %s", diff)
