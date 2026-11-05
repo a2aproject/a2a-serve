@@ -516,6 +516,10 @@ func (n *testRelayNode) WhoIs(_ context.Context, remoteAddr string) (*network.Pe
 	return p, nil
 }
 
+func (n *testRelayNode) Member(context.Context, string) (*network.Peer, error) {
+	return nil, network.ErrUnsupported
+}
+
 func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 	n.fabric.mu.RLock()
 	var candidates []network.PeerInfo

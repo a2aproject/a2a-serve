@@ -6,7 +6,7 @@ An a2a-serve agent can read your project, run commands and reach the network, an
 
 By default the agent runs in Docker with:
 
-- the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config;
+- the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config. `.mcp.json` appears as a read-only file with no servers, so the agent gets only the MCP servers the server passes it;
 - `state/home` as its home directory, where it keeps its sessions and config;
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
 - a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is a TCP port on the host's loopback, and each container sends a key of its own.
@@ -20,7 +20,7 @@ What the sandbox doesn't protect yet:
 - **API keys are readable inside it.** Values passed with `--secret` are environment variables of the agent, so a tricked agent can read them and send them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
 - **It can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
 - **It reaches the tailnet as you.** The tailnet is a trusted private network. When the machine running the agent is on it, the agent's connections to tailnet addresses go out through that machine's Tailscale node, so this agent's private URL, your other agents and other tailnet services see your device and grant your rights, whoever started the task.
-- **The workspace is writable** unless mounted `:ro`, including `.git`, `.mcp.json` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
+- **The workspace is writable** unless mounted `:ro`, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
 - **Docker is the boundary.** Kernel and Docker escapes are out of scope for this project.
 
 `--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token and the conversations of every user. Use it only for agents and callers you trust completely.
@@ -66,7 +66,7 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Token of the `local` pairing | Calls to the local URL as the owner | Like a caller token, for the user running the server | `a2a-serve pair rm local`, which also unlinks your messenger accounts; the next start issues a new token |
 | Messenger link | Messages from that account with the pairing's current role | `server.db` | `a2a-serve pair rm <name>` |
 | Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as an authenticated caller | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
-| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>` |
+| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve pair rm --email <address>`, or `a2a-serve config unset allow-email <entry>`, which deletes them within an hour |
 | Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
 | Agent key (Docker Desktop) | The agent's socket, for the conversations of one container | Generated when the container starts, in its home | Restart |
@@ -88,5 +88,5 @@ Starting an agent runs what its files say. Read the ones you didn't write before
   - `env` and `secrets`: the variables the agent gets;
   - `backup`: where snapshots of the agent's secrets are uploaded;
   - webhook nodes: the URLs the server POSTs to.
-- **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the agent's `--secret` and `--env` values, which the sandbox sees anyway. The agent can edit the file, and the change applies to the next conversation.
+- **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the agent's `--secret` and `--env` values, which the sandbox sees anyway. In the Docker sandbox, the agent can't read or edit the file. With `sandbox: local`, the agent can edit it, and Claude Code may start its servers on its own, including the ones `--disable-mcp` turns off.
 - **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills`, and instruction files such as `AGENTS.md` and `CLAUDE.md`, are instructions for the agent. Commands they suggest still wait for approval.

@@ -118,6 +118,11 @@ func (c *Config) Validate() error {
 			add("invalid --env %q: want NAME=value", kv)
 		}
 	}
+	for _, name := range c.MCP.Disabled {
+		if strings.TrimSpace(name) == "" {
+			add("invalid --disable-mcp %q: want the name of an MCP server in .mcp.json", name)
+		}
+	}
 	checkPort := func(flag string, p int) {
 		if p < 0 || p > 65535 {
 			add("invalid %s %d: want 1-65535", flag, p)

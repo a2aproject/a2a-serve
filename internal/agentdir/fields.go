@@ -21,6 +21,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/google/shlex"
 )
 
 // placement is the command whose flags change a setting.
@@ -35,16 +37,29 @@ const (
 	placeChannel
 )
 
+// scope tells who decides a setting.
+type scope int
+
+const (
+	scopeUnset scope = iota
+	// scopeAgent settings define what the agent is, which a recipe sets.
+	scopeAgent
+	// scopeOwner settings decide where the agent is reachable, who may call
+	// it and how it is operated, which only the owner sets.
+	scopeOwner
+)
+
 // field is a setting of config.yaml, named by its flag. A scalar has at
 // most one entry.
 type field struct {
 	flag  string
 	place placement
+	scope scope
 	list  bool
 	// live settings are applied by a running server without a restart.
 	live bool
 	get  func(*Config) []string
-	// put replaces the entries; nil resets the setting.
+	// put replaces the entries with what get returns; nil resets the setting.
 	put func(*Config, []string)
 	// key returns the key of an entry, or of an argument naming it.
 	key func(string) string
@@ -91,9 +106,19 @@ func operational(f field) field {
 	return f
 }
 
+func agentScope(f field) field {
+	f.scope = scopeAgent
+	return f
+}
+
+func ownerScope(f field) field {
+	f.scope = scopeOwner
+	return f
+}
+
 func emailField(flag string, p func(*EmailConfig) *string) field {
 	return field{
-		flag: flag, live: true, place: placeChannel,
+		flag: flag, live: true, place: placeChannel, scope: scopeOwner,
 		get: func(c *Config) []string {
 			if c.Channels.Email == nil {
 				return nil
@@ -111,7 +136,7 @@ func emailField(flag string, p func(*EmailConfig) *string) field {
 
 func tokenField(kind string, set func(*Config, string)) field {
 	return field{
-		flag: kind, live: true, place: placeChannel,
+		flag: kind, live: true, place: placeChannel, scope: scopeOwner,
 		get: func(c *Config) []string { return nonEmpty(c.ChannelToken(kind)) },
 		put: func(c *Config, v []string) { set(c, first(v)) },
 	}
@@ -141,27 +166,28 @@ func mountArgKey(s string) string {
 }
 
 var fields = []field{
-	scalar("agent", false, func(c *Config) *string { return &c.Harness }),
-	scalar("name", false, func(c *Config) *string { return &c.Name }),
-	scalar("description", true, func(c *Config) *string { return &c.Description }),
+	agentScope(scalar("agent", false, func(c *Config) *string { return &c.Harness })),
+	ownerScope(scalar("name", false, func(c *Config) *string { return &c.Name })),
+	agentScope(scalar("description", true, func(c *Config) *string { return &c.Description })),
 	{
-		flag: "command",
-		get:  func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
-		put:  func(c *Config, v []string) { c.Command = nil },
+		flag:  "command",
+		scope: scopeAgent,
+		get:   func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
+		put:   func(c *Config, v []string) { c.Command = shellSplit(first(v)) },
 	},
-	scalar("image", false, func(c *Config) *string { return &c.Image }),
-	scalar("sandbox", false, func(c *Config) *string { return &c.Sandbox }),
-	scalar("workspace", false, func(c *Config) *string { return &c.Workspace }),
-	list("mount", false, func(c *Config) *[]string { return &c.Mounts }, mountArgKey),
-	list("secret", false, func(c *Config) *[]string { return &c.Secrets }, identity),
-	list("env", false, func(c *Config) *[]string { return &c.Env }, envKey),
-	intField("port", func(c *Config) *int { return &c.Port }),
-	scalar("private", false, func(c *Config) *string { return &c.Network.Private }),
-	scalar("public", false, func(c *Config) *string { return &c.Network.Public }),
-	scalar("private-access", true, func(c *Config) *string { return &c.Policy.PrivateAccess }),
-	scalar("public-access", true, func(c *Config) *string { return &c.Policy.PublicAccess }),
-	list("allow-email", true, func(c *Config) *[]string { return &c.Policy.AllowEmails }, strings.ToLower),
-	operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL })),
+	agentScope(scalar("image", false, func(c *Config) *string { return &c.Image })),
+	agentScope(scalar("sandbox", false, func(c *Config) *string { return &c.Sandbox })),
+	ownerScope(scalar("workspace", false, func(c *Config) *string { return &c.Workspace })),
+	agentScope(list("mount", false, func(c *Config) *[]string { return &c.Mounts }, mountArgKey)),
+	agentScope(list("secret", false, func(c *Config) *[]string { return &c.Secrets }, identity)),
+	agentScope(list("env", false, func(c *Config) *[]string { return &c.Env }, envKey)),
+	ownerScope(intField("port", func(c *Config) *int { return &c.Port })),
+	ownerScope(scalar("private", false, func(c *Config) *string { return &c.Network.Private })),
+	ownerScope(scalar("public", false, func(c *Config) *string { return &c.Network.Public })),
+	ownerScope(scalar("private-access", true, func(c *Config) *string { return &c.Policy.PrivateAccess })),
+	ownerScope(scalar("public-access", true, func(c *Config) *string { return &c.Policy.PublicAccess })),
+	ownerScope(list("allow-email", true, func(c *Config) *[]string { return &c.Policy.AllowEmails }, strings.ToLower)),
+	ownerScope(operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL }))),
 	tokenField(ChannelTelegram, func(c *Config, v string) {
 		c.Channels.Telegram = nil
 		if v != "" {
@@ -181,19 +207,20 @@ var fields = []field{
 	emailField("email-password", func(e *EmailConfig) *string { return &e.Password }),
 	emailField("email-mailbox", func(e *EmailConfig) *string { return &e.Mailbox }),
 	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
-	list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity),
-	list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity),
-	scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat }),
-	operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory })),
-	operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs })),
-	operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs })),
-	operational(scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID })),
-	operational(scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret })),
-	operational(scalar("backup", false, func(c *Config) *string { return &c.Backup.To })),
-	operational(scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key })),
-	operational(scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval })),
-	operational(scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention })),
-	operational(scalar("task-ttl", false, func(c *Config) *string { return &c.TaskTTL })),
+	agentScope(list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity)),
+	agentScope(list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity)),
+	ownerScope(list("disable-mcp", true, func(c *Config) *[]string { return &c.MCP.Disabled }, identity)),
+	ownerScope(scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat })),
+	agentScope(operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }))),
+	agentScope(operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }))),
+	agentScope(operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs }))),
+	ownerScope(operational(scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID }))),
+	ownerScope(operational(scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret }))),
+	ownerScope(operational(scalar("backup", false, func(c *Config) *string { return &c.Backup.To }))),
+	ownerScope(operational(scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key }))),
+	ownerScope(operational(scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval }))),
+	ownerScope(operational(scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention }))),
+	ownerScope(operational(scalar("task-ttl", false, func(c *Config) *string { return &c.TaskTTL }))),
 }
 
 // unsetOnly are settings which `config unset` accepts besides the fields:
@@ -228,6 +255,37 @@ func SettingNames() []string {
 func IsLive(setting string) bool {
 	f, ok := lookupField(setting)
 	return ok && f.live
+}
+
+// IsAgentSetting reports whether the setting defines what the agent is, as
+// opposed to an owner setting, which decides where the agent is reachable,
+// who may call it and how it is operated. A recipe sets only agent settings.
+func IsAgentSetting(setting string) bool {
+	f, ok := lookupField(setting)
+	return ok && f.scope == scopeAgent
+}
+
+// AgentSettings returns a config with only the agent settings of c.
+func (c *Config) AgentSettings() *Config {
+	out := &Config{}
+	for _, f := range fields {
+		if f.scope == scopeAgent {
+			f.put(out, slices.Clone(f.get(c)))
+		}
+	}
+	return out
+}
+
+// OwnerSettings returns the owner settings c sets, which [Config.AgentSettings]
+// leaves out.
+func (c *Config) OwnerSettings() []string {
+	var out []string
+	for _, f := range fields {
+		if f.scope == scopeOwner && len(f.get(c)) > 0 {
+			out = append(out, f.flag)
+		}
+	}
+	return out
 }
 
 // Change is the difference of one setting between two configs.
@@ -388,6 +446,20 @@ func ShellJoin(args []string) string {
 	return strings.Join(out, " ")
 }
 
+// shellSplit splits a command line ShellJoin made.
+func shellSplit(s string) []string {
+	if s == "" {
+		return nil
+	}
+	argv, err := shlex.Split(s)
+	if err != nil {
+		// ShellJoin quotes every word, so this only happens for a line
+		// written by hand; it runs as one word.
+		return []string{s}
+	}
+	return argv
+}
+
 func shellQuote(s string) string {
 	if s != "" && strings.IndexFunc(s, func(r rune) bool {
 		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@,+%", r))
@@ -405,6 +477,7 @@ func CopyLive(dst, src *Config) {
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
 	dst.Policy = src.Policy.clone()
+	dst.MCP.Disabled = slices.Clone(src.MCP.Disabled)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an

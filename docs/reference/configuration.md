@@ -25,6 +25,8 @@ channels:
 approvals:
   allow: [read, search]
   owner_chat: telegram:anna      # --owner-chat
+mcp:
+  disabled: [kubernetes]         # --disable-mcp: servers of .mcp.json the agent doesn't get
 limits: {memory: 8g, cpus: "4", pids: 1024}
 task_ttl: 30d                    # --task-ttl: tasks idle this long are deleted
 auth:                            # --google-client-id, --google-client-secret

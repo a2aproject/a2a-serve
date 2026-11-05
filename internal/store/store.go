@@ -219,6 +219,12 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, `CREATE INDEX IF NOT EXISTS seen_at ON seen (at)`)
 		return err
 	},
+	// 13: schedules made for the local pairing run as and are shown to the
+	// user running the agent, whom its tokens and chat links act as.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV13)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -380,6 +386,11 @@ CREATE INDEX links_pairing ON links (pairing);
 CREATE TABLE codes (
 	hash TEXT PRIMARY KEY, pairing TEXT NOT NULL REFERENCES pairings(name) ON DELETE CASCADE, expires INTEGER NOT NULL);
 CREATE INDEX codes_pairing ON codes (pairing);
+`
+
+const schemaV13 = `
+UPDATE schedules SET user_id = 'user:owner', user_identity = '' WHERE user_id = 'pair:local';
+UPDATE schedules SET deliver_user = 'user:owner' WHERE deliver_user = 'pair:local';
 `
 
 func (s *Store) migrate(ctx context.Context) error {
