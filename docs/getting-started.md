@@ -5,8 +5,9 @@ Install a2a-serve, start a coding agent in your project, and talk to it from you
 ## Install
 
 ```bash
-brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux
-a2a-serve doctor --fix                       # set up the a2a CLI and check Docker
+brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli    # macOS and Linux
+brew install a2aproject/a2a-cli/a2a-serve
+a2a-serve doctor --fix    # set up the a2a CLI and check Docker
 ```
 
 Without Homebrew, use the install script:

@@ -54,7 +54,8 @@ checksum:
   name_template: checksums.txt
 
 # The formula lives next to the a2a CLI's, in the a2aproject/a2a-cli tap,
-# so `brew install a2aproject/a2a-cli/a2a-serve` brings both.
+# so `brew install a2aproject/a2a-cli/a2a-serve` brings both. The repository
+# isn't named homebrew-a2a-cli, so users tap it by URL first.
 brews:
   - name: a2a-serve
     ids:
