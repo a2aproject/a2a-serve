@@ -81,6 +81,51 @@ func TestLoadMCP(t *testing.T) {
 	}
 }
 
+func TestLoadMCPSymlinks(t *testing.T) {
+	t.Parallel()
+	const servers = `{"mcpServers": {"x": {"command": "x"}}}`
+	tests := []struct {
+		name    string
+		target  func(t *testing.T, dir string) string
+		want    []MCPServer
+		wantErr bool
+	}{
+		{
+			name: "inside the workspace",
+			target: func(t *testing.T, dir string) string {
+				writeFile(t, filepath.Join(dir, "config", "mcp.json"), servers)
+				return filepath.Join("config", "mcp.json")
+			},
+			want: []MCPServer{{Name: "x", Type: MCPStdio, Command: "x"}},
+		},
+		{
+			name: "out of the workspace",
+			target: func(t *testing.T, _ string) string {
+				outside := filepath.Join(t.TempDir(), "claude.json")
+				writeFile(t, outside, servers)
+				return outside
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			if err := os.Symlink(tc.target(t, dir), filepath.Join(dir, MCPFile)); err != nil {
+				t.Fatalf("os.Symlink() error = %v", err)
+			}
+			got, err := LoadMCP(dir)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("LoadMCP() error = %v, want error %v", err, tc.wantErr)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("LoadMCP() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestMCPServerResolve(t *testing.T) {
 	t.Parallel()
 	vars := map[string]string{"TOKEN": "t0k", "HOST": "api.example.com"}
@@ -185,6 +230,38 @@ func TestSkills(t *testing.T) {
 		{Name: "review", Dir: ".claude/skills"},
 		{Name: "build", Dir: ".agents/skills"},
 		{Name: "deploy", Dir: ".agents/skills"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Skills() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSkillsSymlinks(t *testing.T) {
+	t.Parallel()
+	root, outside := t.TempDir(), t.TempDir()
+	writeFile(t, filepath.Join(root, ".agents/skills/review/SKILL.md"), "---\nname: review\n---\n")
+	writeFile(t, filepath.Join(outside, "secret/SKILL.md"), "---\nname: secret\n---\n")
+	writeFile(t, filepath.Join(outside, "skills/stolen/SKILL.md"), "---\nname: stolen\n---\n")
+	symlink := func(target, link string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
+			t.Fatalf("os.MkdirAll() error = %v", err)
+		}
+		if err := os.Symlink(target, link); err != nil {
+			t.Fatalf("os.Symlink() error = %v", err)
+		}
+	}
+	symlink(filepath.Join("..", "..", ".agents", "skills", "review"), filepath.Join(root, ".claude/skills/review"))
+	symlink(filepath.Join(outside, "secret"), filepath.Join(root, ".claude/skills/secret"))
+	symlink(filepath.Join(outside, "skills"), filepath.Join(root, ".opencode/skills"))
+
+	got, err := Skills(root)
+	if err != nil {
+		t.Fatalf("Skills() error = %v", err)
+	}
+	want := []Skill{
+		{Name: "review", Dir: ".claude/skills"},
+		{Name: "review", Dir: ".agents/skills"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Skills() wrong result (-want +got) diff = %s", diff)

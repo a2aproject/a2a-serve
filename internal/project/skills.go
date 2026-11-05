@@ -18,6 +18,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
+	"strings"
 )
 
 // SkillDirs are the project folders harnesses read skills from, each skill
@@ -37,24 +39,50 @@ func (s Skill) Path(root string) string {
 }
 
 // Skills lists the skills in the skill folders of the project at root, in
-// the order of SkillDirs, then by name.
-func Skills(root string) ([]Skill, error) {
-	var out []Skill
+// the order of SkillDirs, then by name. The agent can write the project, so
+// folders and skills behind symlinks that lead out of root are left out.
+func Skills(root string) (out []Skill, err error) {
+	r, err := os.OpenRoot(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, r.Close()) }()
 	for _, dir := range SkillDirs {
-		entries, err := os.ReadDir(filepath.Join(root, dir))
-		if errors.Is(err, os.ErrNotExist) {
-			continue
-		}
+		entries, err := readDir(r, dir)
 		if err != nil {
 			return nil, err
 		}
 		for _, e := range entries {
 			s := Skill{Name: e.Name(), Dir: dir}
-			if _, err := os.Stat(filepath.Join(s.Path(root), "SKILL.md")); err != nil {
+			if _, err := r.Stat(filepath.Join(dir, s.Name, "SKILL.md")); err != nil {
 				continue
 			}
 			out = append(out, s)
 		}
 	}
 	return out, nil
+}
+
+// readDir lists the folder dir of r. A missing folder, or a symlink r
+// refuses to follow, has no entries.
+func readDir(r *os.Root, dir string) ([]os.DirEntry, error) {
+	f, err := r.Open(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		if fi, lerr := r.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			return nil, nil
+		}
+		return nil, err
+	}
+	entries, err := f.ReadDir(-1)
+	if err := errors.Join(err, f.Close()); err != nil {
+		return nil, err
+	}
+	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })
+	return entries, nil
 }

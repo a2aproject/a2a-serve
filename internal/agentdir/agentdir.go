@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Name is the name of the directory which marks an agent.
@@ -171,12 +173,17 @@ func (d Dir) SocketPath() string {
 	return filepath.Join(base, "a2a-"+d.ID()+".sock")
 }
 
-// HarnessSocketDir returns the directory of the socket through which a
-// sandboxed harness reaches the server. Like the control socket, it moves to
-// the runtime directory when the path is too long for a Unix socket.
+// HarnessSocketIDLen is the length of the names of the directories in
+// [Dir.HarnessSocketDir].
+const HarnessSocketIDLen = 12
+
+// HarnessSocketDir returns the directory that holds a directory per agent
+// process, of [HarnessSocketIDLen] characters, with the a2a.sock through
+// which the process reaches the server. Like the control socket, it moves
+// to the runtime directory when the path is too long for a Unix socket.
 func (d Dir) HarnessSocketDir() string {
 	p := filepath.Join(d.StateDir(), "harness")
-	if len(p)+len("/a2a.sock") <= maxSocketPath {
+	if len(p)+1+HarnessSocketIDLen+len("/a2a.sock") <= maxSocketPath {
 		return p
 	}
 	base := os.Getenv("XDG_RUNTIME_DIR")
@@ -197,10 +204,15 @@ func (d Dir) ID() string {
 func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 
 // Init creates the .a2a and state directories and the .gitignore which keeps
-// state out of version control.
+// state out of version control. The state directory and the harness home
+// must be real directories, since a cloned repository could ship them as
+// symlinks.
 func (d Dir) Init() error {
-	for _, p := range []string{d.Path(), d.StateDir(), d.HomeDir()} {
-		if err := os.MkdirAll(p, 0o700); err != nil {
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		return err
+	}
+	for _, p := range []string{d.StateDir(), d.HomeDir()} {
+		if err := fsutil.MkdirReal(p); err != nil {
 			return err
 		}
 	}

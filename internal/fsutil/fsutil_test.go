@@ -144,3 +144,47 @@ func TestTryLock(t *testing.T) {
 		t.Fatalf("release() error = %v", err)
 	}
 }
+
+func TestMkdirReal(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, dir string)
+		wantErr bool
+	}{
+		{name: "missing", setup: func(*testing.T, string) {}},
+		{name: "directory", setup: func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+		}},
+		{name: "symlink to a directory", setup: func(t *testing.T, dir string) {
+			if err := os.Symlink(t.TempDir(), dir); err != nil {
+				t.Fatal(err)
+			}
+		}, wantErr: true},
+		{name: "file", setup: func(t *testing.T, dir string) {
+			if err := os.WriteFile(dir, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "state")
+			tc.setup(t, dir)
+			err := MkdirReal(dir)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("MkdirReal() error = %v, want error %v", err, tc.wantErr)
+			}
+			if err != nil {
+				return
+			}
+			fi, err := os.Lstat(dir)
+			if err != nil || !fi.IsDir() {
+				t.Fatalf("MkdirReal() left %s as %v (%v), want a directory", dir, fi, err)
+			}
+		})
+	}
+}

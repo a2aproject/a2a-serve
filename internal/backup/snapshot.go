@@ -157,12 +157,33 @@ func (s *snapshotter) addStableFile(src, name string) error {
 	return s.writeEntry(info, name, info.Size(), f)
 }
 
-// addFile adds a file that the agent may write to. A file that changes
-// while it is copied is copied again, up to maxCopyAttempts times. After
-// that the last copy is kept and a warning names the file.
-func (s *snapshotter) addFile(src, name string) error {
+// errNotRegular reports a path that doesn't name a regular file, such as
+// one the agent replaced with a symlink.
+var errNotRegular = errors.New("not a regular file")
+
+// addFile adds the file src that the agent may write to, opened through the
+// directory it is in.
+func (s *snapshotter) addFile(src, name string) (err error) {
+	r, err := os.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, r.Close()) }()
+	return s.addRootFile(r, filepath.Base(src), name)
+}
+
+// addRootFile adds the file rel in r. A file that changes while it is
+// copied is copied again, up to maxCopyAttempts times. After that the last
+// copy is kept and a warning names the file.
+func (s *snapshotter) addRootFile(r *os.Root, rel, name string) error {
 	for attempt := 1; ; attempt++ {
-		info, n, stable, err := s.copyToStage(src, name, attempt)
+		info, n, stable, err := s.copyToStage(r, rel, name, attempt)
+		if errors.Is(err, errNotRegular) {
+			if attempt < maxCopyAttempts {
+				continue
+			}
+			return fmt.Errorf("%s is %w", name, err)
+		}
 		if err != nil {
 			return err
 		}
@@ -180,10 +201,19 @@ func (s *snapshotter) addFile(src, name string) error {
 	}
 }
 
-// copyToStage copies src to the staging file and reports how many bytes it
-// copied and whether src stayed the same during the copy.
-func (s *snapshotter) copyToStage(src, name string, attempt int) (info fs.FileInfo, n int64, stable bool, err error) {
-	f, err := os.Open(src)
+// copyToStage copies rel in r to the staging file and reports how many
+// bytes it copied and whether rel stayed the same during the copy. Both
+// checks of rel go through r and don't follow a symlink at rel, so the copy
+// is always of a regular file in r.
+func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (info fs.FileInfo, n int64, stable bool, err error) {
+	listed, err := r.Lstat(rel)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !listed.Mode().IsRegular() {
+		return nil, 0, false, errNotRegular
+	}
+	f, err := r.Open(rel)
 	if err != nil {
 		return nil, 0, false, err
 	}
@@ -191,6 +221,10 @@ func (s *snapshotter) copyToStage(src, name string, attempt int) (info fs.FileIn
 	before, err := f.Stat()
 	if err != nil {
 		return nil, 0, false, err
+	}
+	if !os.SameFile(listed, before) {
+		// rel was replaced between the Lstat and the open.
+		return nil, 0, false, errNotRegular
 	}
 	if err := s.stage.Truncate(0); err != nil {
 		return nil, 0, false, err
@@ -211,7 +245,7 @@ func (s *snapshotter) copyToStage(src, name string, attempt int) (info fs.FileIn
 	if err != nil {
 		return nil, 0, false, err
 	}
-	current, err := os.Stat(src)
+	current, err := r.Lstat(rel)
 	if errors.Is(err, fs.ErrNotExist) {
 		return before, n, false, nil
 	}
@@ -240,11 +274,32 @@ func (s *snapshotter) writeEntry(info fs.FileInfo, name string, size int64, r io
 	return err
 }
 
-func (s *snapshotter) addTree(ctx context.Context, root, name string) error {
-	return filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+// addTree adds the tree at root as name. The agent can change its homes
+// while the walk runs, so files are opened through root, which refuses
+// symlinks that lead out of it.
+func (s *snapshotter) addTree(ctx context.Context, root, name string) (err error) {
+	info, err := os.Lstat(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A missing root is an absent optional tree.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.Mode().IsRegular():
+		return s.addFile(root, name)
+	case !info.IsDir():
+		return s.addEntry(info, func() (string, error) { return os.Readlink(root) }, name)
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, r.Close()) }()
+	return fs.WalkDir(r.FS(), ".", func(rel string, e fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
-			// A missing root is an absent optional tree, a vanished
-			// entry was deleted during the backup.
+			// A vanished entry was deleted during the backup.
 			return nil
 		}
 		if err != nil {
@@ -253,14 +308,10 @@ func (s *snapshotter) addTree(ctx context.Context, root, name string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		if e.IsDir() && isHomeCache(name, filepath.ToSlash(rel)) {
+		if e.IsDir() && isHomeCache(name, rel) {
 			return filepath.SkipDir
 		}
-		entry := path.Join(name, filepath.ToSlash(rel))
+		entry := path.Join(name, rel)
 		info, err := e.Info()
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -268,32 +319,40 @@ func (s *snapshotter) addTree(ctx context.Context, root, name string) error {
 		if err != nil {
 			return err
 		}
-		switch {
-		case info.Mode().IsRegular():
-			if err := s.addFile(p, entry); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-			return nil
-		case info.IsDir(), info.Mode()&fs.ModeSymlink != 0:
-			link := ""
-			if info.Mode()&fs.ModeSymlink != 0 {
-				if link, err = os.Readlink(p); err != nil {
-					return err
-				}
-			}
-			hdr, err := tar.FileInfoHeader(info, link)
-			if err != nil {
-				return err
-			}
-			hdr.Name = entry
-			if info.IsDir() {
-				hdr.Name += "/"
-			}
-			return s.tw.WriteHeader(hdr)
+		if !info.Mode().IsRegular() {
+			return s.addEntry(info, func() (string, error) { return r.Readlink(filepath.FromSlash(rel)) }, entry)
 		}
+		err = s.addRootFile(r, filepath.FromSlash(rel), entry)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotRegular) {
+			// The file was deleted or replaced after the walk listed it.
+			return nil
+		}
+		return err
+	})
+}
+
+// addEntry adds a directory or a symlink, whose target readlink returns.
+func (s *snapshotter) addEntry(info fs.FileInfo, readlink func() (string, error), entry string) error {
+	link := ""
+	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		var err error
+		if link, err = readlink(); err != nil {
+			return err
+		}
+	case !info.IsDir():
 		// Sockets and other special files don't survive a move.
 		return nil
-	})
+	}
+	hdr, err := tar.FileInfoHeader(info, link)
+	if err != nil {
+		return err
+	}
+	hdr.Name = entry
+	if info.IsDir() {
+		hdr.Name += "/"
+	}
+	return s.tw.WriteHeader(hdr)
 }
 
 // extractArchive extracts a snapshot into dst, the .a2a directory of the

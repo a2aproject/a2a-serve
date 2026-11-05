@@ -131,14 +131,14 @@ func TestCallClaimsClaimsOf(t *testing.T) {
 	}
 	turn := callerClaims{ContextID: "ctx1", User: anna}
 
-	if _, err := cl.claimsOf(ctx, "unknown"); !errors.Is(err, errUnknownHandle) {
+	if _, err := cl.claimsOf(ctx, "unknown", ""); !errors.Is(err, errUnknownHandle) {
 		t.Fatalf("CallClaims.claimsOf(unknown) error = %v, want %v", err, errUnknownHandle)
 	}
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() before a turn error = %v, want %v", err, errNoTurn)
 	}
 	end := cl.beginTurn(turn)
-	got, err := cl.claimsOf(ctx, h)
+	got, err := cl.claimsOf(ctx, h, "")
 	if err != nil {
 		t.Fatalf("CallClaims.claimsOf() during a turn error = %v", err)
 	}
@@ -146,8 +146,47 @@ func TestCallClaimsClaimsOf(t *testing.T) {
 		t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
 	}
 	end()
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	}
+}
+
+func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
+	t.Parallel()
+	annaKey := userAgentKeyPrefix + anna.ID
+	keys := map[string]string{"owner": "", "anna": annaKey}
+	tests := []struct {
+		name      string
+		contextID string
+		process   string
+		wantErr   error
+	}{
+		{name: "owner's conversation from the owner's process", contextID: "owner"},
+		{name: "anna's conversation from anna's process", contextID: "anna", process: annaKey},
+		{name: "owner's conversation from anna's process", contextID: "owner", process: annaKey, wantErr: errUnknownHandle},
+		{name: "anna's conversation from the owner's process", contextID: "anna", wantErr: errUnknownHandle},
+		{name: "anna's conversation from another user's process", contextID: "anna", process: userAgentKeyPrefix + bob.ID, wantErr: errUnknownHandle},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			st := openTestStore(t)
+			cl := newCallClaims(CallClaimsDeps{Store: st, Sessions: st.Sessions(), AgentKey: func(_ context.Context, contextID string) (string, error) {
+				return keys[contextID], nil
+			}})
+			h, err := cl.handle(ctx, tc.contextID)
+			if err != nil {
+				t.Fatalf("CallClaims.handle() error = %v", err)
+			}
+			t.Cleanup(cl.beginTurn(callerClaims{ContextID: tc.contextID, User: anna}))
+
+			_, err = cl.claimsOf(ctx, h, tc.process)
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("CallClaims.claimsOf() error = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
@@ -165,7 +204,7 @@ func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 	}
 	t.Cleanup(cl.beginTurn(callerClaims{ContextID: "ctx1", User: anna}))
 
-	if _, err := cl.claimsOf(ctx, h2); !errors.Is(err, errNoTurn) {
+	if _, err := cl.claimsOf(ctx, h2, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() of a conversation without a turn error = %v, want %v", err, errNoTurn)
 	}
 	t.Cleanup(cl.beginTurn(callerClaims{ContextID: "ctx2", User: bob}))
@@ -176,7 +215,7 @@ func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 		{handle: h1, want: callerClaims{ContextID: "ctx1", User: anna}},
 		{handle: h2, want: callerClaims{ContextID: "ctx2", User: bob}},
 	} {
-		got, err := cl.claimsOf(ctx, tc.handle)
+		got, err := cl.claimsOf(ctx, tc.handle, "")
 		if err != nil {
 			t.Fatalf("CallClaims.claimsOf() error = %v", err)
 		}
@@ -200,7 +239,7 @@ func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 	endNewer := cl.beginTurn(newer)
 
 	endOlder()
-	got, err := cl.claimsOf(ctx, h)
+	got, err := cl.claimsOf(ctx, h, "")
 	if err != nil {
 		t.Fatalf("CallClaims.claimsOf() after the older turn ended error = %v", err)
 	}
@@ -208,7 +247,7 @@ func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 		t.Fatalf("CallClaims.claimsOf() after the older turn ended wrong result (-want +got) diff = %s", diff)
 	}
 	endNewer()
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() after both turns ended error = %v, want %v", err, errNoTurn)
 	}
 }
@@ -224,7 +263,7 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
 
 	end := cl.turn(auth.InProcess(ctx, anna), execCtx)
-	got, err := cl.claimsOf(ctx, h)
+	got, err := cl.claimsOf(ctx, h, "")
 	end()
 
 	if err != nil {
@@ -233,7 +272,7 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: anna}, got); diff != "" {
 		t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
 	}
 }
@@ -261,12 +300,14 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 	tests := []struct {
 		name     string
 		agentKey func(context.Context, string) (string, error)
+		process  string
 		want     auth.Principal
+		wantErr  bool
 	}{
 		{name: "no processes", want: anna},
 		{name: "main process", agentKey: func(context.Context, string) (string, error) { return "", nil }, want: anna},
-		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return anonymousAgentKey, nil }, want: anonymous},
-		{name: "unknown process", agentKey: func(context.Context, string) (string, error) { return "", errors.New("boom") }, want: auth.Principal{ID: anna.ID}},
+		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return anonymousAgentKey, nil }, process: anonymousAgentKey, want: anonymous},
+		{name: "unknown process", agentKey: func(context.Context, string) (string, error) { return "", errors.New("boom") }, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -280,11 +321,14 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 			}
 
 			end := cl.turn(auth.InProcess(ctx, anna), &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"})
-			got, err := cl.claimsOf(ctx, h)
+			got, err := cl.claimsOf(ctx, h, tc.process)
 			end()
 
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("CallClaims.claimsOf() error = %v, want error %v", err, tc.wantErr)
+			}
 			if err != nil {
-				t.Fatalf("CallClaims.claimsOf() error = %v", err)
+				return
 			}
 			if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
 				t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
@@ -349,7 +393,7 @@ func TestCallClaimsAgentsURL(t *testing.T) {
 	}{
 		{name: "socket", bridge: harnessBridge{socket: "/tmp/h.sock"}, wantURL: func(h string) string { return "http://a2a/" + h }},
 		{name: "socket wins over TCP", bridge: harnessBridge{socket: "/tmp/h.sock", url: "http://127.0.0.1:9"}, wantURL: func(h string) string { return "http://a2a/" + h }},
-		{name: "TCP bridge", bridge: harnessBridge{url: "http://host.docker.internal:4000", key: "k"}, wantURL: func(h string) string { return "http://host.docker.internal:4000/" + h }},
+		{name: "TCP bridge", bridge: harnessBridge{url: "http://host.docker.internal:4000"}, wantURL: func(h string) string { return "http://host.docker.internal:4000/" + h }},
 		{name: "no listener", bridge: harnessBridge{}, wantErr: true},
 	}
 	for _, tc := range tests {

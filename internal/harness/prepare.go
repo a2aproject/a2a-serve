@@ -64,6 +64,10 @@ type Spec struct {
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
 	Hidden []string
+	// Pins are Mounts and Hidden as the server resolved them at its start.
+	// A container doesn't start when a path the harness could replace
+	// resolves elsewhere now. Nil skips the check.
+	Pins Pins
 	// MCPMask is the host path of a file with no MCP servers, which a
 	// sandbox mounts over the workspace's .mcp.json, so that the harness
 	// gets MCP servers only from the server. Empty keeps .mcp.json visible.
@@ -79,8 +83,9 @@ type Spec struct {
 	Labels map[string]string
 
 	// Socket is the host path of the Unix socket through which the harness
-	// reaches the agent server. Empty when the harness reaches the server
-	// over TCP.
+	// reaches the agent server, alone in its directory, which a container
+	// mounts read-only so the harness can't replace it. Empty when the
+	// harness reaches the server over TCP.
 	Socket string
 	// CLI is the host path of the a2a binary put first on the PATH of a
 	// local harness. A harness in Docker uses the a2a of its image.
@@ -127,6 +132,9 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 }
 
 func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
+	if err := spec.Pins.check(spec.Mounts, spec.Hidden); err != nil {
+		return nil, err
+	}
 	rootless, err := CheckDocker(ctx)
 	if err != nil {
 		return nil, err
@@ -158,7 +166,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, masks...)
 	}
 	if spec.Socket != "" {
-		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir})
+		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
 	cmd, err := dr.Command(ctx, spec.Profile.Command(ws))

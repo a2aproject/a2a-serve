@@ -21,8 +21,6 @@ import (
 	"io"
 	"iter"
 	"log/slog"
-	"net"
-	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -38,14 +36,13 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// harnessSocketName is the name of the Unix socket the harness reaches the
-// server through, in the harness socket directory.
+// harnessSocketName is the name of the Unix socket an agent process reaches
+// the server through, in its directory of the harness socket directory.
 const harnessSocketName = "a2a.sock"
 
 // newExecutor starts the harness as an ACP agent in its sandbox. close stops
@@ -70,10 +67,10 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		Turn:         s.claims.turn,
 	})
 	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
+		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
 	}
 	s.logf("✓ %s is running (ACP)", h.profile.Name())
-	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 // pruneContainers removes the containers of this agent directory that an
@@ -115,10 +112,10 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
 	})
 	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
+		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.stop(ctx))
 	}
 	slog.Info("prepared the agent of anonymous callers", "sandbox", h.prepared.Summary)
-	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 // maxUserAgents limits the agent processes of authenticated users that run
@@ -164,13 +161,13 @@ func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.W
 	}
 	rwc, err := h.process(harnessLog).Start(ctx, key)
 	if err != nil {
-		return nil, errors.Join(err, h.prepared.Stop(context.WithoutCancel(ctx)))
+		return nil, errors.Join(err, h.stop(context.WithoutCancel(ctx)))
 	}
 	slog.Info("started the agent process of a user", "user", id, "sandbox", h.prepared.Summary)
 	var proc io.ReadWriteCloser
 	proc = a2aacp.WithCleanup(rwc, func() error {
 		s.users.exited(ua, proc)
-		return h.prepared.Stop(context.Background())
+		return h.stop(context.Background())
 	})
 	s.users.started(ua, proc)
 	return proc, nil
@@ -181,6 +178,8 @@ type preparedHarness struct {
 	profile  harness.Profile
 	mounts   []agentdir.Mount
 	prepared *harness.Prepared
+	// stop cleans up after the harness exited.
+	stop func(context.Context) error
 }
 
 func (h *preparedHarness) process(stderr io.Writer) a2aacp.Process {
@@ -212,7 +211,8 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Sandbox:  cfg.Sandbox,
 		Mounts:   mounts,
 		Home:     s.dir.HomeDir(),
-		Hidden:   []string{s.dir.Path()},
+		Hidden:   s.hidden(),
+		Pins:     s.pins,
 		MCPMask:  s.dir.MCPMaskPath(),
 		Env:      env,
 		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
@@ -221,6 +221,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress: imageProgress,
 	}
+	closeEndpoint := func() error { return nil }
 	if key == anonymousAgentKey {
 		spec.Home = s.dir.AnonymousHomeDir()
 		spec.Name += "-anonymous"
@@ -229,14 +230,18 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 			return nil, err
 		}
 	} else {
+		ep := s.mainHarness
 		if id, ok := userOfKey(key); ok {
 			if err := s.prepareUserHome(ctx, &spec, id); err != nil {
 				return nil, err
 			}
+			if ep, err = s.harness.open(key); err != nil {
+				return nil, err
+			}
+			closeEndpoint = ep.close
 		}
-		spec.Socket = s.bridge.socket
-		if s.bridge.helperEnv != "" {
-			spec.Env = append(spec.Env, s.bridge.helperEnv)
+		if err := s.connectHarness(&spec, ep); err != nil {
+			return nil, errors.Join(err, closeEndpoint())
 		}
 		if cfg.Sandbox == harness.SandboxLocal {
 			spec.CLI = s.localCLI(ctx)
@@ -244,14 +249,33 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, closeEndpoint())
 	}
-	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared}, nil
+	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
+	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop}, nil
+}
+
+// hidden are the host paths sandboxes hide even where a mount exposes them.
+func (s *Server) hidden() []string { return []string{s.dir.Path()} }
+
+// connectHarness gives spec the endpoint through which its agent process
+// reaches the server: the socket, or the key for the TCP listener in a
+// credential helper in its home.
+func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
+	if ep.key == "" {
+		spec.Socket = ep.socket
+		return nil
+	}
+	env, err := writeHarnessHelper(spec.Home, s.harness.dial, ep.key)
+	if err != nil {
+		return fmt.Errorf("saving the harness key: %w", err)
+	}
+	spec.Env = append(spec.Env, env)
+	return nil
 }
 
 // prepareUserHome gives spec the home and container name of the agent
-// process of the user id, with the credential helper and instructions of
-// the owner's home.
+// process of the user id, with the instructions of the owner's home.
 func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
 	spec.Home = s.dir.UserHomeDir(id)
 	spec.Name += "-" + agentdir.UserKey(id)
@@ -261,11 +285,6 @@ func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id str
 	}
 	if err := fsutil.MkdirPrivate(spec.Home); err != nil {
 		return err
-	}
-	if s.bridge.key != "" {
-		if _, err := writeHarnessHelper(spec.Home, s.bridge.dial, s.bridge.key); err != nil {
-			return fmt.Errorf("saving the harness key: %w", err)
-		}
 	}
 	return s.writeInstructionsIn(ctx, spec.Home)
 }
@@ -293,47 +312,15 @@ func (f liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorC
 	return a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.AutoAnswer(ctx, execCtx, q)
 }
 
-// listenHarness opens the listener through which the harness calls other
-// agents: a Unix socket, which is mounted into a container, or TCP with a key
-// for Docker Desktop, which can't mount it.
-func (s *Server) listenHarness(sandboxed bool) (net.Listener, harnessBridge, error) {
+// listenHarness opens the listeners through which agent processes call
+// other agents: Unix sockets, which are mounted into containers, or TCP with
+// a key for Docker Desktop, which can't mount them.
+func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
 	bind, dial, tcp := harness.TCPBridge(s.config().Sandbox)
 	if !sandboxed || !tcp {
-		return s.listenHarnessSocket()
+		return listenHarnessSockets(s.dir.HarnessSocketDir())
 	}
-	ln, err := net.Listen("tcp", net.JoinHostPort(bind, "0"))
-	if err != nil {
-		return nil, harnessBridge{}, fmt.Errorf("listening for the harness on %s: %w", bind, err)
-	}
-	_, port, err := net.SplitHostPort(ln.Addr().String())
-	if err != nil {
-		return nil, harnessBridge{}, errors.Join(err, ln.Close())
-	}
-	b := harnessBridge{url: "http://" + net.JoinHostPort(dial, port), dial: dial, key: cryptoutil.RandomString(40, cryptoutil.Alphanumeric)}
-	b.helperEnv, err = writeHarnessHelper(s.dir.HomeDir(), dial, b.key)
-	if err != nil {
-		return nil, harnessBridge{}, errors.Join(fmt.Errorf("saving the harness key: %w", err), ln.Close())
-	}
-	return ln, b, nil
-}
-
-func (s *Server) listenHarnessSocket() (net.Listener, harnessBridge, error) {
-	dir := s.dir.HarnessSocketDir()
-	if err := fsutil.MkdirPrivate(filepath.Dir(dir)); err != nil {
-		return nil, harnessBridge{}, err
-	}
-	if err := fsutil.MkdirPrivate(dir); err != nil {
-		return nil, harnessBridge{}, err
-	}
-	sock := filepath.Join(dir, harnessSocketName)
-	if err := removeIfExists(sock); err != nil {
-		return nil, harnessBridge{}, err
-	}
-	ln, err := net.Listen("unix", sock)
-	if err != nil {
-		return nil, harnessBridge{}, fmt.Errorf("listening for the harness on %s: %w", sock, err)
-	}
-	return ln, harnessBridge{socket: sock}, nil
+	return listenHarnessTCP(bind, dial)
 }
 
 // observedExecutor publishes every event of the agent to the server's event

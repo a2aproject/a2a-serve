@@ -212,13 +212,83 @@ func hiddenDsts(mounts []agentdir.Mount, hidden []string) []string {
 	return out
 }
 
-// resolvePath returns p with symlinks resolved, or cleaned when it doesn't
-// exist.
+// resolvePath returns p with symlinks resolved. Of a path that doesn't
+// exist, it resolves the part that does, dangling symlinks included.
 func resolvePath(p string) string {
+	return resolveFrom(filepath.Clean(p), 0)
+}
+
+// maxSymlinks bounds the symlinks resolvePath follows by hand.
+const maxSymlinks = 40
+
+func resolveFrom(p string, hops int) string {
 	if r, err := filepath.EvalSymlinks(p); err == nil {
 		return r
 	}
-	return filepath.Clean(p)
+	if target, err := os.Readlink(p); err == nil && hops < maxSymlinks {
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(p), target)
+		}
+		return resolveFrom(filepath.Clean(target), hops+1)
+	}
+	parent := filepath.Dir(p)
+	if parent == p {
+		return p
+	}
+	return filepath.Join(resolveFrom(parent, hops), filepath.Base(p))
+}
+
+// Pins are the mount sources and hidden paths of an agent with symlinks
+// resolved, as they were when its server started.
+type Pins map[string]string
+
+// Pin resolves the sources of mounts and the hidden paths.
+func Pin(mounts []agentdir.Mount, hidden []string) Pins {
+	p := Pins{}
+	for _, m := range mounts {
+		p[m.Src] = resolvePath(m.Src)
+	}
+	for _, h := range hidden {
+		p[h] = resolvePath(h)
+	}
+	return p
+}
+
+// check refuses a pinned mount source or hidden path that lies inside
+// another writable mount and resolves elsewhere now. The harness can
+// replace a directory in a writable mount with a symlink, which docker
+// would follow at the next start.
+func (p Pins) check(mounts []agentdir.Mount, hidden []string) error {
+	paths := slices.Clone(hidden)
+	for _, m := range mounts {
+		paths = append(paths, m.Src)
+	}
+	for _, path := range paths {
+		pinned, ok := p[path]
+		if !ok || !p.inWritableMount(path, mounts) {
+			continue
+		}
+		if now := resolvePath(path); now != pinned {
+			return fmt.Errorf("%s resolved to %s when the agent server started and resolves to %s now; the agent may have replaced a directory with a symlink, so check it and restart the agent server", path, pinned, now)
+		}
+	}
+	return nil
+}
+
+// inWritableMount reports whether the pinned path lies strictly inside the
+// pinned source of a writable mount.
+func (p Pins) inWritableMount(path string, mounts []agentdir.Mount) bool {
+	for _, m := range mounts {
+		src, ok := p[m.Src]
+		if m.ReadOnly || !ok || m.Src == path {
+			continue
+		}
+		rel, err := filepath.Rel(src, p[path])
+		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // containerStopTimeout bounds removing a container, which gets its own

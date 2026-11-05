@@ -76,9 +76,6 @@ func (s *Server) privateListener(u *url.URL) listener {
 
 // routes returns the HTTP handler of one listener.
 func (s *Server) routes(l listener) http.Handler {
-	if l.kind == network.ListenerHarness {
-		return s.proxy.routes(s.bridge.key)
-	}
 	baseURL := l.baseURL
 	mux := http.NewServeMux()
 	card := func(w http.ResponseWriter, r *http.Request) {

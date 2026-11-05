@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"cmp"
 	"context"
-	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -95,21 +94,21 @@ func writeHarnessHelper(home, host, key string) (env string, err error) {
 	return harness.EnvCredentialHelper + "=" + host + "=" + path.Join(harness.ContainerHome, harnessHelperPath), nil
 }
 
-// harnessBridge is how the harness reaches the server: through the Unix
-// socket, or over TCP at url, on host dial, with key, which the credential
-// helper of helperEnv gives the harness's a2a CLI.
+// harnessBridge is how agents URLs reach the server: through the Unix
+// socket of the owner's agent process, or over TCP at url.
 type harnessBridge struct {
-	socket    string
-	url       string
-	dial      string
-	key       string
-	helperEnv string
+	socket string
+	url    string
 }
 
+// harnessCaller returns the agent key of the process a request on the
+// harness listener came from, or false when the request proves none.
+type harnessCaller func(r *http.Request) (agentKey string, ok bool)
+
 // routes serves the agents URLs on the harness listener.
-func (hp *HarnessProxy) routes(key string) http.Handler {
+func (hp *HarnessProxy) routes(caller harnessCaller) http.Handler {
 	mux := http.NewServeMux()
-	agents := hp.agentsHandler(key)
+	agents := hp.agentsHandler(caller)
 	mux.Handle("/{handle}/{agent}", agents)
 	mux.Handle("/{handle}/{agent}/{rest...}", agents)
 	return jsonhttp.LimitBody(mux)
@@ -117,19 +116,18 @@ func (hp *HarnessProxy) routes(key string) http.Handler {
 
 // agentsHandler serves the agents the harness may call, at
 // /{handle}/{agent}/..., as A2A agents proxied by this server: contacts are
-// called with this agent's identity, nodes in-process. Over a Unix socket
-// only the harness can connect; over TCP it sends key.
-func (hp *HarnessProxy) agentsHandler(key string) http.Handler {
+// called with this agent's identity, nodes in-process. caller tells the
+// agent process a request comes from, which reaches only the handles of
+// its own conversations.
+func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if key != "" {
-			tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
-			if !ok || subtle.ConstantTimeCompare([]byte(tok), []byte(key)) != 1 {
-				jsonhttp.Error(w, http.StatusUnauthorized, "harness key required")
-				return
-			}
+		process, ok := caller(r)
+		if !ok {
+			jsonhttp.Error(w, http.StatusUnauthorized, "harness key required")
+			return
 		}
 		handle, name := r.PathValue("handle"), r.PathValue("agent")
-		claims, err := hp.claims.claimsOf(r.Context(), handle)
+		claims, err := hp.claims.claimsOf(r.Context(), handle, process)
 		switch {
 		case errors.Is(err, errUnknownHandle):
 			jsonhttp.Error(w, http.StatusNotFound, err.Error())
@@ -156,7 +154,7 @@ func (hp *HarnessProxy) agentsHandler(key string) http.Handler {
 			hp.serveSchedules(w, r, claims, base, rest)
 			return
 		}
-		ok, err := hp.clients.callable(r.Context(), name)
+		ok, err = hp.clients.callable(r.Context(), name)
 		if err != nil {
 			slog.Error("looking up a callable agent", "agent", name, "error", err)
 			jsonhttp.Error(w, http.StatusInternalServerError, "looking up "+name+" failed")
