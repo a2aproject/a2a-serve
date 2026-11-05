@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -98,19 +99,35 @@ func (s *Store) UpdatePairing(ctx context.Context, p Pairing) error {
 
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
 // its webhook node and the node's watches. principals are the users the
-// pairing acts as; their schedules and watches go with it.
+// pairing acts as. Their schedules, watches, tasks and questions go with
+// it, and so do the channel conversations, agent sessions and handles of
+// the contexts left without tasks, so a new pairing with the same name
+// starts with none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, principals ...string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?)`, name); err != nil {
 			return err
 		}
 		for _, p := range principals {
-			if _, err := tx.ExecContext(ctx, `DELETE FROM schedules WHERE user_id = ?`, p); err != nil {
+			for _, del := range []string{
+				`DELETE FROM schedules WHERE user_id = ?`,
+				`DELETE FROM watches WHERE on_behalf_of = ?`,
+				`DELETE FROM questions WHERE user_id = ?`,
+			} {
+				if _, err := tx.ExecContext(ctx, del, p); err != nil {
+					return err
+				}
+			}
+			deleted, err := deleteTasks(ctx, tx, `owner = ?`, p)
+			if err != nil {
 				return err
 			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE on_behalf_of = ?`, p); err != nil {
+			if err := forgetTasks(ctx, tx, deleted, "convs", "sessions", "handles", "call_tasks"); err != nil {
 				return err
 			}
+		}
+		if err := deleteOrphans(ctx, tx); err != nil {
+			return err
 		}
 		return deleteOneTx(ctx, tx, `DELETE FROM pairings WHERE name = ?`, name)
 	})
@@ -153,18 +170,20 @@ type Token struct {
 // PutToken stores a token by its hash. A pairing whose kind is unset gets
 // kind.
 func (s *Store) PutToken(ctx context.Context, token string, t Token, kind string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		var pairing any
-		if t.Pairing != "" {
-			pairing = t.Pairing
-			if err := setKindIfUnset(ctx, tx, t.Pairing, kind); err != nil {
-				return err
-			}
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.putTokenTx(ctx, tx, token, t, kind) })
+}
+
+func (s *Store) putTokenTx(ctx context.Context, tx *sql.Tx, token string, t Token, kind string) error {
+	var pairing any
+	if t.Pairing != "" {
+		pairing = t.Pairing
+		if err := setKindIfUnset(ctx, tx, t.Pairing, kind); err != nil {
+			return err
 		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO tokens (hash, pairing, email, domain, url, created) VALUES (?, ?, ?, ?, ?, ?)`,
-			cryptoutil.Hash(token), pairing, t.Email, t.Domain, t.URL, s.now().UnixNano())
-		return err
-	})
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO tokens (hash, pairing, email, domain, url, created) VALUES (?, ?, ?, ?, ?, ?)`,
+		cryptoutil.Hash(token), pairing, t.Email, t.Domain, t.URL, s.now().UnixNano())
+	return err
 }
 
 const tokenColumns = `coalesce(pairing, ''), email, domain, url, created, last_used`
@@ -228,6 +247,46 @@ func (s *Store) DeleteTokens(ctx context.Context, pairing string) error {
 	return err
 }
 
+// DeleteSignIns deletes the Google sign-in tokens of email at every URL,
+// and returns how many it deleted.
+func (s *Store) DeleteSignIns(ctx context.Context, email string) (int64, error) {
+	res, err := s.exec(ctx, `DELETE FROM tokens WHERE pairing IS NULL AND email = ?`, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneSignIns deletes the Google sign-in tokens whose email and domain
+// allowed refuses.
+func (s *Store) PruneSignIns(ctx context.Context, allowed func(email, domain string) bool) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT email, domain FROM tokens WHERE pairing IS NULL`)
+		if err != nil {
+			return err
+		}
+		var refused [][2]string
+		for rows.Next() {
+			var email, domain string
+			if err := rows.Scan(&email, &domain); err != nil {
+				return errors.Join(err, rows.Close())
+			}
+			if !allowed(email, domain) {
+				refused = append(refused, [2]string{email, domain})
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, r := range refused {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE pairing IS NULL AND email = ? AND domain = ?`, r[0], r[1]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Link ties a chat account to a pairing. Conv is the conversation of the
 // account's direct chat, where the agent can reach the pairing unprompted.
 type Link struct {
@@ -240,15 +299,17 @@ type Link struct {
 // PutLink links a chat account to a pairing, replacing an existing link. A
 // pairing whose kind is unset gets kind.
 func (s *Store) PutLink(ctx context.Context, l Link, kind string) error {
-	return s.inTx(ctx, func(tx *sql.Tx) error {
-		if err := setKindIfUnset(ctx, tx, l.Pairing, kind); err != nil {
-			return err
-		}
-		_, err := tx.ExecContext(ctx, `INSERT INTO links (channel, identity, pairing, conv, created) VALUES (?, ?, ?, ?, ?)
-			ON CONFLICT (channel, identity) DO UPDATE SET pairing = excluded.pairing, conv = excluded.conv`,
-			l.Channel, l.Identity, l.Pairing, l.Conv, s.now().UnixNano())
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.putLinkTx(ctx, tx, l, kind) })
+}
+
+func (s *Store) putLinkTx(ctx context.Context, tx *sql.Tx, l Link, kind string) error {
+	if err := setKindIfUnset(ctx, tx, l.Pairing, kind); err != nil {
 		return err
-	})
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO links (channel, identity, pairing, conv, created) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (channel, identity) DO UPDATE SET pairing = excluded.pairing, conv = excluded.conv`,
+		l.Channel, l.Identity, l.Pairing, l.Conv, s.now().UnixNano())
+	return err
 }
 
 // LinkOf returns the link of a chat account.
@@ -337,10 +398,32 @@ func (s *Store) ReplaceCode(ctx context.Context, code string, c Code) error {
 // ErrCodeExpired is returned when a code was found but has expired.
 var ErrCodeExpired = errors.New("the code has expired")
 
-// TakeCode consumes a code which accept accepts. A code it refuses stays
-// pending, and is reported as not found. A code can be used once.
-func (s *Store) TakeCode(ctx context.Context, code string, accept func(Code) bool) (Code, error) {
-	var c Code
+// Grant is what a code is exchanged for: a bearer token, a chat link, or
+// the node token of a webhook node. It sets at most one of them.
+type Grant struct {
+	// Token is a bearer token of the code's pairing, issued at TokenURL.
+	Token    string
+	TokenURL string
+	// Link links a chat account to the code's pairing, whatever its Pairing.
+	Link *Link
+	// Kind is given to the code's pairing if it has none yet, with a Token
+	// or a Link.
+	Kind string
+	// NodeToken replaces the token of the code's webhook node, and
+	// NodeSecret the key its wakes are signed with.
+	NodeToken  string
+	NodeSecret string
+}
+
+// RedeemCode consumes a code and stores what grant returns for it, in one
+// transaction. A code grant refuses, or whose grant fails to store, stays
+// pending. A code can be used once. Codes past their expiry are deleted
+// and reported as [ErrCodeExpired].
+func (s *Store) RedeemCode(ctx context.Context, code string, grant func(Code) (Grant, error)) (Code, error) {
+	var (
+		c       Code
+		expired bool
+	)
 	err := s.inTx(ctx, func(tx *sql.Tx) error {
 		var expires int64
 		h := cryptoutil.Hash(code)
@@ -353,19 +436,50 @@ func (s *Store) TakeCode(ctx context.Context, code string, accept func(Code) boo
 			return err
 		}
 		c.Expires = unixTime(expires)
-		if !accept(c) {
-			return ErrNotFound
+		g, err := grant(c)
+		if err != nil {
+			return err
 		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM codes WHERE hash = ?`, h)
-		return err
+		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE hash = ?`, h); err != nil {
+			return err
+		}
+		if expired = s.now().After(c.Expires); expired {
+			return nil
+		}
+		return s.storeGrant(ctx, tx, c.Pairing, g)
 	})
 	if err != nil {
 		return Code{}, err
 	}
-	if s.now().After(c.Expires) {
+	if expired {
 		return Code{}, ErrCodeExpired
 	}
 	return c, nil
+}
+
+func (s *Store) storeGrant(ctx context.Context, tx *sql.Tx, pairing string, g Grant) error {
+	switch {
+	case g.Token != "":
+		return s.putTokenTx(ctx, tx, g.Token, Token{Pairing: pairing, URL: g.TokenURL}, g.Kind)
+	case g.Link != nil:
+		l := *g.Link
+		l.Pairing = pairing
+		return s.putLinkTx(ctx, tx, l, g.Kind)
+	case g.NodeToken != "":
+		return deleteOneTx(ctx, tx, `UPDATE nodes SET token_hash = ?, secret = ? WHERE id = ?`, cryptoutil.Hash(g.NodeToken), g.NodeSecret, pairing)
+	}
+	return nil
+}
+
+// TakeCode consumes a code which accept accepts. A code it refuses stays
+// pending, and is reported as not found. A code can be used once.
+func (s *Store) TakeCode(ctx context.Context, code string, accept func(Code) bool) (Code, error) {
+	return s.RedeemCode(ctx, code, func(c Code) (Grant, error) {
+		if !accept(c) {
+			return Grant{}, ErrNotFound
+		}
+		return Grant{}, nil
+	})
 }
 
 // AnyCode accepts every code, for [Store.TakeCode].

@@ -20,6 +20,13 @@ a2a-serve config [flags]
 | `--as-command` |  | Print the a2a-serve commands which recreate the agent, with secrets as env:NAME |
 | `--defaults` |  | Also show the settings left at their defaults, with the default values |
 
+**Flags of every `a2a-serve config` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
+| `--timeout duration` | `1m0s` | Timeout of each call to the running agent, a duration such as 30s or 2m |
+
 ## a2a-serve config edit
 
 Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
@@ -77,6 +84,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
+| `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
 | `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
@@ -111,8 +119,8 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
-| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone) |
-| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
+| `--private-access string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
 
 **Approvals flags**
 
@@ -160,7 +168,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
 
-Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, env, google-client-id, google-client-secret, image, memory, mount, name, owner-chat, pids, port, private, private-access, public, public-access, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, mount, name, owner-chat, pids, port, private, private-access, public, public-access, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

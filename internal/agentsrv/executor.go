@@ -51,6 +51,7 @@ const harnessSocketName = "a2a.sock"
 // newExecutor starts the harness as an ACP agent in its sandbox. close stops
 // the harness and cleans up its sandbox.
 func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.Writer) (exec a2asrv.AgentExecutor, close func(context.Context) error, err error) {
+	s.pruneContainers(ctx)
 	h, err := s.prepareHarness(ctx, imageProgress, "")
 	if err != nil {
 		return nil, nil, err
@@ -73,6 +74,23 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ %s is running (ACP)", h.profile.Name())
 	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+}
+
+// pruneContainers removes the containers of this agent directory that an
+// earlier server left running, such as those of a crash or a stop that ran
+// out of time.
+func (s *Server) pruneContainers(ctx context.Context) {
+	if sb := s.config().Sandbox; sb != "" && sb != harness.SandboxDocker {
+		return
+	}
+	n, err := harness.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
+	if err != nil {
+		slog.Warn("removing containers left by an earlier run", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("removed containers left by an earlier run", "count", n)
+	}
 }
 
 // newAnonymousExecutor prepares the separate harness of anonymous
@@ -127,11 +145,18 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	return acp, func(context.Context) error { return acp.Close() }, nil
 }
 
-// startUserAgent starts the agent process of a user's agent key.
+// startUserAgent starts the agent process of a user's agent key, unless
+// the user's pairing was removed.
 func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
 	id, ok := userOfKey(key)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent key %q", key)
+	}
+	ua := s.users.get(key)
+	ua.startMu.Lock()
+	defer ua.startMu.Unlock()
+	if err := s.checkUser(ctx, id); err != nil {
+		return nil, err
 	}
 	h, err := s.prepareHarness(ctx, harnessLog, key)
 	if err != nil {
@@ -142,7 +167,13 @@ func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.W
 		return nil, errors.Join(err, h.prepared.Stop(context.WithoutCancel(ctx)))
 	}
 	slog.Info("started the agent process of a user", "user", id, "sandbox", h.prepared.Summary)
-	return a2aacp.WithCleanup(rwc, func() error { return h.prepared.Stop(context.Background()) }), nil
+	var proc io.ReadWriteCloser
+	proc = a2aacp.WithCleanup(rwc, func() error {
+		s.users.exited(ua, proc)
+		return h.prepared.Stop(context.Background())
+	})
+	s.users.started(ua, proc)
+	return proc, nil
 }
 
 // preparedHarness is a harness ready to start as an ACP agent.
@@ -182,6 +213,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Mounts:   mounts,
 		Home:     s.dir.HomeDir(),
 		Hidden:   []string{s.dir.Path()},
+		MCPMask:  s.dir.MCPMaskPath(),
 		Env:      env,
 		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
 		Image:    cfg.Image,
@@ -304,22 +336,6 @@ func (s *Server) listenHarnessSocket() (net.Listener, harnessBridge, error) {
 	return ln, harnessBridge{socket: sock}, nil
 }
 
-// cancelRetryHandler retries a cancel that a2a-go refuses as not cancelable.
-// a2a-go passes a cancel to the task's running execution and fails it when
-// that execution ends input-required first, as it does right after the
-// agent asks a question. The failed cancel returns once the execution is
-// gone, so the retry cancels the stored task. See the TODO in a2a-go's
-// localManager.handleCancelWithConcurrentRun.
-type cancelRetryHandler struct{ a2asrv.RequestHandler }
-
-func (h cancelRetryHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
-	task, err := h.RequestHandler.CancelTask(ctx, req)
-	if !errors.Is(err, a2a.ErrTaskNotCancelable) {
-		return task, err
-	}
-	return h.RequestHandler.CancelTask(ctx, req)
-}
-
 // observedExecutor publishes every event of the agent to the server's event
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {
@@ -336,11 +352,13 @@ var (
 	_ a2asrv.AgentExecutionCleaner = (*observedExecutor)(nil)
 )
 
-// Cleanup relays the question a task stopped on, and forgets that nobody
+// Cleanup tells the followers of the task's context that an execution
+// ended, relays the question the task stopped on, and forgets that nobody
 // watches the context of a task that ended. a2a-go calls it once the
-// execution is done with its last event, so an answer to the question can
-// start the next execution.
+// execution is done with its last event and stored it, so an answer to the
+// question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
+	e.bus.executionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
 	if err != nil || (ok && task.Status.State.Terminal()) {
 		e.unattended.remove(execCtx.ContextID)
@@ -512,10 +530,12 @@ func eventState(ev a2a.Event) (a2a.TaskState, bool) {
 
 // eventBus fans out task events to in-process followers, such as a channel
 // conversation waiting for a task someone else answered. Followers never
-// miss events: a slow follower's events queue up.
+// miss events: a slow follower's events queue up. Followers of a context
+// learn when an execution in it ended.
 type eventBus struct {
-	mu   sync.Mutex
-	subs map[a2a.TaskID]map[*subscription]struct{}
+	mu       sync.Mutex
+	subs     map[a2a.TaskID]map[*subscription]struct{}
+	contexts map[string]map[chan struct{}]struct{}
 }
 
 // subscription is the queue of events of one follower. ready has a value
@@ -557,7 +577,9 @@ func (s *subscription) push(ev a2a.Event) {
 	}
 }
 
-func newEventBus() *eventBus { return &eventBus{subs: map[a2a.TaskID]map[*subscription]struct{}{}} }
+func newEventBus() *eventBus {
+	return &eventBus{subs: map[a2a.TaskID]map[*subscription]struct{}{}, contexts: map[string]map[chan struct{}]struct{}{}}
+}
 
 func (b *eventBus) subscribe(id a2a.TaskID) (*subscription, func()) {
 	sub := &subscription{ready: make(chan struct{}, 1)}
@@ -582,6 +604,37 @@ func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
 	defer b.mu.Unlock()
 	for sub := range b.subs[id] {
 		sub.push(ev)
+	}
+}
+
+// subscribeContext returns a channel that has a value once an execution in
+// the context ended after the call.
+func (b *eventBus) subscribeContext(contextID string) (<-chan struct{}, func()) {
+	ch := make(chan struct{}, 1)
+	b.mu.Lock()
+	if b.contexts[contextID] == nil {
+		b.contexts[contextID] = map[chan struct{}]struct{}{}
+	}
+	b.contexts[contextID][ch] = struct{}{}
+	b.mu.Unlock()
+	return ch, func() {
+		b.mu.Lock()
+		defer b.mu.Unlock()
+		delete(b.contexts[contextID], ch)
+		if len(b.contexts[contextID]) == 0 {
+			delete(b.contexts, contextID)
+		}
+	}
+}
+
+func (b *eventBus) executionEnded(contextID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for ch := range b.contexts[contextID] {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
 	}
 }
 

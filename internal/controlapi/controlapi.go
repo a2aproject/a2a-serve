@@ -102,6 +102,8 @@ type MCPServerStatus struct {
 	// Missing are the variables it references which have no value, so the
 	// harness doesn't get it.
 	Missing []string `json:"missing,omitempty"`
+	// Disabled is set when the config turns the server off.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BackupStatus describes the agent's backup snapshots.
@@ -138,18 +140,41 @@ func (s *Status) URL(scope string) (string, error) {
 		}
 		return s.Public, nil
 	}
-	return "", fmt.Errorf("unknown URL scope %q", scope)
+	return "", unknownScope(scope)
+}
+
+func unknownScope(scope string) error {
+	return fmt.Errorf("unknown URL scope %q", scope)
+}
+
+// CheckScope reports whether scope is empty, local, private or public, the
+// values [Status.URL] takes.
+func CheckScope(scope string) error {
+	switch scope {
+	case "", ScopeLocal, ScopePrivate, ScopePublic:
+		return nil
+	}
+	return unknownScope(scope)
+}
+
+// CheckInspectorScope reports whether scope is local or private, the values
+// [Status.InspectorURL] takes.
+func CheckInspectorScope(scope string) error {
+	switch scope {
+	case ScopeLocal, ScopePrivate:
+		return nil
+	}
+	return fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
 }
 
 // InspectorURL returns the URL to open the web inspector at in scope: the
 // local URL, or the private URL, where it is served only over HTTPS.
 func (s *Status) InspectorURL(scope string) (string, error) {
-	switch scope {
-	case ScopeLocal:
+	if err := CheckInspectorScope(scope); err != nil {
+		return "", err
+	}
+	if scope == ScopeLocal {
 		return s.Local, nil
-	case ScopePrivate:
-	default:
-		return "", fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
 	}
 	u, err := s.URL(ScopePrivate)
 	if err != nil {
@@ -317,6 +342,15 @@ type RevokeResponse struct {
 	// Kept is set when the pairing stays and only its credentials were
 	// revoked, as for the local pairing.
 	Kept bool `json:"kept,omitempty"`
+	// Access is who may call the agent afterwards.
+	Access *Access `json:"access,omitempty"`
+}
+
+// SignOutResponse tells what `pair rm --email` revoked.
+type SignOutResponse struct {
+	Email string `json:"email"`
+	// Tokens is the number of Google sign-in tokens revoked.
+	Tokens int `json:"tokens"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
 }
@@ -586,6 +620,12 @@ func (c *Client) Pair(ctx context.Context, req PairCodeRequest) (*PairCodeRespon
 func (c *Client) Revoke(ctx context.Context, name string) (*RevokeResponse, error) {
 	var out RevokeResponse
 	return &out, c.do(ctx, http.MethodDelete, "/pair/"+url.PathEscape(name), nil, &out)
+}
+
+// SignOut revokes the Google sign-in tokens of email.
+func (c *Client) SignOut(ctx context.Context, email string) (*SignOutResponse, error) {
+	var out SignOutResponse
+	return &out, c.do(ctx, http.MethodDelete, "/signins/"+url.PathEscape(email), nil, &out)
 }
 
 // Pairings lists the callers and webhook nodes paired with the agent.

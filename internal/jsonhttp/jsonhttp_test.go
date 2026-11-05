@@ -82,6 +82,7 @@ func TestLimitBody(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name          string
+		limit         int64
 		size          int64
 		contentLength int64
 		want          int
@@ -89,15 +90,22 @@ func TestLimitBody(t *testing.T) {
 		{name: "at the limit", size: MaxBody, contentLength: MaxBody, want: http.StatusOK},
 		{name: "declared over the limit", size: 1, contentLength: MaxBody + 1, want: http.StatusRequestEntityTooLarge},
 		{name: "chunked over the limit", size: MaxBody + 1, contentLength: -1, want: http.StatusRequestEntityTooLarge},
+		{name: "at a smaller limit", limit: 10, size: 10, contentLength: 10, want: http.StatusOK},
+		{name: "declared over a smaller limit", limit: 10, size: 1, contentLength: 11, want: http.StatusRequestEntityTooLarge},
+		{name: "chunked over a smaller limit", limit: 10, size: 11, contentLength: -1, want: http.StatusRequestEntityTooLarge},
 	}
-	h := LimitBody(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	read := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.Copy(io.Discard, r.Body); err != nil {
 			Error(w, http.StatusRequestEntityTooLarge, err.Error())
 		}
-	}))
+	})
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			h := LimitBody(read)
+			if tc.limit != 0 {
+				h = LimitBodyTo(tc.limit, read)
+			}
 			r := httptest.NewRequest(http.MethodPost, "/", io.LimitReader(zeros{}, tc.size))
 			r.ContentLength = tc.contentLength
 			w := httptest.NewRecorder()

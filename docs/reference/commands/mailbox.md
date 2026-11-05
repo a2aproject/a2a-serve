@@ -20,6 +20,12 @@ settings, secret:NAME reuses a value stored in .a2a/state/secrets.
 a2a-serve mailbox <command>
 ```
 
+**Flags of every `a2a-serve mailbox` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--timeout duration` | `30s` | Timeout of each request to the agent server, a duration such as 30s or 2m |
+
 ## a2a-serve mailbox get
 
 Show a task addressed to the node, with history and artifacts.
@@ -75,10 +81,11 @@ a2a-serve mailbox reply <task-id> [flags]
 **Examples**
 
 ```bash
-a2a-serve mailbox reply <task> --status working --text "on it"
+a2a-serve mailbox reply <task> --working "on it"
 a2a-serve mailbox reply <task> --input-required "Which branch?"
 a2a-serve mailbox reply <task> --final "Done" --artifact report.pdf
 a2a-serve mailbox reply <task> --fail "Could not reach the repo"
+a2a-serve mailbox reply <task> --reject "Not something this node does"
 ```
 
 **Flags**
@@ -90,9 +97,11 @@ a2a-serve mailbox reply <task> --fail "Could not reach the repo"
 | `--final string` |  | Complete the task with this result |
 | `--input-required string` |  | Ask the caller this question |
 | `--key string` |  | Idempotency key (default: derived from the task and the event content) |
-| `--status string` |  | Task state: working, input-required, completed, failed, rejected |
+| `--reject string` |  | Reject the task with this reason |
+| `--status string` |  | Task state: working, input-required, completed, failed, rejected; each also has a flag of its own |
 | `--text string` |  | Status message, or the result for completed (with --status) |
 | `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
+| `--working string` |  | Report progress with this message |
 
 ## a2a-serve mailbox verify
 

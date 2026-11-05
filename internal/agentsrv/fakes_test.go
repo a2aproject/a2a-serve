@@ -318,18 +318,32 @@ type injectedTurn struct {
 	Text      string
 }
 
-// fakeTurnInjector records the turns injected.
+// fakeTurnInjector records the turns injected. The agent accepts them at
+// once, or, with hold set, when the test calls their accept function.
 type fakeTurnInjector struct {
-	turns chan injectedTurn
-	err   error
+	turns    chan injectedTurn
+	accepted chan func(error)
+	hold     bool
+	err      error
 }
 
 func newFakeTurnInjector() *fakeTurnInjector {
-	return &fakeTurnInjector{turns: make(chan injectedTurn, 16)}
+	return &fakeTurnInjector{turns: make(chan injectedTurn, 16), accepted: make(chan func(error), 16)}
 }
 
-func (f *fakeTurnInjector) injectTurn(_ context.Context, contextID string, p auth.Principal, text string) error {
-	f.turns <- injectedTurn{ContextID: contextID, User: p, Text: text}
+func (f *fakeTurnInjector) injectTurn(_ context.Context, t postedTurn) error {
+	accept := t.Accepted
+	if accept == nil {
+		accept = func(error) {}
+	}
+	switch {
+	case f.err != nil:
+	case f.hold:
+		f.accepted <- accept
+	default:
+		accept(nil)
+	}
+	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text}
 	return f.err
 }
 

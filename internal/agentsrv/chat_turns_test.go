@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -195,14 +196,15 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 		Store:      fx.store,
 		Tasks:      fx.tasks,
 		Chain:      fx.chain,
+		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter()},
 		Approvals:  svc,
 		Chat:       fx.chat,
 		Supervisor: fx.supervisor,
 		Queue:      fx.queue,
 		Sender:     sender,
+		Bus:        fx.bus,
 		Unattended: unattended,
 		AgentName:  agentName,
-		Timings:    fx.timings,
 	})
 	turns.start(fx.ctx)
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, channel: "fake", identity: "telegram:1", conv: "dm1"})
@@ -389,6 +391,15 @@ func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 	}
 }
 
+func TestChatTurnsLinkCodeLimitsFailures(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	for range 11 {
+		fx.ch.write("telegram:9", "dm9", "join WRNG-C0DE")
+	}
+	fx.ch.waitFor(t, "dm9", hasText("Too many invalid codes."))
+}
+
 func TestChatTurnsStop(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -456,7 +467,7 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 	t.Parallel()
 	fx := newTurnsFixture(t)
 
-	if err := fx.turns.injectTurn(fx.ctx, "c-schedule", auth.Owner(), "run it"); err != nil {
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it"}); err != nil {
 		t.Fatalf("turns.injectTurn() error = %v", err)
 	}
 
@@ -482,7 +493,7 @@ func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	fx := newTurnsFixture(t)
 	fx.setContext(t, "dm1", "c1")
 
-	if err := fx.turns.injectTurn(fx.ctx, "c1", auth.Owner(), "run it"); err != nil {
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
 		t.Fatalf("turns.injectTurn() error = %v", err)
 	}
 
@@ -503,16 +514,132 @@ func TestChatTurnsInjectTurnWaitsForPendingQuestion(t *testing.T) {
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
 
-	if err := fx.turns.injectTurn(fx.ctx, "c1", auth.Owner(), "run it"); err != nil {
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
 		t.Fatalf("turns.injectTurn() error = %v", err)
 	}
 	fx.sender.wantIdle(t)
-	fx.setTaskState(t, "t1", "c1", a2a.TaskStateCompleted)
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
 
 	call := fx.sender.nextStream(t)
 	if got := sentMessageOf(call.req.Message).Text; got != "run it" {
 		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "run it")
 	}
+}
+
+func TestChatTurnsInjectTurnWaitsForExecutionToEnd(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateInputRequired)
+	fx.sender.wantIdle(t)
+	fx.setTaskState(t, "t1", "c1", a2a.TaskStateWorking)
+	fx.sender.wantIdle(t)
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+
+	fx.sender.nextStream(t)
+}
+
+func TestChatTurnsInjectTurnMergesRunsOfAScheduleWhileHeld(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	for _, turn := range []postedTurn{
+		{Text: "run", Key: "schedule:brief"},
+		{Text: "result a"},
+		{Text: "run", Key: "schedule:brief"},
+		{Text: "result b"},
+		{Text: "run", Key: "schedule:brief"},
+	} {
+		turn.ContextID, turn.User = "c1", auth.Owner()
+		if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
+			t.Fatalf("turns.injectTurn() error = %v", err)
+		}
+	}
+	fx.sender.wantIdle(t)
+
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+
+	var got []string
+	for range 3 {
+		got = append(got, sentMessageOf(fx.sender.nextStream(t).req.Message).Text)
+	}
+	want := []string{
+		"run\n\n(Runs skipped while this one waited for an answer in this conversation: 2.)",
+		"result a",
+		"result b",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("SendStreamingMessage() texts wrong result (-want +got) diff = %s", diff)
+	}
+	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsInjectTurnWithoutConversationWaitsForPendingQuestion(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.putTask(t, "t1", "c-schedule", a2a.TaskStateInputRequired)
+	accepted := make(chan error, 1)
+	turn := postedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+	fx.sender.wantIdle(t)
+
+	fx.endExecution(t, "t1", "c-schedule", a2a.TaskStateCompleted)
+
+	if got := sentMessageOf(fx.sender.nextSend(t).req.Message).Text; got != "run it" {
+		t.Fatalf("SendMessage() text = %q, want %q", got, "run it")
+	}
+	if err := <-accepted; err != nil {
+		t.Fatalf("postedTurn.Accepted() error = %v, want nil", err)
+	}
+}
+
+func TestChatTurnsDropPostedRemovesWaitingTurns(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	accepted := make(chan error, 1)
+	turn := postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run", Key: "schedule:brief", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	fx.turns.dropPosted("schedule:brief")
+
+	if err := <-accepted; !errors.Is(err, errTurnDropped) {
+		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
+	}
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsDropPostedOfRemovesWaitingTurnsOfPrincipals(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	accepted := make(chan error, 1)
+	user := auth.Principal{ID: "pair:bob"}
+	turn := postedTurn{ContextID: "c1", User: user, Text: "run", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	fx.turns.dropPostedOf("pair:bob")
+
+	if err := <-accepted; !errors.Is(err, errTurnDropped) {
+		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
+	}
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+	fx.sender.wantIdle(t)
 }
 
 func TestChatTurnsTypedAnswer(t *testing.T) {

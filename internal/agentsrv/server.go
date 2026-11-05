@@ -51,6 +51,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -151,12 +152,13 @@ type Server struct {
 	// the tasks of anonymous callers.
 	split  *splitExecutor
 	budget *anonymousBudget
+	// users are the agent processes of users that run now.
+	users userAgents
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
-	pairLimit      *pairLimiter
 	timings        Timings
 }
 
@@ -220,8 +222,7 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		pairLimit: newPairLimiter(),
-		timings:   opts.Timings.withDefaults(),
+		timings: opts.Timings.withDefaults(),
 	}
 	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
@@ -277,6 +278,12 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 		return nil, fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
+	// Written before the slow startup steps, so that a stop can signal a
+	// server whose control socket doesn't exist yet.
+	if err := fsutil.WriteAtomic(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the pid file: %w", err)
+	}
+	closers.push(func(context.Context) error { return removeIfExists(s.dir.PIDPath()) })
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
 		return nil, err
@@ -345,6 +352,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
+		Limiter:   pairings.NewLimiter(),
+		Users:     stopUsers{s},
+		Homes:     s.dir,
 	}
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)
@@ -390,14 +400,15 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Chain:      s.chain,
+		Pairings:   s.pairings,
 		Approvals:  s.approvals,
 		Chat:       s.chatApprovals,
 		Supervisor: s.supervisor,
 		Queue:      newConversationQueue(),
 		Sender:     s.sender,
+		Bus:        s.bus,
 		Unattended: unattended,
 		AgentName:  agentName,
-		Timings:    s.timings,
 	})
 	s.schedules = newSchedules(ctx, schedulesDeps{
 		Store:      s.store,
@@ -429,14 +440,14 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = cancelRetryHandler{a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
+	s.handler = turns.RetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 		a2asrv.WithLogger(slog.Default()),
-	)}
+	))
 	s.sender.Set(s.handler)
 	return nil
 }
@@ -547,7 +558,8 @@ func (s *Server) reloadConfig(saved *agentdir.Config) {
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 }
 
-// updateConfig applies fn to the config and saves it.
+// updateConfig applies fn to the config and saves it. A config.yaml that
+// fails to parse is left alone and returned as the error.
 func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
@@ -556,15 +568,22 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	// config.yaml may hold changes waiting for a restart; keep them.
-	saved, err := s.dir.ReadConfig()
+	err := fsutil.WithLock(s.dir.ConfigPath(), func() error {
+		// config.yaml may hold changes waiting for a restart; keep them.
+		saved, err := s.dir.ReadConfig()
+		switch {
+		case errors.Is(err, agentdir.ErrNotFound):
+			saved = &next
+		case err != nil:
+			return err
+		default:
+			if err := fn(saved); err != nil {
+				return err
+			}
+		}
+		return s.dir.SaveConfig(saved)
+	})
 	if err != nil {
-		slog.Debug("saving the running config", "error", err)
-		saved = &next
-	} else if err := fn(saved); err != nil {
-		return err
-	}
-	if err := s.dir.SaveConfig(saved); err != nil {
 		return err
 	}
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
@@ -602,12 +621,7 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 // serveHTTP serves the routes of a listener in the background and returns
 // the function which shuts the listener down.
 func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
-	srv := &http.Server{
-		Handler:           s.routes(l),
-		ReadHeaderTimeout: 30 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-	}
+	srv := httpserver.New(ctx, s.routes(l), httpserver.WithConnContext(connContext))
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))
@@ -655,12 +669,17 @@ func (s *Server) bestURL() string {
 const pruneInterval = time.Hour
 
 // pruneLoop prunes the store now and every pruneInterval until ctx ends.
+// It also deletes the Google sign-in tokens of emails that --allow-email
+// no longer matches.
 func (s *Server) pruneLoop(ctx context.Context) {
 	t := time.NewTicker(pruneInterval)
 	defer t.Stop()
 	for {
 		if err := s.store.Prune(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("pruning the database", "error", err)
+		}
+		if err := s.store.PruneSignIns(ctx, s.policy().AllowsSignIn); err != nil && ctx.Err() == nil {
+			slog.Warn("pruning Google sign-ins", "error", err)
 		}
 		s.claims.forgetPruned(ctx)
 		select {

@@ -35,6 +35,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
+
+	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
 func openStore(t *testing.T) *Store {
@@ -287,6 +290,106 @@ func TestDeletePairing(t *testing.T) {
 	}
 }
 
+func TestDeletePairingForgetsItsConversations(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	photo := newTask("anna-1", "c-anna")
+	photo.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
+	for user, tasks := range map[string][]*a2a.Task{
+		"pair:anna": {photo, newTask("anna-shared", "c-shared")},
+		"pair:bob":  {newTask("bob-1", "c-bob"), newTask("bob-shared", "c-shared")},
+	} {
+		for _, task := range tasks {
+			if _, err := ts.Create(asUser(user), task); err != nil {
+				t.Fatalf("Create(%s) error = %v", task.ID, err)
+			}
+		}
+	}
+	for _, q := range []Question{
+		{ID: "q-anna", Token: "t-anna", TaskID: "anna-1", ContextID: "c-anna", User: "pair:anna"},
+		{ID: "q-anna-remote", Token: "t-anna-remote", TaskID: "r1", ContextID: "c-anna", Contact: "ben", HitlID: "h", User: "pair:anna"},
+		{ID: "q-bob", Token: "t-bob", TaskID: "bob-1", ContextID: "c-bob", User: "pair:bob"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	if err := s.SetPendingQuestion(ctx, "telegram", "anna-dm", "q-anna"); err != nil {
+		t.Fatalf("SetPendingQuestion() error = %v", err)
+	}
+	for conv, contextID := range map[string]string{"anna-dm": "c-anna", "bob-dm": "c-bob", "group": "c-shared"} {
+		if err := s.SetContext(ctx, "telegram", conv, contextID); err != nil {
+			t.Fatalf("SetContext(%s) error = %v", conv, err)
+		}
+		if err := s.Sessions().Put(ctx, contextID, a2aacp.Session{ID: "s-" + contextID}); err != nil {
+			t.Fatalf("Sessions().Put(%s) error = %v", contextID, err)
+		}
+	}
+	if err := s.PutHandle(ctx, Handle{Handle: "ab", ContextID: "c-anna"}); err != nil {
+		t.Fatalf("PutHandle() error = %v", err)
+	}
+	if err := s.PutCallTask(ctx, CallTask{ContextID: "c-anna", Agent: "ben", TaskID: "r1", RemoteContextID: "rc"}); err != nil {
+		t.Fatalf("PutCallTask() error = %v", err)
+	}
+
+	if err := s.DeletePairing(ctx, "anna", "pair:anna", "node:anna"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+
+	for _, id := range []a2a.TaskID{"anna-1", "anna-shared"} {
+		if _, err := ts.Get(owner, id); !errors.Is(err, a2a.ErrTaskNotFound) {
+			t.Fatalf("Get(%s) after DeletePairing() error = %v, want %v", id, err, a2a.ErrTaskNotFound)
+		}
+	}
+	for _, id := range []a2a.TaskID{"bob-1", "bob-shared"} {
+		if _, err := ts.Get(owner, id); err != nil {
+			t.Fatalf("Get(%s) of another user's task error = %v", id, err)
+		}
+	}
+	for _, id := range []string{"q-anna", "q-anna-remote"} {
+		if _, err := s.QuestionByID(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("QuestionByID(%s) after DeletePairing() error = %v, want %v", id, err, ErrNotFound)
+		}
+	}
+	if _, err := s.QuestionByID(ctx, "q-bob"); err != nil {
+		t.Fatalf("QuestionByID() of another user's question error = %v", err)
+	}
+	if _, err := s.PendingQuestion(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("PendingQuestion() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.ContextOf(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ContextOf() of the removed user's chat error = %v, want %v", err, ErrNotFound)
+	}
+	for _, conv := range []string{"bob-dm", "group"} {
+		if _, err := s.ContextOf(ctx, "telegram", conv); err != nil {
+			t.Fatalf("ContextOf(%s) of a conversation with other tasks error = %v", conv, err)
+		}
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-anna"); err != nil || ok {
+		t.Fatalf("Sessions().Get() of the removed user's conversation = %v, %v, want false, nil", ok, err)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-shared"); err != nil || !ok {
+		t.Fatalf("Sessions().Get() of a conversation with other tasks = %v, %v, want true, nil", ok, err)
+	}
+	if _, err := s.HandleOf(ctx, "c-anna"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("HandleOf() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if ok, err := s.HasCallTask(ctx, "c-anna", "ben", "r1"); err != nil || ok {
+		t.Fatalf("HasCallTask() after DeletePairing() = %v, %v, want false, nil", ok, err)
+	}
+	var blobs int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
+		t.Fatalf("counting blobs: %v", err)
+	}
+	if blobs != 0 {
+		t.Fatalf("blobs after DeletePairing() = %d, want 0", blobs)
+	}
+}
+
 func TestCodes(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
@@ -317,6 +420,132 @@ func TestCodes(t *testing.T) {
 	}
 	if _, err := s.TakeCode(ctx, "OLD", AnyCode); !errors.Is(err, ErrCodeExpired) {
 		t.Fatalf("TakeCode() expired error = %v, want %v", err, ErrCodeExpired)
+	}
+}
+
+func TestRedeemCode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	refused := errors.New("refused")
+	tests := []struct {
+		name  string
+		grant func(Code) (Grant, error)
+		// existingToken is stored before the code is redeemed.
+		existingToken string
+		expired       bool
+		wantErr       bool
+		wantPending   bool
+		wantKind      string
+		wantTokens    int
+		wantLinks     int
+	}{
+		{
+			name: "token",
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_new", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantKind:   "device",
+			wantTokens: 1,
+		},
+		{
+			name: "chat link",
+			grant: func(c Code) (Grant, error) {
+				return Grant{Link: &Link{Channel: "telegram", Identity: "telegram:1", Pairing: c.Pairing}, Kind: "person"}, nil
+			},
+			wantKind:  "person",
+			wantLinks: 1,
+		},
+		{
+			name:        "refused",
+			grant:       func(Code) (Grant, error) { return Grant{}, refused },
+			wantErr:     true,
+			wantPending: true,
+		},
+		{
+			name:          "failed write",
+			existingToken: "a2p_taken",
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_taken", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantErr:     true,
+			wantPending: true,
+			wantTokens:  1,
+		},
+		{
+			name:    "expired",
+			expired: true,
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_new", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+			if tc.existingToken != "" {
+				if err := s.PutToken(ctx, tc.existingToken, Token{URL: "https://agent"}, ""); err != nil {
+					t.Fatalf("PutToken() error = %v", err)
+				}
+			}
+			expires := time.Now().Add(time.Minute)
+			if tc.expired {
+				expires = time.Now().Add(-time.Second)
+			}
+			if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: expires}); err != nil {
+				t.Fatalf("PutCode() error = %v", err)
+			}
+
+			if _, err := s.RedeemCode(ctx, "K7Q29XF4", tc.grant); (err != nil) != tc.wantErr {
+				t.Fatalf("RedeemCode() error = %v, want error %v", err, tc.wantErr)
+			}
+			if _, err := s.TakeCode(ctx, "K7Q29XF4", AnyCode); (err == nil) != tc.wantPending {
+				t.Fatalf("TakeCode() after RedeemCode() error = %v, want the code pending %v", err, tc.wantPending)
+			}
+			p, err := s.Pairing(ctx, "grok")
+			if err != nil {
+				t.Fatalf("Pairing() error = %v", err)
+			}
+			links, err := s.LinksOf(ctx, "grok")
+			if err != nil {
+				t.Fatalf("LinksOf() error = %v", err)
+			}
+			tokens, err := s.Tokens(ctx)
+			if err != nil {
+				t.Fatalf("Tokens() error = %v", err)
+			}
+			if p.Kind != tc.wantKind || len(tokens) != tc.wantTokens || len(links) != tc.wantLinks {
+				t.Fatalf("after RedeemCode() kind = %q, tokens = %d, links = %d, want %q, %d, %d", p.Kind, len(tokens), len(links), tc.wantKind, tc.wantTokens, tc.wantLinks)
+			}
+		})
+	}
+}
+
+func TestRedeemCodeOfNode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.PutNode(ctx, Node{ID: "grok", Name: "grok", Webhook: "https://x", Secret: "random"}); err != nil {
+		t.Fatalf("PutNode() error = %v", err)
+	}
+	if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	c, err := s.RedeemCode(ctx, "K7Q29XF4", func(Code) (Grant, error) { return Grant{NodeToken: "a2rn.token", NodeSecret: "wake"}, nil })
+	if err != nil {
+		t.Fatalf("RedeemCode() error = %v", err)
+	}
+	if c.Kind != pairapi.PairingWebhook {
+		t.Fatalf("RedeemCode().Kind = %q, want %q", c.Kind, pairapi.PairingWebhook)
+	}
+	got, err := s.Node(ctx, "grok")
+	if err != nil {
+		t.Fatalf("Node() error = %v", err)
+	}
+	if got.TokenHash != cryptoutil.Hash("a2rn.token") || got.Secret != "wake" {
+		t.Fatalf("Node() = %+v, want the token hash and the wake key of the new token", got)
 	}
 }
 
@@ -365,6 +594,83 @@ func TestTokens(t *testing.T) {
 	}
 	if _, err := s.Pairing(ctx, "grok"); err != nil {
 		t.Fatalf("Pairing() after RevokeCredentials() error = %v, want nil", err)
+	}
+}
+
+func putSignIns(t *testing.T, s *Store, tokens map[string]Token) {
+	t.Helper()
+	for tok, tk := range tokens {
+		if err := s.PutToken(context.Background(), tok, tk, ""); err != nil {
+			t.Fatalf("PutToken(%s) error = %v", tok, err)
+		}
+	}
+}
+
+func tokenEmails(t *testing.T, s *Store) []string {
+	t.Helper()
+	all, err := s.Tokens(context.Background())
+	if err != nil {
+		t.Fatalf("Tokens() error = %v", err)
+	}
+	var out []string
+	for _, tk := range all {
+		out = append(out, tk.Pairing+tk.Email)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestDeleteSignIns(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	putSignIns(t, s, map[string]Token{
+		"a2p_laptop": {Email: "anna@example.com", URL: "http://x"},
+		"a2p_phone":  {Email: "anna@example.com", URL: "https://y"},
+		"a2p_bob":    {Email: "bob@example.com", URL: "http://x"},
+	})
+
+	n, err := s.DeleteSignIns(ctx, "Anna@Example.com")
+	if err != nil {
+		t.Fatalf("DeleteSignIns() error = %v", err)
+	}
+
+	if n != 2 {
+		t.Fatalf("DeleteSignIns() = %d, want 2", n)
+	}
+	if diff := cmp.Diff([]string{"bob@example.com", "grok"}, tokenEmails(t, s)); diff != "" {
+		t.Fatalf("Tokens() after DeleteSignIns() wrong result (-want +got) diff = %s", diff)
+	}
+	if n, err := s.DeleteSignIns(ctx, "anna@example.com"); err != nil || n != 0 {
+		t.Fatalf("DeleteSignIns() again = %d, %v, want 0, nil", n, err)
+	}
+}
+
+func TestPruneSignIns(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	putSignIns(t, s, map[string]Token{
+		"a2p_anna":  {Email: "anna@example.com", Domain: "example.com", URL: "http://x"},
+		"a2p_bob":   {Email: "bob@example.com", URL: "http://x"},
+		"a2p_carol": {Email: "carol@other.com", URL: "http://x"},
+	})
+
+	err := s.PruneSignIns(ctx, func(email, domain string) bool { return domain == "example.com" || email == "carol@other.com" })
+	if err != nil {
+		t.Fatalf("PruneSignIns() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"anna@example.com", "carol@other.com", "grok"}, tokenEmails(t, s)); diff != "" {
+		t.Fatalf("Tokens() after PruneSignIns() wrong result (-want +got) diff = %s", diff)
 	}
 }
 

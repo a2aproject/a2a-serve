@@ -15,6 +15,7 @@
 package lifecycle
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"runtime"
@@ -54,5 +55,20 @@ func TestRestart(t *testing.T) {
 				t.Fatalf("Restart() stopped the agent")
 			}
 		})
+	}
+}
+
+func TestRestartServerThatIsStarting(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("the test server is a unix process")
+	}
+	dir := newAgent(t)
+	proc := startingServer(t, dir)
+
+	err := Restart(t.Context(), dir, controlapi.NewClient(dir), false, io.Discard)
+	want := fmt.Sprintf("coder (pid %d) can't be restarted", proc.pid)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Restart() error = %v, want %q", err, want)
 	}
 }

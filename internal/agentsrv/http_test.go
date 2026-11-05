@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
@@ -279,62 +280,102 @@ func TestCardSignInScheme(t *testing.T) {
 	}
 }
 
-func TestOversizedA2ABody(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{})
-	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
-	u, err := url.Parse(ts.localURL())
+// postOversized declares a body over jsonhttp.MaxBody to u without sending
+// it and returns the status of the response.
+func postOversized(t *testing.T, u, authorization string) int {
+	t.Helper()
+	parsed, err := url.Parse(u)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/message:send"} {
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	}()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", parsed.RequestURI(), parsed.Host, authorization, jsonhttp.MaxBody+1)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("POST %s error = %v, want a response", u, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+func TestOversizedA2ABody(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	addNode(t, ts, "grok", 0)
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	for _, path := range []string{"/", "/message:send", "/n/grok", "/n/grok/message:send"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			conn, err := net.Dial("tcp", u.Host)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := conn.Close(); err != nil {
-					t.Errorf("closing the connection: %v", err)
-				}
-			}()
-			req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", path, u.Host, bearer, jsonhttp.MaxBody+1)
-			if _, err := io.WriteString(conn, req); err != nil {
-				t.Fatal(err)
-			}
-			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := resp.Body.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if resp.StatusCode != http.StatusRequestEntityTooLarge {
-				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
+			if got := postOversized(t, ts.localURL()+path, bearer); got != http.StatusRequestEntityTooLarge {
+				t.Fatalf("POST %s status = %d, want %d", path, got, http.StatusRequestEntityTooLarge)
 			}
 		})
 	}
 }
 
-func TestPairingBackoffThroughTunnel(t *testing.T) {
+func TestOversizedHeader(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{public: publicNet()})
-	ctx := context.Background()
-	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "anna"})
-	if err != nil {
-		t.Fatalf("Pair() error = %v", err)
+	ts := startServer(t, serverOpts{})
+
+	got := statusOf(t, http.MethodGet, ts.localURL()+"/healthz", "", http.Header{"X-Padding": {strings.Repeat("a", 512<<10)}})
+
+	if got != http.StatusRequestHeaderFieldsTooLarge {
+		t.Fatalf("GET /healthz with a large header status = %d, want %d", got, http.StatusRequestHeaderFieldsTooLarge)
 	}
-	pair := func(u, code string) int {
-		return statusOf(t, http.MethodPost, u+"/pair", `{"code":"`+code+`"}`, http.Header{"Content-Type": {"application/json"}})
+}
+
+func TestPairingThroughTunnel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// peerPerConn identifies each connection through the relay as its
+		// own peer; otherwise the relay identifies nobody.
+		peerPerConn bool
+		wantStatus  int
+	}{
+		{name: "anonymous callers share a backoff", wantStatus: http.StatusTooManyRequests},
+		{name: "identified callers are limited apart", peerPerConn: true, wantStatus: http.StatusOK},
 	}
-	if got := pair(ts.publicURL(), "WRONGCODE"); got != http.StatusForbidden {
-		t.Fatalf("pair with a wrong code status = %d, want %d", got, http.StatusForbidden)
-	}
-	if got := pair(ts.publicURL(), code.Code); got != http.StatusTooManyRequests {
-		t.Fatalf("pair through the tunnel during backoff status = %d, want %d", got, http.StatusTooManyRequests)
-	}
-	if got := pair(ts.localURL(), code.Code); got != http.StatusOK {
-		t.Fatalf("pair on the local listener status = %d, want %d", got, http.StatusOK)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: !tc.peerPerConn, peerPerConn: tc.peerPerConn}
+			ts := startServer(t, serverOpts{public: relay})
+			code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
+			if err != nil {
+				t.Fatalf("Pair() error = %v", err)
+			}
+			pair := func(u, code string) int {
+				return statusOf(t, http.MethodPost, u+"/pair", `{"code":"`+code+`"}`, http.Header{"Content-Type": {"application/json"}, "Connection": {"close"}})
+			}
+			if got := pair(ts.publicURL(), "WRONGCODE"); got != http.StatusForbidden {
+				t.Fatalf("pair with a wrong code status = %d, want %d", got, http.StatusForbidden)
+			}
+			if got := pair(ts.publicURL(), code.Code); got != tc.wantStatus {
+				t.Fatalf("pair through the tunnel after a wrong code status = %d, want %d", got, tc.wantStatus)
+			}
+			if tc.wantStatus == http.StatusOK {
+				return
+			}
+			if got := pair(ts.localURL(), code.Code); got != http.StatusOK {
+				t.Fatalf("pair on the local listener status = %d, want %d", got, http.StatusOK)
+			}
+		})
 	}
 }

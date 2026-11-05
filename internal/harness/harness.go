@@ -130,9 +130,16 @@ func (claude) Command(ws Workspace) Command {
 }
 
 func (claude) Bootstrap(ws Workspace) error {
-	return writeJSONIfMissing(ws.Home, filepath.Join(".claude", "settings.json"), map[string]any{
+	settings := filepath.Join(".claude", "settings.json")
+	if err := writeJSONIfMissing(ws.Home, settings, map[string]any{
 		"permissions": map[string]any{"defaultMode": "default"},
-	})
+	}); err != nil {
+		return err
+	}
+	// The server passes the project's MCP servers over ACP, leaving out the
+	// ones the config turns off. A sandbox hides .mcp.json; this covers a
+	// .mcp.json the mask doesn't, such as one replaced while the agent runs.
+	return setJSONKey(ws.Home, settings, "enableAllProjectMcpServers", false)
 }
 
 // custom is a harness started with an explicit command line. It keeps the
@@ -188,6 +195,33 @@ func writeJSONIfMissing(home, name string, v any) (err error) {
 	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
+		return err
+	}
+	return root.WriteFile(name, append(data, '\n'), 0o600)
+}
+
+// setJSONKey sets key in the JSON object in the file name in home, keeping
+// the other keys. Like [writeJSONIfMissing], it refuses symlinks that lead
+// out of home.
+func setJSONKey(home, name, key string, v any) (err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	data, err := root.ReadFile(name)
+	if err != nil {
+		return err
+	}
+	obj := map[string]any{}
+	if err := json.Unmarshal(data, &obj); err != nil {
+		return fmt.Errorf("parsing %s: %w", filepath.Join(home, name), err)
+	}
+	if cur, ok := obj[key]; ok && cur == v {
+		return nil
+	}
+	obj[key] = v
+	if data, err = json.MarshalIndent(obj, "", "  "); err != nil {
 		return err
 	}
 	return root.WriteFile(name, append(data, '\n'), 0o600)

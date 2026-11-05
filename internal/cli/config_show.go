@@ -157,7 +157,11 @@ func renderConfig(v *agentctl.View, all bool) string {
 		channels = append(channels, "discord token "+secretState(dc.Token))
 	}
 	if e := c.Channels.Email; e != nil {
-		channels = append(channels, fmt.Sprintf("email %s via %s, %s, password %s", e.Address, e.IMAP, e.SMTP, secretState(e.Password)))
+		login := "password " + secretState(e.Password)
+		if e.OAuthRefreshToken != "" {
+			login = "OAuth refresh token " + secretState(e.OAuthRefreshToken)
+		}
+		channels = append(channels, fmt.Sprintf("email %s via %s, %s, %s", e.Address, e.IMAP, e.SMTP, login))
 	}
 	line("channels", strings.Join(channels, "; "))
 	var approvals []string

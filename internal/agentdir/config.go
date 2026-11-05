@@ -68,6 +68,19 @@ type Config struct {
 	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
+	MCP       MCPConfig       `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+}
+
+// MCPConfig decides which MCP servers of the project's .mcp.json the agent
+// gets.
+type MCPConfig struct {
+	// Disabled are the names of servers left out of the agent's sessions.
+	Disabled []string `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+}
+
+// MCPDisabled reports whether the MCP server name is turned off.
+func (c *Config) MCPDisabled(name string) bool {
+	return slices.Contains(c.MCP.Disabled, name)
 }
 
 // PolicyConfig decides who may call the agent besides the user running it,
@@ -87,6 +100,18 @@ const (
 	AccessPaired   = "paired"
 	AccessAnyone   = "anyone"
 )
+
+// normalize replaces the access word of the other network with the one the
+// setting uses, so that --private-access anyone and --public-access everyone
+// work. everyone and anyone mean the same.
+func (p *PolicyConfig) normalize() {
+	if p.PrivateAccess == AccessAnyone {
+		p.PrivateAccess = AccessEveryone
+	}
+	if p.PublicAccess == AccessEveryone {
+		p.PublicAccess = AccessAnyone
+	}
+}
 
 func (p PolicyConfig) clone() PolicyConfig {
 	p.AllowEmails = slices.Clone(p.AllowEmails)
@@ -207,6 +232,13 @@ type EmailConfig struct {
 	// TrustedAuthServ is the authserv-id of the Authentication-Results header
 	// added by the receiving mail server. Only its verdicts are trusted.
 	TrustedAuthServ string `yaml:"trusted_authserv" json:"trustedAuthServ"`
+	// OAuthRefreshToken, if set, signs in with OAuth (XOAUTH2), and Password
+	// is unused. The access tokens come from OAuthTokenURL. The refresh token
+	// and the client secret are secret references.
+	OAuthTokenURL     string `yaml:"oauth_token_url,omitempty" json:"oauthTokenURL,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id,omitempty" json:"oauthClientID,omitempty"`
+	OAuthClientSecret string `yaml:"oauth_client_secret,omitempty" json:"oauthClientSecret,omitempty"`
+	OAuthRefreshToken string `yaml:"oauth_refresh_token,omitempty" json:"oauthRefreshToken,omitempty"`
 }
 
 // Channel kinds.
@@ -347,6 +379,7 @@ func ParseConfig(data []byte) (*Config, error) {
 	if len(cfg.Mounts) == 0 {
 		cfg.Mounts = nil
 	}
+	cfg.Policy.normalize()
 	return &cfg, nil
 }
 
@@ -373,6 +406,23 @@ func (d Dir) SaveConfig(cfg *Config) error {
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
 }
 
+// UpdateConfig applies fn to the saved config and saves the result, holding
+// the lock of config.yaml so that updates from several processes don't lose
+// changes. A config.yaml that fails to parse is left alone and returned as
+// the error.
+func (d Dir) UpdateConfig(fn func(*Config) error) error {
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		cfg, err := d.LoadOrNewConfig()
+		if err != nil {
+			return err
+		}
+		if err := fn(cfg); err != nil {
+			return err
+		}
+		return d.SaveConfig(cfg)
+	})
+}
+
 // Clone returns a deep copy of c.
 func (c *Config) Clone() *Config {
 	out := *c
@@ -383,6 +433,7 @@ func (c *Config) Clone() *Config {
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
 	out.Policy = c.Policy.clone()
+	out.MCP.Disabled = slices.Clone(c.MCP.Disabled)
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
 	}

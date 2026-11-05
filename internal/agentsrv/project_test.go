@@ -104,3 +104,44 @@ func TestStatusListsProject(t *testing.T) {
 		t.Fatalf("Status() wrong skills (-want +got) diff = %s", diff)
 	}
 }
+
+func TestDisabledMCPServersApplyLive(t *testing.T) {
+	t.Parallel()
+	ts := startProjectServer(t)
+	cfg, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	cfg.MCP.Disabled = []string{"github", "api"}
+	if err := ts.dir.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	control := controlapi.NewClient(ts.dir)
+	if _, err := control.ReloadConfig(t.Context()); err != nil {
+		t.Fatalf("ReloadConfig() error = %v", err)
+	}
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("mcp", "", ""))
+
+	wantResult(t, task, a2a.TaskStateCompleted, "")
+	var got []map[string]any
+	if err := json.Unmarshal([]byte(resultText(task)), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", resultText(task), err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("session MCP servers = %v, want none", got)
+	}
+	st, err := control.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Status() error = %v", err)
+	}
+	wantServers := []controlapi.MCPServerStatus{
+		{Name: "api", Type: project.MCPHTTP, Summary: "http https://api.example.com/mcp", Disabled: true},
+		{Name: "bot", Type: project.MCPStdio, Summary: "bot-mcp", Missing: []string{"CODER_BOT_TOKEN"}},
+		{Name: "github", Type: project.MCPStdio, Summary: "npx -y server-github", Disabled: true},
+	}
+	if diff := cmp.Diff(wantServers, st.MCPServers); diff != "" {
+		t.Fatalf("Status() wrong MCP servers (-want +got) diff = %s", diff)
+	}
+}

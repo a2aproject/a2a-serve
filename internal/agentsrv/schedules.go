@@ -119,16 +119,18 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 		if nextErr != nil || !ok {
 			next = time.Time{}
 		}
-		// A run whose next time isn't saved would repeat on every check.
-		if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
-			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
-			continue
+		oneShot := nextErr == nil && !ok
+		// A run whose next time isn't saved would repeat on every check. A
+		// one-time run that fails stays due, so that the next check retries it.
+		if !oneShot {
+			if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
+				slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
+				continue
+			}
 		}
 		runErr := sc.start(ctx, s)
-		if runErr == nil && nextErr == nil && !ok {
-			if err := sc.store.DeleteSchedule(ctx, s.Name); err != nil && !errors.Is(err, store.ErrNotFound) {
-				slog.Error("removing a finished schedule", "schedule", s.Name, "error", err)
-			}
+		if oneShot && runErr == nil {
+			sc.finish(ctx, s.Name)
 			continue
 		}
 		if err := sc.store.RecordScheduleResult(ctx, s.Name, now, errText(cmp.Or(runErr, nextErr))); err != nil {
@@ -139,6 +141,19 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 		}
 	}
 	return max(wait, sc.minWait)
+}
+
+// finish removes the schedule of a one-time run that succeeded. If that
+// fails, it clears the run so that it doesn't repeat.
+func (sc *schedules) finish(ctx context.Context, name string) {
+	err := sc.store.DeleteSchedule(ctx, name)
+	if err == nil || errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	slog.Error("removing a finished schedule", "schedule", name, "error", err)
+	if err := sc.store.SetScheduleNextRun(ctx, name, time.Time{}); err != nil {
+		slog.Error("clearing the run of a finished schedule", "schedule", name, "error", err)
+	}
 }
 
 func errText(err error) string {
@@ -170,12 +185,16 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.injectTurn(sc.ctx, contextID, user, text); err != nil {
+	if err := sc.turns.injectTurn(sc.ctx, postedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name)}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
 	return nil
 }
+
+// scheduleTurnKey merges the runs of a schedule that wait in a context
+// into one.
+func scheduleTurnKey(name string) string { return "schedule:" + name }
 
 // contextFor returns the context a run of s happens in. A run delivered to
 // a chat becomes the chat's conversation, so replying there continues it.
@@ -198,6 +217,26 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	}
 	id := a2a.NewContextID()
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
+}
+
+// announce posts text into the chat conversation of a context, if it has
+// one.
+func (sc *schedules) announce(ctx context.Context, contextID, text string) {
+	chName, conv, err := sc.store.ConvOf(ctx, contextID)
+	if errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		slog.Warn("finding the conversation of a schedule", "context", contextID, "error", err)
+		return
+	}
+	ch := sc.supervisor.channel(chName)
+	if ch == nil {
+		return
+	}
+	if _, err := ch.Send(ctx, channel.Outbound{Conv: channel.ConvKey(conv), Text: text}); err != nil {
+		slog.Warn("announcing a schedule", "channel", chName, "error", err)
+	}
 }
 
 // storedPrincipal is a principal stored to act later, such as the user a
@@ -246,9 +285,14 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 	return s, runErr
 }
 
-// remove removes a schedule which by may manage.
+// remove removes a schedule which by may manage, and its runs that wait
+// to be posted.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	return sc.manage().Remove(ctx, name, by)
+	if err := sc.manage().Remove(ctx, name, by); err != nil {
+		return err
+	}
+	sc.turns.dropPosted(scheduleTurnKey(name))
+	return nil
 }
 
 // visible lists the schedules by can see.

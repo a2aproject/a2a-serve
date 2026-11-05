@@ -26,6 +26,13 @@ a2a-serve pair set anna --owner
 a2a-serve pair rm anna
 ```
 
+**Flags of every `a2a-serve pair` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
+| `--timeout duration` | `1m0s` | Timeout of each call to the running agent, a duration such as 30s or 2m |
+
 ## a2a-serve pair get
 
 Show a pairing: its kind, role, tokens, linked accounts and pending codes, or an agent you joined
@@ -131,21 +138,42 @@ Aliases: `ls`
 ## a2a-serve pair rm
 
 Delete a pairing with its tokens, linked messenger accounts, pending
-codes and the schedules that run as it, or remove a webhook node with its
-schedules. The person may still call the agent through
-the private network or an --allow-email rule; the command says so, and
-prints who may call afterwards.
+codes, the schedules that run as it, and its tasks, approvals and
+conversations, or remove a webhook node with its schedules. Its running
+tasks are canceled, its agent process stops, and its agent home directory
+is deleted. A new pairing with the same name starts with none of them. The
+person may still call the agent through the private network or an
+--allow-email rule; the command says so, and prints who may call
+afterwards.
 
 `a2a-serve pair rm local` revokes the token of this machine and your linked
 chat accounts, and keeps the pairing; the next start issues a new token.
 
 With an agent URL, forget the token you saved with `a2a-serve pair join`.
 
+With --email, revoke the Google sign-ins of a person. They can sign in
+again while an --allow-email rule matches their email; remove the rule with
+`a2a-serve config unset allow-email` to stop that.
+
 ```
-a2a-serve pair rm <name|agent-url>
+a2a-serve pair rm <name|agent-url> [flags]
 ```
 
 Aliases: `delete`
+
+**Examples**
+
+```bash
+a2a-serve pair rm anna
+a2a-serve pair rm https://coder.tail1234.ts.net
+a2a-serve pair rm --email anna@example.com
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--email address` |  | Revoke the Google sign-ins of the email address |
 
 ## a2a-serve pair set
 

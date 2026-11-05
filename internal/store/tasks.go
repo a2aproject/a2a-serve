@@ -454,6 +454,26 @@ func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string) (int, er
 	return len(pending), nil
 }
 
+// UnfinishedOf returns the IDs of the tasks of the scope that user owns and
+// that aren't in a terminal state.
+func (ts *TaskStore) UnfinishedOf(ctx context.Context, user string) ([]a2a.TaskID, error) {
+	rows, err := ts.s.reads.QueryContext(ctx, `SELECT id FROM tasks WHERE scope = ? AND owner = ? AND state NOT IN (?, ?, ?, ?)`,
+		ts.scope, user, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
+	if err != nil {
+		return nil, err
+	}
+	defer closeRows(rows)
+	var out []a2a.TaskID
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		out = append(out, a2a.TaskID(id))
+	}
+	return out, rows.Err()
+}
+
 // LatestInContext returns the most recently updated task of a context.
 func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2a.Task, error) {
 	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
@@ -472,6 +492,21 @@ func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2
 		return nil, err
 	}
 	return task, nil
+}
+
+// LatestStateInContext returns the ID and state of the most recently
+// updated task of a context, without loading the task.
+func (ts *TaskStore) LatestStateInContext(ctx context.Context, contextID string) (a2a.TaskID, a2a.TaskState, error) {
+	var id, state string
+	err := ts.s.reads.QueryRowContext(ctx, `SELECT id, state FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
+		ts.scope, contextID).Scan(&id, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return a2a.TaskID(id), a2a.TaskState(state), nil
 }
 
 // HasOthersTasks reports whether a context has tasks of another owner than user.

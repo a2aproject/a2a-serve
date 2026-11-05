@@ -87,7 +87,7 @@ coder (opencode) running for 2h, pid 41233
 | Sender | Treated as |
 |---|---|
 | Chat account linked to a pairing (`join <code>`, or the link printed at start) | the pairing. The link printed at start links you |
-| Email sender whose address passes DMARC at your trusted mail server (`--email-trusted-authserv`) | that email address, so `--allow-email anna@example.com` lets Anna email the agent without linking |
+| Email sender whose address passes DMARC at your trusted mail server (`--email-trusted-authserv`) | that email address, so `--allow-email anna@example.com` lets Anna email the agent without linking. DMARC proves the domain only, so anyone who can send authenticated mail for it counts as any of its addresses |
 | Unlinked sender in a direct chat | anyone, with `--public-access anyone`; otherwise rejected with a hint on how to pair |
 | Unlinked sender in a group | ignored |
 

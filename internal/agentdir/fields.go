@@ -207,8 +207,13 @@ var fields = []field{
 	emailField("email-password", func(e *EmailConfig) *string { return &e.Password }),
 	emailField("email-mailbox", func(e *EmailConfig) *string { return &e.Mailbox }),
 	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
+	emailField("email-oauth-token-url", func(e *EmailConfig) *string { return &e.OAuthTokenURL }),
+	emailField("email-oauth-client-id", func(e *EmailConfig) *string { return &e.OAuthClientID }),
+	emailField("email-oauth-client-secret", func(e *EmailConfig) *string { return &e.OAuthClientSecret }),
+	emailField("email-oauth-refresh-token", func(e *EmailConfig) *string { return &e.OAuthRefreshToken }),
 	agentScope(list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity)),
 	agentScope(list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity)),
+	ownerScope(list("disable-mcp", true, func(c *Config) *[]string { return &c.MCP.Disabled }, identity)),
 	ownerScope(scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat })),
 	agentScope(operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }))),
 	agentScope(operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }))),
@@ -246,6 +251,37 @@ func SettingNames() []string {
 		}
 	}
 	slices.Sort(out)
+	return out
+}
+
+// CheckUnset reports why `config unset` refuses a setting by its name alone,
+// before the agent's config is read.
+func CheckUnset(setting string) error {
+	if _, ok := unsetOnly[setting]; ok {
+		return nil
+	}
+	f, ok := lookupField(setting)
+	switch {
+	case !ok:
+		return &SettingsError{Err: fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))}
+	case f.place == placeChannel:
+		kind, _, _ := strings.Cut(setting, "-")
+		return &SettingsError{Err: fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)}
+	case setting == "agent":
+		return &SettingsError{Err: fmt.Errorf("the agent can't be unset; switch it with `a2a-serve config set --agent <name>`")}
+	}
+	return nil
+}
+
+// LiveSettings returns the names of the settings of `config set` that a
+// running server applies without a restart, in the order of the fields.
+func LiveSettings() []string {
+	var out []string
+	for _, f := range fields {
+		if f.live && f.place != placeChannel {
+			out = append(out, f.flag)
+		}
+	}
 	return out
 }
 
@@ -331,22 +367,18 @@ func Diff(old, next *Config) []Change {
 // entries, or resets a scalar setting to its default. It returns the names
 // of stored secrets which are no longer used, to delete.
 func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, error) {
+	if err := CheckUnset(setting); err != nil {
+		return nil, err
+	}
 	before := cfg.referencedSecrets()
 	var deleted []string
-	f, ok := lookupField(setting)
+	f, _ := lookupField(setting)
 	secret, extra := unsetOnly[setting]
 	switch {
 	case extra && len(entries) > 0:
 		return nil, fmt.Errorf("%s takes no entries: run `a2a-serve config unset %s`", setting, setting)
 	case extra:
 		deleted = append(deleted, secret)
-	case ok && f.place == placeChannel:
-		kind, _, _ := strings.Cut(setting, "-")
-		return nil, fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)
-	case !ok:
-		return nil, fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))
-	case setting == "agent":
-		return nil, fmt.Errorf("the agent can't be unset; switch it with `a2a-serve config set --agent <name>`")
 	case !f.list && len(entries) > 0:
 		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
 	case setting == "name":
@@ -476,6 +508,7 @@ func CopyLive(dst, src *Config) {
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
 	dst.Policy = src.Policy.clone()
+	dst.MCP.Disabled = slices.Clone(src.MCP.Disabled)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an

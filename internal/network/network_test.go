@@ -15,15 +15,18 @@
 package network
 
 import (
+	"crypto/tls"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"tailscale.com/ipn"
 )
 
 func TestProbeAgents(t *testing.T) {
@@ -114,6 +117,36 @@ func TestLoginPromptShow(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("loginPrompt.show() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestFunnelSource(t *testing.T) {
+	t.Parallel()
+	funnel := func(src string) net.Conn {
+		c, _ := net.Pipe()
+		return &ipn.FunnelConn{Conn: c, Src: netip.MustParseAddrPort(src)}
+	}
+	plain, _ := net.Pipe()
+	tests := []struct {
+		name   string
+		conn   net.Conn
+		want   string
+		wantOK bool
+	}{
+		{name: "IPv4", conn: funnel("203.0.113.7:5555"), want: "203.0.113.7", wantOK: true},
+		{name: "IPv4 over TLS", conn: tls.Server(funnel("203.0.113.7:5555"), &tls.Config{}), want: "203.0.113.7", wantOK: true},
+		{name: "IPv4-mapped IPv6", conn: funnel("[::ffff:203.0.113.7]:5555"), want: "203.0.113.7", wantOK: true},
+		{name: "IPv6", conn: funnel("[2001:db8:1:2:3:4:5:6]:5555"), want: "2001:db8:1:2::/64", wantOK: true},
+		{name: "not through Funnel", conn: plain},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok := FunnelSource(tc.conn)
+			if got != tc.want || ok != tc.wantOK {
+				t.Fatalf("FunnelSource() = %q, %v, want %q, %v", got, ok, tc.want, tc.wantOK)
 			}
 		})
 	}

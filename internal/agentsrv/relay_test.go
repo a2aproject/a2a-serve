@@ -516,6 +516,10 @@ func (n *testRelayNode) WhoIs(_ context.Context, remoteAddr string) (*network.Pe
 	return p, nil
 }
 
+func (n *testRelayNode) Member(context.Context, string) (*network.Peer, error) {
+	return nil, network.ErrUnsupported
+}
+
 func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 	n.fabric.mu.RLock()
 	var candidates []network.PeerInfo
@@ -527,6 +531,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 			Name:   other.cfg.AgentName,
 			URL:    fmt.Sprintf("http://%s/mesh/%s/a2a/%s", network.AgentMeshHost, other.peerID, other.cfg.AgentName),
 			Online: true,
+			Node:   other.peerID,
 		})
 	}
 	n.fabric.mu.RUnlock()

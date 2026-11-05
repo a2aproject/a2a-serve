@@ -43,6 +43,8 @@ type Manager interface {
 	UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error)
 	// Revoke removes a pairing, or revokes the credentials of the local one.
 	Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error)
+	// SignOut revokes the Google sign-in tokens of an email.
+	SignOut(ctx context.Context, email string) (*controlapi.SignOutResponse, error)
 	// Contacts lists the contacts.
 	Contacts(ctx context.Context) ([]controlapi.ContactInfo, error)
 	// AddContact adds a contact.

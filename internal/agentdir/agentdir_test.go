@@ -51,6 +51,33 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestRemoveUserHome(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	for _, id := range []string{"pair:anna", "pair:bob"} {
+		if err := os.MkdirAll(filepath.Join(d.UserHomeDir(id), ".config"), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", id, err)
+		}
+	}
+
+	if err := d.RemoveUserHome("pair:anna"); err != nil {
+		t.Fatalf("RemoveUserHome() error = %v", err)
+	}
+
+	if _, err := os.Stat(d.UserHomeDir("pair:anna")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of the removed home error = %v, want %v", err, os.ErrNotExist)
+	}
+	if _, err := os.Stat(d.UserHomeDir("pair:bob")); err != nil {
+		t.Fatalf("Stat() of another user's home error = %v", err)
+	}
+	if err := d.RemoveUserHome("pair:anna"); err != nil {
+		t.Fatalf("RemoveUserHome() of a missing home error = %v", err)
+	}
+}
+
 func TestOpenExpandsHome(t *testing.T) {
 	t.Parallel()
 	home, err := os.UserHomeDir()
@@ -91,6 +118,7 @@ func TestConfigRoundTrip(t *testing.T) {
 		Mounts:   []string{"/home/u/docs:/docs:ro"},
 		Network:  NetworkConfig{Private: "tailscale"},
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
+		MCP:      MCPConfig{Disabled: []string{"kubernetes"}},
 	}
 	if err := d.SaveConfig(want); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -270,12 +298,14 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/a:/docs", "/b:/data"},
 		Env:       []string{"DEBUG=1", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read"}, OwnerChat: "telegram"},
+		MCP:       MCPConfig{Disabled: []string{"github"}},
 	}
 	_, err = Settings{
 		Mounts:     []string{"/c:/docs:ro", "/e:/extra"},
 		Env:        []string{"DEBUG=0"},
 		AllowTools: []string{"read", "search"},
 		OwnerChat:  "discord:anna",
+		DisableMCP: []string{"github", "kubernetes"},
 		Workspace:  d.Root,
 	}.Apply(cfg, d)
 	if err != nil {
@@ -287,6 +317,7 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/c:/docs:ro", "/b:/data", "/e:/extra"},
 		Env:       []string{"DEBUG=0", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "discord:anna"},
+		MCP:       MCPConfig{Disabled: []string{"github", "kubernetes"}},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)
@@ -311,6 +342,34 @@ func TestSettingsApplyEmail(t *testing.T) {
 		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
 	}
 	if diff := cmp.Diff(Secrets{SecretEmailPassword: "new"}, secrets); diff != "" {
+		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSettingsApplyEmailOAuth(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{Channels: ChannelsConfig{Email: &EmailConfig{
+		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
+	}}}
+	secrets, err := Settings{Email: &EmailSettings{
+		OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id", OAuthClientSecret: "cs", OAuthRefreshToken: "rt",
+	}}.Apply(cfg, d)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := &EmailConfig{
+		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
+		OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id",
+		OAuthClientSecret: "secret:" + SecretEmailClient, OAuthRefreshToken: "secret:" + SecretEmailOAuth,
+	}
+	if diff := cmp.Diff(want, cfg.Channels.Email); diff != "" {
+		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(Secrets{SecretEmailClient: "cs", SecretEmailOAuth: "rt"}, secrets); diff != "" {
 		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
 	}
 }
@@ -390,5 +449,59 @@ func TestServiceName(t *testing.T) {
 	}
 	if got, want := dir.ServiceName(), "a2a-"+dir.ID(); got != want {
 		t.Fatalf("Dir.ServiceName() = %q, want %q", got, want)
+	}
+}
+
+func TestUpdateConfig(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		content     string
+		wantErr     bool
+		wantContent string
+	}{
+		{name: "valid", content: "name: coder\nharness: opencode\n"},
+		{name: "unparsable", content: "name: [unterminated\n", wantErr: true, wantContent: "name: [unterminated\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := Open(t.TempDir())
+			if err != nil {
+				t.Fatalf("Open() error = %v", err)
+			}
+			if err := os.MkdirAll(d.Path(), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.content), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err = d.UpdateConfig(func(c *Config) error {
+				c.Description = "changed"
+				return nil
+			})
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Dir.UpdateConfig() error = %v, want error %v", err, tc.wantErr)
+			}
+			got, err := os.ReadFile(d.ConfigPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tc.wantErr {
+				if diff := cmp.Diff(tc.content, string(got)); diff != "" {
+					t.Fatalf("Dir.UpdateConfig() changed config.yaml (-want +got) diff = %s", diff)
+				}
+				return
+			}
+			cfg, err := d.ReadConfig()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.Description != "changed" || cfg.Name != "coder" {
+				t.Fatalf("Dir.UpdateConfig() saved %+v, want the description changed and the name kept", cfg)
+			}
+		})
 	}
 }

@@ -415,6 +415,28 @@ func TestSettingsFlagPlacement(t *testing.T) {
 	}
 }
 
+func TestConfigUnsetValidatesSettingBeforeDirectory(t *testing.T) {
+	t.Parallel()
+	empty := t.TempDir()
+	tests := []struct {
+		setting string
+		wantErr string
+	}{
+		{setting: "nope", wantErr: `unknown setting "nope"`},
+		{setting: "agent", wantErr: "the agent can't be unset"},
+		{setting: "telegram", wantErr: "a2a-serve channel rm telegram"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.setting, func(t *testing.T) {
+			t.Parallel()
+			_, err := runCMD(t, "config", "unset", tc.setting, "--dir", empty)
+			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a-serve config unset %s error = %v, want a usage error %q", tc.setting, err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestToolKindsAreRepeatable(t *testing.T) {
 	t.Parallel()
 	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})

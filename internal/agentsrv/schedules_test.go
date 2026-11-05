@@ -88,6 +88,39 @@ func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
 
+func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ctx := context.Background()
+	ctl := controlapi.NewClient(ts.dir)
+	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "brief me", Chat: "fake", Thread: schedule.ThreadSame}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+	ts.ch.write("telegram:1", "dm1", "ask")
+	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+
+	for range 3 {
+		if _, err := ctl.RunSchedule(ctx, "brief"); err != nil {
+			t.Fatalf("RunSchedule() error = %v", err)
+		}
+	}
+	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
+
+	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))
+	ts.ch.waitFor(t, "dm1", hasText("Runs skipped while this one waited for an answer in this conversation: 2."))
+	time.Sleep(200 * time.Millisecond)
+	runs := 0
+	for _, m := range ts.ch.transcript() {
+		if strings.Contains(m.Text, `ran Scheduled run of "brief"`) {
+			runs++
+		}
+	}
+	if got := runs; got != 1 {
+		t.Fatalf("scheduled runs shown = %d, want 1; messages:\n%s", got, ts.ch.dump())
+	}
+}
+
 func TestAddScheduleErrors(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
@@ -143,6 +176,16 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func TestHarnessScheduleIsAnnouncedInChat(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+
+	ts.ch.write("telegram:1", "dm1", `call schedules add triage --cron "@every 2h" --prompt "triage new issues"`)
+
+	ts.ch.waitFor(t, "dm1", hasText(`The agent added the schedule triage (@every 2h): "triage new issues". The next run is`))
 }
 
 func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
@@ -239,17 +282,24 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 	}
 }
 
-func TestFailedOneTimeScheduleIsKept(t *testing.T) {
+func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
+	var skew atomic.Int64
+	// The server's own scheduler must not run the schedule before the channel is removed.
+	skew.Store(int64(-time.Hour))
+	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), now: now})
+	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	due := time.Now().Add(-time.Minute)
 	if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
 		Name: "once", At: due, Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
-		DeliverChannel: "gone", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
+		DeliverChannel: "fake", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
 	}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
+	ts.srv.supervisor.remove("fake")
+	skew.Store(0)
 
 	ts.srv.schedules.runDue(ctx)
 
@@ -257,8 +307,17 @@ func TestFailedOneTimeScheduleIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Schedule() after a failed run error = %v, want the schedule kept", err)
 	}
-	if !strings.Contains(got.LastError, "channel gone is not running") || !got.NextRun.IsZero() || got.LastRun.IsZero() {
-		t.Fatalf("Schedule() = %+v, want the error recorded and no next run", got)
+	if !strings.Contains(got.LastError, "channel fake is not running") || got.NextRun.IsZero() || got.LastRun.IsZero() {
+		t.Fatalf("Schedule() = %+v, want the error recorded and the run still due", got)
+	}
+
+	restarted := newFakeChannel("fake")
+	ts.srv.supervisor.add(restarted)
+	restarted.waitReady(t)
+	ts.srv.schedules.runDue(ctx)
+
+	if _, err := ts.srv.store.Schedule(ctx, "once"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Schedule() after the retry error = %v, want %v", err, store.ErrNotFound)
 	}
 }
 

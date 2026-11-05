@@ -57,4 +57,4 @@ The server then:
 
 - **Why the `a2a` CLI.** It is already in the sandbox and covers the whole A2A protocol. ACP can pass only MCP servers to a session, and an MCP bridge added a tool surface for the agent to learn.
 - **Why calls go through the server.** The private network runs inside the server process, contact tokens stay out of the sandbox, and the server can route approvals and late results to people.
-- **What survives a restart.** Conversations and watched tasks are in `server.db`. Open tasks fail on restart, including tasks that wait for an answer, so their questions close. Questions relayed from other agents stay open, because those tasks run at the other agent.
+- **What survives a restart.** Conversations and watched tasks are in `server.db`. A watched task stays there until the agent accepts its result as a turn, so a restart before then posts the result again. Open tasks fail on restart, including tasks that wait for an answer, so their questions close. Questions relayed from other agents stay open, because those tasks run at the other agent.

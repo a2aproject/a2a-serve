@@ -49,12 +49,25 @@ type fakeNet struct {
 	network.Provider
 	name  string
 	peers map[string]*network.Peer
+	// members are the machines on the network by node; nil for a network
+	// that can't look them up.
+	members map[string]*network.Peer
 }
 
 func (f fakeNet) Name() string { return f.name }
 
 func (f fakeNet) WhoIs(_ context.Context, addr string) (*network.Peer, error) {
 	if p, ok := f.peers[addr]; ok {
+		return p, nil
+	}
+	return nil, network.ErrNoIdentity
+}
+
+func (f fakeNet) Member(_ context.Context, node string) (*network.Peer, error) {
+	if f.members == nil {
+		return nil, network.ErrUnsupported
+	}
+	if p, ok := f.members[node]; ok {
 		return p, nil
 	}
 	return nil, network.ErrNoIdentity
@@ -329,12 +342,8 @@ func TestChainAuthenticateChannel(t *testing.T) {
 	ctx := context.Background()
 	link := func(identity, name, role string) {
 		pair(t, s, name, role)
-		code, _, err := MintCode(ctx, s, name)
-		if err != nil {
-			t.Fatalf("MintCode() error = %v", err)
-		}
-		if _, err := Link(ctx, s, &channel.Inbound{Channel: "telegram", Identity: identity, Authentic: true}, code); err != nil {
-			t.Fatalf("Link() error = %v", err)
+		if err := s.PutLink(ctx, store.Link{Channel: "telegram", Identity: identity, Pairing: name}, "person"); err != nil {
+			t.Fatalf("PutLink() error = %v", err)
 		}
 	}
 	link("telegram:1", LocalPairing, RoleOwner)
@@ -437,11 +446,16 @@ func TestChainRefresh(t *testing.T) {
 	if err := s.PutNode(ctx, store.Node{ID: "grok", Name: "grok", Webhook: "https://example.com/hook", Secret: "s"}); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
 	}
-	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork}
+	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "n1"}
+	ownerDevice := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "n2", Self: true}
+	relay := Identity{Network: network.ListenerPrivate, Provider: network.ProviderRelay, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "p1"}
+	onTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{"n1": {Email: "anna@example.com", Node: "n1"}}}
+	leftTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{}}
 
 	tests := []struct {
 		name        string
 		policy      Policy
+		net         network.Provider
 		id          string
 		identity    Identity
 		want        Principal
@@ -481,6 +495,7 @@ func TestChainRefresh(t *testing.T) {
 		{
 			name:     "tailnet user while the private network is open",
 			policy:   testPolicy(true, nil),
+			net:      onTailnet,
 			id:       "email:anna@example.com",
 			identity: tailnet,
 			want:     Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: tailnet},
@@ -488,14 +503,72 @@ func TestChainRefresh(t *testing.T) {
 		{
 			name:        "tailnet user once the private network is closed",
 			policy:      testPolicy(false, nil),
+			net:         onTailnet,
 			id:          "email:anna@example.com",
 			identity:    tailnet,
 			wantRefused: true,
 		},
+		{
+			name:     "tailnet user who left the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      leftTailnet,
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "tailnet user once the agent left the tailnet",
+			policy:   testPolicy(true, nil),
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "tailnet user allowed by email who left the tailnet",
+			policy:   testPolicy(false, []string{"anna@example.com"}),
+			net:      leftTailnet,
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "your device that left the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      leftTailnet,
+			id:       OwnerID,
+			identity: ownerDevice,
+			want:     Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Self: true}},
+		},
+		{
+			name:     "relay user on a relay that can't look up its members",
+			policy:   testPolicy(true, nil),
+			net:      fakeNet{name: network.ProviderRelay},
+			id:       "email:anna@example.com",
+			identity: relay,
+			want:     Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: relay},
+		},
+		{
+			name:     "relay user once the agent moved to the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      onTailnet,
+			id:       "email:anna@example.com",
+			identity: relay,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:   "machine that left the tailnet",
+			policy: testPolicy(true, nil),
+			net:    leftTailnet,
+			id:     "node:tailscale:n3",
+			identity: Identity{
+				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Node: "n3",
+			},
+			wantErr: ErrNoCredential,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			chain := &Chain{Store: s, Policy: func() Policy { return tc.policy }}
+			chain := &Chain{Store: s, Net: tc.net, Policy: func() Policy { return tc.policy }}
 			got, err := chain.Refresh(ctx, tc.id, tc.identity)
 			if tc.wantRefused {
 				var refused *RefusedError
@@ -514,43 +587,6 @@ func TestChainRefresh(t *testing.T) {
 	}
 }
 
-func TestLink(t *testing.T) {
-	t.Parallel()
-	s := openStore(t)
-	ctx := context.Background()
-	chain := &Chain{Store: s, Policy: func() Policy { return testPolicy(true, nil) }}
-	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
-
-	if _, err := chain.Authenticate(ctx, Request{Channel: in}); err == nil {
-		t.Fatalf("Authenticate() before link error = nil, want a refusal")
-	}
-	code, _, err := MintCode(ctx, s, LocalPairing)
-	if err != nil {
-		t.Fatalf("MintCode() error = %v", err)
-	}
-	if _, err := Link(ctx, s, &channel.Inbound{Channel: "telegram", Identity: "telegram:43"}, code); err == nil {
-		t.Fatalf("Link() unauthentic sender error = nil, want error")
-	}
-	p, err := Link(ctx, s, in, code)
-	if err != nil {
-		t.Fatalf("Link() error = %v", err)
-	}
-	if p.ID != OwnerID {
-		t.Fatalf("Link() = %v, want %v", p.ID, OwnerID)
-	}
-	got, err := chain.Authenticate(ctx, Request{Channel: in})
-	if err != nil {
-		t.Fatalf("Authenticate() after link error = %v", err)
-	}
-	if got.ID != OwnerID || !got.IsOwner() {
-		t.Fatalf("Authenticate() after link = %v, want %v as owner", got, OwnerID)
-	}
-	links, err := s.LinksOf(ctx, LocalPairing)
-	if err != nil || len(links) != 1 || links[0].Conv != "42" {
-		t.Fatalf("LinksOf() = %v, %v, want one link with conv 42", links, err)
-	}
-}
-
 func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
@@ -558,12 +594,8 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	chain := &Chain{Store: s, Policy: func() Policy { return testPolicy(false, nil) }}
 	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
 	pair(t, s, "phone", RoleAuthenticated)
-	code, _, err := MintCode(ctx, s, "phone")
-	if err != nil {
-		t.Fatalf("MintCode() error = %v", err)
-	}
-	if _, err := Link(ctx, s, in, code); err != nil {
-		t.Fatalf("Link() error = %v", err)
+	if err := s.PutLink(ctx, store.Link{Channel: in.Channel, Identity: in.Identity, Pairing: "phone"}, "person"); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
 	}
 	tok := issueToken(t, s, "phone", "device")
 	byToken := Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+tok)}
@@ -587,49 +619,6 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	}
 	if _, err := chain.Authenticate(ctx, byToken); !errors.Is(err, ErrNoCredential) {
 		t.Fatalf("Authenticate() of a token after DeletePairing() error = %v, want %v", err, ErrNoCredential)
-	}
-}
-
-func TestLinkRefusesWebhookCodes(t *testing.T) {
-	t.Parallel()
-	s := openStore(t)
-	ctx := context.Background()
-	if err := s.PutNode(ctx, store.Node{ID: "grok", Name: "grok"}); err != nil {
-		t.Fatalf("PutNode() error = %v", err)
-	}
-	code, _, err := MintCode(ctx, s, "grok")
-	if err != nil {
-		t.Fatalf("MintCode() error = %v", err)
-	}
-	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Authentic: true}
-	if _, err := Link(ctx, s, in, code); !errors.Is(err, ErrInvalidCode) {
-		t.Fatalf("Link() with a webhook code error = %v, want %v", err, ErrInvalidCode)
-	}
-	if _, err := s.TakeCode(ctx, NormalizeCode(code), store.AnyCode); err != nil {
-		t.Fatalf("TakeCode() of the webhook code after Link() error = %v, want it still pending", err)
-	}
-}
-
-func TestLinkCode(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		text   string
-		want   string
-		wantOK bool
-	}{
-		{text: "link K7Q2-9XF4", want: "K7Q2-9XF4", wantOK: true},
-		{text: "join K7Q2-9XF4", want: "K7Q2-9XF4", wantOK: true},
-		{text: "/join k7q29xf4", want: "k7q29xf4", wantOK: true},
-		{text: "/start K7Q29XF4", want: "K7Q29XF4", wantOK: true},
-		{text: "/link@my_bot k7q2-9xf4", want: "k7q2-9xf4", wantOK: true},
-		{text: "please link K7Q2-9XF4 now"},
-		{text: "/start"},
-	}
-	for _, tc := range tests {
-		got, ok := LinkCode(tc.text)
-		if ok != tc.wantOK || got != tc.want {
-			t.Errorf("LinkCode(%q) = %q, %v, want %q, %v", tc.text, got, ok, tc.want, tc.wantOK)
-		}
 	}
 }
 

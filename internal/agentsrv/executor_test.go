@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"bytes"
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
 	"path/filepath"
@@ -157,62 +158,6 @@ func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	}
 }
 
-// lingeringExecutor asks a question, and returns from Execute only once
-// release is closed. canceling gets a value each time Cancel runs.
-type lingeringExecutor struct {
-	release   chan struct{}
-	canceling chan struct{}
-}
-
-func (e *lingeringExecutor) Execute(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
-			return
-		}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, nil), nil)
-		<-e.release
-	}
-}
-
-func (e *lingeringExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		e.canceling <- struct{}{}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
-	}
-}
-
-func TestCancelWhileQuestionExecutionEndsCancelsTask(t *testing.T) {
-	t.Parallel()
-	exec := &lingeringExecutor{release: make(chan struct{}), canceling: make(chan struct{}, 2)}
-	h := cancelRetryHandler{a2asrv.NewHandler(exec)}
-	ctx := context.Background()
-	res, err := h.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("ask", "", "")})
-	if err != nil {
-		t.Fatalf("SendMessage() error = %v", err)
-	}
-	asked := res.(*a2a.Task)
-
-	type result struct {
-		task *a2a.Task
-		err  error
-	}
-	done := make(chan result, 1)
-	go func() {
-		task, err := h.CancelTask(ctx, &a2a.CancelTaskRequest{ID: asked.ID})
-		done <- result{task, err}
-	}()
-	<-exec.canceling
-	close(exec.release)
-
-	got := <-done
-	if got.err != nil {
-		t.Fatalf("CancelTask() error = %v", got.err)
-	}
-	if got.task.Status.State != a2a.TaskStateCanceled {
-		t.Fatalf("CancelTask() state = %v, want %v", got.task.Status.State, a2a.TaskStateCanceled)
-	}
-}
-
 // statusExecutor yields one status update.
 type statusExecutor struct {
 	state a2a.TaskState
@@ -261,6 +206,29 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	}
 	exec.Cleanup(ctx, execCtx, result, nil)
 	ts.ch.waitFor(t, "dm1", hasQuestion)
+}
+
+func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
+	t.Parallel()
+	bus := newEventBus()
+	exec := &observedExecutor{bus: bus, unattended: &contextSet{}}
+	changed, unsubscribe := bus.subscribeContext("c1")
+	defer unsubscribe()
+	other, unsubscribeOther := bus.subscribeContext("c2")
+	defer unsubscribeOther()
+
+	exec.Cleanup(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, nil, errors.New("the agent crashed"))
+
+	select {
+	case <-changed:
+	default:
+		t.Fatal("followers of the context were not woken when its execution ended")
+	}
+	select {
+	case <-other:
+		t.Fatal("followers of another context were woken")
+	default:
+	}
 }
 
 func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
@@ -367,7 +335,7 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			unattended := &contextSet{}
 			unattended.add("c1")
 			unattended.add("c2")
-			e := &observedExecutor{unattended: unattended}
+			e := &observedExecutor{bus: newEventBus(), unattended: unattended}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 

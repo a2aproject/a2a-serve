@@ -33,6 +33,7 @@ a2a-serve config unset allow-email '*@example.com'
 
 - Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
+- `--private-access` and `--public-access` take `everyone` and `anyone` as the same word: `--private-access anyone` is `everyone`, and `--public-access everyone` is `anyone`.
 - [Anonymous callers](identities.md#anonymous-callers) start tasks in their own conversation and never answer approvals.
 - A caller without a credential gets 401, with the steps to pair. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
 
@@ -47,13 +48,14 @@ a2a-serve pair get anna                           # kind, role, tokens, linked a
 a2a-serve pair set anna --owner=false             # change the role
 a2a-serve pair set laptop --kind device           # change the kind: person, device or agent
 a2a-serve pair set anna --rotate                  # revoke her tokens and print a new code
-a2a-serve pair rm grok                            # delete the pairing, its tokens, messenger links and schedules
+a2a-serve pair rm grok                            # delete the pairing, its tokens, messenger links, schedules and tasks
 ```
 
 A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot. `a2a-serve pair list` also lists the agents you joined, and `--joined` lists only those from any directory, and `pair rm <agent-url>` forgets one.
 
 - The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
 - A change of role applies to the next request of every token and messenger account of the pairing.
+- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations and agent home directory. A new pairing with the same name starts with none of them.
 - `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
 - The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
 

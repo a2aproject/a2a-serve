@@ -23,7 +23,6 @@ import (
 	"io"
 	"log/slog"
 	"os"
-	"slices"
 	"strings"
 	"time"
 
@@ -37,7 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
-// maxLogSize is the size at which the server log is rotated on start.
+// maxLogSize is the size at which the server log is rotated.
 const maxLogSize = 10 << 20
 
 // Mode is how [Start] runs the agent.
@@ -103,7 +102,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if err := rotateLog(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
-	logFile, err := os.OpenFile(dir.LogPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	logFile, err := openRotatingLog(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -147,54 +146,6 @@ func checkNotRunning(dir agentdir.Dir) error {
 		return fmt.Errorf("locking the agent directory: %w", err)
 	}
 	return release()
-}
-
-// rotateLog moves the log at path to path.1 once it is larger than limit. A
-// log this process already writes to through one of writers, as the stdout
-// a detached start or the service manager opened, is copied and truncated
-// instead, since a rename would leave those writes in path.1.
-func rotateLog(path string, limit int64, writers ...*os.File) error {
-	info, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if info.Size() <= limit {
-		return nil
-	}
-	if !slices.ContainsFunc(writers, func(f *os.File) bool { return sameFile(f, info) }) {
-		return os.Rename(path, path+".1")
-	}
-	return copyTruncate(path, path+".1")
-}
-
-func sameFile(f *os.File, info os.FileInfo) bool {
-	if f == nil {
-		return false
-	}
-	fi, err := f.Stat()
-	return err == nil && os.SameFile(fi, info)
-}
-
-func copyTruncate(src, dst string) (err error) {
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer func() { err = errors.Join(err, in.Close()) }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		return errors.Join(err, out.Close())
-	}
-	if err := out.Close(); err != nil {
-		return err
-	}
-	return os.Truncate(src, 0)
 }
 
 // background starts the agent detached from the terminal, or as a user

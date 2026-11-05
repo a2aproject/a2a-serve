@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -209,6 +210,47 @@ func TestWatchesWatchPostsOnceForTheSameTask(t *testing.T) {
 
 	if n := len(f.turns.turns); n != 0 {
 		t.Fatalf("further turns injected for the same task = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchKeepsWatchUntilResultIsAccepted(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		err      error
+		wantKept bool
+	}{
+		{name: "accepted"},
+		{name: "refused", err: errors.New("the agent is not running"), wantKept: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			f.turns.hold = true
+			task := f.remote.startTask(t, promptDone)
+			w := f.addWatch(t, task, auth.OwnerID)
+			f.ws.watch(w)
+			f.nextTurn(t)
+
+			f.ws.watch(w)
+			if got, err := f.store.Watches(context.Background()); err != nil || len(got) != 1 {
+				t.Fatalf("store.Watches() before the result is accepted = %+v, %v, want the watch", got, err)
+			}
+			(<-f.turns.accepted)(tc.err)
+
+			f.waitIdle(t)
+			got, err := f.store.Watches(context.Background())
+			if err != nil {
+				t.Fatalf("store.Watches() error = %v", err)
+			}
+			if kept := len(got) == 1; kept != tc.wantKept {
+				t.Fatalf("watch kept = %v, want %v", kept, tc.wantKept)
+			}
+			if n := len(f.turns.turns); n != 0 {
+				t.Fatalf("further turns injected for the same task = %d, want 0", n)
+			}
+		})
 	}
 }
 

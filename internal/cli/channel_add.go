@@ -55,7 +55,10 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return clierr.Usage("--token is required")
 			}
 			r := cfg.secretReader(cfg.stderr())
-			for flag, dst := range map[string]*string{"token": &token, "email-password": &email.Password} {
+			for flag, dst := range map[string]*string{
+				"token": &token, "email-password": &email.Password,
+				"email-oauth-client-secret": &email.OAuthClientSecret, "email-oauth-refresh-token": &email.OAuthRefreshToken,
+			} {
 				if *dst == "" {
 					continue
 				}

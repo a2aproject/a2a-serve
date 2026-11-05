@@ -22,7 +22,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +30,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -163,11 +161,20 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 
 // Refresh gives a principal stored to act later, such as the user a
 // schedule runs as, its role now: the pairing's current role, whether its
-// webhook node still exists, and the policy in force. A zero identity is
-// rebuilt from the ID.
+// webhook node still exists, what the private network reports of its
+// machine, and the policy in force. A zero identity is rebuilt from the ID.
 func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Principal, error) {
 	if identity == (Identity{}) {
 		identity = IdentityOf(id)
+	}
+	if identity.Network == network.ListenerPrivate {
+		var err error
+		if identity, err = a.refreshNetwork(ctx, identity); err != nil {
+			return Principal{}, err
+		}
+	}
+	if id == OwnerID {
+		identity.Self = true
 	}
 	if identity.Pairing != "" {
 		identity.PairingRole = ""
@@ -178,7 +185,7 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 		case err != nil:
 			return Principal{}, err
 		default:
-			identity.PairingRole = pairingRole(p.Role)
+			identity.PairingRole = PairingRole(p.Role)
 		}
 	}
 	if identity.WebhookNode != "" {
@@ -196,6 +203,37 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 	}
 	p.ID = id
 	return p, nil
+}
+
+// refreshNetwork replaces the claims the private network made about the
+// caller's machine with what it reports now, and drops them once it no
+// longer has the machine. A network that can't look machines up, such as
+// a relay, keeps them.
+func (a *Chain) refreshNetwork(ctx context.Context, id Identity) (Identity, error) {
+	var peer *network.Peer
+	if a.Net != nil && a.Net.Name() == id.Provider && id.Node != "" {
+		p, err := a.Net.Member(ctx, id.Node)
+		switch {
+		case errors.Is(err, network.ErrUnsupported):
+			return id, nil
+		case err == nil:
+			peer = p
+		case !errors.Is(err, network.ErrNoIdentity):
+			return Identity{}, err
+		}
+	}
+	id.Node, id.Self = "", false
+	if id.EmailSource == EmailFromNetwork {
+		id.Email, id.EmailSource = "", ""
+	}
+	if peer == nil {
+		return id, nil
+	}
+	id.Node, id.Self = peer.Node, peer.Self
+	if peer.Email != "" {
+		id.Email, id.EmailSource, id.Domain = peer.Email, EmailFromNetwork, ""
+	}
+	return id, nil
 }
 
 func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error) {
@@ -251,12 +289,12 @@ func (a *Chain) withPairing(ctx context.Context, id Identity, name string) (Iden
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Pairing, id.PairingRole = p.Name, pairingRole(p.Role)
+	id.Pairing, id.PairingRole = p.Name, PairingRole(p.Role)
 	return id, nil
 }
 
-// pairingRole is the role a pairing stored with role has.
-func pairingRole(role string) string {
+// PairingRole is the role a pairing stored with role has.
+func PairingRole(role string) string {
 	if role == RoleOwner {
 		return RoleOwner
 	}
@@ -408,13 +446,6 @@ func MintSoleCode(ctx context.Context, s *store.Store, pairing string) (string, 
 	return code, expires, nil
 }
 
-// ErrInvalidCode is returned for unknown, used or expired codes.
-var ErrInvalidCode = errors.New("invalid or expired code")
-
-// ErrUnverifiedSender is returned by [Link] for a message whose sender the
-// channel couldn't verify.
-var ErrUnverifiedSender = errors.New("the sender of this message could not be verified")
-
 // IssueToken issues a bearer token of a pairing at agentURL, and gives the
 // pairing kind if it has none yet. It returns the token and the principal
 // it acts as.
@@ -424,44 +455,4 @@ func IssueToken(ctx context.Context, s *store.Store, pairing, agentURL, kind str
 		return "", "", err
 	}
 	return tok, PairingPrincipal(pairing), nil
-}
-
-var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:join|link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
-
-// LinkCode returns the code of a "join <code>", "link <code>" or "/start
-// <code>" message.
-func LinkCode(text string) (string, bool) {
-	m := linkCommand.FindStringSubmatch(text)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
-}
-
-// Link consumes a pairing code sent from a channel and links the sender's
-// chat account to the code's pairing, which becomes a person if it has no
-// kind yet. Codes of webhook pairings stay pending.
-func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string) (Principal, error) {
-	if !in.Authentic {
-		return Principal{}, ErrUnverifiedSender
-	}
-	c, err := s.TakeCode(ctx, NormalizeCode(code), func(pending store.Code) bool { return pending.Kind != pairapi.PairingWebhook })
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
-		return Principal{}, ErrInvalidCode
-	}
-	if err != nil {
-		return Principal{}, err
-	}
-	l := store.Link{Channel: in.Channel, Identity: in.Identity, Pairing: c.Pairing}
-	if in.Direct {
-		l.Conv = string(in.Conv)
-	}
-	if err := s.PutLink(ctx, l, pairapi.PairingPerson); err != nil {
-		return Principal{}, err
-	}
-	p, err := s.Pairing(ctx, c.Pairing)
-	if err != nil {
-		return Principal{}, err
-	}
-	return Principal{ID: PairingPrincipal(c.Pairing), Role: pairingRole(p.Role)}, nil
 }

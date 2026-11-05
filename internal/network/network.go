@@ -62,6 +62,8 @@ type PeerInfo struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Online      bool   `json:"online"`
+	// Node identifies the machine of the agent, as [Peer.Node] does.
+	Node string `json:"-"`
 }
 
 // Provider is one way of reaching the agent server. It implements what it
@@ -75,6 +77,10 @@ type Provider interface {
 	ListenPublic(ctx context.Context) (net.Listener, *url.URL, error)
 	// WhoIs identifies a caller on the private listener, or returns ErrNoIdentity.
 	WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
+	// Member returns the machine node of the private network as WhoIs
+	// would identify it now, or ErrNoIdentity once the network no longer
+	// has it.
+	Member(ctx context.Context, node string) (*Peer, error)
 	// Peers lists other agent servers reachable on the private network.
 	Peers(ctx context.Context) ([]PeerInfo, error)
 	// HTTPClient makes outbound calls to peers.

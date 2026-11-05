@@ -39,8 +39,11 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 	}
 	vars := project.Vars(cfg, secrets)
 	for _, srv := range found {
-		_, missing := srv.Resolve(vars)
-		servers = append(servers, controlapi.MCPServerStatus{Name: srv.Name, Type: srv.Type, Summary: srv.Summary(), Missing: missing})
+		st := controlapi.MCPServerStatus{Name: srv.Name, Type: srv.Type, Summary: srv.Summary(), Disabled: cfg.MCPDisabled(srv.Name)}
+		if !st.Disabled {
+			_, st.Missing = srv.Resolve(vars)
+		}
+		servers = append(servers, st)
 	}
 	skills, err = project.Skills(ws.Src)
 	return servers, skills, err
@@ -48,8 +51,9 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 
 // sessionParams passes the MCP servers of the project's .mcp.json to each
 // new ACP session. It reads the file for every session, so edits apply to
-// the next conversation. A server with a variable that has no value is left
-// out, since it would only fail inside the harness.
+// the next conversation. Servers the config turns off are left out, and so
+// is a server with a variable that has no value, since it would only fail
+// inside the harness.
 func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
 	cfg := s.config()
 	ws, err := s.dir.WorkspaceMount(cfg)
@@ -64,6 +68,9 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 	vars := project.Vars(cfg, s.secrets())
 	var servers []json.RawMessage
 	for _, srv := range found {
+		if cfg.MCPDisabled(srv.Name) {
+			continue
+		}
 		resolved, missing := srv.Resolve(vars)
 		if len(missing) > 0 {
 			slog.WarnContext(ctx, "leaving out an MCP server with unset variables; pass them with --secret", "server", srv.Name, "missing", missing)

@@ -17,6 +17,7 @@ package email
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -183,4 +184,81 @@ func parsePairs(toks []token) ([][2]string, error) {
 		toks = toks[3:]
 	}
 	return pairs, nil
+}
+
+// ErrTemporary marks a rejection caused by a temporary error of the
+// receiving server's check, such as a DNS timeout. The verdict is in the
+// stored header, so the sender has to send the mail again.
+var ErrTemporary = errors.New("temporary error of the receiving server's check")
+
+// Authenticate checks the topmost Authentication-Results header added by
+// the trusted server, because headers further down may have been forged by
+// the sender. It accepts dmarc=pass for the sender's domain, and
+// dmarc=bestguesspass, which Gmail and Microsoft report for an aligned mail
+// of a domain without a DMARC record. Without a DMARC verdict, or with
+// dmarc=none, it accepts a DKIM signature of exactly that domain. The error
+// tells why the mail is rejected.
+func Authenticate(results []string, trusted, fromDomain string) error {
+	for _, r := range results {
+		id, _, ok := strings.Cut(r, ";")
+		if !ok || !strings.EqualFold(strings.Fields(id + " x")[0], trusted) {
+			continue
+		}
+		_, parsed, err := parseAuthResults(r)
+		if err != nil {
+			return fmt.Errorf("malformed Authentication-Results of %s: %w", trusted, err)
+		}
+		return verdict(parsed, fromDomain)
+	}
+	return fmt.Errorf("no Authentication-Results of %s", trusted)
+}
+
+func verdict(results []authResult, fromDomain string) error {
+	dmarcPass := false
+	for _, r := range results {
+		if r.method != "dmarc" {
+			continue
+		}
+		switch r.result {
+		case "none":
+		case "pass", "bestguesspass":
+			if from := r.props["header.from"]; !strings.EqualFold(from, fromDomain) {
+				return fmt.Errorf("dmarc=%s for %q, want %s", r.result, from, fromDomain)
+			}
+			dmarcPass = true
+		case "temperror":
+			return fmt.Errorf("dmarc=temperror: %w", ErrTemporary)
+		default:
+			return fmt.Errorf("dmarc=%s", r.result)
+		}
+	}
+	if dmarcPass {
+		return nil
+	}
+	headerI := false
+	var other []string
+	for _, r := range results {
+		if r.method != "dkim" {
+			continue
+		}
+		d := r.props["header.d"]
+		if r.result == "pass" && strings.EqualFold(d, fromDomain) {
+			return nil
+		}
+		if r.result == "pass" && d == "" && r.props["header.i"] != "" {
+			headerI = true
+		}
+		if r.result != "pass" && strings.EqualFold(d, fromDomain) {
+			other = append(other, "dkim="+r.result)
+		}
+	}
+	switch {
+	case slices.Contains(other, "dkim=temperror"):
+		return fmt.Errorf("no dmarc=pass, and dkim=temperror for %s: %w", fromDomain, ErrTemporary)
+	case headerI:
+		return fmt.Errorf("no dmarc=pass, and dkim=pass names only header.i, want header.d=%s", fromDomain)
+	case len(other) > 0:
+		return fmt.Errorf("no dmarc=pass, and %s for %s", strings.Join(other, ", "), fromDomain)
+	}
+	return fmt.Errorf("no dmarc=pass and no dkim=pass with header.d=%s", fromDomain)
 }

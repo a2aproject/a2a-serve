@@ -162,6 +162,13 @@ func Allowed(list []string, c Claims) bool {
 // keysTTL is how long Google's signing keys are cached.
 const keysTTL = time.Hour
 
+// KeyRefetchInterval is how long after a fetch of Google's signing keys a
+// token with an unknown key may trigger another fetch.
+const KeyRefetchInterval = time.Minute
+
+// fetchTimeout bounds a fetch of Google's signing keys.
+const fetchTimeout = 30 * time.Second
+
 // Verifier verifies Google ID tokens.
 type Verifier struct {
 	Endpoints Endpoints
@@ -172,6 +179,8 @@ type Verifier struct {
 	mu      sync.Mutex
 	keys    map[string]*rsa.PublicKey
 	fetched time.Time
+	// fetching is closed when the fetch of keys in progress ends.
+	fetching chan struct{}
 }
 
 // Verify checks the signature, issuer, expiry and audience of an ID token,
@@ -245,27 +254,54 @@ func (v *Verifier) now() time.Time {
 	return time.Now()
 }
 
-// key returns Google's signing key kid, fetching the keys when they are
-// stale or don't have it.
+// key returns Google's signing key kid. It fetches the keys when they are
+// stale, or when they don't have kid and are older than KeyRefetchInterval.
+// One fetch runs at a time without holding v.mu, so tokens with known keys
+// don't wait for it.
 func (v *Verifier) key(ctx context.Context, kid string) (*rsa.PublicKey, error) {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if k, ok := v.keys[kid]; ok && time.Since(v.fetched) < keysTTL {
-		return k, nil
+	for {
+		v.mu.Lock()
+		k, ok := v.keys[kid]
+		age := v.now().Sub(v.fetched)
+		wait := v.fetching
+		switch {
+		case ok && age < keysTTL:
+			v.mu.Unlock()
+			return k, nil
+		case !ok && age < KeyRefetchInterval:
+			v.mu.Unlock()
+			return nil, errors.New("the ID token is signed with an unknown key")
+		case wait != nil:
+			v.mu.Unlock()
+			select {
+			case <-wait:
+				continue
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		v.fetching = done
+		v.mu.Unlock()
+		keys, err := v.fetchKeys(ctx)
+		v.mu.Lock()
+		if err == nil {
+			v.keys, v.fetched = keys, v.now()
+		}
+		v.fetching = nil
+		v.mu.Unlock()
+		close(done)
+		if err != nil {
+			return nil, fmt.Errorf("fetching Google's signing keys: %w", err)
+		}
 	}
-	keys, err := v.fetchKeys(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("fetching Google's signing keys: %w", err)
-	}
-	v.keys, v.fetched = keys, time.Now()
-	k, ok := keys[kid]
-	if !ok {
-		return nil, errors.New("the ID token is signed with an unknown key")
-	}
-	return k, nil
 }
 
+// fetchKeys fetches Google's signing keys. Callers waiting for the keys
+// share the fetch, so it doesn't end with the request which started it.
 func (v *Verifier) fetchKeys(ctx context.Context) (map[string]*rsa.PublicKey, error) {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), fetchTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, v.Endpoints.JWKSURL, nil)
 	if err != nil {
 		return nil, err

@@ -170,7 +170,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	if err := d.DeleteSecrets(del...); err != nil {
 		return nil, err
 	}
-	if err := saveConfig(d, next, raw); err != nil {
+	if err := saveConfig(d, mutate, raw); err != nil {
 		return nil, err
 	}
 	if then != nil {
@@ -191,11 +191,23 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	return res, nil
 }
 
-func saveConfig(d agentdir.Dir, cfg *agentdir.Config, raw []byte) error {
-	if raw == nil {
+// saveConfig saves raw as config.yaml, or the config on disk with mutate
+// applied. The config is read again under its lock, so that changes saved
+// since apply read it, by other commands or the running server, are kept.
+func saveConfig(d agentdir.Dir, mutate Mutation, raw []byte) error {
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		if raw != nil {
+			return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644)
+		}
+		cfg, err := d.LoadOrNewConfig()
+		if err != nil {
+			return err
+		}
+		if _, _, err := mutate(cfg); err != nil {
+			return &agentdir.SettingsError{Err: err}
+		}
 		return d.SaveConfig(cfg)
-	}
-	return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644)
+	})
 }
 
 func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange {
@@ -227,18 +239,20 @@ func channelOf(setting string) string {
 	return ""
 }
 
-// channelSecret returns the name of the stored secret the channel of kind
-// refers to, or "".
-func channelSecret(cfg *agentdir.Config, kind string) string {
-	ref := cfg.ChannelToken(kind)
-	if kind == agentdir.ChannelEmail && cfg.Channels.Email != nil {
-		ref = cfg.Channels.Email.Password
+// channelSecretsOf returns the names of the stored secrets the channel of
+// kind refers to.
+func channelSecretsOf(cfg *agentdir.Config, kind string) []string {
+	refs := []string{cfg.ChannelToken(kind)}
+	if e := cfg.Channels.Email; kind == agentdir.ChannelEmail && e != nil {
+		refs = []string{e.Password, e.OAuthClientSecret, e.OAuthRefreshToken}
 	}
-	name, _ := strings.CutPrefix(ref, agentdir.SecretPrefix)
-	if name == ref {
-		return ""
+	var out []string
+	for _, ref := range refs {
+		if name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix); ok && name != "" {
+			out = append(out, name)
+		}
 	}
-	return name
+	return out
 }
 
 // applyChannels adds, replaces or removes the channels which changed on the
@@ -251,8 +265,8 @@ func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdi
 				settings = append(settings, c.Setting)
 			}
 		}
-		secret := channelSecret(next, kind)
-		if secret != "" && slices.ContainsFunc(res.Secrets, func(s SecretChange) bool { return s.Name == secret && s.Action != SecretDeleted }) {
+		secrets := channelSecretsOf(next, kind)
+		if slices.ContainsFunc(res.Secrets, func(s SecretChange) bool { return slices.Contains(secrets, s.Name) && s.Action != SecretDeleted }) {
 			settings = append(settings, kind)
 		}
 		if len(settings) == 0 {
@@ -264,8 +278,14 @@ func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdi
 				return fmt.Errorf("removing %s from the running agent: %w", kind, err)
 			}
 		} else {
-			if secret != "" && store[secret] != "" {
-				req.Secrets = agentdir.Secrets{secret: store[secret]}
+			for _, name := range secrets {
+				if store[name] == "" {
+					continue
+				}
+				if req.Secrets == nil {
+					req.Secrets = agentdir.Secrets{}
+				}
+				req.Secrets[name] = store[name]
 			}
 			if _, err := client.AddChannel(ctx, req); err != nil {
 				return fmt.Errorf("applying %s to the running agent: %w", kind, err)

@@ -16,15 +16,24 @@
 //
 //	go run ./internal/tools/gendocs [dir]
 //
-// dir defaults to docs/reference/commands.
+// dir defaults to docs/reference/commands. It also fills the generated parts
+// of the guides.
 package main
 
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/a2aproject/a2a-serve/internal/cli"
 )
+
+func run(dir string) error {
+	if err := cli.WriteReference(dir); err != nil {
+		return err
+	}
+	return updateGuide(filepath.Join(dir, guidePath))
+}
 
 // DefaultDir is where the reference lives, relative to the repository root.
 const DefaultDir = "docs/reference/commands"
@@ -34,7 +43,7 @@ func main() {
 	if len(os.Args) > 1 {
 		dir = os.Args[1]
 	}
-	if err := cli.WriteReference(dir); err != nil {
+	if err := run(dir); err != nil {
 		fmt.Fprintf(os.Stderr, "gendocs: %v\n", err)
 		os.Exit(1)
 	}

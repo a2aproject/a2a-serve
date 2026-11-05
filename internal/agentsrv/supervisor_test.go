@@ -450,3 +450,38 @@ func TestChannelSupervisorAnnounce(t *testing.T) {
 		t.Fatalf("sv.announce() lines wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestChannelSupervisorConcurrentAddsRunOneChannel(t *testing.T) {
+	t.Parallel()
+	sv := newTestSupervisor(t, time.Millisecond, nil)
+	var active, maxActive atomic.Int32
+	run := func(ctx context.Context, _ chan<- channel.Inbound) error {
+		n := active.Add(1)
+		defer active.Add(-1)
+		for {
+			if m := maxActive.Load(); n <= m || maxActive.CompareAndSwap(m, n) {
+				break
+			}
+		}
+		<-ctx.Done()
+		return nil
+	}
+	const adds = 8
+	var wg sync.WaitGroup
+	for range adds {
+		wg.Go(func() { sv.add(&stubChannel{name: "fake", run: run}) })
+	}
+	wg.Wait()
+
+	deadline := time.Now().Add(waitTimeout)
+	for active.Load() == 0 && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if got := maxActive.Load(); got != 1 {
+		t.Fatalf("channels running at once = %d, want 1", got)
+	}
+	if got := active.Load(); got != 1 {
+		t.Fatalf("channels running after the adds = %d, want 1", got)
+	}
+}
