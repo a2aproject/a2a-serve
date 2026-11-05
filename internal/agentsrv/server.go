@@ -159,7 +159,6 @@ type Server struct {
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
-	pairLimit      *pairLimiter
 	timings        Timings
 }
 
@@ -223,8 +222,7 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		pairLimit: newPairLimiter(),
-		timings:   opts.Timings.withDefaults(),
+		timings: opts.Timings.withDefaults(),
 	}
 	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
@@ -354,6 +352,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
+		Limiter:   pairings.NewLimiter(),
 		Users:     stopUsers{s},
 		Homes:     s.dir,
 	}
@@ -401,6 +400,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Chain:      s.chain,
+		Pairings:   s.pairings,
 		Approvals:  s.approvals,
 		Chat:       s.chatApprovals,
 		Supervisor: s.supervisor,
@@ -621,7 +621,7 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 // serveHTTP serves the routes of a listener in the background and returns
 // the function which shuts the listener down.
 func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
-	srv := httpserver.New(ctx, s.routes(l))
+	srv := httpserver.New(ctx, s.routes(l), httpserver.WithConnContext(connContext))
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))

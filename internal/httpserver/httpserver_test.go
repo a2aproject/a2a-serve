@@ -108,3 +108,41 @@ func TestNewLimitsHeaders(t *testing.T) {
 		})
 	}
 }
+
+func TestNewWithConnContext(t *testing.T) {
+	t.Parallel()
+	type key struct{}
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := New(context.Background(), http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got, _ := r.Context().Value(key{}).(string); got != "set" {
+			w.WriteHeader(http.StatusTeapot)
+		}
+	}), WithConnContext(func(ctx context.Context, _ net.Conn) context.Context {
+		return context.WithValue(ctx, key{}, "set")
+	}))
+	go func() {
+		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve() error = %v", err)
+		}
+	}()
+	t.Cleanup(func() {
+		if err := srv.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+
+	resp, err := http.Get("http://" + ln.Addr().String())
+	if err != nil {
+		t.Fatalf("GET error = %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET status = %d, want %d: the request context lacks the value of WithConnContext", resp.StatusCode, http.StatusOK)
+	}
+}

@@ -36,15 +36,28 @@ const (
 	idleTimeout       = 2 * time.Minute
 )
 
+// Option configures a server made by New.
+type Option func(*http.Server)
+
+// WithConnContext derives the context of the requests of a connection from
+// the context of its server with f.
+func WithConnContext(f func(context.Context, net.Conn) context.Context) Option {
+	return func(s *http.Server) { s.ConnContext = f }
+}
+
 // New returns a server of h whose requests derive their context from ctx.
-func New(ctx context.Context, h http.Handler) *http.Server {
-	return &http.Server{
+func New(ctx context.Context, h http.Handler, opts ...Option) *http.Server {
+	srv := &http.Server{
 		Handler:           LimitConcurrency(MaxConcurrent, h),
 		ReadHeaderTimeout: readHeaderTimeout,
 		IdleTimeout:       idleTimeout,
 		MaxHeaderBytes:    MaxHeaderBytes,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
 	}
+	for _, o := range opts {
+		o(srv)
+	}
+	return srv
 }
 
 // LimitConcurrency handles at most n requests at once and answers the rest

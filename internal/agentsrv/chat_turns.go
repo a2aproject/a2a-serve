@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -38,6 +39,7 @@ type ChatTurns struct {
 	store      *store.Store
 	tasks      *store.TaskStore
 	chain      *auth.Chain
+	pairings   *pairings.Service
 	approvals  *approvals.Service
 	chat       *ChatApprovals
 	supervisor *ChannelSupervisor
@@ -56,6 +58,7 @@ type ChatTurnsDeps struct {
 	Store      *store.Store
 	Tasks      *store.TaskStore
 	Chain      *auth.Chain
+	Pairings   *pairings.Service
 	Approvals  *approvals.Service
 	Chat       *ChatApprovals
 	Supervisor *ChannelSupervisor
@@ -78,6 +81,7 @@ func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		store:      deps.Store,
 		tasks:      deps.Tasks,
 		chain:      deps.Chain,
+		pairings:   deps.Pairings,
 		approvals:  deps.Approvals,
 		chat:       deps.Chat,
 		supervisor: deps.Supervisor,
@@ -168,12 +172,17 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		}
 		return
 	}
-	if code, ok := auth.LinkCode(in.Text); ok {
+	if code, ok := pairings.LinkCode(in.Text); ok {
 		if !c.firstSeen(ctx, in) {
 			return
 		}
-		p, err := auth.Link(ctx, c.store, &in, code)
-		if errors.Is(err, auth.ErrInvalidCode) || errors.Is(err, auth.ErrUnverifiedSender) {
+		p, err := c.pairings.Redeem(ctx, code, pairings.Via{Chat: &in})
+		var limited *pairings.RateLimitError
+		if errors.As(err, &limited) {
+			c.reply(ctx, ch, in, fmt.Sprintf("Too many invalid codes. Try again in %d seconds.", limited.Seconds()))
+			return
+		}
+		if errors.Is(err, pairings.ErrInvalidCode) || errors.Is(err, pairings.ErrUnverifiedSender) {
 			c.reply(ctx, ch, in, "That code is invalid or has expired. Ask the owner for a new one.")
 			return
 		}

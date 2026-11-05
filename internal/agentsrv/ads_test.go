@@ -53,6 +53,8 @@ type fakeProvider struct {
 	kind string
 	// unidentified makes WhoIs identify nobody.
 	unidentified bool
+	// peerPerConn makes WhoIs identify each connection as its own peer.
+	peerPerConn bool
 }
 
 func (n *fakeNet) provider(name string) *fakeProvider { return &fakeProvider{net: n, name: name} }
@@ -89,9 +91,13 @@ func (p *fakeProvider) WhoIs(_ context.Context, remoteAddr string) (*network.Pee
 		return nil, network.ErrNoIdentity
 	}
 	p.net.mu.Lock()
-	defer p.net.mu.Unlock()
-	if name, ok := p.net.callers[remoteAddr]; ok {
+	name, ok := p.net.callers[remoteAddr]
+	p.net.mu.Unlock()
+	if ok {
 		return &network.Peer{Node: name}, nil
+	}
+	if p.peerPerConn {
+		return &network.Peer{Node: remoteAddr}, nil
 	}
 	return &network.Peer{Node: "peer"}, nil
 }

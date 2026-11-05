@@ -22,7 +22,6 @@ import (
 	"crypto/subtle"
 	"errors"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -31,7 +30,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -187,7 +185,7 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 		case err != nil:
 			return Principal{}, err
 		default:
-			identity.PairingRole = pairingRole(p.Role)
+			identity.PairingRole = PairingRole(p.Role)
 		}
 	}
 	if identity.WebhookNode != "" {
@@ -291,12 +289,12 @@ func (a *Chain) withPairing(ctx context.Context, id Identity, name string) (Iden
 	if err != nil {
 		return Identity{}, err
 	}
-	id.Pairing, id.PairingRole = p.Name, pairingRole(p.Role)
+	id.Pairing, id.PairingRole = p.Name, PairingRole(p.Role)
 	return id, nil
 }
 
-// pairingRole is the role a pairing stored with role has.
-func pairingRole(role string) string {
+// PairingRole is the role a pairing stored with role has.
+func PairingRole(role string) string {
 	if role == RoleOwner {
 		return RoleOwner
 	}
@@ -448,13 +446,6 @@ func MintSoleCode(ctx context.Context, s *store.Store, pairing string) (string, 
 	return code, expires, nil
 }
 
-// ErrInvalidCode is returned for unknown, used or expired codes.
-var ErrInvalidCode = errors.New("invalid or expired code")
-
-// ErrUnverifiedSender is returned by [Link] for a message whose sender the
-// channel couldn't verify.
-var ErrUnverifiedSender = errors.New("the sender of this message could not be verified")
-
 // IssueToken issues a bearer token of a pairing at agentURL, and gives the
 // pairing kind if it has none yet. It returns the token and the principal
 // it acts as.
@@ -464,44 +455,4 @@ func IssueToken(ctx context.Context, s *store.Store, pairing, agentURL, kind str
 		return "", "", err
 	}
 	return tok, PairingPrincipal(pairing), nil
-}
-
-var linkCommand = regexp.MustCompile(`(?i)^\s*/?(?:join|link|start)(?:@\S+)?\s+([A-Za-z0-9-]{8,9})\s*$`)
-
-// LinkCode returns the code of a "join <code>", "link <code>" or "/start
-// <code>" message.
-func LinkCode(text string) (string, bool) {
-	m := linkCommand.FindStringSubmatch(text)
-	if m == nil {
-		return "", false
-	}
-	return m[1], true
-}
-
-// Link consumes a pairing code sent from a channel and links the sender's
-// chat account to the code's pairing, which becomes a person if it has no
-// kind yet. Codes of webhook pairings stay pending.
-func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string) (Principal, error) {
-	if !in.Authentic {
-		return Principal{}, ErrUnverifiedSender
-	}
-	c, err := s.TakeCode(ctx, NormalizeCode(code), func(pending store.Code) bool { return pending.Kind != pairapi.PairingWebhook })
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
-		return Principal{}, ErrInvalidCode
-	}
-	if err != nil {
-		return Principal{}, err
-	}
-	l := store.Link{Channel: in.Channel, Identity: in.Identity, Pairing: c.Pairing}
-	if in.Direct {
-		l.Conv = string(in.Conv)
-	}
-	if err := s.PutLink(ctx, l, pairapi.PairingPerson); err != nil {
-		return Principal{}, err
-	}
-	p, err := s.Pairing(ctx, c.Pairing)
-	if err != nil {
-		return Principal{}, err
-	}
-	return Principal{ID: PairingPrincipal(c.Pairing), Role: pairingRole(p.Role)}, nil
 }

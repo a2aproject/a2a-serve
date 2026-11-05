@@ -340,24 +340,42 @@ func TestOversizedHeader(t *testing.T) {
 	}
 }
 
-func TestPairingBackoffThroughTunnel(t *testing.T) {
+func TestPairingThroughTunnel(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{public: publicNet()})
-	ctx := context.Background()
-	code, err := controlapi.NewClient(ts.dir).Pair(ctx, controlapi.PairCodeRequest{Name: "anna"})
-	if err != nil {
-		t.Fatalf("Pair() error = %v", err)
+	tests := []struct {
+		name string
+		// peerPerConn identifies each connection through the relay as its
+		// own peer; otherwise the relay identifies nobody.
+		peerPerConn bool
+		wantStatus  int
+	}{
+		{name: "anonymous callers share a backoff", wantStatus: http.StatusTooManyRequests},
+		{name: "identified callers are limited apart", peerPerConn: true, wantStatus: http.StatusOK},
 	}
-	pair := func(u, code string) int {
-		return statusOf(t, http.MethodPost, u+"/pair", `{"code":"`+code+`"}`, http.Header{"Content-Type": {"application/json"}})
-	}
-	if got := pair(ts.publicURL(), "WRONGCODE"); got != http.StatusForbidden {
-		t.Fatalf("pair with a wrong code status = %d, want %d", got, http.StatusForbidden)
-	}
-	if got := pair(ts.publicURL(), code.Code); got != http.StatusTooManyRequests {
-		t.Fatalf("pair through the tunnel during backoff status = %d, want %d", got, http.StatusTooManyRequests)
-	}
-	if got := pair(ts.localURL(), code.Code); got != http.StatusOK {
-		t.Fatalf("pair on the local listener status = %d, want %d", got, http.StatusOK)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: !tc.peerPerConn, peerPerConn: tc.peerPerConn}
+			ts := startServer(t, serverOpts{public: relay})
+			code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
+			if err != nil {
+				t.Fatalf("Pair() error = %v", err)
+			}
+			pair := func(u, code string) int {
+				return statusOf(t, http.MethodPost, u+"/pair", `{"code":"`+code+`"}`, http.Header{"Content-Type": {"application/json"}, "Connection": {"close"}})
+			}
+			if got := pair(ts.publicURL(), "WRONGCODE"); got != http.StatusForbidden {
+				t.Fatalf("pair with a wrong code status = %d, want %d", got, http.StatusForbidden)
+			}
+			if got := pair(ts.publicURL(), code.Code); got != tc.wantStatus {
+				t.Fatalf("pair through the tunnel after a wrong code status = %d, want %d", got, tc.wantStatus)
+			}
+			if tc.wantStatus == http.StatusOK {
+				return
+			}
+			if got := pair(ts.localURL(), code.Code); got != http.StatusOK {
+				t.Fatalf("pair on the local listener status = %d, want %d", got, http.StatusOK)
+			}
+		})
 	}
 }
