@@ -93,7 +93,6 @@ func TestPairGetJoinedNode(t *testing.T) {
 
 func TestPairListSides(t *testing.T) {
 	t.Parallel()
-	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 	if err := creds.Put(credstore.Credential{URL: "https://reviewer.example.com", Token: "tok", Agent: "reviewer", Principal: "pair:coder"}); err != nil {
 		t.Fatalf("creds.Put() error = %v", err)
@@ -120,6 +119,7 @@ func TestPairListSides(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
 			args := append([]string{"pair", "list", "--dir", d.Root}, tc.args...)
 			out, err := runCMDWithCreds(t, creds, append([]string{"-o", "json"}, args...)...)
 			if err != nil {

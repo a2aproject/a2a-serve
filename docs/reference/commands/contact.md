@@ -8,6 +8,13 @@ Manage the agents this agent may call
 a2a-serve contact <command>
 ```
 
+**Flags of every `a2a-serve contact` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
+| `--timeout duration` | `1m0s` | Timeout of each call to the running agent, a duration such as 30s or 2m |
+
 ## a2a-serve contact add
 
 Let the agent call another agent with the a2a CLI. Without --url the

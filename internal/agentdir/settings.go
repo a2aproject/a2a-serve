@@ -141,6 +141,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
 	set(&cfg.Policy.PrivateAccess, s.PrivateAccess)
 	set(&cfg.Policy.PublicAccess, s.PublicAccess)
+	cfg.Policy.normalize()
 	set(&cfg.Backup.To, s.Backup)
 	set(&cfg.Backup.Interval, s.BackupInterval)
 	set(&cfg.Backup.Retention, s.BackupRetention)

@@ -172,6 +172,20 @@ func TestDeleteSecrets(t *testing.T) {
 	}
 }
 
+func TestLiveSettings(t *testing.T) {
+	t.Parallel()
+	want := []string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}
+	got := LiveSettings()
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("LiveSettings() wrong result (-want +got) diff = %s", diff)
+	}
+	for _, name := range got {
+		if !IsLive(name) {
+			t.Fatalf("IsLive(%q) = false, want true for a live setting", name)
+		}
+	}
+}
+
 func TestFieldsHaveScope(t *testing.T) {
 	t.Parallel()
 	for _, f := range fields {

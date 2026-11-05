@@ -351,3 +351,37 @@ func TestCheckHarness(t *testing.T) {
 		t.Fatalf("CheckHarness(claude) error = %v, want %q", err, want)
 	}
 }
+
+func TestAccessWordAliases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   PolicyConfig
+		want PolicyConfig
+	}{
+		{name: "anyone for the private network", in: PolicyConfig{PrivateAccess: "anyone"}, want: PolicyConfig{PrivateAccess: AccessEveryone}},
+		{name: "everyone for the public URL", in: PolicyConfig{PublicAccess: "everyone"}, want: PolicyConfig{PublicAccess: AccessAnyone}},
+		{name: "canonical words", in: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}, want: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{}
+			s := Settings{Harness: "opencode", PrivateAccess: tc.in.PrivateAccess, PublicAccess: tc.in.PublicAccess}
+			if _, err := s.Apply(cfg, Dir{Root: "/x"}); err != nil {
+				t.Fatalf("Settings.Apply() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, cfg.Policy); diff != "" {
+				t.Fatalf("Settings.Apply() wrong policy (-want +got) diff = %s", diff)
+			}
+
+			parsed, err := ParseConfig([]byte("agent: opencode\npolicy:\n  private_access: " + tc.in.PrivateAccess + "\n  public_access: " + tc.in.PublicAccess + "\n"))
+			if err != nil {
+				t.Fatalf("ParseConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, parsed.Policy); diff != "" {
+				t.Fatalf("ParseConfig() wrong policy (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}

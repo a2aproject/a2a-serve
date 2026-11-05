@@ -101,6 +101,18 @@ const (
 	AccessAnyone   = "anyone"
 )
 
+// normalize replaces the access word of the other network with the one the
+// setting uses, so that --private-access anyone and --public-access everyone
+// work. everyone and anyone mean the same.
+func (p *PolicyConfig) normalize() {
+	if p.PrivateAccess == AccessAnyone {
+		p.PrivateAccess = AccessEveryone
+	}
+	if p.PublicAccess == AccessEveryone {
+		p.PublicAccess = AccessAnyone
+	}
+}
+
 func (p PolicyConfig) clone() PolicyConfig {
 	p.AllowEmails = slices.Clone(p.AllowEmails)
 	return p
@@ -367,6 +379,7 @@ func ParseConfig(data []byte) (*Config, error) {
 	if len(cfg.Mounts) == 0 {
 		cfg.Mounts = nil
 	}
+	cfg.Policy.normalize()
 	return &cfg, nil
 }
 
