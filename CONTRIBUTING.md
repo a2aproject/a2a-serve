@@ -1,6 +1,6 @@
 # How to contribute
 
-We'd love to accept your patches and contributions to this project. This repository holds `a2a-serve`, the agent server run as `a2a serve` through the [A2A CLI](https://github.com/a2aproject/a2a-cli).
+We'd love to accept your patches and contributions to this project. This repository holds `a2a-serve`, the agent server and a command plugin of the [A2A CLI](https://github.com/a2aproject/a2a-cli).
 
 ## Ways to contribute
 
