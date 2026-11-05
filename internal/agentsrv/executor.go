@@ -311,6 +311,8 @@ type observedExecutor struct {
 	bus       *eventBus
 	claims    *CallClaims
 	approvals *approvals.Service
+	// unattended is told when the task of a context ends.
+	unattended *contextSet
 }
 
 var (
@@ -319,12 +321,16 @@ var (
 )
 
 // Cleanup tells the followers of the task's context that an execution
-// ended, and relays the question the task stopped on. a2a-go calls it once
-// the execution is done with its last event and stored it, so an answer to
-// the question can start the next execution.
+// ended, relays the question the task stopped on, and forgets that nobody
+// watches the context of a task that ended. a2a-go calls it once the
+// execution is done with its last event and stored it, so an answer to the
+// question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
 	e.bus.executionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
+	if err != nil || (ok && task.Status.State.Terminal()) {
+		e.unattended.remove(execCtx.ContextID)
+	}
 	if err != nil || !ok {
 		return
 	}

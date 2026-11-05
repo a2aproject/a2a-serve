@@ -68,12 +68,15 @@ type fakeContact struct {
 	mu       sync.Mutex
 	requests []contactRequest
 	messages []*a2a.Message
+	// historyLengths are the history lengths the GetTask calls asked for,
+	// -1 for none.
+	historyLengths []int
 }
 
 func newFakeContact(t *testing.T) *fakeContact {
 	t.Helper()
 	fc := &fakeContact{release: make(chan struct{})}
-	fc.Handler = &countingHandler{RequestHandler: a2asrv.NewHandler(fc), gets: &fc.gets}
+	fc.Handler = &countingHandler{RequestHandler: a2asrv.NewHandler(fc), gets: &fc.gets, seen: fc.recordGet}
 	mux := http.NewServeMux()
 	var card *a2a.AgentCard
 	mux.Handle("/.well-known/agent-card.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -113,6 +116,22 @@ func (fc *fakeContact) received() []contactRequest {
 	fc.mu.Lock()
 	defer fc.mu.Unlock()
 	return append([]contactRequest(nil), fc.requests...)
+}
+
+func (fc *fakeContact) recordGet(req *a2a.GetTaskRequest) {
+	length := -1
+	if req.HistoryLength != nil {
+		length = *req.HistoryLength
+	}
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	fc.historyLengths = append(fc.historyLengths, length)
+}
+
+func (fc *fakeContact) getHistoryLengths() []int {
+	fc.mu.Lock()
+	defer fc.mu.Unlock()
+	return append([]int(nil), fc.historyLengths...)
 }
 
 func (fc *fakeContact) receivedMessages() []*a2a.Message {
@@ -228,10 +247,14 @@ func permissionStatus(t *testing.T) a2a.TaskStatus {
 type countingHandler struct {
 	a2asrv.RequestHandler
 	gets *atomic.Int64
+	seen func(*a2a.GetTaskRequest)
 }
 
 func (h *countingHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
 	h.gets.Add(1)
+	if h.seen != nil {
+		h.seen(req)
+	}
 	return h.RequestHandler.GetTask(ctx, req)
 }
 
@@ -322,4 +345,35 @@ func (f *fakeTurnInjector) injectTurn(_ context.Context, t postedTurn) error {
 	}
 	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text}
 	return f.err
+}
+
+// statusContact is a remote agent that serves its card and answers every
+// other request with status.
+type statusContact struct {
+	URL      string
+	requests atomic.Int64
+}
+
+func newStatusContact(t *testing.T, status int) *statusContact {
+	t.Helper()
+	sc := &statusContact{}
+	var card http.Handler
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sc.requests.Add(1)
+		if r.URL.Path == "/.well-known/agent-card.json" {
+			card.ServeHTTP(w, r)
+			return
+		}
+		http.Error(w, http.StatusText(status), status)
+	}))
+	t.Cleanup(srv.Close)
+	card = a2asrv.NewStaticAgentCardHandler(&a2a.AgentCard{
+		Name:                "status",
+		Version:             "1.0.0",
+		SupportedInterfaces: []*a2a.AgentInterface{a2a.NewAgentInterface(srv.URL, a2a.TransportProtocolJSONRPC)},
+		DefaultInputModes:   []string{"text/plain"},
+		DefaultOutputModes:  []string{"text/plain"},
+	})
+	sc.URL = srv.URL
+	return sc
 }

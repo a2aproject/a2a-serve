@@ -771,6 +771,67 @@ func TestChatTurnsHandlesConversationInArrivalOrder(t *testing.T) {
 	}
 }
 
+func TestChatTurnsTellsSenderWhenPreparingTheMessageFails(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		text       string
+		prepareErr error
+		wantNotice string
+		wantTurn   bool
+	}{
+		{
+			name:       "attachment that failed to download",
+			text:       "look at this",
+			prepareErr: &channel.AttachmentError{Name: "report.pdf", Err: errors.New("timeout")},
+			wantNotice: "⚠ I couldn't download report.pdf, so the agent doesn't see it.",
+			wantTurn:   true,
+		},
+		{
+			name: "several attachments that failed to download",
+			text: "look at this",
+			prepareErr: errors.Join(
+				&channel.AttachmentError{Name: "a.png", Err: errors.New("timeout")},
+				errors.New("recording thread"),
+				&channel.AttachmentError{Name: "b.png", Err: errors.New("timeout")},
+			),
+			wantNotice: "⚠ I couldn't download a.png, b.png, so the agent doesn't see them.",
+			wantTurn:   true,
+		},
+		{
+			name:       "message with only a failed attachment",
+			prepareErr: &channel.AttachmentError{Name: "report.pdf", Err: errors.New("timeout")},
+			wantNotice: "⚠ I couldn't download report.pdf, so the agent doesn't see it.",
+		},
+		{
+			name:       "message that can't be handled",
+			text:       "hello",
+			prepareErr: &channel.DroppedError{Reason: "⚠ I couldn't start a thread, so I ignored your message.", Err: errors.New("missing access")},
+			wantNotice: "⚠ I couldn't start a thread, so I ignored your message.",
+		},
+		{name: "other error", text: "hello", prepareErr: errors.New("recording thread"), wantTurn: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newTurnsFixture(t)
+			in := fx.ch.message("telegram:1", "dm1", tc.text)
+			in.Prepare = func(context.Context, *channel.Inbound) error { return tc.prepareErr }
+
+			fx.ch.deliver(in)
+
+			if tc.wantNotice != "" {
+				fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == tc.wantNotice })
+			}
+			if tc.wantTurn {
+				fx.sender.nextStream(t)
+				return
+			}
+			fx.sender.wantIdle(t)
+		})
+	}
+}
+
 func TestChatTurnsShowsStreamError(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
@@ -779,4 +840,23 @@ func TestChatTurnsShowsStreamError(t *testing.T) {
 	fx.ch.write("telegram:1", "dm1", "hello")
 
 	fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == "⚠ agent unreachable" })
+}
+
+func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
+	rec.ID = "missing1"
+	if err := fx.store.SetPendingQuestion(fx.ctx, "fake", "dm1", rec.ID); err != nil {
+		t.Fatalf("SetPendingQuestion() error = %v", err)
+	}
+	q := approvals.FromRecord(rec)
+	in := channel.Inbound{Channel: "fake", Conv: "dm1", Text: "approve"}
+
+	fx.turns.answerIn(fx.ctx, fx.ch, in, auth.Owner(), rec, q, q.Options[0])
+
+	fx.ch.waitFor(t, "dm1", hasText("Couldn't record the answer. Try again."))
+	if id, err := fx.store.PendingQuestion(fx.ctx, "fake", "dm1"); err != nil || id != rec.ID {
+		t.Fatalf("PendingQuestion() = %q, %v, want %q, nil", id, err, rec.ID)
+	}
 }

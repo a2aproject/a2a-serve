@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/webpage"
 )
 
 // Chat is a conversation on a channel.
@@ -401,6 +402,26 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 	return err
 }
 
+// Outcome returns what to show as the answer of a question after Answer
+// returned err. If another answer was stored first, it is the stored one;
+// otherwise it is option, given by who.
+func (s *Service) Outcome(ctx context.Context, rec store.Question, option Option, who string, err error) (label, by string) {
+	if !errors.Is(err, store.ErrAnswered) {
+		return option.Label, who
+	}
+	stored, qerr := s.store.QuestionByID(ctx, rec.ID)
+	if qerr != nil {
+		slog.Warn("reloading an answered question", "question", rec.ID, "error", qerr)
+		return option.Label, who
+	}
+	for _, o := range FromRecord(stored).Options {
+		if o.ID == stored.Answer {
+			return o.Label, auth.DisplayPrincipal(stored.AnsweredBy)
+		}
+	}
+	return option.Label, who
+}
+
 func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option) error {
 	if rec.Contact != "" {
 		return s.remote.AnswerRemote(ctx, rec, q, option, p)
@@ -432,6 +453,7 @@ button{font-size:1rem;margin:.25rem;padding:.5rem 1rem}</style></head>
 // of the question's user: it is sent only where they may answer, and the answer is sent
 // as them.
 func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
+	webpage.SetSecurityHeaders(w)
 	rec, err := s.store.QuestionByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		http.Error(w, "This question does not exist.", http.StatusNotFound)
@@ -464,7 +486,8 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Couldn't send the answer. Try again.", http.StatusInternalServerError)
 			return
 		}
-		s.notifier.MarkAnswered(r.Context(), rec.ID, opt.Label, "web")
+		label, by := s.Outcome(r.Context(), rec, opt, "web", err)
+		s.notifier.MarkAnswered(r.Context(), rec.ID, label, by)
 		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return
 	}

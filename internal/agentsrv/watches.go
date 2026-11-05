@@ -19,11 +19,16 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
+	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -197,6 +202,11 @@ func (ws *Watches) watch(w store.Watch) {
 				ws.deleteWatch(ctx, w)
 				return
 			}
+			if reason, ok := permanentPollError(err); ok {
+				slog.Warn("stopped watching a task", "agent", w.Contact, "task", w.TaskID, "reason", reason)
+				posting = ws.finishWatch(ctx, w, key, fmt.Sprintf("[%s: stopped watching task %s: %s]", w.Contact, w.TaskID, reason))
+				return
+			}
 			if err != nil {
 				if failingSince.IsZero() {
 					failingSince = time.Now()
@@ -255,10 +265,64 @@ func (ws *Watches) poll(ctx context.Context, w store.Watch, user auth.Principal)
 		return nil, err
 	}
 	task, err := t.get(ctx, a2a.TaskID(w.TaskID))
-	if err != nil {
+	if err != nil && !transientPollError(err) {
 		ws.clients.forgetClient(w.Contact)
 	}
 	return task, err
+}
+
+// transientPollError reports whether a poll failed because the agent
+// couldn't be reached or failed, which keeps its client for the next poll.
+func transientPollError(err error) bool {
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &netErr) {
+		return true
+	}
+	return errorStatus(err) >= http.StatusInternalServerError
+}
+
+// httpStatusMessage matches the error of the JSON-RPC client for a response
+// with a status other than 200, which has no type to match.
+var httpStatusMessage = regexp.MustCompile(`unexpected HTTP status: (\d{3})`)
+
+// errorStatus returns the HTTP status behind an error of a call to an
+// agent, or 0.
+func errorStatus(err error) int {
+	var notOK *agentcard.ErrStatusNotOK
+	switch {
+	case errors.Is(err, a2a.ErrTaskNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, a2a.ErrUnauthenticated):
+		return http.StatusUnauthorized
+	case errors.Is(err, a2a.ErrUnauthorized):
+		return http.StatusForbidden
+	case errors.As(err, &notOK):
+		return notOK.StatusCode
+	}
+	m := httpStatusMessage.FindStringSubmatch(err.Error())
+	if m == nil {
+		return 0
+	}
+	status, err := strconv.Atoi(m[1])
+	if err != nil {
+		return 0
+	}
+	return status
+}
+
+// permanentPollError reports whether polling a task can't succeed again, and
+// why: the agent doesn't know the task, or refuses to talk to this one.
+func permanentPollError(err error) (string, bool) {
+	if err == nil {
+		return "", false
+	}
+	switch errorStatus(err) {
+	case http.StatusNotFound:
+		return fmt.Sprintf("the agent doesn't know the task (%v)", err), true
+	case http.StatusUnauthorized, http.StatusForbidden:
+		return fmt.Sprintf("the agent refused access (%v)", err), true
+	}
+	return "", false
 }
 
 // finishWatch posts the result of a watched task as its user, if they may

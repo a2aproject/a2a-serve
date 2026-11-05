@@ -354,3 +354,166 @@ func TestInviteRacesPrune(t *testing.T) {
 		t.Fatalf("Invite() while pruning error = %v, want nil", err)
 	}
 }
+
+// flakyAds wraps an Advertiser and fails or hooks its changes.
+type flakyAds struct {
+	Advertiser
+	advertiseErr error
+	withdrawErr  error
+	// onAdvertise runs before an advertisement is stored.
+	onAdvertise func()
+}
+
+func (a *flakyAds) Advertise(name, description string) error {
+	if a.onAdvertise != nil {
+		a.onAdvertise()
+	}
+	if a.advertiseErr != nil {
+		return a.advertiseErr
+	}
+	return a.Advertiser.Advertise(name, description)
+}
+
+func (a *flakyAds) Withdraw(name string) error {
+	if a.withdrawErr != nil {
+		return a.withdrawErr
+	}
+	return a.Advertiser.Withdraw(name)
+}
+
+func countChanges(s *Service) *int {
+	n := new(int)
+	s.Changed = func(context.Context) { *n++ }
+	return n
+}
+
+func TestInviteNodeWithFailingAdvertisementLeavesNoNode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	s.Ads = &flakyAds{Advertiser: s.Ads, advertiseErr: errors.New("saving the table")}
+	on := true
+
+	_, err := s.Invite(ctx, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
+
+	if err == nil {
+		t.Fatalf("s.Invite() with a failing advertisement error = nil, want error")
+	}
+	if _, err := s.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("s.Store.Node() after the failed invitation error = %v, want %v", err, store.ErrNotFound)
+	}
+	if _, err := s.Get(ctx, "grok"); kindOf(err) != NotFound {
+		t.Fatalf("s.Get() after the failed invitation error = %v, want not found", err)
+	}
+}
+
+func TestInviteNodeNotifiesChange(t *testing.T) {
+	t.Parallel()
+	s := newService(t)
+	changes := countChanges(s)
+
+	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
+
+	if *changes != 1 {
+		t.Fatalf("Changed called %d times after the invitation, want 1", *changes)
+	}
+}
+
+func TestUpdateNodeRotateWithFailingAdvertisementKeepsToken(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
+	node, err := s.Store.Node(ctx, "grok")
+	if err != nil {
+		t.Fatalf("Node() error = %v", err)
+	}
+	next := node
+	next.TokenHash = "paired"
+	if err := s.Store.UpdateNode(ctx, node, next); err != nil {
+		t.Fatalf("UpdateNode() error = %v", err)
+	}
+	s.Ads = &flakyAds{Advertiser: s.Ads, advertiseErr: errors.New("saving the table")}
+	on := true
+
+	_, err = s.Update(ctx, "grok", controlapi.PairingUpdate{Rotate: true, Advertised: &on})
+
+	if err == nil {
+		t.Fatalf("s.Update() with a failing advertisement error = nil, want error")
+	}
+	got, err := s.Store.Node(ctx, "grok")
+	if err != nil {
+		t.Fatalf("s.Store.Node() error = %v", err)
+	}
+	if got.TokenHash != "paired" || got.Secret != next.Secret {
+		t.Fatalf("s.Store.Node() after the failed rotation = %+v, want the token and secret kept", got)
+	}
+}
+
+func TestUpdateNodeRestoresAdvertisementWhenNodeChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
+	ads := &flakyAds{Advertiser: s.Ads}
+	s.Ads = ads
+	ads.onAdvertise = func() {
+		ads.onAdvertise = nil
+		node, err := s.Store.Node(ctx, "grok")
+		if err != nil {
+			t.Errorf("Node() error = %v", err)
+			return
+		}
+		next := node
+		next.Webhook = "https://example.com/other"
+		if err := s.Store.UpdateNode(ctx, node, next); err != nil {
+			t.Errorf("UpdateNode() error = %v", err)
+		}
+	}
+	on := true
+
+	_, err := s.Update(ctx, "grok", controlapi.PairingUpdate{Advertised: &on})
+
+	if kindOf(err) != Conflict {
+		t.Fatalf("s.Update() of a node changed meanwhile error = %v, want conflict", err)
+	}
+	if s.Ads.Advertised("grok") {
+		t.Fatalf("s.Update() of a node changed meanwhile left it advertised")
+	}
+}
+
+func TestUpdateNodeNotifiesChange(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
+	changes := countChanges(s)
+	desc := "searches"
+
+	if _, err := s.Update(ctx, "grok", controlapi.PairingUpdate{Description: &desc}); err != nil {
+		t.Fatalf("s.Update() error = %v", err)
+	}
+
+	if *changes != 1 {
+		t.Fatalf("Changed called %d times after the update, want 1", *changes)
+	}
+}
+
+func TestRemoveNodeNotifiesChangeWhenWithdrawFails(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	on := true
+	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
+	s.Ads = &flakyAds{Advertiser: s.Ads, withdrawErr: errors.New("saving the table")}
+	changes := countChanges(s)
+
+	_, err := s.Remove(ctx, "grok")
+
+	if err == nil {
+		t.Fatalf("s.Remove() with a failing withdrawal error = nil, want error")
+	}
+	if *changes != 1 {
+		t.Fatalf("Changed called %d times after the removal, want 1", *changes)
+	}
+}

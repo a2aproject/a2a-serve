@@ -211,7 +211,7 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	t.Parallel()
 	bus := newEventBus()
-	exec := &observedExecutor{bus: bus}
+	exec := &observedExecutor{bus: bus, unattended: &contextSet{}}
 	changed, unsubscribe := bus.subscribeContext("c1")
 	defer unsubscribe()
 	other, unsubscribeOther := bus.subscribeContext("c2")
@@ -311,6 +311,39 @@ func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 			_, err := tc.client.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", contextID)})
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("SendMessage() into anna's conversation error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		result  a2a.SendMessageResult
+		err     error
+		wantHas bool
+	}{
+		{name: "completed task", result: &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}},
+		{name: "failed task", result: &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateFailed}}},
+		{name: "execution error", err: context.Canceled},
+		{name: "task waiting for input", result: &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired}}, wantHas: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			unattended := &contextSet{}
+			unattended.add("c1")
+			unattended.add("c2")
+			e := &observedExecutor{bus: newEventBus(), unattended: unattended}
+
+			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
+
+			if got := unattended.has("c1"); got != tc.wantHas {
+				t.Fatalf("unattended.has(c1) = %v, want %v", got, tc.wantHas)
+			}
+			if !unattended.has("c2") {
+				t.Fatalf("unattended.has(c2) = false, want true for another context")
 			}
 		})
 	}

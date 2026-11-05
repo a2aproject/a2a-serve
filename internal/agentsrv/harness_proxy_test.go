@@ -18,10 +18,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -339,9 +341,27 @@ func (a *recordingAgent) GetTask(context.Context, *a2a.GetTaskRequest) (*a2a.Tas
 	return a.task, nil
 }
 
-func (a *recordingAgent) ListTasks(context.Context, *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+// ListTasks pages a.listed, where the token of a page is the index of its
+// first task.
+func (a *recordingAgent) ListTasks(_ context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
 	a.reach("ListTasks")
-	return &a2a.ListTasksResponse{Tasks: a.listed, TotalSize: len(a.listed)}, nil
+	pageSize := req.PageSize
+	if pageSize == 0 {
+		pageSize = len(a.listed)
+	}
+	start := 0
+	if req.PageToken != "" {
+		var err error
+		if start, err = strconv.Atoi(req.PageToken); err != nil {
+			return nil, err
+		}
+	}
+	end := min(start+pageSize, len(a.listed))
+	res := &a2a.ListTasksResponse{Tasks: a.listed[start:end], TotalSize: len(a.listed), PageSize: pageSize}
+	if end < len(a.listed) {
+		res.NextPageToken = strconv.Itoa(end)
+	}
+	return res, nil
 }
 
 func (a *recordingAgent) CancelTask(context.Context, *a2a.CancelTaskRequest) (*a2a.Task, error) {
@@ -476,6 +496,50 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 		{name: "join a context nobody started", contextID: "c1", wantErr: a2a.ErrUnauthorized, call: func(g *guardedHandler) error {
 			_, err := g.SendMessage(ctx, message("", "r2"))
 			return err
+		}},
+		{name: "reference its task", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Message.ReferenceTasks = []a2a.TaskID{"t1"}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "reference another conversation's task", contextID: "c2", wantErr: a2a.ErrTaskNotFound, call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Message.ReferenceTasks = []a2a.TaskID{"t1"}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "reference its task and a task nobody started", contextID: "c1", wantErr: a2a.ErrTaskNotFound, call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Message.ReferenceTasks = []a2a.TaskID{"t1", "t2"}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "push config for its task", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+			req := message("t1", "")
+			req.Config = &a2a.SendMessageConfig{PushConfig: &a2a.PushConfig{TaskID: "t1", URL: "https://hook.example"}}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "push config without a task", contextID: "c2", want: "SendMessage", call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Config = &a2a.SendMessageConfig{PushConfig: &a2a.PushConfig{URL: "https://hook.example"}}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "push config for another conversation's task", contextID: "c2", wantErr: a2a.ErrTaskNotFound, call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Config = &a2a.SendMessageConfig{PushConfig: &a2a.PushConfig{TaskID: "t1", URL: "https://hook.example"}}
+			_, err := g.SendMessage(ctx, req)
+			return err
+		}},
+		{name: "stream with a reference to another conversation's task", contextID: "c2", wantErr: a2a.ErrTaskNotFound, call: func(g *guardedHandler) error {
+			req := message("", "")
+			req.Message.ReferenceTasks = []a2a.TaskID{"t1"}
+			for _, err := range g.SendStreamingMessage(ctx, req) {
+				return err
+			}
+			return nil
 		}},
 		{name: "start a new task", contextID: "c2", want: "SendMessage", call: func(g *guardedHandler) error {
 			_, err := g.SendMessage(ctx, message("", ""))
@@ -736,6 +800,113 @@ func TestGuardedHandlerKeepsApprovalsWithTheUser(t *testing.T) {
 				if _, err := f.store.QuestionByID(ctx, a.Rec.ID); err != nil {
 					t.Fatalf("store.QuestionByID() error = %v", err)
 				}
+			}
+		})
+	}
+}
+
+func TestGuardedHandlerListTasksPagesOnlyItsTasks(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	f.recordStarted(t, "c1", "t2", "r2")
+	f.recordStarted(t, "c1", "t5", "r5")
+	f.recordStarted(t, "c1", "t6", "r6")
+	var listed []*a2a.Task
+	for _, id := range []a2a.TaskID{"t1", "t2", "t3", "t4", "t5", "t6", "t7"} {
+		listed = append(listed, completedTask(id, "r"+string(id[1:])))
+	}
+	agent := &recordingAgent{listed: listed}
+	g := f.guarded(agent, "c1", auth.Owner())
+	tests := []struct {
+		name          string
+		req           a2a.ListTasksRequest
+		wantIDs       []a2a.TaskID
+		wantTotalSize int
+		wantNextPage  bool
+	}{
+		{name: "everything on one page", wantIDs: []a2a.TaskID{"t2", "t5", "t6"}, wantTotalSize: 3},
+		{name: "first page is not empty when others' tasks come first", req: a2a.ListTasksRequest{PageSize: 2}, wantIDs: []a2a.TaskID{"t2", "t5"}, wantTotalSize: 3, wantNextPage: true},
+		{name: "page of one", req: a2a.ListTasksRequest{PageSize: 1}, wantIDs: []a2a.TaskID{"t2"}, wantTotalSize: 3, wantNextPage: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			res, err := g.ListTasks(context.Background(), &tc.req)
+			if err != nil {
+				t.Fatalf("guardedHandler.ListTasks() error = %v", err)
+			}
+			var got []a2a.TaskID
+			for _, task := range res.Tasks {
+				got = append(got, task.ID)
+			}
+			if diff := cmp.Diff(tc.wantIDs, got); diff != "" {
+				t.Fatalf("guardedHandler.ListTasks() wrong tasks (-want +got) diff = %s", diff)
+			}
+			if res.TotalSize != tc.wantTotalSize {
+				t.Fatalf("guardedHandler.ListTasks() TotalSize = %d, want %d", res.TotalSize, tc.wantTotalSize)
+			}
+			if (res.NextPageToken != "") != tc.wantNextPage {
+				t.Fatalf("guardedHandler.ListTasks() NextPageToken = %q, want a token = %v", res.NextPageToken, tc.wantNextPage)
+			}
+		})
+	}
+}
+
+func TestGuardedHandlerListTasksFollowsPageTokens(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	var listed []*a2a.Task
+	for i := range 7 {
+		id := a2a.TaskID(fmt.Sprintf("t%d", i))
+		if i%2 == 0 {
+			f.recordStarted(t, "c1", string(id), "r"+string(id))
+		}
+		listed = append(listed, completedTask(id, "r"+string(id)))
+	}
+	g := f.guarded(&recordingAgent{listed: listed}, "c1", auth.Owner())
+
+	var got []a2a.TaskID
+	req := &a2a.ListTasksRequest{PageSize: 3}
+	for pages := 0; ; pages++ {
+		if pages > 3 {
+			t.Fatalf("guardedHandler.ListTasks() kept returning pages, want it to end")
+		}
+		res, err := g.ListTasks(context.Background(), req)
+		if err != nil {
+			t.Fatalf("guardedHandler.ListTasks() error = %v", err)
+		}
+		for _, task := range res.Tasks {
+			got = append(got, task.ID)
+		}
+		if res.NextPageToken == "" {
+			break
+		}
+		req = &a2a.ListTasksRequest{PageSize: 3, PageToken: res.NextPageToken}
+	}
+
+	if diff := cmp.Diff([]a2a.TaskID{"t0", "t2", "t4", "t6"}, got); diff != "" {
+		t.Fatalf("guardedHandler.ListTasks() pages wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestGuardedHandlerListTasksRejectsBadPaging(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	g := f.guarded(&recordingAgent{}, "c1", auth.Owner())
+	tests := []struct {
+		name string
+		req  a2a.ListTasksRequest
+	}{
+		{name: "page size too large", req: a2a.ListTasksRequest{PageSize: 101}},
+		{name: "negative page size", req: a2a.ListTasksRequest{PageSize: -1}},
+		{name: "page token that is not a number", req: a2a.ListTasksRequest{PageToken: "abc"}},
+		{name: "negative page token", req: a2a.ListTasksRequest{PageToken: "-3"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := g.ListTasks(context.Background(), &tc.req); !errors.Is(err, a2a.ErrInvalidRequest) {
+				t.Fatalf("guardedHandler.ListTasks() error = %v, want %v", err, a2a.ErrInvalidRequest)
 			}
 		})
 	}

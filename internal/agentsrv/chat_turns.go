@@ -107,6 +107,12 @@ func (s *contextSet) add(id string) {
 	s.ids[id] = true
 }
 
+func (s *contextSet) remove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.ids, id)
+}
+
 func (s *contextSet) has(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -198,10 +204,8 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	if !c.firstSeen(ctx, in) {
 		return
 	}
-	if in.Prepare != nil {
-		if err := in.Prepare(ctx, &in); err != nil {
-			slog.Warn("preparing channel message", "channel", in.Channel, "error", err)
-		}
+	if in.Prepare != nil && !c.prepare(ctx, ch, &in) {
+		return
 	}
 	// Stops and answers must not wait for the turn they stop or unblock,
 	// which holds the conversation.
@@ -247,6 +251,35 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		}
 	}
 	c.stream(ctx, ch, in.Conv, channel.Ref{Conv: in.Conv, ID: in.MessageID}, p, &a2a.SendMessageRequest{Message: msg})
+}
+
+// prepare finishes an inbound message and tells its sender what couldn't be
+// done. It reports whether the message is still to be handled.
+func (c *ChatTurns) prepare(ctx context.Context, ch channel.Channel, in *channel.Inbound) bool {
+	err := in.Prepare(ctx, in)
+	if err == nil {
+		return true
+	}
+	slog.Warn("preparing channel message", "channel", in.Channel, "error", err)
+	var dropped *channel.DroppedError
+	if errors.As(err, &dropped) {
+		c.reply(ctx, ch, *in, dropped.Reason)
+		return false
+	}
+	failed := channel.FailedAttachments(err)
+	if len(failed) == 0 {
+		return true
+	}
+	names := make([]string, len(failed))
+	for i, f := range failed {
+		names[i] = f.Name
+	}
+	notice := "⚠ I couldn't download " + strings.Join(names, ", ") + ", so the agent doesn't see it."
+	if len(names) > 1 {
+		notice = strings.TrimSuffix(notice, "it.") + "them."
+	}
+	c.reply(ctx, ch, *in, notice)
+	return in.Text != "" || len(in.Files) > 0
 }
 
 // canContinue reports whether p's message continues the task: p started it
