@@ -176,7 +176,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		}
 		t.Cleanup(func() {
 			if err := os.RemoveAll(d); err != nil {
-				t.Errorf("removing %s: %v", d, err)
+				t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
 			}
 		})
 		o.dir = d
@@ -228,6 +228,19 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	t.Cleanup(ts.stop)
 	return ts
+}
+
+// leftFiles lists the files under dir, which a writer that outlived the
+// server left there.
+func leftFiles(dir string) []string {
+	var left []string
+	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		left = append(left, path)
+		return err
+	}); err != nil {
+		left = append(left, err.Error())
+	}
+	return left
 }
 
 // Agents keep their port across restarts. Ports are picked below the
