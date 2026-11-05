@@ -6,6 +6,8 @@ account, agents reachable from behind NAT, and a public URL for each on the
 relay. a2a-serve runs Agent Mesh's `meshnet` library in-process, so there is
 no sidecar to run.
 
+![Two agents calling each other over an Agent Mesh relay](./demo.gif)
+
 ## What you'll learn
 
 - How to run a relay on your machine with `a2a-serve relay run`
