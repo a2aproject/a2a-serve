@@ -49,6 +49,7 @@ func testTree() *cobra.Command {
 		panic(err)
 	}
 	pair := &cobra.Command{Use: "pair", Short: "Pair | join"}
+	pair.PersistentFlags().String("dir", "", "Agent directory")
 	pair.AddCommand(&cobra.Command{Use: "rm <name>", Short: "Remove a pairing", Run: func(*cobra.Command, []string) {}})
 	secret := &cobra.Command{Use: "secret", Short: "Secret", Hidden: true, Run: func(*cobra.Command, []string) {}}
 	root.AddCommand(start, pair, secret)
@@ -105,7 +106,10 @@ func TestPages(t *testing.T) {
 		},
 		{
 			page: "pair.md",
-			want: []string{"```\ntool pair <command>\n```", "## tool pair rm\n\nRemove a pairing\n\n```\ntool pair rm <name>\n```"},
+			want: []string{
+				"```\ntool pair <command>\n```",
+				"**Flags of every `tool pair` command**\n\n| Flag | Default | Description |\n|---|---|---|\n| `--dir string` |  | Agent directory |",
+				"## tool pair rm\n\nRemove a pairing\n\n```\ntool pair rm <name>\n```"},
 		},
 	}
 	for _, tc := range tests {

@@ -46,6 +46,7 @@ Without a subcommand, shows the settings.`,
 		Args: cobra.NoArgs,
 		// Replaces the parent's check, to also accept -o yaml.
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			cfg.setupLogging()
 			switch cfg.output {
 			case string(output.ModeText), string(output.ModeJson), string(output.ModeJSONL):
 				cfg.Mode = output.Mode(cfg.output)

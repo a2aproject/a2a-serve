@@ -1,0 +1,93 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package cli
+
+import (
+	"io"
+	"log/slog"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/output"
+)
+
+func TestVerboseEnablesDebugLogs(t *testing.T) {
+	prev := slog.Default()
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	dir := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root
+	tests := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{name: "without -v", args: []string{"version"}, want: false},
+		{name: "-v", args: []string{"-v", "version"}, want: true},
+		{name: "--verbose on a command with its own pre-run", args: []string{"config", "show", "--verbose", "--dir", dir}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			slog.SetDefault(slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{Level: slog.LevelInfo})))
+			if _, err := runCMD(t, tc.args...); err != nil {
+				t.Fatalf("a2a-serve %s error = %v", strings.Join(tc.args, " "), err)
+			}
+			if got := slog.Default().Enabled(t.Context(), slog.LevelDebug); got != tc.want {
+				t.Fatalf("debug logs enabled after a2a-serve %s = %v, want %v", strings.Join(tc.args, " "), got, tc.want)
+			}
+		})
+	}
+}
+
+func TestUsageHints(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{name: "unknown flag of a subcommand", args: []string{"pair", "rm", "--bogus"}, want: "run `a2a-serve pair rm --help` for its flags"},
+		{name: "unknown flag of a command", args: []string{"status", "--bogus"}, want: "run `a2a-serve status --help` for its flags"},
+		{name: "unknown command", args: []string{"bogus"}, want: clierr.UsageHint},
+		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", d.Root}, want: "run `a2a-serve pair list` to see the pairings"},
+		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", d.Root}, want: "run `a2a-serve contact list` to see the contacts"},
+		{name: "unknown channel", args: []string{"channel", "rm", "telegram", "--dir", d.Root}, want: "run `a2a-serve channel list` to see the channels"},
+		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", d.Root}, want: "run `a2a-serve config unset --help` for its flags"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &globalConfig{credentials: &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}}
+			cfg.Printer = output.NewPrinter(io.Discard, output.ModeText)
+			root := newRootCmd(cfg)
+			root.SetOut(io.Discard)
+			root.SetArgs(tc.args)
+			cmd, err := root.ExecuteC()
+			if err == nil {
+				t.Fatalf("a2a-serve %s error = nil, want a usage error", strings.Join(tc.args, " "))
+			}
+			got := classify(err, cmd)
+			if got.Exit != 2 {
+				t.Fatalf("a2a-serve %s exit = %d, want 2", strings.Join(tc.args, " "), got.Exit)
+			}
+			if got.Hint != tc.want {
+				t.Fatalf("a2a-serve %s hint = %q, want %q", strings.Join(tc.args, " "), got.Hint, tc.want)
+			}
+		})
+	}
+}

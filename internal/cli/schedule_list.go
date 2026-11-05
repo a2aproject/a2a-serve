@@ -17,8 +17,10 @@ package cli
 import (
 	"cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -53,7 +55,7 @@ func newScheduleListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if s.LastError != "" {
 					last += " ! " + s.LastError
 				}
-				rows = append(rows, []string{s.Name, when, s.User, cmp.Or(s.Chat, "-"), formatScheduleTime(s.NextRun), last, oneLine(s.Prompt, 40)})
+				rows = append(rows, []string{s.Name, when, auth.DisplayPrincipal(s.User), cmp.Or(s.Chat, "-"), formatScheduleTime(s.NextRun), last, oneLine(s.Prompt, 40)})
 			}
 			return cfg.PrintTableOrEmpty([]string{"NAME", "WHEN", "AS", "CHAT", "NEXT", "LAST", "PROMPT"}, rows,
 				"no schedules; add one with `a2a-serve schedule add <name> --cron <expr> --prompt <prompt>`")

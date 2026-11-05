@@ -41,14 +41,25 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Show whether the agent runs, its URLs, channels and who may call it.
 
 --url prints only the agent's URL which reaches furthest: public, then
-private, then local. --url=local, --url=private and --url=public pick one.
---url=local also works while the agent is stopped, once its first start
+private, then local. --url local, --url private and --url public pick one;
+--url=local does the same. --url local also works while the agent is stopped, once its first start
 picked its port.`,
 		Example: `  a2a-serve status
   a2a send -a "$(a2a-serve status --url)" "hello"
   a2a-serve status --url=private`,
-		Args: cobra.NoArgs,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 1 && scope == urlFurthest {
+				scope = args[0]
+				return nil
+			}
+			return cobra.NoArgs(cmd, args)
+		},
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if scope != urlFurthest {
+				if err := controlapi.CheckScope(scope); err != nil {
+					return clierr.Usage(err.Error())
+				}
+			}
 			d, err := sf.agentDir()
 			if err != nil {
 				return err

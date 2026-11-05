@@ -18,8 +18,10 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strings"
@@ -28,6 +30,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/output"
@@ -82,6 +85,14 @@ func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
 	return secretref.NewReader(in, prompt)
 }
 
+// setupLogging makes -v write debug logs to stderr.
+func (g *globalConfig) setupLogging() {
+	if !g.verbose {
+		return
+	}
+	slog.SetDefault(slog.New(slog.NewTextHandler(g.stderr(), &slog.HandlerOptions{Level: slog.LevelDebug})))
+}
+
 func (g *globalConfig) logf(format string, args ...any) {
 	if g.verbose {
 		if _, err := fmt.Fprintf(g.stderr(), "# "+format+"\n", args...); err != nil {
@@ -106,8 +117,8 @@ func Execute(args []string) int {
 	cfg := &globalConfig{Printer: output.NewPrinter(os.Stdout, output.ModeText)}
 	root := newRootCmd(cfg)
 	root.SetArgs(args)
-	if err := root.Execute(); err != nil {
-		return cfg.renderError(err)
+	if cmd, err := root.ExecuteC(); err != nil {
+		return cfg.renderError(err, cmd)
 	}
 	return 0
 }
@@ -135,8 +146,34 @@ func printPluginInfo(w io.Writer) int {
 	return 0
 }
 
-func (g *globalConfig) renderError(err error) int {
+// listCommands names the command which lists what a not-found error names.
+var listCommands = map[string]string{
+	"pairing":  "pair list",
+	"contact":  "contact list",
+	"schedule": "schedule list",
+	"channel":  "channel list",
+}
+
+// classify classifies err of cmd, pointing the hint of a usage error at the
+// help of cmd, or at the command which lists what was not found.
+func classify(err error, cmd *cobra.Command) *clierr.Error {
 	ce := clierr.Classify(err)
+	if ce.Code != clierr.CodeUsage || ce.Hint != clierr.UsageHint || cmd == nil {
+		return ce
+	}
+	hinted := *ce
+	var nf *agenterr.NotFoundError
+	switch {
+	case errors.As(err, &nf) && listCommands[nf.Kind] != "":
+		hinted.Hint = fmt.Sprintf("run `%s %s` to see the %ss", cmd.Root().CommandPath(), listCommands[nf.Kind], nf.Kind)
+	case cmd.HasParent():
+		hinted.Hint = fmt.Sprintf("run `%s --help` for its flags", cmd.CommandPath())
+	}
+	return &hinted
+}
+
+func (g *globalConfig) renderError(err error, cmd *cobra.Command) int {
+	ce := classify(err, cmd)
 	if ce.Silent() {
 		return ce.Exit
 	}
@@ -161,9 +198,10 @@ func newRootCmd(cfg *globalConfig) *cobra.Command {
 	root.CompletionOptions = cobra.CompletionOptions{DisableDefaultCmd: true}
 	root.SetVersionTemplate(buildVersionInfo().text())
 	pf := root.PersistentFlags()
-	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line)")
-	pf.BoolVarP(&cfg.verbose, "verbose", "v", false, "Verbose output to stderr")
+	pf.StringVarP(&cfg.output, "output", "o", "text", "Output format: text, json (indented), or jsonl (one compact JSON object per line); config show also takes yaml")
+	pf.BoolVarP(&cfg.verbose, "verbose", "v", false, "Print debug logs and progress details to stderr")
 	root.PersistentPreRunE = func(cmd *cobra.Command, args []string) error {
+		cfg.setupLogging()
 		switch output.Mode(cfg.output) {
 		case output.ModeText, output.ModeJson, output.ModeJSONL:
 			cfg.Mode = output.Mode(cfg.output)

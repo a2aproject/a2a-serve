@@ -39,11 +39,11 @@ the file reopens with the errors on top, like crontab -e. Secret values
 aren't in config.yaml: store them with ` + "`a2a-serve config set --secret NAME`" + `.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, err := sf.agentDir()
+			editor, err := editorCommand(os.Getenv, term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd())))
 			if err != nil {
 				return err
 			}
-			editor, err := editorCommand()
+			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
@@ -67,10 +67,16 @@ aren't in config.yaml: store them with ` + "`a2a-serve config set --secret NAME`
 	return cmd
 }
 
-func editorCommand() ([]string, error) {
-	editor := os.Getenv("VISUAL")
+// editorCommand returns the editor to run: $VISUAL, $EDITOR or vi. Without
+// a terminal the default vi would wait for input forever, so it needs an
+// editor which doesn't.
+func editorCommand(getenv func(string) string, terminal bool) ([]string, error) {
+	editor := getenv("VISUAL")
 	if editor == "" {
-		editor = os.Getenv("EDITOR")
+		editor = getenv("EDITOR")
+	}
+	if editor == "" && !terminal {
+		return nil, clierr.Usage("no terminal to run an editor in; set $VISUAL or $EDITOR, or change settings with `a2a-serve config set`")
 	}
 	if editor == "" {
 		editor = "vi"

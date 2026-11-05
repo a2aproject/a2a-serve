@@ -26,6 +26,13 @@ a2a-serve pair set anna --owner
 a2a-serve pair rm anna
 ```
 
+**Flags of every `a2a-serve pair` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
+| `--timeout duration` | `1m0s` | Timeout of each call to the running agent, a duration such as 30s or 2m |
+
 ## a2a-serve pair get
 
 Show a pairing: its kind, role, tokens, linked accounts and pending codes, or an agent you joined

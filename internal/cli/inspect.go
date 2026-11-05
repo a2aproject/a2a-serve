@@ -43,6 +43,9 @@ URL of a tailnet, which is HTTPS. It is never served on a relay or the public
 URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := controlapi.CheckInspectorScope(scope); err != nil {
+				return err
+			}
 			c, err := sf.control()
 			if err != nil {
 				return err

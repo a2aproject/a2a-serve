@@ -13,11 +13,13 @@ $ a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHRO
 ! coder is running; restart to apply sandbox, secret: a2a-serve restart
 ```
 
-The description, the owner chat, the allowed and denied tools, and messengers apply at once. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set`.
+<!-- generated:live-settings -->
+A running agent applies `--description`, `--private-access`, `--public-access`, `--allow-email`, `--allow-tools`, `--deny-tools` and `--owner-chat` at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set`.
+<!-- /generated:live-settings -->
 
 | Command | What it does |
 | --- | --- |
-| `a2a-serve config show` | Shows the settings. `--as-command` prints the commands that recreate the agent. |
+| `a2a-serve config show` | Shows the settings. `--as-command` prints the commands that recreate the agent, and `-o yaml` prints the settings as YAML. |
 | `a2a-serve config set <flags>` | Changes settings. `--dry-run` only prints the diff. |
 | `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list, or resets a setting to its default. |
 | `a2a-serve config edit` | Opens `config.yaml` in your editor and validates it on save. |
