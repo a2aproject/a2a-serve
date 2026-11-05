@@ -115,3 +115,35 @@ func TestExecExecutor_CancelStopsTheCommandsChildren(t *testing.T) {
 		}
 	}
 }
+
+func TestExecExecutor_ChunkedStopKillsTheCommandsChildren(t *testing.T) {
+	t.Parallel()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	e := newExecExecutor(ScriptOptions{Command: fmt.Sprintf("sleep 30 & echo $! > %s; printf 'a\\nb\\nc\\n'; wait", pidFile), Chunk: "\n"})
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("go"))
+	execCtx := &a2asrv.ExecutorContext{Message: msg, TaskID: a2a.NewTaskID(), ContextID: "ctx"}
+	for ev, err := range e.Execute(t.Context(), execCtx) {
+		if err != nil {
+			t.Fatalf("Execute() error = %v", err)
+		}
+		if _, ok := ev.(*a2a.TaskArtifactUpdateEvent); ok {
+			break
+		}
+	}
+	data, err := os.ReadFile(pidFile)
+	if err != nil {
+		t.Fatalf("reading the pid file error = %v", err)
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil {
+		t.Fatalf("strconv.Atoi() error = %v", err)
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child process %d still runs after Execute() returned", pid)
+		}
+	}
+}
