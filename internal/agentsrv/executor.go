@@ -61,7 +61,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
-		AutoAnswer:   liveToolRules(s.config),
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Turn:         s.claims.turn,
@@ -77,7 +77,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 // earlier server left running, such as those of a crash or a stop that ran
 // out of time.
 func (s *Server) pruneContainers(ctx context.Context) {
-	if sb := s.config().Sandbox; sb != "" && sb != harness.SandboxDocker {
+	if sb := s.rt.Config().Sandbox; sb != "" && sb != harness.SandboxDocker {
 		return
 	}
 	n, err := harness.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
@@ -103,7 +103,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		Pool: &a2aacp.PoolConfig{
 			Key: func(context.Context, string) (string, error) { return anonymousAgentKey, nil },
 		},
-		AutoAnswer:   liveToolRules(s.config),
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Turn:         s.claims.turn,
@@ -130,8 +130,8 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		return s.startUserAgent(ctx, key, harnessLog)
 	})
 	acp, err := a2aacp.NewExecutor(ctx, start, &a2aacp.Config{
-		Pool:         &a2aacp.PoolConfig{Key: s.split.agentKey, MaxAgents: maxUserAgents},
-		AutoAnswer:   liveToolRules(s.config),
+		Pool:         &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents},
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Turn:         s.claims.turn,
@@ -207,7 +207,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 // prepareHarness prepares the harness of the agent process of an agent
 // key: the owner's for no key, anonymous callers' or a user's.
 func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
 		return nil, err
@@ -218,7 +218,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	env := append([]string{}, cfg.Env...)
 	for _, name := range cfg.Secrets {
-		v, ok := s.secrets()[name]
+		v, ok := s.rt.Secrets()[name]
 		if !ok {
 			return nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
 		}
@@ -347,7 +347,7 @@ func (f liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorC
 // other agents: Unix sockets, which are mounted into containers, or TCP with
 // a key for Docker Desktop, which can't mount them.
 func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
-	bind, dial, tcp := harness.TCPBridge(s.config().Sandbox)
+	bind, dial, tcp := harness.TCPBridge(s.rt.Config().Sandbox)
 	if !sandboxed || !tcp {
 		return listenHarnessSockets(s.dir.HarnessSocketDir())
 	}

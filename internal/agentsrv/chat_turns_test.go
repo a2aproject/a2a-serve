@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -192,7 +193,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudg
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
 	unattended := &contextSet{}
-	agentName := func() string { return "coder" }
+	rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil)
 	svc := approvals.New(approvals.Deps{
 		Records:          fx.records,
 		Sender:           sender,
@@ -200,7 +201,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudg
 		Unattended:       unattended.has,
 		Anonymous:        func(context.Context, string) bool { return false },
 		AnonymousTimeout: fx.timings.AnonymousQuestionTimeout,
-		AgentName:        agentName,
+		Runtime:          rt,
 	})
 	turns := newChatTurns(ChatTurnsDeps{
 		Store:      fx.store,
@@ -215,7 +216,8 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudg
 		Bus:        fx.bus,
 		Unattended: unattended,
 		Budget:     budget,
-		AgentName:  agentName,
+		Posted:     &postedTurns{},
+		Runtime:    rt,
 	})
 	turns.start(fx.ctx)
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, channel: "fake", identity: "telegram:1", conv: "dm1"})
@@ -679,7 +681,7 @@ func TestChatTurnsDropPostedOfRemovesWaitingTurnsOfPrincipals(t *testing.T) {
 		t.Fatalf("turns.injectTurn() error = %v", err)
 	}
 
-	fx.turns.dropPostedOf("pair:bob")
+	fx.turns.posted.dropUsers([]string{"pair:bob"})
 
 	if err := <-accepted; !errors.Is(err, errTurnDropped) {
 		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)

@@ -95,7 +95,7 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 // harness uses your own home, which is left alone. A home that fails the
 // sandbox checks is skipped, since the agent may have redirected it.
 func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	if cfg.Sandbox == harness.SandboxLocal {
 		return nil
 	}

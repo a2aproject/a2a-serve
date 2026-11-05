@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -45,11 +46,11 @@ import (
 // ContactClients reaches other agents: contacts, through one cached client
 // each, agents found on the private network and webhook nodes hosted here.
 type ContactClients struct {
-	store     *store.Store
-	private   network.Provider
-	nodes     *nodes.Host
-	ads       *gossip.Table
-	agentName func() string
+	store   *store.Store
+	private network.Provider
+	nodes   *nodes.Host
+	ads     *gossip.Table
+	rt      *agentdir.Runtime
 
 	// builds joins the concurrent builds of one contact's client, so that
 	// two calls don't build one each and destroy the other's.
@@ -65,23 +66,24 @@ type ContactClients struct {
 
 // ContactClientsDeps are the dependencies of [ContactClients].
 type ContactClientsDeps struct {
-	Store     *store.Store
-	Private   network.Provider
-	Nodes     *nodes.Host
-	Ads       *gossip.Table
-	AgentName func() string
+	Store   *store.Store
+	Private network.Provider
+	Nodes   *nodes.Host
+	Ads     *gossip.Table
+	// Runtime has the config of the agent.
+	Runtime *agentdir.Runtime
 }
 
 var _ approvals.RemoteAnswerer = (*ContactClients)(nil)
 
 func newContactClients(deps ContactClientsDeps) *ContactClients {
 	return &ContactClients{
-		store:     deps.Store,
-		private:   deps.Private,
-		nodes:     deps.Nodes,
-		ads:       deps.Ads,
-		agentName: deps.AgentName,
-		clients:   map[string]*contactClient{},
+		store:   deps.Store,
+		private: deps.Private,
+		nodes:   deps.Nodes,
+		ads:     deps.Ads,
+		rt:      deps.Runtime,
+		clients: map[string]*contactClient{},
 	}
 }
 
@@ -291,7 +293,7 @@ func (cc *ContactClients) isNode(ctx context.Context, name string) (bool, error)
 // at authenticated; the node admits the agent hosting it explicitly.
 func (cc *ContactClients) nodeCaller(user auth.Principal, hops int) auth.Principal {
 	return auth.Principal{
-		ID: "agent:" + cc.agentName(), Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
+		ID: "agent:" + cc.rt.Config().Name, Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
 		Identity: auth.Identity{Network: network.ListenerHarness, Hops: hops + 1},
 	}
 }

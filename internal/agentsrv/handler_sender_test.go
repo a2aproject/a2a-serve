@@ -16,13 +16,13 @@ package agentsrv
 
 import (
 	"context"
-	"errors"
 	"iter"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 )
 
 type fakeHandler struct {
@@ -42,30 +42,36 @@ func (f *fakeHandler) CancelTask(context.Context, *a2a.CancelTaskRequest) (*a2a.
 	return f.task, nil
 }
 
-func TestHandlerSenderNotReady(t *testing.T) {
+func TestBindHandlerRefusesTurnsWhileBuilding(t *testing.T) {
 	t.Parallel()
-	var s handlerSender
 	ctx := t.Context()
 	req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
+	var errs []error
 
-	if _, err := s.SendMessage(ctx, req); !errors.Is(err, errNotReady) {
-		t.Fatalf("handlerSender.SendMessage() error = %v, want %v", err, errNotReady)
-	}
-	for _, err := range s.SendStreamingMessage(ctx, req) {
-		if !errors.Is(err, errNotReady) {
-			t.Fatalf("handlerSender.SendStreamingMessage() error = %v, want %v", err, errNotReady)
+	bindHandler(func(s *handlerSender) a2asrv.RequestHandler {
+		_, err := s.SendMessage(ctx, req)
+		errs = append(errs, err)
+		for _, err := range s.SendStreamingMessage(ctx, req) {
+			errs = append(errs, err)
 		}
-	}
-	if _, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"}); !errors.Is(err, errNotReady) {
-		t.Fatalf("handlerSender.CancelTask() error = %v, want %v", err, errNotReady)
+		_, err = s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"})
+		errs = append(errs, err)
+		return &fakeHandler{}
+	})
+
+	if diff := cmp.Diff([]error{errNotReady, errNotReady, errNotReady}, errs, cmpopts.EquateErrors()); diff != "" {
+		t.Fatalf("handlerSender while building wrong errors (-want +got) diff = %s", diff)
 	}
 }
 
-func TestHandlerSenderSet(t *testing.T) {
+func TestBindHandler(t *testing.T) {
 	t.Parallel()
 	task := &a2a.Task{ID: "t1", ContextID: "c1"}
-	var s handlerSender
-	s.set(&fakeHandler{task: task})
+	h := &fakeHandler{task: task}
+	s, got := bindHandler(func(*handlerSender) a2asrv.RequestHandler { return h })
+	if got != a2asrv.RequestHandler(h) {
+		t.Fatalf("bindHandler() handler = %v, want the built one", got)
+	}
 	ctx := t.Context()
 	req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 
@@ -86,23 +92,11 @@ func TestHandlerSenderSet(t *testing.T) {
 	if diff := cmp.Diff([]a2a.Event{task}, events); diff != "" {
 		t.Fatalf("handlerSender.SendStreamingMessage() wrong result (-want +got) diff = %s", diff)
 	}
-	got, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"})
+	canceled, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"})
 	if err != nil {
 		t.Fatalf("handlerSender.CancelTask() error = %v", err)
 	}
-	if diff := cmp.Diff(task, got); diff != "" {
+	if diff := cmp.Diff(task, canceled); diff != "" {
 		t.Fatalf("handlerSender.CancelTask() wrong result (-want +got) diff = %s", diff)
 	}
-}
-
-func TestHandlerSenderSetTwicePanics(t *testing.T) {
-	t.Parallel()
-	var s handlerSender
-	s.set(&fakeHandler{})
-	defer func() {
-		if recover() == nil {
-			t.Fatalf("handlerSender.set() twice didn't panic")
-		}
-	}()
-	s.set(&fakeHandler{})
 }

@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -64,8 +65,9 @@ type Deps struct {
 	Tasks     *store.TaskStore
 	Approvals *approvals.Service
 	Sender    Sender
-	AgentName func() string
-	BaseURL   func() string
+	// Runtime has the config of the agent.
+	Runtime *agentdir.Runtime
+	BaseURL func() string
 	// ListPairings describes the agent's pairings.
 	ListPairings func(ctx context.Context) ([]pairings.Pairing, error)
 	// Status describes the running server.
@@ -276,7 +278,7 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 		q := approvals.FromRecord(rec)
 		out = append(out, Approval{Action: Path + "/questions/" + rec.ID, Text: q.Display(), ContextID: rec.ContextID, Contact: rec.Contact, Options: q.Options, Created: rec.Created})
 	}
-	tasks, err := in.waitingTasks(ctx)
+	tasks, err := waitingTasks(ctx, in.deps.Tasks)
 	if err != nil {
 		return nil, err
 	}
@@ -294,24 +296,25 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	return out, nil
 }
 
-// ApprovalCount is the number of [Inspector.PendingApprovals].
-func (in *Inspector) ApprovalCount(ctx context.Context) (int, error) {
-	remote, err := in.deps.Store.UnansweredRemoteQuestions(ctx)
+// ApprovalCount is the number of [Inspector.PendingApprovals] of the agent
+// with the store st and the task store tasks.
+func ApprovalCount(ctx context.Context, st *store.Store, tasks *store.TaskStore) (int, error) {
+	remote, err := st.UnansweredRemoteQuestions(ctx)
 	if err != nil {
 		return 0, err
 	}
-	tasks, err := in.waitingTasks(ctx)
+	waiting, err := waitingTasks(ctx, tasks)
 	if err != nil {
 		return 0, err
 	}
-	return remote + len(tasks), nil
+	return remote + len(waiting), nil
 }
 
-// waitingTasks are the tasks of this agent waiting for an answer to a
-// question, without their history and artifacts.
-func (in *Inspector) waitingTasks(ctx context.Context) ([]*a2a.Task, error) {
+// waitingTasks are the tasks waiting for an answer to a question, without
+// their history and artifacts.
+func waitingTasks(ctx context.Context, tasks *store.TaskStore) ([]*a2a.Task, error) {
 	noHistory := 0
-	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100, HistoryLength: &noHistory})
+	resp, err := tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100, HistoryLength: &noHistory})
 	if err != nil {
 		return nil, err
 	}
@@ -400,7 +403,7 @@ func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "No such conversation.", http.StatusNotFound)
 		return
 	}
-	page := conversationPage{Agent: in.deps.AgentName(), ContextID: id}
+	page := conversationPage{Agent: in.deps.Runtime.Config().Name, ContextID: id}
 	if ch, conv, err := in.deps.Store.ConvOf(ctx, id); err == nil {
 		page.Chat = ch + " " + conv
 	}

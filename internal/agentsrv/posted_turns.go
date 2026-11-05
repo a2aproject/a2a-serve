@@ -212,10 +212,6 @@ func (c *ChatTurns) injectTurn(ctx context.Context, t postedTurn) error {
 // the runs of a removed schedule.
 func (c *ChatTurns) dropPosted(key string) { c.posted.drop(key) }
 
-// dropPostedOf removes the turns that wait to be posted as one of the
-// principals, such as the runs of a removed pairing.
-func (c *ChatTurns) dropPostedOf(principals ...string) { c.posted.dropUsers(principals) }
-
 // post sends the turns of a context's line until it is empty or ctx ends.
 func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) {
 	for {

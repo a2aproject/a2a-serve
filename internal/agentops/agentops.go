@@ -41,8 +41,8 @@ type Deps struct {
 	Pairings  *pairings.Service
 	Contacts  contacts.Service
 	Schedules schedules.Service
-	// Config returns the config the agent runs with.
-	Config func() *agentdir.Config
+	// Runtime has the config and secrets the agent runs with.
+	Runtime *agentdir.Runtime
 	// Network returns the networks the agent is on. Nil derives them from
 	// the config.
 	Network func() access.Network
@@ -64,7 +64,7 @@ func (s *Service) Access(ctx context.Context) (*access.Description, error) {
 	if err != nil {
 		return nil, err
 	}
-	cfg := s.deps.Config()
+	cfg := s.deps.Runtime.Config()
 	net := access.NetworkOf(cfg)
 	if s.deps.Network != nil {
 		net = s.deps.Network()

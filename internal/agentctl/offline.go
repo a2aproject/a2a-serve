@@ -72,7 +72,8 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 		Pairings:  pairings.New(pairings.Deps{Store: st, BaseURL: func() string { return base }, Ads: ads, Homes: d}),
 		Contacts:  contacts.Service{Store: st},
 		Schedules: schedulesvc.Service{Store: st},
-		Config:    func() *agentdir.Config { return cfg },
+		// A stopped agent runs with no secrets.
+		Runtime: agentdir.NewRuntime(d, cfg, nil),
 	})
 	return &offline{Service: ops, dir: d, release: release, store: st}, nil
 }

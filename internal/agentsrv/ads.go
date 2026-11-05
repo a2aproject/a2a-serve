@@ -153,7 +153,7 @@ func (s *Server) gossipRound(ctx context.Context) {
 		slog.Debug("finding peers to gossip with", "error", err)
 		return
 	}
-	self := s.config().Name
+	self := s.rt.Config().Name
 	var targets []network.PeerInfo
 	for _, p := range peers {
 		if p.Online && !strings.EqualFold(p.Name, self) {

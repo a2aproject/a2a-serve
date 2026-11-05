@@ -42,8 +42,7 @@ type ChatApprovals struct {
 	records    *approvals.Records
 	supervisor *ChannelSupervisor
 	bus        *eventBus
-	agentName  func() string
-	ownerChat  func() string
+	rt         *agentdir.Runtime
 	anonymous  func(ctx context.Context, contextID string) bool
 	timings    Timings
 	// ctx ends when the server stops; tasks followed after an answer
@@ -58,9 +57,8 @@ type ChatApprovalsDeps struct {
 	Records    *approvals.Records
 	Supervisor *ChannelSupervisor
 	Bus        *eventBus
-	AgentName  func() string
-	// OwnerChat returns the --owner-chat setting.
-	OwnerChat func() string
+	// Runtime has the config of the agent.
+	Runtime *agentdir.Runtime
 	// Anonymous reports whether a conversation is anonymous, so that an
 	// owner answers its questions in the owner chat.
 	Anonymous func(ctx context.Context, contextID string) bool
@@ -76,8 +74,7 @@ func newChatApprovals(ctx context.Context, deps ChatApprovalsDeps) *ChatApproval
 		records:    deps.Records,
 		supervisor: deps.Supervisor,
 		bus:        deps.Bus,
-		agentName:  deps.AgentName,
-		ownerChat:  deps.OwnerChat,
+		rt:         deps.Runtime,
 		anonymous:  deps.Anonymous,
 		timings:    deps.Timings,
 		ctx:        ctx,
@@ -260,7 +257,7 @@ var ownerChatOrder = []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord,
 // OwnerChat returns the chat of --owner-chat, or else the direct chat of an
 // owner on the first running messenger, in ownerChatOrder.
 func (a *ChatApprovals) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
-	if v := a.ownerChat(); v != "" {
+	if v := a.rt.Config().Approvals.OwnerChat; v != "" {
 		chName, who, _ := strings.Cut(v, ":")
 		c, err := a.directChat(ctx, chName, who)
 		if err != nil {

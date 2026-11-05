@@ -182,22 +182,23 @@ func (emptyExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Seq2
 
 func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
 	t.Parallel()
-	e := &splitExecutor{
-		main:     emptyExecutor{},
-		sessions: openTestStore(t).Sessions(),
-		budget:   newAnonymousBudget(),
-		start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	keys := newAgentKeys(openTestStore(t).Sessions())
+	e := newSplitExecutor(context.Background(), splitDeps{
+		Main:   emptyExecutor{},
+		Keys:   keys,
+		Budget: newAnonymousBudget(),
+		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 			return emptyExecutor{}, func(context.Context) error { return nil }, nil
 		},
-	}
+	})
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
 
 	for range e.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if got := len(e.pending); got != 0 {
-		t.Fatalf("splitExecutor.pending has %d entries after the turn, want 0", got)
+	keys.mu.Lock()
+	defer keys.mu.Unlock()
+	if got := len(keys.pending); got != 0 {
+		t.Fatalf("agentKeys.pending has %d entries after the turn, want 0", got)
 	}
 }

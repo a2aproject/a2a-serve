@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -110,8 +111,8 @@ type Deps struct {
 	// rejected after AnonymousTimeout.
 	Anonymous        func(ctx context.Context, contextID string) bool
 	AnonymousTimeout time.Duration
-	// AgentName returns the name of the agent.
-	AgentName func() string
+	// Runtime has the config of the agent.
+	Runtime *agentdir.Runtime
 }
 
 // Service handles the questions of the agent and of agents it calls.
@@ -123,7 +124,7 @@ type Service struct {
 	unattended       func(contextID string) bool
 	anonymous        func(ctx context.Context, contextID string) bool
 	anonymousTimeout time.Duration
-	agentName        func() string
+	rt               *agentdir.Runtime
 }
 
 // New returns the approvals service of deps.
@@ -136,7 +137,7 @@ func New(deps Deps) *Service {
 		unattended:       deps.Unattended,
 		anonymous:        deps.Anonymous,
 		anonymousTimeout: deps.AnonymousTimeout,
-		agentName:        deps.AgentName,
+		rt:               deps.Runtime,
 	}
 }
 
@@ -505,7 +506,7 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := hitlPage.Execute(w, map[string]any{
-		"Agent": s.agentName(), "Text": q.Display(), "Options": q.Options,
+		"Agent": s.rt.Config().Name, "Text": q.Display(), "Options": q.Options,
 		"Answered": rec.Answer, "By": auth.DisplayPrincipal(rec.AnsweredBy),
 	}); err != nil {
 		slog.Warn("rendering hitl page", "error", err)

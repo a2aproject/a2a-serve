@@ -64,8 +64,8 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Ops:            s.ops,
 		Status:         s.status,
 		Stop:           s.Stop,
-		Config:         s.config,
-		ReloadConfig:   s.reloadSavedConfig,
+		Config:         s.rt.Config,
+		ReloadConfig:   s.rt.Reload,
 		Peers:          s.clients.discover,
 		AddChannel:     s.addChannel,
 		RemoveChannel:  s.deleteChannel,
@@ -94,7 +94,7 @@ func removeIfExists(path string) error {
 
 // status describes the running server, as `a2a-serve status` shows it.
 func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	local, private, public := s.URLs()
 	st := &controlapi.Status{
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
@@ -127,10 +127,10 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(cs), len(nodes)
-	if st.Approvals, err = s.inspector.ApprovalCount(ctx); err != nil {
+	if st.Approvals, err = inspector.ApprovalCount(ctx, s.store, s.tasks); err != nil {
 		return nil, err
 	}
-	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets()); err != nil {
+	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.rt.Secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
@@ -149,7 +149,7 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 		return nil, err
 	}
 	maps.Copy(secrets, req.Secrets)
-	next := s.config()
+	next := s.rt.Config()
 	if err := next.SetChannel(req.Kind, req.Token, req.Email); err != nil {
 		return nil, agenterr.Invalid(err)
 	}
@@ -160,11 +160,10 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 	if err := channel.Validate(ctx, ch); err != nil {
 		return nil, err
 	}
-	if err := s.dir.SaveSecrets(req.Secrets); err != nil {
+	if err := s.rt.SaveSecrets(req.Secrets); err != nil {
 		return nil, err
 	}
-	s.setSecrets(secrets)
-	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
+	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
 		return nil, err
 	}
 	s.supervisor.add(ch)
@@ -175,22 +174,12 @@ func (s *Server) deleteChannel(kind string) error {
 	if err := (&agentdir.Config{}).SetChannel(kind, "", nil); err != nil {
 		return agenterr.Invalid(err)
 	}
-	if !s.config().HasChannel(kind) {
+	if !s.rt.Config().HasChannel(kind) {
 		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
 	}
-	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
+	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
 		return err
 	}
 	s.supervisor.remove(kind)
-	return nil
-}
-
-// reloadSavedConfig applies the live settings of config.yaml.
-func (s *Server) reloadSavedConfig() error {
-	saved, err := s.dir.LoadConfig()
-	if err != nil {
-		return err
-	}
-	s.reloadConfig(saved)
 	return nil
 }

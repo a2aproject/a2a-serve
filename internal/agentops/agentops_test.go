@@ -49,13 +49,12 @@ func newService(t *testing.T) (*Service, *store.Store) {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	cfg := &agentdir.Config{Name: "coder"}
 	return New(Deps{
 		Store:     st,
 		Pairings:  pairings.New(pairings.Deps{Store: st, BaseURL: func() string { return baseURL }}),
 		Contacts:  contacts.Service{Store: st},
 		Schedules: schedules.Service{Store: st},
-		Config:    func() *agentdir.Config { return cfg },
+		Runtime:   agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil),
 		Network:   func() access.Network { return access.Network{Private: network.ProviderTailscale} },
 	}), st
 }

@@ -25,6 +25,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -49,11 +50,11 @@ type ChatTurns struct {
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
 	unattended *contextSet
-	posted     postedTurns
+	posted     *postedTurns
 	budget     *anonymousBudget
 	// downloads holds a place for each message being prepared.
 	downloads chan struct{}
-	agentName func() string
+	rt        *agentdir.Runtime
 }
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
@@ -71,8 +72,11 @@ type ChatTurnsDeps struct {
 	Unattended *contextSet
 	// Budget is the budget of anonymous callers, which is checked before
 	// their attachments are downloaded.
-	Budget    *anonymousBudget
-	AgentName func() string
+	Budget *anonymousBudget
+	// Posted are the turns posted into contexts, waiting to be sent.
+	Posted *postedTurns
+	// Runtime has the config of the agent.
+	Runtime *agentdir.Runtime
 }
 
 // maxDownloads bounds the messages whose attachments are downloaded at once,
@@ -101,7 +105,8 @@ func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		unattended: deps.Unattended,
 		budget:     deps.Budget,
 		downloads:  make(chan struct{}, maxDownloads),
-		agentName:  deps.AgentName,
+		posted:     deps.Posted,
+		rt:         deps.Runtime,
 	}
 }
 
@@ -203,7 +208,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 			c.reply(ctx, ch, in, "Couldn't link your account. Try again.")
 			return
 		}
-		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.agentName()))
+		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.rt.Config().Name))
 		return
 	}
 	p, err := c.chain.Authenticate(ctx, auth.Request{Channel: &in})
@@ -261,7 +266,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		return
 	case isCommand(in.Text, "start"):
 		<-t.turn
-		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.agentName()))
+		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.rt.Config().Name))
 		return
 	}
 

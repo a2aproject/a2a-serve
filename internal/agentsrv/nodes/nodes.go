@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/egress"
@@ -59,8 +60,8 @@ type Config struct {
 	Store *store.Store
 	// Viewer decides which node tasks a caller sees.
 	Viewer store.Viewer
-	// AgentName returns the name of the hosting agent.
-	AgentName func() string
+	// Runtime has the config of the hosting agent.
+	Runtime *agentdir.Runtime
 	// BaseURL returns the URL the hosting agent is reached at.
 	BaseURL func() string
 	// Authenticate puts the principal of a request on a listener into its
@@ -313,7 +314,7 @@ func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
 	u := mailboxapi.NodeURL(baseURL, node.ID)
 	desc := node.Description
 	if desc == "" {
-		desc = node.Name + " is a webhook node hosted by " + n.cfg.AgentName() + "."
+		desc = node.Name + " is a webhook node hosted by " + n.cfg.Runtime.Config().Name + "."
 	}
 	return &a2a.AgentCard{
 		Name:        node.Name,
@@ -552,7 +553,7 @@ func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) 
 		}
 
 		n.wake(e.node, mailboxapi.Envelope{
-			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.AgentName()),
+			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.Runtime.Config().Name),
 			Message: ec.Message, Text: a2atext.Message(ec.Message), State: mailboxapi.StateName(state),
 		})
 
@@ -628,7 +629,7 @@ func (e *nodeExecutor) Cancel(ctx context.Context, ec *a2asrv.ExecutorContext) i
 			w.close()
 		}
 		n.wake(e.node, mailboxapi.Envelope{Kind: mailboxapi.KindCanceled, TaskID: string(ec.TaskID), ContextID: ec.ContextID,
-			Sender: senderOf(ctx, n.cfg.AgentName()), State: mailboxapi.StateName(a2a.TaskStateCanceled)})
+			Sender: senderOf(ctx, n.cfg.Runtime.Config().Name), State: mailboxapi.StateName(a2a.TaskStateCanceled)})
 		yield(a2a.NewStatusUpdateEvent(ec, a2a.TaskStateCanceled, nil), nil)
 	}
 }

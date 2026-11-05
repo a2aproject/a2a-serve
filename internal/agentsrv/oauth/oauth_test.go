@@ -78,8 +78,7 @@ func startOAuth(t *testing.T, g *googletest.Google, cfg *agentdir.Config, shared
 		Google:         g.Endpoints(),
 		SharedClientID: shared,
 		Tokens:         tokens,
-		Config:         func() *agentdir.Config { return cfg },
-		Secrets:        func() agentdir.Secrets { return agentdir.Secrets{"GOOGLE_CLIENT_SECRET": g.Secret} },
+		Runtime:        agentdir.NewRuntime(agentdir.Dir{}, cfg, agentdir.Secrets{"GOOGLE_CLIENT_SECRET": g.Secret}),
 	})
 	mux := http.NewServeMux()
 	var ts *httptest.Server
@@ -245,7 +244,7 @@ func TestServerAuthorizeState(t *testing.T) {
 	g := googletest.New(t, googletest.Account{})
 	cfg := ownerAppConfig("mom@example.org")
 	newMux := func() *http.ServeMux {
-		o := oauth.New(oauth.Deps{Google: g.Endpoints(), Config: func() *agentdir.Config { return cfg }})
+		o := oauth.New(oauth.Deps{Google: g.Endpoints(), Runtime: agentdir.NewRuntime(agentdir.Dir{}, cfg, nil)})
 		mux := http.NewServeMux()
 		o.Register(mux, func(*http.Request) string { return "https://coder.example.com" }, noLimit)
 		return mux
@@ -441,7 +440,7 @@ func TestServerCardScheme(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			o := oauth.New(oauth.Deps{Google: googleauth.Google, SharedClientID: tc.shared, Config: func() *agentdir.Config { return tc.cfg }})
+			o := oauth.New(oauth.Deps{Google: googleauth.Google, SharedClientID: tc.shared, Runtime: agentdir.NewRuntime(agentdir.Dir{}, tc.cfg, nil)})
 			got := o.CardScheme(base)
 			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(a2a.OpenIDConnectSecurityScheme{}, "Description"), cmpopts.IgnoreFields(a2a.OAuth2SecurityScheme{}, "Description")); diff != "" {
 				t.Fatalf("Server.CardScheme() wrong scheme (-want +got) diff = %s", diff)
@@ -466,7 +465,7 @@ func TestServerChallengeHeader(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			o := oauth.New(oauth.Deps{Google: googleauth.Google, Config: func() *agentdir.Config { return tc.cfg }})
+			o := oauth.New(oauth.Deps{Google: googleauth.Google, Runtime: agentdir.NewRuntime(agentdir.Dir{}, tc.cfg, nil)})
 			if got := o.ChallengeHeader(tc.kind, base); got != tc.want {
 				t.Fatalf("Server.ChallengeHeader(%q) = %q, want %q", tc.kind, got, tc.want)
 			}

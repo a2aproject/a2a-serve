@@ -54,7 +54,7 @@ import (
 func addContact(t *testing.T, caller, callee *testServer, name, role string) {
 	t.Helper()
 	ctx := context.Background()
-	code, err := controlapi.NewClient(callee.dir).Pair(ctx, controlapi.PairCodeRequest{Name: caller.srv.config().Name, Owner: role == auth.RoleOwner})
+	code, err := controlapi.NewClient(callee.dir).Pair(ctx, controlapi.PairCodeRequest{Name: caller.srv.rt.Config().Name, Owner: role == auth.RoleOwner})
 	if err != nil {
 		t.Fatal(err)
 	}

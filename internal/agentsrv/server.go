@@ -29,7 +29,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -106,9 +105,8 @@ type Server struct {
 	started time.Time
 	cancel  context.CancelFunc
 
-	// cfgMu serializes changes of rt.
-	cfgMu sync.Mutex
-	rt    atomic.Pointer[runtimeConfig]
+	// rt is the config and secrets the server runs with.
+	rt *agentdir.Runtime
 
 	store   *store.Store
 	tasks   *store.TaskStore
@@ -156,9 +154,10 @@ type Server struct {
 	backups   backups
 	inspector *inspector.Inspector
 	// split runs the conversations of anonymous callers and of each
-	// authenticated user in their own agent processes, and budget limits
-	// the tasks of anonymous callers.
+	// authenticated user in their own agent processes, which keys tell,
+	// and budget limits the tasks of anonymous callers.
 	split  *splitExecutor
+	keys   *agentKeys
 	budget *anonymousBudget
 	// users are the agent processes of users that run now.
 	users userAgents
@@ -168,13 +167,6 @@ type Server struct {
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
 	timings        Timings
-}
-
-// runtimeConfig is the config and secrets the server runs with. Changes
-// replace it whole, so readers never see a partial update.
-type runtimeConfig struct {
-	cfg     *agentdir.Config
-	secrets agentdir.Secrets
 }
 
 // maxExecutions bounds the tasks running at once, and
@@ -218,6 +210,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	s := &Server{
 		dir:     opts.Dir,
+		rt:      agentdir.NewRuntime(opts.Dir, opts.Config, opts.Secrets),
 		out:     opts.Out,
 		started: time.Now(),
 		cancel:  cancel,
@@ -232,7 +225,6 @@ func Run(ctx context.Context, opts Options) error {
 
 		timings: opts.Timings.withDefaults(),
 	}
-	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
 	defer func() {
 		cancel()
@@ -308,7 +300,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	}
 	closers.push(func(context.Context) error { return st.Close() })
 	s.store = st
-	st.SetTaskTTL(s.config().TaskTTLDuration())
+	st.SetTaskTTL(s.rt.Config().TaskTTLDuration())
 	s.tasks = st.Tasks("", s.viewer)
 	n, err := s.tasks.FailUnfinished(ctx, "The server restarted before this task finished. Send the message again.", asksCallerQuestion)
 	if err != nil {
@@ -336,11 +328,10 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 
 // build creates the components and starts the harness. Nothing serves yet.
 // Each component gets the ones it uses, so they are created in dependency
-// order; the agent's handler runs them all, so it comes last and the
-// components which send it turns hold s.sender, which it is set into.
+// order. The agent's handler runs the approvals, chat turns and watches,
+// which send it turns, so [bindHandler] builds them together.
 func (s *Server) build(ctx context.Context, closers *stack, opts Options) error {
-	agentName := func() string { return s.config().Name }
-	ads, err := gossip.Open(filepath.Join(s.dir.StateDir(), "ads.json"), s.config().Name)
+	ads, err := gossip.Open(filepath.Join(s.dir.StateDir(), "ads.json"), s.rt.Config().Name)
 	if err != nil {
 		return err
 	}
@@ -355,39 +346,26 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Google:         google,
 		SharedClientID: opts.SharedGoogleClientID,
 		Tokens:         s.store,
-		Config:         s.config,
-		Secrets:        s.secrets,
+		Runtime:        s.rt,
 	})
 	s.nodes = nodes.New(ctx, nodes.Config{
 		Store:          s.store,
 		Viewer:         s.viewer,
-		AgentName:      agentName,
+		Runtime:        s.rt,
 		BaseURL:        s.bestURL,
 		Authenticate:   s.authenticate,
 		WebhookRetries: s.timings.WebhookRetries,
 		Advertised:     s.ads.Advertised,
 	})
 	s.supervisor = newChannelSupervisor(ctx, SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
-	s.pairings = pairings.New(pairings.Deps{
-		Store:     s.store,
-		BaseURL:   s.bestURL,
-		Ads:       s.ads,
-		LinkHints: s.supervisor.linkHints,
-		Mailbox:   s.nodes.Mailbox,
-		Forget:    s.nodes.Forget,
-		Changed:   s.refreshInstructions,
-		Users:     stopUsers{s},
-		Homes:     userHomes{s},
-	})
-	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
+	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
 	closers.push(s.clients.close)
+	s.keys = newAgentKeys(s.store.Sessions())
 	s.claims = newCallClaims(CallClaimsDeps{
-		Store:  s.store,
-		Bridge: s.bridge,
-		Chain:  s.chain,
-		// The executor's turns use the claims, so they come first; split
-		// exists before the first turn.
-		AgentKey: func(ctx context.Context, contextID string) (string, error) { return s.split.agentKey(ctx, contextID) },
+		Store:    s.store,
+		Bridge:   s.bridge,
+		Chain:    s.chain,
+		AgentKey: s.keys.of,
 		Sessions: s.store.Sessions(),
 	})
 	s.refreshInstructions(ctx)
@@ -395,7 +373,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return err
 	}
 
-	s.sender = &handlerSender{}
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	s.chatApprovals = newChatApprovals(ctx, ChatApprovalsDeps{
 		Store:      s.store,
@@ -403,36 +380,67 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Records:    records,
 		Supervisor: s.supervisor,
 		Bus:        s.bus,
-		AgentName:  agentName,
-		OwnerChat:  func() string { return s.config().Approvals.OwnerChat },
-		Anonymous:  s.split.Anonymous,
+		Runtime:    s.rt,
+		Anonymous:  s.keys.anonymous,
 		Timings:    s.timings,
 	})
 	unattended := &contextSet{}
-	s.approvals = approvals.New(approvals.Deps{
-		Records:          records,
-		Sender:           s.sender,
-		Notifier:         s.chatApprovals,
-		Remote:           s.clients,
-		Unattended:       unattended.has,
-		Anonymous:        s.split.Anonymous,
-		AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
-		AgentName:        agentName,
-	})
-	s.chatTurns = newChatTurns(ChatTurnsDeps{
-		Store:      s.store,
-		Tasks:      s.tasks,
-		Chain:      s.chain,
-		Pairings:   s.pairings,
-		Approvals:  s.approvals,
-		Chat:       s.chatApprovals,
-		Supervisor: s.supervisor,
-		Queue:      newConversationQueue(),
-		Sender:     s.sender,
-		Bus:        s.bus,
-		Unattended: unattended,
-		Budget:     s.budget,
-		AgentName:  agentName,
+	posted := &postedTurns{}
+	s.sender, s.handler = bindHandler(func(sender *handlerSender) a2asrv.RequestHandler {
+		s.approvals = approvals.New(approvals.Deps{
+			Records:          records,
+			Sender:           sender,
+			Notifier:         s.chatApprovals,
+			Remote:           s.clients,
+			Unattended:       unattended.has,
+			Anonymous:        s.keys.anonymous,
+			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
+			Runtime:          s.rt,
+		})
+		s.pairings = pairings.New(pairings.Deps{
+			Store:     s.store,
+			BaseURL:   s.bestURL,
+			Ads:       s.ads,
+			LinkHints: s.supervisor.linkHints,
+			Mailbox:   s.nodes.Mailbox,
+			Forget:    s.nodes.Forget,
+			Changed:   s.refreshInstructions,
+			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
+			Homes:     userHomes{s},
+		})
+		s.chatTurns = newChatTurns(ChatTurnsDeps{
+			Store:      s.store,
+			Tasks:      s.tasks,
+			Chain:      s.chain,
+			Pairings:   s.pairings,
+			Approvals:  s.approvals,
+			Chat:       s.chatApprovals,
+			Supervisor: s.supervisor,
+			Queue:      newConversationQueue(),
+			Sender:     sender,
+			Bus:        s.bus,
+			Unattended: unattended,
+			Budget:     s.budget,
+			Posted:     posted,
+			Runtime:    s.rt,
+		})
+		s.watches = newWatches(ctx, WatchesDeps{
+			Store:   s.store,
+			Clients: s.clients,
+			Records: records,
+			Chat:    s.chatApprovals,
+			Turns:   s.chatTurns,
+			Chain:   s.chain,
+			Timings: s.timings,
+		})
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended, watches: s.watches},
+			a2asrv.WithTaskStore(s.tasks),
+			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
+			a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
+			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
+			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
+			a2asrv.WithLogger(slog.Default()),
+		)))
 	})
 	s.schedules = newSchedules(ctx, schedulesDeps{
 		Store:      s.store,
@@ -442,21 +450,12 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Now:        opts.Now,
 		MinWait:    s.timings.ScheduleMinWait,
 	})
-	s.watches = newWatches(ctx, WatchesDeps{
-		Store:   s.store,
-		Clients: s.clients,
-		Records: records,
-		Chat:    s.chatApprovals,
-		Turns:   s.chatTurns,
-		Chain:   s.chain,
-		Timings: s.timings,
-	})
 	s.ops = agentops.New(agentops.Deps{
 		Store:       s.store,
 		Pairings:    s.pairings,
 		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.locate, HTTPClient: s.clients.httpClient, Changed: s.refreshInstructions},
 		Schedules:   s.schedules.service(),
-		Config:      s.config,
+		Runtime:     s.rt,
 		Network:     s.networks,
 		RunSchedule: s.schedules.runNow,
 	})
@@ -467,21 +466,11 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Approvals:    s.approvals,
 		ListPairings: s.pairings.List,
 		Sender:       s.sender,
-		AgentName:    agentName,
+		Runtime:      s.rt,
 		BaseURL:      s.bestURL,
 		Status:       s.status,
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
-
-	s.handler = withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended, watches: s.watches},
-		a2asrv.WithTaskStore(s.tasks),
-		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
-		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
-		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
-		a2asrv.WithLogger(slog.Default()),
-	)))
-	s.sender.set(s.handler)
 	return nil
 }
 
@@ -502,17 +491,24 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		exec = acp
 	}
 	s.budget = newAnonymousBudget()
-	s.split = &splitExecutor{main: exec, sessions: s.store.Sessions(), budget: s.budget, ctx: ctx}
+	var start startPool
 	if opts.Executor == nil {
-		s.split.start = func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-			if pool == anonymousPool {
-				return s.newAnonymousExecutor(ctx, opts.HarnessLog)
-			}
-			return s.newUsersExecutor(ctx, opts.HarnessLog)
-		}
+		start = s.poolStarter(opts.HarnessLog)
 	}
+	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start})
 	closers.push(s.split.close)
 	return nil
+}
+
+// poolStarter starts the agent processes of anonymous callers in one pool,
+// and those of authenticated users in another.
+func (s *Server) poolStarter(harnessLog io.Writer) startPool {
+	return func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+		if pool == anonymousPool {
+			return s.newAnonymousExecutor(ctx, harnessLog)
+		}
+		return s.newUsersExecutor(ctx, harnessLog)
+	}
 }
 
 // serve starts the chat turns, serves every listener and the control socket,
@@ -566,49 +562,6 @@ func closeListener(ln net.Listener) error {
 	return nil
 }
 
-func (s *Server) config() *agentdir.Config {
-	c := *s.rt.Load().cfg
-	return &c
-}
-
-// secrets are the secrets in use. Callers must not change them.
-func (s *Server) secrets() agentdir.Secrets { return s.rt.Load().secrets }
-
-// setSecrets replaces the secrets in use.
-func (s *Server) setSecrets(secrets agentdir.Secrets) {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	s.rt.Store(&runtimeConfig{cfg: s.rt.Load().cfg, secrets: secrets})
-}
-
-// reloadConfig applies the live settings of saved to the config in use.
-func (s *Server) reloadConfig(saved *agentdir.Config) {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	cur := s.rt.Load()
-	next := *cur.cfg
-	agentdir.CopyLive(&next, saved)
-	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
-}
-
-// updateConfig applies fn to the config in use and to config.yaml, which
-// may hold changes waiting for a restart. A config.yaml that fails to parse
-// is left alone and returned as the error.
-func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
-	s.cfgMu.Lock()
-	defer s.cfgMu.Unlock()
-	cur := s.rt.Load()
-	next := *cur.cfg
-	if err := fn(&next); err != nil {
-		return err
-	}
-	if err := s.dir.UpdateConfig(fn); err != nil {
-		return err
-	}
-	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
-	return nil
-}
-
 func (s *Server) logf(format string, args ...any) {
 	if _, err := fmt.Fprintf(s.out, format+"\n", args...); err != nil {
 		slog.Debug("writing progress", "error", err)
@@ -618,14 +571,14 @@ func (s *Server) logf(format string, args ...any) {
 // listenLocal opens the localhost listener. The first run picks a free port
 // and saves it, so the local URL stays the same.
 func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- error) error {
-	port := s.config().Port
+	port := s.rt.Config().Port
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		return fmt.Errorf("listening on localhost:%d: %w", port, err)
 	}
 	if port == 0 {
 		port = ln.Addr().(*net.TCPAddr).Port
-		if err := s.updateConfig(func(c *agentdir.Config) error { c.Port = port; return nil }); err != nil {
+		if err := s.rt.Update(func(c *agentdir.Config) error { c.Port = port; return nil }); err != nil {
 			return errors.Join(err, ln.Close())
 		}
 	}
@@ -734,7 +687,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if err != nil {
 		return err
 	}
-	if w := localSandboxWarning(s.config().Sandbox, a); w != "" {
+	if w := localSandboxWarning(s.rt.Config().Sandbox, a); w != "" {
 		s.logf("! %s", w)
 	}
 	return s.supervisor.announce(ctx)
@@ -762,7 +715,7 @@ func (s *Server) viewer(ctx context.Context) (string, bool, error) {
 
 // policy is the access policy in force.
 func (s *Server) policy() auth.Policy {
-	return access.Policy(s.config().Policy)
+	return access.Policy(s.rt.Config().Policy)
 }
 
 // networks are the networks the agent is on.

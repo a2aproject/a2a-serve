@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 )
@@ -126,7 +127,7 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			ch := &flakyChannel{fakeChannel: newFakeChannel("fake")}
-			a := &ChatApprovals{agentName: func() string { return "coder" }, timings: Timings{SendRetry: time.Millisecond}}
+			a := &ChatApprovals{rt: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil), timings: Timings{SendRetry: time.Millisecond}}
 			rd := newRenderer(a, ch, "conv", channel.Ref{}, auth.Principal{})
 			rd.onArtifact(&a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart("partial")}}, false)
 			rd.flush(ctx, true)

@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -58,7 +59,7 @@ func newHost(t *testing.T) *Host {
 	return New(t.Context(), Config{
 		Store:          st,
 		Viewer:         viewer,
-		AgentName:      func() string { return "assistant" },
+		Runtime:        agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil),
 		BaseURL:        func() string { return "https://assistant.example.com" },
 		WebhookRetries: []time.Duration{0},
 		Advertised:     func(string) bool { return true },

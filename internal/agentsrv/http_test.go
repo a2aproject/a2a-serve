@@ -209,8 +209,7 @@ func TestCardDescription(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{}
-			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: tc.harness}})
+			s := &Server{rt: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Harness: tc.harness}, nil)}
 			if got := s.card(network.ListenerPrivate, "http://127.0.0.1:9000").Description; got != tc.want {
 				t.Fatalf("Server.card().Description = %q, want %q", got, tc.want)
 			}
@@ -235,9 +234,8 @@ func TestCardPairingScheme(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{private: &fakeProvider{}}
-			s.oauth = oauth.New(oauth.Deps{Google: googleauth.Google, Config: s.config})
-			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
+			rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}, nil)
+			s := &Server{private: &fakeProvider{}, rt: rt, oauth: oauth.New(oauth.Deps{Google: googleauth.Google, Runtime: rt})}
 			card := s.card(tc.kind, "http://127.0.0.1:9000")
 			_, got := card.SecuritySchemes["pairing"]
 			if got != tc.want || (len(card.SecurityRequirements) > 0) != tc.want {
@@ -265,9 +263,8 @@ func TestCardSignInScheme(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{private: &fakeProvider{}}
-			s.oauth = oauth.New(oauth.Deps{Google: googleauth.Google, SharedClientID: "shared-app", Config: s.config})
-			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
+			rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}, nil)
+			s := &Server{private: &fakeProvider{}, rt: rt, oauth: oauth.New(oauth.Deps{Google: googleauth.Google, SharedClientID: "shared-app", Runtime: rt})}
 			card := s.card(tc.kind, base)
 			if _, got := card.SecuritySchemes["google"]; got != tc.want {
 				t.Fatalf("Server.card(%q) advertises the google scheme = %v, want %v", tc.kind, got, tc.want)

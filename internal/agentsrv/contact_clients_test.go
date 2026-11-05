@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/egress"
@@ -42,7 +43,7 @@ import (
 
 func newTestContactClients(t *testing.T, st *store.Store, private network.Provider) *ContactClients {
 	t.Helper()
-	cc := newContactClients(ContactClientsDeps{Store: st, Private: private, AgentName: func() string { return "assistant" }})
+	cc := newContactClients(ContactClientsDeps{Store: st, Private: private, Runtime: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil)})
 	t.Cleanup(func() {
 		if err := cc.close(context.Background()); err != nil {
 			t.Errorf("ContactClients.close() error = %v", err)

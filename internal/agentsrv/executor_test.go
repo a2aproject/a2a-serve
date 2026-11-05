@@ -402,9 +402,8 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 			if err != nil {
 				t.Fatalf("harness.NewPins() error = %v", err)
 			}
-			s := &Server{dir: dir, pins: pins}
 			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
-			s.rt.Store(&runtimeConfig{cfg: cfg, secrets: agentdir.Secrets{}})
+			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{})}
 			if err := os.Rename(dir.Root, dir.Root+".old"); err != nil {
 				t.Fatal(err)
 			}

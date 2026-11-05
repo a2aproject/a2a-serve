@@ -55,7 +55,7 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 // is a server with a variable that has no value, since it would only fail
 // inside the harness.
 func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	ws, err := s.dir.WorkspaceMount(cfg)
 	if err != nil {
 		return a2aacp.SessionParams{}, err
@@ -65,7 +65,7 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
 		return a2aacp.SessionParams{Cwd: ws.Src}, nil
 	}
-	vars := project.Vars(cfg, s.secrets())
+	vars := project.Vars(cfg, s.rt.Secrets())
 	var servers []json.RawMessage
 	for _, srv := range found {
 		if cfg.MCPDisabled(srv.Name) {

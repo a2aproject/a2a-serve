@@ -16,9 +16,7 @@ package agentsrv
 
 import (
 	"context"
-	"os"
 	"testing"
-	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -118,69 +116,5 @@ func TestStatusAccess(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)
-	}
-}
-
-func TestUpdateConfigKeepsUnparsableConfigFile(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{})
-	broken := []byte("name: [unterminated\n")
-	if err := os.WriteFile(ts.dir.ConfigPath(), broken, 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	err := ts.srv.updateConfig(func(c *agentdir.Config) error {
-		c.Description = "changed"
-		return nil
-	})
-
-	if err == nil {
-		t.Fatalf("Server.updateConfig() error = nil, want a parse error")
-	}
-	got, readErr := os.ReadFile(ts.dir.ConfigPath())
-	if readErr != nil {
-		t.Fatal(readErr)
-	}
-	if diff := cmp.Diff(string(broken), string(got)); diff != "" {
-		t.Fatalf("Server.updateConfig() overwrote config.yaml (-want +got) diff = %s", diff)
-	}
-	if got := ts.srv.config().Description; got == "changed" {
-		t.Fatalf("Server.updateConfig() applied the change to the running config despite the error")
-	}
-}
-
-func TestUpdateConfigWaitsForConfigLock(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{})
-	locked := make(chan struct{})
-	unlock := make(chan struct{})
-	holderDone := make(chan error, 1)
-	go func() {
-		holderDone <- ts.dir.LockConfig(func() error {
-			close(locked)
-			<-unlock
-			return nil
-		})
-	}()
-	<-locked
-	done := make(chan error, 1)
-	go func() {
-		done <- ts.srv.updateConfig(func(c *agentdir.Config) error {
-			c.Description = "changed"
-			return nil
-		})
-	}()
-
-	select {
-	case err := <-done:
-		t.Fatalf("Server.updateConfig() returned while the config was locked, error = %v", err)
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(unlock)
-	if err := <-holderDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatalf("Server.updateConfig() error = %v", err)
 	}
 }

@@ -24,6 +24,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -145,8 +146,7 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 		Records:    fx.records,
 		Supervisor: fx.supervisor,
 		Bus:        fx.bus,
-		AgentName:  func() string { return "coder" },
-		OwnerChat:  func() string { return ownerChat },
+		Runtime:    agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Approvals: agentdir.ApprovalsConfig{OwnerChat: ownerChat}}, nil),
 		Anonymous:  func(context.Context, string) bool { return false },
 		Timings:    fx.timings,
 	})
