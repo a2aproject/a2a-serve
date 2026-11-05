@@ -318,3 +318,62 @@ func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 		t.Fatalf("injected turn history = %v, want the node's result", last.History)
 	}
 }
+
+func TestNodeCardIsServedToCallersWhoMayCallTheNode(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{}}
+	ts := startServer(t, serverOpts{name: "assistant", private: fnet.provider("assistant")})
+	addNode(t, ts, "grok", 0)
+	addNode(t, ts, "secret", 0)
+	on := true
+	if _, err := controlapi.NewClient(ts.dir).UpdatePairing(context.Background(), "grok", controlapi.PairingUpdate{Advertised: &on}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+	owner := ts.pair("me", auth.RoleOwner)
+	member := ts.pair("anna", auth.RoleAuthenticated)
+	tests := []struct {
+		name  string
+		path  string
+		token string
+		want  int
+	}{
+		{name: "advertised node card without a token", path: "/n/grok/.well-known/agent-card.json", want: http.StatusOK},
+		{name: "advertised node root without a token", path: "/n/grok", want: http.StatusOK},
+		{name: "advertised node card for a member", path: "/n/grok/.well-known/agent-card.json", token: member, want: http.StatusOK},
+		{name: "node card without a token", path: "/n/secret/.well-known/agent-card.json", want: http.StatusUnauthorized},
+		{name: "node root without a token", path: "/n/secret", want: http.StatusUnauthorized},
+		{name: "node legacy card without a token", path: "/n/secret/.well-known/agent.json", want: http.StatusUnauthorized},
+		{name: "node card for a member", path: "/n/secret/.well-known/agent-card.json", token: member, want: http.StatusForbidden},
+		{name: "node card for the owner", path: "/n/secret/.well-known/agent-card.json", token: owner, want: http.StatusOK},
+		{name: "node root for the owner", path: "/n/secret", token: owner, want: http.StatusOK},
+		{name: "unknown node without a token", path: "/n/nobody/.well-known/agent-card.json", want: http.StatusUnauthorized},
+		{name: "unknown node for the owner", path: "/n/nobody/.well-known/agent-card.json", token: owner, want: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req, err := http.NewRequest(http.MethodGet, ts.localURL()+tc.path, nil)
+			if err != nil {
+				t.Fatalf("http.NewRequest() error = %v", err)
+			}
+			req.Header.Set("Accept", "application/json")
+			if tc.token != "" {
+				req.Header.Set("Authorization", "Bearer "+tc.token)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("GET %s error = %v", tc.path, err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err := errors.Join(err, resp.Body.Close()); err != nil {
+				t.Fatalf("reading GET %s: %v", tc.path, err)
+			}
+			if resp.StatusCode != tc.want {
+				t.Fatalf("GET %s = %d, want %d: %s", tc.path, resp.StatusCode, tc.want, body)
+			}
+			if tc.want != http.StatusOK && strings.Contains(string(body), "secret") {
+				t.Fatalf("GET %s body = %s, want no node name", tc.path, body)
+			}
+		})
+	}
+}

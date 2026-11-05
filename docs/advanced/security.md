@@ -35,12 +35,12 @@ A web page open in your browser can't make requests that change state on the age
 | --- | --- |
 | localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
 | Tailscale | Everyone on the tailnet, or with `--private-access paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
-| Agent Mesh relay | On a relay that admits people by sign-in: you, callers with a token, and people on the `--allow-email` list. On a relay that agents join only with tokens: everyone on the relay. `--private-access` overrides both. |
+| Agent Mesh relay | Everyone the relay admits, or with `--private-access paired` only callers with a token. The relay's enrollment decides who is on it ([who a relay admits](agent-mesh.md#how-the-access-model-maps)). |
 | Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-access anyone`, also anyone, as an anonymous caller. |
 | Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC, or DKIM of the sender's exact domain, at the trusted server. Email proves only the sender's domain. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
-Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network.
+Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network. The card of a node that isn't advertised goes only to callers who may call the node.
 
 A call that comes through another agent gets at most the authenticated role, even from your own agents, so someone who can steer one of your agents can't act as you on the others. The calling server keeps the user a call is for, and relays the callee's approvals to them.
 

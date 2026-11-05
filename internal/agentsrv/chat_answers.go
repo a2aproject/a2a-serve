@@ -144,12 +144,14 @@ func (c *ChatTurns) answerIn(ctx context.Context, ch channel.Channel, in channel
 		if err != nil {
 			slog.Error("answering question", "question", rec.ID, "error", err)
 			c.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
+			c.restorePending(ctx, in, rec)
 			return
 		}
 		if err := c.store.AnswerQuestion(ctx, rec.ID, p.ID, opt.ID); err != nil {
 			if !errors.Is(err, store.ErrAnswered) {
 				slog.Error("answering question", "question", rec.ID, "error", err)
 				c.reply(ctx, ch, in, "Couldn't record the answer. Try again.")
+				c.restorePending(ctx, in, rec)
 				return
 			}
 			c.reply(ctx, ch, in, "Already answered.")

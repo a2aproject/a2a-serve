@@ -17,12 +17,9 @@ package agentctl
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"maps"
-	"net/http"
 	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -32,7 +29,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/manage"
-	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -82,29 +78,11 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 			if err != nil {
 				return nil, err
 			}
-			return access.Describe(cfg.Policy, networkOf(ctx, d, cfg), access.CountPairings(all)), nil
+			return access.Describe(cfg.Policy, access.NetworkOf(cfg), access.CountPairings(all)), nil
 		}},
 		contacts:  manage.Contacts{Store: st},
 		schedules: manage.Schedules{Store: st},
 	}, nil
-}
-
-// networkOf returns the networks of the agent in d, which runs with cfg.
-// Like the running server, it takes a relay to admit people by sign-in
-// unless the agent joins it with a token and the relay's /info names no
-// identity provider.
-func networkOf(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config) access.Network {
-	net := access.NetworkOf(cfg)
-	if net.Private != network.ProviderRelay {
-		return net
-	}
-	secrets, err := d.LoadSecrets()
-	if err != nil {
-		slog.Warn("reading the secrets to check the relay", "error", err)
-	}
-	net.SignIn = secrets[agentdir.SecretRelayToken] == "" ||
-		network.RelayAdmitsBySignIn(ctx, &http.Client{Timeout: relayInfoTimeout}, cfg.Network.Private)
-	return net
 }
 
 // savedAccess describes who may call the agent in d with its saved config
@@ -133,11 +111,8 @@ func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, clie
 		}
 		n = access.CountPairings(all)
 	}
-	return access.Describe(cfg.Policy, networkOf(ctx, d, cfg), n), nil
+	return access.Describe(cfg.Policy, access.NetworkOf(cfg), n), nil
 }
-
-// relayInfoTimeout bounds the read of a relay's /info.
-const relayInfoTimeout = 10 * time.Second
 
 // Close closes the database and releases the agent directory.
 func (o *offline) Close() error { return errors.Join(o.store.Close(), o.release()) }

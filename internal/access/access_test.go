@@ -31,15 +31,9 @@ func TestPolicy(t *testing.T) {
 	tests := []struct {
 		name     string
 		settings agentdir.PolicyConfig
-		signIn   bool
 		want     auth.Policy
 	}{
 		{name: "defaults", want: auth.Policy{Authenticated: []string{"private"}}},
-		{name: "network that admits by sign-in", signIn: true, want: auth.Policy{}},
-		{
-			name: "everyone on a network that admits by sign-in", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessEveryone}, signIn: true,
-			want: auth.Policy{Authenticated: []string{"private"}},
-		},
 		{name: "closed private network", settings: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: auth.Policy{}},
 		{
 			name: "public URL open to anyone", settings: agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone},
@@ -54,7 +48,7 @@ func TestPolicy(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if diff := cmp.Diff(tc.want, Policy(tc.settings, tc.signIn)); diff != "" {
+			if diff := cmp.Diff(tc.want, Policy(tc.settings)); diff != "" {
 				t.Fatalf("Policy() wrong result (-want +got) diff = %s", diff)
 			}
 		})
@@ -139,15 +133,27 @@ func TestDescribe(t *testing.T) {
 			},
 		},
 		{
-			name: "relay that admits by sign-in", net: Network{Private: network.ProviderRelay, Public: true, SignIn: true},
+			name: "relay", net: Network{Private: network.ProviderRelay, Public: true},
 			want: &controlapi.Access{
-				PrivateAccess: "paired", PublicAccess: "paired",
-				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
+				PrivateAccess: "everyone", PublicAccess: "paired",
+				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{},
+				Others: []string{"everyone on the relay"},
+				Summary: []string{
+					"you: this machine and your devices on the relay",
+					"everyone on the relay",
+					"the public URL needs a pairing",
+				},
+			},
+		},
+		{
+			name: "closed relay", settings: agentdir.PolicyConfig{PrivateAccess: "paired"}, net: Network{Private: network.ProviderRelay},
+			want: &controlapi.Access{
+				PrivateAccess: "paired",
+				Owner:         []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
 				Summary: []string{
 					"you: this machine and your devices on the relay",
 					"nobody else",
-					"the relay needs a pairing, since it admits people by sign-in (--private-access everyone opens it)",
-					"the public URL needs a pairing",
+					"the relay needs a pairing",
 				},
 			},
 		},

@@ -44,9 +44,9 @@ grep -q '^credential-helper:' ~/.config/a2a-cli/config.yaml 2>/dev/null ||
 
 `a2a-serve doctor` reads `a2a version -o json` and fails on versions older than the one this a2a-serve needs. Those versions lack `--unix-socket` or the credential helper format above, so their calls get a 401. With `--sandbox local`, the server also logs a warning on start.
 
-## Running a2a-serve as `a2a serve`
+## Command plugin
 
-The `a2a` CLI runs any `a2a-<name>` on `PATH` as `a2a <name>` when command plugins are enabled. With `a2a-serve` on `PATH`, `a2a serve start` runs `a2a-serve start`, and the same holds for every other command.
+The `a2a` CLI runs any `a2a-<name>` on `PATH` as `a2a <name>` when command plugins are enabled. With `a2a-serve` on `PATH`, `a2a serve start` runs `a2a-serve start`, and the same holds for every other command. This documentation writes every command as `a2a-serve <command>`.
 
 Command plugins are off by default. `a2a-serve doctor --fix` turns them on. To turn them on by hand:
 

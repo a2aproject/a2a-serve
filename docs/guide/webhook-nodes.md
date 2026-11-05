@@ -19,6 +19,8 @@ Give every webhook a credential that only the server sends, such as a `--webhook
 
 Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as an authenticated caller.
 
+The server follows redirects of the webhook. It sends the webhook headers and the signature only to the host of the webhook URL, and drops them when a redirect leads to another host. A wake that takes longer than 20 seconds fails and is retried.
+
 ## Advertised pairings
 
 With `--advertised`, every agent on the private network can find a webhook node and call it through its host:

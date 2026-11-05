@@ -324,6 +324,19 @@ func TestConfigRunningAgent(t *testing.T) {
 	if err != nil || !strings.Contains(out, "! coder is running; restart to apply env: a2a-serve restart") {
 		t.Fatalf("a2a-serve config set --env = %q, %v, want a restart notice", out, err)
 	}
+	out, err = runCMD(t, "-o", "json", "config", "set", "--dir", dir, "--env", "TRACE=1")
+	if err != nil {
+		t.Fatalf("a2a-serve config set --env -o json error = %v", err)
+	}
+	var set struct {
+		Restart []string `json:"restart"`
+	}
+	if err := json.Unmarshal([]byte(out), &set); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
+	}
+	if diff := cmp.Diff([]string{"env"}, set.Restart); diff != "" {
+		t.Fatalf("a2a-serve config set --env -o json restart wrong result (-want +got) diff = %s", diff)
+	}
 	out, err = runCMD(t, "config", "--dir", dir)
 	if err != nil || !strings.Contains(out, "! restart to apply env: a2a-serve restart") {
 		t.Fatalf("a2a-serve config = %q, %v, want env pending", out, err)
@@ -351,7 +364,7 @@ func TestConfigRunningAgent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if diff := cmp.Diff([]string{"DEBUG=1"}, saved.Env); diff != "" {
+	if diff := cmp.Diff([]string{"DEBUG=1", "TRACE=1"}, saved.Env); diff != "" {
 		t.Fatalf("saved env wrong result (-want +got) diff = %s", diff)
 	}
 }
