@@ -15,17 +15,14 @@
 package agentsrv
 
 import (
-	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"io"
 	"log/slog"
-	"math"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -38,13 +35,14 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/skills"
 )
 
@@ -102,7 +100,7 @@ func (s *Server) routes(l listener) http.Handler {
 	})
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
-	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l.tunneled) })))
+	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
 	if l.kind == network.ListenerPublic {
 		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) })
@@ -246,55 +244,86 @@ func (s *Server) needsPairing(kind string) bool {
 
 // handlePair exchanges a pair code for a caller token, or a node code for a
 // node token.
-func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL string, tunneled bool) {
-	host := remoteHost(r.RemoteAddr)
-	if wait := s.pairLimit.wait(host, tunneled); wait > 0 {
-		secs := int(math.Ceil(wait.Seconds()))
-		w.Header().Set("Retry-After", strconv.Itoa(secs))
-		jsonhttp.Error(w, http.StatusTooManyRequests, fmt.Sprintf("too many invalid pairing codes; try again in %d seconds", secs))
-		return
-	}
+func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL string, l listener) {
 	var req pairapi.Request
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	kind := cmp.Or(req.Kind, pairapi.PairingPerson)
-	if kind == pairapi.PairingWebhook || !slices.Contains(pairapi.PairingKinds, kind) {
-		jsonhttp.Error(w, http.StatusBadRequest, "unknown kind "+req.Kind)
+	red, err := s.pairings.Redeem(r.Context(), req.Code, pairings.Via{Client: s.pairClient(r, l), URL: baseURL, Kind: req.Kind})
+	var (
+		limited *pairings.RateLimitError
+		invalid *agenterr.InvalidError
+	)
+	switch {
+	case errors.As(err, &limited):
+		w.Header().Set("Retry-After", strconv.Itoa(limited.Seconds()))
+		jsonhttp.Error(w, http.StatusTooManyRequests, limited.Error())
 		return
-	}
-	local := false
-	c, err := s.store.TakeCode(r.Context(), auth.NormalizeCode(req.Code), func(pending store.Code) bool {
-		local = pending.Pairing == auth.LocalPairing
-		return !local
-	})
-	if local {
-		jsonhttp.Error(w, http.StatusForbidden, "this code links your chat account; send \"join <code>\" to the agent's bot")
+	case errors.As(err, &invalid):
+		jsonhttp.Error(w, http.StatusBadRequest, invalid.Error())
 		return
-	}
-	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
-		s.pairLimit.fail(host, tunneled)
+	case errors.Is(err, pairings.ErrLocalCode):
+		jsonhttp.Error(w, http.StatusForbidden, err.Error())
+		return
+	case errors.Is(err, pairings.ErrInvalidCode):
 		jsonhttp.Error(w, http.StatusForbidden, "invalid or expired pairing code")
 		return
-	}
-	if err != nil {
+	case err != nil:
 		slog.Error("pairing failed", "error", err)
 		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
 		return
 	}
-	s.pairLimit.succeed(tunneled)
-	if c.Kind == pairapi.PairingWebhook {
-		s.nodes.Pair(w, r, baseURL, c.Pairing)
-		return
+	agent := s.config().Name
+	if red.Kind == pairapi.KindNode {
+		agent = red.Node
 	}
-	tok, principal, err := auth.IssueToken(r.Context(), s.store, c.Pairing, baseURL, kind)
+	jsonhttp.Write(w, http.StatusOK, pairapi.Response{Kind: red.Kind, Token: red.Token, Principal: red.Principal, Agent: agent, URL: red.URL})
+}
+
+// pairClient identifies the client of a pairing request for the limit on
+// failed attempts: the source of a Funnel connection, the verified peer of
+// a relay connection, or the remote address of a direct one. Other
+// tunneled clients can't be told apart, so they get "".
+func (s *Server) pairClient(r *http.Request, l listener) string {
+	if src, ok := r.Context().Value(funnelSourceKey{}).(string); ok {
+		return src
+	}
+	if !l.tunneled {
+		return remoteHost(r.RemoteAddr)
+	}
+	p := s.private
+	if l.kind == network.ListenerPublic {
+		p = s.public
+	}
+	if p == nil || p.Name() != network.ProviderRelay {
+		return ""
+	}
+	peer, err := p.WhoIs(r.Context(), r.RemoteAddr)
+	if err != nil || peer.Node == "" {
+		return ""
+	}
+	return "peer:" + peer.Node
+}
+
+// funnelSourceKey keys the client address of a Funnel connection in the
+// contexts of its requests.
+type funnelSourceKey struct{}
+
+// connContext adds the client address of a Funnel connection to ctx.
+func connContext(ctx context.Context, c net.Conn) context.Context {
+	if src, ok := network.FunnelSource(c); ok {
+		return context.WithValue(ctx, funnelSourceKey{}, src)
+	}
+	return ctx
+}
+
+// remoteHost is the host of a request's remote address.
+func remoteHost(remoteAddr string) string {
+	host, _, err := net.SplitHostPort(remoteAddr)
 	if err != nil {
-		slog.Error("pairing failed", "error", err)
-		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
-		return
+		return remoteAddr
 	}
-	slog.Info("paired", "pairing", c.Pairing, "url", baseURL)
-	jsonhttp.Write(w, http.StatusOK, pairapi.Response{Kind: pairapi.KindCaller, Token: tok, Principal: principal, Agent: s.config().Name, URL: baseURL})
+	return host
 }
 
 // cliSkill is the agent skill of the a2a CLI on PATH, read once.

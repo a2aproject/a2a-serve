@@ -27,7 +27,9 @@ What the sandbox doesn't protect yet:
 
 ## Who can call the agent
 
-Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes and limits failed attempts), `/skill.md`, `/download/…` and `/hitl/<token>`.
+Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
+
+The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 

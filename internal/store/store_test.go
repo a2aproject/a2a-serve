@@ -35,6 +35,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
+
+	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
 func openStore(t *testing.T) *Store {
@@ -317,6 +320,132 @@ func TestCodes(t *testing.T) {
 	}
 	if _, err := s.TakeCode(ctx, "OLD", AnyCode); !errors.Is(err, ErrCodeExpired) {
 		t.Fatalf("TakeCode() expired error = %v, want %v", err, ErrCodeExpired)
+	}
+}
+
+func TestRedeemCode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	refused := errors.New("refused")
+	tests := []struct {
+		name  string
+		grant func(Code) (Grant, error)
+		// existingToken is stored before the code is redeemed.
+		existingToken string
+		expired       bool
+		wantErr       bool
+		wantPending   bool
+		wantKind      string
+		wantTokens    int
+		wantLinks     int
+	}{
+		{
+			name: "token",
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_new", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantKind:   "device",
+			wantTokens: 1,
+		},
+		{
+			name: "chat link",
+			grant: func(c Code) (Grant, error) {
+				return Grant{Link: &Link{Channel: "telegram", Identity: "telegram:1", Pairing: c.Pairing}, Kind: "person"}, nil
+			},
+			wantKind:  "person",
+			wantLinks: 1,
+		},
+		{
+			name:        "refused",
+			grant:       func(Code) (Grant, error) { return Grant{}, refused },
+			wantErr:     true,
+			wantPending: true,
+		},
+		{
+			name:          "failed write",
+			existingToken: "a2p_taken",
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_taken", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantErr:     true,
+			wantPending: true,
+			wantTokens:  1,
+		},
+		{
+			name:    "expired",
+			expired: true,
+			grant: func(Code) (Grant, error) {
+				return Grant{Token: "a2p_new", TokenURL: "https://agent", Kind: "device"}, nil
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+			if tc.existingToken != "" {
+				if err := s.PutToken(ctx, tc.existingToken, Token{URL: "https://agent"}, ""); err != nil {
+					t.Fatalf("PutToken() error = %v", err)
+				}
+			}
+			expires := time.Now().Add(time.Minute)
+			if tc.expired {
+				expires = time.Now().Add(-time.Second)
+			}
+			if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: expires}); err != nil {
+				t.Fatalf("PutCode() error = %v", err)
+			}
+
+			if _, err := s.RedeemCode(ctx, "K7Q29XF4", tc.grant); (err != nil) != tc.wantErr {
+				t.Fatalf("RedeemCode() error = %v, want error %v", err, tc.wantErr)
+			}
+			if _, err := s.TakeCode(ctx, "K7Q29XF4", AnyCode); (err == nil) != tc.wantPending {
+				t.Fatalf("TakeCode() after RedeemCode() error = %v, want the code pending %v", err, tc.wantPending)
+			}
+			p, err := s.Pairing(ctx, "grok")
+			if err != nil {
+				t.Fatalf("Pairing() error = %v", err)
+			}
+			links, err := s.LinksOf(ctx, "grok")
+			if err != nil {
+				t.Fatalf("LinksOf() error = %v", err)
+			}
+			tokens, err := s.Tokens(ctx)
+			if err != nil {
+				t.Fatalf("Tokens() error = %v", err)
+			}
+			if p.Kind != tc.wantKind || len(tokens) != tc.wantTokens || len(links) != tc.wantLinks {
+				t.Fatalf("after RedeemCode() kind = %q, tokens = %d, links = %d, want %q, %d, %d", p.Kind, len(tokens), len(links), tc.wantKind, tc.wantTokens, tc.wantLinks)
+			}
+		})
+	}
+}
+
+func TestRedeemCodeOfNode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := openStore(t)
+	if err := s.PutNode(ctx, Node{ID: "grok", Name: "grok", Webhook: "https://x", Secret: "random"}); err != nil {
+		t.Fatalf("PutNode() error = %v", err)
+	}
+	if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	c, err := s.RedeemCode(ctx, "K7Q29XF4", func(Code) (Grant, error) { return Grant{NodeToken: "a2rn.token", NodeSecret: "wake"}, nil })
+	if err != nil {
+		t.Fatalf("RedeemCode() error = %v", err)
+	}
+	if c.Kind != pairapi.PairingWebhook {
+		t.Fatalf("RedeemCode().Kind = %q, want %q", c.Kind, pairapi.PairingWebhook)
+	}
+	got, err := s.Node(ctx, "grok")
+	if err != nil {
+		t.Fatalf("Node() error = %v", err)
+	}
+	if got.TokenHash != cryptoutil.Hash("a2rn.token") || got.Secret != "wake" {
+		t.Fatalf("Node() = %+v, want the token hash and the wake key of the new token", got)
 	}
 }
 

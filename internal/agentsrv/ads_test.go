@@ -44,6 +44,8 @@ type fakeProvider struct {
 	kind string
 	// unidentified makes WhoIs identify nobody.
 	unidentified bool
+	// peerPerConn makes WhoIs identify each connection as its own peer.
+	peerPerConn bool
 	// signIn makes the network one which admits people by sign-in.
 	signIn bool
 }
@@ -79,9 +81,12 @@ func (p *fakeProvider) ListenPublic(context.Context) (net.Listener, *url.URL, er
 	return ln, &url.URL{Scheme: "http", Host: ln.Addr().String()}, nil
 }
 
-func (p *fakeProvider) WhoIs(context.Context, string) (*network.Peer, error) {
+func (p *fakeProvider) WhoIs(_ context.Context, remoteAddr string) (*network.Peer, error) {
 	if p.unidentified {
 		return nil, network.ErrNoIdentity
+	}
+	if p.peerPerConn {
+		return &network.Peer{Node: remoteAddr}, nil
 	}
 	return &network.Peer{Node: "peer"}, nil
 }

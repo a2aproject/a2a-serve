@@ -72,6 +72,9 @@ type Service struct {
 	// Access describes who may call the agent, which responses to changes
 	// carry. Optional.
 	Access func(ctx context.Context) (*controlapi.Access, error)
+	// Limiter limits failed attempts to redeem codes. [Service.Redeem]
+	// needs it.
+	Limiter *Limiter
 }
 
 func invalid(format string, args ...any) error {

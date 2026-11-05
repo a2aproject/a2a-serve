@@ -156,7 +156,6 @@ type Server struct {
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
-	pairLimit      *pairLimiter
 	timings        Timings
 }
 
@@ -220,8 +219,7 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		pairLimit: newPairLimiter(),
-		timings:   opts.Timings.withDefaults(),
+		timings: opts.Timings.withDefaults(),
 	}
 	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
@@ -345,6 +343,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
+		Limiter:   pairings.NewLimiter(),
 	}
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)
@@ -390,6 +389,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Chain:      s.chain,
+		Pairings:   s.pairings,
 		Approvals:  s.approvals,
 		Chat:       s.chatApprovals,
 		Supervisor: s.supervisor,
@@ -607,6 +607,7 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 		ReadHeaderTimeout: 30 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 		BaseContext:       func(net.Listener) context.Context { return ctx },
+		ConnContext:       connContext,
 	}
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {

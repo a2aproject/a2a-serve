@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -195,6 +196,7 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 		Store:      fx.store,
 		Tasks:      fx.tasks,
 		Chain:      fx.chain,
+		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter()},
 		Approvals:  svc,
 		Chat:       fx.chat,
 		Supervisor: fx.supervisor,
@@ -387,6 +389,15 @@ func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 	if !call.caller.IsOwner() {
 		t.Fatalf("SendStreamingMessage() caller = %+v, want an owner", call.caller)
 	}
+}
+
+func TestChatTurnsLinkCodeLimitsFailures(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	for range 11 {
+		fx.ch.write("telegram:9", "dm9", "join WRNG-C0DE")
+	}
+	fx.ch.waitFor(t, "dm9", hasText("Too many invalid codes."))
 }
 
 func TestChatTurnsStop(t *testing.T) {

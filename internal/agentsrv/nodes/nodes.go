@@ -40,7 +40,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
@@ -273,27 +272,6 @@ func (n *Host) Mailbox(id string) (waiting, open int) {
 		}
 	}
 	return waiting, open
-}
-
-// Pair issues a new node token for the node of a taken node code, replacing
-// the previous one and the key its wakes are signed with.
-func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) {
-	node, err := n.cfg.Store.Node(r.Context(), id)
-	if err != nil {
-		jsonhttp.Error(w, http.StatusNotFound, "the node was removed")
-		return
-	}
-	secret := cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
-	token := mailboxapi.NewNodeToken(mailboxapi.APIBase(baseURL), node.ID, secret)
-	node.TokenHash, node.Secret = cryptoutil.Hash(token), mailboxapi.WakeKey(token)
-	if err := n.cfg.Store.PutNode(r.Context(), node); err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	slog.Info("node paired", "node", node.ID)
-	jsonhttp.Write(w, http.StatusOK, pairapi.Response{
-		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: mailboxapi.NodeURL(baseURL, node.ID),
-	})
 }
 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
