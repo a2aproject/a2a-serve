@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -55,7 +56,6 @@ func TestVerboseEnablesDebugLogs(t *testing.T) {
 
 func TestUsageHints(t *testing.T) {
 	t.Parallel()
-	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 	tests := []struct {
 		name string
 		args []string
@@ -64,19 +64,26 @@ func TestUsageHints(t *testing.T) {
 		{name: "unknown flag of a subcommand", args: []string{"pair", "rm", "--bogus"}, want: "run `a2a-serve pair rm --help` for its flags"},
 		{name: "unknown flag of a command", args: []string{"status", "--bogus"}, want: "run `a2a-serve status --help` for its flags"},
 		{name: "unknown command", args: []string{"bogus"}, want: clierr.UsageHint},
-		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", d.Root}, want: "run `a2a-serve pair list` to see the pairings"},
-		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", d.Root}, want: "run `a2a-serve contact list` to see the contacts"},
-		{name: "unknown channel", args: []string{"channel", "rm", "telegram", "--dir", d.Root}, want: "run `a2a-serve channel list` to see the channels"},
-		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", d.Root}, want: "run `a2a-serve config unset --help` for its flags"},
+		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve pair list` to see the pairings"},
+		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve contact list` to see the contacts"},
+		{name: "unknown channel", args: []string{"channel", "rm", "telegram", "--dir", "{dir}"}, want: "run `a2a-serve channel list` to see the channels"},
+		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", "{dir}"}, want: "run `a2a-serve config unset --help` for its flags"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			args := slices.Clone(tc.args)
+			for i, a := range args {
+				if a == "{dir}" {
+					args[i] = d.Root
+				}
+			}
 			cfg := &globalConfig{credentials: &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}}
 			cfg.Printer = output.NewPrinter(io.Discard, output.ModeText)
 			root := newRootCmd(cfg)
 			root.SetOut(io.Discard)
-			root.SetArgs(tc.args)
+			root.SetArgs(args)
 			cmd, err := root.ExecuteC()
 			if err == nil {
 				t.Fatalf("a2a-serve %s error = nil, want a usage error", strings.Join(tc.args, " "))
