@@ -193,6 +193,20 @@ until_ok() {
   done
 }
 
+# approve_pending <pane> [flags] approves the task the pane's last a2a send
+# left in input-required, and the ones that follow, up to three. Flags such as
+# "-a <url>" are repeated on each a2a send.
+approve_pending() {
+  local i task
+  for i in 1 2 3; do
+    [[ "$(last_match "$1" 'Status: +[a-z-]+')" == *input-required ]] || return 0
+    pause 3
+    task="$(last_match "$1" 'a2a send --task-id [^ ]+')"
+    clear_pane "$1"
+    run "$1" "a2a send ${2:+$2 }--task-id ${task##* } approve"
+  done
+}
+
 # fake <real> <fake> prints <fake> in fake mode and <real> otherwise, for
 # prompts that fakeacp has to understand.
 fake() {
@@ -203,14 +217,21 @@ fake() {
   fi
 }
 
+# cast_time prints the time of the last event recorded in the cast.
+cast_time() {
+  tail -n 1 "$CAST" | awk -F'[[,]' '{ print $2 }'
+}
+
 # browser <scenario> [key=value...] starts a browser recording of
 # browser/<scenario>.mjs in the background, to <name>-browser-<n>.webm.
+# It notes the cast time in <name>.markers, where compose.sh puts the video.
 # browser_wait waits for it.
 DEMO_BROWSER_COUNT=0
 browser() {
   local name="$1"
   shift
   DEMO_BROWSER_COUNT=$((DEMO_BROWSER_COUNT + 1))
+  printf '%s %s\n' "$(cast_time)" "$DEMO_NAME-browser-$DEMO_BROWSER_COUNT.webm" >>"$DEMO_OUT/$DEMO_NAME.markers"
   node "$DEMO_TOOLS/browser/record.mjs" "$DEMO_TOOLS/browser/$name.mjs" \
     --out "$DEMO_OUT/$DEMO_NAME-browser-$DEMO_BROWSER_COUNT.webm" "$@" >&2 &
   DEMO_BROWSER_PID=$!

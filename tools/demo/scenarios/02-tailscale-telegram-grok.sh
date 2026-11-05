@@ -16,6 +16,11 @@
 
 DEMO_SECRET_VARS="CODER_BOT_TOKEN GROK_WEBHOOK_TOKEN GROK_WEBHOOK_URL"
 
+# The agent's tailnet identity outlives the run, so later runs reuse the
+# machine "coder" instead of adding coder-1, coder-2 and asking for approval.
+TSNET_CACHE="$DEMO_REAL_HOME/.cache/a2a-demo/tsnet-coder"
+TSNET_DIR="$HOME/a2a-example2/coder/.a2a/state/tsnet"
+
 prepare() {
   [[ -z "$DEMO_FAKE" ]] || die "this scenario needs Tailscale and Telegram; it has no --fake mode"
   [[ -n "${CODER_BOT_TOKEN:-}" ]] || die "export CODER_BOT_TOKEN, the token of the bot from @BotFather"
@@ -23,6 +28,12 @@ prepare() {
   if [[ -n "${GROK_WEBHOOK_URL:-}" && -z "${GROK_WEBHOOK_TOKEN:-}" ]]; then
     die "GROK_WEBHOOK_URL is set without GROK_WEBHOOK_TOKEN"
   fi
+}
+
+teardown() {
+  [[ -d "$TSNET_DIR" ]] || return 0
+  rm -rf "$TSNET_CACHE" && mkdir -p "$(dirname "$TSNET_CACHE")" && cp -R "$TSNET_DIR" "$TSNET_CACHE" ||
+    log "could not save the tailnet identity to $TSNET_CACHE"
 }
 
 layout() {
@@ -38,6 +49,9 @@ scene() {
   run B "a2a-serve config set --agent $AGENT --name coder $AGENT_FLAGS \\
   --private tailscale --public tailscale"
   run B "a2a-serve channel add telegram --token env:CODER_BOT_TOKEN"
+  if [[ -d "$TSNET_CACHE" ]]; then
+    mkdir -p "$(dirname "$TSNET_DIR")" && cp -R "$TSNET_CACHE" "$TSNET_DIR"
+  fi
 
   run A "cd ~/a2a-example2/coder"
   start A "a2a-serve start"
@@ -46,9 +60,9 @@ scene() {
     ask_human "approve the machine at $(last_match A 'https://login\.tailscale\.com/[^ ]+') and disable its key expiry" \
       A 't\.me/[^ ]+\?start='
   fi
-  wait_text A 't\.me/[^ ]+\?start=[A-Za-z0-9]+'
+  wait_text A 't\.me/[^ ]+\?start=[A-Za-z0-9-]+'
   local link
-  link="$(last_match A 'https://t\.me/[^ ]+\?start=[A-Za-z0-9]+')"
+  link="$(last_match A 'https://t\.me/[^ ]+\?start=[A-Za-z0-9-]+')"
   pause 2
 
   clear_pane B
@@ -62,6 +76,7 @@ scene() {
   clear_pane B
   say B "5. Call it from your other machines"
   run B "a2a send -a $private \"What's in notes.md?\""
+  approve_pending B "-a $private"
   pause 3
 
   [[ -n "${GROK_WEBHOOK_URL:-}" ]] || return 0
@@ -81,7 +96,7 @@ scene() {
   say B "8. Delegate to Grok from Telegram"
   local bot
   bot="$(last_match A 'telegram +@[A-Za-z0-9_]+')"
-  browser telegram "bot=${bot##*@}" \
+  browser telegram "bot=${bot##*@}" approve=1 settle=300 \
     "message=Ask grok what the top AI news is today, and summarize it in three bullets."
   browser_wait
 }

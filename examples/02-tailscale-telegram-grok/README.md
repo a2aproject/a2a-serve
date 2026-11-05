@@ -4,6 +4,8 @@
 agent you can reach from anywhere: on your tailnet, from a Telegram chat, and
 with a public URL so a Grok bot can work for it as a webhook node.
 
+![An agent on a tailnet, linked to Telegram, approving a tool call from the chat](./demo.gif)
+
 ## What you'll learn
 
 - How the agent joins your tailnet as its own machine, and why your devices

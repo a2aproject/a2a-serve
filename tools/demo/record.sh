@@ -30,7 +30,8 @@ usage: tools/demo/record.sh <scenario>|list [flags]
   --out DIR       where to write the recordings (default tools/demo/out)
   --size COLSxROWS terminal size (default 120x40)
   --speed N       type and pause N times faster (default 1)
-  --gif           also render a GIF with agg
+  --gif           also render a GIF, with the browser videos spliced in (needs agg and ffmpeg)
+  --gif-speed N   play the GIF N times faster (default 1.5)
   --keep          keep the work directory with the agent home directories
 EOF
 }
@@ -55,6 +56,7 @@ DEMO_OUT="$DEMO_TOOLS/out"
 SIZE="120x40"
 SPEED=1
 GIF=""
+GIF_SPEED=1.5
 KEEP=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -64,6 +66,7 @@ while [[ $# -gt 0 ]]; do
     --size) SIZE="$2"; shift 2 ;;
     --speed) SPEED="$2"; shift 2 ;;
     --gif) GIF=1; shift ;;
+    --gif-speed) GIF_SPEED="$2"; shift 2 ;;
     --keep) KEEP=1; shift ;;
     -h | --help) usage; exit 0 ;;
     *) echo "error: unknown flag $1" >&2; usage >&2; exit 2 ;;
@@ -82,7 +85,7 @@ ASCIINEMA_MAJOR="$(asciinema --version | sed -E 's/^asciinema ([0-9]+).*/\1/')"
 mkdir -p "$DEMO_OUT"
 DEMO_OUT="$(cd "$DEMO_OUT" && pwd)"
 CAST="$DEMO_OUT/$DEMO_NAME.cast"
-rm -f "$DEMO_OUT/$DEMO_NAME"-browser-*.webm
+rm -f "$DEMO_OUT/$DEMO_NAME"-browser-*.webm "$DEMO_OUT/$DEMO_NAME.markers"
 
 # A short, stable path: it shows in the recording, and macOS limits Unix
 # socket paths to 104 bytes.
@@ -117,6 +120,11 @@ if [[ -z "${DOCKER_HOST:-}" ]] && command -v docker >/dev/null; then
   [[ -n "$DOCKER_HOST" ]] && export DOCKER_HOST
 fi
 [[ -d "$REAL_HOME/.docker" ]] && export DOCKER_CONFIG="$REAL_HOME/.docker"
+# Docker Desktop keeps its credential helpers, such as docker-credential-desktop,
+# next to its CLI. Login shells add them to PATH; agents' shells may not.
+for dir in /Applications/Docker.app/Contents/Resources/bin "$REAL_HOME/.docker/bin"; do
+  [[ -d "$dir" ]] && PATH="$PATH:$dir"
+done
 if [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
   if [[ "$(uname)" == Darwin ]]; then
     export PLAYWRIGHT_BROWSERS_PATH="$REAL_HOME/Library/Caches/ms-playwright"
@@ -167,6 +175,7 @@ cleanup() {
     a2a-serve stop --dir "$(dirname "$(dirname "$cfg")")" >/dev/null 2>&1 ||
       echo "[demo] could not stop the agent in $(dirname "$(dirname "$cfg")")" >&2
   done
+  declare -F teardown >/dev/null && teardown
   if [[ -n "$KEEP" ]]; then
     echo "[demo] kept $DEMO_WORK" >&2
   else
@@ -204,7 +213,7 @@ scene
 browser_wait
 pause 2
 # Cut the cast before tmux clears the screen on exit.
-cutoff="$(tail -n 1 "$CAST" | awk -F'[[,]' '{ print $2 }')"
+cutoff="$(cast_time)"
 t kill-server
 wait "$ASCIINEMA_PID"
 ASCIINEMA_PID=""
@@ -220,7 +229,6 @@ for var in OPENROUTER_API_KEY ANTHROPIC_API_KEY OPENAI_API_KEY GEMINI_API_KEY ${
 done
 
 if [[ -n "$GIF" ]]; then
-  command -v agg >/dev/null || die "agg is not installed"
-  agg "$CAST" "${CAST%.cast}.gif"
+  "$DEMO_TOOLS/compose.sh" "$CAST" "${CAST%.cast}.gif" --speed "$GIF_SPEED"
 fi
 ls -1 "$DEMO_OUT/$DEMO_NAME".* "$DEMO_OUT/$DEMO_NAME"-browser-*.webm 2>/dev/null || true
