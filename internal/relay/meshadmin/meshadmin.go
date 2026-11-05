@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 )
@@ -35,6 +36,10 @@ const RoleNode = "mesh:role:node"
 
 // RoleRouter is the role of the relay's embedded router.
 const RoleRouter = "mesh:role:router"
+
+// SystemAuthenticated is the binding member of every identity an issuer
+// Agent Mesh trusts vouches for.
+const SystemAuthenticated = "mesh:system:authenticated"
 
 // IngressPassthrough forwards requests to a public URL unchanged, so the
 // agent's own auth applies there.
@@ -102,20 +107,38 @@ type Node struct {
 
 // Email returns the verified email of a node that signed in, or "".
 func (n Node) Email() string {
-	if n.ClaimsJSON == "" {
+	email, _ := n.account()
+	return email
+}
+
+// Domain returns the Google Workspace domain of the account the node signed
+// in with, or "".
+func (n Node) Domain() string {
+	email, domain := n.account()
+	if email == "" {
 		return ""
+	}
+	return domain
+}
+
+// account returns the verified email and the hd claim of the node's
+// sign-in.
+func (n Node) account() (email, domain string) {
+	if n.ClaimsJSON == "" {
+		return "", ""
 	}
 	var claims struct {
 		Email    string `json:"email"`
 		Verified *bool  `json:"email_verified"`
+		Domain   string `json:"hd"`
 	}
 	if err := json.Unmarshal([]byte(n.ClaimsJSON), &claims); err != nil {
-		return ""
+		return "", ""
 	}
 	if claims.Verified != nil && !*claims.Verified {
-		return ""
+		return "", ""
 	}
-	return strings.ToLower(claims.Email)
+	return strings.ToLower(claims.Email), strings.ToLower(claims.Domain)
 }
 
 // NodeServices are the services a node last reported (api.NodeServices).
@@ -174,10 +197,15 @@ func (c *Client) Status(ctx context.Context) (*Status, error) {
 	return &out, nil
 }
 
-// Ban bans the node with peerID. Agent Mesh refuses its next request, and
-// its peers drop it.
+// Ban bans the node with peerID, and the identity it signed in with. Agent
+// Mesh refuses its next request, and its peers drop it.
 func (c *Client) Ban(ctx context.Context, peerID string) error {
 	return c.do(ctx, http.MethodPost, "/admin/revoke", map[string]string{"peer_id": peerID}, nil)
+}
+
+// Unban lifts the ban of the node with peerID and of its identity.
+func (c *Client) Unban(ctx context.Context, peerID string) error {
+	return c.do(ctx, http.MethodPost, "/admin/nodes/"+url.PathEscape(peerID)+"/unban", nil, nil)
 }
 
 // maxResponse bounds what the client reads of a response. The status of a

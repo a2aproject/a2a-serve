@@ -218,15 +218,16 @@ func (p PolicyConfig) validate() []error {
 		errs = append(errs, fmt.Errorf("invalid --public-access %q: want paired or anyone", v))
 	}
 	for _, e := range p.AllowEmails {
-		if !validEmailPattern(e) {
+		if !ValidEmailPattern(e) {
 			errs = append(errs, fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", e))
 		}
 	}
 	return errs
 }
 
-// validEmailPattern reports whether entry is an email or *@domain.
-func validEmailPattern(entry string) bool {
+// ValidEmailPattern reports whether an --allow-email entry is an email or
+// *@domain.
+func ValidEmailPattern(entry string) bool {
 	local, domain, ok := strings.Cut(entry, "@")
 	return ok && local != "" && domain != "" && !strings.ContainsAny(domain, "@* ") && (!strings.Contains(local, "*") || local == "*")
 }

@@ -16,7 +16,6 @@ package cli
 
 import (
 	"fmt"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -32,7 +31,13 @@ func newRelayRemoveCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 		Long: `Remove agents from the relay at once: the agent with that name or peer ID,
 or every agent of a person, given their email. The relay refuses their next
 request, and the other agents drop them. A removed agent can't join again
-with its identity.
+with its identity, and removing an agent that signed in bans the Google
+account behind it, so the person can't sign in again either.
+
+For people who sign in, --allow-email decides: when the relay starts, it
+removes the agents of people the list no longer admits, and lets back the
+removed people it admits. To keep someone out, also drop them from
+--allow-email. Invite a removed invited agent again to let it back.
 
 ` + secretref.Help,
 		Args: cobra.ExactArgs(1),
@@ -53,10 +58,12 @@ with its identity.
 					return err
 				}
 			}
-			if strings.Contains(args[0], "@") {
-				_, err = fmt.Fprintf(cfg.Out, "  %s can join again with a new agent while the relay admits them\n", args[0])
+			for _, email := range res.Admitted {
+				if _, err := fmt.Fprintf(cfg.Out, "! %s is on --allow-email, so the relay lets them back when it starts; drop them from it to keep them out\n", email); err != nil {
+					return err
+				}
 			}
-			return err
+			return nil
 		},
 	}
 	f.addTargetFlags(cmd.Flags())
