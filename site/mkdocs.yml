@@ -84,16 +84,16 @@ nav:
       - Webhook Nodes: guide/webhook-nodes.md
       - Backups: guide/backups.md
       - Shell Completion: guide/shell-completion.md
+  - Examples:
+      - Serve a Coding Agent: examples/01-agent-server/index.md
+      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
+      - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md
       - Access Model: advanced/access-model.md
       - Agent Mesh: advanced/agent-mesh.md
       - Security: advanced/security.md
-  - Examples:
-      - Serve a Coding Agent: examples/01-agent-server/index.md
-      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
-      - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
   - Reference:
       - Commands:
           - a2a-serve: reference/commands/a2a-serve.md

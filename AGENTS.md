@@ -12,6 +12,27 @@
 * Prefer early `return`-s and `continue` over deeply nested blocks.
 * Never ignore error results `_ = smth.Close()`, errors need to bubble up OR be logged.
 
+### Architecture
+
+* Build components with constructors that take their dependencies explicitly. Don't patch fields after construction, and don't use package globals as test seams.
+* Dependencies point down. Lower packages don't import `agentsrv` or `cli`; move a shared helper down instead.
+* Give each behavior one source of truth. A setting, a list of live settings, or an operation on a running or stopped agent has one implementation, and the other places derive from it.
+* Code that writes the agent directory holds its lock.
+
+### Correctness
+
+* Persist state before you act on it, so a failed write can't repeat or lose the action.
+* Clear per-task state on every exit path: success, failure, cancel and restart.
+* A partial failure is a failure. Don't report success for work that stopped early.
+* Shared mutable state has one owner and one way in. Don't read fields guarded by a lock without taking it.
+* Everything kept in memory or in the database has a removal path: a TTL, a cap, or cleanup when its owner goes away.
+
+### Security
+
+* External traffic is always untrusted. Private networks get the trust the access model documents.
+* Bound every input from outside: body size, time, count and rate. Limit per caller, and keep in mind that callers behind a tunnel share one address.
+* Never log secrets or URLs that may carry them. Redact them before you log or store an error.
+
 ### Documentation
 
 * Keep each fact in one place and link to it from others. `README.md` and `docs/index.md` mirror each other: change both together.
