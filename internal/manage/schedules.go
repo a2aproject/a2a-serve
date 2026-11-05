@@ -40,6 +40,34 @@ type Schedules struct {
 	Now func() time.Time
 	// Changed is called after a schedule is added or removed. Optional.
 	Changed func()
+	// Limits bound the schedules Add creates. The zero value has none.
+	Limits Limits
+}
+
+// Limits bound the schedules of a user.
+type Limits struct {
+	// PerUser is how many schedules one user may make.
+	PerUser int
+	// MinInterval is the shortest time allowed between two runs.
+	MinInterval time.Duration
+}
+
+// AgentLimits bound the schedules the agent makes through the agents URL.
+var AgentLimits = Limits{PerUser: 50, MinInterval: 5 * time.Minute}
+
+// check refuses runs closer together than l allows.
+func (l Limits) check(when schedule.When) error {
+	if l.MinInterval == 0 || when.Cron == "" {
+		return nil
+	}
+	interval, err := when.MinInterval()
+	if err != nil {
+		return agenterr.Invalid(err)
+	}
+	if interval < l.MinInterval {
+		return agenterr.Invalidf("the runs of a schedule must be at least %d minutes apart", int(l.MinInterval.Minutes()))
+	}
+	return nil
 }
 
 func (m Schedules) now() time.Time {
@@ -65,12 +93,15 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Princi
 	if err != nil {
 		return store.Schedule{}, agenterr.Invalid(err)
 	}
-	next, ok, err := when.Next(m.now())
+	next, ok, err := when.Next(time.Time{}, m.now())
 	if err != nil {
 		return store.Schedule{}, agenterr.Invalid(err)
 	}
 	if !ok {
 		return store.Schedule{}, agenterr.Invalidf("--at %s is in the past", req.At)
+	}
+	if err := m.Limits.check(when); err != nil {
+		return store.Schedule{}, err
 	}
 	s := store.Schedule{
 		Name: req.Name, Cron: when.Cron, At: when.At, TZ: when.TZ, Prompt: req.Prompt,
@@ -103,9 +134,12 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Princi
 	if s.Conversation == schedule.ThreadSame && s.ContextID == "" && s.DeliverChannel == "" {
 		s.ContextID = a2a.NewContextID()
 	}
-	if err := m.Store.AddSchedule(ctx, s); err != nil {
+	if err := m.Store.AddScheduleCapped(ctx, s, m.Limits.PerUser); err != nil {
 		if errors.Is(err, store.ErrExists) {
 			return store.Schedule{}, agenterr.Conflictf("a schedule named %s already exists", req.Name)
+		}
+		if errors.Is(err, store.ErrLimit) {
+			return store.Schedule{}, agenterr.Conflictf("a user can make at most %d schedules here; remove one first", m.Limits.PerUser)
 		}
 		return store.Schedule{}, err
 	}

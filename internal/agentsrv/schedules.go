@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -51,6 +52,11 @@ type schedules struct {
 	minWait time.Duration
 	// wake makes the scheduler check the schedules again after a change.
 	wake chan struct{}
+
+	mu sync.Mutex
+	// pending are the one-time schedules whose run waits to be accepted.
+	// They stay due in the store, so that a restart runs them again.
+	pending map[string]bool
 }
 
 // schedulesDeps are the dependencies of [schedules].
@@ -73,6 +79,7 @@ func newSchedules(ctx context.Context, deps schedulesDeps) *schedules {
 		now:        deps.Now,
 		minWait:    deps.MinWait,
 		wake:       make(chan struct{}, 1),
+		pending:    map[string]bool{},
 	}
 }
 
@@ -108,34 +115,25 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 	}
 	now := sc.now()
 	for _, s := range all {
-		if s.NextRun.IsZero() {
+		if s.NextRun.IsZero() || sc.isPending(s.Name) {
 			continue
 		}
 		if s.NextRun.After(now) {
 			wait = min(wait, s.NextRun.Sub(now))
 			continue
 		}
-		next, ok, nextErr := whenOf(s).Next(now)
-		if nextErr != nil || !ok {
-			next = time.Time{}
-		}
-		oneShot := nextErr == nil && !ok
-		// A run whose next time isn't saved would repeat on every check. A
-		// one-time run that fails stays due, so that the next check retries it.
-		if !oneShot {
-			if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
-				slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
-				continue
-			}
-		}
-		runErr := sc.start(ctx, s)
-		if oneShot && runErr == nil {
-			sc.finish(ctx, s.Name)
+		next, ok, nextErr := whenOf(s).Next(s.NextRun, now)
+		if nextErr == nil && !ok {
+			sc.runOnce(ctx, s, now)
 			continue
 		}
-		if err := sc.store.RecordScheduleResult(ctx, s.Name, now, errText(cmp.Or(runErr, nextErr))); err != nil {
-			slog.Error("recording a schedule run", "schedule", s.Name, "error", err)
+		// A run whose next time isn't saved would repeat on every check.
+		if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
+			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
+			continue
 		}
+		runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
+		sc.record(ctx, s.Name, now, cmp.Or(runErr, nextErr))
 		if !next.IsZero() {
 			wait = min(wait, next.Sub(now))
 		}
@@ -143,8 +141,58 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 	return max(wait, sc.minWait)
 }
 
-// finish removes the schedule of a one-time run that succeeded. If that
-// fails, it clears the run so that it doesn't repeat.
+// runOnce starts the run of a one-time schedule, which stays due until the
+// agent accepts its turn. A run that fails stays due, so that the next
+// check retries it.
+func (sc *schedules) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
+	sc.setPending(s.Name, true)
+	err := sc.start(ctx, s, func(err error) {
+		sc.setPending(s.Name, false)
+		if err != nil {
+			sc.record(context.WithoutCancel(sc.ctx), s.Name, sc.now(), err)
+			return
+		}
+		sc.finish(context.WithoutCancel(sc.ctx), s.Name)
+	})
+	if err != nil {
+		sc.setPending(s.Name, false)
+		sc.record(ctx, s.Name, now, err)
+	}
+}
+
+// recordFailure returns what records a run's turn that the agent refused.
+func (sc *schedules) recordFailure(name string) func(error) {
+	return func(err error) {
+		if err != nil {
+			sc.record(context.WithoutCancel(sc.ctx), name, sc.now(), err)
+		}
+	}
+}
+
+func (sc *schedules) record(ctx context.Context, name string, ran time.Time, runErr error) {
+	if err := sc.store.RecordScheduleResult(ctx, name, ran, errText(runErr)); err != nil {
+		slog.Error("recording a schedule run", "schedule", name, "error", err)
+	}
+}
+
+func (sc *schedules) isPending(name string) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.pending[name]
+}
+
+func (sc *schedules) setPending(name string, pending bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if pending {
+		sc.pending[name] = true
+		return
+	}
+	delete(sc.pending, name)
+}
+
+// finish removes the schedule of a one-time run that the agent accepted.
+// If that fails, it clears the run so that it doesn't repeat.
 func (sc *schedules) finish(ctx context.Context, name string) {
 	err := sc.store.DeleteSchedule(ctx, name)
 	if err == nil || errors.Is(err, store.ErrNotFound) {
@@ -169,8 +217,9 @@ func whenOf(s store.Schedule) schedule.When {
 
 // start posts a run of s into its conversation as a new turn. The turn runs
 // in the background, as an ordinary task of the schedule's user, with the
-// role the user has now.
-func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
+// role the user has now. accepted is called once the agent accepted the
+// turn or refused it, unless start fails.
+func (sc *schedules) start(ctx context.Context, s store.Schedule, accepted func(error)) error {
 	user, err := storedPrincipal(ctx, sc.chain, s.UserID, s.UserIdentity)
 	if err == nil && user.Role == "" {
 		err = fmt.Errorf("%s can no longer call this agent", auth.DisplayPrincipal(s.UserID))
@@ -185,7 +234,7 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.injectTurn(sc.ctx, postedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name)}); err != nil {
+	if err := sc.turns.injectTurn(sc.ctx, postedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
@@ -258,13 +307,19 @@ func storedPrincipal(ctx context.Context, chain *auth.Chain, id, identity string
 	return p, err
 }
 
-// add creates a schedule made by by, in the conversation contextID if set.
-func (sc *schedules) add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
-	return sc.manage().Add(ctx, req, by, contextID)
+// add creates a schedule the owner made.
+func (sc *schedules) add(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
+	return sc.manage(manage.Limits{}).Add(ctx, req, by, "")
 }
 
-func (sc *schedules) manage() manage.Schedules {
-	return manage.Schedules{Store: sc.store, Now: sc.now, Changed: sc.changed}
+// addByAgent creates a schedule the agent made for by in the conversation
+// contextID, within [manage.AgentLimits].
+func (sc *schedules) addByAgent(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
+	return sc.manage(manage.AgentLimits).Add(ctx, req, by, contextID)
+}
+
+func (sc *schedules) manage(limits manage.Limits) manage.Schedules {
+	return manage.Schedules{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits}
 }
 
 // runNow starts a run of a schedule at once, without changing when it runs
@@ -277,7 +332,7 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 	if err != nil {
 		return store.Schedule{}, err
 	}
-	runErr := sc.start(ctx, s)
+	runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
 	s.LastRun, s.LastError = sc.now(), errText(runErr)
 	if err := sc.store.RecordScheduleResult(ctx, s.Name, s.LastRun, s.LastError); err != nil {
 		return store.Schedule{}, err
@@ -288,7 +343,7 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 // remove removes a schedule which by may manage, and its runs that wait
 // to be posted.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	if err := sc.manage().Remove(ctx, name, by); err != nil {
+	if err := sc.manage(manage.Limits{}).Remove(ctx, name, by); err != nil {
 		return err
 	}
 	sc.turns.dropPosted(scheduleTurnKey(name))
@@ -297,5 +352,5 @@ func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal)
 
 // visible lists the schedules by can see.
 func (sc *schedules) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
-	return sc.manage().Visible(ctx, by)
+	return sc.manage(manage.Limits{}).Visible(ctx, by)
 }

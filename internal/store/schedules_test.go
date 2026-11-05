@@ -115,3 +115,30 @@ func TestDeleteScheduleAfterClose(t *testing.T) {
 		t.Fatalf("DeleteSchedule() after Close() error = %v, want %v", err, ErrClosed)
 	}
 }
+
+func TestAddScheduleCapped(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	add := func(name, createdBy string, limit int) error {
+		return s.AddScheduleCapped(ctx, Schedule{Name: name, Cron: "@daily", Prompt: "x", UserID: createdBy, Conversation: "new", CreatedBy: createdBy}, limit)
+	}
+	for _, name := range []string{"a1", "a2"} {
+		if err := add(name, "pair:anna", 2); err != nil {
+			t.Fatalf("AddScheduleCapped(%s) error = %v", name, err)
+		}
+	}
+
+	if err := add("a3", "pair:anna", 2); !errors.Is(err, ErrLimit) {
+		t.Fatalf("AddScheduleCapped() past the limit error = %v, want %v", err, ErrLimit)
+	}
+	if err := add("a1", "pair:anna", 3); !errors.Is(err, ErrExists) {
+		t.Fatalf("AddScheduleCapped() of an existing name error = %v, want %v", err, ErrExists)
+	}
+	if err := add("b1", "pair:bob", 2); err != nil {
+		t.Fatalf("AddScheduleCapped() of another user error = %v", err)
+	}
+	if err := add("a3", "pair:anna", 0); err != nil {
+		t.Fatalf("AddScheduleCapped() without a limit error = %v", err)
+	}
+}

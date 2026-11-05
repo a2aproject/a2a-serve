@@ -1438,10 +1438,14 @@ func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
 	for _, q := range []Question{
 		{ID: "q-unanswered", Token: "t1", TaskID: "r1", Contact: "helper", HitlID: "h1"},
 		{ID: "q-answered", Token: "t2", TaskID: "r2", Contact: "helper", HitlID: "h2"},
+		{ID: "q-watched", Token: "t4", TaskID: "r4", Contact: "helper", HitlID: "h4"},
 	} {
 		if err := s.PutQuestion(ctx, q); err != nil {
 			t.Fatalf("PutQuestion() error = %v", err)
 		}
+	}
+	if err := s.PutWatch(ctx, Watch{Contact: "helper", TaskID: "r4"}); err != nil {
+		t.Fatalf("PutWatch() error = %v", err)
 	}
 	if err := s.AnswerQuestion(ctx, "q-answered", "owner", "once"); err != nil {
 		t.Fatalf("AnswerQuestion() error = %v", err)
@@ -1456,7 +1460,7 @@ func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
 		t.Fatalf("Prune() error = %v", err)
 	}
 
-	for id, wantErr := range map[string]error{"q-unanswered": ErrNotFound, "q-answered": ErrNotFound, "q-fresh": nil} {
+	for id, wantErr := range map[string]error{"q-unanswered": ErrNotFound, "q-answered": ErrNotFound, "q-fresh": nil, "q-watched": nil} {
 		if _, err := s.QuestionByID(ctx, id); !errors.Is(err, wantErr) {
 			t.Fatalf("QuestionByID(%s) after Prune() error = %v, want %v", id, err, wantErr)
 		}

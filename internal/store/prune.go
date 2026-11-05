@@ -31,9 +31,9 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // Prune deletes expired codes, and the pairings nobody redeemed a code of
 // when their last code expires; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; questions of remote agents
-// as old; the channel conversations, agent sessions, handles and call tasks
-// of contexts left without tasks; and the dedup keys of messages older than
-// the retention.
+// as old whose task nobody watches; the channel conversations, agent
+// sessions, handles and call tasks of contexts left without tasks; and the
+// dedup keys of messages older than the retention.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
@@ -59,7 +59,8 @@ func (s *Store) Prune(ctx context.Context) error {
 		if err := forgetTasks(ctx, tx, pruned); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND created < ?`, cutoff); err != nil {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND created < ?
+			AND NOT EXISTS (SELECT 1 FROM watches WHERE watches.contact = questions.contact AND watches.task_id = questions.task_id)`, cutoff); err != nil {
 			return err
 		}
 		return deleteOrphans(ctx, tx)

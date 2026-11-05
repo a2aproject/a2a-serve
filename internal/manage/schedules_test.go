@@ -16,11 +16,15 @@ package manage
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -91,5 +95,50 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 	want := struct{ User, DeliverUser, Chat string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, Chat: "telegram:owner"}
 	if diff := cmp.Diff(want, struct{ User, DeliverUser, Chat string }{got.UserID, got.DeliverUser, ScheduleInfo(got).Chat}); diff != "" {
 		t.Fatalf("Add() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestAddScheduleWithinLimits(t *testing.T) {
+	t.Parallel()
+	limits := Limits{PerUser: 2, MinInterval: 5 * time.Minute}
+	tests := []struct {
+		name     string
+		limits   Limits
+		existing int
+		req      schedule.Request
+		wantErr  string
+	}{
+		{name: "within the limits", limits: limits, existing: 1, req: schedule.Request{Cron: "*/5 * * * *"}},
+		{name: "one-time", limits: limits, existing: 1, req: schedule.Request{At: "2099-01-01 10:00"}},
+		{name: "too many", limits: limits, existing: 2, req: schedule.Request{Cron: "@daily"}, wantErr: "at most 2 schedules"},
+		{name: "every second", limits: limits, req: schedule.Request{Cron: "@every 1s"}, wantErr: "at least 5 minutes apart"},
+		{name: "every minute", limits: limits, req: schedule.Request{Cron: "* * * * *"}, wantErr: "at least 5 minutes apart"},
+		{name: "no limits", existing: 2, req: schedule.Request{Cron: "@every 1s"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			m := Schedules{Store: s, Limits: tc.limits}
+			for i := range tc.existing {
+				if _, err := m.Add(ctx, schedule.Request{Name: fmt.Sprintf("old%d", i), Cron: "@daily", Prompt: "x"}, auth.Owner(), "ctx1"); err != nil {
+					t.Fatalf("Add() error = %v", err)
+				}
+			}
+			tc.req.Name, tc.req.Prompt = "new", "x"
+
+			_, err := m.Add(ctx, tc.req, auth.Owner(), "ctx1")
+
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("Add() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) || !agenterr.IsRequest(err) {
+				t.Fatalf("Add() error = %v, want a request error with %q", err, tc.wantErr)
+			}
+		})
 	}
 }

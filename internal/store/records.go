@@ -621,33 +621,59 @@ type Watch struct {
 	Created    time.Time
 	// FailingSince is when polling the task started failing, or zero.
 	FailingSince time.Time
+	// Generation counts the calls that watched the task again, such as a
+	// follow-up message, after the first.
+	Generation int64
+	// State is the last state seen of the task, and StateChanged when it
+	// was first seen.
+	State        string
+	StateChanged time.Time
 }
 
-// PutWatch stores a watch.
+const watchColumns = `contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since,
+	generation, state, state_changed`
+
+// PutWatch stores a watch. Watching a task again starts a new generation
+// of its watch.
 func (s *Store) PutWatch(ctx context.Context, w Watch) error {
 	_, err := s.exec(ctx, `INSERT INTO watches (contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created)
-		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT (contact, task_id) DO UPDATE SET generation = generation + 1`,
 		w.Contact, w.TaskID, w.RemoteContextID, w.OriginContextID, w.OnBehalfOf, w.Identity, s.now().UnixNano())
 	return err
 }
 
+func scanWatch(row interface{ Scan(...any) error }) (Watch, error) {
+	var (
+		w                                   Watch
+		created, failingSince, stateChanged int64
+	)
+	err := row.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &w.Identity, &created, &failingSince,
+		&w.Generation, &w.State, &stateChanged)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Watch{}, ErrNotFound
+	}
+	w.Created, w.FailingSince, w.StateChanged = unixTime(created), unixTime(failingSince), unixTime(stateChanged)
+	return w, err
+}
+
+// Watch returns the watch of a task, or [ErrNotFound].
+func (s *Store) Watch(ctx context.Context, contact, taskID string) (Watch, error) {
+	return scanWatch(s.reads.QueryRowContext(ctx, `SELECT `+watchColumns+` FROM watches WHERE contact = ? AND task_id = ?`, contact, taskID))
+}
+
 // Watches lists watches.
 func (s *Store) Watches(ctx context.Context) ([]Watch, error) {
-	rows, err := s.reads.QueryContext(ctx, `SELECT contact, task_id, remote_context_id, origin_context_id, on_behalf_of, identity, created, failing_since FROM watches`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT `+watchColumns+` FROM watches`)
 	if err != nil {
 		return nil, err
 	}
 	defer closeRows(rows)
 	var out []Watch
 	for rows.Next() {
-		var (
-			w                     Watch
-			created, failingSince int64
-		)
-		if err := rows.Scan(&w.Contact, &w.TaskID, &w.RemoteContextID, &w.OriginContextID, &w.OnBehalfOf, &w.Identity, &created, &failingSince); err != nil {
+		w, err := scanWatch(rows)
+		if err != nil {
 			return nil, err
 		}
-		w.Created, w.FailingSince = unixTime(created), unixTime(failingSince)
 		out = append(out, w)
 	}
 	return out, rows.Err()
@@ -664,10 +690,18 @@ func (s *Store) SetWatchFailing(ctx context.Context, contact, taskID string, sin
 	return err
 }
 
-// DeleteWatch removes a watch.
-func (s *Store) DeleteWatch(ctx context.Context, contact, taskID string) error {
-	_, err := s.exec(ctx, `DELETE FROM watches WHERE contact = ? AND task_id = ?`, contact, taskID)
+// SetWatchState records the state a watched task changed to, and when.
+func (s *Store) SetWatchState(ctx context.Context, contact, taskID, state string, at time.Time) error {
+	_, err := s.exec(ctx, `UPDATE watches SET state = ?, state_changed = ? WHERE contact = ? AND task_id = ?`, state, nanos(at), contact, taskID)
 	return err
+}
+
+// DeleteWatch removes the watch of a task if it is still in generation,
+// or returns [ErrNotFound].
+func (s *Store) DeleteWatch(ctx context.Context, contact, taskID string, generation int64) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		return deleteOneTx(ctx, tx, `DELETE FROM watches WHERE contact = ? AND task_id = ? AND generation = ?`, contact, taskID, generation)
+	})
 }
 
 // deleteOneTx runs a delete and returns [ErrNotFound] if it deleted nothing.

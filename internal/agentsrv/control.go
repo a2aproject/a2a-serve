@@ -74,7 +74,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		RemoveChannel: s.deleteChannel,
 		Store:         s.store,
 		AddSchedule: func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			return s.schedules.add(ctx, req, by, "")
+			return s.schedules.add(ctx, req, by)
 		},
 		RunSchedule:    s.schedules.runNow,
 		RemoveSchedule: s.schedules.remove,

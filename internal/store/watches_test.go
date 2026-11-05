@@ -16,6 +16,7 @@ package store
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -92,5 +93,59 @@ func TestSetWatchFailing(t *testing.T) {
 		if len(ws) != 1 || !ws[0].FailingSince.Equal(want) {
 			t.Fatalf("Watches() = %+v, want one failing since %v", ws, want)
 		}
+	}
+}
+
+func TestPutWatchAgainStartsAGeneration(t *testing.T) {
+	t.Parallel()
+	s, ctx := openStore(t), context.Background()
+	w := Watch{Contact: "coder", TaskID: "t1", OriginContextID: "c1", OnBehalfOf: "user:owner"}
+	if err := s.PutWatch(ctx, w); err != nil {
+		t.Fatal(err)
+	}
+	first, err := s.Watch(ctx, "coder", "t1")
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	if err := s.PutWatch(ctx, Watch{Contact: "coder", TaskID: "t1", OriginContextID: "c2"}); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := s.Watch(ctx, "coder", "t1")
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	if got.Generation != first.Generation+1 || got.OriginContextID != "c1" {
+		t.Fatalf("Watch() after PutWatch() again = %+v, want the first watch in generation %d", got, first.Generation+1)
+	}
+	if err := s.DeleteWatch(ctx, "coder", "t1", first.Generation); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("DeleteWatch() of an older generation error = %v, want %v", err, ErrNotFound)
+	}
+	if err := s.DeleteWatch(ctx, "coder", "t1", got.Generation); err != nil {
+		t.Fatalf("DeleteWatch() error = %v", err)
+	}
+	if _, err := s.Watch(ctx, "coder", "t1"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Watch() after DeleteWatch() error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestSetWatchState(t *testing.T) {
+	t.Parallel()
+	s, ctx := openStore(t), context.Background()
+	if err := s.PutWatch(ctx, Watch{Contact: "coder", TaskID: "t1"}); err != nil {
+		t.Fatal(err)
+	}
+	at := time.Unix(0, 1_700_000_000_000_000_000)
+
+	if err := s.SetWatchState(ctx, "coder", "t1", "TASK_STATE_WORKING", at); err != nil {
+		t.Fatalf("SetWatchState() error = %v", err)
+	}
+
+	got, err := s.Watch(ctx, "coder", "t1")
+	if err != nil {
+		t.Fatalf("Watch() error = %v", err)
+	}
+	if got.State != "TASK_STATE_WORKING" || !got.StateChanged.Equal(at) {
+		t.Fatalf("Watch() = %+v, want state TASK_STATE_WORKING since %v", got, at)
 	}
 }
