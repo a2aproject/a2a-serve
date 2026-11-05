@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/webpage"
 )
 
 // Path is where the owner's web inspector is served.
@@ -118,22 +119,15 @@ func (in *Inspector) Register(mux *http.ServeMux) {
 	mux.HandleFunc("POST "+Path+"/tasks/{id}/answer", in.page(in.handleTaskAnswer))
 }
 
-func setInspectorHeaders(w http.ResponseWriter) {
-	h := w.Header()
-	h.Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'")
-	h.Set("X-Content-Type-Options", "nosniff")
-	h.Set("Referrer-Policy", "no-referrer")
-	h.Set("Cache-Control", "no-store")
-}
-
 func (in *Inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
-	setInspectorHeaders(w)
+	webpage.SetSecurityHeaders(w)
 	code := r.URL.Query().Get("code")
 	in.mu.Lock()
 	exp, ok := in.codes[code]
 	delete(in.codes, code)
 	var token string
 	if ok && time.Now().Before(exp) {
+		in.dropExpiredSessions(time.Now())
 		token = cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
 		in.sessions[token] = session{expires: time.Now().Add(sessionTTL), csrf: cryptoutil.RandomString(32, cryptoutil.Alphanumeric)}
 	}
@@ -149,10 +143,19 @@ func (in *Inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
 
+// dropExpiredSessions forgets the sessions that ended. The caller holds in.mu.
+func (in *Inspector) dropExpiredSessions(now time.Time) {
+	for token, sess := range in.sessions {
+		if now.After(sess.expires) {
+			delete(in.sessions, token)
+		}
+	}
+}
+
 // page requires a session, and for POSTs its CSRF token.
 func (in *Inspector) page(h func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		setInspectorHeaders(w)
+		webpage.SetSecurityHeaders(w)
 		c, err := r.Cookie(cookieName)
 		if err != nil {
 			http.Error(w, "Open the inspector with `a2a-serve inspect`.", http.StatusUnauthorized)
@@ -450,7 +453,8 @@ func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ sess
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	in.deps.MarkAnswered(ctx, rec.ID, opt.Label, "the inspector")
+	label, by := in.deps.Approvals.Outcome(ctx, rec, opt, "the inspector", err)
+	in.deps.MarkAnswered(ctx, rec.ID, label, by)
 	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
 

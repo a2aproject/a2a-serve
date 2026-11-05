@@ -17,6 +17,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
@@ -48,10 +49,15 @@ Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 			if err != nil {
 				return err
 			}
-			return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st})
+			return printRestarted(cfg, st)
 		},
 	}
 	cmd.Flags().BoolVar(&quiet, "quiet", false, quietUsage)
 	sf.addControlFlags(cmd.Flags())
 	return cmd
+}
+
+// printRestarted prints the status of the restarted agent as JSON.
+func printRestarted(cfg *globalConfig, st *controlapi.Status) error {
+	return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st})
 }

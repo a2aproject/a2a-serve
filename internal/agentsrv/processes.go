@@ -103,7 +103,8 @@ var _ a2asrv.AgentExecutor = (*splitExecutor)(nil)
 
 func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
-		exec, err := e.pick(ctx, execCtx.ContextID)
+		exec, err := e.pick(ctx, execCtx.ContextID, true)
+		defer e.forgetPending(execCtx.ContextID)
 		if err != nil {
 			failTask(execCtx, err)(yield)
 			return
@@ -126,7 +127,7 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 
 func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
-		exec, err := e.pick(ctx, execCtx.ContextID)
+		exec, err := e.pick(ctx, execCtx.ContextID, false)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -140,8 +141,9 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 }
 
 // pick returns the executor of a conversation, and starts its pool if
-// needed.
-func (e *splitExecutor) pick(ctx context.Context, contextID string) (a2asrv.AgentExecutor, error) {
+// needed. If remember is set, the conversation keeps its agent key until
+// forgetPending, in case its session isn't stored yet.
+func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, error) {
 	key, err := e.agentKey(ctx, contextID)
 	if err != nil {
 		return nil, err
@@ -149,13 +151,24 @@ func (e *splitExecutor) pick(ctx context.Context, contextID string) (a2asrv.Agen
 	if key == "" || e.start == nil {
 		return e.main, nil
 	}
-	e.mu.Lock()
-	if e.pending == nil {
-		e.pending = map[string]string{}
+	if remember {
+		e.mu.Lock()
+		if e.pending == nil {
+			e.pending = map[string]string{}
+		}
+		e.pending[contextID] = key
+		e.mu.Unlock()
 	}
-	e.pending[contextID] = key
-	e.mu.Unlock()
 	return e.pool(poolOf(key))
+}
+
+// forgetPending drops the agent key kept for a conversation once its turn
+// ended: a conversation that has a session is looked up there, and one that
+// has none after a whole turn starts over with its next caller.
+func (e *splitExecutor) forgetPending(contextID string) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	delete(e.pending, contextID)
 }
 
 // agentKey returns the agent key of a conversation: the one stored with its

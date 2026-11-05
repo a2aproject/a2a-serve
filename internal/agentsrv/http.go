@@ -234,7 +234,7 @@ func (s *Server) needsPairing(kind string) bool {
 	p := s.config().Policy
 	switch kind {
 	case network.ListenerPrivate:
-		return access.PrivateAccess(p, s.signIn()) == agentdir.AccessPaired
+		return access.PrivateAccess(p) == agentdir.AccessPaired
 	case network.ListenerPublic:
 		return p.PublicAccess != agentdir.AccessAnyone
 	}

@@ -24,6 +24,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -247,7 +248,7 @@ func (c *Channel) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 			for _, a := range files {
 				f, err := c.download(ctx, b, a.id, a.name, a.mediaType)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("telegram: downloading %s: %w", a.name, err))
+					errs = append(errs, &channel.AttachmentError{Name: a.name, Err: err})
 					continue
 				}
 				in.Files = append(in.Files, f)
@@ -293,25 +294,38 @@ func (c *Channel) download(ctx context.Context, b *bot.Bot, fileID, name, mediaT
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, b.FileDownloadLink(f), nil)
 	if err != nil {
-		return channel.File{}, err
+		return channel.File{}, c.redact(err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return channel.File{}, err
+		return channel.File{}, c.redact(err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
 			slog.Debug("telegram: closing download", "error", err)
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		return channel.File{}, fmt.Errorf("the server answered %s", resp.Status)
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
 	if err != nil {
-		return channel.File{}, err
+		return channel.File{}, c.redact(err)
 	}
 	if len(data) > maxFile {
 		return channel.File{}, fmt.Errorf("file %s is too large (over %d bytes)", name, maxFile)
 	}
 	return channel.File{Name: name, MediaType: mediaType, Data: data}, nil
+}
+
+// redact hides the bot token in the URL of a failed request, which is part of
+// the file download link.
+func (c *Channel) redact(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		urlErr.URL = strings.ReplaceAll(urlErr.URL, c.token, "***")
+	}
+	return err
 }
 
 func (c *Channel) handleCallback(ctx context.Context, b *bot.Bot, q *models.CallbackQuery) {
@@ -402,8 +416,11 @@ func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, er
 			continue
 		}
 		params := &bot.SendMessageParams{
-			ChatID: chat, MessageThreadID: thread, Text: ToMarkdownV2(piece), ParseMode: models.ParseModeMarkdown,
+			ChatID: chat, MessageThreadID: thread, Text: piece,
 			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+		}
+		if !m.Literal {
+			params.Text, params.ParseMode = ToMarkdownV2(piece), models.ParseModeMarkdown
 		}
 		if i == len(pieces)-1 && m.Question != nil {
 			params.ReplyMarkup = keyboard(m.Question)
@@ -436,9 +453,12 @@ func (c *Channel) Edit(ctx context.Context, ref channel.Ref, m channel.Outbound)
 	}
 	text := channel.Truncate(m.Text, maxText)
 	params := &bot.EditMessageTextParams{
-		ChatID: chat, MessageID: id, Text: ToMarkdownV2(text), ParseMode: models.ParseModeMarkdown,
+		ChatID: chat, MessageID: id, Text: text,
 		ReplyMarkup:        keyboard(m.Question),
 		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: bot.True()},
+	}
+	if !m.Literal {
+		params.Text, params.ParseMode = ToMarkdownV2(text), models.ParseModeMarkdown
 	}
 	_, err = c.bot.EditMessageText(ctx, params)
 	if isFormatError(err) {

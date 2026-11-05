@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,9 @@ type user struct {
 
 func newUser(t *testing.T) *user {
 	t.Helper()
+	if _, marked := sandboxTests.Load(topName(t)); sandbox == "docker" && !marked {
+		t.Skip("doesn't depend on the sandbox; mark it with dependsOnSandbox to run it with E2E_SANDBOX=docker")
+	}
 	home, err := os.MkdirTemp("", "a2a-e2e-home-")
 	if err != nil {
 		t.Fatalf("os.MkdirTemp() error = %v", err)
@@ -64,12 +68,15 @@ func newUser(t *testing.T) *user {
 		"PATH=" + binDir + string(os.PathListSeparator) + os.Getenv("PATH"),
 		"TMPDIR=" + os.TempDir(),
 	}}
+	if dockerHost != "" {
+		u.env = append(u.env, "DOCKER_HOST="+dockerHost)
+	}
 	u.setUp()
 	return u
 }
 
-// setUp runs `doctor --fix` and requires the checks of the a2a CLI to pass;
-// the Docker check may fail, as the agents run with --sandbox local.
+// setUp runs `doctor --fix` and requires the checks of the a2a CLI to pass,
+// and the Docker check when the agents run in Docker.
 func (u *user) setUp() {
 	u.t.Helper()
 	out, err := u.exec(u.home, "a2a-serve", "doctor", "--fix", "-o", "json")
@@ -85,6 +92,9 @@ func (u *user) setUp() {
 		got[c.ID] = c.Status
 	}
 	want := map[string]string{"a2a": "ok", "plugins": "ok", "a2a-serve": "ok", "credential-helper": "ok"}
+	if sandbox == "docker" {
+		want["docker"] = "ok"
+	}
 	for id := range got {
 		if _, ok := want[id]; !ok {
 			delete(got, id)
@@ -136,15 +146,59 @@ func (u *user) send(url string, args ...string) (*a2a.Task, error) {
 	if err != nil {
 		return nil, err
 	}
+	return decodeTask(out)
+}
+
+func decodeTask(out string) (*a2a.Task, error) {
 	var resp a2a.StreamResponse
 	if err := json.Unmarshal([]byte(out), &resp); err != nil {
 		return nil, fmt.Errorf("json.Unmarshal(%q): %w", out, err)
 	}
 	task, ok := resp.Event.(*a2a.Task)
 	if !ok {
-		return nil, fmt.Errorf("a2a send returned %T, want a task", resp.Event)
+		return nil, fmt.Errorf("a2a returned %T, want a task", resp.Event)
 	}
 	return task, nil
+}
+
+// getTask gets a task with `a2a task get` and extra flags.
+func (u *user) getTask(url, id string, flags ...string) (*a2a.Task, error) {
+	out, err := u.exec(u.home, append([]string{"a2a", "task", "get", "-a", url, "-o", "json", id}, flags...)...)
+	if err != nil {
+		return nil, err
+	}
+	return decodeTask(out)
+}
+
+func (u *user) mustGetTask(url, id string) *a2a.Task {
+	u.t.Helper()
+	task, err := u.getTask(url, id)
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	return task
+}
+
+// listTasks lists tasks with `a2a task list`.
+func (u *user) listTasks(url string, args ...string) ([]*a2a.Task, error) {
+	out, err := u.exec(u.home, append([]string{"a2a", "task", "list", "-a", url, "-o", "json"}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	var resp a2a.ListTasksResponse
+	if err := json.Unmarshal([]byte(out), &resp); err != nil {
+		return nil, fmt.Errorf("json.Unmarshal(%q): %w", out, err)
+	}
+	return resp.Tasks, nil
+}
+
+func (u *user) mustListTasks(url string, args ...string) []*a2a.Task {
+	u.t.Helper()
+	tasks, err := u.listTasks(url, args...)
+	if err != nil {
+		u.t.Fatal(err)
+	}
+	return tasks
 }
 
 func (u *user) mustSend(url string, args ...string) *a2a.Task {
@@ -172,7 +226,9 @@ type agent struct {
 	stopped bool
 }
 
-func (u *user) startAgent(name string) *agent {
+// startAgent starts an agent in the sandbox of the run, with extra start
+// flags.
+func (u *user) startAgent(name string, flags ...string) *agent {
 	u.t.Helper()
 	dir := filepath.Join(u.home, name)
 	if err := os.Mkdir(dir, 0o700); err != nil {
@@ -180,9 +236,44 @@ func (u *user) startAgent(name string) *agent {
 	}
 	a := &agent{u: u, name: name, dir: dir}
 	u.t.Cleanup(a.cleanup)
-	a.serve("start", "acp", "--name", name, "--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp"), "--detach")
+	args := append([]string{"start", "acp", "--name", name, "--detach"}, sandboxFlags()...)
+	a.serve(append(args, flags...)...)
 	a.url = strings.TrimSpace(a.serve("status", "--url=local"))
 	return a
+}
+
+func sandboxFlags() []string {
+	if sandbox == "docker" {
+		return []string{"--sandbox", "docker", "--image", fakeacpImage, "--command", "/usr/local/bin/fakeacp"}
+	}
+	return []string{"--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp")}
+}
+
+// sandboxTests holds the names of the top-level tests marked with
+// dependsOnSandbox.
+var sandboxTests sync.Map
+
+// dependsOnSandbox marks a test of what the sandbox changes: how the agent
+// process starts, crashes and restarts, what it sees, and how it reaches the
+// server. Only marked tests run with E2E_SANDBOX=docker; call it before
+// newUser.
+func dependsOnSandbox(t *testing.T) {
+	sandboxTests.Store(topName(t), true)
+}
+
+func topName(t *testing.T) string {
+	name, _, _ := strings.Cut(t.Name(), "/")
+	return name
+}
+
+// requireDocker marks a test of the docker sandbox, and skips it when the
+// agents run locally.
+func requireDocker(t *testing.T) {
+	t.Helper()
+	dependsOnSandbox(t)
+	if sandbox != "docker" {
+		t.Skip("needs E2E_SANDBOX=docker")
+	}
 }
 
 // serve runs `a2a-serve <args>` in the agent's directory.
@@ -235,6 +326,23 @@ func (a *agent) cleanup() {
 	}
 	if _, err := a.u.exec(a.dir, "a2a", "serve", "stop"); err != nil {
 		t.Errorf("stop %s: %v", a.name, err)
+	}
+}
+
+// eventually polls check until it returns true or the command timeout ends,
+// and fails with the last description check returned.
+func eventually(t *testing.T, what string, check func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(cmdTimeout)
+	for {
+		ok, last := check()
+		if ok {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: gave up, last %s", what, last)
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 }
 

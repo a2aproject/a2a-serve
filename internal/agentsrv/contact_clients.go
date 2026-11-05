@@ -38,6 +38,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"golang.org/x/sync/singleflight"
 )
 
 // ContactClients reaches other agents: contacts, through one cached client
@@ -49,9 +50,9 @@ type ContactClients struct {
 	ads       *gossip.Table
 	agentName func() string
 
-	// buildMu serializes building contact clients, so that two calls don't
-	// build one each and destroy the other's.
-	buildMu sync.Mutex
+	// builds joins the concurrent builds of one contact's client, so that
+	// two calls don't build one each and destroy the other's.
+	builds singleflight.Group
 
 	mu       sync.Mutex
 	cache    []network.PeerInfo
@@ -201,6 +202,7 @@ func viaAgent(ctx context.Context, hops int) context.Context {
 // target is an agent the server calls for a user.
 type target interface {
 	send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error)
+	// get returns the task with no history, which watches don't read.
 	get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
 }
 
@@ -214,7 +216,7 @@ func (t remoteTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessa
 }
 
 func (t remoteTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
-	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id})
+	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
 }
 
 type localTarget struct {
@@ -227,7 +229,7 @@ func (t localTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessag
 }
 
 func (t localTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
-	return t.h.GetTask(auth.InProcess(ctx, t.p), &a2a.GetTaskRequest{ID: id})
+	return t.h.GetTask(auth.InProcess(ctx, t.p), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
 }
 
 // ErrOffline is returned when a contact can't be reached.
@@ -317,8 +319,27 @@ func (cc *ContactClients) contactClient(ctx context.Context, name string) (*a2ac
 	if client := cc.cachedClient(name, c); client != nil {
 		return client, nil
 	}
-	cc.buildMu.Lock()
-	defer cc.buildMu.Unlock()
+	// The build outlives the call that started it, which others may wait for.
+	bctx := context.WithoutCancel(ctx)
+	ch := cc.builds.DoChan(buildKey(c), func() (any, error) { return cc.buildClient(bctx, name, c) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*a2aclient.Client), nil
+	}
+}
+
+// buildKey identifies a contact as stored, so that a changed contact isn't
+// served the client built for its previous version.
+func buildKey(c store.Contact) string {
+	return strings.Join([]string{c.Name, c.URL, c.Via, c.Token}, "\x00")
+}
+
+func (cc *ContactClients) buildClient(ctx context.Context, name string, c store.Contact) (*a2aclient.Client, error) {
 	if client := cc.cachedClient(name, c); client != nil {
 		return client, nil
 	}
@@ -327,7 +348,7 @@ func (cc *ContactClients) contactClient(ctx context.Context, name string) (*a2ac
 	defer cancel()
 	card, err := agentcard.NewResolver(hc).Resolve(cctx, c.URL)
 	if err != nil {
-		return nil, fmt.Errorf("%s is %w (%v)", name, ErrOffline, err)
+		return nil, fmt.Errorf("%s is %w (%w)", name, ErrOffline, err)
 	}
 	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
 	if err != nil {

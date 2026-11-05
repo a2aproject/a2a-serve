@@ -20,6 +20,8 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"maps"
+	"slices"
 	"strings"
 	"sync"
 
@@ -309,6 +311,24 @@ func (cl *CallClaims) markLined(ctx context.Context, contextID string) {
 	cl.linedMu.Lock()
 	defer cl.linedMu.Unlock()
 	cl.lined[contextID] = &linedSession{id: sess.ID}
+}
+
+// forgetPruned drops what is kept in memory of the conversations whose
+// handle the store pruned with their tasks. A conversation that continues
+// anyway gets the agents line again.
+func (cl *CallClaims) forgetPruned(ctx context.Context) {
+	cl.linedMu.Lock()
+	ids := slices.Collect(maps.Keys(cl.lined))
+	cl.linedMu.Unlock()
+	for _, id := range ids {
+		_, err := cl.store.HandleOf(ctx, id)
+		if !errors.Is(err, store.ErrNotFound) {
+			continue
+		}
+		cl.linedMu.Lock()
+		delete(cl.lined, id)
+		cl.linedMu.Unlock()
+	}
 }
 
 // turnClaims returns the claims of the caller of execCtx.
