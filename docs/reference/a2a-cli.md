@@ -1,6 +1,6 @@
 # The a2a CLI
 
-a2a-serve works with the [a2a CLI](https://github.com/a2aproject/a2a-cli), the command-line A2A client of the A2A project. People and nodes call agents with it, the agent calls other agents with it, and it can run a2a-serve as a [command plugin](../guide/a2a-command-plugin.md).
+a2a-serve works with the [a2a CLI](https://github.com/a2aproject/a2a-cli), the command-line A2A client of the A2A project. People and nodes call agents with it, the agent calls other agents with it, and it can run a2a-serve as `a2a serve`.
 
 `a2a-serve doctor` checks that the installed `a2a` is recent enough and prints the command to upgrade it. `a2a-serve doctor --fix` does the setup on this page.
 
@@ -43,3 +43,17 @@ grep -q '^credential-helper:' ~/.config/a2a-cli/config.yaml 2>/dev/null ||
 ### Version check
 
 `a2a-serve doctor` reads `a2a version -o json` and fails on versions older than the one this a2a-serve needs. Those versions lack `--unix-socket` or the credential helper format above, so their calls get a 401. With `--sandbox local`, the server also logs a warning on start.
+
+## Command plugin
+
+The `a2a` CLI runs any `a2a-<name>` on `PATH` as `a2a <name>` when command plugins are enabled. With `a2a-serve` on `PATH`, `a2a serve start` runs `a2a-serve start`, and the same holds for every other command. This documentation writes every command as `a2a-serve <command>`.
+
+Command plugins are off by default. `a2a-serve doctor --fix` turns them on. To turn them on by hand:
+
+```bash
+a2a plugin set-enabled true
+```
+
+`A2ACLI_PLUGINS_ENABLED=true` turns them on for one shell.
+
+If `a2a serve` fails with `unknown command "serve" for "a2a"`, command plugins are off or `a2a-serve` is not on `PATH`.

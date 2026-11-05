@@ -84,7 +84,6 @@ nav:
       - Webhook Nodes: guide/webhook-nodes.md
       - Backups: guide/backups.md
       - Shell Completion: guide/shell-completion.md
-      - Running as a2a serve: guide/a2a-command-plugin.md
   - Examples:
       - Serve a Coding Agent: examples/01-agent-server/index.md
       - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
