@@ -179,6 +179,23 @@ func (r *relay) browse(t *testing.T, link string) (int, string) {
 	return resp.StatusCode, string(body)
 }
 
+// leave follows link to the redirect to Google's sign-in, and returns
+// where it redirects.
+func (r *relay) leave(t *testing.T, link string) string {
+	t.Helper()
+	hc := *r.hc
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	resp, err := hc.Get(link)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer closeBody(t, resp)
+	if resp.StatusCode != http.StatusFound {
+		t.Fatalf("GET %s status = %d, want 302", link, resp.StatusCode)
+	}
+	return resp.Header.Get("Location")
+}
+
 var approvalToken = regexp.MustCompile(`name="token" value="([^"]+)"`)
 
 // answer answers the approval form on page.
@@ -468,5 +485,22 @@ func TestASignInKeepsItsLastThreeApprovals(t *testing.T) {
 	r.answer(t, pages[3], "approve")
 	if status, got := r.poll(t, d.DeviceCode); status != http.StatusOK {
 		t.Fatalf("POST /token after approving the newest page = %d %q, want 200", status, got.Error)
+	}
+}
+
+func TestASignInKeepsItsLastThreeTripsToGoogle(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	d := r.startSignIn(t)
+	var trips []string
+	for range 4 {
+		trips = append(trips, r.leave(t, d.Complete))
+	}
+
+	if _, got := r.browse(t, trips[0]); !strings.Contains(got, "expired") {
+		t.Fatalf("returning from the oldest of four trips to Google = %q, want it expired", got)
+	}
+	if status, got := r.browse(t, trips[3]); status != http.StatusOK || !strings.Contains(got, d.UserCode) {
+		t.Fatalf("returning from the newest trip to Google = %d %q, want 200 with the code %s", status, got, d.UserCode)
 	}
 }

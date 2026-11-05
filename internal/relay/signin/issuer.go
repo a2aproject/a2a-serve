@@ -106,6 +106,7 @@ type Issuer struct {
 	byLink    map[string]string
 	signins   map[string]*pendingSignIn
 	approvals map[string]*approval
+	seq       uint64
 	// lastRefresh is when each refresh token was last used, by its hash.
 	lastRefresh map[string]time.Time
 }

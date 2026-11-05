@@ -58,6 +58,7 @@ type pendingSignIn struct {
 	verifier   string
 	nonce      string
 	expires    time.Time
+	seq        uint64
 }
 
 // approval is a sign-in back from Google that waits for the person to
@@ -67,6 +68,7 @@ type approval struct {
 	claims     googleauth.Claims
 	google     string
 	expires    time.Time
+	seq        uint64
 }
 
 // authorize starts the sign-in of an agent (RFC 8628).
@@ -222,6 +224,7 @@ func (i *Issuer) startGoogleSignIn(w http.ResponseWriter, r *http.Request, devic
 		return
 	}
 	p.expires = d.expires
+	p.seq = i.nextSeq()
 	i.dropExtraSignIns(deviceCode)
 	i.signins[state] = p
 	i.mu.Unlock()
@@ -233,6 +236,13 @@ func (i *Issuer) startGoogleSignIn(w http.ResponseWriter, r *http.Request, devic
 // that all of them stay below MaxPending times it.
 const maxSignInsPerDevice = 3
 
+// nextSeq orders the trips to Google and approvals of a sign-in, which all
+// share its expiry. i.mu is held.
+func (i *Issuer) nextSeq() uint64 {
+	i.seq++
+	return i.seq
+}
+
 // dropExtraSignIns makes room for one more trip to Google of deviceCode by
 // dropping its oldest. i.mu is held.
 func (i *Issuer) dropExtraSignIns(deviceCode string) {
@@ -243,7 +253,7 @@ func (i *Issuer) dropExtraSignIns(deviceCode string) {
 			continue
 		}
 		n++
-		if oldest == "" || p.expires.Before(i.signins[oldest].expires) {
+		if oldest == "" || p.seq < i.signins[oldest].seq {
 			oldest = k
 		}
 	}
@@ -301,7 +311,7 @@ func (i *Issuer) callback(w http.ResponseWriter, r *http.Request) {
 	d, ok := i.devices[p.deviceCode]
 	if ok {
 		i.dropExtraApprovals(p.deviceCode)
-		i.approvals[token] = &approval{deviceCode: p.deviceCode, claims: claims, google: t.RefreshToken, expires: d.expires}
+		i.approvals[token] = &approval{deviceCode: p.deviceCode, claims: claims, google: t.RefreshToken, expires: d.expires, seq: i.nextSeq()}
 	}
 	i.mu.Unlock()
 	if !ok {
@@ -321,7 +331,7 @@ func (i *Issuer) dropExtraApprovals(deviceCode string) {
 			continue
 		}
 		n++
-		if oldest == "" || a.expires.Before(i.approvals[oldest].expires) {
+		if oldest == "" || a.seq < i.approvals[oldest].seq {
 			oldest = k
 		}
 	}
