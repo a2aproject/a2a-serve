@@ -205,9 +205,16 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if o.timings != nil {
 		o.timings(&timings)
 	}
+	// The agent processes' stderr explains why one exited.
+	agentStderr := &lockedBuffer{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("stderr of the agent processes:\n%s", agentStderr)
+		}
+	})
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

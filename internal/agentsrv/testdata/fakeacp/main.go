@@ -49,9 +49,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -102,6 +104,15 @@ type agent struct {
 }
 
 func main() {
+	// Tests print the stderr of agents when they fail, which tells a stop by
+	// the server from a signal of another process.
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
+	go func() {
+		sig := <-signals
+		fmt.Fprintf(os.Stderr, "fakeacp %d: got %v\n", os.Getpid(), sig)
+		os.Exit(1)
+	}()
 	a := &agent{out: json.NewEncoder(os.Stdout), pending: map[string]chan message{}, cancels: map[string]chan struct{}{}}
 	sc := bufio.NewScanner(os.Stdin)
 	sc.Buffer(make([]byte, 1<<20), 16<<20)
@@ -129,6 +140,7 @@ func main() {
 		}
 		go a.handle(m)
 	}
+	fmt.Fprintf(os.Stderr, "fakeacp %d: stdin closed: %v\n", os.Getpid(), sc.Err())
 }
 
 // registerPrompt returns the channel that session/cancel closes to stop the
