@@ -111,7 +111,11 @@ func secretRefs(cfg *agentdir.Config) []secretRef {
 		{"discord token", cfg.ChannelToken(agentdir.ChannelDiscord), "a2a-serve channel add discord --token -"},
 	}
 	if e := cfg.Channels.Email; e != nil {
-		refs = append(refs, secretRef{"email password", e.Password, "a2a-serve channel add email --email-password -"})
+		refs = append(refs,
+			secretRef{"email password", e.Password, "a2a-serve channel add email --email-password -"},
+			secretRef{"email OAuth client secret", e.OAuthClientSecret, "a2a-serve channel add email --email-oauth-client-secret -"},
+			secretRef{"email OAuth refresh token", e.OAuthRefreshToken, "a2a-serve channel add email --email-oauth-refresh-token -"},
+		)
 	}
 	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a-serve config set --google-client-secret -"})
 	refs = append(refs, secretRef{"--backup-key", cfg.Backup.Key, "a2a-serve config set --backup-key -"})

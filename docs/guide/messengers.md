@@ -18,4 +18,8 @@ Each chat or thread is one conversation. `/new` starts a new one, and `/stop` ca
 
 - **Telegram:** answers stream into one message, and approvals are buttons. In groups, the bot answers when mentioned or replied to.
 - **Discord:** needs the Message Content intent. Each conversation gets a thread in server channels. `/join`, `/new` and `/stop` are slash commands.
-- **Email:** the agent accepts mail that passes DMARC or aligned DKIM at your trusted mail server (`--email-trusted-authserv`). It replies in the thread, with only questions and final results. Approve by replying `approve`, `always` or `deny`.
+- **Email:** the agent reads mail that passes DMARC at your trusted mail server (`--email-trusted-authserv`). Without a DMARC result, or with `dmarc=none`, a DKIM signature of the sender's exact domain also counts. The agent drops other mail without a reply, `join` mails included. It replies in the thread, with only questions and final results. Approve by replying `approve`, `always` or `deny`. The agent ignores quoted text, signatures and lines such as "Sent from my iPhone". When more text follows the answer, the agent asks for a plain answer.
+
+DMARC and DKIM prove the domain of a sender. Anyone who can send authenticated mail for the domain counts as any of its addresses. This includes the domain's mail admins and services it lets send for it, such as a newsletter service.
+
+Providers such as Microsoft 365 require OAuth sign-in for IMAP and SMTP. Pass a refresh token, the client ID and the provider's token URL with the `--email-oauth-*` flags of [`channel add`](../reference/commands/channel.md). The server refreshes the access tokens itself.

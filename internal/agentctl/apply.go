@@ -210,18 +210,20 @@ func channelOf(setting string) string {
 	return ""
 }
 
-// channelSecret returns the name of the stored secret the channel of kind
-// refers to, or "".
-func channelSecret(cfg *agentdir.Config, kind string) string {
-	ref := cfg.ChannelToken(kind)
-	if kind == agentdir.ChannelEmail && cfg.Channels.Email != nil {
-		ref = cfg.Channels.Email.Password
+// channelSecretsOf returns the names of the stored secrets the channel of
+// kind refers to.
+func channelSecretsOf(cfg *agentdir.Config, kind string) []string {
+	refs := []string{cfg.ChannelToken(kind)}
+	if e := cfg.Channels.Email; kind == agentdir.ChannelEmail && e != nil {
+		refs = []string{e.Password, e.OAuthClientSecret, e.OAuthRefreshToken}
 	}
-	name, _ := strings.CutPrefix(ref, agentdir.SecretPrefix)
-	if name == ref {
-		return ""
+	var out []string
+	for _, ref := range refs {
+		if name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix); ok && name != "" {
+			out = append(out, name)
+		}
 	}
-	return name
+	return out
 }
 
 // applyChannels adds, replaces or removes the channels which changed on the
@@ -234,8 +236,8 @@ func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdi
 				settings = append(settings, c.Setting)
 			}
 		}
-		secret := channelSecret(next, kind)
-		if secret != "" && slices.ContainsFunc(res.Secrets, func(s SecretChange) bool { return s.Name == secret && s.Action != SecretDeleted }) {
+		secrets := channelSecretsOf(next, kind)
+		if slices.ContainsFunc(res.Secrets, func(s SecretChange) bool { return slices.Contains(secrets, s.Name) && s.Action != SecretDeleted }) {
 			settings = append(settings, kind)
 		}
 		if len(settings) == 0 {
@@ -247,8 +249,14 @@ func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdi
 				return fmt.Errorf("removing %s from the running agent: %w", kind, err)
 			}
 		} else {
-			if secret != "" && store[secret] != "" {
-				req.Secrets = agentdir.Secrets{secret: store[secret]}
+			for _, name := range secrets {
+				if store[name] == "" {
+					continue
+				}
+				if req.Secrets == nil {
+					req.Secrets = agentdir.Secrets{}
+				}
+				req.Secrets[name] = store[name]
 			}
 			if _, err := client.AddChannel(ctx, req); err != nil {
 				return fmt.Errorf("applying %s to the running agent: %w", kind, err)

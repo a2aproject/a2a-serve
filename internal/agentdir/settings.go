@@ -84,16 +84,21 @@ type Settings struct {
 	TaskTTL string
 }
 
-// EmailSettings configure the email channel. Password is env:VAR,
-// secret:NAME or the value. Set fields override the configured channel.
+// EmailSettings configure the email channel. Password, OAuthClientSecret
+// and OAuthRefreshToken are env:VAR, secret:NAME or the value. Set fields
+// override the configured channel.
 type EmailSettings struct {
-	Address         string
-	IMAP            string
-	SMTP            string
-	Username        string
-	Password        string
-	Mailbox         string
-	TrustedAuthServ string
+	Address           string
+	IMAP              string
+	SMTP              string
+	Username          string
+	Password          string
+	Mailbox           string
+	TrustedAuthServ   string
+	OAuthTokenURL     string
+	OAuthClientID     string
+	OAuthClientSecret string
+	OAuthRefreshToken string
 }
 
 // Secret names under which flag values are stored.
@@ -101,6 +106,8 @@ const (
 	SecretTelegram      = "TELEGRAM_BOT_TOKEN"
 	SecretDiscord       = "DISCORD_BOT_TOKEN"
 	SecretEmailPassword = "EMAIL_PASSWORD"
+	SecretEmailOAuth    = "EMAIL_OAUTH_REFRESH_TOKEN"
+	SecretEmailClient   = "EMAIL_OAUTH_CLIENT_SECRET"
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 	SecretRelayToken    = "RELAY_TOKEN"
@@ -253,12 +260,24 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		set(&next.Username, e.Username)
 		set(&next.Mailbox, e.Mailbox)
 		set(&next.TrustedAuthServ, e.TrustedAuthServ)
-		if e.Password != "" {
-			ref, err := resolve(e.Password, SecretEmailPassword)
-			if err != nil {
-				return nil, fmt.Errorf("--email-password: %w", err)
+		set(&next.OAuthTokenURL, e.OAuthTokenURL)
+		set(&next.OAuthClientID, e.OAuthClientID)
+		for _, s := range []struct {
+			flag, value, name string
+			dst               *string
+		}{
+			{"email-password", e.Password, SecretEmailPassword, &next.Password},
+			{"email-oauth-client-secret", e.OAuthClientSecret, SecretEmailClient, &next.OAuthClientSecret},
+			{"email-oauth-refresh-token", e.OAuthRefreshToken, SecretEmailOAuth, &next.OAuthRefreshToken},
+		} {
+			if s.value == "" {
+				continue
 			}
-			next.Password = ref
+			ref, err := resolve(s.value, s.name)
+			if err != nil {
+				return nil, fmt.Errorf("--%s: %w", s.flag, err)
+			}
+			*s.dst = ref
 		}
 		cfg.Channels.Email = &next
 	}

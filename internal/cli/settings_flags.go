@@ -151,6 +151,10 @@ func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings) {
 	f.StringVar(&email.Password, "email-password", "", secretUsage("Email channel: password"))
 	f.StringVar(&email.Mailbox, "email-mailbox", "", "Email channel: mailbox to watch (default INBOX)")
 	f.StringVar(&email.TrustedAuthServ, "email-trusted-authserv", "", "Email channel: authserv-id of your mail server's Authentication-Results")
+	f.StringVar(&email.OAuthRefreshToken, "email-oauth-refresh-token", "", secretUsage("Email channel: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused"))
+	f.StringVar(&email.OAuthTokenURL, "email-oauth-token-url", "", "Email channel: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token")
+	f.StringVar(&email.OAuthClientID, "email-oauth-client-id", "", "Email channel: OAuth client ID")
+	f.StringVar(&email.OAuthClientSecret, "email-oauth-client-secret", "", secretUsage("Email channel: OAuth client secret, if the client has one"))
 }
 
 // settings returns the parsed settings. Secret-valued flags set to - are

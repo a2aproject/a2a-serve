@@ -315,6 +315,34 @@ func TestSettingsApplyEmail(t *testing.T) {
 	}
 }
 
+func TestSettingsApplyEmailOAuth(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &Config{Channels: ChannelsConfig{Email: &EmailConfig{
+		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
+	}}}
+	secrets, err := Settings{Email: &EmailSettings{
+		OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id", OAuthClientSecret: "cs", OAuthRefreshToken: "rt",
+	}}.Apply(cfg, d)
+	if err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := &EmailConfig{
+		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
+		OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id",
+		OAuthClientSecret: "secret:" + SecretEmailClient, OAuthRefreshToken: "secret:" + SecretEmailOAuth,
+	}
+	if diff := cmp.Diff(want, cfg.Channels.Email); diff != "" {
+		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(Secrets{SecretEmailClient: "cs", SecretEmailOAuth: "rt"}, secrets); diff != "" {
+		t.Fatalf("Apply() wrong secrets (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSettingsApplyNetworkSecrets(t *testing.T) {
 	t.Setenv("A2A_TEST_TS", "tskey-1")
 	tests := []struct {
