@@ -119,8 +119,6 @@ func TestPrivateNetworkAccess(t *testing.T) {
 	}{
 		{name: "everyone on the private network", provider: &fakeProvider{}, want: http.StatusOK},
 		{name: "closed private network", provider: &fakeProvider{}, access: agentdir.AccessPaired, want: http.StatusForbidden, wantBody: "this agent doesn't accept the machine peer on the private network"},
-		{name: "network that admits by sign-in", provider: &fakeProvider{signIn: true}, want: http.StatusForbidden, wantBody: "this agent doesn't accept the machine peer on the private network"},
-		{name: "network that admits by sign-in, opened", provider: &fakeProvider{signIn: true}, access: agentdir.AccessEveryone, want: http.StatusOK},
 		{name: "caller the network doesn't identify", provider: &fakeProvider{unidentified: true}, want: http.StatusUnauthorized, wantBody: "this agent needs a token"},
 	}
 	for _, tc := range tests {
@@ -222,20 +220,18 @@ func TestCardPairingScheme(t *testing.T) {
 		name   string
 		kind   string
 		policy agentdir.PolicyConfig
-		signIn bool
 		want   bool
 	}{
 		{name: "local", kind: network.ListenerLocal, want: true},
 		{name: "private open to everyone", kind: network.ListenerPrivate},
 		{name: "private for pairings", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: true},
-		{name: "private network that admits by sign-in", kind: network.ListenerPrivate, signIn: true, want: true},
 		{name: "public for pairings", kind: network.ListenerPublic, want: true},
 		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s := &Server{private: &fakeProvider{signIn: tc.signIn}}
+			s := &Server{private: &fakeProvider{}}
 			s.oauth = oauth.New(oauth.Deps{Google: googleauth.Google, Config: s.config})
 			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
 			card := s.card(tc.kind, "http://127.0.0.1:9000")

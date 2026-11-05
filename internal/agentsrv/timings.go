@@ -31,6 +31,9 @@ type Timings struct {
 	InjectRetry time.Duration
 	// EditInterval throttles streaming edits; messengers rate-limit them.
 	EditInterval time.Duration
+	// SendRetry is the first delay before a message that must reach the
+	// chat, such as a question, is sent again; it doubles on each failure.
+	SendRetry time.Duration
 	// ScheduleMinWait is the shortest wait between checks of the schedules.
 	ScheduleMinWait time.Duration
 	// WebhookRetries are the delays before each wake delivery attempt to a
@@ -51,6 +54,7 @@ func (t Timings) withDefaults() Timings {
 	t.WatchMaxInterval = cmp.Or(t.WatchMaxInterval, 30*time.Second)
 	t.InjectRetry = cmp.Or(t.InjectRetry, 2*time.Second)
 	t.EditInterval = cmp.Or(t.EditInterval, time.Second)
+	t.SendRetry = cmp.Or(t.SendRetry, time.Second)
 	t.ScheduleMinWait = cmp.Or(t.ScheduleMinWait, time.Second)
 	t.ChannelRetryMin = cmp.Or(t.ChannelRetryMin, 5*time.Second)
 	t.FirstBackupDelay = cmp.Or(t.FirstBackupDelay, time.Minute)

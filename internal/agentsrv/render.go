@@ -16,7 +16,6 @@ package agentsrv
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -42,25 +41,34 @@ type renderer struct {
 	replyTo channel.Ref
 	p       auth.Principal
 
+	// lim retries messenger calls and holds the messenger's rate limit.
+	lim *retrier
+
+	// mu guards the text received so far. It is never held during a
+	// messenger call, so that events keep being consumed.
 	mu        sync.Mutex
 	taskID    a2a.TaskID
 	contextID string
 	artifacts []*artifactText
 	files     []channel.File
 	progress  string
+	timer     *time.Timer
+	done      bool
+	// waitsForOwner is set once the task waits for an owner to answer its
+	// question elsewhere, as for anonymous conversations.
+	waitsForOwner bool
 
+	// showMu serializes what is shown in the conversation, and guards the
+	// fields below. It is taken before mu.
+	showMu    sync.Mutex
 	ref       channel.Ref
 	segStart  int
 	lastShown string
 	lastEdit  time.Time
-	timer     *time.Timer
-	done      bool
 	// lostFrom is the offset in the text from which what the user sees is
 	// stale because an edit or send failed, or -1.
 	lostFrom int
-	// waitsForOwner is set once the task waits for an owner to answer its
-	// question elsewhere, as for anonymous conversations.
-	waitsForOwner bool
+
 	// onWaitForOwner, if set, is called when the task starts waiting for an
 	// owner, before the conversation is told, so that an answer given
 	// meanwhile isn't missed.
@@ -77,7 +85,7 @@ func newRenderer(a *ChatApprovals, ch channel.Channel, conv channel.ConvKey, rep
 	if caps.MaxText <= 0 {
 		caps.MaxText = 4000
 	}
-	return &renderer{a: a, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p, lostFrom: -1}
+	return &renderer{a: a, ch: ch, caps: caps, conv: conv, replyTo: replyTo, p: p, lostFrom: -1, lim: newRetrier(a.timings.SendRetry)}
 }
 
 // onEvent renders an event and reports whether the task stopped: it
@@ -184,38 +192,55 @@ func (rd *renderer) text() string {
 	return sb.String()
 }
 
-// flush shows the current text. Unless force, edits are throttled and the
-// latest text is shown when the interval passes.
+// flush shows the current text. Unless force, edits are throttled, wait for
+// the messenger's rate limit, and the latest text is shown when the interval
+// passes.
 func (rd *renderer) flush(ctx context.Context, force bool) {
 	if !rd.caps.Stream {
 		return
 	}
+	if force {
+		rd.showMu.Lock()
+	} else if !rd.showMu.TryLock() {
+		rd.schedule(ctx, rd.a.timings.EditInterval)
+		return
+	}
+	defer rd.showMu.Unlock()
 	rd.mu.Lock()
-	defer rd.mu.Unlock()
-	if rd.done {
+	done, text, progress := rd.done, rd.text(), rd.progress
+	rd.mu.Unlock()
+	if done {
 		return
 	}
 	if !force {
-		if wait := rd.a.timings.EditInterval - time.Since(rd.lastEdit); wait > 0 {
-			if rd.timer == nil {
-				rd.timer = time.AfterFunc(wait, func() {
-					rd.mu.Lock()
-					rd.timer = nil
-					rd.mu.Unlock()
-					rd.flush(ctx, false)
-				})
-			}
+		if wait := max(rd.a.timings.EditInterval-time.Since(rd.lastEdit), rd.lim.remaining()); wait > 0 {
+			rd.schedule(ctx, wait)
 			return
 		}
 	}
-	rd.showLocked(ctx, rd.progress)
+	rd.showLocked(ctx, text, progress, force)
+}
+
+// schedule flushes again after wait, unless a flush is already scheduled.
+func (rd *renderer) schedule(ctx context.Context, wait time.Duration) {
+	rd.mu.Lock()
+	defer rd.mu.Unlock()
+	if rd.done || rd.timer != nil {
+		return
+	}
+	rd.timer = time.AfterFunc(max(wait, time.Millisecond), func() {
+		rd.mu.Lock()
+		rd.timer = nil
+		rd.mu.Unlock()
+		rd.flush(ctx, false)
+	})
 }
 
 // showLocked edits or sends the streaming message, starting a new message
 // when the text outgrows the channel's limit. It returns the offset in the
-// text from which the user doesn't see the current text, or -1.
-func (rd *renderer) showLocked(ctx context.Context, progress string) int {
-	text := rd.text()
+// text from which the user doesn't see the current text, or -1. A reliable
+// call retries what the messenger refused.
+func (rd *renderer) showLocked(ctx context.Context, text, progress string, reliable bool) int {
 	limit := max(rd.caps.MaxText-200, rd.caps.MaxText/2, 1)
 	for len(text)-rd.segStart > limit {
 		seg := text[rd.segStart:]
@@ -226,7 +251,7 @@ func (rd *renderer) showLocked(ctx context.Context, progress string) int {
 		if cut == 0 {
 			_, cut = utf8.DecodeRuneInString(seg)
 		}
-		if !rd.showSegmentLocked(ctx, seg[:cut]) && rd.lostFrom < 0 {
+		if !rd.showSegmentLocked(ctx, seg[:cut], reliable) && rd.lostFrom < 0 {
 			rd.lostFrom = rd.segStart
 		}
 		rd.segStart += cut
@@ -239,28 +264,42 @@ func (rd *renderer) showLocked(ctx context.Context, progress string) int {
 		}
 		display += "⚙ " + progress
 	}
-	if display != "" && !rd.showSegmentLocked(ctx, display) && rd.lostFrom < 0 {
+	if display != "" && !rd.showSegmentLocked(ctx, display, reliable) && rd.lostFrom < 0 {
 		return rd.segStart
 	}
 	return rd.lostFrom
 }
 
 // showSegmentLocked reports whether display is shown.
-func (rd *renderer) showSegmentLocked(ctx context.Context, display string) bool {
+func (rd *renderer) showSegmentLocked(ctx context.Context, display string, reliable bool) bool {
 	if display == rd.lastShown {
 		return true
 	}
 	rd.lastEdit = time.Now()
 	out := channel.Outbound{Conv: rd.conv, Text: display, ReplyTo: rd.replyTo}
 	if rd.ref.ID != "" && rd.caps.Edit {
-		if err := rd.ch.Edit(ctx, rd.ref, out); err != nil {
+		policy := retryNever
+		if reliable {
+			policy = retryRateLimits
+		}
+		err := rd.lim.do(ctx, policy, func() error { return rd.ch.Edit(ctx, rd.ref, out) })
+		if err != nil {
 			slog.Debug("editing message", "channel", rd.ch.Name(), "error", err)
 			return false
 		}
 		rd.lastShown = display
 		return true
 	}
-	ref, err := rd.ch.Send(ctx, out)
+	policy := retryNever
+	if reliable {
+		policy = retryAll
+	}
+	var ref channel.Ref
+	err := rd.lim.do(ctx, policy, func() error {
+		var err error
+		ref, err = rd.ch.Send(ctx, out)
+		return err
+	})
 	if err != nil {
 		slog.Warn("sending message", "channel", rd.ch.Name(), "error", err)
 		return false
@@ -269,48 +308,31 @@ func (rd *renderer) showSegmentLocked(ctx context.Context, display string) bool 
 	return true
 }
 
-// send sends a standalone message, split to the channel's limit.
+// send sends a standalone message, split to the channel's limit, and retries
+// pieces that fail. It stops at the first piece that doesn't get through, so
+// that the text doesn't arrive with a gap.
 func (rd *renderer) send(ctx context.Context, text string) channel.Ref {
 	var ref channel.Ref
 	for _, piece := range channel.Split(text, rd.caps.MaxText) {
-		var err error
-		ref, err = rd.ch.Send(ctx, channel.Outbound{Conv: rd.conv, Text: piece, ReplyTo: rd.replyTo, Subject: rd.subject()})
+		out := channel.Outbound{Conv: rd.conv, Text: piece, ReplyTo: rd.replyTo, Subject: rd.subject()}
+		err := rd.lim.do(ctx, retryAll, func() error {
+			var err error
+			ref, err = rd.ch.Send(ctx, out)
+			return err
+		})
 		if err != nil {
 			slog.Warn("sending message", "channel", rd.ch.Name(), "error", err)
+			return ref
 		}
 	}
 	return ref
 }
 
-// maxRetryWait is the longest the renderer waits for a rate limit to end.
-const maxRetryWait = 30 * time.Second
-
-// resend sends text as new messages after the last edit of the streaming
-// message failed, so that the user gets the final answer. A rate limit is
-// retried once.
-func (rd *renderer) resend(ctx context.Context, text string) {
-	for _, piece := range channel.Split(text, rd.caps.MaxText) {
-		out := channel.Outbound{Conv: rd.conv, Text: piece, ReplyTo: rd.replyTo, Subject: rd.subject()}
-		_, err := rd.ch.Send(ctx, out)
-		var limit *channel.RateLimitError
-		if errors.As(err, &limit) && limit.RetryAfter <= maxRetryWait {
-			select {
-			case <-ctx.Done():
-				err = ctx.Err()
-			case <-time.After(limit.RetryAfter):
-				_, err = rd.ch.Send(ctx, out)
-			}
-		}
-		if err != nil {
-			slog.Warn("sending the final answer after a failed edit", "channel", rd.ch.Name(), "error", err)
-			return
-		}
-	}
-}
-
 func (rd *renderer) subject() string { return rd.a.agentName() }
 
 func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
+	rd.showMu.Lock()
+	defer rd.showMu.Unlock()
 	rd.mu.Lock()
 	if rd.timer != nil {
 		rd.timer.Stop()
@@ -335,24 +357,26 @@ func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
 		text = joinText(text, "⚠ "+status)
 	}
 	files := rd.files
-	streamed := rd.caps.Stream
-	lost := -1
-	if streamed {
-		rd.artifacts = []*artifactText{{id: "final"}}
-		rd.artifacts[0].text.WriteString(text)
-		lost = rd.showLocked(ctx, "")
-	}
 	rd.done = true
 	rd.mu.Unlock()
 
-	if !streamed && text != "" {
+	lost := -1
+	if rd.caps.Stream {
+		lost = rd.showLocked(ctx, text, "", true)
+	}
+	if !rd.caps.Stream && text != "" {
 		rd.send(ctx, text)
 	}
 	if lost >= 0 {
-		rd.resend(ctx, text[lost:])
+		rd.send(ctx, text[lost:])
 	}
 	if len(files) > 0 {
-		if _, err := rd.ch.Send(ctx, channel.Outbound{Conv: rd.conv, Files: files, ReplyTo: rd.replyTo, Subject: rd.subject()}); err != nil {
+		out := channel.Outbound{Conv: rd.conv, Files: files, ReplyTo: rd.replyTo, Subject: rd.subject()}
+		err := rd.lim.do(ctx, retryAll, func() error {
+			_, err := rd.ch.Send(ctx, out)
+			return err
+		})
+		if err != nil {
 			slog.Warn("sending files", "channel", rd.ch.Name(), "error", err)
 		}
 	}
@@ -409,7 +433,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 	} else {
 		out.Text += rd.a.answerHint(ctx, rec, q)
 	}
-	rd.a.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text)
+	rd.a.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text, rd.lim)
 }
 
 // waitingForOwner returns the task which waits for an owner's answer.

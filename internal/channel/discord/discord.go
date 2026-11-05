@@ -26,6 +26,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -41,8 +42,9 @@ const (
 	maxFile = 20 << 20
 	// catchUpLimit is Discord's page size for message history.
 	catchUpLimit = 50
-	// maxCatchUpPages bounds catching up on a busy channel after a long outage.
-	maxCatchUpPages = 20
+	// maxCatchUpMessages bounds the messages read per channel when catching
+	// up after an outage; the newest are read.
+	maxCatchUpMessages = 1000
 	// convsKey lists the conversations to catch up on after a reconnect.
 	convsKey = "discord:convs"
 )
@@ -56,10 +58,19 @@ type Channel struct {
 	s      *discordgo.Session
 	me     *discordgo.User
 
+	// queue hands each conversation's events to the router in the order the
+	// gateway received them.
+	queue *orderedQueue
+	// threadRetry is the first delay before starting a thread is tried again.
+	threadRetry time.Duration
+
 	mu    sync.Mutex
 	in    chan<- channel.Inbound
 	ctx   context.Context
 	convs []string
+
+	// cursorMu serializes updates of the last message seen of conversations.
+	cursorMu sync.Mutex
 }
 
 var (
@@ -73,7 +84,9 @@ var noMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMen
 
 // New returns a channel for the bot with token. kv keeps the last message
 // seen per conversation.
-func New(token string, kv channel.KV) *Channel { return &Channel{token: token, kv: kv} }
+func New(token string, kv channel.KV) *Channel {
+	return &Channel{token: token, kv: kv, queue: newOrderedQueue(), threadRetry: 500 * time.Millisecond}
+}
 
 // Name implements [channel.Channel].
 func (c *Channel) Name() string { return "discord" }
@@ -172,7 +185,7 @@ func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) {
 	convs := slices.Clone(c.convs)
 	c.mu.Unlock()
 	for _, conv := range convs {
-		c.catchUp(s, s.State, conv)
+		c.queue.do(conv, func() { c.catchUp(s, s.State, conv) })
 	}
 }
 
@@ -190,7 +203,9 @@ type threadStarter interface {
 }
 
 func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
-	ctx := context.Background()
+	c.mu.Lock()
+	ctx := c.ctx
+	c.mu.Unlock()
 	last, ok, err := c.kv.Get(ctx, lastKey(conv))
 	if err != nil {
 		slog.Warn("discord: loading the last message seen", "channel", conv, "error", err)
@@ -199,37 +214,68 @@ func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
 	if !ok || last == "" {
 		return
 	}
-	msgs, err := missed(s, conv, last)
+	msgs, skipped, err := missed(s, conv, last)
 	if err != nil {
 		slog.Warn("discord: catching up", "channel", conv, "error", err)
+		return
+	}
+	if skipped > 0 {
+		slog.Warn("discord: catching up on the newest missed messages only; older ones are skipped",
+			"channel", conv, "read", len(msgs), "skipped_at_least", skipped)
 	}
 	if len(msgs) == 0 {
 		return
 	}
 	direct := isDirect(s, st, conv)
 	for _, m := range msgs {
+		if ctx.Err() != nil {
+			return
+		}
 		c.handleMessage(s, m, direct)
+		c.trackInbound(conv, m.ID)
 	}
 }
 
-// missed returns the messages of conv after last, oldest first. On an error
-// it returns the messages read so far.
-func missed(api restAPI, conv, last string) ([]*discordgo.Message, error) {
+// missed returns the newest messages of conv after last, up to
+// maxCatchUpMessages, oldest first. If older ones are left unread, it also
+// returns how many of them it saw. It reads backwards from the newest message,
+// so on an error it returns none: the cursor must not pass messages that
+// weren't read.
+func missed(api restAPI, conv, last string) ([]*discordgo.Message, int, error) {
 	var all []*discordgo.Message
-	for range maxCatchUpPages {
-		page, err := api.ChannelMessages(conv, catchUpLimit, "", last, "")
+	before := ""
+	for len(all) < maxCatchUpMessages {
+		limit := min(catchUpLimit, maxCatchUpMessages-len(all))
+		page, err := api.ChannelMessages(conv, limit, before, "", "")
 		if err != nil {
-			return all, err
+			return nil, 0, err
 		}
-		slices.SortFunc(page, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) })
-		all = append(all, page...)
-		if len(page) < catchUpLimit {
-			return all, nil
+		newer := newerThan(page, last)
+		all = append(all, newer...)
+		if len(newer) < len(page) || len(page) < limit {
+			return sortedByID(all), 0, nil
 		}
-		last = page[len(page)-1].ID
+		before = oldestID(page)
 	}
-	slog.Warn("discord: catching up on the oldest missed messages only; newer ones are skipped", "channel", conv, "count", len(all))
-	return all, nil
+	probe, err := api.ChannelMessages(conv, catchUpLimit, before, "", "")
+	if err != nil {
+		slog.Warn("discord: checking for more missed messages", "channel", conv, "error", err)
+		return sortedByID(all), 0, nil
+	}
+	return sortedByID(all), len(newerThan(probe, last)), nil
+}
+
+func newerThan(page []*discordgo.Message, last string) []*discordgo.Message {
+	return slices.DeleteFunc(slices.Clone(page), func(m *discordgo.Message) bool { return compareSnowflakes(m.ID, last) <= 0 })
+}
+
+func oldestID(page []*discordgo.Message) string {
+	return slices.MinFunc(page, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) }).ID
+}
+
+func sortedByID(msgs []*discordgo.Message) []*discordgo.Message {
+	slices.SortFunc(msgs, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) })
+	return msgs
 }
 
 func compareSnowflakes(a, b string) int {
@@ -254,12 +300,40 @@ func isDirect(api restAPI, st *discordgo.State, conv string) bool {
 	return ch.Type == discordgo.ChannelTypeDM || ch.Type == discordgo.ChannelTypeGroupDM
 }
 
-// track records the last message of a conversation for catching up.
-func (c *Channel) track(conv, msgID string) {
+// trackInbound moves the catch-up cursor of a conversation to a message the
+// bot received, unless it is already past it.
+func (c *Channel) trackInbound(conv, msgID string) {
+	c.setCursor(conv, msgID, func(old string, ok bool) bool { return !ok || compareSnowflakes(msgID, old) > 0 })
+	c.remember(conv)
+}
+
+// trackSent starts the catch-up cursor of a conversation with a message the
+// bot sent. It never moves a cursor: messages that arrived while the bot was
+// disconnected are older than its replies and must still be caught up on.
+func (c *Channel) trackSent(conv, msgID string) {
+	c.setCursor(conv, msgID, func(_ string, ok bool) bool { return !ok })
+	c.remember(conv)
+}
+
+func (c *Channel) setCursor(conv, msgID string, replace func(old string, ok bool) bool) {
 	ctx := context.Background()
+	c.cursorMu.Lock()
+	defer c.cursorMu.Unlock()
+	old, ok, err := c.kv.Get(ctx, lastKey(conv))
+	if err != nil {
+		slog.Warn("discord: loading the last message seen", "channel", conv, "error", err)
+		return
+	}
+	if !replace(old, ok && old != "") {
+		return
+	}
 	if err := c.kv.Set(ctx, lastKey(conv), msgID); err != nil {
 		slog.Warn("discord: recording last message", "error", err)
 	}
+}
+
+// remember adds conv to the conversations to catch up on.
+func (c *Channel) remember(conv string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if slices.Contains(c.convs, conv) {
@@ -269,7 +343,7 @@ func (c *Channel) track(conv, msgID string) {
 	if len(c.convs) > 200 {
 		c.convs = c.convs[len(c.convs)-200:]
 	}
-	if err := c.kv.Set(ctx, convsKey, strings.Join(c.convs, ",")); err != nil {
+	if err := c.kv.Set(context.Background(), convsKey, strings.Join(c.convs, ",")); err != nil {
 		slog.Warn("discord: recording conversations", "error", err)
 	}
 }
@@ -285,8 +359,10 @@ func (c *Channel) ownThread(id string) bool {
 	return ok && v == "1"
 }
 
+// onMessage queues the message, because the gateway runs handlers on
+// goroutines of their own.
 func (c *Channel) onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
-	c.handleMessage(s, m.Message, m.GuildID == "")
+	c.queue.do(m.ChannelID, func() { c.handleMessage(s, m.Message, m.GuildID == "") })
 }
 
 func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bool) {
@@ -301,7 +377,7 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 		return
 	}
 	text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, "<@"+c.me.ID+">", ""), "<@!"+c.me.ID+">", ""))
-	c.track(m.ChannelID, m.ID)
+	c.trackInbound(m.ChannelID, m.ID)
 	in := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: m.ID,
@@ -316,22 +392,22 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 		in.Prepare = func(ctx context.Context, in *channel.Inbound) error {
 			var errs []error
 			if newThread {
-				th, err := s.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
-					Name: threadName(m.Content, c.me.ID), AutoArchiveDuration: 1440,
-				}, discordgo.WithContext(ctx))
+				th, err := c.startThread(ctx, s, m)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("discord: starting thread: %w", err))
-				} else {
-					in.Conv = channel.ConvKey(th.ID)
-					if err := c.kv.Set(ctx, threadKey(th.ID), "1"); err != nil {
-						errs = append(errs, fmt.Errorf("discord: recording thread: %w", err))
+					return &channel.DroppedError{
+						Reason: "⚠ I couldn't start a thread for this conversation, so I ignored your message. Check that I may create threads in this channel, then try again.",
+						Err:    err,
 					}
+				}
+				in.Conv = channel.ConvKey(th.ID)
+				if err := c.kv.Set(ctx, threadKey(th.ID), "1"); err != nil {
+					errs = append(errs, fmt.Errorf("discord: recording thread: %w", err))
 				}
 			}
 			for _, a := range m.Attachments {
 				f, err := download(ctx, a)
 				if err != nil {
-					errs = append(errs, fmt.Errorf("discord: downloading %s: %w", a.Filename, err))
+					errs = append(errs, &channel.AttachmentError{Name: a.Filename, Err: err})
 					continue
 				}
 				in.Files = append(in.Files, f)
@@ -340,6 +416,34 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 		}
 	}
 	c.deliver(in)
+}
+
+// startThread starts the thread of a conversation under m, trying again a
+// few times: a conversation that fell back to its channel would be shared
+// with everyone who writes there.
+func (c *Channel) startThread(ctx context.Context, s threadStarter, m *discordgo.Message) (*discordgo.Channel, error) {
+	const attempts = 3
+	delay := c.threadRetry
+	var err error
+	for attempt := range attempts {
+		var th *discordgo.Channel
+		th, err = s.MessageThreadStartComplex(m.ChannelID, m.ID, &discordgo.ThreadStart{
+			Name: threadName(m.Content, c.me.ID), AutoArchiveDuration: 1440,
+		}, discordgo.WithContext(ctx))
+		if err == nil {
+			return th, nil
+		}
+		if attempt == attempts-1 {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, errors.Join(err, ctx.Err())
+		case <-time.After(delay):
+		}
+		delay *= 2
+	}
+	return nil, fmt.Errorf("discord: starting thread: %w", err)
 }
 
 func threadName(text, botID string) string {
@@ -361,22 +465,35 @@ func download(ctx context.Context, a *discordgo.MessageAttachment) (channel.File
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, a.URL, nil)
 	if err != nil {
-		return channel.File{}, err
+		return channel.File{}, redactQuery(err)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return channel.File{}, err
+		return channel.File{}, redactQuery(err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
 			slog.Debug("discord: closing download", "error", err)
 		}
 	}()
+	if resp.StatusCode != http.StatusOK {
+		return channel.File{}, fmt.Errorf("the server answered %s", resp.Status)
+	}
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile))
 	if err != nil {
 		return channel.File{}, err
 	}
 	return channel.File{Name: a.Filename, MediaType: a.ContentType, Data: data}, nil
+}
+
+// redactQuery drops the query of the URL in err, where Discord puts the
+// signature of an attachment link.
+func redactQuery(err error) error {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		urlErr.URL, _, _ = strings.Cut(urlErr.URL, "?")
+	}
+	return err
 }
 
 func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCreate) {
@@ -420,7 +537,7 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 	default:
 		return
 	}
-	c.deliver(in)
+	c.queue.do(i.ChannelID, func() { c.deliver(in) })
 }
 
 func respond(s *discordgo.Session, i *discordgo.InteractionCreate, r *discordgo.InteractionResponse) {
@@ -455,13 +572,53 @@ func components(q *channel.Question) []discordgo.MessageComponent {
 	return rows
 }
 
+// markdownChars are the characters that Discord formats or turns into links,
+// spoilers and quotes.
+const markdownChars = "\\*_~|`>#[]()<"
+
+// escapeMarkdown makes Discord show text as written.
+func escapeMarkdown(text string) string {
+	var sb strings.Builder
+	for _, r := range text {
+		if strings.ContainsRune(markdownChars, r) {
+			sb.WriteByte('\\')
+		}
+		sb.WriteRune(r)
+	}
+	return sb.String()
+}
+
+// escapeWithin is escapeMarkdown, with text cut so that the result has at most
+// limit bytes.
+func escapeWithin(text string, limit int) string {
+	escaped := escapeMarkdown(text)
+	for len(escaped) > limit {
+		text = channel.Truncate(text, max(len(text)-(len(escaped)-limit), 0))
+		escaped = escapeMarkdown(text)
+	}
+	return escaped
+}
+
+// messagePieces splits the text of m into messages.
+func messagePieces(m channel.Outbound) []string {
+	if !m.Literal {
+		return channel.Split(m.Text, maxText)
+	}
+	// Escaping at most doubles the size.
+	pieces := channel.Split(m.Text, maxText/2)
+	for i, p := range pieces {
+		pieces[i] = escapeMarkdown(p)
+	}
+	return pieces
+}
+
 // Send implements [channel.Channel].
 func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, error) {
 	if err := c.connect(); err != nil {
 		return channel.Ref{}, err
 	}
 	var ref channel.Ref
-	pieces := channel.Split(m.Text, maxText)
+	pieces := messagePieces(m)
 	for i, piece := range pieces {
 		send := &discordgo.MessageSend{Content: piece, AllowedMentions: noMentions}
 		last := i == len(pieces)-1
@@ -481,7 +638,7 @@ func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, er
 			return ref, fmt.Errorf("discord send: %w", err)
 		}
 		ref = channel.Ref{Conv: m.Conv, ID: msg.ID}
-		c.track(string(m.Conv), msg.ID)
+		c.trackSent(string(m.Conv), msg.ID)
 	}
 	return ref, nil
 }
@@ -492,6 +649,9 @@ func (c *Channel) Edit(ctx context.Context, ref channel.Ref, m channel.Outbound)
 		return err
 	}
 	text := channel.Truncate(m.Text, maxText)
+	if m.Literal {
+		text = escapeWithin(m.Text, maxText)
+	}
 	comps := components(m.Question)
 	_, err := c.s.ChannelMessageEditComplex(&discordgo.MessageEdit{
 		ID: ref.ID, Channel: string(ref.Conv), Content: &text, Components: &comps, AllowedMentions: noMentions,

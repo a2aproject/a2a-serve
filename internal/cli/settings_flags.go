@@ -98,7 +98,7 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.IntVar(&s.Port, "port", 0, "Localhost port, 1-65535 (default: a free port, kept across runs)")
 	f.StringVar(&s.Private, "private", "", "Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com")
 	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay")
-	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in)")
+	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)")
 	f.StringVar(&s.PublicAccess, "public-access", "", "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)")
 	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL", true))
 	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
