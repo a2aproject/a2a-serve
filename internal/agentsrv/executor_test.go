@@ -73,8 +73,12 @@ func (e *turnExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Se
 	return func(func(a2a.Event, error) bool) {}
 }
 
-func (e *turnExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+func (e *turnExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		if err := ctx.Err(); err != nil {
+			yield(nil, err)
+			return
+		}
 		e.mu.Lock()
 		e.canceled = true
 		e.mu.Unlock()
@@ -118,6 +122,33 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 		}
 		states = append(states, ev.(*a2a.TaskStatusUpdateEvent).Status.State)
 	}
+	if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateCanceled}, states); diff != "" {
+		t.Fatalf("Cancel() wrong states (-want +got) diff = %s", diff)
+	}
+	if !inner.turnCanceled() {
+		t.Fatalf("Cancel() didn't cancel the turn")
+	}
+}
+
+func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
+	t.Parallel()
+	inner := &turnExecutor{}
+	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// a2asrv stops consuming at the terminal event and cancels the context.
+	var states []a2a.TaskState
+	for ev, err := range exec.Cancel(ctx, execCtx) {
+		if err != nil {
+			t.Fatalf("Cancel() error = %v", err)
+		}
+		states = append(states, ev.(*a2a.TaskStatusUpdateEvent).Status.State)
+		cancel()
+		break
+	}
+
 	if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateCanceled}, states); diff != "" {
 		t.Fatalf("Cancel() wrong states (-want +got) diff = %s", diff)
 	}

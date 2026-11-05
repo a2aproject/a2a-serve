@@ -167,8 +167,13 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 			return
 		}
 		p, err := auth.Link(ctx, c.store, &in, code)
-		if err != nil {
+		if errors.Is(err, auth.ErrInvalidCode) || errors.Is(err, auth.ErrUnverifiedSender) {
 			c.reply(ctx, ch, in, "That code is invalid or has expired. Ask the owner for a new one.")
+			return
+		}
+		if err != nil {
+			slog.Error("linking a chat account", "channel", in.Channel, "error", err)
+			c.reply(ctx, ch, in, "Couldn't link your account. Try again.")
 			return
 		}
 		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.agentName()))
