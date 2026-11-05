@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -221,7 +222,8 @@ func Normalize(raw string) string {
 }
 
 // Pair exchanges a pairing code at agentURL for a credential, as a
-// redeemer of kind.
+// redeemer of kind. A node token must be for a node of the agent at
+// agentURL, so that the agent can't have it stored for another one.
 func Pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Credential, error) {
 	base := Normalize(agentURL)
 	pr, err := pairapi.Pair(ctx, hc, base, code, kind)
@@ -229,10 +231,56 @@ func Pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Cr
 		return Credential{}, err
 	}
 	c := Credential{URL: base, Token: pr.Token, Agent: pr.Agent, Principal: pr.Principal, Created: time.Now().UTC()}
-	if pr.Kind == KindNode {
+	switch pr.Kind {
+	case "", pairapi.KindCaller:
+		return c, nil
+	case KindNode:
+		if err := checkNodeToken(base, pr); err != nil {
+			return Credential{}, fmt.Errorf("pairing with %s: %w", base, err)
+		}
 		c.Kind, c.URL = KindNode, Normalize(pr.URL)
+		return c, nil
 	}
-	return c, nil
+	return Credential{}, fmt.Errorf("pairing with %s: unknown token kind %q", base, pr.Kind)
+}
+
+// checkNodeToken checks that the node token and URL of pr belong to one
+// node of the agent at base.
+func checkNodeToken(base string, pr pairapi.Response) error {
+	apiBase, id, ok := mailboxapi.ParseNodeToken(pr.Token)
+	if !ok {
+		return errors.New("the agent returned a malformed node token")
+	}
+	agent := Normalize(strings.TrimSuffix(apiBase, mailboxapi.Prefix))
+	if !sameAgent(agent, base) {
+		return fmt.Errorf("the agent returned a node token for %s", agent)
+	}
+	if Normalize(pr.URL) != Normalize(mailboxapi.NodeURL(agent, id)) {
+		return fmt.Errorf("the agent returned the node URL %s for node %s", pr.URL, id)
+	}
+	return nil
+}
+
+// sameAgent reports whether the normalized URLs a and b are the same,
+// taking every loopback host as one, as an agent's local URL names it by IP.
+func sameAgent(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ua, errA := url.Parse(a)
+	ub, errB := url.Parse(b)
+	if errA != nil || errB != nil || !isLoopback(ua.Hostname()) || !isLoopback(ub.Hostname()) {
+		return false
+	}
+	return ua.Scheme == ub.Scheme && ua.Port() == ub.Port() && ua.Path == ub.Path
+}
+
+func isLoopback(host string) bool {
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // HelperCommand is the a2a CLI credential helper that reads this store.

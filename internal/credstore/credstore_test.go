@@ -22,6 +22,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -182,20 +183,80 @@ func TestPair(t *testing.T) {
 
 func TestPairNode(t *testing.T) {
 	t.Parallel()
+	var token string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := pairapi.Response{Kind: KindNode, Token: "a2rn.x", Principal: "node:grok", Agent: "Grok", URL: "http://" + r.Host + "/n/grok"}
+		resp := pairapi.Response{Kind: KindNode, Token: token, Principal: "node:grok", Agent: "Grok", URL: "http://" + r.Host + "/n/grok"}
 		if err := json.NewEncoder(w).Encode(resp); err != nil {
 			t.Error(err)
 		}
 	}))
 	defer srv.Close()
+	token = mailboxapi.NewNodeToken(mailboxapi.APIBase(srv.URL), "grok", "secret")
 	got, err := Pair(context.Background(), srv.Client(), srv.URL, "K7Q2-9XF4", pairapi.PairingPerson)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
-	want := Credential{URL: srv.URL + "/n/grok", Kind: KindNode, Token: "a2rn.x", Agent: "Grok", Principal: "node:grok", Created: got.Created}
+	want := Credential{URL: srv.URL + "/n/grok", Kind: KindNode, Token: token, Agent: "Grok", Principal: "node:grok", Created: got.Created}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Pair() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPairRefusesTokensForOtherURLs(t *testing.T) {
+	t.Parallel()
+	nodeToken := func(agent, id string) string { return mailboxapi.NewNodeToken(mailboxapi.APIBase(agent), id, "secret") }
+	tests := []struct {
+		name string
+		// resp builds the response of the agent at base.
+		resp    func(base string) pairapi.Response
+		local   bool
+		wantErr bool
+	}{
+		{name: "caller token", resp: func(string) pairapi.Response {
+			return pairapi.Response{Kind: pairapi.KindCaller, Token: "a2p_x", URL: "https://elsewhere.example.com"}
+		}},
+		{name: "node of the agent", resp: func(base string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: nodeToken(base, "grok"), URL: base + "/n/grok"}
+		}},
+		{name: "node of the agent at another loopback name", local: true, resp: func(base string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: nodeToken(base, "grok"), URL: base + "/n/grok"}
+		}},
+		{name: "unknown kind", wantErr: true, resp: func(string) pairapi.Response {
+			return pairapi.Response{Kind: "admin", Token: "a2p_x"}
+		}},
+		{name: "node URL of another agent", wantErr: true, resp: func(base string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: nodeToken(base, "grok"), URL: "https://other.example.com/n/grok"}
+		}},
+		{name: "node token of another agent", wantErr: true, resp: func(string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: nodeToken("https://other.example.com", "grok"), URL: "https://other.example.com/n/grok"}
+		}},
+		{name: "node URL of another node", wantErr: true, resp: func(base string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: nodeToken(base, "grok"), URL: base + "/n/bot"}
+		}},
+		{name: "malformed node token", wantErr: true, resp: func(base string) pairapi.Response {
+			return pairapi.Response{Kind: KindNode, Token: "a2rn.x", URL: base + "/n/grok"}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var base string
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if err := json.NewEncoder(w).Encode(tc.resp(base)); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer srv.Close()
+			base = srv.URL
+			agent := srv.URL
+			if tc.local {
+				agent = strings.Replace(srv.URL, "127.0.0.1", "localhost", 1)
+			}
+			_, err := Pair(context.Background(), srv.Client(), agent, "K7Q2-9XF4", pairapi.PairingPerson)
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("Pair() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
 	}
 }
 
