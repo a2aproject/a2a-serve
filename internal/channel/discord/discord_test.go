@@ -36,26 +36,35 @@ import (
 const botID = "99"
 
 // fakeAPI serves a channel's history like Discord: the oldest messages after
-// the given one, newest first.
+// afterID, or the newest ones before beforeID, newest first.
 type fakeAPI struct {
 	channel *discordgo.Channel
 	msgs    []*discordgo.Message
+	// failBefore, if set, fails requests for messages before it.
+	failBefore string
 }
 
-func (f *fakeAPI) ChannelMessages(channelID string, limit int, _, afterID, _ string, _ ...discordgo.RequestOption) ([]*discordgo.Message, error) {
-	after, err := strconv.ParseUint(afterID, 10, 64)
-	if err != nil {
-		return nil, err
+func (f *fakeAPI) ChannelMessages(channelID string, limit int, beforeID, afterID, _ string, _ ...discordgo.RequestOption) ([]*discordgo.Message, error) {
+	if f.failBefore != "" && beforeID != "" && compareSnowflakes(beforeID, f.failBefore) <= 0 {
+		return nil, errors.New("discord unreachable")
 	}
 	var page []*discordgo.Message
 	for _, m := range f.msgs {
-		id, err := strconv.ParseUint(m.ID, 10, 64)
-		if err != nil {
-			return nil, err
+		if m.ChannelID != channelID {
+			continue
 		}
-		if m.ChannelID == channelID && id > after && len(page) < limit {
-			page = append(page, m)
+		if afterID != "" && compareSnowflakes(m.ID, afterID) <= 0 {
+			continue
 		}
+		if beforeID != "" && compareSnowflakes(m.ID, beforeID) >= 0 {
+			continue
+		}
+		page = append(page, m)
+	}
+	if afterID != "" {
+		page = page[:min(limit, len(page))]
+	} else {
+		page = page[max(len(page)-limit, 0):]
 	}
 	slices.Reverse(page)
 	return page, nil
@@ -99,7 +108,9 @@ func TestCatchUp(t *testing.T) {
 	var outageWant []delivered
 	for i := 1001; i <= 3500; i++ {
 		outage = append(outage, message(i, false))
-		outageWant = append(outageWant, delivered{MessageID: strconv.Itoa(i), Direct: true, Text: "hi " + strconv.Itoa(i)})
+		if i > 3500-maxCatchUpMessages {
+			outageWant = append(outageWant, delivered{MessageID: strconv.Itoa(i), Direct: true, Text: "hi " + strconv.Itoa(i)})
+		}
 	}
 	dm := &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM}
 	guild := &discordgo.Channel{ID: "c1", GuildID: "g1", Type: discordgo.ChannelTypeGuildText}
@@ -142,7 +153,7 @@ func TestCatchUp(t *testing.T) {
 			wantLast: "1002",
 		},
 		{
-			name:     "outage with more messages than one round reads",
+			name:     "outage with more messages than the limit reads the newest",
 			api:      &fakeAPI{channel: dm, msgs: outage},
 			want:     outageWant,
 			wantLast: "3500",
@@ -212,6 +223,53 @@ func TestComponents(t *testing.T) {
 	}}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("components() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestMissed(t *testing.T) {
+	t.Parallel()
+	history := func(n int) []*discordgo.Message {
+		var msgs []*discordgo.Message
+		for i := 1001; i < 1001+n; i++ {
+			msgs = append(msgs, message(i, false))
+		}
+		return msgs
+	}
+	tests := []struct {
+		name        string
+		api         *fakeAPI
+		wantFirst   string
+		wantLen     int
+		wantSkipped int
+		wantErr     bool
+	}{
+		{name: "fewer messages than the limit", api: &fakeAPI{msgs: history(120)}, wantFirst: "1001", wantLen: 120},
+		{name: "exactly the limit", api: &fakeAPI{msgs: history(maxCatchUpMessages)}, wantFirst: "1001", wantLen: maxCatchUpMessages},
+		{name: "a few over the limit", api: &fakeAPI{msgs: history(maxCatchUpMessages + 10)}, wantFirst: "1011", wantLen: maxCatchUpMessages, wantSkipped: 10},
+		{name: "far over the limit", api: &fakeAPI{msgs: history(5 * maxCatchUpMessages)}, wantFirst: strconv.Itoa(1001 + 4*maxCatchUpMessages), wantLen: maxCatchUpMessages, wantSkipped: catchUpLimit},
+		{name: "failure while reading", api: &fakeAPI{msgs: history(500), failBefore: "1200"}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, skipped, err := missed(tc.api, "c1", "1000")
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("missed() error = %v, want error: %v", err, tc.wantErr)
+			}
+			if len(got) != tc.wantLen {
+				t.Fatalf("missed() returned %d messages, want %d", len(got), tc.wantLen)
+			}
+			if tc.wantLen > 0 && got[0].ID != tc.wantFirst {
+				t.Fatalf("missed() first message = %s, want %s", got[0].ID, tc.wantFirst)
+			}
+			if !slices.IsSortedFunc(got, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) }) {
+				t.Fatalf("missed() messages are not oldest first")
+			}
+			if skipped != tc.wantSkipped {
+				t.Fatalf("missed() skipped = %d, want %d", skipped, tc.wantSkipped)
+			}
+		})
 	}
 }
 

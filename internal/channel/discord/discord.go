@@ -42,8 +42,9 @@ const (
 	maxFile = 20 << 20
 	// catchUpLimit is Discord's page size for message history.
 	catchUpLimit = 50
-	// maxCatchUpPages bounds catching up on a busy channel after a long outage.
-	maxCatchUpPages = 20
+	// maxCatchUpMessages bounds the messages read per channel when catching
+	// up after an outage; the newest are read.
+	maxCatchUpMessages = 1000
 	// convsKey lists the conversations to catch up on after a reconnect.
 	convsKey = "discord:convs"
 )
@@ -213,46 +214,68 @@ func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
 	if !ok || last == "" {
 		return
 	}
-	direct, known := false, false
-	for ctx.Err() == nil {
-		msgs, more, err := missed(s, conv, last)
-		if err != nil {
-			slog.Warn("discord: catching up", "channel", conv, "error", err)
-		}
-		if len(msgs) == 0 {
+	msgs, skipped, err := missed(s, conv, last)
+	if err != nil {
+		slog.Warn("discord: catching up", "channel", conv, "error", err)
+		return
+	}
+	if skipped > 0 {
+		slog.Warn("discord: catching up on the newest missed messages only; older ones are skipped",
+			"channel", conv, "read", len(msgs), "skipped_at_least", skipped)
+	}
+	if len(msgs) == 0 {
+		return
+	}
+	direct := isDirect(s, st, conv)
+	for _, m := range msgs {
+		if ctx.Err() != nil {
 			return
 		}
-		if !known {
-			direct, known = isDirect(s, st, conv), true
-		}
-		for _, m := range msgs {
-			c.handleMessage(s, m, direct)
-			c.trackInbound(conv, m.ID)
-		}
-		if !more || err != nil {
-			return
-		}
-		last = msgs[len(msgs)-1].ID
+		c.handleMessage(s, m, direct)
+		c.trackInbound(conv, m.ID)
 	}
 }
 
-// missed returns the messages of conv after last, oldest first, and whether
-// more are left after them. On an error it returns the messages read so far.
-func missed(api restAPI, conv, last string) ([]*discordgo.Message, bool, error) {
+// missed returns the newest messages of conv after last, up to
+// maxCatchUpMessages, oldest first. If older ones are left unread, it also
+// returns how many of them it saw. It reads backwards from the newest message,
+// so on an error it returns none: the cursor must not pass messages that
+// weren't read.
+func missed(api restAPI, conv, last string) ([]*discordgo.Message, int, error) {
 	var all []*discordgo.Message
-	for range maxCatchUpPages {
-		page, err := api.ChannelMessages(conv, catchUpLimit, "", last, "")
+	before := ""
+	for len(all) < maxCatchUpMessages {
+		limit := min(catchUpLimit, maxCatchUpMessages-len(all))
+		page, err := api.ChannelMessages(conv, limit, before, "", "")
 		if err != nil {
-			return all, false, err
+			return nil, 0, err
 		}
-		slices.SortFunc(page, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) })
-		all = append(all, page...)
-		if len(page) < catchUpLimit {
-			return all, false, nil
+		newer := newerThan(page, last)
+		all = append(all, newer...)
+		if len(newer) < len(page) || len(page) < limit {
+			return sortedByID(all), 0, nil
 		}
-		last = page[len(page)-1].ID
+		before = oldestID(page)
 	}
-	return all, true, nil
+	probe, err := api.ChannelMessages(conv, catchUpLimit, before, "", "")
+	if err != nil {
+		slog.Warn("discord: checking for more missed messages", "channel", conv, "error", err)
+		return sortedByID(all), 0, nil
+	}
+	return sortedByID(all), len(newerThan(probe, last)), nil
+}
+
+func newerThan(page []*discordgo.Message, last string) []*discordgo.Message {
+	return slices.DeleteFunc(slices.Clone(page), func(m *discordgo.Message) bool { return compareSnowflakes(m.ID, last) <= 0 })
+}
+
+func oldestID(page []*discordgo.Message) string {
+	return slices.MinFunc(page, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) }).ID
+}
+
+func sortedByID(msgs []*discordgo.Message) []*discordgo.Message {
+	slices.SortFunc(msgs, func(a, b *discordgo.Message) int { return compareSnowflakes(a.ID, b.ID) })
+	return msgs
 }
 
 func compareSnowflakes(a, b string) int {
