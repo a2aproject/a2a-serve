@@ -24,3 +24,14 @@ runs:
           ~/go/pkg/mod
         key: ${{ runner.os }}-go-build-${{ hashFiles('**/go.mod', '**/go.sum') }}
         restore-keys: ${{ runner.os }}-go-build-
+
+    # The module proxy occasionally resets streams; retry so later steps run against a warm cache.
+    - name: Download modules
+      shell: bash
+      run: |
+        for attempt in 1 2 3; do
+          go mod download && exit 0
+          echo "::warning::go mod download failed (attempt $attempt)"
+          sleep $((attempt * 15))
+        done
+        exit 1

@@ -36,6 +36,7 @@ var commandGroups = map[string]string{
 	"restart":    groupRun,
 	"inspect":    groupRun,
 	"config":     groupConfigure,
+	"recipe":     groupConfigure,
 	"channel":    groupConfigure,
 	"schedule":   groupConfigure,
 	"backup":     groupConfigure,
