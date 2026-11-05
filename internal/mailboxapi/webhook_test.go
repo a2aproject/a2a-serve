@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package webhook
+package mailboxapi
 
 import "testing"
 
@@ -31,8 +31,8 @@ func TestValidate(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			if err := Validate(tc.url); (err != nil) != tc.wantErr {
-				t.Fatalf("Validate(%q) error = %v, want error %v", tc.url, err, tc.wantErr)
+			if err := ValidateWebhook(tc.url); (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateWebhook(%q) error = %v, want error %v", tc.url, err, tc.wantErr)
 			}
 		})
 	}
@@ -51,8 +51,8 @@ func TestRedactURL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			if got := RedactURL(tc.url); got != tc.want {
-				t.Fatalf("RedactURL(%q) = %q, want %q", tc.url, got, tc.want)
+			if got := RedactWebhookURL(tc.url); got != tc.want {
+				t.Fatalf("RedactWebhookURL(%q) = %q, want %q", tc.url, got, tc.want)
 			}
 		})
 	}
@@ -72,8 +72,8 @@ func TestOrigin(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.url, func(t *testing.T) {
 			t.Parallel()
-			if got := Origin(tc.url); got != tc.want {
-				t.Fatalf("Origin(%q) = %q, want %q", tc.url, got, tc.want)
+			if got := WebhookOrigin(tc.url); got != tc.want {
+				t.Fatalf("WebhookOrigin(%q) = %q, want %q", tc.url, got, tc.want)
 			}
 		})
 	}

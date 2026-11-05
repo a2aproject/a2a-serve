@@ -22,10 +22,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // relayStatus is the output of `relay status -o json`.
@@ -56,7 +56,7 @@ Agent Mesh it runs and this a2a-serve pins, who can join, how many agents are
 on it, and its last backup before an upgrade. A stopped local relay shows
 what its relay directory says.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)

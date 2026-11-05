@@ -25,8 +25,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // newHarnessCmd builds `a2a-serve start <agent>`, which creates the agent on
@@ -49,7 +49,7 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 existing agent, the flags change them like ` + "`a2a-serve config set`" + `. In a
 subdirectory of an agent, pass --dir to create a separate agent.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY
   a2a-serve start %[1]s --private tailscale --allow-tools read,search --detach
   a2a-serve start %[1]s --workspace ~/src/app --mount ~/docs:/docs:ro`, name),

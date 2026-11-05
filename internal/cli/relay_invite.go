@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRelayInviteCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
@@ -38,7 +38,7 @@ An invited agent keeps renewing its membership, even after it slept for days,
 until it is removed with ` + "`a2a-serve relay remove`" + `. One that stays away
 longer than 30 days needs a new invite.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  a2a-serve relay invite ci-bot
   a2a-serve relay invite ci-bot --expires 72h
   a2a-serve relay invite ci-bot --url https://relay.example.com --admin-token env:RELAY_ADMIN_TOKEN`,

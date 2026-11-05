@@ -19,9 +19,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRelayMembersCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
@@ -34,7 +34,7 @@ func newRelayMembersCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 email for a signed-in agent, or an invite), when they joined, when they last
 reported to the relay, and their peer ID.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)

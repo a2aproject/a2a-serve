@@ -25,7 +25,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -36,7 +36,7 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <telegram|discord|email>",
 		Short: "Add a messenger, or replace its settings",
-		Long:  "Add a messenger, or replace its settings.\n\n" + secretref.Help,
+		Long:  "Add a messenger, or replace its settings.\n\n" + flagparse.SecretHelp,
 		Example: `  a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
   a2a-serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,

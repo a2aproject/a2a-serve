@@ -19,8 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRelayRemoveCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
@@ -39,7 +39,7 @@ removes the agents of people the list no longer admits, and lets back the
 removed people it admits. To keep someone out, also drop them from
 --allow-email. Invite a removed invited agent again to let it back.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)

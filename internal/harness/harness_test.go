@@ -16,6 +16,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -208,6 +209,31 @@ func TestDockerRunnerHiddenThroughSymlinks(t *testing.T) {
 	}
 }
 
+func TestOpencodeContinuesAfterDeniedTool(t *testing.T) {
+	t.Parallel()
+	p, err := Lookup("opencode", nil)
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+	var content string
+	for _, kv := range p.Command(Workspace{Dir: "/w", Home: "/h"}).Env {
+		if v, ok := strings.CutPrefix(kv, "OPENCODE_CONFIG_CONTENT="); ok {
+			content = v
+		}
+	}
+	var cfg struct {
+		Experimental struct {
+			ContinueLoopOnDeny bool `json:"continue_loop_on_deny"`
+		} `json:"experimental"`
+	}
+	if err := json.Unmarshal([]byte(content), &cfg); err != nil {
+		t.Fatalf("json.Unmarshal(OPENCODE_CONFIG_CONTENT %q) error = %v", content, err)
+	}
+	if !cfg.Experimental.ContinueLoopOnDeny {
+		t.Fatalf("OPENCODE_CONFIG_CONTENT = %q, want experimental.continue_loop_on_deny true", content)
+	}
+}
+
 func TestLookup(t *testing.T) {
 	t.Parallel()
 	ws := Workspace{Dir: "/w", Home: "/h"}
@@ -218,12 +244,10 @@ func TestLookup(t *testing.T) {
 		image   string
 		wantErr bool
 	}{
-		{name: "opencode", want: Command{Path: "opencode", Args: []string{"acp"}, Dir: "/w",
-			Env: []string{"OPENCODE_PERMISSION=" + opencodePermission, "CLOUDCODE_PERMISSION=" + opencodePermission}},
+		{name: "opencode", want: Command{Path: "opencode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "claude", want: Command{Path: "claude-agent-acp", Dir: "/w"}, image: ImageRepo + "claude:" + ImageTag},
-		{name: "opencode", command: []string{"cloudcode", "acp"}, want: Command{Path: "cloudcode", Args: []string{"acp"}, Dir: "/w",
-			Env: []string{"OPENCODE_PERMISSION=" + opencodePermission, "CLOUDCODE_PERMISSION=" + opencodePermission}},
+		{name: "opencode", command: []string{"cloudcode", "acp"}, want: Command{Path: "cloudcode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, want: Command{Path: "gemini", Args: []string{"--experimental-acp"}, Dir: "/w"}},
 		{name: "unknown", wantErr: true},

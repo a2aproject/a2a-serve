@@ -33,8 +33,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // pluginName is the name the a2a CLI runs this binary under: a2a-<name>
@@ -83,12 +83,12 @@ func (g *globalConfig) progress() io.Writer {
 }
 
 // secretReader returns a reader of secret values which prompts on prompt.
-func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
+func (g *globalConfig) secretReader(prompt io.Writer) *flagparse.SecretReader {
 	in := os.Stdin
 	if g.stdin != nil {
 		in = g.stdin
 	}
-	return secretref.NewReader(in, prompt)
+	return flagparse.NewSecretReader(in, prompt)
 }
 
 // input is where answers to questions are read from.

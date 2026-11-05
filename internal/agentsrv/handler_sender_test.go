@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package turns
+package agentsrv
 
 import (
 	"context"
@@ -42,67 +42,67 @@ func (f *fakeHandler) CancelTask(context.Context, *a2a.CancelTaskRequest) (*a2a.
 	return f.task, nil
 }
 
-func TestSenderNotReady(t *testing.T) {
+func TestHandlerSenderNotReady(t *testing.T) {
 	t.Parallel()
-	var s Sender
+	var s handlerSender
 	ctx := t.Context()
 	req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 
-	if _, err := s.SendMessage(ctx, req); !errors.Is(err, ErrNotReady) {
-		t.Fatalf("Sender.SendMessage() error = %v, want %v", err, ErrNotReady)
+	if _, err := s.SendMessage(ctx, req); !errors.Is(err, errNotReady) {
+		t.Fatalf("handlerSender.SendMessage() error = %v, want %v", err, errNotReady)
 	}
 	for _, err := range s.SendStreamingMessage(ctx, req) {
-		if !errors.Is(err, ErrNotReady) {
-			t.Fatalf("Sender.SendStreamingMessage() error = %v, want %v", err, ErrNotReady)
+		if !errors.Is(err, errNotReady) {
+			t.Fatalf("handlerSender.SendStreamingMessage() error = %v, want %v", err, errNotReady)
 		}
 	}
-	if _, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"}); !errors.Is(err, ErrNotReady) {
-		t.Fatalf("Sender.CancelTask() error = %v, want %v", err, ErrNotReady)
+	if _, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"}); !errors.Is(err, errNotReady) {
+		t.Fatalf("handlerSender.CancelTask() error = %v, want %v", err, errNotReady)
 	}
 }
 
-func TestSenderSet(t *testing.T) {
+func TestHandlerSenderSet(t *testing.T) {
 	t.Parallel()
 	task := &a2a.Task{ID: "t1", ContextID: "c1"}
-	var s Sender
-	s.Set(&fakeHandler{task: task})
+	var s handlerSender
+	s.set(&fakeHandler{task: task})
 	ctx := t.Context()
 	req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 
 	res, err := s.SendMessage(ctx, req)
 	if err != nil {
-		t.Fatalf("Sender.SendMessage() error = %v", err)
+		t.Fatalf("handlerSender.SendMessage() error = %v", err)
 	}
 	if diff := cmp.Diff(a2a.SendMessageResult(task), res); diff != "" {
-		t.Fatalf("Sender.SendMessage() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("handlerSender.SendMessage() wrong result (-want +got) diff = %s", diff)
 	}
 	var events []a2a.Event
 	for ev, err := range s.SendStreamingMessage(ctx, req) {
 		if err != nil {
-			t.Fatalf("Sender.SendStreamingMessage() error = %v", err)
+			t.Fatalf("handlerSender.SendStreamingMessage() error = %v", err)
 		}
 		events = append(events, ev)
 	}
 	if diff := cmp.Diff([]a2a.Event{task}, events); diff != "" {
-		t.Fatalf("Sender.SendStreamingMessage() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("handlerSender.SendStreamingMessage() wrong result (-want +got) diff = %s", diff)
 	}
 	got, err := s.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "t1"})
 	if err != nil {
-		t.Fatalf("Sender.CancelTask() error = %v", err)
+		t.Fatalf("handlerSender.CancelTask() error = %v", err)
 	}
 	if diff := cmp.Diff(task, got); diff != "" {
-		t.Fatalf("Sender.CancelTask() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("handlerSender.CancelTask() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
-func TestSenderSetTwicePanics(t *testing.T) {
+func TestHandlerSenderSetTwicePanics(t *testing.T) {
 	t.Parallel()
-	var s Sender
-	s.Set(&fakeHandler{})
+	var s handlerSender
+	s.set(&fakeHandler{})
 	defer func() {
 		if recover() == nil {
-			t.Fatalf("Sender.Set() twice didn't panic")
+			t.Fatalf("handlerSender.set() twice didn't panic")
 		}
 	}()
-	s.Set(&fakeHandler{})
+	s.set(&fakeHandler{})
 }

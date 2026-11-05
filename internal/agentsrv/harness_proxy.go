@@ -230,7 +230,7 @@ func proxyCard(name, base string) *a2a.AgentCard {
 
 // guardedHandler keeps a conversation to the tasks it started, and
 // approvals with the user: the harness can't answer another agent's
-// permission question, which is relayed to the user's chat instead. Tasks
+// permission question, which is relayed to the user instead. Tasks
 // the harness doesn't wait for are watched, and their result is posted into
 // the conversation.
 type guardedHandler struct {
@@ -492,7 +492,7 @@ func (g *guardedHandler) checkAnswer(ctx context.Context, req *a2a.SendMessageRe
 	}
 	if q := approvals.FromStatus(task.Status); q != nil && q.Type == approvals.TypePermission {
 		g.after(ctx, task)
-		return fmt.Errorf("%w: this is an approval for the user, who was asked in their chat; don't answer it, the result will be posted into this conversation", a2a.ErrUnauthorized)
+		return fmt.Errorf("%w: this is an approval for the user, and the server asks them for it; don't answer it. End your turn: the result comes back into this conversation", a2a.ErrUnauthorized)
 	}
 	return nil
 }

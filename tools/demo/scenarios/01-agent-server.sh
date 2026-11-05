@@ -17,10 +17,8 @@
 layout() {
   panes B
   split_pane A B above 35
-  split_pane C A right 50
   title A "terminal A: coder"
   title B "terminal B"
-  title C "terminal C: reviewer"
 }
 
 scene() {
@@ -68,13 +66,11 @@ EOF'
   run B "a2a send --context-id ${context##* } \"$(fake 'Which file did you just create?' hello)\""
   pause 3
 
-  say C "7. Start a second agent"
-  run C "mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer"
-  start C "a2a-serve start $AGENT --name reviewer $AGENT_FLAGS"
-  wait_text C 'local +http'
-
   clear_pane B
-  run B "cd ~/a2a-example1/reviewer"
+  say B "7. Let it call another agent"
+  run B "mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer"
+  run B "a2a-serve start $AGENT --name reviewer $AGENT_FLAGS --detach"
+  run B "a2a-serve status"
   run B "a2a-serve pair invite coder"
   local code url
   code="$(last_match B 'code [A-Z0-9]{4}-[A-Z0-9]{4}')"
@@ -84,5 +80,6 @@ EOF'
   run B "cd ~/a2a-example1/coder"
   run B "a2a-serve contact add reviewer --url $url --code ${code#code }"
   run B "a2a send \"$(fake 'Ask the reviewer agent what files it sees in its workspace, and tell me.' 'call reviewer hello')\""
+  approve_pending B
   pause 4
 }

@@ -32,7 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 func newTestAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
@@ -252,7 +252,7 @@ func TestSecretReader(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			sr := secretref.NewReader(pipeWith(t, "123:abc\n"), io.Discard)
+			sr := flagparse.NewSecretReader(pipeWith(t, "123:abc\n"), io.Discard)
 
 			got, err := tc.flags.settings(sr)
 			if err != nil {

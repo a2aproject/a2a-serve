@@ -32,6 +32,7 @@ import (
 
 	"tailscale.com/ipn"
 	"tailscale.com/tsnet"
+	"tailscale.com/util/dnsname"
 )
 
 // Tailscale is a [Provider] which joins the agent server to a tailnet as its
@@ -101,6 +102,13 @@ func (t *Tailscale) start(ctx context.Context) error {
 	domains := srv.CertDomains()
 	if len(domains) == 0 {
 		return errors.Join(errors.New("tailscale: HTTPS certificates are disabled in this tailnet; enable HTTPS on the DNS page of the admin console (https://login.tailscale.com/admin/dns)"), srv.Close())
+	}
+	if name, renamed := assignedName(t.Hostname, domains[0]); renamed {
+		where := "in the admin console"
+		if t.ControlURL == "" {
+			where = "at https://login.tailscale.com/admin/machines"
+		}
+		logf("tailscale: the name %q is taken on this tailnet, so this machine is %q; remove the old machine and rename this one %s", dnsname.SanitizeHostname(t.Hostname), name, where)
 	}
 	t.srv = srv
 	t.url = &url.URL{Scheme: "https", Host: domains[0]}
@@ -415,6 +423,14 @@ func (p *loginPrompt) show(link string) bool {
 	}
 	p.count++
 	return p.count%loginRepeat == 1
+}
+
+// assignedName returns the machine name in the tailnet domain, and whether it
+// differs from the requested hostname, as when Tailscale adds a suffix
+// because another machine has the name.
+func assignedName(hostname, domain string) (string, bool) {
+	name, _, _ := strings.Cut(domain, ".")
+	return name, name != dnsname.SanitizeHostname(hostname)
 }
 
 func extractURL(msg string) string {

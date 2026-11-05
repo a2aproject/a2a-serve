@@ -3,6 +3,8 @@
 This example serves a coding agent, opencode or Claude Code, from its project
 directory and talks to it like any other A2A agent.
 
+![Serving a coding agent, approving a tool call, and letting it call a second agent](./demo.gif)
+
 ## What you'll learn
 
 - How to start a coding agent as an A2A server, and where it keeps its state
@@ -116,18 +118,13 @@ a2a send --context-id <context-id> "Which file did you just create?"
 
 ## 7. Let it call another agent (optional)
 
-Start a second agent in **terminal C**:
+In **terminal B**, start a second agent in the background. Then let `coder`
+call it: mint a code on the reviewer's side and redeem it as a contact on
+coder's side.
 
 ```bash
 mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer
-a2a-serve start opencode --name reviewer --model openrouter/google/gemini-flash-latest --secret OPENROUTER_API_KEY
-```
-
-In **terminal B**, let `coder` call it: mint a code on the reviewer's side
-and redeem it as a contact on coder's side.
-
-```bash
-cd ~/a2a-example1/reviewer
+a2a-serve start opencode --name reviewer --model openrouter/google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach
 a2a-serve status                  # note reviewer's local URL
 a2a-serve pair invite coder       # prints a code
 
@@ -143,7 +140,14 @@ a2a send "Ask the reviewer agent what files it sees in its workspace, and tell m
 
 Coder runs `a2a send -a http://a2a/<handle>/reviewer ...` in its sandbox. Its
 server makes the call with the token it just stored, so no credential enters
-the sandbox. If reviewer needs an approval, the request comes to you.
+the sandbox. If reviewer needs an approval, your task waits for it and shows
+reviewer's request. Answer it like coder's own:
+
+```bash
+a2a send --task-id <task-id> approve
+```
+
+The task then continues with reviewer's result.
 
 ## 8. Clean up
 

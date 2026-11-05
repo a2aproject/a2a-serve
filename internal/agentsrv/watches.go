@@ -53,6 +53,9 @@ type Watches struct {
 
 	mu       sync.Mutex
 	watching map[string]bool
+	// callers are the contexts whose A2A caller waits for their task, which
+	// is asked the questions of the agents it calls.
+	callers map[string]*callerWait
 }
 
 // WatchesDeps are the dependencies of [Watches].
@@ -88,13 +91,15 @@ func newWatches(ctx context.Context, deps WatchesDeps) *Watches {
 		timings:  deps.Timings,
 		ctx:      ctx,
 		watching: map[string]bool{},
+		callers:  map[string]*callerWait{},
 	}
 }
 
 // relay asks the user on whose behalf a remote task runs to answer its
 // permission question, once per question, also across restarts: in the
-// conversation the call came from, or else in the user's direct chat, or
-// else in the owner chat.
+// conversation the call came from, or else on the task of the A2A caller
+// who waits for the turn that called the agent, or else in the user's
+// direct chat, or else in the owner chat.
 func (ws *Watches) relay(ctx context.Context, claims callerClaims, agent string, task *a2a.Task, q *approvals.Question) {
 	user := claims.User.ID
 	if user == "" {
@@ -120,6 +125,15 @@ func (ws *Watches) relay(ctx context.Context, claims callerClaims, agent string,
 		ws.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
 		return
 	}
+	if ws.toCaller(claims.ContextID, &callerQuestion{rec: rec, header: header, msg: task.Status.Message}) {
+		return
+	}
+	ws.askInChat(ctx, user, agent, rec, header)
+}
+
+// askInChat asks the question of a remote task in the direct chat of the
+// user on whose behalf it runs, or else in the owner chat.
+func (ws *Watches) askInChat(ctx context.Context, user, agent string, rec store.Question, header string) {
 	if to, ok := ws.directChat(ctx, user); ok {
 		ws.chat.Ask(ctx, to, header, rec)
 		return
@@ -442,7 +456,11 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	text, files := resultTurn(text)
-	if err := ws.turns.injectTurn(ctx, postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}); err != nil {
+	t := postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
+	if ws.resultToCaller(t) {
+		return true
+	}
+	if err := ws.turns.injectTurn(ctx, t); err != nil {
 		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
 		return false
 	}

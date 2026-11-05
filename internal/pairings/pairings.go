@@ -37,7 +37,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
 
 // LocalOwner is the built-in pairing of the user running the agent: the
@@ -201,7 +200,7 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 	if req.Name == SchedulesAgent {
 		return nil, invalid("%q is the built-in agent that manages schedules; pick another name", SchedulesAgent)
 	}
-	if err := webhook.Validate(req.Webhook); err != nil {
+	if err := mailboxapi.ValidateWebhook(req.Webhook); err != nil {
 		return nil, invalid("%v", err)
 	}
 	if _, err := s.Store.Contact(ctx, req.Name); err == nil {
@@ -265,7 +264,7 @@ func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*co
 func NodeInfo(base string, node store.Node) controlapi.NodeInfo {
 	return controlapi.NodeInfo{
 		ID: node.ID, Name: node.Name, URL: mailboxapi.NodeURL(base, node.ID),
-		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
+		Webhook: mailboxapi.RedactWebhookURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
@@ -357,7 +356,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		return nil, invalid("--owner and --kind don't apply to webhook nodes")
 	}
 	if req.Webhook != "" {
-		if err := webhook.Validate(req.Webhook); err != nil {
+		if err := mailboxapi.ValidateWebhook(req.Webhook); err != nil {
 			return nil, invalid("%v", err)
 		}
 		node.Webhook = req.Webhook
@@ -656,7 +655,7 @@ func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
 		if n, ok := nodesByID[p.Name]; ok {
 			cp.Principal = auth.NodePrincipal(n.ID)
 			cp.Node = &controlapi.NodeDetails{
-				URL: mailboxapi.NodeURL(base, n.ID), Webhook: webhook.RedactURL(n.Webhook), Description: n.Description,
+				URL: mailboxapi.NodeURL(base, n.ID), Webhook: mailboxapi.RedactWebhookURL(n.Webhook), Description: n.Description,
 				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
 				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
 			}

@@ -23,8 +23,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -46,7 +46,7 @@ overwritten. List entries are added, or replace the entry with the same key:
 lists by value. Remove entries with ` + "`a2a-serve config unset`" + `. A change to who
 may call the agent, or to its networks, prints who may call afterwards.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY
   a2a-serve config set --tailscale-authkey - --restart
   a2a-serve config set --mount ~/docs:/docs:ro --dry-run`,

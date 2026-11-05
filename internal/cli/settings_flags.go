@@ -23,7 +23,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 // settingsFlags are the agent settings shared by `a2a-serve start <agent>` and
@@ -34,7 +34,7 @@ type settingsFlags struct {
 
 // secretUsage is the help of a flag which takes a secret value.
 func secretUsage(usage string) string {
-	return usage + " (" + secretref.Syntax + ")"
+	return usage + " (" + flagparse.SecretSyntax + ")"
 }
 
 // listUsage labels the help of a list flag. split says whether commas also
@@ -87,7 +87,7 @@ func registerSettingFlag(cmd *cobra.Command, fl agentdir.Flag) {
 // settings returns the parsed settings. Secret-valued flags set to - are
 // read with r, and so are --secret values missing from the environment
 // when a terminal can prompt for them.
-func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error) {
+func (sf *settingsFlags) settings(r *flagparse.SecretReader) (agentdir.Settings, error) {
 	s := sf.s
 	if err := readSecretFlags(&s, agentdir.CoreFlags|agentdir.OperationalFlags, r); err != nil {
 		return s, err
@@ -100,13 +100,13 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 			continue
 		}
 		if !ok {
-			value = secretref.Stdin
+			value = flagparse.SecretStdin
 		}
-		ref, err := secretref.Parse("secret "+name, value, r)
+		ref, err := flagparse.ParseSecret("secret "+name, value, r)
 		if err != nil {
 			return s, err
 		}
-		if ref.Kind == secretref.Stored {
+		if ref.Kind == flagparse.SecretStored {
 			if s.SecretSources == nil {
 				s.SecretSources = map[string]string{}
 			}
@@ -123,7 +123,7 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 
 // readSecretFlags reads the values of the secret-valued scalar flags of
 // sets in s that are set to - or prompted for.
-func readSecretFlags(s *agentdir.Settings, sets agentdir.FlagSet, r *secretref.Reader) error {
+func readSecretFlags(s *agentdir.Settings, sets agentdir.FlagSet, r *flagparse.SecretReader) error {
 	for _, fl := range s.Flags(sets) {
 		dst, ok := fl.Value.(*string)
 		if !fl.Secret || !ok || *dst == "" {
@@ -139,12 +139,12 @@ func readSecretFlags(s *agentdir.Settings, sets agentdir.FlagSet, r *secretref.R
 // readSecretFlag replaces the value of a secret-valued flag set to - or
 // prompted for with the secret. Env and stored references stay references,
 // which the settings store under their names.
-func readSecretFlag(flag string, dst *string, r *secretref.Reader) error {
-	ref, err := secretref.Parse(flag, *dst, r)
+func readSecretFlag(flag string, dst *string, r *flagparse.SecretReader) error {
+	ref, err := flagparse.ParseSecret(flag, *dst, r)
 	if err != nil {
 		return err
 	}
-	if ref.Kind == secretref.Literal || ref.Kind == secretref.Prompted {
+	if ref.Kind == flagparse.SecretLiteral || ref.Kind == flagparse.SecretPrompted {
 		*dst = ref.Value
 	}
 	return nil
