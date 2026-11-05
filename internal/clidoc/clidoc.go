@@ -149,6 +149,10 @@ func writeCommand(sb *strings.Builder, c *cobra.Command, opts Options, sub bool)
 		sb.WriteString("\n**Flags**\n\n")
 		writeFlagTable(sb, rest)
 	}
+	if shared := flagList(c.PersistentFlags()); len(shared) > 0 && c.Parent() != nil {
+		fmt.Fprintf(sb, "\n**Flags of every `%s` command**\n\n", c.CommandPath())
+		writeFlagTable(sb, shared)
+	}
 }
 
 // sectionTitle names the flags of a section: "Network flags", or

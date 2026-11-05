@@ -26,9 +26,6 @@ type Timings struct {
 	// grows to WatchMaxInterval.
 	WatchInterval    time.Duration
 	WatchMaxInterval time.Duration
-	// InjectRetry is how often a held-back turn checks whether it can be
-	// posted.
-	InjectRetry time.Duration
 	// EditInterval throttles streaming edits; messengers rate-limit them.
 	EditInterval time.Duration
 	// SendRetry is the first delay before a message that must reach the
@@ -52,7 +49,6 @@ type Timings struct {
 func (t Timings) withDefaults() Timings {
 	t.WatchInterval = cmp.Or(t.WatchInterval, 5*time.Second)
 	t.WatchMaxInterval = cmp.Or(t.WatchMaxInterval, 30*time.Second)
-	t.InjectRetry = cmp.Or(t.InjectRetry, 2*time.Second)
 	t.EditInterval = cmp.Or(t.EditInterval, time.Second)
 	t.SendRetry = cmp.Or(t.SendRetry, time.Second)
 	t.ScheduleMinWait = cmp.Or(t.ScheduleMinWait, time.Second)

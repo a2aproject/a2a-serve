@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
@@ -43,6 +44,58 @@ func TestStatusStoppedJSON(t *testing.T) {
 	want := map[string]any{"name": "coder", "agent": "opencode", "dir": d.Root, "running": false}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("a2a-serve status -o json wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestStatusURLScope(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
+	empty := t.TempDir()
+	tests := []struct {
+		name     string
+		args     []string
+		wantOut  string
+		wantExit int
+	}{
+		{name: "scope after the flag", args: []string{"status", "--url", "local", "--dir", d.Root}, wantOut: "http://127.0.0.1:4100\n"},
+		{name: "scope joined with =", args: []string{"status", "--url=local", "--dir", d.Root}, wantOut: "http://127.0.0.1:4100\n"},
+		{name: "scope of a stopped agent which needs the server", args: []string{"status", "--url", "private", "--dir", d.Root}, wantExit: 6},
+		{name: "flag without a scope of a stopped agent", args: []string{"status", "--url", "--dir", d.Root}, wantExit: 6},
+		{name: "scope without the flag", args: []string{"status", "local", "--dir", d.Root}, wantExit: 2},
+		{name: "second argument", args: []string{"status", "--url", "local", "extra", "--dir", d.Root}, wantExit: 2},
+		{name: "unknown scope before the directory lookup", args: []string{"status", "--url", "bogus", "--dir", empty}, wantExit: 2},
+		{name: "unknown scope joined with =", args: []string{"status", "--url=bogus", "--dir", empty}, wantExit: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, err := runCMD(t, tc.args...)
+			gotExit := 0
+			if err != nil {
+				gotExit = clierr.Classify(err).Exit
+			}
+			if gotExit != tc.wantExit {
+				t.Fatalf("a2a-serve %s error = %v (exit %d), want exit %d", strings.Join(tc.args, " "), err, gotExit, tc.wantExit)
+			}
+			if out != tc.wantOut {
+				t.Fatalf("a2a-serve %s = %q, want %q", strings.Join(tc.args, " "), out, tc.wantOut)
+			}
+		})
+	}
+}
+
+func TestInspectScopeValidatedFirst(t *testing.T) {
+	t.Parallel()
+	empty := t.TempDir()
+
+	_, err := runCMD(t, "inspect", "--url", "public", "--dir", empty)
+
+	want := "the inspector isn't served on the public URL; want local or private"
+	if err == nil || err.Error() != want {
+		t.Fatalf("a2a-serve inspect --url public error = %v, want %q", err, want)
+	}
+	if got := clierr.Classify(err).Exit; got != 1 {
+		t.Fatalf("a2a-serve inspect --url public exit = %d, want 1", got)
 	}
 }
 

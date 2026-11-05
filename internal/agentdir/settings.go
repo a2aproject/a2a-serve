@@ -20,6 +20,8 @@ import (
 	"os"
 	"slices"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Settings are the flags of `a2a-serve start <agent>` and `a2a-serve config
@@ -86,16 +88,21 @@ type Settings struct {
 	TaskTTL string
 }
 
-// EmailSettings configure the email channel. Password is env:VAR,
-// secret:NAME or the value. Set fields override the configured channel.
+// EmailSettings configure the email channel. Password, OAuthClientSecret
+// and OAuthRefreshToken are env:VAR, secret:NAME or the value. Set fields
+// override the configured channel.
 type EmailSettings struct {
-	Address         string
-	IMAP            string
-	SMTP            string
-	Username        string
-	Password        string
-	Mailbox         string
-	TrustedAuthServ string
+	Address           string
+	IMAP              string
+	SMTP              string
+	Username          string
+	Password          string
+	Mailbox           string
+	TrustedAuthServ   string
+	OAuthTokenURL     string
+	OAuthClientID     string
+	OAuthClientSecret string
+	OAuthRefreshToken string
 }
 
 // Secret names under which flag values are stored.
@@ -103,6 +110,8 @@ const (
 	SecretTelegram      = "TELEGRAM_BOT_TOKEN"
 	SecretDiscord       = "DISCORD_BOT_TOKEN"
 	SecretEmailPassword = "EMAIL_PASSWORD"
+	SecretEmailOAuth    = "EMAIL_OAUTH_REFRESH_TOKEN"
+	SecretEmailClient   = "EMAIL_OAUTH_CLIENT_SECRET"
 	SecretTailscaleKey  = "TS_AUTHKEY"
 	SecretGoogleClient  = "GOOGLE_CLIENT_SECRET"
 	SecretRelayToken    = "RELAY_TOKEN"
@@ -132,6 +141,7 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
 	set(&cfg.Policy.PrivateAccess, s.PrivateAccess)
 	set(&cfg.Policy.PublicAccess, s.PublicAccess)
+	cfg.Policy.normalize()
 	set(&cfg.Backup.To, s.Backup)
 	set(&cfg.Backup.Interval, s.BackupInterval)
 	set(&cfg.Backup.Retention, s.BackupRetention)
@@ -258,12 +268,24 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 		set(&next.Username, e.Username)
 		set(&next.Mailbox, e.Mailbox)
 		set(&next.TrustedAuthServ, e.TrustedAuthServ)
-		if e.Password != "" {
-			ref, err := resolve(e.Password, SecretEmailPassword)
-			if err != nil {
-				return nil, fmt.Errorf("--email-password: %w", err)
+		set(&next.OAuthTokenURL, e.OAuthTokenURL)
+		set(&next.OAuthClientID, e.OAuthClientID)
+		for _, s := range []struct {
+			flag, value, name string
+			dst               *string
+		}{
+			{"email-password", e.Password, SecretEmailPassword, &next.Password},
+			{"email-oauth-client-secret", e.OAuthClientSecret, SecretEmailClient, &next.OAuthClientSecret},
+			{"email-oauth-refresh-token", e.OAuthRefreshToken, SecretEmailOAuth, &next.OAuthRefreshToken},
+		} {
+			if s.value == "" {
+				continue
 			}
-			next.Password = ref
+			ref, err := resolve(s.value, s.name)
+			if err != nil {
+				return nil, fmt.Errorf("--%s: %w", s.flag, err)
+			}
+			*s.dst = ref
 		}
 		cfg.Channels.Email = &next
 	}
@@ -364,14 +386,16 @@ func (d Dir) ApplySettings(s Settings) (*Config, Secrets, error) {
 
 // SaveSettings merges settings into the agent's config and secrets.
 func (d Dir) SaveSettings(s Settings) error {
-	conf, secrets, err := d.ApplySettings(s)
-	if err != nil {
-		return err
-	}
-	if err := d.SaveSecrets(secrets); err != nil {
-		return err
-	}
-	return d.SaveConfig(conf)
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		conf, secrets, err := d.ApplySettings(s)
+		if err != nil {
+			return err
+		}
+		if err := d.SaveSecrets(secrets); err != nil {
+			return err
+		}
+		return d.SaveConfig(conf)
+	})
 }
 
 // setNetwork sets a provider; "none" removes it.

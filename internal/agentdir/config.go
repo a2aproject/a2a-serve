@@ -101,6 +101,18 @@ const (
 	AccessAnyone   = "anyone"
 )
 
+// normalize replaces the access word of the other network with the one the
+// setting uses, so that --private-access anyone and --public-access everyone
+// work. everyone and anyone mean the same.
+func (p *PolicyConfig) normalize() {
+	if p.PrivateAccess == AccessAnyone {
+		p.PrivateAccess = AccessEveryone
+	}
+	if p.PublicAccess == AccessEveryone {
+		p.PublicAccess = AccessAnyone
+	}
+}
+
 func (p PolicyConfig) clone() PolicyConfig {
 	p.AllowEmails = slices.Clone(p.AllowEmails)
 	return p
@@ -220,6 +232,13 @@ type EmailConfig struct {
 	// TrustedAuthServ is the authserv-id of the Authentication-Results header
 	// added by the receiving mail server. Only its verdicts are trusted.
 	TrustedAuthServ string `yaml:"trusted_authserv" json:"trustedAuthServ"`
+	// OAuthRefreshToken, if set, signs in with OAuth (XOAUTH2), and Password
+	// is unused. The access tokens come from OAuthTokenURL. The refresh token
+	// and the client secret are secret references.
+	OAuthTokenURL     string `yaml:"oauth_token_url,omitempty" json:"oauthTokenURL,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id,omitempty" json:"oauthClientID,omitempty"`
+	OAuthClientSecret string `yaml:"oauth_client_secret,omitempty" json:"oauthClientSecret,omitempty"`
+	OAuthRefreshToken string `yaml:"oauth_refresh_token,omitempty" json:"oauthRefreshToken,omitempty"`
 }
 
 // Channel kinds.
@@ -360,6 +379,7 @@ func ParseConfig(data []byte) (*Config, error) {
 	if len(cfg.Mounts) == 0 {
 		cfg.Mounts = nil
 	}
+	cfg.Policy.normalize()
 	return &cfg, nil
 }
 
@@ -384,6 +404,23 @@ func (d Dir) SaveConfig(cfg *Config) error {
 		return err
 	}
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
+}
+
+// UpdateConfig applies fn to the saved config and saves the result, holding
+// the lock of config.yaml so that updates from several processes don't lose
+// changes. A config.yaml that fails to parse is left alone and returned as
+// the error.
+func (d Dir) UpdateConfig(fn func(*Config) error) error {
+	return fsutil.WithLock(d.ConfigPath(), func() error {
+		cfg, err := d.LoadOrNewConfig()
+		if err != nil {
+			return err
+		}
+		if err := fn(cfg); err != nil {
+			return err
+		}
+		return d.SaveConfig(cfg)
+	})
 }
 
 // Clone returns a deep copy of c.

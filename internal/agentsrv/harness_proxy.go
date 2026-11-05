@@ -111,7 +111,7 @@ func (hp *HarnessProxy) routes(caller harnessCaller) http.Handler {
 	agents := hp.agentsHandler(caller)
 	mux.Handle("/{handle}/{agent}", agents)
 	mux.Handle("/{handle}/{agent}/{rest...}", agents)
-	return mux
+	return jsonhttp.LimitBody(mux)
 }
 
 // agentsHandler serves the agents the harness may call, at

@@ -140,18 +140,41 @@ func (s *Status) URL(scope string) (string, error) {
 		}
 		return s.Public, nil
 	}
-	return "", fmt.Errorf("unknown URL scope %q", scope)
+	return "", unknownScope(scope)
+}
+
+func unknownScope(scope string) error {
+	return fmt.Errorf("unknown URL scope %q", scope)
+}
+
+// CheckScope reports whether scope is empty, local, private or public, the
+// values [Status.URL] takes.
+func CheckScope(scope string) error {
+	switch scope {
+	case "", ScopeLocal, ScopePrivate, ScopePublic:
+		return nil
+	}
+	return unknownScope(scope)
+}
+
+// CheckInspectorScope reports whether scope is local or private, the values
+// [Status.InspectorURL] takes.
+func CheckInspectorScope(scope string) error {
+	switch scope {
+	case ScopeLocal, ScopePrivate:
+		return nil
+	}
+	return fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
 }
 
 // InspectorURL returns the URL to open the web inspector at in scope: the
 // local URL, or the private URL, where it is served only over HTTPS.
 func (s *Status) InspectorURL(scope string) (string, error) {
-	switch scope {
-	case ScopeLocal:
+	if err := CheckInspectorScope(scope); err != nil {
+		return "", err
+	}
+	if scope == ScopeLocal {
 		return s.Local, nil
-	case ScopePrivate:
-	default:
-		return "", fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
 	}
 	u, err := s.URL(ScopePrivate)
 	if err != nil {

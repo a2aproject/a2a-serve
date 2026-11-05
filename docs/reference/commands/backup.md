@@ -20,6 +20,13 @@ Recreate the agent on another host with "a2a-serve backup restore".
 a2a-serve backup <command>
 ```
 
+**Flags of every `a2a-serve backup` command**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--deadline duration` | `10m0s` | Time limit of the command, which writes to or lists the backup destination, a duration such as 30s or 15m |
+| `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
+
 ## a2a-serve backup list
 
 List the agent's snapshots, oldest first

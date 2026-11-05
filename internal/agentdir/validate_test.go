@@ -96,6 +96,22 @@ func TestValidate(t *testing.T) {
 		{name: "task ttl", modify: func(c *Config) { c.TaskTTL = "a month" }, wantErr: "--task-ttl: invalid duration"},
 		{name: "task ttl too short", modify: func(c *Config) { c.TaskTTL = "10m" }, wantErr: "--task-ttl 10m: want at least 1h"},
 		{
+			name: "email with OAuth",
+			modify: func(c *Config) {
+				c.Channels.Email = &EmailConfig{
+					Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx",
+					OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id", OAuthRefreshToken: "secret:EMAIL_OAUTH_REFRESH_TOKEN",
+				}
+			},
+		},
+		{
+			name: "incomplete email OAuth",
+			modify: func(c *Config) {
+				c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx", OAuthRefreshToken: "r"}
+			},
+			wantErr: "the email channel needs --email-oauth-client-id, --email-oauth-token-url",
+		},
+		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },
 			wantErr: "the email channel needs --email-password, --email-smtp, --email-trusted-authserv",
@@ -333,5 +349,39 @@ func TestCheckHarness(t *testing.T) {
 	want := "this agent runs opencode; switch with `a2a-serve config set --agent claude`"
 	if err := cfg.CheckHarness("claude"); err == nil || err.Error() != want {
 		t.Fatalf("CheckHarness(claude) error = %v, want %q", err, want)
+	}
+}
+
+func TestAccessWordAliases(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		in   PolicyConfig
+		want PolicyConfig
+	}{
+		{name: "anyone for the private network", in: PolicyConfig{PrivateAccess: "anyone"}, want: PolicyConfig{PrivateAccess: AccessEveryone}},
+		{name: "everyone for the public URL", in: PolicyConfig{PublicAccess: "everyone"}, want: PolicyConfig{PublicAccess: AccessAnyone}},
+		{name: "canonical words", in: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}, want: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{}
+			s := Settings{Harness: "opencode", PrivateAccess: tc.in.PrivateAccess, PublicAccess: tc.in.PublicAccess}
+			if _, err := s.Apply(cfg, Dir{Root: "/x"}); err != nil {
+				t.Fatalf("Settings.Apply() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, cfg.Policy); diff != "" {
+				t.Fatalf("Settings.Apply() wrong policy (-want +got) diff = %s", diff)
+			}
+
+			parsed, err := ParseConfig([]byte("agent: opencode\npolicy:\n  private_access: " + tc.in.PrivateAccess + "\n  public_access: " + tc.in.PublicAccess + "\n"))
+			if err != nil {
+				t.Fatalf("ParseConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, parsed.Policy); diff != "" {
+				t.Fatalf("ParseConfig() wrong policy (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }

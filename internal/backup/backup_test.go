@@ -18,6 +18,7 @@ import (
 	"context"
 	"database/sql"
 	"io/fs"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,7 +34,12 @@ import (
 // home with a cache and a symlink, and a network identity.
 func newAgent(t *testing.T) agentdir.Dir {
 	t.Helper()
-	d, err := agentdir.Open(t.TempDir())
+	return newAgentAt(t, t.TempDir())
+}
+
+func newAgentAt(t *testing.T, root string) agentdir.Dir {
+	t.Helper()
+	d, err := agentdir.Open(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +49,8 @@ func newAgent(t *testing.T) agentdir.Dir {
 	if err := d.SaveSecrets(agentdir.Secrets{"BACKUP_KEY": "k"}); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", d.DBPath())
+	u := url.URL{Scheme: "file", OmitHost: true, Path: d.DBPath()}
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		t.Fatal(err)
 	}

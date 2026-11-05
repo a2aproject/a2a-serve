@@ -24,6 +24,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -54,22 +55,61 @@ var identityPaths = []string{"state/tsnet", "state/agentmesh"}
 // again.
 var skippedHomeDirs = []string{".cache", ".npm"}
 
+// maxCopyAttempts is how many times a file that changes while it is copied
+// is copied again before the last copy is kept.
+const maxCopyAttempts = 3
+
+// snapshotter adds files to a tar archive. It copies each file to a staging
+// file first, so that a copy that raced with a write of the agent can be
+// discarded before it reaches the archive.
+type snapshotter struct {
+	tw    *tar.Writer
+	stage *os.File
+	log   *slog.Logger
+	// afterCopy, when set, runs after each attempt to copy a file and before
+	// the file is checked for changes.
+	afterCopy func(name string, attempt int)
+}
+
+func newSnapshotter(tw *tar.Writer, stage *os.File, log *slog.Logger, afterCopy func(name string, attempt int)) *snapshotter {
+	return &snapshotter{tw: tw, stage: stage, log: log, afterCopy: afterCopy}
+}
+
 // writeArchive writes a gzipped tar of the agent's state to w: a consistent
 // copy of server.db, config.yaml, the secrets, the advertised pairings, the
 // harness homes and the network identity.
 func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
+	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.MkdirTemp(d.StateDir(), "backup-")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if rerr := os.RemoveAll(tmp); rerr != nil {
+			slog.Warn("removing the staged backup files", "error", rerr)
+		}
+	}()
+	stage, err := os.OpenFile(filepath.Join(tmp, "stage"), os.O_RDWR|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer closeLogged(stage)
+
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	if err := addDB(ctx, tw, d.DBPath()); err != nil {
+	s := newSnapshotter(tw, stage, slog.Default(), nil)
+	if err := s.addDB(ctx, d, tmp); err != nil {
 		return err
 	}
 	for _, p := range []string{pathConfig, pathSecrets, pathAds} {
-		if err := addFile(tw, filepath.Join(d.Path(), p), p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		if err := s.addFile(filepath.Join(d.Path(), p), p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
 	for _, p := range append([]string{pathHome, pathUserHomes}, identityPaths...) {
-		if err := addTree(ctx, tw, filepath.Join(d.Path(), p), p); err != nil {
+		if err := s.addTree(ctx, filepath.Join(d.Path(), p), p); err != nil {
 			return err
 		}
 	}
@@ -80,24 +120,18 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 }
 
 // addDB adds a copy of the database made with VACUUM INTO, which is
-// consistent while the server writes to it.
-func addDB(ctx context.Context, tw *tar.Writer, dbPath string) error {
+// consistent while the server writes to it. The copy is made in tmp, a
+// directory under state/ that only the user can read.
+func (s *snapshotter) addDB(ctx context.Context, d agentdir.Dir, tmp string) error {
+	dbPath := d.DBPath()
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
-	tmp, err := os.MkdirTemp("", "a2a-backup")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := os.RemoveAll(tmp); err != nil {
-			slog.Warn("removing the database copy", "error", err)
-		}
-	}()
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	u := url.URL{Scheme: "file", OmitHost: true, Path: dbPath, RawQuery: "_pragma=busy_timeout(5000)"}
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return err
 	}
@@ -106,54 +140,144 @@ func addDB(ctx context.Context, tw *tar.Writer, dbPath string) error {
 	if err := errors.Join(err, db.Close()); err != nil {
 		return fmt.Errorf("copying the database: %w", err)
 	}
-	return addFile(tw, copyPath, pathDB)
+	return s.addStableFile(copyPath, pathDB)
 }
 
-func addFile(tw *tar.Writer, src, name string) error {
+// addStableFile adds a file that nothing writes to.
+func (s *snapshotter) addStableFile(src, name string) error {
 	f, err := os.Open(src)
 	if err != nil {
 		return err
 	}
 	defer closeLogged(f)
-	return addOpenFile(tw, f, name)
-}
-
-func addOpenFile(tw *tar.Writer, f *os.File, name string) error {
 	info, err := f.Stat()
 	if err != nil {
 		return err
 	}
-	if !info.Mode().IsRegular() {
-		// The file was replaced after the walk listed it.
-		return nil
+	return s.writeEntry(info, name, info.Size(), f)
+}
+
+// errNotRegular reports a path that doesn't name a regular file, such as
+// one the agent replaced with a symlink.
+var errNotRegular = errors.New("not a regular file")
+
+// addFile adds the file src that the agent may write to, opened through the
+// directory it is in.
+func (s *snapshotter) addFile(src, name string) (err error) {
+	r, err := os.OpenRoot(filepath.Dir(src))
+	if err != nil {
+		return err
 	}
+	defer func() { err = errors.Join(err, r.Close()) }()
+	return s.addRootFile(r, filepath.Base(src), name)
+}
+
+// addRootFile adds the file rel in r. A file that changes while it is
+// copied is copied again, up to maxCopyAttempts times. After that the last
+// copy is kept and a warning names the file.
+func (s *snapshotter) addRootFile(r *os.Root, rel, name string) error {
+	for attempt := 1; ; attempt++ {
+		info, n, stable, err := s.copyToStage(r, rel, name, attempt)
+		if errors.Is(err, errNotRegular) {
+			if attempt < maxCopyAttempts {
+				continue
+			}
+			return fmt.Errorf("%s is %w", name, err)
+		}
+		if err != nil {
+			return err
+		}
+		if !stable && attempt < maxCopyAttempts {
+			continue
+		}
+		if !stable {
+			s.log.Warn("a file kept changing while it was backed up, the archive holds a copy that may be inconsistent",
+				"file", name, "attempts", attempt)
+		}
+		if _, err := s.stage.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		return s.writeEntry(info, name, n, s.stage)
+	}
+}
+
+// copyToStage copies rel in r to the staging file and reports how many
+// bytes it copied and whether rel stayed the same during the copy. Both
+// checks of rel go through r and don't follow a symlink at rel, so the copy
+// is always of a regular file in r.
+func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (info fs.FileInfo, n int64, stable bool, err error) {
+	listed, err := r.Lstat(rel)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !listed.Mode().IsRegular() {
+		return nil, 0, false, errNotRegular
+	}
+	f, err := r.Open(rel)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	defer closeLogged(f)
+	before, err := f.Stat()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !os.SameFile(listed, before) {
+		// rel was replaced between the Lstat and the open.
+		return nil, 0, false, errNotRegular
+	}
+	if err := s.stage.Truncate(0); err != nil {
+		return nil, 0, false, err
+	}
+	if _, err := s.stage.Seek(0, io.SeekStart); err != nil {
+		return nil, 0, false, err
+	}
+	// Reading no more than the initial size keeps a file that grows without
+	// end from stalling the backup; the size check then finds the growth.
+	n, err = io.Copy(s.stage, io.LimitReader(f, before.Size()))
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if s.afterCopy != nil {
+		s.afterCopy(name, attempt)
+	}
+	after, err := f.Stat()
+	if err != nil {
+		return nil, 0, false, err
+	}
+	current, err := r.Lstat(rel)
+	if errors.Is(err, fs.ErrNotExist) {
+		return before, n, false, nil
+	}
+	if err != nil {
+		return nil, 0, false, err
+	}
+	stable = n == before.Size() &&
+		after.Size() == before.Size() &&
+		after.ModTime().Equal(before.ModTime()) &&
+		os.SameFile(before, current)
+	return before, n, stable, nil
+}
+
+// writeEntry writes a regular file entry of size bytes read from r.
+func (s *snapshotter) writeEntry(info fs.FileInfo, name string, size int64, r io.Reader) error {
 	hdr, err := tar.FileInfoHeader(info, "")
 	if err != nil {
 		return err
 	}
 	hdr.Name = name
-	if err := tw.WriteHeader(hdr); err != nil {
+	hdr.Size = size
+	if err := s.tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	n, err := io.CopyN(tw, f, hdr.Size)
-	if errors.Is(err, io.EOF) {
-		// The file shrank after the header was written.
-		_, err = io.CopyN(tw, zeroReader{}, hdr.Size-n)
-	}
+	_, err = io.CopyN(s.tw, r, size)
 	return err
 }
 
-type zeroReader struct{}
-
-func (zeroReader) Read(p []byte) (int, error) {
-	clear(p)
-	return len(p), nil
-}
-
-// addTree adds the tree at root as name. The harness can change its homes
+// addTree adds the tree at root as name. The agent can change its homes
 // while the walk runs, so files are opened through root, which refuses
 // symlinks that lead out of it.
-func addTree(ctx context.Context, tw *tar.Writer, root, name string) (err error) {
+func (s *snapshotter) addTree(ctx context.Context, root, name string) (err error) {
 	info, err := os.Lstat(root)
 	if errors.Is(err, fs.ErrNotExist) {
 		// A missing root is an absent optional tree.
@@ -164,9 +288,9 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) (err error)
 	}
 	switch {
 	case info.Mode().IsRegular():
-		return addFile(tw, root, name)
+		return s.addFile(root, name)
 	case !info.IsDir():
-		return addEntry(tw, info, func() (string, error) { return os.Readlink(root) }, name)
+		return s.addEntry(info, func() (string, error) { return os.Readlink(root) }, name)
 	}
 	r, err := os.OpenRoot(root)
 	if err != nil {
@@ -196,22 +320,19 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) (err error)
 			return err
 		}
 		if !info.Mode().IsRegular() {
-			return addEntry(tw, info, func() (string, error) { return r.Readlink(filepath.FromSlash(rel)) }, entry)
+			return s.addEntry(info, func() (string, error) { return r.Readlink(filepath.FromSlash(rel)) }, entry)
 		}
-		f, err := r.Open(filepath.FromSlash(rel))
-		if errors.Is(err, fs.ErrNotExist) {
+		err = s.addRootFile(r, filepath.FromSlash(rel), entry)
+		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotRegular) {
+			// The file was deleted or replaced after the walk listed it.
 			return nil
 		}
-		if err != nil {
-			return err
-		}
-		defer closeLogged(f)
-		return addOpenFile(tw, f, entry)
+		return err
 	})
 }
 
 // addEntry adds a directory or a symlink, whose target readlink returns.
-func addEntry(tw *tar.Writer, info fs.FileInfo, readlink func() (string, error), entry string) error {
+func (s *snapshotter) addEntry(info fs.FileInfo, readlink func() (string, error), entry string) error {
 	link := ""
 	switch {
 	case info.Mode()&fs.ModeSymlink != 0:
@@ -231,7 +352,7 @@ func addEntry(tw *tar.Writer, info fs.FileInfo, readlink func() (string, error),
 	if info.IsDir() {
 		hdr.Name += "/"
 	}
-	return tw.WriteHeader(hdr)
+	return s.tw.WriteHeader(hdr)
 }
 
 // extractArchive extracts a snapshot into dst, the .a2a directory of the

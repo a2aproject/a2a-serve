@@ -1,6 +1,6 @@
 # Output and Exit Codes
 
-Management commands take `-o json` or `-o jsonl`. List commands (`pair list`,
+Management commands take `-o json` or `-o jsonl`, and `config show` also takes `-o yaml`. List commands (`pair list`,
 `channel list`, `contact list`, `schedule list`, `peers`, `backup list`,
 `mailbox list`, `doctor`) print a JSON array of objects with `-o json`, and
 one object per line with `-o jsonl`; each object has every column of the
@@ -14,21 +14,23 @@ and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
 prints. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
-networks. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
+networks. Removals (`channel rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `pair rm --email` prints the kind `google` and adds
 `tokens`, the number of sign-in tokens it revoked. `stop` prints
-`{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. `restart` prints the
-same object as `status -o json`, and `channel add` prints the channel's `name` and
+`{"name", "stopped", "serviceInstalled", "serviceRemoved"}`, where `stopped` is
+false if the agent wasn't running and `serviceInstalled` is true if it starts
+again at login. `restart` prints the object of `status -o json` for the running
+agent, without `pending`. `channel add` prints the channel's `name` and
 `account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
 that makes you its owner, until you link an account. Progress lines of `restart` and `config set --restart` go to stderr with
 `-o json`. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 
 Commands that call the running agent take `--timeout`, the timeout of each
-call (default 60s). The `backup` commands take `--deadline`, the time limit of
+call (default 60s); the `mailbox` commands take their own, with a default of 30s. The `backup` commands take `--deadline`, the time limit of
 the whole command (default 10m). `--version` prints what `version` prints.
 
 Errors follow the error contract of the

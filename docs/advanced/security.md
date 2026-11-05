@@ -27,7 +27,9 @@ What the sandbox doesn't protect yet:
 
 ## Who can call the agent
 
-Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes and limits failed attempts), `/skill.md`, `/download/…` and `/hitl/<token>`.
+Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
+
+The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 
@@ -37,7 +39,7 @@ A web page open in your browser can't make requests that change state on the age
 | Tailscale | Everyone on the tailnet, or with `--private-access paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
 | Agent Mesh relay | Everyone the relay admits, or with `--private-access paired` only callers with a token. The relay's enrollment decides who is on it ([who a relay admits](agent-mesh.md#how-the-access-model-maps)). |
 | Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-access anyone`, also anyone, as an anonymous caller. |
-| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC or aligned DKIM at the trusted server. |
+| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-access anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC, or DKIM of the sender's exact domain, at the trusted server. Email proves only the sender's domain. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
 Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes, and calls always go to the host found by name on the private network. The card of a node that isn't advertised goes only to callers who may call the node.

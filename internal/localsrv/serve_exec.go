@@ -271,11 +271,10 @@ func (e *execExecutor) executeChunked(ctx context.Context, execCtx *a2asrv.Execu
 	yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
 }
 
-// stopProcess kills a command whose output is no longer read, and reaps it.
-// Closing stdout first ends children of the shell which are blocked writing
-// to it.
+// stopProcess kills a command whose output is no longer read, and the
+// processes it started, and reaps it.
 func stopProcess(cmd *exec.Cmd, stdout io.Closer) {
-	if err := cmd.Process.Kill(); err != nil && !errors.Is(err, os.ErrProcessDone) {
+	if err := killGroup(cmd.Process); err != nil && !errors.Is(err, os.ErrProcessDone) {
 		slog.Debug("killing exec command", "error", err)
 	}
 	if err := stdout.Close(); err != nil {

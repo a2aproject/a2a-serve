@@ -63,5 +63,5 @@ Every command takes these.
 
 | Flag | Default | Description |
 |---|---|---|
-| `-o, --output string` | `text` | Output format: text, json (indented), or jsonl (one compact JSON object per line) |
-| `-v, --verbose` |  | Verbose output to stderr |
+| `-o, --output string` | `text` | Output format: text, json (indented), or jsonl (one compact JSON object per line); config show also takes yaml |
+| `-v, --verbose` |  | Print debug logs and progress details to stderr |

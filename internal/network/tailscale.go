@@ -23,6 +23,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"strings"
 	"sync"
@@ -243,11 +244,31 @@ func (t *Tailscale) split() error {
 }
 
 func isFunnel(c net.Conn) bool {
+	_, ok := funnelConn(c)
+	return ok
+}
+
+func funnelConn(c net.Conn) (*ipn.FunnelConn, bool) {
 	if tc, ok := c.(*tls.Conn); ok {
 		c = tc.NetConn()
 	}
-	_, ok := c.(*ipn.FunnelConn)
-	return ok
+	fc, ok := c.(*ipn.FunnelConn)
+	return fc, ok
+}
+
+// FunnelSource returns the address of the client that opened a Funnel
+// connection; its remote address is the Funnel relay's. An IPv6 address
+// is cut to its /64, which one client usually holds whole.
+func FunnelSource(c net.Conn) (string, bool) {
+	fc, ok := funnelConn(c)
+	if !ok || !fc.Src.IsValid() {
+		return "", false
+	}
+	addr := fc.Src.Addr().Unmap()
+	if addr.Is6() {
+		return netip.PrefixFrom(addr, 64).Masked().String(), true
+	}
+	return addr.String(), true
 }
 
 // WhoIs implements [Provider].
@@ -329,7 +350,7 @@ func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 		}
 		host := strings.TrimSuffix(p.DNSName, ".")
 		name, _, _ := strings.Cut(host, ".")
-		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true})
+		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true, Node: string(p.ID)})
 	}
 	return ProbeAgents(ctx, t.HTTPClient(), candidates), nil
 }

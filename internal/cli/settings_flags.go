@@ -98,8 +98,8 @@ func (sf *settingsFlags) registerCore(cmd *cobra.Command) {
 	f.IntVar(&s.Port, "port", 0, "Localhost port, 1-65535 (default: a free port, kept across runs)")
 	f.StringVar(&s.Private, "private", "", "Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com")
 	f.StringVar(&s.Public, "public", "", "Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay")
-	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone, or paired for only you and your pairings (default everyone)")
-	f.StringVar(&s.PublicAccess, "public-access", "", "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired)")
+	f.StringVar(&s.PrivateAccess, "private-access", "", "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)")
+	f.StringVar(&s.PublicAccess, "public-access", "", "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)")
 	f.StringSliceVar(&s.AllowEmails, "allow-email", nil, listUsage("People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL", true))
 	f.StringSliceVar(&s.AllowTools, "allow-tools", nil, listUsage("ACP tool `kinds` approved without asking: "+strings.Join(agentdir.ToolKinds, ", ")+", or a glob", true))
 	f.StringSliceVar(&s.DenyTools, "deny-tools", nil, listUsage("ACP tool `kinds` denied without asking, like --allow-tools", true))
@@ -152,6 +152,10 @@ func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings) {
 	f.StringVar(&email.Password, "email-password", "", secretUsage("Email channel: password"))
 	f.StringVar(&email.Mailbox, "email-mailbox", "", "Email channel: mailbox to watch (default INBOX)")
 	f.StringVar(&email.TrustedAuthServ, "email-trusted-authserv", "", "Email channel: authserv-id of your mail server's Authentication-Results")
+	f.StringVar(&email.OAuthRefreshToken, "email-oauth-refresh-token", "", secretUsage("Email channel: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused"))
+	f.StringVar(&email.OAuthTokenURL, "email-oauth-token-url", "", "Email channel: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token")
+	f.StringVar(&email.OAuthClientID, "email-oauth-client-id", "", "Email channel: OAuth client ID")
+	f.StringVar(&email.OAuthClientSecret, "email-oauth-client-secret", "", secretUsage("Email channel: OAuth client secret, if the client has one"))
 }
 
 // settings returns the parsed settings. Secret-valued flags set to - are

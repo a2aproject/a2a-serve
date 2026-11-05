@@ -52,19 +52,15 @@ func newService(t *testing.T) *Service {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}}
+	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter()}
 }
 
 // redeem exchanges code for a token as a redeemer of kind, as POST /pair
 // does.
 func redeem(t *testing.T, s *Service, code, kind string) {
 	t.Helper()
-	c, err := s.Store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode)
-	if err != nil {
-		t.Fatalf("TakeCode() error = %v", err)
-	}
-	if _, _, err := auth.IssueToken(context.Background(), s.Store, c.Pairing, s.BaseURL(), kind); err != nil {
-		t.Fatalf("IssueToken() error = %v", err)
+	if _, err := s.Redeem(context.Background(), code, Via{URL: s.BaseURL(), Kind: kind}); err != nil {
+		t.Fatalf("Redeem() error = %v", err)
 	}
 }
 

@@ -98,8 +98,8 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone) |
-| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
+| `--private-access string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
 
 **Approvals flags**
 
@@ -178,8 +178,8 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone) |
-| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
+| `--private-access string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
 
 **Approvals flags**
 
@@ -330,8 +330,8 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone) |
-| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
+| `--private-access string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
 
 **Approvals flags**
 

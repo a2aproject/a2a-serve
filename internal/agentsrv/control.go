@@ -24,7 +24,6 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
@@ -36,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -62,9 +62,6 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 	if err := os.Chmod(path, 0o600); err != nil {
 		return errors.Join(err, ln.Close())
 	}
-	if err := os.WriteFile(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
-		return errors.Join(err, ln.Close())
-	}
 	mux := control.Handler(control.Deps{
 		Status:        s.status,
 		Stop:          s.Stop,
@@ -84,10 +81,10 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
+	srv := httpserver.New(ctx, mux)
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
-		return errors.Join(err, removeIfExists(path), removeIfExists(s.dir.PIDPath()))
+		return errors.Join(err, removeIfExists(path))
 	})
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {

@@ -96,10 +96,22 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 		if err != nil {
 			return nil, fmt.Errorf("email: %w", err)
 		}
-		return email.New(email.Config{
+		cfg := email.Config{
 			Address: ec.Address, IMAP: ec.IMAP, SMTP: ec.SMTP, Username: ec.Username, Password: pw,
 			Mailbox: ec.Mailbox, TrustedAuthServ: ec.TrustedAuthServ,
-		}, opts.KV), nil
+		}
+		if ec.OAuthRefreshToken != "" {
+			refresh, err := secrets.Resolve(ec.OAuthRefreshToken)
+			if err != nil {
+				return nil, fmt.Errorf("email: OAuth refresh token: %w", err)
+			}
+			clientSecret, err := secrets.Resolve(ec.OAuthClientSecret)
+			if err != nil {
+				return nil, fmt.Errorf("email: OAuth client secret: %w", err)
+			}
+			cfg.OAuth = &email.OAuthConfig{TokenURL: ec.OAuthTokenURL, ClientID: ec.OAuthClientID, ClientSecret: clientSecret, RefreshToken: refresh}
+		}
+		return email.New(cfg, opts.KV), nil
 	}
 	return nil, fmt.Errorf("unknown channel %q: want telegram, discord or email", kind)
 }

@@ -25,6 +25,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -72,12 +73,18 @@ type Service struct {
 	// Access describes who may call the agent, which responses to changes
 	// carry. Optional.
 	Access func(ctx context.Context) (*controlapi.Access, error)
+	// Limiter limits failed attempts to redeem codes. [Service.Redeem]
+	// needs it.
+	Limiter *Limiter
 	// Users stops what the users of a pairing run while it is removed.
 	// Optional: a stopped agent runs nothing.
 	Users Users
 	// Homes deletes the agent homes of the users of a removed pairing.
 	// Optional.
 	Homes Homes
+
+	mu       sync.Mutex
+	removing map[string]int
 }
 
 // Users stops the tasks and agent processes of users.
@@ -423,7 +430,10 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 		resp.Kept = true
 		return resp, s.Store.RevokeCredentials(ctx, name)
 	}
-	if err := s.deletePairing(ctx, name, auth.PairPrincipal(name), auth.NodePrincipal(name)); err != nil {
+	endRemoval := s.beginRemoval(name)
+	err = s.deletePairing(ctx, name, auth.PairPrincipal(name), auth.NodePrincipal(name))
+	endRemoval()
+	if err != nil {
 		return nil, err
 	}
 	if p.Kind == pairapi.PairingWebhook {
@@ -442,6 +452,31 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 		resp.StillAllowed = resp.Access.Others
 	}
 	return resp, nil
+}
+
+// beginRemoval makes [Service.Redeem] refuse the codes of the pairing name
+// until the returned function is called, so no credential is issued while
+// the pairing's users are stopped and its homes deleted.
+func (s *Service) beginRemoval(name string) (end func()) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.removing == nil {
+		s.removing = map[string]int{}
+	}
+	s.removing[name]++
+	return func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		if s.removing[name]--; s.removing[name] == 0 {
+			delete(s.removing, name)
+		}
+	}
+}
+
+func (s *Service) isRemoving(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.removing[name] > 0
 }
 
 // deletePairing deletes the pairing called name, and the agent homes of

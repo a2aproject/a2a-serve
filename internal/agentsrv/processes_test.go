@@ -16,9 +16,12 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"iter"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -141,6 +144,31 @@ func TestLocalSandboxWarning(t *testing.T) {
 				t.Fatalf("localSandboxWarning() = %q, want a warning %v", got, tc.wantWarn)
 			}
 		})
+	}
+}
+
+func TestSplitExecutorClosePoolsInParallel(t *testing.T) {
+	t.Parallel()
+	var running sync.WaitGroup
+	running.Add(2)
+	stop := func(context.Context) error {
+		running.Done()
+		done := make(chan struct{})
+		go func() { running.Wait(); close(done) }()
+		select {
+		case <-done:
+			return nil
+		case <-time.After(5 * time.Second):
+			return errors.New("the other pool did not stop at the same time")
+		}
+	}
+	e := &splitExecutor{pools: map[string]*startedPool{
+		anonymousPool: {stop: stop},
+		usersPool:     {stop: stop},
+	}}
+
+	if err := e.close(context.Background()); err != nil {
+		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
 }
 

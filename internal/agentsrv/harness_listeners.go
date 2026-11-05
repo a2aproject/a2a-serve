@@ -25,12 +25,12 @@ import (
 	"path/filepath"
 	"slices"
 	"sync"
-	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 )
 
 // harnessListeners gives each agent process its own way to reach the
@@ -146,18 +146,12 @@ func (hl *harnessListeners) openSocket(agentKey string) (*harnessEndpoint, error
 // serve serves handler on every endpoint, those opened later included,
 // and returns the function that shuts them down.
 func (hl *harnessListeners) serve(ctx context.Context, handler http.Handler, errc chan<- error) func(context.Context) error {
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 30 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-		ConnContext: func(ctx context.Context, c net.Conn) context.Context {
-			if kc, ok := c.(*keyedConn); ok {
-				return context.WithValue(ctx, harnessProcessKey{}, kc.agentKey)
-			}
-			return ctx
-		},
-	}
+	srv := httpserver.New(ctx, handler, httpserver.WithConnContext(func(ctx context.Context, c net.Conn) context.Context {
+		if kc, ok := c.(*keyedConn); ok {
+			return context.WithValue(ctx, harnessProcessKey{}, kc.agentKey)
+		}
+		return ctx
+	}))
 	hl.mu.Lock()
 	hl.srv, hl.errc = srv, errc
 	listeners := hl.pending
