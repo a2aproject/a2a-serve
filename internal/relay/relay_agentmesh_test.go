@@ -26,17 +26,22 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
+	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -84,6 +89,11 @@ type runningRelay struct {
 
 func startRelay(t *testing.T, d relaydir.Dir, bin string) *runningRelay {
 	t.Helper()
+	return startRelayWith(t, d, bin, googleauth.Endpoints{})
+}
+
+func startRelayWith(t *testing.T, d relaydir.Dir, bin string, google googleauth.Endpoints) *runningRelay {
+	t.Helper()
 	release, err := d.Lock()
 	if err != nil {
 		t.Fatalf("Lock() error = %v", err)
@@ -92,7 +102,7 @@ func startRelay(t *testing.T, d relaydir.Dir, bin string) *runningRelay {
 	done := make(chan error, 1)
 	go func() {
 		err := relay.New(relay.Options{
-			Dir: d, Binary: bin, A2AServe: "test", Out: logWriter{t}, MeshLog: io.Discard, Now: time.Now,
+			Dir: d, Binary: bin, A2AServe: "test", Google: google, Out: logWriter{t}, MeshLog: io.Discard, Now: time.Now,
 		}).Run(ctx)
 		done <- errors.Join(err, release())
 	}()
@@ -114,6 +124,9 @@ func startRelay(t *testing.T, d relaydir.Dir, bin string) *runningRelay {
 	deadline := time.Now().Add(time.Minute)
 	for {
 		st, err := r.client.Status(ctx)
+		if err == nil {
+			_, err = get(ctx, http.DefaultClient, st.URL+"/readyz")
+		}
 		if err == nil {
 			r.url = st.URL
 			return r
@@ -142,9 +155,16 @@ func joinAgent(t *testing.T, r *runningRelay, name string) *joinedAgent {
 	if err != nil {
 		t.Fatalf("Client.Invite() error = %v", err)
 	}
-	p, err := network.NewRelay(network.RelayConfig{
+	return serveAgent(t, network.RelayConfig{
 		AgentName: name, URL: r.url, StateDir: t.TempDir(), Token: inv.Token, Private: true, Public: true, Logf: t.Logf,
 	})
+}
+
+// serveAgent joins the agent of cfg to its relay and serves it there.
+func serveAgent(t *testing.T, cfg network.RelayConfig) *joinedAgent {
+	t.Helper()
+	name := cfg.AgentName
+	p, err := network.NewRelay(cfg)
 	if err != nil {
 		t.Fatalf("network.NewRelay() error = %v", err)
 	}
@@ -300,5 +320,169 @@ func TestRelayRunsAgentMesh(t *testing.T) {
 	}
 	if len(ms) != 2 {
 		t.Fatalf("Client.Members() after a restart = %+v, want coder and the removed reviewer", ms)
+	}
+}
+
+// browser is the person behind signed-in agents: it approves every sign-in
+// link an agent prints, signing in at the fake Google at once.
+type browser struct {
+	t     *testing.T
+	relay string
+	hc    *http.Client
+	links atomic.Int32
+}
+
+var approvalToken = regexp.MustCompile(`name="token" value="([^"]+)"`)
+
+// logf is the Logf of an agent: it opens the sign-in links the agent prints.
+func (b *browser) logf(format string, args ...any) {
+	line := fmt.Sprintf(format, args...)
+	b.t.Log(line)
+	_, rest, ok := strings.Cut(line, "→ sign in to the relay "+b.relay+": ")
+	if !ok {
+		return
+	}
+	link, _, _ := strings.Cut(rest, " (code ")
+	b.links.Add(1)
+	go b.approve(link)
+}
+
+func (b *browser) approve(link string) {
+	page, err := get(context.Background(), b.hc, link)
+	if err != nil {
+		b.t.Errorf("opening the sign-in link: %v", err)
+		return
+	}
+	m := approvalToken.FindStringSubmatch(page)
+	if m == nil {
+		b.t.Errorf("no approval form on the sign-in page:\n%s", page)
+		return
+	}
+	resp, err := b.hc.PostForm(signin.URL(b.relay)+"/approve", url.Values{"token": {m[1]}, "answer": {"approve"}})
+	if err != nil {
+		b.t.Errorf("approving the sign-in: %v", err)
+		return
+	}
+	if err := resp.Body.Close(); err != nil {
+		b.t.Errorf("closing: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		b.t.Errorf("approving the sign-in: %s", resp.Status)
+	}
+}
+
+func TestRelaySignIn(t *testing.T) {
+	bin := agentmeshOne(t)
+	g := googletest.New(t, googletest.Account{Subject: "anna-id", Email: "anna@example.com", Verified: true, HostedDomain: "example.com"})
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	relayURL := fmt.Sprintf("http://127.0.0.1:%d", port)
+	if _, err := d.SaveSettings(relaydir.Settings{
+		URL: relayURL, Listen: fmt.Sprintf("127.0.0.1:%d", port),
+		AllowEmails: []string{"*@example.com"}, GoogleClientID: "relay-app", GoogleClientSecret: g.Secret,
+	}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelayWith(t, d, bin, g.Endpoints())
+	b := &browser{t: t, relay: r.url, hc: &http.Client{Timeout: 30 * time.Second}}
+	stateDir := t.TempDir()
+	login := &network.RelayLogin{RelayURL: r.url, StateDir: stateDir, HTTP: b.hc, Logf: b.logf, Poll: time.Second}
+
+	idToken, err := login.Token(t.Context())
+	if err != nil {
+		t.Fatalf("RelayLogin.Token() error = %v", err)
+	}
+	if got := b.links.Load(); got != 1 {
+		t.Fatalf("sign-in links printed = %d, want 1", got)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, r.url+"/user/bootstrap-tokens", strings.NewReader(`{"role":"mesh:role:node"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+idToken)
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := b.hc.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("POST /user/bootstrap-tokens with a signed-in identity status = %d, want 403", resp.StatusCode)
+	}
+
+	coder := serveAgent(t, network.RelayConfig{AgentName: "coder", URL: r.url, StateDir: stateDir, Private: true, Public: true, Logf: b.logf})
+	reviewer := joinAgent(t, r, "reviewer")
+
+	if got := b.links.Load(); got != 1 {
+		t.Fatalf("sign-in links printed after the agent joined = %d, want 1: it joins with its refresh token", got)
+	}
+	eventually(t, "the invited reviewer calls the signed-in coder", func() error {
+		got, err := get(t.Context(), reviewer.provider.HTTPClient(), coder.privateURL+"/hello")
+		if err == nil && got != `{"name":"coder"}` {
+			return fmt.Errorf("got %q", got)
+		}
+		return err
+	})
+	eventually(t, "members shows who signed in", func() error {
+		ms, err := r.client.Members(t.Context(), false)
+		if err != nil {
+			return err
+		}
+		var who []string
+		for _, m := range ms {
+			who = append(who, m.Agent+" "+m.Who())
+		}
+		slices.Sort(who)
+		if diff := cmp.Diff([]string{"coder anna@example.com", "reviewer invite"}, who); diff != "" {
+			return fmt.Errorf("Members() wrong result (-want +got) diff = %s", diff)
+		}
+		return nil
+	})
+	st, err := r.client.Status(t.Context())
+	if err != nil {
+		t.Fatalf("Client.Status() error = %v", err)
+	}
+	if want := "sign-in (*@example.com) and invites"; st.Join != want {
+		t.Fatalf("Client.Status() join = %q, want %q", st.Join, want)
+	}
+
+	restartAllowing := func(allow string) {
+		t.Helper()
+		if err := r.stop(); err != nil {
+			t.Fatalf("relay.Run() error = %v", err)
+		}
+		if _, err := d.SaveSettings(relaydir.Settings{AllowEmails: []string{allow}}); err != nil {
+			t.Fatalf("SaveSettings() error = %v", err)
+		}
+		r = startRelayWith(t, d, bin, g.Endpoints())
+	}
+	banned := func() []string {
+		t.Helper()
+		ms, err := r.client.Members(t.Context(), true)
+		if err != nil {
+			t.Fatalf("Client.Members() error = %v", err)
+		}
+		var out []string
+		for _, m := range ms {
+			if m.Banned {
+				out = append(out, m.Who())
+			}
+		}
+		return out
+	}
+
+	restartAllowing("ben@example.com")
+	if diff := cmp.Diff([]string{"anna@example.com"}, banned()); diff != "" {
+		t.Fatalf("banned members after dropping anna@example.com wrong result (-want +got) diff = %s", diff)
+	}
+
+	restartAllowing("anna@example.com")
+	if got := banned(); len(got) != 0 {
+		t.Fatalf("banned members after allowing anna@example.com again = %v, want none", got)
 	}
 }

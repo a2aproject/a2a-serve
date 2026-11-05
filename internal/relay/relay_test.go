@@ -34,6 +34,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -64,6 +65,17 @@ func TestMeshArgsAndEnv(t *testing.T) {
 			},
 			wantEnv: []string{"HOME=/home/me", "AGENTMESH_ADMIN_TOKEN=tok", "AGENTMESH_DB_DSN=postgres://db"},
 		},
+		{
+			name:   "sign-in",
+			config: MeshConfig{URL: "https://relay.example.com", Port: 4100, DataDir: "/r/agentmesh", AdminToken: "tok", Issuer: "https://relay.example.com/a2a-serve/signin"},
+			wantArgs: []string{
+				"--bind-address", "127.0.0.1", "--port", "4100", "--external-url", "https://relay.example.com",
+				"--data-dir", "/r/agentmesh", "--no-join-token", "--enroll-qr=false", "--router-allow-loopback=false",
+				"--issuer", "https://relay.example.com/a2a-serve/signin", "--workload-issuer", "https://relay.example.com/a2a-serve/signin",
+				"--oidc-client-id", "a2a-serve", "--allowed-audiences", "a2a-serve", "--control-plane-workload-session-ttl", "24h0m0s",
+			},
+			wantEnv: []string{"HOME=/home/me", "AGENTMESH_ADMIN_TOKEN=tok"},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -81,9 +93,9 @@ func TestMeshArgsAndEnv(t *testing.T) {
 
 func TestPolicyLetsNodesServeA2AOnly(t *testing.T) {
 	t.Parallel()
-	p := Policy()
+	p := Policy(false)
 	if len(p.Bindings) != 0 {
-		t.Fatalf("Policy() bindings = %v, want none: invited agents get their role from the token", p.Bindings)
+		t.Fatalf("Policy(false) bindings = %v, want none: invited agents get their role from the token", p.Bindings)
 	}
 	for _, r := range p.Roles {
 		if r.Name != "mesh:role:node" {
@@ -100,6 +112,14 @@ func TestPolicyLetsNodesServeA2AOnly(t *testing.T) {
 		return
 	}
 	t.Fatal("Policy() has no node role")
+}
+
+func TestPolicyWithSignInLetsSignedInAgentsJoin(t *testing.T) {
+	t.Parallel()
+	want := []meshadmin.Binding{{Role: "mesh:role:node", Members: []string{"mesh:system:authenticated"}}}
+	if diff := cmp.Diff(want, Policy(true).Bindings); diff != "" {
+		t.Fatalf("Policy(true) bindings wrong result (-want +got) diff = %s", diff)
+	}
 }
 
 func newRelayDir(t *testing.T) relaydir.Dir {

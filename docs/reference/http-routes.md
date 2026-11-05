@@ -48,7 +48,8 @@ A relay that `a2a-serve relay run` runs serves these routes on its port.
 
 | Route | |
 | --- | --- |
-| `GET /.well-known/a2a-serve-relay` | the relay's versions: `{"a2a_serve": "<version>", "agentmesh": "<version>", "signin": false}` |
+| `GET /.well-known/a2a-serve-relay` | the relay's versions, and whether people may sign in: `{"a2a_serve": "<version>", "agentmesh": "<version>", "signin": true}` |
 | `/a2a-serve/control/…` | the relay's control API: `GET status`, `POST invites`, `GET members`, `POST members/remove`. It needs the admin token as a bearer token. After a wrong token, the next wrong tokens get 429 with `Retry-After` for 1 to 10 seconds |
+| `/a2a-serve/signin/…` | the relay's identity provider, an OpenID Connect issuer at `<relay-url>/a2a-serve/signin` with the client ID `a2a-serve`: `GET .well-known/openid-configuration`, `GET jwks`, the device flow (RFC 8628) at `POST device/authorize` and `POST token`, which also takes the `refresh_token` grant, and the pages people sign in on: `GET device`, `GET callback` and `POST approve`. ID tokens are signed with EdDSA and last an hour. 404 when sign-in is off |
 | `/admin/…`, `POST` and `PUT /policies`, `/console/…`, `/metrics` | 404 |
 | other paths | Agent Mesh's control plane, routers and ingress, such as `/info`, `/register`, `/refresh`, `/readyz` and `/ingress/…`, with the path cleaned of dot segments. They answer 503 while the relay starts. `CONNECT`, `TRACE` and other methods that Agent Mesh doesn't serve get 405 |

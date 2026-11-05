@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
@@ -48,16 +49,23 @@ func newMesh(t *testing.T) *meshtest.Mesh {
 	t.Helper()
 	m := meshtest.New(t, adminToken)
 	m.AddNode(meshadmin.Node{PeerID: "12D3router", Role: meshadmin.RoleRouter, Enrolled: joined}, seen)
-	m.AddNode(meshadmin.Node{PeerID: "12D3coder", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"Anna@example.com","email_verified":true}`, Enrolled: joined}, seen, "coder")
-	m.AddNode(meshadmin.Node{PeerID: "12D3reviewer", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"anna@example.com"}`, Enrolled: joined.Add(time.Minute)}, seen, "reviewer")
+	m.AddNode(meshadmin.Node{PeerID: "12D3coder", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"Anna@example.com","email_verified":true,"hd":"example.com"}`, Enrolled: joined}, seen, "coder")
+	m.AddNode(meshadmin.Node{PeerID: "12D3reviewer", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"anna@example.com","hd":"example.com"}`, Enrolled: joined.Add(time.Minute)}, seen, "reviewer")
 	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: joined.Add(time.Hour)}, seen, "ci-bot")
 	m.AddNode(meshadmin.Node{PeerID: "12D3gone", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: joined.Add(-time.Hour), Banned: true}, seen, "old")
 	return m
 }
 
 func newService(m *meshtest.Mesh) *control.Service {
+	return newServiceAllowing(m, "*@example.com")
+}
+
+// newServiceAllowing returns the service of a relay whose allowlist is allow.
+func newServiceAllowing(m *meshtest.Mesh, allow ...string) *control.Service {
 	return control.NewService(meshadmin.New(m.URL, adminToken, http.DefaultClient), func() control.Status {
 		return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
+	}, func(m control.Member) bool {
+		return googleauth.Allowed(allow, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
 	})
 }
 
@@ -136,8 +144,8 @@ func TestOperationsOverEachTransport(t *testing.T) {
 				t.Fatalf("Client.Members() error = %v", err)
 			}
 			wantMembers := []control.Member{
-				{Agent: "coder", Email: "anna@example.com", Joined: joined, Seen: seen, Peer: "12D3coder"},
-				{Agent: "reviewer", Email: "anna@example.com", Joined: joined.Add(time.Minute), Seen: seen, Peer: "12D3reviewer"},
+				{Agent: "coder", Email: "anna@example.com", Domain: "example.com", Joined: joined, Seen: seen, Peer: "12D3coder"},
+				{Agent: "reviewer", Email: "anna@example.com", Domain: "example.com", Joined: joined.Add(time.Minute), Seen: seen, Peer: "12D3reviewer"},
 				{Agent: "ci-bot", Invite: true, Joined: joined.Add(time.Hour), Seen: seen, Peer: "12D3bot"},
 			}
 			if diff := cmp.Diff(wantMembers, members); diff != "" {
@@ -161,6 +169,55 @@ func TestOperationsOverEachTransport(t *testing.T) {
 				t.Fatalf("Client.Remove() banned wrong nodes (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestReconcile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		allow      []string
+		before     []string
+		wantBanned []string
+	}{
+		{name: "everyone still allowed", allow: []string{"*@example.com"}, wantBanned: []string{"12D3gone"}},
+		{name: "email dropped", allow: []string{"ben@example.com"}, wantBanned: []string{"12D3coder", "12D3reviewer", "12D3gone"}},
+		{name: "sign-in off", wantBanned: []string{"12D3coder", "12D3reviewer", "12D3gone"}},
+		{name: "email allowed again", allow: []string{"anna@example.com"}, before: []string{"12D3coder", "12D3reviewer"}, wantBanned: []string{"12D3gone"}},
+		{name: "removed invite stays removed", allow: []string{"*@example.com"}, before: []string{"12D3bot"}, wantBanned: []string{"12D3bot", "12D3gone"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+			for _, peer := range tt.before {
+				if _, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: peer}); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if _, _, err := newServiceAllowing(m, tt.allow...).Reconcile(t.Context()); err != nil {
+				t.Fatalf("Service.Reconcile() error = %v", err)
+			}
+
+			if diff := cmp.Diff(tt.wantBanned, m.Banned(), cmp.Transformer("sort", sorted)); diff != "" {
+				t.Fatalf("Service.Reconcile() left wrong nodes banned (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestRemoveReportsPeopleTheRelayLetsBack(t *testing.T) {
+	t.Parallel()
+	m := newMesh(t)
+
+	res, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: "anna@example.com"})
+
+	if err != nil {
+		t.Fatalf("Service.Remove() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"anna@example.com"}, res.Admitted); diff != "" {
+		t.Fatalf("Service.Remove() admitted wrong result (-want +got) diff = %s", diff)
 	}
 }
 

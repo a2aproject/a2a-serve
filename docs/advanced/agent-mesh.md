@@ -1,7 +1,7 @@
 # Agent Mesh
 
 > [!NOTE]
-> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`, and `a2a-serve relay run` runs a relay. Sign-in to the relay, egress through it and the directory of advertised nodes are planned, and marked as such below.
+> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`, and `a2a-serve relay run` runs a relay. Egress through the relay and the directory of advertised nodes are planned, and marked as such below.
 
 [Agent Mesh](https://google.github.io/agentmesh/) is a zero-trust network for agents: nodes enroll with a control plane, get short-lived credentials bound to their own keys, reach each other through routers from behind NAT, and can be reached from the internet through ingress. a2a-serve runs on top of it.
 
@@ -54,7 +54,7 @@ Every request passes three steps:
 
 `--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, with `a2a-serve relay remove`, which bans their nodes.
 
-A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-access` defaults to `everyone` on every relay. The relay decides who it admits. Agent Mesh v0.2.0 admits anyone its identity provider accepts, so on a relay that admits people by sign-in, set `--private-access paired` until the relay checks an email allowlist itself (planned).
+A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-access` defaults to `everyone` on every relay. The relay decides who it admits: people who sign in with an email on its allowlist, and agents it invites.
 
 ## Calls between agents
 
@@ -72,9 +72,12 @@ The sandbox reaches the network only through the server (planned). On a relay, t
 
 - reports the relay's versions at `/.well-known/a2a-serve-relay`;
 - serves the relay's control API to callers with the admin token;
+- serves the relay's identity provider, when people may sign in;
 - blocks Agent Mesh's admin API, console and metrics, which a2a-serve manages or doesn't use;
 - proxies everything else to `agentmesh-one`, WebSockets included.
 
-a2a-serve sets every `agentmesh-one` flag and applies the mesh policy through the admin API at every start. The policy lets every node call, publish and expose A2A services, with public URLs in `passthrough` mode. `agentmesh-one` runs with no standing join token, so agents join with an invite, a single-use bootstrap token with autonomous recovery. [HTTP Routes](../reference/http-routes.md#relay-routes) lists the front's routes, and [Relays](../guide/relays.md) shows how to run one.
+a2a-serve sets every `agentmesh-one` flag and applies the mesh policy through the admin API at every start. The policy lets every node call, publish and expose A2A services, with public URLs in `passthrough` mode. `agentmesh-one` runs with no standing join token, so agents join by sign-in or with an invite, a single-use bootstrap token with autonomous recovery.
+
+a2a-serve is the relay's identity provider. Agent Mesh v0.2.0 can't use Google's device flow, and admits anyone its identity provider accepts. So the front runs the device flow itself: the person signs in with the relay's Google app, the front checks the email against the allowlist, and then issues the ID token that Agent Mesh enrolls the agent with. The agent keeps a refresh token, and each renewal checks the account with Google and against the allowlist again. Agent Mesh also renews an enrolled agent on its own until the agent's session ends, so at every start the relay bans the agents of people its allowlist no longer admits, and lifts the bans of people it admits. `agentmesh-one` trusts no other issuer. It treats this one as a workload issuer, so its user API refuses signed-in accounts, which keeps them from minting join tokens. [HTTP Routes](../reference/http-routes.md#relay-routes) lists the front's routes, and [Relays](../guide/relays.md) shows how to run one.
 
 Source builds need `-tags agentmesh` to join a relay. It adds about 36 MB to the binary, so release binaries leave it out until `meshnet` is its own Go module. The relay commands don't need it. `doctor` checks that the build supports relays and, with `--online`, that the relay answers with the pinned Agent Mesh version.

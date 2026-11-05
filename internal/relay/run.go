@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -34,10 +35,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -58,6 +61,9 @@ type Options struct {
 	Cloudflared string
 	// A2AServe is the version of this a2a-serve.
 	A2AServe string
+	// Google are the endpoints of Google's sign-in, which agents sign in to
+	// the relay with.
+	Google googleauth.Endpoints
 	// Out gets progress lines for the user, and MeshLog the output of
 	// agentmesh-one and cloudflared.
 	Out, MeshLog io.Writer
@@ -124,9 +130,24 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 		return control.Status{
 			URL: publicURL, PID: os.Getpid(), Started: started,
 			Versions: control.Versions{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version},
-			Join:     "invites",
+			Join:     joinedBy(&conf.Config),
 		}
+	}, func(m control.Member) bool {
+		return conf.SignIn() && googleauth.Allowed(conf.AllowEmails, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
 	})
+	var signIn http.Handler
+	issuer := ""
+	if conf.SignIn() {
+		iss, err := signin.New(signin.Options{
+			URL: publicURL, Secret: conf.AdminToken, AllowEmails: conf.AllowEmails,
+			ClientID: conf.GoogleClientID, ClientSecret: conf.GoogleClientSecret,
+			Google: r.opts.Google, HTTP: &http.Client{Timeout: 30 * time.Second}, Now: r.opts.Now,
+		})
+		if err != nil {
+			return err
+		}
+		signIn, issuer = iss, signin.URL(publicURL)
+	}
 
 	restart := make(chan struct{})
 	var restartOnce sync.Once
@@ -137,7 +158,7 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	defer removeSocket(d.SocketPath())
 	local := httpserver.New(ctx, control.Handler(svc, func() { restartOnce.Do(func() { close(restart) }) }))
 	remote := control.RequireToken(conf.AdminToken, backoff.NewFailures(time.Second, 10*time.Second, r.opts.Now), control.Handler(svc, nil))
-	fr := front.New(agentmesh.Info{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version}, remote)
+	fr := front.New(agentmesh.Info{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version, SignIn: conf.SignIn()}, remote, signIn)
 	public := httpserver.New(ctx, fr)
 
 	serveErr := make(chan error, 2)
@@ -145,7 +166,12 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	go func() { serveErr <- serve(public, ln) }()
 	defer shutdown(local, public)
 
-	mesh, err := r.startMesh(ctx, MeshConfig{URL: publicURL, Port: port, DataDir: d.MeshDir(), AdminToken: conf.AdminToken, Database: conf.Database})
+	if issuer != "" {
+		if err := checkIssuer(ctx, publicURL); err != nil {
+			return stoppedOr(ctx, err)
+		}
+	}
+	mesh, err := r.startMesh(ctx, MeshConfig{URL: publicURL, Port: port, DataDir: d.MeshDir(), AdminToken: conf.AdminToken, Database: conf.Database, Issuer: issuer})
 	if err != nil {
 		return err
 	}
@@ -153,8 +179,18 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	if err := waitReady(ctx, admin, mesh); err != nil {
 		return stoppedOr(ctx, err)
 	}
-	if err := admin.SetPolicy(ctx, Policy()); err != nil {
+	if err := admin.SetPolicy(ctx, Policy(conf.SignIn())); err != nil {
 		return stoppedOr(ctx, fmt.Errorf("applying the relay's policy: %w", err))
+	}
+	removed, readmitted, err := svc.Reconcile(ctx)
+	if err != nil {
+		return stoppedOr(ctx, fmt.Errorf("applying the allowlist to the relay's members: %w", err))
+	}
+	for _, m := range removed {
+		r.printf("✓ removed %s: the relay no longer lets %s sign in", memberName(m), m.Email)
+	}
+	for _, m := range readmitted {
+		r.printf("✓ let back %s: the relay lets %s sign in again", memberName(m), m.Email)
 	}
 	fr.Open(meshURL)
 	defer fr.Close()
@@ -162,6 +198,10 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	r.printf("✓ ready; serving HTTP on %s", ln.Addr())
 	if conf.Tunnel != "" {
 		r.printf("  the quick tunnel's URL changes on every start, and agents have to join again then")
+	}
+	if conf.SignIn() {
+		r.printf("→ people sign in from their agents (allowed: %s):", strings.Join(conf.AllowEmails, ", "))
+		r.printf("  a2a-serve config set --private %s --public %s", publicURL, publicURL)
 	}
 	r.printf("→ invite an agent: a2a-serve relay invite <name>")
 
@@ -177,6 +217,65 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	case <-restart:
 		return ErrRestart
 	}
+}
+
+// memberName names m by its agent, or by its peer ID when Agent Mesh no
+// longer knows the agent of a banned node.
+func memberName(m control.Member) string {
+	if m.Agent != "" {
+		return m.Agent
+	}
+	return "agent " + m.Peer
+}
+
+// joinedBy says who can join a relay with conf.
+func joinedBy(conf *relaydir.Config) string {
+	if !conf.SignIn() {
+		return "invites"
+	}
+	return "sign-in (" + strings.Join(conf.AllowEmails, ", ") + ") and invites"
+}
+
+// issuerTimeout bounds how long the relay waits to reach its own identity
+// provider at its URL.
+const issuerTimeout = 30 * time.Second
+
+// checkIssuer checks that the relay reaches its identity provider at its
+// public URL, as agentmesh-one does when it starts, so that a URL that
+// doesn't lead back to the relay fails with a reason.
+func checkIssuer(ctx context.Context, publicURL string) error {
+	u := signin.DiscoveryURL(publicURL)
+	ctx, cancel := context.WithTimeout(ctx, issuerTimeout)
+	defer cancel()
+	hc := &http.Client{Timeout: 10 * time.Second}
+	var last error
+	for {
+		last = getOK(ctx, hc, u)
+		if last == nil {
+			return nil
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("agentmesh-one reads the relay's sign-in at %s, and this machine can't reach it: %v; check that the relay's URL leads back to it", u, last)
+		case <-time.After(time.Second):
+		}
+	}
+}
+
+func getOK(ctx context.Context, hc *http.Client, u string) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return err
+	}
+	closeLogged(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return errors.New(resp.Status)
+	}
+	return nil
 }
 
 // stoppedOr returns nil when ctx ended, since the relay was asked to stop

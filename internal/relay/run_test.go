@@ -54,7 +54,13 @@ func runFakeMesh(exitAfter string) int {
 		return 2
 	}
 	go func() {
-		if err := http.Serve(ln, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})); err != nil {
+		if err := http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/admin/status" {
+				if _, err := io.WriteString(w, "{}"); err != nil {
+					return
+				}
+			}
+		})); err != nil {
 			return
 		}
 	}()

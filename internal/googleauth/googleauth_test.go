@@ -18,8 +18,10 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -42,7 +44,7 @@ func TestVerify(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verifier.Verify() error = %v", err)
 	}
-	want := googleauth.Claims{Email: "mom@example.com", EmailVerified: true, HostedDomain: "example.com", Nonce: "n1", Audience: "app"}
+	want := googleauth.Claims{Subject: "1234", Email: "mom@example.com", EmailVerified: true, HostedDomain: "example.com", Nonce: "n1", Audience: "app"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Verifier.Verify() wrong result (-want +got) diff = %s", diff)
 	}
@@ -210,5 +212,66 @@ func TestAllowed(t *testing.T) {
 				t.Fatalf("Allowed(%v, %+v) = %v, want %v", list, tc.claims, got, tc.want)
 			}
 		})
+	}
+}
+
+// signIn follows Google's sign-in page at authURL and returns the code it
+// sends back.
+func signIn(t *testing.T, authURL string) string {
+	t.Helper()
+	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	resp, err := hc.Get(authURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	back, err := url.Parse(resp.Header.Get("Location"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return back.Query().Get("code")
+}
+
+func TestExchangeTokensAndRefresh(t *testing.T) {
+	t.Parallel()
+	g := googletest.New(t, googletest.Account{Email: "mom@example.com", Verified: true})
+	e := g.Endpoints()
+	v := &googleauth.Verifier{Endpoints: e}
+	ctx := context.Background()
+	const redirect = "http://127.0.0.1:1/callback"
+	verifier := strings.Repeat("v", 43)
+
+	online, err := e.ExchangeTokens(ctx, http.DefaultClient, "app", g.Secret, signIn(t, e.AuthCodeURL("app", redirect, "s", "n", googleauth.Challenge(verifier))), redirect, verifier)
+	if err != nil {
+		t.Fatalf("Endpoints.ExchangeTokens() error = %v", err)
+	}
+	if online.RefreshToken != "" {
+		t.Fatalf("Endpoints.ExchangeTokens() of an online sign-in returned a refresh token")
+	}
+
+	offline, err := e.ExchangeTokens(ctx, http.DefaultClient, "app", g.Secret, signIn(t, e.OfflineAuthCodeURL("app", redirect, "s", "n", googleauth.Challenge(verifier))), redirect, verifier)
+	if err != nil {
+		t.Fatalf("Endpoints.ExchangeTokens() error = %v", err)
+	}
+	if offline.RefreshToken == "" {
+		t.Fatalf("Endpoints.ExchangeTokens() of an offline sign-in returned no refresh token")
+	}
+	idToken, err := e.Refresh(ctx, http.DefaultClient, "app", g.Secret, offline.RefreshToken)
+	if err != nil {
+		t.Fatalf("Endpoints.Refresh() error = %v", err)
+	}
+	got, err := v.Verify(ctx, idToken, []string{"app"})
+	if err != nil {
+		t.Fatalf("Verifier.Verify() error = %v", err)
+	}
+	if got.Email != "mom@example.com" {
+		t.Fatalf("Endpoints.Refresh() email = %q, want mom@example.com", got.Email)
+	}
+
+	g.RevokeRefreshTokens()
+	if _, err := e.Refresh(ctx, http.DefaultClient, "app", g.Secret, offline.RefreshToken); !errors.Is(err, googleauth.ErrInvalidGrant) {
+		t.Fatalf("Endpoints.Refresh() after revocation error = %v, want %v", err, googleauth.ErrInvalidGrant)
 	}
 }

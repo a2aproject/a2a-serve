@@ -74,14 +74,23 @@ func upstream(t *testing.T) *url.URL {
 	return u
 }
 
-func newFront(t *testing.T) (*front.Front, *httptest.Server) {
-	t.Helper()
-	control := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := fmt.Fprintf(w, "control %s", r.URL.Path); err != nil {
+// echo answers with its name and the path it got.
+func echo(t *testing.T, name string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := fmt.Fprintf(w, "%s %s", name, r.URL.Path); err != nil {
 			t.Errorf("writing: %v", err)
 		}
 	})
-	f := front.New(info, control)
+}
+
+func newFront(t *testing.T) (*front.Front, *httptest.Server) {
+	t.Helper()
+	return newFrontWith(t, echo(t, "signin"))
+}
+
+func newFrontWith(t *testing.T, signIn http.Handler) (*front.Front, *httptest.Server) {
+	t.Helper()
+	f := front.New(info, echo(t, "control"), signIn)
 	srv := httptest.NewServer(f)
 	t.Cleanup(srv.Close)
 	return f, srv
@@ -123,6 +132,8 @@ func TestFrontRoutes(t *testing.T) {
 		{method: "GET", path: "/policies", wantStatus: 200, wantPrefix: "mesh GET /policies"},
 		{method: "GET", path: "/ingress/12D3/a2a/coder", wantStatus: 200, wantPrefix: "mesh GET /ingress/12D3/a2a/coder"},
 		{method: "GET", path: "/a2a-serve/control/status", wantStatus: 200, wantPrefix: "control /status"},
+		{method: "GET", path: "/a2a-serve/signin/.well-known/openid-configuration", wantStatus: 200, wantPrefix: "signin /.well-known/openid-configuration"},
+		{method: "POST", path: "/a2a-serve/signin/token", wantStatus: 200, wantPrefix: "signin /token"},
 		{method: "POST", path: "/policies", wantStatus: 404},
 		{method: "PUT", path: "/policies", wantStatus: 404},
 		{method: "GET", path: "/admin/status", wantStatus: 404},
@@ -147,6 +158,16 @@ func TestFrontRoutes(t *testing.T) {
 				t.Fatalf("%s %s = %d %q, want %d %q…", tt.method, tt.path, status, body, tt.wantStatus, tt.wantPrefix)
 			}
 		})
+	}
+}
+
+func TestFrontWithoutSignIn(t *testing.T) {
+	t.Parallel()
+	f, srv := newFrontWith(t, nil)
+	f.Open(upstream(t))
+
+	if status, body := do(t, http.MethodGet, srv.URL+"/a2a-serve/signin/.well-known/openid-configuration"); status != http.StatusNotFound {
+		t.Fatalf("GET /a2a-serve/signin/... without sign-in = %d %q, want 404", status, body)
 	}
 }
 

@@ -147,6 +147,21 @@ func (m *Mesh) handler() http.Handler {
 		}
 		http.Error(w, "Node not found", http.StatusNotFound)
 	})
+	mux.HandleFunc("POST /admin/nodes/{peer}/unban", func(w http.ResponseWriter, r *http.Request) {
+		if !m.auth(w, r) {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for i := range m.nodes {
+			if m.nodes[i].PeerID == r.PathValue("peer") {
+				m.nodes[i].Banned = false
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		http.Error(w, "Node not found", http.StatusNotFound)
+	})
 	return mux
 }
 

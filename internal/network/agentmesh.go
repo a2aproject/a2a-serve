@@ -126,7 +126,11 @@ func (a *agentMesh) start(ctx context.Context) error {
 	if a.cfg.Token == "" {
 		login := &RelayLogin{RelayURL: a.cfg.URL, StateDir: a.cfg.StateDir, HTTP: &http.Client{Timeout: 30 * time.Second}, Logf: a.cfg.Logf, Poll: time.Second}
 		srv.TokenSource = login.Token
-		if !hasMeshIdentity(a.cfg.StateDir) {
+		refresh, err := savedRefreshToken(a.cfg.StateDir)
+		if err != nil {
+			slog.Warn("reading the relay's refresh token", "error", err)
+		}
+		if !hasMeshIdentity(a.cfg.StateDir) && refresh == "" {
 			a.logf("… joining the relay %s; this needs a sign-in on the first run (or --relay-token)", a.cfg.URL)
 		}
 	}
