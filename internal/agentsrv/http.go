@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -74,6 +75,13 @@ func (s *Server) privateListener(u *url.URL) listener {
 	return l
 }
 
+const (
+	// maxPairBody bounds the body of a pairing request.
+	maxPairBody = 4 << 10
+	// maxHITLBody bounds the form that answers a question at /hitl.
+	maxHITLBody = 4 << 10
+)
+
 // routes returns the HTTP handler of one listener.
 func (s *Server) routes(l listener) http.Handler {
 	baseURL := l.baseURL
@@ -97,10 +105,13 @@ func (s *Server) routes(l listener) http.Handler {
 	})
 	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
 	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
-	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))
-	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
+	// Routes that serve callers before they authenticate share a pool of
+	// their own, limited for each client.
+	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
+	mux.Handle("POST "+pairapi.Path, unauthenticated.Handler(jsonhttp.RequireJSON(jsonhttp.LimitUnauthenticatedBody(maxPairBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))))
+	mux.Handle("/hitl/{token}", unauthenticated.Handler(jsonhttp.LimitUnauthenticatedBody(maxHITLBody, http.HandlerFunc(s.approvals.HandlePage))))
 	if l.kind == network.ListenerPublic {
-		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) })
+		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) }, unauthenticated.Handler)
 	}
 	if l.kind == network.ListenerPrivate {
 		s.registerGossip(mux)
@@ -278,7 +289,8 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 }
 
 // pairClient identifies the client of a pairing request for the limit on
-// failed attempts: the source of a Funnel connection, the verified peer of
+// failed attempts, and of unauthenticated requests for their limit on
+// concurrent ones: the source of a Funnel connection, the verified peer of
 // a relay connection, or the remote address of a direct one. Other
 // tunneled clients can't be told apart, so they get "".
 func (s *Server) pairClient(r *http.Request, l listener) string {

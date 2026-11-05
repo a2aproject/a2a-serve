@@ -69,6 +69,32 @@ func (s Source) String() string {
 	return out
 }
 
+// Describe names the source for people: the path in the repository, the
+// repository without its scheme, and the ref.
+func (s Source) Describe() string {
+	if s.Local() {
+		return s.Dir
+	}
+	repo := s.Repo
+	if i := strings.Index(repo, "://"); i >= 0 {
+		repo = repo[i+3:]
+	} else if host, p, ok := strings.Cut(repo, ":"); ok {
+		repo = host + "/" + p
+	}
+	if at := strings.Index(repo, "@"); at >= 0 && at < strings.Index(repo+"/", "/") {
+		repo = repo[at+1:]
+	}
+	repo = strings.TrimSuffix(strings.TrimSuffix(repo, "/"), ".git")
+	ref := s.Ref
+	if ref == "" {
+		ref = "the default branch"
+	}
+	if s.Path == "" {
+		return repo + " at " + ref
+	}
+	return s.Path + " from " + repo + " at " + ref
+}
+
 // Name is the default name of an agent created from the source: the last
 // element of its path, or else the name of the repository or directory.
 func (s Source) Name() string {

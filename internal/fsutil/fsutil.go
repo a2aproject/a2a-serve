@@ -98,6 +98,21 @@ func WithLock(path string, fn func() error) (err error) {
 	return fn()
 }
 
+// WithDirLock runs fn while holding an exclusive advisory lock on the
+// directory dir itself, which leaves no lock file in it.
+func WithDirLock(dir string, fn func() error) (err error) {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, f.Close()) }()
+	if err := lock(f); err != nil {
+		return fmt.Errorf("locking %s: %w", dir, err)
+	}
+	defer func() { err = errors.Join(err, unlock(f)) }()
+	return fn()
+}
+
 // ErrLocked is returned by TryLock when another holder has the lock.
 var ErrLocked = errors.New("locked by another process")
 

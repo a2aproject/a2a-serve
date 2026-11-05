@@ -57,3 +57,24 @@ func TestRedactURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOrigin(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		url  string
+		want string
+	}{
+		{url: "https://discord.com/api/webhooks/123/s3cret", want: "https://discord.com"},
+		{url: "https://user:pass@hooks.example.com:8443/hook?key=s3cret", want: "https://hooks.example.com:8443"},
+		{url: "http://[::1]:8080/hook", want: "http://[::1]:8080"},
+		{url: "::", want: ""},
+	}
+	for _, tc := range tests {
+		t.Run(tc.url, func(t *testing.T) {
+			t.Parallel()
+			if got := Origin(tc.url); got != tc.want {
+				t.Fatalf("Origin(%q) = %q, want %q", tc.url, got, tc.want)
+			}
+		})
+	}
+}

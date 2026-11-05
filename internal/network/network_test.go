@@ -47,10 +47,86 @@ func TestProbeAgents(t *testing.T) {
 	got := ProbeAgents(t.Context(), http.DefaultClient, []PeerInfo{
 		{Name: "laptop", URL: agent.URL, Online: true},
 		{Name: "printer", URL: other.URL, Online: true},
-	})
+	}, nil)
 	want := []PeerInfo{{Name: "coder", URL: agent.URL, Description: "opencode agent", Online: true}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func cardServer(t *testing.T, name string) string {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewEncoder(w).Encode(map[string]any{"name": name}); err != nil {
+			t.Error(err)
+		}
+	}))
+	t.Cleanup(srv.Close)
+	return srv.URL
+}
+
+func TestProbeAgentsNamesAgentsUniquely(t *testing.T) {
+	t.Parallel()
+	type machine struct{ name, node, card string }
+	tests := []struct {
+		name     string
+		machines []machine
+		taken    []string
+		want     map[string]string
+	}{
+		{
+			name:     "card name of a machine",
+			machines: []machine{{name: "laptop", node: "n1", card: "coder"}},
+			want:     map[string]string{"n1": "coder"},
+		},
+		{
+			name:     "card name of another machine",
+			machines: []machine{{name: "evil", node: "n1", card: "bob"}, {name: "bob", node: "n2", card: "bob"}},
+			want:     map[string]string{"n1": "evil", "n2": "bob"},
+		},
+		{
+			name:     "card name of a machine that isn't an agent",
+			machines: []machine{{name: "evil", node: "n1", card: "printer"}, {name: "Printer", node: "n2"}},
+			want:     map[string]string{"n1": "evil"},
+		},
+		{
+			name:     "card name of an offline machine",
+			machines: []machine{{name: "evil", node: "n1", card: "bob"}},
+			taken:    []string{"bob"},
+			want:     map[string]string{"n1": "evil"},
+		},
+		{
+			name:     "card name of two agents",
+			machines: []machine{{name: "laptop", node: "n1", card: "coder"}, {name: "desktop", node: "n2", card: "Coder"}},
+			want:     map[string]string{"n1": "laptop", "n2": "desktop"},
+		},
+		{
+			name:     "machine name of two agents",
+			machines: []machine{{name: "bob", node: "n1", card: "bob"}, {name: "bob", node: "n2", card: "bob"}, {name: "anna", node: "n3", card: "anna"}},
+			want:     map[string]string{"n1": "bob-" + nodeSuffix("n1"), "n2": "bob-" + nodeSuffix("n2"), "n3": "anna"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var candidates []PeerInfo
+			for _, m := range tc.machines {
+				u := "http://127.0.0.1:1"
+				if m.card != "" {
+					u = cardServer(t, m.card)
+				}
+				candidates = append(candidates, PeerInfo{Name: m.name, URL: u, Online: true, Node: m.node})
+			}
+
+			got := map[string]string{}
+			for _, p := range ProbeAgents(t.Context(), http.DefaultClient, candidates, tc.taken) {
+				got[p.Node] = p.Name
+			}
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 

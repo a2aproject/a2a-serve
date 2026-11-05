@@ -55,11 +55,10 @@ const (
 
 	oauthPendingTTL = 10 * time.Minute
 
-	// MaxPendingSignIns bounds the sign-ins sent to Google and not back yet;
-	// a new one beyond it drops the oldest.
-	MaxPendingSignIns = 1000
 	// MaxParamLen bounds each client parameter of an authorization request.
 	MaxParamLen = 2048
+	// MaxTokenBody bounds the body of a token request.
+	MaxTokenBody = 64 << 10
 )
 
 // TokenStore keeps the access tokens the server issues.
@@ -85,23 +84,13 @@ type Server struct {
 	deps     Deps
 	verifier *googleauth.Verifier
 	hc       *http.Client
+	// states signs the sign-ins sent to Google into the state sent there,
+	// so they take no memory until they come back.
+	states stateSigner
 
 	mu sync.Mutex
-	// pending are sign-ins sent to Google, by the state sent there.
-	pending map[string]pendingSignIn
 	// codes are authorization codes issued to clients.
 	codes map[string]issuedCode
-}
-
-type pendingSignIn struct {
-	issuer         string
-	clientRedirect string
-	clientState    string
-	clientID       string
-	challenge      string
-	googleVerifier string
-	nonce          string
-	expires        time.Time
 }
 
 type issuedCode struct {
@@ -120,15 +109,16 @@ func New(deps Deps) *Server {
 	return &Server{
 		deps: deps, hc: hc,
 		verifier: &googleauth.Verifier{Endpoints: deps.Google, HTTP: hc},
-		pending:  map[string]pendingSignIn{}, codes: map[string]issuedCode{},
+		states:   newStateSigner(), codes: map[string]issuedCode{},
 	}
 }
 
 func (o *Server) enabled() bool { return len(o.deps.Config().Policy.AllowEmails) > 0 }
 
 // Register serves the sign-in routes on mux, where base is the URL the
-// request reached the agent at.
-func (o *Server) Register(mux *http.ServeMux, base func(*http.Request) string) {
+// request reached the agent at, and limit bounds the requests to the
+// routes under /oauth/.
+func (o *Server) Register(mux *http.ServeMux, base func(*http.Request) string, limit func(http.Handler) http.Handler) {
 	mux.HandleFunc("GET "+ProtectedResourcePath, o.on(func(w http.ResponseWriter, r *http.Request) {
 		b := base(r)
 		jsonhttp.Write(w, http.StatusOK, map[string]any{
@@ -140,9 +130,9 @@ func (o *Server) Register(mux *http.ServeMux, base func(*http.Request) string) {
 	mux.HandleFunc("GET "+AuthServerPath, o.on(func(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Write(w, http.StatusOK, o.metadata(base(r)))
 	}))
-	mux.HandleFunc("GET "+AuthorizePath, o.on(func(w http.ResponseWriter, r *http.Request) { o.authorize(w, r, base(r)) }))
-	mux.HandleFunc("GET "+CallbackPath, o.on(o.callback))
-	mux.HandleFunc("POST "+TokenPath, o.on(func(w http.ResponseWriter, r *http.Request) { o.token(w, r, base(r)) }))
+	mux.Handle("GET "+AuthorizePath, limit(o.on(func(w http.ResponseWriter, r *http.Request) { o.authorize(w, r, base(r)) })))
+	mux.Handle("GET "+CallbackPath, limit(o.on(o.callback)))
+	mux.Handle("POST "+TokenPath, limit(jsonhttp.LimitUnauthenticatedBody(MaxTokenBody, o.on(func(w http.ResponseWriter, r *http.Request) { o.token(w, r, base(r)) }))))
 }
 
 // signInFlow is how callers sign in with Google at the public listener.
@@ -282,30 +272,19 @@ func (o *Server) authorize(w http.ResponseWriter, r *http.Request, base string) 
 			return
 		}
 	}
-	p := pendingSignIn{
-		issuer: base, clientRedirect: redirect, clientState: q.Get("state"), clientID: q.Get("client_id"),
-		challenge: q.Get("code_challenge"), googleVerifier: cryptoutil.RandomString(64, cryptoutil.Alphanumeric),
-		nonce: cryptoutil.RandomString(32, cryptoutil.Alphanumeric), expires: time.Now().Add(oauthPendingTTL),
+	p := newPending(oauthPendingTTL)
+	p.Issuer, p.ClientRedirect, p.ClientState, p.ClientID, p.Challenge = base, redirect, q.Get("state"), q.Get("client_id"), q.Get("code_challenge")
+	state, err := o.states.seal(p)
+	if err != nil {
+		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
+		return
 	}
-	state := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
-	o.mu.Lock()
-	o.prune()
-	if len(o.pending) >= MaxPendingSignIns {
-		o.dropOldestPending()
-	}
-	o.pending[state] = p
-	o.mu.Unlock()
-	http.Redirect(w, r, o.deps.Google.AuthCodeURL(cfg.Auth.GoogleClientID, base+CallbackPath, state, p.nonce, googleauth.Challenge(p.googleVerifier)), http.StatusFound)
+	http.Redirect(w, r, o.deps.Google.AuthCodeURL(cfg.Auth.GoogleClientID, base+CallbackPath, state, o.states.nonce(p), googleauth.Challenge(o.states.googleVerifier(p))), http.StatusFound)
 }
 
-// prune drops expired sign-ins and codes. o.mu is held.
+// prune drops expired codes. o.mu is held.
 func (o *Server) prune() {
 	now := time.Now()
-	for k, p := range o.pending {
-		if now.After(p.expires) {
-			delete(o.pending, k)
-		}
-	}
 	for k, c := range o.codes {
 		if now.After(c.expires) {
 			delete(o.codes, k)
@@ -313,27 +292,12 @@ func (o *Server) prune() {
 	}
 }
 
-// dropOldestPending drops the sign-in which expires first. o.mu is held.
-func (o *Server) dropOldestPending() {
-	var oldest string
-	var expires time.Time
-	for k, p := range o.pending {
-		if oldest == "" || p.expires.Before(expires) {
-			oldest, expires = k, p.expires
-		}
-	}
-	delete(o.pending, oldest)
-}
-
 // callback takes the account back from Google, checks it against the
 // allowlist and sends the client an authorization code.
 func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	o.mu.Lock()
-	p, ok := o.pending[q.Get("state")]
-	delete(o.pending, q.Get("state"))
-	o.mu.Unlock()
-	if !ok || time.Now().After(p.expires) {
+	p, ok := o.states.open(q.Get("state"), time.Now())
+	if !ok {
 		http.Error(w, "This sign-in expired. Start again from your client.", http.StatusBadRequest)
 		return
 	}
@@ -348,13 +312,13 @@ func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "The agent's Google app isn't set up: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	idToken, err := o.deps.Google.Exchange(r.Context(), o.hc, cfg.Auth.GoogleClientID, secret, q.Get("code"), p.issuer+CallbackPath, p.googleVerifier)
+	idToken, err := o.deps.Google.Exchange(r.Context(), o.hc, cfg.Auth.GoogleClientID, secret, q.Get("code"), p.Issuer+CallbackPath, o.states.googleVerifier(p))
 	if err != nil {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {err.Error()}})
 		return
 	}
 	claims, err := o.verifier.Verify(r.Context(), idToken, []string{cfg.Auth.GoogleClientID})
-	if err == nil && subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(p.nonce)) != 1 {
+	if err == nil && subtle.ConstantTimeCompare([]byte(claims.Nonce), []byte(o.states.nonce(p))) != 1 {
 		err = errNonce
 	}
 	if err != nil {
@@ -368,7 +332,8 @@ func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 	}
 	code := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
 	o.mu.Lock()
-	o.codes[code] = issuedCode{issuer: p.issuer, email: strings.ToLower(claims.Email), domain: workspaceDomain(claims), clientID: p.clientID, redirect: p.clientRedirect, challenge: p.challenge, expires: time.Now().Add(oauthPendingTTL)}
+	o.prune()
+	o.codes[code] = issuedCode{issuer: p.Issuer, email: strings.ToLower(claims.Email), domain: workspaceDomain(claims), clientID: p.ClientID, redirect: p.ClientRedirect, challenge: p.Challenge, expires: time.Now().Add(oauthPendingTTL)}
 	o.mu.Unlock()
 	o.redirectClient(w, r, p, url.Values{"code": {code}})
 }
@@ -376,15 +341,15 @@ func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 var errNonce = errors.New("the Google sign-in doesn't belong to this request")
 
 func (o *Server) redirectClient(w http.ResponseWriter, r *http.Request, p pendingSignIn, v url.Values) {
-	u, err := url.Parse(p.clientRedirect)
+	u, err := url.Parse(p.ClientRedirect)
 	if err != nil {
 		http.Error(w, "Invalid redirect.", http.StatusBadRequest)
 		return
 	}
 	q := u.Query()
 	maps.Copy(q, v)
-	if p.clientState != "" {
-		q.Set("state", p.clientState)
+	if p.ClientState != "" {
+		q.Set("state", p.ClientState)
 	}
 	u.RawQuery = q.Encode()
 	http.Redirect(w, r, u.String(), http.StatusFound)
@@ -393,6 +358,15 @@ func (o *Server) redirectClient(w http.ResponseWriter, r *http.Request, p pendin
 // token issues the agent's access token for an authorization code, or for
 // a Google ID token of the shared app bound to this agent's URL.
 func (o *Server) token(w http.ResponseWriter, r *http.Request, base string) {
+	if err := r.ParseForm(); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			oauthError(w, http.StatusRequestEntityTooLarge, "invalid_request", "request body too large")
+			return
+		}
+		oauthError(w, http.StatusBadRequest, "invalid_request", "invalid form body")
+		return
+	}
 	switch r.FormValue("grant_type") {
 	case "authorization_code":
 		o.mu.Lock()

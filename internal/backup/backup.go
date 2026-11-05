@@ -24,6 +24,7 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -31,6 +32,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Ext is the file extension of snapshots.
@@ -151,16 +153,25 @@ func Latest(ctx context.Context, dest Dest) (Snapshot, error) {
 	return snaps[len(snaps)-1], nil
 }
 
-// Restore recreates an agent's .a2a directory in root from a snapshot. The
-// network identity is restored only with takeOver, so that the old and the
-// new host don't run as the same machine.
-func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) error {
+// Restore recreates an agent's .a2a directory in root from a snapshot. It
+// extracts the snapshot into a directory next to .a2a and renames that into
+// place, so that a damaged snapshot or an interruption leaves no partial
+// agent behind. The network identity is restored only with takeOver, so
+// that the old and the new host don't run as the same machine.
+func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (err error) {
 	d, err := agentdir.Open(root)
 	if err != nil {
 		return err
 	}
 	if d.Exists() {
 		return agenterr.Conflictf("%s already has an agent; restore into another directory", root)
+	}
+	entries, err := os.ReadDir(d.Path())
+	if err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if len(entries) > 0 {
+		return agenterr.Conflictf("%s is not empty; restore into another directory", d.Path())
 	}
 	rc, err := dest.Get(ctx, name)
 	if err != nil {
@@ -171,18 +182,65 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err != nil {
 		return err
 	}
-	_, statErr := os.Stat(d.Path())
-	created := errors.Is(statErr, fs.ErrNotExist)
-	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+	if err := os.MkdirAll(d.Root, 0o700); err != nil {
 		return err
 	}
-	if err := extractArchive(plain, d.Path(), takeOver); err != nil {
-		if created {
-			err = errors.Join(err, os.RemoveAll(d.Path()))
-		}
+	tmp, release, err := restoreDir(d)
+	if err != nil {
 		return err
+	}
+	defer func() {
+		if err := os.RemoveAll(tmp); err != nil {
+			slog.Warn("removing a partial restore", "error", err)
+		}
+	}()
+	defer func() { err = errors.Join(err, release()) }()
+	if err := extractArchive(ctx, plain, tmp, takeOver); err != nil {
+		return err
+	}
+	// os.Rename doesn't replace a directory, even an empty one.
+	if err := os.Remove(d.Path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+		return err
+	}
+	if err := os.Rename(tmp, d.Path()); err != nil {
+		return fmt.Errorf("moving the restored agent into place: %w", err)
 	}
 	return nil
+}
+
+// restoreDir creates the directory next to the .a2a directory of d to
+// restore into, and returns it locked. It first removes the directories of
+// interrupted restores, which can hold plaintext secrets, keeping the ones
+// that another restore holds locked. The lock on the root keeps a
+// concurrent restore from removing a directory before it is locked.
+func restoreDir(d agentdir.Dir) (dir string, release func() error, err error) {
+	err = fsutil.WithDirLock(d.Root, func() error {
+		removeLeftovers(filepath.Join(d.Root, agentdir.Name+".restore-*"), func(dir string) (func() error, error) {
+			return lockRestored(d, dir)
+		})
+		if dir, err = os.MkdirTemp(d.Root, agentdir.Name+".restore-"); err != nil {
+			return err
+		}
+		if release, err = lockRestored(d, dir); err != nil {
+			return errors.Join(err, os.RemoveAll(dir))
+		}
+		return nil
+	})
+	return dir, release, err
+}
+
+// lockRestored takes the lock of the agent directory of d in tmp, where it
+// is restored. The lock stays held once tmp is renamed into place.
+func lockRestored(d agentdir.Dir, tmp string) (release func() error, err error) {
+	rel, err := filepath.Rel(d.Path(), d.LockPath())
+	if err != nil {
+		return nil, err
+	}
+	lock := filepath.Join(tmp, rel)
+	if err := os.MkdirAll(filepath.Dir(lock), 0o700); err != nil {
+		return nil, err
+	}
+	return fsutil.TryLock(lock)
 }
 
 // ForAgent returns the destination and settings of the backups of the agent
