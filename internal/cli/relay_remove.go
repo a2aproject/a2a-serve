@@ -35,7 +35,7 @@ request, and the other agents drop them. A removed agent can't join again
 with its identity.
 
 ` + secretref.Help,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)
 			if err != nil {

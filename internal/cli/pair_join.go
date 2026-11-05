@@ -38,7 +38,7 @@ credential helper that a2a-serve doctor --fix configures.
 A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
 instead, which the a2a-serve mailbox commands use.`,
 		Example: "  a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
-		Args:    cobra.ExactArgs(2),
+		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
 			defer cancel()

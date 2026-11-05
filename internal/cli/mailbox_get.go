@@ -26,7 +26,7 @@ func newMailboxGetCmd(cfg *globalConfig) *cobra.Command {
 		Use:   "get <task-id>",
 		Short: "Show a task addressed to the node, with history and artifacts",
 		Long:  "Show a task addressed to the node, with history and artifacts.\n\n" + secretref.Help,
-		Args:  cobra.ExactArgs(1),
+		Args:  namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := nodeContext(cmd, cfg)
 			defer cancel()

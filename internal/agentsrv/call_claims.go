@@ -351,7 +351,7 @@ func (cl *CallClaims) agentsURL(ctx context.Context, contextID string) (string, 
 		base = socketHost
 	}
 	if base == "" {
-		return "", errors.New("the harness listener is not running")
+		return "", errors.New("the agent listener is not running")
 	}
 	h, err := cl.handle(ctx, contextID)
 	if err != nil {

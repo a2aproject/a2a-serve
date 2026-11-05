@@ -123,7 +123,7 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		process, ok := caller(r)
 		if !ok {
-			jsonhttp.Error(w, http.StatusUnauthorized, "harness key required")
+			jsonhttp.Error(w, http.StatusUnauthorized, "agent key required")
 			return
 		}
 		handle, name := r.PathValue("handle"), r.PathValue("agent")
@@ -215,7 +215,7 @@ func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, c
 func proxyCard(name, base string) *a2a.AgentCard {
 	return &a2a.AgentCard{
 		Name:        name,
-		Description: name + ", called through the agent server hosting you.",
+		Description: name + ", called through the server hosting you.",
 		Version:     "1.0.0",
 		SupportedInterfaces: []*a2a.AgentInterface{
 			a2a.NewAgentInterface(base, a2a.TransportProtocolJSONRPC),

@@ -46,7 +46,7 @@ on the old host before taking over.
 
 ` + secretref.Help,
 		Example: "  a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY",
-		Args:    cobra.ExactArgs(1),
+		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := context.WithTimeout(cmd.Context(), sf.deadline)
 			defer cancel()

@@ -244,7 +244,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 			return nil, errors.Join(err, closeEndpoint())
 		}
 		if cfg.Sandbox == harness.SandboxLocal {
-			spec.CLI = s.localCLI(ctx)
+			spec.CLI = s.localCLI()
 		}
 	}
 	prepared, err := harness.Prepare(ctx, spec)
@@ -268,7 +268,7 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 	}
 	env, err := writeHarnessHelper(spec.Home, s.harness.dial, ep.key)
 	if err != nil {
-		return fmt.Errorf("saving the harness key: %w", err)
+		return fmt.Errorf("saving the agent key: %w", err)
 	}
 	spec.Env = append(spec.Env, env)
 	return nil
@@ -289,16 +289,14 @@ func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id str
 	return s.writeInstructionsIn(ctx, spec.Home)
 }
 
-// localCLI returns the a2a CLI on PATH, with which a harness without a
-// sandbox calls other agents, and warns when that can't work.
-func (s *Server) localCLI(ctx context.Context) string {
+// localCLI returns the a2a CLI on PATH, with which an agent without a
+// sandbox calls other agents, or "" when there is none. The setup problems
+// that the server prints on start report a missing or outdated CLI.
+func (s *Server) localCLI() string {
 	cli, err := a2acli.Path()
 	if err != nil {
-		s.logf("! the harness can't call other agents: %v", err)
+		slog.Debug("no a2a CLI for the agent", "error", err)
 		return ""
-	}
-	if v := a2acli.Version(ctx); a2acli.Outdated(v) {
-		s.logf("! the harness calls other agents with a2a %s at %s, which is older than %s; run a2a-serve doctor", v, cli, a2acli.MinVersion)
 	}
 	return cli
 }

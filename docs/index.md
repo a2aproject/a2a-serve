@@ -3,7 +3,22 @@
 Visit [Getting Started](getting-started.md) to see how a single command turns the coding agent on your machine into a sandboxed [A2A](https://a2a-protocol.org) agent that popular messengers and other agents can call.
 
 > [!WARNING]
-> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward. Read the [security page](advanced/security.md) before you expose an agent to other people.
+> A2A Serve is pre-1.0. Commands, flags and `config.yaml` keys may change; stored state always migrates forward. Read the [security page](advanced/security.md) and the [known limitations](#known-limitations) before you expose an agent to other people.
+
+## Install
+
+```bash
+brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux
+a2a-serve doctor --fix                       # set up the a2a CLI and check Docker
+```
+
+Without Homebrew, use the install script:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
+```
+
+Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 
 ## Features
 
@@ -39,3 +54,10 @@ Visit [Getting Started](getting-started.md) to see how a single command turns th
 | [Webhook Nodes](guide/webhook-nodes.md) | Give agents that run only when woken an A2A address |
 | [Backups](guide/backups.md) | Encrypted snapshots and restores on another machine |
 | [Shell Completion](guide/shell-completion.md) | Completion scripts for bash, zsh, fish and PowerShell |
+
+## Known Limitations
+
+- **API keys are readable inside the sandbox.** Values passed with `--secret` are environment variables of the agent, so a tricked agent can read them and send them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
+- **The sandbox can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
+- **A cloned repository can configure the agent you start in it.** `a2a-serve start` takes the command, image, mounts, environment variables and MCP servers from the project's `.a2a/config.yaml` and `.mcp.json`. Read both before you start an agent in a repository you didn't write.
+- **Agent images follow the latest agent releases** at the time they were published, so the same tag can carry different agent versions over time.

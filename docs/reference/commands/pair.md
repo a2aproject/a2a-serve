@@ -167,12 +167,14 @@ Aliases: `delete`
 a2a-serve pair rm anna
 a2a-serve pair rm https://coder.tail1234.ts.net
 a2a-serve pair rm --email anna@example.com
+a2a-serve pair rm anna --dry-run
 ```
 
 **Flags**
 
 | Flag | Default | Description |
 |---|---|---|
+| `--dry-run` |  | Print what would be removed without removing it |
 | `--email address` |  | Revoke the Google sign-ins of the email address |
 
 ## a2a-serve pair set

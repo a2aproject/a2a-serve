@@ -24,7 +24,7 @@ func newScheduleRunCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
 		Use:               "run <name>",
 		Short:             "Run a schedule now, without changing its next run",
-		Args:              cobra.ExactArgs(1),
+		Args:              namedArgs,
 		ValidArgsFunction: scheduleNames(sf),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()

@@ -269,7 +269,7 @@ func (p Pins) check(mounts []agentdir.Mount, hidden []string) error {
 			continue
 		}
 		if now := resolvePath(path); now != pinned {
-			return fmt.Errorf("%s resolved to %s when the agent server started and resolves to %s now; the agent may have replaced a directory with a symlink, so check it and restart the agent server", path, pinned, now)
+			return fmt.Errorf("%s resolved to %s when the server started and resolves to %s now; the agent may have replaced a directory with a symlink, so check it and restart the server", path, pinned, now)
 		}
 	}
 	return nil

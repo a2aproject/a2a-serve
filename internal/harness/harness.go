@@ -79,7 +79,7 @@ func Lookup(name string, command []string) (Profile, error) {
 	}
 	mk, ok := profiles[name]
 	if !ok {
-		return nil, fmt.Errorf("unknown harness %q: known harnesses are %v, or pass --command for any ACP agent", name, ProfileNames())
+		return nil, fmt.Errorf("unknown agent %q: known agents are %v, or pass --command for any ACP agent", name, ProfileNames())
 	}
 	return mk(), nil
 }

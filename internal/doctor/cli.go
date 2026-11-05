@@ -76,7 +76,7 @@ func checkA2A(ctx context.Context, env Env) Result {
 	}
 	path, err := env.LookPath(a2acli.Binary)
 	if err != nil {
-		return fail("a2a not on PATH", "callers send tasks with it, and harnesses without a sandbox call other agents with it")
+		return fail("a2a not on PATH", "callers send tasks with it, and agents without a sandbox call other agents with it")
 	}
 	out, err := env.Run(ctx, path, "version", "-o", "json")
 	if err != nil {

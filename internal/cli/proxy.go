@@ -33,7 +33,7 @@ func newProxyCmd(cfg *globalConfig) *cobra.Command {
 		Long: "Run a test server which forwards each request to the agent with the agent card URL <agent-url>, logging the traffic.\n\n" +
 			"--auth takes a header value, which may end in a secret value: env:VAR reads the environment variable VAR, and - a prompt without echo or stdin.",
 		Example: "  a2a-serve start proxy https://agent.example.com --auth \"Bearer env:AGENT_TOKEN\"",
-		Args:    cobra.ExactArgs(1),
+		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			p.URL = args[0]
 			r := cfg.secretReader(cfg.stderr())

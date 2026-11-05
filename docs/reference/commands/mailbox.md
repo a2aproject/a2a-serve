@@ -3,8 +3,8 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Commands a webhook node runs: an agent which only runs when woken, such as a
-Grok Bot routine, hosted by an agent server ("a2a-serve pair invite --webhook" on its side).
-The agent server holds the node's tasks in a mailbox until the node wakes. The node
+Grok Bot routine, hosted by a server ("a2a-serve pair invite --webhook" on its side).
+The server holds the node's tasks in a mailbox until the node wakes. The node
 pairs once with "a2a-serve pair join &lt;agent-url&gt; &lt;code&gt;", then answers each wake
 with reply.
 
@@ -24,7 +24,7 @@ a2a-serve mailbox <command>
 
 | Flag | Default | Description |
 |---|---|---|
-| `--timeout duration` | `30s` | Timeout of each request to the agent server, a duration such as 30s or 2m |
+| `--timeout duration` | `30s` | Timeout of each request to the server, a duration such as 30s or 2m |
 
 ## a2a-serve mailbox get
 

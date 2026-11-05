@@ -155,10 +155,10 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 		{name: "user below the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops - 1}}, agent: "coder", wantCode: http.StatusOK},
 		{name: "name that isn't callable", user: auth.Owner(), agent: "nobody", wantCode: http.StatusNotFound, wantError: `"nobody" is not an agent you can call`},
 		{name: "harness key", key: "harness-key", header: "Bearer harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusOK},
-		{name: "no harness key", key: "harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "harness key required"},
-		{name: "wrong harness key", key: "harness-key", header: "Bearer nope", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "harness key required"},
-		{name: "harness key of another scheme", key: "harness-key", header: "Basic harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "harness key required"},
-		{name: "key is checked before the handle", key: "harness-key", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusUnauthorized, wantError: "harness key required"},
+		{name: "no harness key", key: "harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
+		{name: "wrong harness key", key: "harness-key", header: "Bearer nope", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
+		{name: "harness key of another scheme", key: "harness-key", header: "Basic harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
+		{name: "key is checked before the handle", key: "harness-key", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

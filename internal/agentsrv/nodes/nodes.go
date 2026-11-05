@@ -144,7 +144,7 @@ func (n *Host) tasks(ctx context.Context, id string) *store.TaskStore {
 	n.failed[id] = true
 	n.mu.Unlock()
 	if first {
-		if _, err := ts.FailUnfinished(ctx, "The agent server restarted before the node answered."); err != nil {
+		if _, err := ts.FailUnfinished(ctx, "The server restarted before the node answered."); err != nil {
 			slog.Error("failing interrupted node tasks", "node", id, "error", err)
 		}
 	}
