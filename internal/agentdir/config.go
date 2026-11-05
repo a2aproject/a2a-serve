@@ -447,12 +447,25 @@ func (d Dir) SaveConfig(cfg *Config) error {
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
 }
 
+// LockConfig runs fn holding the advisory lock of config.yaml, so that
+// read-modify-write cycles of several processes don't lose changes. The
+// lock file lives in the state directory, which is never committed.
+func (d Dir) LockConfig(fn func() error) error {
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		return err
+	}
+	if err := fsutil.MkdirReal(d.StateDir()); err != nil {
+		return err
+	}
+	return fsutil.WithLock(filepath.Join(d.StateDir(), configFile), fn)
+}
+
 // UpdateConfig applies fn to the saved config and saves the result, holding
 // the lock of config.yaml so that updates from several processes don't lose
 // changes. A config.yaml that fails to parse is left alone and returned as
 // the error.
 func (d Dir) UpdateConfig(fn func(*Config) error) error {
-	return fsutil.WithLock(d.ConfigPath(), func() error {
+	return d.LockConfig(func() error {
 		cfg, err := d.LoadOrNewConfig()
 		if err != nil {
 			return err

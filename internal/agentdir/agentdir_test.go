@@ -553,3 +553,30 @@ func TestUpdateConfig(t *testing.T) {
 		})
 	}
 }
+
+func TestUpdateConfigLocksInState(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+
+	if err := d.UpdateConfig(func(c *Config) error {
+		c.Harness = "opencode"
+		return nil
+	}); err != nil {
+		t.Fatalf("Dir.UpdateConfig() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(d.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if diff := cmp.Diff([]string{".gitignore", "config.yaml", "state"}, got); diff != "" {
+		t.Fatalf("Dir.UpdateConfig() wrong .a2a entries (-want +got) diff = %s", diff)
+	}
+}

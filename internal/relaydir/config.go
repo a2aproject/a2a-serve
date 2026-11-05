@@ -172,7 +172,7 @@ func (d Dir) SaveSettings(s Settings) (oldURL string, err error) {
 	if err := d.Init(); err != nil {
 		return "", err
 	}
-	err = fsutil.WithLock(d.ConfigPath(), func() error {
+	err = d.lockConfig(func() error {
 		old, err := d.readConfigOrEmpty()
 		if err != nil {
 			return err
@@ -266,7 +266,7 @@ type Resolved struct {
 // it, so the relay never runs with a token it would lose.
 func (d Dir) Resolve() (*Resolved, error) {
 	var r *Resolved
-	err := fsutil.WithLock(d.ConfigPath(), func() error {
+	err := d.lockConfig(func() error {
 		c, err := d.ReadConfig()
 		if err != nil {
 			return err

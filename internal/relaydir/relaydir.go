@@ -149,17 +149,12 @@ func (d Dir) Exists() bool {
 	return err == nil
 }
 
-// Init creates the .a2a and state directories, closed to others, and the
-// .gitignore which keeps state out of version control. It refuses an agent
-// directory.
-func (d Dir) Init() error {
-	if (agentdir.Dir{Root: d.Root}).Exists() {
-		return ErrAgentDir
-	}
+// mkdirState creates the .a2a and state directories, closed to others. A
+// cloned repository could ship the state directories as symlinks.
+func (d Dir) mkdirState() error {
 	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
 		return err
 	}
-	// A cloned repository could ship the state directories as symlinks.
 	for _, p := range []string{filepath.Dir(d.StateDir()), d.StateDir()} {
 		if err := fsutil.MkdirReal(p); err != nil {
 			return err
@@ -167,6 +162,28 @@ func (d Dir) Init() error {
 		if err := os.Chmod(p, 0o700); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// lockConfig runs fn holding the advisory lock of relay.yaml, kept in the
+// state directory, which is never committed.
+func (d Dir) lockConfig(fn func() error) error {
+	if err := d.mkdirState(); err != nil {
+		return err
+	}
+	return fsutil.WithLock(filepath.Join(d.StateDir(), agentdir.RelayConfigFile), fn)
+}
+
+// Init creates the .a2a and state directories, closed to others, and the
+// .gitignore which keeps state out of version control. It refuses an agent
+// directory.
+func (d Dir) Init() error {
+	if (agentdir.Dir{Root: d.Root}).Exists() {
+		return ErrAgentDir
+	}
+	if err := d.mkdirState(); err != nil {
+		return err
 	}
 	gi := filepath.Join(d.Path(), ".gitignore")
 	if _, err := os.Stat(gi); errors.Is(err, os.ErrNotExist) {
