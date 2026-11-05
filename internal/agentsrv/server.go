@@ -125,9 +125,9 @@ type Server struct {
 	harness     *harnessListeners
 	mainHarness *harnessEndpoint
 	bridge      harnessBridge
-	// pins are the mount sources and hidden paths as they resolved at the
-	// start, which containers of later agent processes are checked against.
-	pins harness.Pins
+	// pins are the agent directory, .a2a, state and the homes as the server
+	// first saw them, which containers of agent processes are checked against.
+	pins *harness.Pins
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -291,11 +291,9 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 		return fmt.Errorf("writing the pid file: %w", err)
 	}
 	closers.push(func(context.Context) error { return removeIfExists(s.dir.PIDPath()) })
-	mounts, err := s.dir.Mounts(s.config())
-	if err != nil {
+	if s.pins, err = harness.NewPins(s.dir.Root, s.dir.Path(), s.dir.StateDir(), s.dir.HomeDir()); err != nil {
 		return err
 	}
-	s.pins = harness.Pin(mounts, s.hidden())
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
 		return err
@@ -371,7 +369,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Access:    s.access,
 		Limiter:   pairings.NewLimiter(),
 		Users:     stopUsers{s},
-		Homes:     s.dir,
+		Homes:     userHomes{s},
 	}
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)
