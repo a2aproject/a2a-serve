@@ -194,19 +194,29 @@ func TestAdvertisedNeedsWebhookNode(t *testing.T) {
 	}
 }
 
-func TestGossipTakesEntriesOnlyFromTheirHost(t *testing.T) {
+func TestGossipRelayCantHideEntriesOfTheirHost(t *testing.T) {
 	t.Parallel()
 	fnet := &fakeNet{agents: map[string]string{"carl": "http://127.0.0.1:1"}}
+	ben := startServer(t, serverOpts{name: "ben", private: fnet.provider("ben")})
 	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
-	expires := time.Now().Add(time.Hour)
-	entries := gossipEntries{Entries: []gossip.Entry{
-		{Name: "grok", Host: "ben", Version: 1, Expires: expires},
-		{Name: "helper", Host: "carl", Version: 1, Expires: expires},
-	}}
 	ctx := context.Background()
+	addNode(t, ben, "grok", 0)
+	on := true
+	if _, err := controlapi.NewClient(ben.dir).UpdatePairing(ctx, "grok", controlapi.PairingUpdate{Advertised: &on}); err != nil {
+		t.Fatalf("UpdatePairing(advertised) error = %v", err)
+	}
+	anna.srv.gossipRound(ctx)
+	expires := time.Now().Add(time.Hour)
+	forged := time.Now().Add(30 * time.Minute).UnixNano()
+	relayed := gossipEntries{Entries: []gossip.Entry{
+		{Name: "grok", Host: "ben", Version: forged, Expires: expires, Removed: true},
+		{Name: "helper", Host: "dora", Version: 1, Expires: expires},
+	}}
 
-	if err := postJSON(ctx, fnet.provider("carl").HTTPClient(), anna.srv.privateURL+gossipEntriesPath, entries, nil); err != nil {
-		t.Fatalf("POST %s error = %v", gossipEntriesPath, err)
+	for _, hc := range []*http.Client{fnet.provider("carl").HTTPClient(), http.DefaultClient} {
+		if err := postJSON(ctx, hc, anna.srv.privateURL+gossipEntriesPath, relayed, nil); err != nil {
+			t.Fatalf("POST %s error = %v", gossipEntriesPath, err)
+		}
 	}
 
 	ads, err := controlapi.NewClient(anna.dir).Advertisements(ctx)
@@ -217,40 +227,28 @@ func TestGossipTakesEntriesOnlyFromTheirHost(t *testing.T) {
 	for _, a := range ads {
 		keys = append(keys, a.Key)
 	}
-	if diff := cmp.Diff([]string{"helper@carl"}, keys); diff != "" {
+	if diff := cmp.Diff([]string{"grok@ben", "helper@dora"}, keys); diff != "" {
 		t.Fatalf("Advertisements() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
-func TestGossipRefuses(t *testing.T) {
+func TestGossipRefusesOversizedBody(t *testing.T) {
 	t.Parallel()
-	fnet := &fakeNet{agents: map[string]string{"carl": "http://127.0.0.1:1"}}
+	fnet := &fakeNet{agents: map[string]string{}}
 	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
-	carl := fnet.provider("carl").HTTPClient()
-	tests := []struct {
-		name   string
-		client *http.Client
-		path   string
-		body   string
-		want   int
-	}{
-		{name: "caller who isn't an agent", client: http.DefaultClient, path: gossipPath, body: `{"digest":{}}`, want: http.StatusForbidden},
-		{name: "entries of a caller who isn't an agent", client: http.DefaultClient, path: gossipEntriesPath, body: `{"entries":[]}`, want: http.StatusForbidden},
-		{name: "oversized body", client: carl, path: gossipEntriesPath, body: `{"entries":[],"padding":"` + strings.Repeat("a", maxGossipBody) + `"}`, want: http.StatusRequestEntityTooLarge},
-		{name: "digest of an agent", client: carl, path: gossipPath, body: `{"digest":{}}`, want: http.StatusOK},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+	body := `{"entries":[],"padding":"` + strings.Repeat("a", maxGossipBody) + `"}`
+	for _, path := range []string{gossipPath, gossipEntriesPath} {
+		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			resp, err := tc.client.Post(anna.srv.privateURL+tc.path, "application/json", strings.NewReader(tc.body))
+			resp, err := http.Post(anna.srv.privateURL+path, "application/json", strings.NewReader(body))
 			if err != nil {
-				t.Fatalf("POST %s error = %v", tc.path, err)
+				t.Fatalf("POST %s error = %v", path, err)
 			}
 			if err := resp.Body.Close(); err != nil {
 				t.Fatal(err)
 			}
-			if resp.StatusCode != tc.want {
-				t.Fatalf("POST %s status = %d, want %d", tc.path, resp.StatusCode, tc.want)
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
 			}
 		})
 	}

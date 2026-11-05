@@ -15,6 +15,7 @@
 package gossip
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -36,8 +37,7 @@ func openTable(t *testing.T, self string, c *clock) *Table {
 	return tb
 }
 
-// round swaps the tables of a and b the way the agents do over HTTP, when
-// a calls b.
+// round swaps the tables of a and b the way the agents do over HTTP.
 func round(t *testing.T, a, b *Table) {
 	t.Helper()
 	newer, want := b.Compare(a.self, a.Digest())
@@ -57,7 +57,7 @@ func keys(entries []Entry) []string {
 	return out
 }
 
-func TestEntriesSpreadOnlyFromTheirHost(t *testing.T) {
+func TestSpreadThroughAnotherAgent(t *testing.T) {
 	t.Parallel()
 	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
 	ben, mid, anna := openTable(t, "ben", c), openTable(t, "mid", c), openTable(t, "anna", c)
@@ -66,11 +66,6 @@ func TestEntriesSpreadOnlyFromTheirHost(t *testing.T) {
 	}
 	round(t, mid, ben)
 	round(t, anna, mid)
-	if got := anna.Live(); len(got) != 0 {
-		t.Fatalf("Live() on anna after a round with mid = %v, want none", keys(got))
-	}
-
-	round(t, ben, anna)
 	if diff := cmp.Diff([]string{"grok@ben"}, keys(anna.Live())); diff != "" {
 		t.Fatalf("Live() on anna wrong result (-want +got) diff = %s", diff)
 	}
@@ -82,34 +77,10 @@ func TestEntriesSpreadOnlyFromTheirHost(t *testing.T) {
 	if err := ben.Withdraw("grok"); err != nil {
 		t.Fatalf("Withdraw() error = %v", err)
 	}
-	round(t, anna, ben)
+	round(t, mid, ben)
+	round(t, anna, mid)
 	if got := anna.Live(); len(got) != 0 {
 		t.Fatalf("Live() on anna after the withdrawal = %v, want none", keys(got))
-	}
-}
-
-func TestCompareOffersOwnEntriesAndWantsThePeers(t *testing.T) {
-	t.Parallel()
-	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
-	ben, anna := openTable(t, "ben", c), openTable(t, "anna", c)
-	if err := ben.Advertise("grok", ""); err != nil {
-		t.Fatal(err)
-	}
-	if err := anna.Advertise("coder", ""); err != nil {
-		t.Fatal(err)
-	}
-	expires := c.t.Add(time.Hour)
-	if err := anna.Merge("carl", []Entry{{Name: "helper", Host: "carl", Version: 1, Expires: expires}}); err != nil {
-		t.Fatal(err)
-	}
-
-	newer, want := anna.Compare("ben", Digest{"grok@ben": 7, "other@carl": 7})
-
-	if diff := cmp.Diff([]string{"coder@anna"}, keys(newer)); diff != "" {
-		t.Fatalf("Compare() newer wrong result (-want +got) diff = %s", diff)
-	}
-	if diff := cmp.Diff([]string{"grok@ben"}, want); diff != "" {
-		t.Fatalf("Compare() want wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -149,7 +120,6 @@ func TestMergeRefuses(t *testing.T) {
 	future := c.t.Add(time.Hour)
 	err := anna.Merge("ben", []Entry{
 		{Name: "helper", Host: "anna", Description: "forged", Version: future.UnixNano(), Expires: future},
-		{Name: "helper", Host: "carl", Description: "of another host", Version: 1, Expires: future},
 		{Name: "bad name", Host: "ben", Version: 1, Expires: future},
 		{Name: "old", Host: "ben", Version: 1, Expires: c.t.Add(-time.Minute)},
 		{Name: "forever", Host: "ben", Version: 1, Expires: c.t.Add(10 * TTL)},
@@ -168,6 +138,98 @@ func TestMergeRefuses(t *testing.T) {
 	}
 	if own := anna.Own(); own["helper"].Description != "mine" {
 		t.Fatalf("Own() = %v, want the agent's own entry kept", own)
+	}
+}
+
+func TestRelayCantHideEntriesFromTheirHost(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	expires := c.t.Add(time.Hour)
+	forged := c.t.Add(30 * time.Minute).UnixNano()
+	tests := []struct {
+		name  string
+		entry Entry
+	}{
+		{name: "removal", entry: Entry{Name: "grok", Host: "ben", Version: forged, Expires: expires, Removed: true}},
+		{name: "newer version", entry: Entry{Name: "grok", Host: "ben", Description: "forged", Version: forged, Expires: expires}},
+		{name: "older version", entry: Entry{Name: "grok", Host: "ben", Description: "forged", Version: 1, Expires: expires}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ben, anna := openTable(t, "ben", c), openTable(t, "anna", c)
+			if err := ben.Advertise("grok", "Grok"); err != nil {
+				t.Fatal(err)
+			}
+			round(t, anna, ben)
+
+			if err := anna.Merge("mallory", []Entry{tc.entry}); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+
+			if e, ok := anna.Lookup("grok@ben"); !ok || e.Description != "Grok" {
+				t.Fatalf("Lookup(grok@ben) after a relayed %s = %+v, %v, want ben's advertisement", tc.name, e, ok)
+			}
+		})
+	}
+}
+
+func TestHostReplacesRelayedEntries(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	for _, annaCalls := range []bool{true, false} {
+		t.Run(fmt.Sprintf("anna calls %v", annaCalls), func(t *testing.T) {
+			t.Parallel()
+			ben, anna := openTable(t, "ben", c), openTable(t, "anna", c)
+			if err := ben.Advertise("grok", "Grok"); err != nil {
+				t.Fatal(err)
+			}
+			forged := Entry{Name: "grok", Host: "ben", Version: c.t.Add(30 * time.Minute).UnixNano(), Expires: c.t.Add(time.Hour), Removed: true}
+			if err := anna.Merge("mallory", []Entry{forged}); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+			if _, ok := anna.Lookup("grok@ben"); ok {
+				t.Fatalf("Lookup(grok@ben) after a relayed removal = found, want the removal kept")
+			}
+
+			if annaCalls {
+				round(t, anna, ben)
+			} else {
+				round(t, ben, anna)
+			}
+
+			if e, ok := anna.Lookup("grok@ben"); !ok || e.Description != "Grok" {
+				t.Fatalf("Lookup(grok@ben) after a round with ben = %+v, %v, want ben's advertisement", e, ok)
+			}
+		})
+	}
+}
+
+func TestTableKeepsEntriesFromTheirHostAfterReopening(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "ads.json")
+	expires := c.t.Add(time.Hour)
+	tb, err := Open(path, "anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb.SetClock(c.now)
+	if err := tb.Merge("ben", []Entry{{Name: "grok", Host: "ben", Description: "Grok", Version: 1, Expires: expires}}); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := Open(path, "anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	again.SetClock(c.now)
+	if err := again.Merge("mallory", []Entry{{Name: "grok", Host: "ben", Version: 2, Expires: expires, Removed: true}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if e, ok := again.Lookup("grok@ben"); !ok || e.Description != "Grok" {
+		t.Fatalf("Lookup(grok@ben) after reopening and a relayed removal = %+v, %v, want ben's advertisement", e, ok)
 	}
 }
 

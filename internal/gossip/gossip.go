@@ -15,10 +15,11 @@
 // Package gossip spreads the advertised pairings of agents across a private
 // network. Each agent keeps a table of advertisements, its own and the ones
 // it heard of; agents swap the names and versions they know with a few
-// random peers, and download the entries the other has newer. An agent
-// takes the entries of a host only from that host, so a peer can't change
-// or remove the advertisements of others. Every agent gets the entries of
-// a host once one of them picks the other for a round.
+// random peers, and download the entries the other has newer. After a few
+// rounds every agent has every entry, including agents which were offline
+// or can't reach the host directly. An entry an agent got from its host
+// can only change by another one from the host, so a peer relaying entries
+// can't hide or alter the advertisements of others.
 package gossip
 
 import (
@@ -98,12 +99,20 @@ type Table struct {
 
 	mu      sync.Mutex
 	entries map[string]Entry
+	// direct are the keys of the entries which came from their host.
+	direct map[string]bool
+}
+
+// stored is an entry as the table file keeps it.
+type stored struct {
+	Entry
+	Direct bool `json:"direct,omitempty"`
 }
 
 // Open reads the table at path of the agent named self. A missing file is
 // empty.
 func Open(path, self string) (*Table, error) {
-	t := &Table{path: path, self: self, now: time.Now, entries: map[string]Entry{}}
+	t := &Table{path: path, self: self, now: time.Now, entries: map[string]Entry{}, direct: map[string]bool{}}
 	data, err := os.ReadFile(path)
 	if errors.Is(err, fs.ErrNotExist) {
 		return t, nil
@@ -111,12 +120,15 @@ func Open(path, self string) (*Table, error) {
 	if err != nil {
 		return nil, err
 	}
-	var list []Entry
+	var list []stored
 	if err := json.Unmarshal(data, &list); err != nil {
 		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	for _, e := range list {
-		t.entries[e.Key()] = e
+		t.entries[e.Key()] = e.Entry
+		if e.Direct {
+			t.direct[e.Key()] = true
+		}
 	}
 	return t, nil
 }
@@ -126,9 +138,9 @@ func (t *Table) SetClock(now func() time.Time) { t.now = now }
 
 // save writes the table. t.mu is held.
 func (t *Table) save() error {
-	list := make([]Entry, 0, len(t.entries))
+	list := make([]stored, 0, len(t.entries))
 	for _, k := range sortedKeys(t.entries) {
-		list = append(list, t.entries[k])
+		list = append(list, stored{Entry: t.entries[k], Direct: t.direct[k]})
 	}
 	data, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
@@ -230,6 +242,7 @@ func (t *Table) Expire() error {
 	for k, e := range t.entries {
 		if t.now().After(e.Expires) {
 			delete(t.entries, k)
+			delete(t.direct, k)
 			changed = true
 		}
 	}
@@ -277,21 +290,24 @@ func (t *Table) Digest() Digest {
 	return d
 }
 
-// Compare returns the entries of this agent newer here than in the digest
-// of peer, and the keys of peer's entries it has newer.
+// Compare returns the entries newer here than in the digest of the agent
+// named peer, and the keys peer has newer. Entries of this agent and keys
+// of peer's own entries count as newer whenever their versions differ, so
+// that an entry from its host replaces a relayed one of a higher version.
 func (t *Table) Compare(peer string, d Digest) (newer []Entry, want []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, k := range sortedKeys(t.entries) {
-		if e := t.entries[k]; e.Host == t.self && e.Version > d[k] {
+		e := t.entries[k]
+		v, ok := d[k]
+		if e.Version > v || ok && e.Host == t.self && e.Version != v {
 			newer = append(newer, e)
 		}
 	}
 	for k, v := range d {
-		if _, host, ok := ParseKey(k); !ok || !strings.EqualFold(host, peer) {
-			continue
-		}
-		if e, ok := t.entries[k]; !ok || v > e.Version {
+		e, ok := t.entries[k]
+		_, host, _ := ParseKey(k)
+		if !ok || v > e.Version || peer != "" && strings.EqualFold(host, peer) && v != e.Version {
 			want = append(want, k)
 		}
 	}
@@ -299,38 +315,49 @@ func (t *Table) Compare(peer string, d Digest) (newer []Entry, want []string) {
 	return newer, want
 }
 
-// Get returns the entries of this agent of keys.
+// Get returns the entries of keys.
 func (t *Table) Get(keys []string) []Entry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []Entry
 	for _, k := range keys {
-		if e, ok := t.entries[k]; ok && e.Host == t.self {
+		if e, ok := t.entries[k]; ok {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// Merge keeps the entries of peer newer than the ones here. Entries of
-// other hosts, invalid, expired or future ones are dropped.
+// Merge keeps the entries newer than the ones here, which the agent named
+// peer sent; peer is empty when the sender is unknown. Entries of this agent
+// only come from this agent, and invalid, expired or future ones are
+// dropped. Entries of peer itself replace the ones relayed by others. A
+// relayed entry never replaces one that came from its host.
 func (t *Table) Merge(peer string, entries []Entry) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	changed := false
 	for _, e := range entries {
 		now := t.now()
-		if !strings.EqualFold(e.Host, peer) || strings.EqualFold(e.Host, t.self) || e.validate() != nil || now.After(e.Expires) || e.Expires.After(now.Add(TTL+maxSkew)) || e.Version > now.Add(maxSkew).UnixNano() {
+		if strings.EqualFold(e.Host, t.self) || e.validate() != nil || now.After(e.Expires) || e.Expires.After(now.Add(TTL+maxSkew)) || e.Version > now.Add(maxSkew).UnixNano() {
 			continue
 		}
-		cur, ok := t.entries[e.Key()]
-		if ok && cur.Version >= e.Version {
+		key := e.Key()
+		direct := peer != "" && strings.EqualFold(e.Host, peer)
+		cur, ok := t.entries[key]
+		switch {
+		case !ok && len(t.entries) >= MaxEntries:
+			continue
+		case !ok:
+		case t.direct[key] && (!direct || cur.Version >= e.Version):
+			continue
+		case !t.direct[key] && !direct && cur.Version >= e.Version:
 			continue
 		}
-		if !ok && len(t.entries) >= MaxEntries {
-			continue
+		t.entries[key] = e
+		if direct {
+			t.direct[key] = true
 		}
-		t.entries[e.Key()] = e
 		changed = true
 	}
 	if !changed {
