@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -234,6 +235,23 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	}
 	if _, err := cl.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
 		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	}
+}
+
+func TestCallClaimsTurnRecordsAgentsLineWhenItBegins(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cl := newTestCallClaims(t, harnessBridge{})
+	if err := cl.sessions.Put(ctx, "ctx1", a2aacp.Session{ID: "s1"}); err != nil {
+		t.Fatalf("SessionStore.Put() error = %v", err)
+	}
+	withLine := context.WithValue(auth.InProcess(ctx, anna), agentsLineKey{}, true)
+
+	end := cl.turn(withLine, &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"})
+	defer end()
+
+	if cl.needsAgentsLine(ctx, "ctx1") {
+		t.Fatalf("CallClaims.needsAgentsLine() during the turn = true, want false")
 	}
 }
 

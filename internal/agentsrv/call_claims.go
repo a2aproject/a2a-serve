@@ -176,15 +176,13 @@ func (cl *CallClaims) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		user = auth.Principal{ID: c.User.ID}
 	}
 	c.User = user
-	endTurn := cl.beginTurn(c)
-	return func() {
-		endTurn()
-		// The session of a new conversation is stored once the turn runs,
-		// so the line is recorded after it.
-		if hadAgentsLine(ctx) {
-			cl.markLined(ctx, c.ContextID)
-		}
+	// a2aacp stores the session of a new conversation before the turn
+	// begins. The line is recorded now, since the next message may come
+	// before the turn's end is called.
+	if hadAgentsLine(ctx) {
+		cl.markLined(ctx, c.ContextID)
 	}
+	return cl.beginTurn(c)
 }
 
 // callerIn returns who user acts as through the agents URL of a
