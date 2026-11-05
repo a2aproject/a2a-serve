@@ -393,6 +393,24 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 	return resp, nil
 }
 
+// SignOut revokes the Google sign-in tokens of email at every URL. The
+// person can sign in again while --allow-email matches the email.
+func (s *Service) SignOut(ctx context.Context, email string) (*controlapi.SignOutResponse, error) {
+	email = strings.ToLower(strings.TrimSpace(email))
+	if !strings.Contains(email, "@") {
+		return nil, invalid("%q is not an email address", email)
+	}
+	n, err := s.Store.DeleteSignIns(ctx, email)
+	if err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, &agenterr.NotFoundError{Kind: "Google sign-in of", Name: email}
+	}
+	resp := &controlapi.SignOutResponse{Email: email, Tokens: int(n)}
+	return resp, s.withAccess(ctx, &resp.Access)
+}
+
 // withAccess sets dst to who may call the agent, if the service knows.
 func (s *Service) withAccess(ctx context.Context, dst **controlapi.Access) error {
 	if s.Access == nil {

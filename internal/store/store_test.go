@@ -468,6 +468,83 @@ func TestTokens(t *testing.T) {
 	}
 }
 
+func putSignIns(t *testing.T, s *Store, tokens map[string]Token) {
+	t.Helper()
+	for tok, tk := range tokens {
+		if err := s.PutToken(context.Background(), tok, tk, ""); err != nil {
+			t.Fatalf("PutToken(%s) error = %v", tok, err)
+		}
+	}
+}
+
+func tokenEmails(t *testing.T, s *Store) []string {
+	t.Helper()
+	all, err := s.Tokens(context.Background())
+	if err != nil {
+		t.Fatalf("Tokens() error = %v", err)
+	}
+	var out []string
+	for _, tk := range all {
+		out = append(out, tk.Pairing+tk.Email)
+	}
+	slices.Sort(out)
+	return out
+}
+
+func TestDeleteSignIns(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	putSignIns(t, s, map[string]Token{
+		"a2p_laptop": {Email: "anna@example.com", URL: "http://x"},
+		"a2p_phone":  {Email: "anna@example.com", URL: "https://y"},
+		"a2p_bob":    {Email: "bob@example.com", URL: "http://x"},
+	})
+
+	n, err := s.DeleteSignIns(ctx, "Anna@Example.com")
+	if err != nil {
+		t.Fatalf("DeleteSignIns() error = %v", err)
+	}
+
+	if n != 2 {
+		t.Fatalf("DeleteSignIns() = %d, want 2", n)
+	}
+	if diff := cmp.Diff([]string{"bob@example.com", "grok"}, tokenEmails(t, s)); diff != "" {
+		t.Fatalf("Tokens() after DeleteSignIns() wrong result (-want +got) diff = %s", diff)
+	}
+	if n, err := s.DeleteSignIns(ctx, "anna@example.com"); err != nil || n != 0 {
+		t.Fatalf("DeleteSignIns() again = %d, %v, want 0, nil", n, err)
+	}
+}
+
+func TestPruneSignIns(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	putSignIns(t, s, map[string]Token{
+		"a2p_anna":  {Email: "anna@example.com", Domain: "example.com", URL: "http://x"},
+		"a2p_bob":   {Email: "bob@example.com", URL: "http://x"},
+		"a2p_carol": {Email: "carol@other.com", URL: "http://x"},
+	})
+
+	err := s.PruneSignIns(ctx, func(email, domain string) bool { return domain == "example.com" || email == "carol@other.com" })
+	if err != nil {
+		t.Fatalf("PruneSignIns() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"anna@example.com", "carol@other.com", "grok"}, tokenEmails(t, s)); diff != "" {
+		t.Fatalf("Tokens() after PruneSignIns() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestPutNodeNeedsWebhookPairing(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

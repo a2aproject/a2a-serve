@@ -169,6 +169,11 @@ func (o *offline) Revoke(ctx context.Context, name string) (*controlapi.RevokeRe
 	return o.pairings.Remove(ctx, name)
 }
 
+// SignOut revokes the Google sign-in tokens of an email.
+func (o *offline) SignOut(ctx context.Context, email string) (*controlapi.SignOutResponse, error) {
+	return o.pairings.SignOut(ctx, email)
+}
+
 // Contacts lists the contacts.
 func (o *offline) Contacts(ctx context.Context) ([]controlapi.ContactInfo, error) {
 	return o.contacts.List(ctx)

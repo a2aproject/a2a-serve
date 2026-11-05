@@ -655,12 +655,17 @@ func (s *Server) bestURL() string {
 const pruneInterval = time.Hour
 
 // pruneLoop prunes the store now and every pruneInterval until ctx ends.
+// It also deletes the Google sign-in tokens of emails that --allow-email
+// no longer matches.
 func (s *Server) pruneLoop(ctx context.Context) {
 	t := time.NewTicker(pruneInterval)
 	defer t.Stop()
 	for {
 		if err := s.store.Prune(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("pruning the database", "error", err)
+		}
+		if err := s.store.PruneSignIns(ctx, s.policy().AllowsSignIn); err != nil && ctx.Err() == nil {
+			slog.Warn("pruning Google sign-ins", "error", err)
 		}
 		select {
 		case <-ctx.Done():

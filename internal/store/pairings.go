@@ -19,6 +19,7 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -242,6 +243,46 @@ func (s *Store) Tokens(ctx context.Context) ([]Token, error) {
 func (s *Store) DeleteTokens(ctx context.Context, pairing string) error {
 	_, err := s.exec(ctx, `DELETE FROM tokens WHERE pairing = ?`, pairing)
 	return err
+}
+
+// DeleteSignIns deletes the Google sign-in tokens of email at every URL,
+// and returns how many it deleted.
+func (s *Store) DeleteSignIns(ctx context.Context, email string) (int64, error) {
+	res, err := s.exec(ctx, `DELETE FROM tokens WHERE pairing IS NULL AND email = ?`, strings.ToLower(strings.TrimSpace(email)))
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
+}
+
+// PruneSignIns deletes the Google sign-in tokens whose email and domain
+// allowed refuses.
+func (s *Store) PruneSignIns(ctx context.Context, allowed func(email, domain string) bool) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT DISTINCT email, domain FROM tokens WHERE pairing IS NULL`)
+		if err != nil {
+			return err
+		}
+		var refused [][2]string
+		for rows.Next() {
+			var email, domain string
+			if err := rows.Scan(&email, &domain); err != nil {
+				return errors.Join(err, rows.Close())
+			}
+			if !allowed(email, domain) {
+				refused = append(refused, [2]string{email, domain})
+			}
+		}
+		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, r := range refused {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE pairing IS NULL AND email = ? AND domain = ?`, r[0], r[1]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 // Link ties a chat account to a pairing. Conv is the conversation of the
