@@ -90,7 +90,7 @@ subdirectory of an agent, pass --dir to create a separate agent.
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}
-	flags.register(cmd, coreSettings)
+	flags.register(cmd, agentdir.CoreFlags)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
 	mode.addRunFlags(f)

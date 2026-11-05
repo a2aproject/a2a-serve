@@ -15,9 +15,12 @@
 package agentdir
 
 import (
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"gopkg.in/yaml.v3"
 )
 
 func fullConfig() *Config {
@@ -143,7 +146,7 @@ func TestCommands(t *testing.T) {
 	}
 	want := []string{
 		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-access anyone --allow-email '*@example.com'",
-		"a2a-serve config set --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h --tailscale-authkey env:TS_AUTHKEY",
+		"a2a-serve config set --tailscale-authkey env:TS_AUTHKEY --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h",
 		"a2a-serve channel add telegram --token env:BOT",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
@@ -183,6 +186,29 @@ func TestLiveSettings(t *testing.T) {
 		if !IsLive(name) {
 			t.Fatalf("IsLive(%q) = false, want true for a live setting", name)
 		}
+	}
+}
+
+func TestCopyLive(t *testing.T) {
+	t.Parallel()
+	src := fullConfig()
+	src.Description = "reviews code"
+	src.Policy.PublicAccess = AccessAnyone
+	src.Approvals.Deny = []string{"execute"}
+	dst := &Config{Name: "other", Harness: "claude"}
+	CopyLive(dst, src)
+	var got []string
+	for _, c := range Diff(src, dst) {
+		if slices.Contains(LiveSettings(), c.Setting) {
+			got = append(got, c.Setting)
+		}
+	}
+	if len(got) > 0 {
+		t.Fatalf("CopyLive() left live settings %v uncopied", got)
+	}
+	src.MCP.Disabled[0] = "changed"
+	if dst.MCP.Disabled[0] == "changed" {
+		t.Fatalf("CopyLive() shares lists with the source")
 	}
 }
 
@@ -252,5 +278,75 @@ func TestIsAgentSetting(t *testing.T) {
 				t.Fatalf("IsAgentSetting(%q) = %v, want %v", tc.setting, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFlagsSetTheirKeys(t *testing.T) {
+	t.Parallel()
+	const all = AgentFlag | CoreFlags | OperationalFlags | EmailFlags
+	docs := map[string]SettingDoc{}
+	for _, d := range SettingDocs() {
+		docs[d.Flag] = d
+	}
+	for _, fl := range (&Settings{}).Flags(all) {
+		t.Run(fl.Name, func(t *testing.T) {
+			t.Parallel()
+			s := Settings{SecretValues: Secrets{"V": "value"}}
+			flags := s.Flags(all)
+			switch v := flags[slices.IndexFunc(flags, func(f Flag) bool { return f.Name == fl.Name })].Value.(type) {
+			case *string:
+				*v = "V"
+			case *int:
+				*v = 7
+			case *[]string:
+				*v = []string{"V"}
+			default:
+				t.Fatalf("Settings.Flags() value of --%s = %T, want *string, *int or *[]string", fl.Name, v)
+			}
+			cfg := &Config{}
+			secrets, err := s.Apply(cfg, Dir{Root: "/x"})
+			if err != nil {
+				t.Fatalf("Settings.Apply() error = %v", err)
+			}
+			doc := docs[fl.Name]
+			if doc.Key == "" {
+				if secrets[doc.Secret] != "V" {
+					t.Fatalf("Settings.Apply() secrets = %v, want %s stored", secrets, doc.Secret)
+				}
+				return
+			}
+			data, err := MarshalConfig(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var root yaml.Node
+			if err := yaml.Unmarshal(data, &root); err != nil {
+				t.Fatal(err)
+			}
+			var got []string
+			setKeys(root.Content[0], "", &got)
+			got = slices.DeleteFunc(got, func(k string) bool { return k == "name" && fl.Name != "name" })
+			if diff := cmp.Diff([]string{doc.Key}, got); diff != "" {
+				t.Fatalf("--%s sets wrong config.yaml keys (-want +got) diff = %s", fl.Name, diff)
+			}
+		})
+	}
+}
+
+// setKeys appends the dotted keys of n with values.
+func setKeys(n *yaml.Node, prefix string, out *[]string) {
+	switch n.Kind {
+	case yaml.MappingNode:
+		for i := 0; i+1 < len(n.Content); i += 2 {
+			setKeys(n.Content[i+1], prefix+n.Content[i].Value+".", out)
+		}
+	case yaml.SequenceNode:
+		if len(n.Content) > 0 {
+			*out = append(*out, strings.TrimSuffix(prefix, "."))
+		}
+	case yaml.ScalarNode:
+		if n.Value != "" {
+			*out = append(*out, strings.TrimSuffix(prefix, "."))
+		}
 	}
 }

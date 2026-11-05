@@ -310,6 +310,58 @@ func TestFixes(t *testing.T) {
 	}
 }
 
+func TestFixLegacyConfigKeys(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	legacy := "name: coder\nagent: opencode\ntask_ttl: 7d\npolicy:\n  private_access: paired\n"
+	if err := os.WriteFile(d.ConfigPath(), []byte(legacy), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want, err := d.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Dir: &d}
+
+	var fixed bool
+	for _, r := range Run(t.Context(), m.Env(), opts) {
+		if r.ID != "config-keys" {
+			continue
+		}
+		if !r.Fixable() {
+			t.Fatalf("Run() config-keys = %+v, want a fixable warning", r)
+		}
+		if _, err := r.Apply(); err != nil {
+			t.Fatalf("Result{ID: %q}.Apply() error = %v", r.ID, err)
+		}
+		fixed = true
+	}
+
+	if !fixed {
+		t.Fatalf("Run() reported no config-keys result for %q", legacy)
+	}
+	data, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if keys, err := agentdir.LegacyKeys(data); err != nil || len(keys) > 0 {
+		t.Fatalf("config.yaml after the fix has snake_case keys %v, error = %v:\n%s", keys, err, data)
+	}
+	got, err := d.ReadConfig()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("config.yaml after the fix wrong result (-want +got) diff = %s", diff)
+	}
+	for _, r := range Run(t.Context(), m.Env(), opts) {
+		if r.ID == "config-keys" {
+			t.Fatalf("Run() after the fix = %+v, want no config-keys result", r)
+		}
+	}
+}
+
 func TestFixCredentialHelper(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -41,6 +41,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	saved.Description = "reviews code"
 	saved.Approvals.OwnerChat = "telegram"
 	saved.Policy.PrivateAccess = agentdir.AccessPaired
+	saved.MCP.Disabled = []string{"github"}
 	saved.Sandbox = harness.SandboxDocker
 	if err := ts.dir.SaveConfig(saved); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -50,7 +51,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReloadConfig() error = %v", err)
 	}
-	if diff := cmp.Diff([]string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}, res.Applied); diff != "" {
+	if diff := cmp.Diff([]string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}, res.Applied); diff != "" {
 		t.Fatalf("ReloadConfig() wrong result (-want +got) diff = %s", diff)
 	}
 	running, err := client.Config(ctx)

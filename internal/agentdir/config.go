@@ -33,7 +33,8 @@ import (
 
 // Config is the agent definition in .a2a/config.yaml. It holds no secrets:
 // values like bot tokens are references of the form secret:<NAME>, resolved
-// from the secrets file.
+// from the secrets file. Keys are camelCase; [ParseConfig] also reads the
+// snake_case keys of older versions.
 type Config struct {
 	Name        string `yaml:"name" json:"name"`
 	Description string `yaml:"description,omitempty" json:"description,omitempty"`
@@ -60,7 +61,7 @@ type Config struct {
 	Port int `yaml:"port,omitempty" json:"port,omitempty"`
 	// TaskTTL is how long tasks are kept after their last update, such as
 	// 30d. Default 30d.
-	TaskTTL string `yaml:"task_ttl,omitempty" json:"taskTTL,omitempty"`
+	TaskTTL string `yaml:"taskTTL,omitempty" json:"taskTTL,omitempty"`
 
 	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
 	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
@@ -88,11 +89,11 @@ func (c *Config) MCPDisabled(name string) bool {
 // who is always an owner.
 type PolicyConfig struct {
 	// PrivateAccess is everyone or paired. Empty is everyone.
-	PrivateAccess string `yaml:"private_access,omitempty" json:"privateAccess,omitempty"`
+	PrivateAccess string `yaml:"privateAccess,omitempty" json:"privateAccess,omitempty"`
 	// PublicAccess is paired or anyone. Empty is paired.
-	PublicAccess string `yaml:"public_access,omitempty" json:"publicAccess,omitempty"`
+	PublicAccess string `yaml:"publicAccess,omitempty" json:"publicAccess,omitempty"`
 	// AllowEmails are the emails, or *@domain, of people who may call.
-	AllowEmails []string `yaml:"allow_emails,omitempty" json:"allowEmails,omitempty"`
+	AllowEmails []string `yaml:"allowEmails,omitempty" json:"allowEmails,omitempty"`
 }
 
 // Values of --private-access and --public-access.
@@ -123,8 +124,8 @@ func (p PolicyConfig) clone() PolicyConfig {
 type AuthConfig struct {
 	// GoogleClientID and GoogleClientSecret are the owner's own Google app.
 	// The secret is a secret reference.
-	GoogleClientID     string `yaml:"google_client_id,omitempty" json:"googleClientID,omitempty"`
-	GoogleClientSecret string `yaml:"google_client_secret,omitempty" json:"googleClientSecret,omitempty"`
+	GoogleClientID     string `yaml:"googleClientID,omitempty" json:"googleClientID,omitempty"`
+	GoogleClientSecret string `yaml:"googleClientSecret,omitempty" json:"googleClientSecret,omitempty"`
 }
 
 // BackupConfig configures the agent's backup snapshots.
@@ -200,7 +201,7 @@ type NetworkConfig struct {
 	// Public is tailscale, a relay URL or empty.
 	Public string `yaml:"public,omitempty" json:"public,omitempty"`
 
-	TailscaleControlURL string `yaml:"tailscale_control_url,omitempty" json:"tailscaleControlURL,omitempty"`
+	TailscaleControlURL string `yaml:"tailscaleControlURL,omitempty" json:"tailscaleControlURL,omitempty"`
 }
 
 // ChannelsConfig configures the messengers the agent is reachable from.
@@ -232,14 +233,14 @@ type EmailConfig struct {
 	Mailbox  string `yaml:"mailbox,omitempty" json:"mailbox,omitempty"`
 	// TrustedAuthServ is the authserv-id of the Authentication-Results header
 	// added by the receiving mail server. Only its verdicts are trusted.
-	TrustedAuthServ string `yaml:"trusted_authserv" json:"trustedAuthServ"`
+	TrustedAuthServ string `yaml:"trustedAuthServ" json:"trustedAuthServ"`
 	// OAuthRefreshToken, if set, signs in with OAuth (XOAUTH2), and Password
 	// is unused. The access tokens come from OAuthTokenURL. The refresh token
 	// and the client secret are secret references.
-	OAuthTokenURL     string `yaml:"oauth_token_url,omitempty" json:"oauthTokenURL,omitempty"`
-	OAuthClientID     string `yaml:"oauth_client_id,omitempty" json:"oauthClientID,omitempty"`
-	OAuthClientSecret string `yaml:"oauth_client_secret,omitempty" json:"oauthClientSecret,omitempty"`
-	OAuthRefreshToken string `yaml:"oauth_refresh_token,omitempty" json:"oauthRefreshToken,omitempty"`
+	OAuthTokenURL     string `yaml:"oauthTokenURL,omitempty" json:"oauthTokenURL,omitempty"`
+	OAuthClientID     string `yaml:"oauthClientID,omitempty" json:"oauthClientID,omitempty"`
+	OAuthClientSecret string `yaml:"oauthClientSecret,omitempty" json:"oauthClientSecret,omitempty"`
+	OAuthRefreshToken string `yaml:"oauthRefreshToken,omitempty" json:"oauthRefreshToken,omitempty"`
 }
 
 // Channel kinds.
@@ -307,7 +308,7 @@ type ApprovalsConfig struct {
 	// OwnerChat is the chat, <channel>[:<who>], where an owner answers the
 	// questions of tasks nobody watches. Empty picks the first messenger
 	// with a linked owner.
-	OwnerChat string `yaml:"owner_chat,omitempty" json:"ownerChat,omitempty"`
+	OwnerChat string `yaml:"ownerChat,omitempty" json:"ownerChat,omitempty"`
 	// RemovedApprovers holds an approvers key, which Validate rejects: who
 	// started a task answers its questions now.
 	RemovedApprovers []string `yaml:"approvers,omitempty" json:"-"`
@@ -366,9 +367,16 @@ func (d Dir) ReadConfig() (*Config, error) {
 
 // ParseConfig parses the content of config.yaml.
 func ParseConfig(data []byte) (*Config, error) {
-	var cfg Config
-	if err := yaml.Unmarshal(data, &cfg); err != nil {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
+	}
+	var cfg Config
+	if len(doc.Content) > 0 {
+		renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
+		if err := doc.Decode(&cfg); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Harness == "" {
 		cfg.Harness = cfg.LegacyHarness
@@ -395,23 +403,50 @@ func UnknownKeys(data []byte) ([]string, error) {
 		return nil, nil
 	}
 	var out []string
+	renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
 	unknownKeys(doc.Content[0], reflect.TypeFor[Config](), "", &out)
 	slices.Sort(out)
 	return out, nil
 }
 
-func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
+// LegacyKeys returns the snake_case keys of older versions in the
+// config.yaml content data, as dotted paths, sorted. Saving the config
+// renames them.
+func LegacyKeys(data []byte) ([]string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return nil, nil
+	}
+	var out []string
+	renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", &out)
+	slices.Sort(out)
+	return out, nil
+}
+
+// yamlFields returns the types of the fields of a struct by their YAML keys.
+func yamlFields(t reflect.Type) map[string]reflect.Type {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	if t.Kind() != reflect.Struct || n.Kind != yaml.MappingNode {
-		return
+	if t.Kind() != reflect.Struct {
+		return nil
 	}
-	known := map[string]reflect.Type{}
+	out := map[string]reflect.Type{}
 	for f := range t.Fields() {
 		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
-			known[name] = f.Type
+			out[name] = f.Type
 		}
+	}
+	return out
+}
+
+func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
+	known := yamlFields(t)
+	if known == nil || n.Kind != yaml.MappingNode {
+		return
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key := n.Content[i].Value
@@ -423,6 +458,40 @@ func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
 		unknownKeys(n.Content[i+1], ft, prefix+key+".", out)
 	}
 }
+
+// renameLegacyKeys renames the snake_case keys in n, a node of type t, to
+// the camelCase keys they match, such as task_ttl to taskTTL, and appends
+// their dotted paths to renamed if it is set. A key whose camelCase key is
+// also set is left alone.
+func renameLegacyKeys(n *yaml.Node, t reflect.Type, prefix string, renamed *[]string) {
+	known := yamlFields(t)
+	if known == nil || n.Kind != yaml.MappingNode {
+		return
+	}
+	set := map[string]bool{}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		set[n.Content[i].Value] = true
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key := n.Content[i]
+		if _, ok := known[key.Value]; !ok && strings.Contains(key.Value, "_") {
+			for name := range known {
+				if foldKey(name) == foldKey(key.Value) && !set[name] {
+					if renamed != nil {
+						*renamed = append(*renamed, prefix+key.Value)
+					}
+					key.Value, set[name] = name, true
+					break
+				}
+			}
+		}
+		if ft, ok := known[key.Value]; ok {
+			renameLegacyKeys(n.Content[i+1], ft, prefix+key.Value+".", renamed)
+		}
+	}
+}
+
+func foldKey(k string) string { return strings.ToLower(strings.ReplaceAll(k, "_", "")) }
 
 // MarshalConfig returns the content of config.yaml for cfg.
 func MarshalConfig(cfg *Config) ([]byte, error) {

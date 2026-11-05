@@ -12,7 +12,14 @@ The agent is reachable on localhost by default. Network flags add a private URL,
 
 ## Tailscale
 
-Each agent joins your tailnet as its own machine, even when the computer already runs Tailscale. On the first run it prints a login link; on a headless machine, use `--tailscale-authkey env:TS_AUTHKEY`. Then:
+Each agent joins your tailnet as its own machine, even when the computer already runs Tailscale. On the first run it prints a login link. On a headless machine, store an auth key with `config set`, then start the agent:
+
+```sh
+a2a-serve config set --agent opencode --tailscale-authkey env:TS_AUTHKEY
+a2a-serve start opencode --private tailscale
+```
+
+`config set --agent` creates the agent without starting it. After the agent joins:
 
 - turn off key expiry for the machine in the admin console;
 - enable HTTPS certificates for the tailnet;

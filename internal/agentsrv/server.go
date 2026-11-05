@@ -583,8 +583,9 @@ func (s *Server) reloadConfig(saved *agentdir.Config) {
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 }
 
-// updateConfig applies fn to the config and saves it. A config.yaml that
-// fails to parse is left alone and returned as the error.
+// updateConfig applies fn to the config in use and to config.yaml, which
+// may hold changes waiting for a restart. A config.yaml that fails to parse
+// is left alone and returned as the error.
 func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
@@ -593,22 +594,7 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	err := s.dir.LockConfig(func() error {
-		// config.yaml may hold changes waiting for a restart; keep them.
-		saved, err := s.dir.ReadConfig()
-		switch {
-		case errors.Is(err, agentdir.ErrNotFound):
-			saved = &next
-		case err != nil:
-			return err
-		default:
-			if err := fn(saved); err != nil {
-				return err
-			}
-		}
-		return s.dir.SaveConfig(saved)
-	})
-	if err != nil {
+	if err := s.dir.UpdateConfig(fn); err != nil {
 		return err
 	}
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})

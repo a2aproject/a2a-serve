@@ -44,18 +44,23 @@ func TestReferenceIsUpToDate(t *testing.T) {
 	}
 }
 
-func TestGuideIsUpToDate(t *testing.T) {
+func TestGeneratedPartsAreUpToDate(t *testing.T) {
 	t.Parallel()
-	path := filepath.Join("..", "..", "..", DefaultDir, guidePath)
-	doc, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want, err := fillLiveSettings(string(doc))
-	if err != nil {
-		t.Fatalf("fillLiveSettings() error = %v", err)
-	}
-	if diff := cmp.Diff(want, string(doc)); diff != "" {
-		t.Fatalf("%s is out of date; run `go run ./internal/tools/gendocs` (-want +got) diff = %s", path, diff)
+	for _, p := range generatedParts {
+		t.Run(p.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join("..", "..", "..", DefaultDir, p.path)
+			doc, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want, err := p.fill(string(doc))
+			if err != nil {
+				t.Fatalf("generatedPart.fill() error = %v", err)
+			}
+			if diff := cmp.Diff(want, string(doc)); diff != "" {
+				t.Fatalf("%s is out of date; run `go run ./internal/tools/gendocs` (-want +got) diff = %s", path, diff)
+			}
+		})
 	}
 }
