@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package turns
+package agentsrv
 
 import (
 	"context"
@@ -24,9 +24,9 @@ import (
 
 const cancelAttempts = 3
 
-// RetryingCancel returns h, whose CancelTask retries a cancel that lost a
+// withRetryingCancel returns h, whose CancelTask retries a cancel that lost a
 // race with the end of the task's execution.
-func RetryingCancel(h a2asrv.RequestHandler) a2asrv.RequestHandler {
+func withRetryingCancel(h a2asrv.RequestHandler) a2asrv.RequestHandler {
 	return &retryingCancel{RequestHandler: h}
 }
 

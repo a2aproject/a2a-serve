@@ -30,8 +30,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
@@ -64,7 +64,7 @@ commit, a tag or a commit stays. The update keeps your changes. A file
 changed both here and in the recipe stays as it is, and the recipe's
 version is saved next to it as <file>.recipe.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  a2a-serve recipe https://github.com/acme/agents/tree/v1.2/experts/elk --name elk
   a2a-serve recipe git@github.com:acme/agents.git#v1.2:experts/elk --dry-run
   a2a-serve recipe ./experts/elk --yes --disable-mcp kubernetes --secret GRAFANA_TOKEN

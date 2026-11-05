@@ -22,8 +22,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newPairSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -46,7 +46,7 @@ request.
 prints a new code; for a webhook node, it also changes the secret its wakes
 are signed with. Linked messenger accounts stay linked.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  a2a-serve pair set anna --owner
   a2a-serve pair set anna --owner=false
   a2a-serve pair set laptop --kind device

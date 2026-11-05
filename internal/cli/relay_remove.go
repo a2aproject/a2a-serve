@@ -20,8 +20,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRelayRemoveCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
@@ -34,7 +34,7 @@ or every agent of a person, given their email. The relay refuses their next
 request, and the other agents drop them. A removed agent can't join again
 with its identity.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)

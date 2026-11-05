@@ -23,7 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -44,7 +44,7 @@ machine. Without it, the agent joins the network as a new machine on its
 first start. Stop the agent
 on the old host before taking over.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: "  a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-key env:BACKUP_KEY",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -61,7 +61,7 @@ on the old host before taking over.
 			if key == "" {
 				return clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
 			}
-			passphrase, err := secretref.Resolve("backup-key", key, cfg.secretReader(cfg.stderr()))
+			passphrase, err := flagparse.ResolveSecret("backup-key", key, cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}

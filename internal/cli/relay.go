@@ -23,9 +23,9 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newRelayCmd(cfg *globalConfig) *cobra.Command {
@@ -71,7 +71,7 @@ const relayDirUsage = "Relay directory (default: the nearest directory with .a2a
 func (f *relayFlags) addTargetFlags(fs *pflag.FlagSet) {
 	fs.StringVar(&f.dir, "dir", "", relayDirUsage)
 	fs.StringVar(&f.url, "url", "", "Manage the relay at this URL, with --admin-token")
-	fs.StringVar(&f.adminToken, "admin-token", "", "The admin token of the relay at --url, as a "+secretref.Syntax)
+	fs.StringVar(&f.adminToken, "admin-token", "", "The admin token of the relay at --url, as a "+flagparse.SecretSyntax)
 	fs.DurationVar(&f.timeout, "timeout", time.Minute, "Timeout of each call to the relay, a `duration` such as 30s or 2m")
 }
 
@@ -116,7 +116,7 @@ func (f *relayFlags) client(cfg *globalConfig) (*control.Client, error) {
 	if f.adminToken == "" {
 		return nil, clierr.Usage("--url needs --admin-token, the relay's admin token")
 	}
-	token, err := secretref.Resolve("admin-token", f.adminToken, cfg.secretReader(cfg.stderr()))
+	token, err := flagparse.ResolveSecret("admin-token", f.adminToken, cfg.secretReader(cfg.stderr()))
 	if err != nil {
 		return nil, err
 	}

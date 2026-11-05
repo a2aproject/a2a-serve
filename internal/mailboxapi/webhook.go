@@ -12,16 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package webhook checks and redacts the URLs of webhook nodes.
-package webhook
+package mailboxapi
 
 import (
 	"fmt"
 	"net/url"
 )
 
-// Validate checks the URL of a webhook node.
-func Validate(u string) error {
+// ValidateWebhook checks the URL of a webhook node.
+func ValidateWebhook(u string) error {
 	p, err := url.Parse(u)
 	if err != nil || (p.Scheme != "https" && p.Scheme != "http") || p.Host == "" {
 		return fmt.Errorf("--webhook must be an http(s) URL, got %q", u)
@@ -29,8 +28,9 @@ func Validate(u string) error {
 	return nil
 }
 
-// RedactURL drops the query, which webhook providers often use for secrets.
-func RedactURL(u string) string {
+// RedactWebhookURL drops the query of a webhook URL, which providers often use
+// for secrets.
+func RedactWebhookURL(u string) string {
 	p, err := url.Parse(u)
 	if err != nil {
 		return ""
@@ -42,10 +42,10 @@ func RedactURL(u string) string {
 	return p.String()
 }
 
-// Origin returns the scheme and host of a webhook URL, which is all of it
+// WebhookOrigin returns the scheme and host of a webhook URL, which is all of it
 // that is safe to log: providers such as Discord and Slack keep the secret
 // in the path.
-func Origin(u string) string {
+func WebhookOrigin(u string) string {
 	p, err := url.Parse(u)
 	if err != nil {
 		return ""

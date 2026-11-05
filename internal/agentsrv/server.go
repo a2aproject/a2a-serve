@@ -42,7 +42,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/turns"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -113,7 +112,7 @@ type Server struct {
 	store   *store.Store
 	tasks   *store.TaskStore
 	handler a2asrv.RequestHandler
-	sender  *turns.Sender
+	sender  *handlerSender
 	chain   *auth.Chain
 	bus     *eventBus
 
@@ -395,7 +394,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return err
 	}
 
-	s.sender = &turns.Sender{}
+	s.sender = &handlerSender{}
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	s.chatApprovals = newChatApprovals(ctx, ChatApprovalsDeps{
 		Store:      s.store,
@@ -463,7 +462,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = turns.RetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
+	s.handler = withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -471,7 +470,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 		a2asrv.WithLogger(slog.Default()),
 	))
-	s.sender.Set(s.handler)
+	s.sender.set(s.handler)
 	return nil
 }
 

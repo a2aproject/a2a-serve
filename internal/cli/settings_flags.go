@@ -26,7 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 // settingsFlags are the agent settings shared by `a2a-serve start <agent>` and
@@ -51,7 +51,7 @@ const (
 
 // secretUsage is the help of a flag which takes a secret value.
 func secretUsage(usage string) string {
-	return usage + " (" + secretref.Syntax + ")"
+	return usage + " (" + flagparse.SecretSyntax + ")"
 }
 
 // listUsage labels the help of a list flag. split says whether commas also
@@ -161,7 +161,7 @@ func registerEmailFlags(f *pflag.FlagSet, email *agentdir.EmailSettings) {
 // settings returns the parsed settings. Secret-valued flags set to - are
 // read with r, and so are --secret values missing from the environment
 // when a terminal can prompt for them.
-func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error) {
+func (sf *settingsFlags) settings(r *flagparse.SecretReader) (agentdir.Settings, error) {
 	s := sf.s
 	if sf.command != "" {
 		argv, err := shlex.Split(sf.command)
@@ -182,13 +182,13 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 		if *v.dst == "" {
 			continue
 		}
-		ref, err := secretref.Parse(v.flag, *v.dst, r)
+		ref, err := flagparse.ParseSecret(v.flag, *v.dst, r)
 		if err != nil {
 			return s, err
 		}
 		// Env and stored references stay references, which the settings
 		// store under their names.
-		if ref.Kind == secretref.Literal || ref.Kind == secretref.Prompted {
+		if ref.Kind == flagparse.SecretLiteral || ref.Kind == flagparse.SecretPrompted {
 			*v.dst = ref.Value
 		}
 	}
@@ -200,13 +200,13 @@ func (sf *settingsFlags) settings(r *secretref.Reader) (agentdir.Settings, error
 			continue
 		}
 		if !ok {
-			value = secretref.Stdin
+			value = flagparse.SecretStdin
 		}
-		ref, err := secretref.Parse("secret "+name, value, r)
+		ref, err := flagparse.ParseSecret("secret "+name, value, r)
 		if err != nil {
 			return s, err
 		}
-		if ref.Kind == secretref.Stored {
+		if ref.Kind == flagparse.SecretStored {
 			if s.SecretSources == nil {
 				s.SecretSources = map[string]string{}
 			}

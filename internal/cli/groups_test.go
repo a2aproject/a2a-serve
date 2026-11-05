@@ -21,8 +21,8 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func TestServeCommandsHaveGroups(t *testing.T) {
@@ -60,11 +60,11 @@ func TestSecretFlagsHaveSecretValuesHelp(t *testing.T) {
 	walk = func(c *cobra.Command) {
 		var secret []string
 		c.Flags().VisitAll(func(f *pflag.Flag) {
-			if strings.Contains(f.Usage, secretref.Syntax) {
+			if strings.Contains(f.Usage, flagparse.SecretSyntax) {
 				secret = append(secret, "--"+f.Name)
 			}
 		})
-		if len(secret) > 0 && !strings.Contains(c.Long, secretref.Help) {
+		if len(secret) > 0 && !strings.Contains(c.Long, flagparse.SecretHelp) {
 			t.Errorf("%s has secret flags %v, want the Secret values paragraph in its long help", c.CommandPath(), secret)
 		}
 		for _, sub := range c.Commands() {

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package turns
+package agentsrv
 
 import (
 	"context"
@@ -44,7 +44,7 @@ func (s *scriptedCanceler) CancelTask(context.Context, *a2a.CancelTaskRequest) (
 	return r.task, r.err
 }
 
-func TestRetryingCancel(t *testing.T) {
+func TestWithRetryingCancel(t *testing.T) {
 	t.Parallel()
 	canceled := &a2a.Task{ID: "t1", Status: a2a.TaskStatus{State: a2a.TaskStateCanceled}}
 	notCancelable := cancelResult{err: a2a.ErrTaskNotCancelable}
@@ -65,18 +65,18 @@ func TestRetryingCancel(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			inner := &scriptedCanceler{results: tt.results}
-			h := RetryingCancel(inner)
+			h := withRetryingCancel(inner)
 
 			got, err := h.CancelTask(t.Context(), &a2a.CancelTaskRequest{ID: "t1"})
 
 			if !errors.Is(err, tt.wantErr) {
-				t.Fatalf("RetryingCancel().CancelTask() error = %v, want %v", err, tt.wantErr)
+				t.Fatalf("withRetryingCancel().CancelTask() error = %v, want %v", err, tt.wantErr)
 			}
 			if diff := cmp.Diff(tt.wantTask, got); diff != "" {
-				t.Fatalf("RetryingCancel().CancelTask() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("withRetryingCancel().CancelTask() wrong result (-want +got) diff = %s", diff)
 			}
 			if inner.calls != tt.wantCalls {
-				t.Fatalf("RetryingCancel().CancelTask() calls = %d, want %d", inner.calls, tt.wantCalls)
+				t.Fatalf("withRetryingCancel().CancelTask() calls = %d, want %d", inner.calls, tt.wantCalls)
 			}
 		})
 	}
@@ -106,11 +106,11 @@ func (e *inputRequiredExecutor) Cancel(_ context.Context, execCtx *a2asrv.Execut
 	}
 }
 
-func TestRetryingCancelOfExecutionEndingInInputRequired(t *testing.T) {
+func TestWithRetryingCancelOfExecutionEndingInInputRequired(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	h := RetryingCancel(a2asrv.NewHandler(&inputRequiredExecutor{release: make(chan struct{})}))
+	h := withRetryingCancel(a2asrv.NewHandler(&inputRequiredExecutor{release: make(chan struct{})}))
 	req := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}
 	var taskID a2a.TaskID
 	for ev, err := range h.SendStreamingMessage(ctx, req) {
@@ -126,9 +126,9 @@ func TestRetryingCancelOfExecutionEndingInInputRequired(t *testing.T) {
 	got, err := h.CancelTask(ctx, &a2a.CancelTaskRequest{ID: taskID})
 
 	if err != nil {
-		t.Fatalf("RetryingCancel().CancelTask() error = %v", err)
+		t.Fatalf("withRetryingCancel().CancelTask() error = %v", err)
 	}
 	if got.Status.State != a2a.TaskStateCanceled {
-		t.Fatalf("RetryingCancel().CancelTask() state = %v, want %v", got.Status.State, a2a.TaskStateCanceled)
+		t.Fatalf("withRetryingCancel().CancelTask() state = %v, want %v", got.Status.State, a2a.TaskStateCanceled)
 	}
 }
