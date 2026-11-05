@@ -171,3 +171,109 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 		})
 	}
 }
+
+func TestPrepareDockerChecksPinnedPaths(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	swap := func(t *testing.T, dir, target string) {
+		t.Helper()
+		if err := os.Rename(dir, dir+".old"); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink(target, dir); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mkdir := func(t *testing.T, dir string) string {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
+	tests := []struct {
+		name     string
+		setup    func(t *testing.T, ws string) (mounts []agentdir.Mount, hidden []string, swapped string)
+		dangling bool
+		wantErr  bool
+	}{
+		{
+			name: "mount in the workspace kept",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				data := mkdir(t, filepath.Join(ws, "data"))
+				return []agentdir.Mount{{Src: ws, Dst: ws}, {Src: data, Dst: "/data", ReadOnly: true}}, nil, ""
+			},
+		},
+		{
+			name: "mount in the workspace replaced by a symlink",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				data := mkdir(t, filepath.Join(ws, "data"))
+				return []agentdir.Mount{{Src: ws, Dst: ws}, {Src: data, Dst: "/data", ReadOnly: true}}, nil, data
+			},
+			wantErr: true,
+		},
+		{
+			name: "mount in the workspace replaced by a dangling symlink",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				data := mkdir(t, filepath.Join(ws, "data"))
+				return []agentdir.Mount{{Src: ws, Dst: ws}, {Src: data, Dst: "/data", ReadOnly: true}}, nil, data
+			},
+			dangling: true,
+			wantErr:  true,
+		},
+		{
+			name: "mount in a read-only workspace replaced by a symlink",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				data := mkdir(t, filepath.Join(ws, "data"))
+				return []agentdir.Mount{{Src: ws, Dst: ws, ReadOnly: true}, {Src: data, Dst: "/data"}}, nil, data
+			},
+		},
+		{
+			name: "mount out of every other mount replaced by a symlink",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				docs := mkdir(t, filepath.Join(t.TempDir(), "docs"))
+				return []agentdir.Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs"}}, nil, docs
+			},
+		},
+		{
+			name: "agent directory in the workspace replaced by a symlink",
+			setup: func(t *testing.T, ws string) ([]agentdir.Mount, []string, string) {
+				agent := mkdir(t, filepath.Join(ws, "agent"))
+				mkdir(t, filepath.Join(agent, agentdir.Name))
+				return []agentdir.Mount{{Src: ws, Dst: ws}}, []string{filepath.Join(agent, agentdir.Name)}, agent
+			},
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws := t.TempDir()
+			mounts, hidden, swapped := tc.setup(t, ws)
+			pins := Pin(mounts, hidden)
+			target := t.TempDir()
+			if tc.dangling {
+				target = filepath.Join(target, "gone")
+			}
+			if swapped != "" {
+				swap(t, swapped, target)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Mounts:  mounts,
+				Hidden:  hidden,
+				Pins:    pins,
+				Home:    t.TempDir(),
+				Name:    "a2a-test",
+			})
+			if err == nil {
+				t.Cleanup(func() {
+					if err := p.Stop(context.Background()); err != nil {
+						t.Errorf("Stop() error = %v", err)
+					}
+				})
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Prepare() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}

@@ -180,7 +180,8 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Sandbox:  cfg.Sandbox,
 		Mounts:   mounts,
 		Home:     s.dir.HomeDir(),
-		Hidden:   []string{s.dir.Path()},
+		Hidden:   s.hidden(),
+		Pins:     s.pins,
 		Env:      env,
 		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
 		Image:    cfg.Image,
@@ -221,6 +222,9 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop}, nil
 }
+
+// hidden are the host paths sandboxes hide even where a mount exposes them.
+func (s *Server) hidden() []string { return []string{s.dir.Path()} }
 
 // connectHarness gives spec the endpoint through which its agent process
 // reaches the server: the socket, or the key for the TCP listener in a

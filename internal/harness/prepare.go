@@ -61,6 +61,10 @@ type Spec struct {
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
 	Hidden []string
+	// Pins are Mounts and Hidden as the server resolved them at its start.
+	// A container doesn't start when a path the harness could replace
+	// resolves elsewhere now. Nil skips the check.
+	Pins Pins
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 
@@ -121,6 +125,9 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 }
 
 func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
+	if err := spec.Pins.check(spec.Mounts, spec.Hidden); err != nil {
+		return nil, err
+	}
 	rootless, err := CheckDocker(ctx)
 	if err != nil {
 		return nil, err

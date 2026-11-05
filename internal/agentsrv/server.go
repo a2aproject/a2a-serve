@@ -124,6 +124,9 @@ type Server struct {
 	harness     *harnessListeners
 	mainHarness *harnessEndpoint
 	bridge      harnessBridge
+	// pins are the mount sources and hidden paths as they resolved at the
+	// start, which containers of later agent processes are checked against.
+	pins harness.Pins
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -281,6 +284,11 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 		return fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
+	mounts, err := s.dir.Mounts(s.config())
+	if err != nil {
+		return err
+	}
+	s.pins = harness.Pin(mounts, s.hidden())
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
 		return err
