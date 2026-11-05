@@ -18,6 +18,7 @@ package harness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -112,7 +113,7 @@ func (opencode) Bootstrap(ws Workspace) error {
 	if err := json.Unmarshal([]byte(opencodePermission), &permission); err != nil {
 		return err
 	}
-	return writeJSONIfMissing(filepath.Join(ws.Home, ".config", "opencode", "opencode.json"), map[string]any{
+	return writeJSONIfMissing(ws.Home, filepath.Join(".config", "opencode", "opencode.json"), map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"permission": permission,
 		"autoupdate": false,
@@ -129,7 +130,7 @@ func (claude) Command(ws Workspace) Command {
 }
 
 func (claude) Bootstrap(ws Workspace) error {
-	return writeJSONIfMissing(filepath.Join(ws.Home, ".claude", "settings.json"), map[string]any{
+	return writeJSONIfMissing(ws.Home, filepath.Join(".claude", "settings.json"), map[string]any{
 		"permissions": map[string]any{"defaultMode": "default"},
 	})
 }
@@ -166,17 +167,28 @@ func (c custom) Bootstrap(ws Workspace) error {
 	return nil
 }
 
-// writeJSONIfMissing keeps config the user changed after the first start.
-func writeJSONIfMissing(path string, v any) error {
-	if _, err := os.Stat(path); err == nil {
+// writeJSONIfMissing writes the file name in home, keeping config the user
+// changed after the first start. The harness can change its home, so
+// symlinks that lead out of it are refused.
+func writeJSONIfMissing(home, name string, v any) (err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	_, err = root.Stat(name)
+	if err == nil {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
 	data, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, append(data, '\n'), 0o600)
+	return root.WriteFile(name, append(data, '\n'), 0o600)
 }

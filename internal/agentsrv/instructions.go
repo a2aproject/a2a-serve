@@ -118,7 +118,7 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	var errs []error
 	for _, home := range homes {
 		for _, f := range instructionFiles {
-			errs = append(errs, writeSection(filepath.Join(home, f), sb.String()))
+			errs = append(errs, writeSection(home, f, sb.String()))
 		}
 	}
 	return errors.Join(errs...)
@@ -132,17 +132,23 @@ func (s *Server) refreshInstructions(ctx context.Context) {
 	}
 }
 
-// writeSection replaces the managed section of the file at path, keeping
-// whatever else the file holds.
-func writeSection(path, body string) error {
-	data, err := os.ReadFile(path)
+// writeSection replaces the managed section of the file name in home,
+// keeping whatever else the file holds. The harness can change its home, so
+// symlinks that lead out of it are refused.
+func writeSection(home, name, body string) (err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	data, err := root.ReadFile(name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(withSection(string(data), body)), 0o600)
+	return root.WriteFile(name, []byte(withSection(string(data), body)), 0o600)
 }
 
 func withSection(text, body string) string {
