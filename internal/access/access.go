@@ -35,13 +35,9 @@ type Network struct {
 	Private string
 	// Public reports whether the agent has a public URL.
 	Public bool
-	// SignIn reports whether the private network admits people by sign-in,
-	// which makes an unset --private-access paired.
-	SignIn bool
 }
 
-// NetworkOf returns the networks cfg configures. It can't tell whether a
-// relay admits people by sign-in, so SignIn is left to the caller.
+// NetworkOf returns the networks cfg configures.
 func NetworkOf(cfg *agentdir.Config) Network {
 	n := Network{Public: cfg.Network.Public != ""}
 	switch p := cfg.Network.Private; p {
@@ -54,24 +50,18 @@ func NetworkOf(cfg *agentdir.Config) Network {
 	return n
 }
 
-// PrivateAccess is the --private-access in force: the setting, or by
-// default everyone, unless the private network admits people by sign-in.
-func PrivateAccess(p agentdir.PolicyConfig, signIn bool) string {
-	switch {
-	case p.PrivateAccess != "":
-		return p.PrivateAccess
-	case signIn:
-		return agentdir.AccessPaired
-	}
-	return agentdir.AccessEveryone
+// PrivateAccess is the --private-access in force: the setting, or
+// everyone by default.
+func PrivateAccess(p agentdir.PolicyConfig) string {
+	return cmp.Or(p.PrivateAccess, agentdir.AccessEveryone)
 }
 
 // Policy is the policy of the settings p: the private network with
 // --private-access everyone and --allow-email are authenticated; with
 // --public-access anyone, anyone is anonymous.
-func Policy(p agentdir.PolicyConfig, signIn bool) auth.Policy {
+func Policy(p agentdir.PolicyConfig) auth.Policy {
 	var out auth.Policy
-	if PrivateAccess(p, signIn) == agentdir.AccessEveryone {
+	if PrivateAccess(p) == agentdir.AccessEveryone {
 		out.Authenticated = append(out.Authenticated, auth.MemberPrivate)
 	}
 	for _, e := range p.AllowEmails {
@@ -108,24 +98,20 @@ func CountPairings(ps []store.Pairing) Pairings {
 // Describe says who may call an agent with the settings p on the networks
 // net, which has the pairings n.
 func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *controlapi.Access {
-	pol := Policy(p, net.SignIn)
+	pol := Policy(p)
 	a := &controlapi.Access{
 		Owner: []string{auth.MemberSelf}, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
 		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private),
 	}
 	if net.Private != "" {
-		a.PrivateAccess = PrivateAccess(p, net.SignIn)
+		a.PrivateAccess = PrivateAccess(p)
 	}
 	if net.Public {
 		a.PublicAccess = cmp.Or(p.PublicAccess, agentdir.AccessPaired)
 	}
 	a.Summary = []string{"you: " + yourDevices(net.Private), others(a.Others, n)}
 	if a.PrivateAccess == agentdir.AccessPaired {
-		line := networkName(net.Private) + " needs a pairing"
-		if p.PrivateAccess == "" {
-			line += ", since it admits people by sign-in (--private-access everyone opens it)"
-		}
-		a.Summary = append(a.Summary, line)
+		a.Summary = append(a.Summary, networkName(net.Private)+" needs a pairing")
 	}
 	switch {
 	case !net.Public:

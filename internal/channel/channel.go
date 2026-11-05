@@ -19,6 +19,7 @@ package channel
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -75,6 +76,50 @@ func (e *RateLimitError) Error() string { return e.Err.Error() }
 
 func (e *RateLimitError) Unwrap() error { return e.Err }
 
+// AttachmentError is returned by [Inbound.Prepare] for an attachment that
+// couldn't be downloaded. The message is still handled without it.
+type AttachmentError struct {
+	Name string
+	Err  error
+}
+
+func (e *AttachmentError) Error() string { return fmt.Sprintf("downloading %s: %v", e.Name, e.Err) }
+
+func (e *AttachmentError) Unwrap() error { return e.Err }
+
+// DroppedError is returned by [Inbound.Prepare] when the message can't be
+// handled. Reason is shown to its sender.
+type DroppedError struct {
+	Reason string
+	Err    error
+}
+
+func (e *DroppedError) Error() string { return fmt.Sprintf("%s: %v", e.Reason, e.Err) }
+
+func (e *DroppedError) Unwrap() error { return e.Err }
+
+// FailedAttachments returns the attachment errors within err, which may be
+// joined.
+func FailedAttachments(err error) []*AttachmentError {
+	var out []*AttachmentError
+	var walk func(error)
+	walk = func(err error) {
+		switch e := err.(type) {
+		case nil:
+		case *AttachmentError:
+			out = append(out, e)
+		case interface{ Unwrap() []error }:
+			for _, sub := range e.Unwrap() {
+				walk(sub)
+			}
+		default:
+			walk(errors.Unwrap(err))
+		}
+	}
+	walk(err)
+	return out
+}
+
 // Caps are what a channel supports.
 type Caps struct {
 	Edit    bool
@@ -129,7 +174,9 @@ type Inbound struct {
 	ReplyTo Ref
 	// Prepare, if set, finishes the message once its sender is known to be
 	// allowed in: it downloads files and may move Conv to a new thread. It
-	// keeps strangers from making the server do work on their behalf.
+	// keeps strangers from making the server do work on their behalf. It
+	// returns [AttachmentError] for files it couldn't download and
+	// [DroppedError] if the message must not be handled.
 	Prepare func(ctx context.Context, in *Inbound) error
 }
 
@@ -144,6 +191,10 @@ type Outbound struct {
 	ReplyTo Ref
 	// Subject is used by channels with subjects, such as email.
 	Subject string
+	// Literal shows Text exactly as written: the channel applies no markup,
+	// so that links and formatting can't hide any of it. It is set for
+	// approvals, whose text the owner has to read in full.
+	Literal bool
 }
 
 // Question is a decision offered with buttons.

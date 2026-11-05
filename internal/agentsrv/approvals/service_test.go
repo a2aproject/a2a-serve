@@ -394,3 +394,69 @@ func TestPageURL(t *testing.T) {
 		})
 	}
 }
+
+func TestOutcome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		answered  string
+		by        string
+		err       error
+		wantLabel string
+		wantBy    string
+	}{
+		{name: "answer was recorded", err: nil, wantLabel: "Allow", wantBy: "web"},
+		{name: "another answer won", answered: "reject", by: "pair:anna", err: store.ErrAnswered, wantLabel: "reject", wantBy: "anna"},
+		{name: "same answer won", answered: "once", by: auth.OwnerID, err: store.ErrAnswered, wantLabel: "Allow", wantBy: "owner"},
+		{name: "delivery failed", err: errors.New("agent unreachable"), wantLabel: "Allow", wantBy: "web"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := newService(t, &sendingHandler{})
+			ctx := context.Background()
+			q := FromMessage(permissionMessage(t))
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+			if err != nil {
+				t.Fatalf("NewRecord() error = %v", err)
+			}
+			if tc.answered != "" {
+				if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.by, tc.answered); err != nil {
+					t.Fatalf("AnswerQuestion() error = %v", err)
+				}
+			}
+			once, ok := q.Match("once")
+			if !ok {
+				t.Fatal("question has no option once")
+			}
+
+			label, by := svc.Outcome(ctx, rec, once, "web", tc.err)
+
+			if label != tc.wantLabel || by != tc.wantBy {
+				t.Fatalf("svc.Outcome() = %q, %q, want %q, %q", label, by, tc.wantLabel, tc.wantBy)
+			}
+		})
+	}
+}
+
+func TestHandlePageSetsSecurityHeaders(t *testing.T) {
+	t.Parallel()
+	svc := newService(t, &sendingHandler{})
+	ctx := context.Background()
+	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+	rec, err := svc.NewRecord(ctx, "t1", "c1", "", auth.OwnerID, FromMessage(permissionMessage(t)))
+	if err != nil {
+		t.Fatalf("NewRecord() error = %v", err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/hitl/"+rec.Token, nil)
+	req.SetPathValue("token", rec.Token)
+	w := httptest.NewRecorder()
+
+	svc.HandlePage(w, req)
+
+	for _, h := range []string{"Content-Security-Policy", "X-Content-Type-Options", "Referrer-Policy", "Cache-Control"} {
+		if w.Header().Get(h) == "" {
+			t.Errorf("HandlePage() header %s is empty, want it set", h)
+		}
+	}
+}

@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package cli implements the a2a-serve command-line interface: an a2a CLI
-// command plugin, run as `a2a serve`.
+// Package cli implements the a2a-serve command-line interface, which is also
+// an a2a CLI command plugin.
 package cli
 
 import (

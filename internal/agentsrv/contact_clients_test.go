@@ -21,6 +21,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
@@ -505,5 +506,45 @@ func TestContactClientsLocate(t *testing.T) {
 				t.Fatalf("ContactClients.locate() = %q, %q, want %q, %q", gotURL, gotVia, tc.wantURL, tc.wantVia)
 			}
 		})
+	}
+}
+
+func TestContactClientsSlowContactDoesNotStallOthers(t *testing.T) {
+	t.Parallel()
+	hanging := make(chan struct{})
+	release := make(chan struct{})
+	slow := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(hanging)
+		<-release
+	}))
+	t.Cleanup(slow.Close)
+	t.Cleanup(func() { close(release) })
+	remote := newFakeContact(t)
+	st := openTestStore(t)
+	putContact(t, st, store.Contact{Name: "slow", URL: slow.URL})
+	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	cc := newTestContactClients(t, st, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go func() {
+		if _, err := cc.contactClient(ctx, "slow"); err == nil {
+			t.Errorf("ContactClients.contactClient() of a hanging contact error = nil, want an error")
+		}
+	}()
+	<-hanging
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := cc.contactClient(context.Background(), "coder")
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("ContactClients.contactClient() while another contact hangs error = %v", err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatalf("ContactClients.contactClient() was blocked by the card fetch of another contact")
 	}
 }

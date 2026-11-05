@@ -33,7 +33,7 @@ const Binary = "a2a"
 // MinVersion is the oldest a2a CLI module version this build works with: the
 // first with --unix-socket <path> and credential helpers listed as
 // {scope, command} in config files. It stands in for an installed version
-// which is unknown or a development build.
+// which is unknown or a development build, and the e2e tests install it.
 const MinVersion = "v0.4.0"
 
 // Path returns the path of the a2a CLI on PATH.

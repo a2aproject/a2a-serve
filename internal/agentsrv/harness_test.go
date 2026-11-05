@@ -62,6 +62,7 @@ var testTimings = Timings{
 	ChannelRetryMin:          10 * time.Millisecond,
 	FirstBackupDelay:         50 * time.Millisecond,
 	AnonymousQuestionTimeout: 5 * time.Second,
+	SendRetry:                time.Millisecond,
 }
 
 func TestMain(m *testing.M) {
