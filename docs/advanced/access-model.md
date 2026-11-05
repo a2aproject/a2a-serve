@@ -38,7 +38,7 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 | `--allow-email <pattern>` | People who sign in with a matching email, such as `*@example.com`, on any network. Turns on Google sign-in at the public URL | none |
 | `pair invite <name> --owner` | The pairing can also see every task and answer every approval | off |
 
-You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
+You can always call the agent and answer its approvals: on this machine through the local URL, and from your other devices on the private network.
 
 The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there. A relay that admits people by sign-in admits anyone its identity provider accepts, so on such a relay `--private-access` defaults to `paired` until you set it.
 

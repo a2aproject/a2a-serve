@@ -13,7 +13,7 @@ The server recognizes each caller and gives it a role: owner, authenticated or a
 | Caller | How it is recognized | Role |
 | --- | --- | --- |
 | You, on the machine running the agent | The token a2a-serve saves for you on start, listed as `local` | owner |
-| Your devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device | owner |
+| Your devices on the tailnet, except the machine running the agent | Tailscale identity: the same user as the agent, on an untagged device | owner |
 | Everyone else on the private network, unless `--private-access paired` | The tailnet's or relay's identity | authenticated |
 | Messenger accounts | Linked with a pairing code | the pairing's role |
 | People whose email matches `--allow-email` | A verified email: [Google sign-in](email-sign-in.md), a tailnet or relay login, or mail that passes DMARC | authenticated |
@@ -21,6 +21,8 @@ The server recognizes each caller and gives it a role: owner, authenticated or a
 | [Webhook nodes](webhook-nodes.md) | Their node token | authenticated |
 | Unlinked senders in direct chats, with `--public-access anyone` | Their chat account | anonymous |
 | Anyone on the public URL, with `--public-access anyone` | Nothing | anonymous |
+
+On the private URL, the machine running the agent gets the role of everyone else on the private network, because the sandbox's connections to the tailnet come from it. Use the local URL on that machine.
 
 These settings are flags of `start` and `config set` ([reference](../reference/commands/config.md)). A running agent applies them at once, and every change prints who can call afterwards:
 

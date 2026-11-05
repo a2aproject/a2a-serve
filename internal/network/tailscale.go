@@ -23,7 +23,9 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -276,7 +278,33 @@ func (t *Tailscale) WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
 		p.Email = login
 	}
 	p.Self = st.Self != nil && who.Node.User == st.Self.UserID
+	local, err := net.InterfaceAddrs()
+	if err != nil {
+		slog.Warn("listing the addresses of this machine; treating the caller as this machine", "error", err)
+	}
+	p.ThisMachine = err != nil || onThisMachine(who.Node.Addresses, local)
 	return p, nil
+}
+
+// onThisMachine reports whether one of a node's tailnet addresses is on a
+// network interface of this machine. The node is then the machine's own
+// Tailscale, through which the sandbox reaches the tailnet. The server's
+// tsnet node runs in userspace and has no interface.
+func onThisMachine(node []netip.Prefix, local []net.Addr) bool {
+	for _, a := range local {
+		ipnet, ok := a.(*net.IPNet)
+		if !ok {
+			continue
+		}
+		ip, ok := netip.AddrFromSlice(ipnet.IP)
+		if !ok {
+			continue
+		}
+		if slices.ContainsFunc(node, func(p netip.Prefix) bool { return p.Addr() == ip.Unmap() }) {
+			return true
+		}
+	}
+	return false
 }
 
 // Peers implements [Provider].

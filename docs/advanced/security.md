@@ -19,7 +19,7 @@ What the sandbox doesn't protect yet:
 
 - **API keys are readable inside it.** Values passed with `--secret` are environment variables of the agent, so a tricked agent can read them and send them anywhere ([#16](https://github.com/a2aproject/a2a-serve/issues/16)).
 - **It can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
-- **It reaches the tailnet as you.** The tailnet is a trusted private network. When the machine running the agent is on it, the agent's connections to tailnet addresses go out through that machine's Tailscale node, so this agent's private URL, your other agents and other tailnet services see your device and grant your rights, whoever started the task.
+- **It reaches the tailnet as you.** The tailnet is a trusted private network. When the machine running the agent is on it, the agent's connections to tailnet addresses go out through that machine's Tailscale node, so your other agents and other tailnet services see your device and grant your rights, whoever started the task. This agent's private URL gives that machine the role of everyone else on the private network ([Identities](../guide/identities.md)).
 - **The workspace is writable** unless mounted `:ro`, including `.git`, `.mcp.json` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
 - **Docker is the boundary.** Kernel and Docker escapes are out of scope for this project.
 

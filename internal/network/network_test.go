@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -114,6 +115,37 @@ func TestLoginPromptShow(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("loginPrompt.show() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestOnThisMachine(t *testing.T) {
+	t.Parallel()
+	ipNet := func(s string) net.Addr {
+		ip, n, err := net.ParseCIDR(s)
+		if err != nil {
+			t.Fatalf("net.ParseCIDR(%q) error = %v", s, err)
+		}
+		n.IP = ip
+		return n
+	}
+	local := []net.Addr{ipNet("127.0.0.1/8"), ipNet("192.168.1.10/24"), ipNet("100.64.0.7/32"), ipNet("fd7a:115c:a1e0::7/128")}
+	tests := []struct {
+		name string
+		node []netip.Prefix
+		want bool
+	}{
+		{name: "this machine's IPv4", node: []netip.Prefix{netip.MustParsePrefix("100.64.0.7/32"), netip.MustParsePrefix("fd7a:115c:a1e0::8/128")}, want: true},
+		{name: "this machine's IPv6", node: []netip.Prefix{netip.MustParsePrefix("fd7a:115c:a1e0::7/128")}, want: true},
+		{name: "another machine", node: []netip.Prefix{netip.MustParsePrefix("100.64.0.8/32"), netip.MustParsePrefix("fd7a:115c:a1e0::8/128")}},
+		{name: "no addresses"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := onThisMachine(tc.node, local); got != tc.want {
+				t.Fatalf("onThisMachine() = %v, want %v", got, tc.want)
 			}
 		})
 	}
