@@ -15,10 +15,12 @@
 package agentctl
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -69,7 +71,10 @@ func TestOpen(t *testing.T) {
 				holdLock(t, d)
 			}
 
-			m, closer, err := Open(t.Context(), d, controlapi.NewClient(d))
+			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			defer cancel()
+
+			m, closer, err := Open(ctx, d, controlapi.NewClient(d))
 
 			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return a.Error() == b.Error() })); diff != "" {
 				t.Fatalf("Open() wrong error (-want +got) diff = %s", diff)
@@ -143,8 +148,10 @@ func TestSetWhileStarting(t *testing.T) {
 	want := &agentdir.Config{Name: "coder", Harness: "opencode"}
 	d := newAgent(t, want, nil)
 	holdLock(t, d)
+	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	defer cancel()
 
-	_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+	_, err := Set(ctx, d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
 
 	var busy *agenterr.BusyError
 	if !errors.As(err, &busy) {

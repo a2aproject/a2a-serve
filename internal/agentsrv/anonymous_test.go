@@ -120,7 +120,12 @@ func TestAnonymousConversationCallsNoAgents(t *testing.T) {
 
 func TestAnonymousApprovalTimesOut(t *testing.T) {
 	t.Parallel()
-	ts := startPublicServer(t, nil)
+	ts := startServer(t, serverOpts{
+		public:    publicNet(),
+		channel:   newFakeChannel("fake"),
+		configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone },
+		timings:   func(tm *Timings) { tm.AnonymousQuestionTimeout = time.Second },
+	})
 	anon := anonymousClient(t, ts)
 	task := send(t, anon, userText("ask", "", ""))
 	if task.Status.State != a2a.TaskStateInputRequired {

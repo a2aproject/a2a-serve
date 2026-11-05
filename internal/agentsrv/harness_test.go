@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"maps"
 	"math/rand/v2"
 	"net"
@@ -53,6 +54,10 @@ import (
 
 var fakeACP string
 
+// migratedDB is a server.db with every migration applied. Migrations take
+// most of the CPU time of a fresh store, so tests copy it instead.
+var migratedDB []byte
+
 var testTimings = Timings{
 	WatchInterval:            50 * time.Millisecond,
 	WatchMaxInterval:         200 * time.Millisecond,
@@ -78,11 +83,47 @@ func TestMain(m *testing.M) {
 		fmt.Fprintln(os.Stderr, "building fakeacp:", err)
 		os.Exit(1)
 	}
+	if migratedDB, err = migrateDB(filepath.Join(dir, "server.db")); err != nil {
+		fmt.Fprintln(os.Stderr, "migrating the template database:", err)
+		os.Exit(1)
+	}
 	code := m.Run()
 	if err := os.RemoveAll(dir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	os.Exit(code)
+}
+
+func migrateDB(path string) ([]byte, error) {
+	st, err := store.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := st.Close(); err != nil {
+		return nil, err
+	}
+	return os.ReadFile(path)
+}
+
+// seedDB writes migratedDB to path unless a database is already there.
+func seedDB(t *testing.T, path string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if errors.Is(err, fs.ErrExist) {
+		return
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.Write(migratedDB); err != nil {
+		t.Fatal(errors.Join(err, f.Close()))
+	}
+	if err := f.Close(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 // testServer is a server running fakeacp in a temporary directory.
@@ -103,7 +144,9 @@ type serverOpts struct {
 	secrets     agentdir.Secrets
 	// configure changes the config before the server starts.
 	configure func(*agentdir.Config)
-	google    *googleauth.Endpoints
+	// timings changes the test timings before the server starts.
+	timings func(*Timings)
+	google  *googleauth.Endpoints
 	// sharedClientID is the client ID of the shared Google app.
 	sharedClientID string
 	private        network.Provider
@@ -152,9 +195,14 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
+	seedDB(t, dir.DBPath())
+	timings := testTimings
+	if o.timings != nil {
+		o.timings(&timings)
+	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Out: o.out, SetupProblems: o.setupProblems, Timings: testTimings, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}

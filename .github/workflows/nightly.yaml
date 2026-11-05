@@ -21,8 +21,8 @@ jobs:
     - name: Race Detector
       run: go test -race -mod=readonly -v -count=1 -shuffle=on ./...
 
-    # A run of the agentsrv package takes about 4s on a hosted runner, so 200
-    # runs need more than the default 10m timeout.
+    # A run of the agentsrv package takes several seconds on a hosted runner,
+    # so 200 runs need more than the default 10m timeout.
     - name: Test Loop
       run: go test -mod=readonly -count=200 -shuffle=on -timeout=60m ./...
 

@@ -98,7 +98,9 @@ func (e *turnExecutor) turnCanceled() bool {
 
 func openTestStore(t *testing.T) *store.Store {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	path := filepath.Join(t.TempDir(), "server.db")
+	seedDB(t, path)
+	st, err := store.Open(path)
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
 	}
