@@ -26,6 +26,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -94,7 +95,8 @@ type Config struct {
 func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.Time) (Snapshot, error) {
 	snap := Snapshot{Name: snapshotName(cfg.Agent, now), Agent: cfg.Agent, Taken: now.UTC().Truncate(time.Second)}
 	pr, pw := io.Pipe()
-	go func() {
+	var writer sync.WaitGroup
+	writer.Go(func() {
 		enc, err := Encrypt(pw, cfg.Key)
 		if err != nil {
 			pw.CloseWithError(err)
@@ -102,9 +104,12 @@ func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.T
 		}
 		err = writeArchive(ctx, d, enc)
 		pw.CloseWithError(errors.Join(err, enc.Close()))
-	}()
+	})
 	err := dest.Put(ctx, snap.Name, pr)
-	if err := errors.Join(err, pr.Close()); err != nil {
+	err = errors.Join(err, pr.Close())
+	// The writer holds a plaintext copy of the database until it returns.
+	writer.Wait()
+	if err != nil {
 		// A cloud CLI may have stored what it read before the failure.
 		if derr := dest.Delete(context.WithoutCancel(ctx), snap.Name); derr != nil && !errors.Is(derr, fs.ErrNotExist) {
 			slog.Warn("removing a failed snapshot", "error", derr)

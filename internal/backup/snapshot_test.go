@@ -17,12 +17,17 @@ package backup
 import (
 	"archive/tar"
 	"bytes"
+	"compress/gzip"
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -136,5 +141,91 @@ func TestAddTreeFilesChangingSize(t *testing.T) {
 	want := map[string]string{"home/": "", "home/grow": "abc", "home/shrink": "de\x00\x00\x00"}
 	if diff := cmp.Diff(want, readTar(t, w.buf.Bytes())); diff != "" {
 		t.Fatalf("addTree() wrong entries (-want +got) diff = %s", diff)
+	}
+}
+
+// archiveFiles returns the entries of the gzipped tar archive in data.
+func archiveFiles(t *testing.T, data []byte) map[string]string {
+	t.Helper()
+	gz, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		t.Fatalf("gzip.NewReader() error = %v", err)
+	}
+	plain, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("reading the archive: %v", err)
+	}
+	return readTar(t, plain)
+}
+
+func TestWriteArchiveCopiesDatabaseOfPathWithURICharacters(t *testing.T) {
+	t.Parallel()
+	for _, name := range []string{"hash#dir", "query?dir", "percent%41dir"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			root := filepath.Join(t.TempDir(), name)
+			if err := os.Mkdir(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			d := newAgentAt(t, root)
+			var buf bytes.Buffer
+
+			if err := writeArchive(context.Background(), d, &buf); err != nil {
+				t.Fatalf("writeArchive() error = %v", err)
+			}
+
+			copyPath := filepath.Join(t.TempDir(), "copy.db")
+			if err := os.WriteFile(copyPath, []byte(archiveFiles(t, buf.Bytes())[pathDB]), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			db, err := sql.Open("sqlite", copyPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := db.Close(); err != nil {
+					t.Errorf("closing the database copy: %v", err)
+				}
+			}()
+			var text string
+			if err := db.QueryRow(`SELECT text FROM notes`).Scan(&text); err != nil || text != "remember me" {
+				t.Fatalf("database copy note = %q, %v, want %q", text, err, "remember me")
+			}
+		})
+	}
+}
+
+func TestWriteArchiveStagesDatabaseCopyInStateDir(t *testing.T) {
+	d := newAgent(t)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+
+	if err := writeArchive(context.Background(), d, io.Discard); err != nil {
+		t.Fatalf("writeArchive() error = %v", err)
+	}
+}
+
+// failingDest fails every Put after it read the header of the snapshot,
+// while the archive is still being written.
+type failingDest struct{ Dest }
+
+func (failingDest) Put(_ context.Context, _ string, r io.Reader) error {
+	if _, err := io.ReadFull(r, make([]byte, len(magic)+saltLen+prefixLen)); err != nil {
+		return err
+	}
+	return errors.New("destination unreachable")
+}
+
+func (failingDest) Delete(context.Context, string) error { return nil }
+
+func TestTakeJoinsArchiveWriterOnFailure(t *testing.T) {
+	d := newAgent(t)
+
+	if _, err := Take(context.Background(), d, failingDest{}, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now()); err == nil {
+		t.Fatalf("Take() error = nil, want the destination error")
+	}
+
+	buf := make([]byte, 1<<20)
+	if stacks := string(buf[:runtime.Stack(buf, true)]); strings.Contains(stacks, "backup.writeArchive") {
+		t.Fatalf("Take() returned while the archive writer still ran:\n%s", stacks)
 	}
 }

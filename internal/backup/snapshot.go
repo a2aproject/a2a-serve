@@ -24,6 +24,7 @@ import (
 	"io"
 	"io/fs"
 	"log/slog"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -60,7 +61,7 @@ var skippedHomeDirs = []string{".cache", ".npm"}
 func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	gz := gzip.NewWriter(w)
 	tw := tar.NewWriter(gz)
-	if err := addDB(ctx, tw, d.DBPath()); err != nil {
+	if err := addDB(ctx, tw, d); err != nil {
 		return err
 	}
 	for _, p := range []string{pathConfig, pathSecrets, pathAds} {
@@ -81,14 +82,16 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 
 // addDB adds a copy of the database made with VACUUM INTO, which is
 // consistent while the server writes to it.
-func addDB(ctx context.Context, tw *tar.Writer, dbPath string) error {
+// The copy is staged under state/, which only the user can read.
+func addDB(ctx context.Context, tw *tar.Writer, d agentdir.Dir) error {
+	dbPath := d.DBPath()
 	if _, err := os.Stat(dbPath); err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return err
 	}
-	tmp, err := os.MkdirTemp("", "a2a-backup")
+	tmp, err := os.MkdirTemp(d.StateDir(), "backup-")
 	if err != nil {
 		return err
 	}
@@ -97,7 +100,8 @@ func addDB(ctx context.Context, tw *tar.Writer, dbPath string) error {
 			slog.Warn("removing the database copy", "error", err)
 		}
 	}()
-	db, err := sql.Open("sqlite", "file:"+dbPath+"?_pragma=busy_timeout(5000)")
+	u := url.URL{Scheme: "file", OmitHost: true, Path: dbPath, RawQuery: "_pragma=busy_timeout(5000)"}
+	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return err
 	}
