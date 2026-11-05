@@ -32,6 +32,8 @@ type Settings struct {
 	Description string
 	// Command is the command line of the agent, as shell words.
 	Command string
+	// Model is the agent's model, in the agent's own format.
+	Model string
 	// Secrets are names of environment variables passed to the harness.
 	// Their values are taken from SecretValues, copied from the stored
 	// secret SecretSources names, or else read from the CLI's environment,

@@ -62,7 +62,7 @@ From the agent's project directory:
 ```bash
 mkdir -p ~/a2a-example2/coder && cd ~/a2a-example2/coder
 a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
-  --private tailscale --public tailscale
+  --model openrouter/anthropic/claude-sonnet-4.5 --private tailscale --public tailscale
 a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
 a2a-serve start
 ```

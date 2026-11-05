@@ -11,6 +11,7 @@ command: [cloudcode, acp]        # optional: replaces the profile's command
 sandbox: docker                  # or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace
+model: openrouter/anthropic/claude-sonnet-4.5  # optional: the agent's own model id
 secrets: [OPENROUTER_API_KEY]    # passed to the agent as environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
@@ -52,6 +53,7 @@ dot. Files with the snake_case keys of older versions still load, and
 | `--name` | `name` | `start <agent>`, `config set` |
 | `--description` | `description` | `start <agent>`, `config set` |
 | `--command` | `command` | `start <agent>`, `config set` |
+| `--model` | `model` | `start <agent>`, `config set` |
 | `--image` | `image` | `start <agent>`, `config set` |
 | `--sandbox` | `sandbox` | `start <agent>`, `config set` |
 | `--workspace` | `workspace` | `start <agent>`, `config set` |

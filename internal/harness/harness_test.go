@@ -248,6 +248,29 @@ func TestLookup(t *testing.T) {
 	}
 }
 
+func TestWarnings(t *testing.T) {
+	t.Parallel()
+	openrouter := []string{"OPENROUTER_API_KEY"}
+	tests := []struct {
+		name string
+		cfg  agentdir.Config
+		want int
+	}{
+		{name: "opencode with OpenRouter and no model", cfg: agentdir.Config{Harness: "opencode", Secrets: openrouter}, want: 1},
+		{name: "opencode with OpenRouter and a model", cfg: agentdir.Config{Harness: "opencode", Secrets: openrouter, Model: "openrouter/a/b"}},
+		{name: "opencode with another key", cfg: agentdir.Config{Harness: "opencode", Secrets: []string{"ANTHROPIC_API_KEY"}}},
+		{name: "claude with OpenRouter", cfg: agentdir.Config{Harness: "claude", Secrets: openrouter}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Warnings(&tc.cfg); len(got) != tc.want {
+				t.Fatalf("Warnings() = %q, want %d warnings", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBootstrap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

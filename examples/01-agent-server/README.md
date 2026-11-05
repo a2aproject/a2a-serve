@@ -34,7 +34,7 @@ EOF
 In **terminal A**, from the workspace:
 
 ```bash
-a2a-serve start opencode --name coder --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name coder --model openrouter/anthropic/claude-sonnet-4.5 --secret OPENROUTER_API_KEY
 ```
 
 For Claude Code, use `a2a-serve start claude` instead.
@@ -120,7 +120,7 @@ Start a second agent in **terminal C**:
 
 ```bash
 mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer
-a2a-serve start opencode --name reviewer --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name reviewer --model openrouter/anthropic/claude-sonnet-4.5 --secret OPENROUTER_API_KEY
 ```
 
 In **terminal B**, let `coder` call it: mint a code on the reviewer's side

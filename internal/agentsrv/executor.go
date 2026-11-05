@@ -233,6 +233,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Pins:     s.pins,
 		MCPMask:  s.dir.MCPMaskPath(),
 		Env:      env,
+		Model:    cfg.Model,
 		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
 		Image:    cfg.Image,
 		Limits:   harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},

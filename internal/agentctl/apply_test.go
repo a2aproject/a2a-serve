@@ -211,6 +211,27 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 	}
 }
 
+func TestSetWarnings(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{
+		Secrets: []string{"OPENROUTER_API_KEY"}, SecretValues: agentdir.Secrets{"OPENROUTER_API_KEY": "k"},
+	}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if len(got.Warnings) != 1 {
+		t.Fatalf("Set() warnings = %q, want one about OPENROUTER_API_KEY", got.Warnings)
+	}
+	got, err = Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Model: "openrouter/a/b"}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	if len(got.Warnings) != 0 {
+		t.Fatalf("Set() warnings = %q, want none with a model", got.Warnings)
+	}
+}
+
 func TestUnsetSecret(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY", "OTHER"}}, agentdir.Secrets{"KEY": "k", "OTHER": "o"})

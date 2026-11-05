@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 // Secret actions of a [SecretChange].
@@ -58,6 +59,8 @@ type Result struct {
 	// Access is who may call the agent with the saved settings, set when
 	// an access or network setting changed.
 	Access *controlapi.Access `json:"access,omitempty"`
+	// Warnings are problems of the saved settings that don't stop the agent.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // Empty reports whether nothing changed.
@@ -145,6 +148,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	res := &Result{
 		Name: next.Name, Path: d.ConfigPath(), Changes: agentdir.Diff(old, next),
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
+		Warnings: harness.Warnings(next),
 	}
 	if dryRun {
 		return res, nil

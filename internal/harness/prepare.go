@@ -73,6 +73,9 @@ type Spec struct {
 	MCPMask string
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
+	// Model is the model of the harness, in its own format. Empty keeps
+	// the harness default.
+	Model string
 
 	// Name, Image, Limits and Labels configure the container. Image
 	// defaults to the profile's.
@@ -171,7 +174,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
-	cmd, err := dr.Command(ctx, spec.Profile.Command(ws))
+	cmd, err := dr.Command(ctx, profileCommand(spec, ws))
 	if err != nil {
 		return nil, err
 	}
@@ -214,6 +217,15 @@ func writeIfMissing(path string, data []byte) error {
 	return f.Close()
 }
 
+// profileCommand is the command of the profile, with the model of spec.
+func profileCommand(spec Spec, ws Workspace) Command {
+	c := spec.Profile.Command(ws)
+	if spec.Model != "" {
+		c.Env = append(slices.Clone(c.Env), spec.Profile.ModelEnv(spec.Model)...)
+	}
+	return c
+}
+
 // cliEnv returns env with the a2a CLI timeout added unless env sets it.
 func cliEnv(env []string) []string {
 	if slices.ContainsFunc(env, func(kv string) bool { return strings.HasPrefix(kv, EnvTimeout+"=") }) {
@@ -223,7 +235,7 @@ func cliEnv(env []string) []string {
 }
 
 func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
-	c := spec.Profile.Command(ws)
+	c := profileCommand(spec, ws)
 	c.Env = append(c.Env, cliEnv(spec.Env)...)
 	if spec.CLI != "" {
 		c.Env = append(c.Env, "PATH="+filepath.Dir(spec.CLI)+string(os.PathListSeparator)+os.Getenv("PATH"))

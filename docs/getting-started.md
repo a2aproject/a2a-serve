@@ -20,11 +20,11 @@ Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 
 ## Start an agent
 
-In your project, start opencode with your model's API key:
+In your project, start opencode with your model and its API key:
 
 ```bash
 cd ~/src/app
-a2a-serve start opencode --secret OPENROUTER_API_KEY --detach
+a2a-serve start opencode --model openrouter/anthropic/claude-sonnet-4.5 --secret OPENROUTER_API_KEY --detach
 ```
 
 For Claude Code, run `a2a-serve start claude --secret ANTHROPIC_API_KEY --detach`. Without Docker, add `--sandbox local`.

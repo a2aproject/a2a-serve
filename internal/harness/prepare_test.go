@@ -63,6 +63,51 @@ func TestPrepareLocal(t *testing.T) {
 	}
 }
 
+func TestPrepareModel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		command []string
+		model   string
+		want    []string
+	}{
+		{name: "opencode", model: "openrouter/a/b", want: []string{`OPENCODE_CONFIG_CONTENT={"model":"openrouter/a/b"}`, `CLOUDCODE_CONFIG_CONTENT={"model":"openrouter/a/b"}`}},
+		{name: "claude", model: "sonnet", want: []string{"ANTHROPIC_MODEL=sonnet"}},
+		{name: "claude", command: []string{"my-claude"}, model: "opus", want: []string{"ANTHROPIC_MODEL=opus"}},
+		{name: "claude"},
+		{name: "gemini", command: []string{"gemini"}, model: "m"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+strings.Join(tc.command, "_")+tc.model, func(t *testing.T) {
+			t.Parallel()
+			ws := t.TempDir()
+			profile, err := Lookup(tc.name, tc.command)
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{
+				Profile: profile,
+				Sandbox: SandboxLocal,
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    t.TempDir(),
+				Model:   tc.model,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			var got []string
+			for _, kv := range p.Env {
+				if strings.HasPrefix(kv, "ANTHROPIC_MODEL=") || strings.Contains(kv, "_CONFIG_CONTENT=") {
+					got = append(got, kv)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prepare() model env wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 // runningDocker runs rootful, has every image and removes any container.
 const runningDocker = `case "$1" in
 info) echo "[name=seccomp,profile=builtin]" ;;
