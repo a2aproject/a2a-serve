@@ -274,6 +274,8 @@ func TestRemove(t *testing.T) {
 	s := newService(t)
 	everyone := &controlapi.Access{Others: []string{"everyone on the tailnet"}, Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet"}}
 	s.Access = func(context.Context) (*controlapi.Access, error) { return everyone, nil }
+	var forgotten []string
+	s.Forget = func(id string) { forgotten = append(forgotten, id) }
 	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
@@ -305,6 +307,9 @@ func TestRemove(t *testing.T) {
 	}
 	if s.Ads.Advertised("grok") {
 		t.Fatalf("Remove(grok) kept its advertisement")
+	}
+	if diff := cmp.Diff([]string{"grok"}, forgotten); diff != "" {
+		t.Fatalf("Remove() forgot wrong nodes (-want +got) diff = %s", diff)
 	}
 	all, err := s.List(ctx)
 	if err != nil || len(all) != 1 || all[0].Name != LocalOwner || len(all[0].Tokens) != 0 {
