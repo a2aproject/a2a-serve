@@ -40,7 +40,15 @@ type threads struct {
 
 	mu     sync.Mutex
 	loaded bool
-	list   []thread // least recently used first
+	state  threadState
+}
+
+type threadState struct {
+	// Legacy is set for a mailbox the agent read before conversations were
+	// keyed without the subject. Replies to threads it doesn't know get the
+	// old key, so conversations started before keep their context.
+	Legacy bool     `json:"legacy,omitempty"`
+	List   []thread `json:"threads"` // least recently used first
 }
 
 type thread struct {
@@ -58,19 +66,37 @@ func (t *threads) loadLocked(ctx context.Context) error {
 		return fmt.Errorf("loading email threads: %w", err)
 	}
 	if ok {
-		if err := json.Unmarshal([]byte(v), &t.list); err != nil {
+		if err := json.Unmarshal([]byte(v), &t.state); err != nil {
 			return fmt.Errorf("decoding email threads: %w", err)
 		}
+		t.loaded = true
+		return nil
+	}
+	_, read, err := t.kv.Get(ctx, lastUIDKey)
+	if err != nil {
+		return fmt.Errorf("loading the last UID: %w", err)
+	}
+	t.state.Legacy = read
+	if err := t.saveLocked(ctx); err != nil {
+		return err
 	}
 	t.loaded = true
 	return nil
 }
 
+// load reads the state. The channel loads it before it first records a
+// UID, so a new mailbox isn't taken for one read before the upgrade.
+func (t *threads) load(ctx context.Context) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.loadLocked(ctx)
+}
+
 func (t *threads) saveLocked(ctx context.Context) error {
-	if len(t.list) > maxThreads {
-		t.list = slices.Clone(t.list[len(t.list)-maxThreads:])
+	if len(t.state.List) > maxThreads {
+		t.state.List = slices.Clone(t.state.List[len(t.state.List)-maxThreads:])
 	}
-	v, err := json.Marshal(t.list)
+	v, err := json.Marshal(t.state)
 	if err != nil {
 		return err
 	}
@@ -79,36 +105,47 @@ func (t *threads) saveLocked(ctx context.Context) error {
 
 // touchLocked moves the thread of conv to the end, adding it if needed.
 func (t *threads) touchLocked(conv channel.ConvKey) *thread {
-	i := slices.IndexFunc(t.list, func(th thread) bool { return th.Conv == conv })
+	i := slices.IndexFunc(t.state.List, func(th thread) bool { return th.Conv == conv })
 	th := thread{Conv: conv}
 	if i >= 0 {
-		th = t.list[i]
-		t.list = slices.Delete(t.list, i, i+1)
+		th = t.state.List[i]
+		t.state.List = slices.Delete(t.state.List, i, i+1)
 	}
-	t.list = append(t.list, th)
-	return &t.list[len(t.list)-1]
+	t.state.List = append(t.state.List, th)
+	return &t.state.List[len(t.state.List)-1]
 }
 
 // convOf returns the conversation with addr in which the agent sent one of
-// ids.
-func (t *threads) convOf(ctx context.Context, addr string, ids []string) (channel.ConvKey, bool, error) {
+// ids, or else a known conversation with addr and root. Without one, a
+// reply in a legacy mailbox gets the key with the base subject, as before
+// the upgrade.
+func (t *threads) convOf(ctx context.Context, addr, root string, ids []string, reply bool, subject string) (channel.ConvKey, error) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := t.loadLocked(ctx); err != nil {
-		return "", false, err
+		return "", err
 	}
-	for i := len(t.list) - 1; i >= 0; i-- {
-		th := t.list[i]
+	for i := len(t.state.List) - 1; i >= 0; i-- {
+		th := t.state.List[i]
 		if a, _, _ := parseConv(th.Conv); a != addr {
 			continue
 		}
 		for _, id := range ids {
 			if slices.Contains(th.Sent, id) {
-				return th.Conv, true, nil
+				return th.Conv, nil
 			}
 		}
 	}
-	return "", false, nil
+	for i := len(t.state.List) - 1; i >= 0; i-- {
+		th := t.state.List[i]
+		if a, r, _ := parseConv(th.Conv); a == addr && r == root {
+			return th.Conv, nil
+		}
+	}
+	if reply && t.state.Legacy {
+		return legacyConvKey(addr, root, subject), nil
+	}
+	return ConvKey(addr, root), nil
 }
 
 // received records the subject of the latest mail in conv.
@@ -147,7 +184,7 @@ func (t *threads) subject(ctx context.Context, conv channel.ConvKey) (string, er
 	if err := t.loadLocked(ctx); err != nil {
 		return "", err
 	}
-	for _, th := range t.list {
+	for _, th := range t.state.List {
 		if th.Conv == conv {
 			return th.Subject, nil
 		}

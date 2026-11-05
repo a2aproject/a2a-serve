@@ -242,6 +242,9 @@ func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error 
 	if err != nil {
 		return fmt.Errorf("selecting %s: %w", c.cfg.Mailbox, err)
 	}
+	if err := c.threads.load(ctx); err != nil {
+		return err
+	}
 	if err := c.checkValidity(ctx, sel, func() (imap.UID, error) { return highestUID(client, sel.NumMessages) }); err != nil {
 		return err
 	}
@@ -523,10 +526,6 @@ func (c *Channel) envelope(raw []byte) (envelope, error) {
 // conv returns the conversation of a mail: the one in which the agent sent
 // a message the mail references, or else the thread root with the sender.
 func (c *Channel) conv(ctx context.Context, env envelope) (channel.ConvKey, error) {
-	conv, ok, err := c.threads.convOf(ctx, env.sender, slices.Concat(env.references, env.inReplyTo))
-	if err != nil || ok {
-		return conv, err
-	}
 	root := env.msgID
 	switch {
 	case len(env.references) > 0:
@@ -534,7 +533,7 @@ func (c *Channel) conv(ctx context.Context, env envelope) (channel.ConvKey, erro
 	case len(env.inReplyTo) > 0:
 		root = env.inReplyTo[0]
 	}
-	return ConvKey(env.sender, root), nil
+	return c.threads.convOf(ctx, env.sender, root, slices.Concat(env.references, env.inReplyTo), root != env.msgID, env.subject)
 }
 
 // inbound turns an authenticated mail into a message. It drops a mail whose
@@ -628,6 +627,22 @@ func body(raw []byte, reply bool) (string, []channel.File, error) {
 func ConvKey(addr, root string) channel.ConvKey {
 	return channel.ConvKey(addr + "\t" + root)
 }
+
+// legacyConvKey is the key of a conversation started before the subject
+// left the key: the correspondent, the thread root and the subject without
+// the prefixes the old pattern stripped.
+func legacyConvKey(addr, root, subject string) channel.ConvKey {
+	for {
+		loc := legacySubjectPrefix.FindStringIndex(subject)
+		if loc == nil {
+			break
+		}
+		subject = subject[loc[1]:]
+	}
+	return channel.ConvKey(addr + "\t" + root + "\t" + strings.ReplaceAll(strings.TrimSpace(subject), "\t", " "))
+}
+
+var legacySubjectPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?|aw|wg|sv)(\[\d+\])?\s*:\s*`)
 
 // subjectPrefix matches one reply or forward prefix, such as "Re:", "RE[2]:",
 // "Fwd:", the German "AW:" and "WG:", the Swedish "SV:" or the Chinese "回复：".

@@ -329,6 +329,67 @@ func TestParseReplyKeepsConversation(t *testing.T) {
 	}
 }
 
+func TestParseReplyKeepsLegacyConversation(t *testing.T) {
+	t.Parallel()
+	reply := func(id, subject string) string {
+		return "From: Alice <alice@alice.org>\r\n" +
+			"Subject: " + subject + "\r\n" +
+			"Message-ID: <" + id + "@alice.org>\r\n" +
+			"References: <root@alice.org> <m1@example.com>\r\n" +
+			"Authentication-Results: mx.example.com; dmarc=pass header.from=alice.org\r\n" +
+			"\r\n" +
+			"approve\r\n"
+	}
+	tests := []struct {
+		name string
+		kv   map[string]string
+		want channel.ConvKey
+	}{
+		{
+			name: "mailbox read before the upgrade",
+			kv:   map[string]string{uidValidityKey: "7", lastUIDKey: "41"},
+			want: "alice@alice.org\troot@alice.org\tfix the test",
+		},
+		{
+			name: "new mailbox",
+			want: ConvKey("alice@alice.org", "root@alice.org"),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := New(Config{Address: "coder@example.com", TrustedAuthServ: "mx.example.com"}, channeltest.NewKV(tc.kv))
+			for _, m := range []struct{ id, subject string }{{"m2", "Re: fix the test"}, {"m3", "Antw: fix the test"}} {
+				got, err := parse(t.Context(), c, reply(m.id, m.subject))
+				if err != nil {
+					t.Fatalf("parse(%s) error = %v, want a message", m.subject, err)
+				}
+				if got.Conv != tc.want {
+					t.Fatalf("parse(%s).Conv = %q, want %q", m.subject, got.Conv, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func TestNewMailboxIsNotLegacyAfterItsFirstSession(t *testing.T) {
+	t.Parallel()
+	c := newTestChannel(t)
+	if err := c.threads.load(t.Context()); err != nil {
+		t.Fatalf("threads.load() error = %v", err)
+	}
+	if err := c.checkValidity(t.Context(), &imap.SelectData{UIDValidity: 7, UIDNext: 10}, nil); err != nil {
+		t.Fatalf("checkValidity() error = %v", err)
+	}
+	got, err := parse(t.Context(), New(Config{Address: "coder@example.com", TrustedAuthServ: "mx.example.com"}, c.kv), rawMail)
+	if err != nil {
+		t.Fatalf("parse() error = %v, want a message", err)
+	}
+	if want := ConvKey("alice@alice.org", "root@alice.org"); got.Conv != want {
+		t.Fatalf("parse().Conv = %q, want %q", got.Conv, want)
+	}
+}
+
 func TestSendThreadsReplies(t *testing.T) {
 	t.Parallel()
 	srv := startSMTP(t)
