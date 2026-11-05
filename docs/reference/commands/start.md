@@ -66,7 +66,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/anthropic/claude-sonnet-4.5, or a Claude model for claude, such as sonnet (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**
@@ -148,7 +148,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/anthropic/claude-sonnet-4.5, or a Claude model for claude, such as sonnet (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**
@@ -302,7 +302,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--description string` |  | Agent description for its card |
-| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/anthropic/claude-sonnet-4.5, or a Claude model for claude, such as sonnet (default: the agent's) |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 
 **Workspace flags**

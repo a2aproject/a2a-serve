@@ -73,7 +73,7 @@ To create the agent without questions, such as in a script, export the variables
 
 ```bash
 a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-observability-agent/recipe \
-  --name o11y --yes --secret OPENROUTER_API_KEY --model openrouter/anthropic/claude-sonnet-4.5
+  --name o11y --yes --secret OPENROUTER_API_KEY --model openrouter/google/gemini-flash-latest
 ```
 
 ## 3. Describe your environment

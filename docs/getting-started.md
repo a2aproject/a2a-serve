@@ -24,7 +24,7 @@ In your project, start opencode with your model and its API key:
 
 ```bash
 cd ~/src/app
-a2a-serve start opencode --model openrouter/anthropic/claude-sonnet-4.5 --secret OPENROUTER_API_KEY --detach
+a2a-serve start opencode --model openrouter/google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach
 ```
 
 For Claude Code, run `a2a-serve start claude --secret ANTHROPIC_API_KEY --detach`. Without Docker, add `--sandbox local`.

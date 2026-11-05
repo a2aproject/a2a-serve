@@ -280,7 +280,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Model }, func(s *Settings) *string { return &s.Model }),
 		flag:   "model", path: "model", scope: scopeAgent, section: SectionGeneral,
-		usage: "Model of the agent, in its own format: provider/model for opencode, such as openrouter/anthropic/claude-sonnet-4.5, or a Claude model for claude, such as sonnet (default: the agent's)",
+		usage: "Model of the agent, in its own format: provider/model for opencode, such as openrouter/google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's)",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Image }, func(s *Settings) *string { return &s.Image }),

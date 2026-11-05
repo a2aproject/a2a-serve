@@ -94,7 +94,7 @@ func Lookup(name string, command []string) (Profile, error) {
 func Warnings(cfg *agentdir.Config) []string {
 	var out []string
 	if cfg.Harness == "opencode" && cfg.Model == "" && slices.Contains(cfg.Secrets, "OPENROUTER_API_KEY") {
-		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/anthropic/claude-sonnet-4.5")
+		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/google/gemini-flash-latest")
 	}
 	return out
 }

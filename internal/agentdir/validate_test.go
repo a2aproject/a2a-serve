@@ -36,7 +36,7 @@ func TestValidate(t *testing.T) {
 		{name: "valid", modify: func(*Config) {}},
 		{name: "acp with a command", modify: func(c *Config) { c.Harness, c.Command = "acp", []string{"fakeacp"} }},
 		{name: "unknown harness with a command", modify: func(c *Config) { c.Harness, c.Command = "gemini", []string{"gemini"} }},
-		{name: "model", modify: func(c *Config) { c.Model = "openrouter/anthropic/claude-sonnet-4.5" }},
+		{name: "model", modify: func(c *Config) { c.Model = "openrouter/google/gemini-flash-latest" }},
 		{name: "model with a profile command", modify: func(c *Config) { c.Harness, c.Command, c.Model = "claude", []string{"my-claude"}, "sonnet" }},
 		{name: "model of acp", modify: func(c *Config) { c.Harness, c.Command, c.Model = "acp", []string{"fakeacp"}, "m" }, wantErr: "--model needs the agent claude or opencode"},
 		{name: "no agent", modify: func(c *Config) { c.Harness = "" }, wantErr: "no agent"},

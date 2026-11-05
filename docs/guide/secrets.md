@@ -8,7 +8,7 @@ The server keeps API keys and tokens in `.a2a/state/secrets`, so an agent runnin
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-…
-a2a-serve start opencode --model openrouter/anthropic/claude-sonnet-4.5 --secret OPENROUTER_API_KEY
+a2a-serve start opencode --model openrouter/google/gemini-flash-latest --secret OPENROUTER_API_KEY
 ```
 
 1. The command reads `OPENROUTER_API_KEY` from your environment. When the variable isn't set, it asks for the value with a hidden prompt on a terminal and fails otherwise.
