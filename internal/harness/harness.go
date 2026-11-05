@@ -94,6 +94,19 @@ const ImageTag = "latest"
 // instead of its default of approving them.
 const opencodePermission = `{"bash":"ask","edit":"ask","webfetch":"ask"}`
 
+// opencodeConfig keeps opencode working after a tool call is denied, by a
+// rule or by the user, so that it can answer another way. By default it
+// ends the turn without an answer.
+const opencodeConfig = `{"experimental":{"continue_loop_on_deny":true}}`
+
+// opencodeEnv configures opencode on every start, also in agent homes
+// bootstrapped before a setting existed.
+var opencodeEnv = []string{
+	"OPENCODE_PERMISSION=" + opencodePermission,
+	"CLOUDCODE_PERMISSION=" + opencodePermission,
+	"OPENCODE_CONFIG_CONTENT=" + opencodeConfig,
+}
+
 type opencode struct{}
 
 func (opencode) Name() string  { return "opencode" }
@@ -104,7 +117,7 @@ func (opencode) Command(ws Workspace) Command {
 		Path: "opencode",
 		Args: []string{"acp"},
 		Dir:  ws.Dir,
-		Env:  []string{"OPENCODE_PERMISSION=" + opencodePermission, "CLOUDCODE_PERMISSION=" + opencodePermission},
+		Env:  slices.Clone(opencodeEnv),
 	}
 }
 
