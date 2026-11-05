@@ -392,3 +392,51 @@ func TestServiceName(t *testing.T) {
 		t.Fatalf("Dir.ServiceName() = %q, want %q", got, want)
 	}
 }
+
+func TestInitRefusesSymlinkedState(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		link func(d Dir) string
+	}{
+		{name: "state", link: func(d Dir) string { return d.StateDir() }},
+		{name: "home", link: func(d Dir) string { return d.HomeDir() }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			outside := t.TempDir()
+			link := tc.link(d)
+			if err := os.MkdirAll(filepath.Dir(link), 0o700); err != nil {
+				t.Fatalf("os.MkdirAll() error = %v", err)
+			}
+			if err := os.Symlink(outside, link); err != nil {
+				t.Fatalf("os.Symlink() error = %v", err)
+			}
+			if err := d.Init(); err == nil {
+				t.Fatalf("Dir.Init() with %s a symlink error = nil, want an error", link)
+			}
+		})
+	}
+}
+
+func TestInitKeepsExistingState(t *testing.T) {
+	t.Parallel()
+	d := Dir{Root: t.TempDir()}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() again error = %v", err)
+	}
+	for _, dir := range []string{d.StateDir(), d.HomeDir()} {
+		fi, err := os.Lstat(dir)
+		if err != nil {
+			t.Fatalf("os.Lstat(%s) error = %v", dir, err)
+		}
+		if !fi.IsDir() {
+			t.Fatalf("Dir.Init() made %s a %v, want a directory", dir, fi.Mode())
+		}
+	}
+}

@@ -25,6 +25,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Name is the name of the directory which marks an agent.
@@ -192,10 +194,15 @@ func (d Dir) ID() string {
 func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 
 // Init creates the .a2a and state directories and the .gitignore which keeps
-// state out of version control.
+// state out of version control. The state directory and the harness home
+// must be real directories, since a cloned repository could ship them as
+// symlinks.
 func (d Dir) Init() error {
-	for _, p := range []string{d.Path(), d.StateDir(), d.HomeDir()} {
-		if err := os.MkdirAll(p, 0o700); err != nil {
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		return err
+	}
+	for _, p := range []string{d.StateDir(), d.HomeDir()} {
+		if err := fsutil.MkdirReal(p); err != nil {
 			return err
 		}
 	}
