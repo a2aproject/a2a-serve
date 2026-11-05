@@ -196,7 +196,7 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 		Store:      fx.store,
 		Tasks:      fx.tasks,
 		Chain:      fx.chain,
-		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter()},
+		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter(time.Now)},
 		Approvals:  svc,
 		Chat:       fx.chat,
 		Supervisor: fx.supervisor,

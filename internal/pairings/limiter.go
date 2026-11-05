@@ -42,9 +42,9 @@ type Limiter struct {
 	shared  *failureBackoff
 }
 
-// NewLimiter returns a limiter with no failures recorded.
-func NewLimiter() *Limiter {
-	return &Limiter{clients: newFailureLimiter(maxFailures, failurePeriod), shared: newFailureBackoff(backoffBase, backoffMax)}
+// NewLimiter returns a limiter with no failures recorded on the clock now.
+func NewLimiter(now func() time.Time) *Limiter {
+	return &Limiter{clients: newFailureLimiter(maxFailures, failurePeriod, now), shared: newFailureBackoff(backoffBase, backoffMax, now)}
 }
 
 // attempt starts an attempt of client, or returns how long the client
@@ -91,8 +91,8 @@ type failureWindow struct {
 	count int
 }
 
-func newFailureLimiter(max int, window time.Duration) *failureLimiter {
-	return &failureLimiter{max: max, window: window, now: time.Now, hits: map[string]*failureWindow{}}
+func newFailureLimiter(max int, window time.Duration, now func() time.Time) *failureLimiter {
+	return &failureLimiter{max: max, window: window, now: now, hits: map[string]*failureWindow{}}
 }
 
 // reserve records a failure of key and returns the function that takes
@@ -153,8 +153,8 @@ type failureBackoff struct {
 	until    time.Time
 }
 
-func newFailureBackoff(base, max time.Duration) *failureBackoff {
-	return &failureBackoff{base: base, max: max, now: time.Now}
+func newFailureBackoff(base, max time.Duration, now func() time.Time) *failureBackoff {
+	return &failureBackoff{base: base, max: max, now: now}
 }
 
 // reserve records a failure, or returns how long until the next attempt is
