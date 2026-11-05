@@ -384,3 +384,59 @@ func TestSetConcurrentlyKeepsEveryUpdate(t *testing.T) {
 		t.Fatalf("saved env wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestApplyThen(t *testing.T) {
+	t.Parallel()
+	errStep := errors.New("step failed")
+	tests := []struct {
+		name      string
+		dryRun    bool
+		stepErr   error
+		wantCalls int
+		wantErr   error
+	}{
+		{name: "runs after saving", wantCalls: 1},
+		{name: "dry run skips it", dryRun: true},
+		{name: "fails", stepErr: errStep, wantCalls: 1, wantErr: errStep},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			var calls int
+			var saved string
+			var lockErr error
+			then := func(cfg *agentdir.Config) error {
+				calls++
+				saved = loadConfig(t, d).Sandbox
+				_, lockErr = fsutil.TryLock(d.LockPath())
+				if cfg.Sandbox != "local" {
+					t.Errorf("then() got sandbox %q, want local", cfg.Sandbox)
+				}
+				return tc.stepErr
+			}
+			mutate := func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+				cfg.Sandbox = "local"
+				return nil, nil, nil
+			}
+
+			_, err := ApplyThen(t.Context(), d, controlapi.NewClient(d), mutate, then, tc.dryRun)
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ApplyThen() error = %v, want %v", err, tc.wantErr)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("ApplyThen() ran the step %d times, want %d", calls, tc.wantCalls)
+			}
+			if calls == 0 {
+				return
+			}
+			if saved != "local" {
+				t.Fatalf("ApplyThen() ran the step before saving config.yaml, sandbox = %q", saved)
+			}
+			if !errors.Is(lockErr, fsutil.ErrLocked) {
+				t.Fatalf("fsutil.TryLock() during the step error = %v, want %v", lockErr, fsutil.ErrLocked)
+			}
+		})
+	}
+}

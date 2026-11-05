@@ -47,12 +47,23 @@ var apiKeys = map[string][]string{
 	"opencode": {"ANTHROPIC_API_KEY", "OPENAI_API_KEY", "GEMINI_API_KEY", "OPENROUTER_API_KEY"},
 }
 
-type prompter struct {
-	r   *bufio.Reader
-	out io.Writer
+// Prompter asks questions, one per line. The first-run wizard and other
+// commands that configure an agent share its questions.
+type Prompter struct {
+	r          *bufio.Reader
+	out        io.Writer
+	readSecret func(prompt string) (string, error)
 }
 
-func (p *prompter) ask(question, def string) (string, error) {
+// NewPrompter returns a prompter which reads answers from in and writes
+// questions to out. readSecret prints a prompt and reads an answer without
+// echoing it; nil reads it like any other answer.
+func NewPrompter(in io.Reader, out io.Writer, readSecret func(prompt string) (string, error)) *Prompter {
+	return &Prompter{r: bufio.NewReader(in), out: out, readSecret: readSecret}
+}
+
+// Ask asks a question and returns the answer, or def for an empty one.
+func (p *Prompter) Ask(question, def string) (string, error) {
 	prompt := question + ": "
 	if def != "" {
 		prompt = fmt.Sprintf("%s [%s]: ", question, def)
@@ -74,9 +85,10 @@ func (p *prompter) ask(question, def string) (string, error) {
 	return line, nil
 }
 
-func (p *prompter) choose(question string, options []string, def string) (string, error) {
+// Choose asks until the answer is one of options.
+func (p *Prompter) Choose(question string, options []string, def string) (string, error) {
 	for {
-		v, err := p.ask(fmt.Sprintf("%s (%s)", question, strings.Join(options, ", ")), def)
+		v, err := p.Ask(fmt.Sprintf("%s (%s)", question, strings.Join(options, ", ")), def)
 		if err != nil {
 			return "", err
 		}
@@ -87,6 +99,111 @@ func (p *prompter) choose(question string, options []string, def string) (string
 			return "", err
 		}
 	}
+}
+
+// Confirm asks a yes or no question.
+func (p *Prompter) Confirm(question string, def bool) (bool, error) {
+	d := "n"
+	if def {
+		d = "y"
+	}
+	v, err := p.Choose(question, []string{"y", "n"}, d)
+	return v == "y", err
+}
+
+// Secret asks for a value without echoing it.
+func (p *Prompter) Secret(question string) (string, error) {
+	if p.readSecret != nil {
+		return p.readSecret(question)
+	}
+	return p.Ask(question, "")
+}
+
+// APIKeys asks for the environment variables with the model API keys of
+// the harness, until each is set in this shell.
+func (p *Prompter) APIKeys(harness string, getenv func(string) string) ([]string, error) {
+	var def string
+	for _, k := range apiKeys[harness] {
+		if getenv(k) != "" {
+			def = k
+			break
+		}
+	}
+	for {
+		answer, err := p.Ask("Environment variables with API keys to pass to the agent (comma-separated)", def)
+		if err != nil {
+			return nil, err
+		}
+		var keys, missing []string
+		for k := range strings.SplitSeq(answer, ",") {
+			if k = strings.TrimSpace(k); k == "" {
+				continue
+			}
+			if getenv(k) == "" {
+				missing = append(missing, k)
+			}
+			keys = append(keys, k)
+		}
+		if len(missing) == 0 {
+			return keys, nil
+		}
+		if _, err := fmt.Fprintf(p.out, "  not set in this shell: %s\n", strings.Join(missing, ", ")); err != nil {
+			return nil, err
+		}
+	}
+}
+
+// SecretValue asks for the value of the variable name, which purpose
+// needs, from this shell if it is set there, or typed in, and adds it to
+// s. It reports whether the variable got a value.
+func (p *Prompter) SecretValue(s *agentdir.Settings, getenv func(string) string, name, purpose string) (bool, error) {
+	if getenv(name) != "" {
+		ok, err := p.Confirm(fmt.Sprintf("  Pass %s from this shell %s", name, purpose), true)
+		if err != nil || !ok {
+			return false, err
+		}
+		s.Secrets = append(s.Secrets, name)
+		return true, nil
+	}
+	v, err := p.Secret(fmt.Sprintf("  %s %s (empty to skip)", name, purpose))
+	if err != nil || v == "" {
+		return false, err
+	}
+	if s.SecretValues == nil {
+		s.SecretValues = agentdir.Secrets{}
+	}
+	s.SecretValues[name] = v
+	s.Secrets = append(s.Secrets, name)
+	return true, nil
+}
+
+// MCPServers shows the MCP servers of a project, and asks for the
+// variables they need which s doesn't pass to the agent yet.
+func (p *Prompter) MCPServers(s *agentdir.Settings, getenv func(string) string, servers []project.MCPServer) error {
+	if len(servers) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(p.out, "  The project's %s has MCP servers, which run in the sandbox:\n", project.MCPFile); err != nil {
+		return err
+	}
+	passed := func(name string) (string, bool) {
+		return "", slices.Contains(s.Secrets, name)
+	}
+	for _, srv := range servers {
+		if _, err := fmt.Fprintf(p.out, "    %s: %s\n", srv.Name, srv.Summary()); err != nil {
+			return err
+		}
+		_, missing := srv.Resolve(passed)
+		for _, name := range missing {
+			if slices.Contains(s.Secrets, name) {
+				continue
+			}
+			if _, err := p.SecretValue(s, getenv, name, "for "+srv.Name); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // ErrCanceled is returned by [Run] when the user doesn't confirm the settings.
@@ -116,7 +233,7 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	if len(harnesses) == 0 {
 		return Result{}, errors.New("no harnesses to choose from")
 	}
-	p := &prompter{r: bufio.NewReader(in), out: out}
+	p := NewPrompter(in, out, opts.ReadSecret)
 	if _, err := fmt.Fprintln(out, "No agent here yet. A few questions to set one up (Enter keeps the default):"); err != nil {
 		return Result{}, err
 	}
@@ -127,67 +244,32 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	if slices.Contains(harnesses, "opencode") {
 		def = "opencode"
 	}
-	if s.Harness, err = p.choose("Coding agent", harnesses, def); err != nil {
+	if s.Harness, err = p.Choose("Coding agent", harnesses, def); err != nil {
 		return res, err
 	}
-	if s.Name, err = p.ask("Agent name", opts.DefaultName); err != nil {
+	if s.Name, err = p.Ask("Agent name", opts.DefaultName); err != nil {
 		return res, err
 	}
 	if s.Sandbox, err = p.sandbox(opts.DockerErr); err != nil {
 		return res, err
 	}
-
-	var defKey string
-	for _, k := range apiKeys[s.Harness] {
-		if getenv(k) != "" {
-			defKey = k
-			break
-		}
+	if s.Secrets, err = p.APIKeys(s.Harness, getenv); err != nil {
+		return res, err
 	}
-	for {
-		keys, err := p.ask("Environment variables with API keys to pass to the agent (comma-separated)", defKey)
-		if err != nil {
-			return res, err
-		}
-		s.Secrets = nil
-		var missing []string
-		for k := range strings.SplitSeq(keys, ",") {
-			if k = strings.TrimSpace(k); k == "" {
-				continue
-			}
-			if getenv(k) == "" {
-				missing = append(missing, k)
-			}
-			s.Secrets = append(s.Secrets, k)
-		}
-		if len(missing) == 0 {
-			break
-		}
-		if _, err := fmt.Fprintf(out, "  not set in this shell: %s\n", strings.Join(missing, ", ")); err != nil {
-			return res, err
-		}
-	}
-
 	if err := p.project(opts, s); err != nil {
 		return res, err
 	}
 
-	if s.Private, err = p.choose("Private network for your machines and team", []string{"none", "tailscale"}, "none"); err != nil {
+	if s.Private, err = p.Choose("Private network for your machines and team", []string{"none", "tailscale"}, "none"); err != nil {
 		return res, err
 	}
-	if s.Public, err = p.choose("Public URL on the internet", []string{"none", "tailscale"}, "none"); err != nil {
+	if s.Public, err = p.Choose("Public URL on the internet", []string{"none", "tailscale"}, "none"); err != nil {
 		return res, err
 	}
-	const telegram = "Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)"
-	if opts.ReadSecret != nil {
-		s.Telegram, err = opts.ReadSecret(telegram)
-	} else {
-		s.Telegram, err = p.ask(telegram, "")
-	}
-	if err != nil {
+	if s.Telegram, err = p.Secret("Telegram bot token from @BotFather (env:VAR, the token, or empty to skip)"); err != nil {
 		return res, err
 	}
-	if res.Mode, err = p.choose("Run", []string{ModeForeground, ModeDetach, ModeService}, ModeForeground); err != nil {
+	if res.Mode, err = p.Choose("Run", []string{ModeForeground, ModeDetach, ModeService}, ModeForeground); err != nil {
 		return res, err
 	}
 	if opts.Command == nil {
@@ -198,7 +280,7 @@ func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 
 // project shows the MCP servers and skills of the project, and asks for the
 // variables its MCP servers need which aren't passed to the agent yet.
-func (p *prompter) project(opts Options, s *agentdir.Settings) error {
+func (p *Prompter) project(opts Options, s *agentdir.Settings) error {
 	if opts.Workspace == "" {
 		return nil
 	}
@@ -220,67 +302,11 @@ func (p *prompter) project(opts Options, s *agentdir.Settings) error {
 			return err
 		}
 	}
-	if len(servers) == 0 {
-		return nil
-	}
-	if _, err := fmt.Fprintf(p.out, "  The project's %s has MCP servers, which run in the sandbox:\n", project.MCPFile); err != nil {
-		return err
-	}
-	passed := func(name string) (string, bool) {
-		if slices.Contains(s.Secrets, name) {
-			return "", true
-		}
-		return "", false
-	}
-	for _, srv := range servers {
-		if _, err := fmt.Fprintf(p.out, "    %s: %s\n", srv.Name, srv.Summary()); err != nil {
-			return err
-		}
-		_, missing := srv.Resolve(passed)
-		for _, name := range missing {
-			if slices.Contains(s.Secrets, name) {
-				continue
-			}
-			if err := p.mcpVar(opts, s, srv.Name, name); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-// mcpVar asks for the value of a variable an MCP server needs: from this
-// shell if it is set there, or typed in.
-func (p *prompter) mcpVar(opts Options, s *agentdir.Settings, server, name string) error {
-	if opts.Getenv(name) != "" {
-		v, err := p.choose(fmt.Sprintf("  Pass %s from this shell for %s", name, server), []string{"y", "n"}, "y")
-		if err != nil || v != "y" {
-			return err
-		}
-		s.Secrets = append(s.Secrets, name)
-		return nil
-	}
-	question := fmt.Sprintf("  %s for %s (empty to skip)", name, server)
-	var v string
-	var err error
-	if opts.ReadSecret != nil {
-		v, err = opts.ReadSecret(question)
-	} else {
-		v, err = p.ask(question, "")
-	}
-	if err != nil || v == "" {
-		return err
-	}
-	if s.SecretValues == nil {
-		s.SecretValues = agentdir.Secrets{}
-	}
-	s.SecretValues[name] = v
-	s.Secrets = append(s.Secrets, name)
-	return nil
+	return p.MCPServers(s, opts.Getenv, servers)
 }
 
 // sandbox asks where the agent runs, defaulting to local without Docker.
-func (p *prompter) sandbox(dockerErr error) (string, error) {
+func (p *Prompter) sandbox(dockerErr error) (string, error) {
 	def := agentdir.SandboxDocker
 	if dockerErr != nil {
 		def = agentdir.SandboxLocal
@@ -288,7 +314,7 @@ func (p *prompter) sandbox(dockerErr error) (string, error) {
 			return "", err
 		}
 	}
-	v, err := p.choose("Sandbox", []string{agentdir.SandboxDocker, agentdir.SandboxLocal}, def)
+	v, err := p.Choose("Sandbox", []string{agentdir.SandboxDocker, agentdir.SandboxLocal}, def)
 	if err != nil || v == agentdir.SandboxDocker {
 		return "", err
 	}
@@ -296,7 +322,7 @@ func (p *prompter) sandbox(dockerErr error) (string, error) {
 }
 
 // confirm shows the command which creates the same agent and asks to save it.
-func (p *prompter) confirm(res Result, command func(agentdir.Settings) ([]string, error)) error {
+func (p *Prompter) confirm(res Result, command func(agentdir.Settings) ([]string, error)) error {
 	lines, err := command(res.Settings)
 	if err != nil {
 		return err
@@ -307,11 +333,11 @@ func (p *prompter) confirm(res Result, command func(agentdir.Settings) ([]string
 	if _, err := fmt.Fprintf(p.out, "\nThis is the same as running:\n  %s\n\n", strings.Join(lines, "\n  ")); err != nil {
 		return err
 	}
-	ok, err := p.choose("Save .a2a/config.yaml and start the agent", []string{"y", "n"}, "y")
+	ok, err := p.Confirm("Save .a2a/config.yaml and start the agent", true)
 	if err != nil {
 		return err
 	}
-	if ok != "y" {
+	if !ok {
 		return ErrCanceled
 	}
 	return nil

@@ -191,3 +191,43 @@ func TestRunAsksForMCPVariables(t *testing.T) {
 		t.Fatalf("Run() printed %q, want neither the secret nor variables with defaults", out.String())
 	}
 }
+
+func TestPrompterSecretValue(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"SET": "from-shell"}
+	tests := []struct {
+		name   string
+		input  string
+		secret string
+		want   agentdir.Settings
+		wantOK bool
+	}{
+		{name: "passed from the shell", input: "\n", want: agentdir.Settings{Secrets: []string{"SET"}}, wantOK: true},
+		{name: "not passed from the shell", input: "n\n"},
+		{name: "typed", secret: "typed", want: agentdir.Settings{Secrets: []string{"UNSET"}, SecretValues: agentdir.Secrets{"UNSET": "typed"}}, wantOK: true},
+		{name: "skipped"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			name := "UNSET"
+			if tc.input != "" {
+				name = "SET"
+			}
+			p := NewPrompter(strings.NewReader(tc.input), &strings.Builder{}, func(string) (string, error) { return tc.secret, nil })
+			var got agentdir.Settings
+
+			ok, err := p.SecretValue(&got, func(k string) string { return env[k] }, name, "for github")
+
+			if err != nil {
+				t.Fatalf("Prompter.SecretValue() error = %v", err)
+			}
+			if ok != tc.wantOK {
+				t.Fatalf("Prompter.SecretValue() = %v, want %v", ok, tc.wantOK)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prompter.SecretValue() wrong settings (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
