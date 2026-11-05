@@ -87,6 +87,10 @@ a2a-serve start opencode --sandbox local --command "opencode acp"
 bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 ```
 
+### Recording demos
+
+[`tools/demo/`](tools/demo/SKILL.md) records the examples as asciinema casts, with browser steps as Playwright videos. `tools/demo/record.sh list` shows the scenarios, and `--fake` dry-runs one with `fakeacp`. Its `SKILL.md` covers setup on macOS and works as an agent skill.
+
 ### End-to-end tests
 
 `./e2e` drives the core user journeys the same way: serving and calling an agent, approvals, restarts, pairing callers, user isolation, agent contacts, webhook nodes, schedules, backups and the inspector. Each test user gets its own `HOME`, set up with `a2a-serve doctor --fix`. The tests build `a2a-serve` and `fakeacp` and install the `a2a` CLI at `a2acli.MinVersion`; set `E2E_A2A_CLI` to the path of an `a2a` binary to skip the install:
