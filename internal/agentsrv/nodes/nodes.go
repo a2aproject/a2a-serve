@@ -275,25 +275,42 @@ func (n *Host) Mailbox(id string) (waiting, open int) {
 	return waiting, open
 }
 
+// pairAttempts is how often Pair reads the node again after another update
+// changed it.
+const pairAttempts = 3
+
 // Pair issues a new node token for the node of a taken node code, replacing
 // the previous one and the key its wakes are signed with.
 func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) {
-	node, err := n.cfg.Store.Node(r.Context(), id)
-	if err != nil {
-		jsonhttp.Error(w, http.StatusNotFound, "the node was removed")
+	for range pairAttempts {
+		node, err := n.cfg.Store.Node(r.Context(), id)
+		if err != nil {
+			jsonhttp.Error(w, http.StatusNotFound, "the node was removed")
+			return
+		}
+		secret := cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
+		token := mailboxapi.NewNodeToken(mailboxapi.APIBase(baseURL), node.ID, secret)
+		next := node
+		next.TokenHash, next.Secret = cryptoutil.Hash(token), mailboxapi.WakeKey(token)
+		err = n.cfg.Store.UpdateNode(r.Context(), node, next)
+		if errors.Is(err, store.ErrChanged) {
+			continue
+		}
+		if errors.Is(err, store.ErrNotFound) {
+			jsonhttp.Error(w, http.StatusNotFound, "the node was removed")
+			return
+		}
+		if err != nil {
+			jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		slog.Info("node paired", "node", node.ID)
+		jsonhttp.Write(w, http.StatusOK, pairapi.Response{
+			Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: mailboxapi.NodeURL(baseURL, node.ID),
+		})
 		return
 	}
-	secret := cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
-	token := mailboxapi.NewNodeToken(mailboxapi.APIBase(baseURL), node.ID, secret)
-	node.TokenHash, node.Secret = cryptoutil.Hash(token), mailboxapi.WakeKey(token)
-	if err := n.cfg.Store.PutNode(r.Context(), node); err != nil {
-		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-	slog.Info("node paired", "node", node.ID)
-	jsonhttp.Write(w, http.StatusOK, pairapi.Response{
-		Kind: pairapi.KindNode, Token: token, Principal: auth.NodePrincipal(node.ID), Agent: node.Name, URL: mailboxapi.NodeURL(baseURL, node.ID),
-	})
+	jsonhttp.Error(w, http.StatusConflict, "the node keeps changing; try again")
 }
 
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {

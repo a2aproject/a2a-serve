@@ -160,7 +160,8 @@ type Node struct {
 }
 
 // PutNode creates or replaces a node, with its webhook pairing. It returns
-// [ErrExists] if a pairing of another kind has its ID.
+// [ErrExists] if a pairing of another kind has its ID. Use [Store.UpdateNode]
+// to change a node that was read.
 func (s *Store) PutNode(ctx context.Context, n Node) error {
 	headers, err := json.Marshal(n.Headers)
 	if err != nil {
@@ -176,6 +177,41 @@ func (s *Store) PutNode(ctx context.Context, n Node) error {
 			n.ID, n.Name, n.Description, n.Webhook, string(headers), n.Secret, n.TokenHash, s.now().UnixNano())
 		return err
 	})
+}
+
+// ErrChanged is returned when a record changed since the caller read it.
+var ErrChanged = errors.New("the record changed since it was read")
+
+// UpdateNode replaces the node prev with next, as long as prev is still what
+// is stored. It returns [ErrNotFound] if the node is gone and [ErrChanged]
+// if another update was faster.
+func (s *Store) UpdateNode(ctx context.Context, prev, next Node) error {
+	oldHeaders, err := json.Marshal(prev.Headers)
+	if err != nil {
+		return err
+	}
+	headers, err := json.Marshal(next.Headers)
+	if err != nil {
+		return err
+	}
+	res, err := s.exec(ctx, `UPDATE nodes SET name = ?, description = ?, webhook = ?, headers = ?, secret = ?, token_hash = ?
+		WHERE id = ? AND name = ? AND description = ? AND webhook = ? AND headers = ? AND secret = ? AND token_hash = ?`,
+		next.Name, next.Description, next.Webhook, string(headers), next.Secret, next.TokenHash,
+		prev.ID, prev.Name, prev.Description, prev.Webhook, string(oldHeaders), prev.Secret, prev.TokenHash)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n > 0 {
+		return nil
+	}
+	if _, err := s.Node(ctx, prev.ID); err != nil {
+		return err
+	}
+	return ErrChanged
 }
 
 // Node returns a node by ID.
