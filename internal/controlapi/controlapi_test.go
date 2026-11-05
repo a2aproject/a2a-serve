@@ -22,13 +22,16 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -261,10 +264,83 @@ func TestClientRequestErrors(t *testing.T) {
 
 			err := NewClient(dir).DeleteChannel(t.Context(), "telegram")
 
+			var ce *clierr.Error
+			if errors.As(err, &ce) {
+				err = ce.Unwrap()
+			}
 			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return fmt.Sprintf("%T %v", a, a) == fmt.Sprintf("%T %v", b, b) })); diff != "" {
 				t.Fatalf("Client.DeleteChannel() wrong error (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestClientErrorClass(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		err      error
+		wantCode string
+		wantExit int
+		wantHint string
+	}{
+		{
+			name:     "unreachable URL",
+			err:      fmt.Errorf("can't reach http://127.0.0.1:1: %w", &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}),
+			wantCode: clierr.CodeIO,
+			wantExit: 3,
+			wantHint: clierr.Classify(&net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED}).Hint,
+		},
+		{
+			name:     "busy",
+			err:      &agenterr.BusyError{Name: "coder"},
+			wantCode: clierr.CodeBusy,
+			wantExit: 8,
+		},
+		{
+			name:     "not found",
+			err:      &agenterr.NotFoundError{Kind: "contact", Name: "grok"},
+			wantCode: clierr.CodeUsage,
+			wantExit: 2,
+			wantHint: clierr.UsageHint,
+		},
+		{
+			name:     "other",
+			err:      errors.New("database is locked"),
+			wantCode: clierr.CodeInternal,
+			wantExit: 1,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, tc.err) }))
+
+			_, err := NewClient(dir).AddContact(t.Context(), ContactRequest{Name: "grok"})
+
+			got := clierr.Classify(err)
+			want := &clierr.Error{Code: tc.wantCode, Message: tc.err.Error(), Hint: tc.wantHint, Exit: tc.wantExit}
+			if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(clierr.Error{})); diff != "" {
+				t.Fatalf("Client.AddContact() wrong error class (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestClientErrorWithoutClass(t *testing.T) {
+	t.Parallel()
+	dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		if _, err := w.Write([]byte(`{"error":"can't reach http://127.0.0.1:1"}`)); err != nil {
+			t.Errorf("Write() error = %v", err)
+		}
+	}))
+
+	_, err := NewClient(dir).AddContact(t.Context(), ContactRequest{Name: "grok"})
+
+	if got := clierr.Classify(err); got.Code != clierr.CodeInternal || got.Message != "can't reach http://127.0.0.1:1" {
+		t.Fatalf("Client.AddContact() error = %s %q, want %s from a server without error classes", got.Code, got.Message, clierr.CodeInternal)
 	}
 }
 

@@ -33,6 +33,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -443,10 +444,10 @@ func ChannelRequestFromConfig(conf *agentdir.Config, kind string) ChannelRequest
 }
 
 // ErrNotRunning is returned when no server answers on the control socket.
-var ErrNotRunning error = &notRunningError{name: "the server"}
+var ErrNotRunning error = clierr.NotRunning(&notRunningError{name: "the server"})
 
 // NotRunning returns an error, matching [ErrNotRunning], for the agent name.
-func NotRunning(name string) error { return &notRunningError{name: name} }
+func NotRunning(name string) error { return clierr.NotRunning(&notRunningError{name: name}) }
 
 type notRunningError struct{ name string }
 
@@ -455,9 +456,6 @@ func (e *notRunningError) Error() string {
 }
 
 func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
-
-// NotRunning marks the error for the CLI's exit code.
-func (e *notRunningError) NotRunning() bool { return true }
 
 // WriteError writes err as the response of a failed control call, with the
 // status of its [agenterr] type; [Client] turns it back into that type.

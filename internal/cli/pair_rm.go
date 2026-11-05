@@ -127,7 +127,7 @@ func forgetJoined(cfg *globalConfig, agentURL string, dryRun bool) error {
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("you haven't joined %s", agentURL)
+			return notJoined(agentURL)
 		}
 		if cfg.IsJSON() {
 			return cfg.PrintJSON(map[string]any{"dryRun": true, "kind": "joined", "name": agentURL})
@@ -140,7 +140,7 @@ func forgetJoined(cfg *globalConfig, agentURL string, dryRun bool) error {
 		return err
 	}
 	if !ok {
-		return fmt.Errorf("you haven't joined %s", agentURL)
+		return notJoined(agentURL)
 	}
 	return cfg.PrintRemoved("joined", agentURL, "✓ deleted the token for "+agentURL)
 }
