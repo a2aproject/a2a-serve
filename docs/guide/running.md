@@ -20,4 +20,6 @@ Each agent lives in its project directory and runs as its own process, with its 
 
 Commands that only change stored data, such as `pair`, `contact add --url`, `contact rm`, `schedule add`, `channel add` and `channel rm`, also work while the agent is stopped. It picks up the changes on its next start. While the agent starts or stops, these commands fail with exit code 8; run them again once `a2a-serve status` shows it running or stopped.
 
+`start --detach` and `start --service` return once the agent serves. If the server stops with an error first, they fail and show the end of the log. A service that failed this way stays installed, and the service manager keeps restarting it until you run `a2a-serve stop --uninstall`.
+
 `restart` checks the settings first, so a misconfigured agent keeps running. To restart an agent running in the foreground of another terminal, press Ctrl-C there and run `a2a-serve start` again.

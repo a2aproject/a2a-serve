@@ -25,7 +25,6 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 
 - **The event bus subscription queue has no bound** (`internal/agentsrv/executor.go:504-533`). The length of one task bounds it.
 - **The `localsrv` test servers keep tasks and output in memory.** They are for development only.
-- **`guardedHandler.ListTasks` runs one primary-key lookup per listed task** (`internal/agentsrv/harness_proxy.go:292-309`). There are at most 100 per page, so the cost is negligible.
 - **SQLite `auto_vacuum` is off.** SQLite reuses freed pages, so the file stops growing after the first prune.
 
 ### Architecture and developer experience

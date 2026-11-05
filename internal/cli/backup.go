@@ -95,7 +95,9 @@ func newBackupNowCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			ctx, cancel := context.WithTimeout(cmd.Context(), sf.deadline)
+			ctx, stop := signalContext(cmd.Context())
+			defer stop()
+			ctx, cancel := context.WithTimeout(ctx, sf.deadline)
 			defer cancel()
 			snap, err := backup.Take(ctx, d, dest, bcfg, time.Now())
 			if err != nil {

@@ -182,8 +182,26 @@ type preparedHarness struct {
 	stop func(context.Context) error
 }
 
-func (h *preparedHarness) process(stderr io.Writer) a2aacp.Process {
-	return a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr}
+func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
+	return checkedProcess{
+		Process: a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr},
+		check:   h.prepared.Check,
+	}
+}
+
+// checkedProcess checks the sandbox before every start of the process, since
+// a pool starts it again after it stops.
+type checkedProcess struct {
+	a2aacp.Process
+	check func() error
+}
+
+// Start implements [a2aacp.Agent].
+func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteCloser, error) {
+	if err := p.check(); err != nil {
+		return nil, err
+	}
+	return p.Process.Start(ctx, key)
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
@@ -221,17 +239,26 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress: imageProgress,
 	}
+	id, isUser := userOfKey(key)
+	switch {
+	case key == anonymousAgentKey:
+		spec.Home = s.dir.AnonymousHomeDir()
+	case isUser:
+		spec.Home = s.dir.UserHomeDir(id)
+	}
+	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
+		return nil, err
+	}
 	closeEndpoint := func() error { return nil }
 	if key == anonymousAgentKey {
-		spec.Home = s.dir.AnonymousHomeDir()
 		spec.Name += "-anonymous"
 		spec.Labels["a2a.role"] = auth.RoleAnonymous
-		if err := fsutil.MkdirPrivate(spec.Home); err != nil {
+		if err := fsutil.CheckPrivate(spec.Home); err != nil {
 			return nil, err
 		}
 	} else {
 		ep := s.mainHarness
-		if id, ok := userOfKey(key); ok {
+		if isUser {
 			if err := s.prepareUserHome(ctx, &spec, id); err != nil {
 				return nil, err
 			}
@@ -255,6 +282,13 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop}, nil
 }
 
+// checkHome makes home a real directory and pins it, after the sandbox
+// checks of cfg pass. Every write of the server into an agent home comes
+// after it.
+func (s *Server) checkHome(cfg *agentdir.Config, mounts []agentdir.Mount, home string) error {
+	return harness.PrepareHome(harness.Spec{Sandbox: cfg.Sandbox, Mounts: mounts, Hidden: s.hidden(), Home: home, Pins: s.pins})
+}
+
 // hidden are the host paths sandboxes hide even where a mount exposes them.
 func (s *Server) hidden() []string { return []string{s.dir.Path()} }
 
@@ -274,17 +308,15 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 	return nil
 }
 
-// prepareUserHome gives spec the home and container name of the agent
-// process of the user id, with the instructions of the owner's home.
+// prepareUserHome gives spec the container name of the agent process of
+// the user id, and its home the instructions of the owner's home.
 func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
-	spec.Home = s.dir.UserHomeDir(id)
 	spec.Name += "-" + agentdir.UserKey(id)
 	spec.Labels["a2a.role"] = auth.RoleAuthenticated
-	if err := fsutil.MkdirPrivate(s.dir.UserHomesDir()); err != nil {
-		return err
-	}
-	if err := fsutil.MkdirPrivate(spec.Home); err != nil {
-		return err
+	for _, dir := range []string{s.dir.UserHomesDir(), spec.Home} {
+		if err := fsutil.CheckPrivate(dir); err != nil {
+			return err
+		}
 	}
 	return s.writeInstructionsIn(ctx, spec.Home)
 }
@@ -646,6 +678,12 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	auth.SetCallUser(callCtx, p)
 	if !p.IsOwner() {
 		ctx = limiter.AttachScope(ctx, p.ID)
+	}
+	// a2a-go streams a running task to any subscriber, so subscribers get
+	// the same scoping as GetTask.
+	if sub, ok := req.Payload.(*a2a.SubscribeToTaskRequest); ok {
+		_, err := i.tasks.Get(ctx, sub.ID)
+		return ctx, nil, err
 	}
 	// Anonymous callers who proved nothing share one principal, so they
 	// list only the conversation they name, whose ID proves it is theirs.

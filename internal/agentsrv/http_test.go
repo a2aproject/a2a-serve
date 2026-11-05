@@ -17,12 +17,14 @@ package agentsrv
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -35,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
@@ -326,6 +329,101 @@ func TestOversizedA2ABody(t *testing.T) {
 				t.Fatalf("POST %s status = %d, want %d", path, got, http.StatusRequestEntityTooLarge)
 			}
 		})
+	}
+}
+
+func TestPairBodyLimit(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	tests := []struct {
+		name    string
+		padding int
+		want    int
+	}{
+		{name: "small body", padding: 1 << 10, want: http.StatusForbidden},
+		{name: "body over the limit", padding: 4 << 10, want: http.StatusRequestEntityTooLarge},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			body := `{"code":"WRONGCODE","padding":"` + strings.Repeat("a", tc.padding) + `"}`
+			if got := statusOf(t, http.MethodPost, ts.localURL()+"/pair", body, http.Header{"Content-Type": {"application/json"}}); got != tc.want {
+				t.Fatalf("POST /pair status = %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// stallPair starts a pairing request on a new connection to u that sends
+// only the start of its body, and keeps it open until the test ends.
+func stallPair(t *testing.T, u string) net.Conn {
+	t.Helper()
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	req := fmt.Sprintf("POST /pair HTTP/1.1\r\nHost: %s\r\nContent-Type: application/json\r\nContent-Length: 100\r\n\r\n{", parsed.Host)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	return conn
+}
+
+// stalledStatus returns the status of the response to a stalled request on
+// conn, or 0 when none comes within wait.
+func stalledStatus(t *testing.T, conn net.Conn, wait time.Duration) int {
+	t.Helper()
+	if err := conn.SetReadDeadline(time.Now().Add(wait)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return 0
+	}
+	if err != nil {
+		t.Fatalf("reading the response to a stalled request: %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+func TestUnauthenticatedClientLimit(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	for range httpserver.MaxUnauthenticatedPerClient {
+		stallPair(t, ts.localURL())
+	}
+	// Until all stalled requests reach the server, one more may get in too.
+	refused := 0
+	for range 5 {
+		if refused = stalledStatus(t, stallPair(t, ts.localURL()), 2*time.Second); refused != 0 {
+			break
+		}
+	}
+
+	hitl := statusOf(t, http.MethodGet, ts.localURL()+"/hitl/unknown", "", nil)
+	owner := statusOf(t, http.MethodPost, ts.localURL()+"/", listTasksRPC, http.Header{"Content-Type": {"application/json"}, "Authorization": {bearer}})
+
+	if refused != http.StatusTooManyRequests {
+		t.Fatalf("POST /pair over the client's stalled requests status = %d, want %d", refused, http.StatusTooManyRequests)
+	}
+	if hitl != http.StatusTooManyRequests {
+		t.Fatalf("GET /hitl/unknown while the client's pairing requests stall status = %d, want %d", hitl, http.StatusTooManyRequests)
+	}
+	if owner != http.StatusOK {
+		t.Fatalf("POST / of the owner while the client's pairing requests stall status = %d, want %d", owner, http.StatusOK)
 	}
 }
 

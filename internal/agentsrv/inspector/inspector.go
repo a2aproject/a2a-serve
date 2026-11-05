@@ -261,11 +261,16 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	if err != nil {
 		return nil, err
 	}
-	byTask := map[string]store.Question{}
+	type taskQuestion struct{ taskID, hitlID string }
+	// Records come newest first, and the newest record of a question wins.
+	records := map[taskQuestion]store.Question{}
 	var out []Approval
 	for _, rec := range recs {
 		if rec.Contact == "" {
-			byTask[rec.TaskID] = rec
+			key := taskQuestion{rec.TaskID, rec.HitlID}
+			if _, ok := records[key]; !ok {
+				records[key] = rec
+			}
 			continue
 		}
 		q := approvals.FromRecord(rec)
@@ -281,7 +286,7 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
 		}
-		if rec, ok := byTask[string(t.ID)]; ok {
+		if rec, ok := records[taskQuestion{string(t.ID), q.ID}]; ok {
 			a.Action = Path + "/questions/" + rec.ID
 		}
 		out = append(out, a)

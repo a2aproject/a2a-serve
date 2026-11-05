@@ -410,6 +410,36 @@ func TestPrepareThreadStart(t *testing.T) {
 	}
 }
 
+func TestHandleMessageKeepsTheRepliedToMessage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ref  *discordgo.MessageReference
+		want channel.Ref
+	}{
+		{name: "reply", ref: &discordgo.MessageReference{MessageID: "900", ChannelID: "c1"}, want: channel.Ref{Conv: "c1", ID: "900"}},
+		{name: "forward", ref: &discordgo.MessageReference{Type: discordgo.MessageReferenceTypeForward, MessageID: "900", ChannelID: "c2"}},
+		{name: "no reference"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := New("token", channeltest.NewKV(nil))
+			c.me = &discordgo.User{ID: botID}
+			in := make(chan channel.Inbound, 1)
+			c.in, c.ctx = in, t.Context()
+			m := message(1001, false)
+			m.MessageReference = tc.ref
+
+			c.handleMessage(nil, m, true)
+
+			if got := (<-in).ReplyTo; got != tc.want {
+				t.Fatalf("handleMessage() ReplyTo = %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestPrepareReportsFailedAttachments(t *testing.T) {
 	t.Parallel()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

@@ -100,6 +100,40 @@ func TestFromRecordKeepsText(t *testing.T) {
 	}
 }
 
+func TestDisplay(t *testing.T) {
+	t.Parallel()
+	const warning = "⚠ This request has hidden formatting characters, shown as [U+XXXX].\n"
+	tests := []struct {
+		name string
+		q    Question
+		want string
+	}{
+		{name: "text", q: Question{Title: "git push", Text: "Run git push?"}, want: "Run git push?"},
+		{name: "title without text", q: Question{Title: "git push"}, want: "git push"},
+		{name: "override", q: Question{Text: "rm -rf ~ #\u202Ehs.tset"}, want: warning + "rm -rf ~ #[U+202E]hs.tset"},
+		{name: "title with override", q: Question{Title: "cat \u202Dtxt"}, want: warning + "cat [U+202D]txt"},
+		{
+			name: "embeddings and isolates",
+			q:    Question{Text: "\u202Aa\u202Bb\u202Cc\u2066d\u2067e\u2068f\u2069"},
+			want: warning + "[U+202A]a[U+202B]b[U+202C]c[U+2066]d[U+2067]e[U+2068]f[U+2069]",
+		},
+		{name: "zero-width spaces", q: Question{Text: "r\u200Bm \uFEFF-rf\u2060"}, want: warning + "r[U+200B]m [U+FEFF]-rf[U+2060]"},
+		{
+			name: "emoji sequences, joiners and marks",
+			q:    Question{Text: "👩\u200D💻 🇺🇦 می\u200Cخواهم \u200Fשלום\u200E ok"},
+			want: "👩\u200D💻 🇺🇦 می\u200Cخواهم \u200Fשלום\u200E ok",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.q.Display(); got != tc.want {
+				t.Fatalf("Display() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestMatch(t *testing.T) {
 	t.Parallel()
 	q := FromMessage(permissionMessage(t))

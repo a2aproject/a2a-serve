@@ -38,6 +38,20 @@ State-changing requests (any method except `GET`, `HEAD` and `OPTIONS`) to the A
 
 On every route, the server refuses state-changing requests that a browser marks as cross-site, with `Sec-Fetch-Site` or an `Origin` that doesn't match the host. They get 403. The forms of `/hitl/<token>` and the inspector rely on this check, and the inspector's forms also carry a CSRF token.
 
+## Request limits
+
+Each listener handles at most 1024 requests at once, including open streams. It answers requests over this limit with 503 and `Retry-After`.
+
+`/pair`, `/oauth/…` and `/hitl/<token>` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so anonymous callers through the relay share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
+
+| Route | Largest body | Time to send the body |
+| --- | --- | --- |
+| `POST /pair`, `/hitl/<token>` | 4 KiB | 10 seconds in total |
+| `POST /oauth/token` | 64 KiB | 10 seconds in total |
+| A2A routes, `/n/…` | 32 MiB | 30 seconds without progress |
+
+A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
+
 ## Signatures and headers
 
 The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of agent servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.
