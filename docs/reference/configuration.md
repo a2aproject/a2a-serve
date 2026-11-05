@@ -17,7 +17,7 @@ network:
   private: tailscale
   public: tailscale
 policy:                          # --private-access, --public-access, --allow-email
-  private_access: paired         # default everyone; paired on a relay that admits people by sign-in
+  private_access: paired         # default everyone
   public_access: paired          # or anyone
   allow_emails: [mom@example.com, "*@example.com"]
 channels:
