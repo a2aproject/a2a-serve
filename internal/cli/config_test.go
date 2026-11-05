@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
@@ -413,6 +414,33 @@ func TestSettingsFlagPlacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSettingsFlagsMatchSettings(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd(&globalConfig{})
+	set, _, err := root.Find([]string{"config", "set"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	set.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if len(f.Annotations[sectionAnnotation]) > 0 {
+			got = append(got, f.Name)
+		}
+	})
+	if diff := cmp.Diff(agentdir.SettingNames(), got); diff != "" {
+		t.Fatalf("a2a-serve config set flags wrong result (-want +got) diff = %s", diff)
+	}
+	start, _, err := root.Find([]string{"start", "opencode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if s := f.Annotations[sectionAnnotation]; len(s) > 0 && s[0] != sectionRun && set.LocalFlags().Lookup(f.Name) == nil {
+			t.Fatalf("a2a-serve start opencode --%s is a setting that config set doesn't take", f.Name)
+		}
+	})
 }
 
 func TestConfigUnsetValidatesSettingBeforeDirectory(t *testing.T) {

@@ -24,13 +24,19 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
-// guidePath is the config guide, relative to the reference directory.
-var guidePath = filepath.Join("..", "..", "guide", "config.md")
+// generatedPart is text of a page between the markers
+// <!-- generated:NAME --> and <!-- /generated:NAME -->.
+type generatedPart struct {
+	// path is the page, relative to the reference directory.
+	path string
+	name string
+	text func() string
+}
 
-const (
-	liveStart = "<!-- generated:live-settings -->"
-	liveEnd   = "<!-- /generated:live-settings -->"
-)
+var generatedParts = []generatedPart{
+	{path: filepath.Join("..", "..", "guide", "config.md"), name: "live-settings", text: liveSettingsText},
+	{path: filepath.Join("..", "configuration.md"), name: "settings", text: settingsTable},
+}
 
 // liveSettingsText says which settings a running agent applies at once.
 func liveSettingsText() string {
@@ -43,9 +49,37 @@ func liveSettingsText() string {
 	return "A running agent applies " + list + " at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set`."
 }
 
-// updateGuide fills the live settings of the config guide at path. A missing
-// guide is skipped, so the reference can be written anywhere.
-func updateGuide(path string) error {
+// settingsTable lists the key of config.yaml each flag sets.
+func settingsTable() string {
+	var sb strings.Builder
+	sb.WriteString("| Flag | Key | Commands |\n| --- | --- | --- |\n")
+	for _, s := range agentdir.SettingDocs() {
+		key := "`" + s.Key + "`"
+		if s.Key == "" {
+			key = "the secret `" + s.Secret + "` in `state/secrets`"
+		}
+		commands := make([]string, len(s.Commands))
+		for i, c := range s.Commands {
+			commands[i] = "`" + c + "`"
+		}
+		fmt.Fprintf(&sb, "| `--%s` | %s | %s |\n", s.Flag, key, strings.Join(commands, ", "))
+	}
+	return strings.TrimSuffix(sb.String(), "\n")
+}
+
+// updateGenerated fills the generated parts of the pages, relative to the
+// reference directory dir. A missing page is skipped, so the reference can
+// be written anywhere.
+func updateGenerated(dir string) error {
+	for _, p := range generatedParts {
+		if err := p.update(filepath.Join(dir, p.path)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (p generatedPart) update(path string) error {
 	doc, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -53,7 +87,7 @@ func updateGuide(path string) error {
 	if err != nil {
 		return err
 	}
-	updated, err := fillLiveSettings(string(doc))
+	updated, err := p.fill(string(doc))
 	if err != nil {
 		return fmt.Errorf("%s: %w", path, err)
 	}
@@ -63,15 +97,16 @@ func updateGuide(path string) error {
 	return os.WriteFile(path, []byte(updated), 0o644)
 }
 
-// fillLiveSettings replaces the text between the live settings markers of doc.
-func fillLiveSettings(doc string) (string, error) {
-	head, rest, ok := strings.Cut(doc, liveStart)
+// fill replaces the text between the markers of p in doc.
+func (p generatedPart) fill(doc string) (string, error) {
+	start, end := "<!-- generated:"+p.name+" -->", "<!-- /generated:"+p.name+" -->"
+	head, rest, ok := strings.Cut(doc, start)
 	if !ok {
-		return "", fmt.Errorf("no %s marker", liveStart)
+		return "", fmt.Errorf("no %s marker", start)
 	}
-	_, tail, ok := strings.Cut(rest, liveEnd)
+	_, tail, ok := strings.Cut(rest, end)
 	if !ok {
-		return "", fmt.Errorf("no %s marker", liveEnd)
+		return "", fmt.Errorf("no %s marker", end)
 	}
-	return head + liveStart + "\n" + liveSettingsText() + "\n" + liveEnd + tail, nil
+	return head + start + "\n" + p.text() + "\n" + end + tail, nil
 }

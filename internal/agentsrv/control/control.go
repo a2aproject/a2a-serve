@@ -66,9 +66,6 @@ type Deps struct {
 	InspectorLogin func() string
 }
 
-// applied are the settings which [Deps.ReloadConfig] applies.
-var applied = []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}
-
 type api struct{ deps Deps }
 
 // Handler returns the handler of the control API.
@@ -270,5 +267,5 @@ func (a *api) config(w http.ResponseWriter, _ *http.Request) {
 
 func (a *api) reloadConfig(w http.ResponseWriter, _ *http.Request) {
 	err := a.deps.ReloadConfig()
-	reply(w, controlapi.ReloadResponse{Applied: applied}, err)
+	reply(w, controlapi.ReloadResponse{Applied: agentdir.LiveSettings()}, err)
 }

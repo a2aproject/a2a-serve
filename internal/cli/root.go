@@ -156,7 +156,8 @@ var listCommands = map[string]string{
 }
 
 // classify classifies err of cmd, pointing the hint of a usage error at the
-// help of cmd, or at the command which lists what was not found.
+// help of cmd, at the command which lists what was not found, or at
+// `config set` for its flags given to `start`.
 func classify(err error, cmd *cobra.Command) *clierr.Error {
 	ce := clierr.Classify(err)
 	if ce.Code != clierr.CodeUsage || ce.Hint != clierr.UsageHint || cmd == nil {
@@ -164,9 +165,12 @@ func classify(err error, cmd *cobra.Command) *clierr.Error {
 	}
 	hinted := *ce
 	var nf *agenterr.NotFoundError
+	setHint := configSetOnlyHint(cmd, ce.Message)
 	switch {
 	case errors.As(err, &nf) && listCommands[nf.Kind] != "":
 		hinted.Hint = fmt.Sprintf("run `%s %s` to see the %ss", cmd.Root().CommandPath(), listCommands[nf.Kind], nf.Kind)
+	case setHint != "":
+		hinted.Hint = setHint
 	case cmd.HasParent():
 		hinted.Hint = fmt.Sprintf("run `%s --help` for its flags", cmd.CommandPath())
 	}

@@ -63,6 +63,8 @@ func TestUsageHints(t *testing.T) {
 	}{
 		{name: "unknown flag of a subcommand", args: []string{"pair", "rm", "--bogus"}, want: "run `a2a-serve pair rm --help` for its flags"},
 		{name: "unknown flag of a command", args: []string{"status", "--bogus"}, want: "run `a2a-serve status --help` for its flags"},
+		{name: "config set flag on start", args: []string{"start", "opencode", "--tailscale-authkey", "x", "--dir", "{dir}"}, want: "--tailscale-authkey is a setting of `a2a-serve config set`: run `a2a-serve config set --tailscale-authkey <value>`, then `a2a-serve start opencode`"},
+		{name: "config set flag with a value on start", args: []string{"start", "claude", "--memory=8g", "--dir", "{dir}"}, want: "--memory is a setting of `a2a-serve config set`: run `a2a-serve config set --memory <value>`, then `a2a-serve start claude`"},
 		{name: "unknown command", args: []string{"bogus"}, want: clierr.UsageHint},
 		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve pair list` to see the pairings"},
 		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve contact list` to see the contacts"},

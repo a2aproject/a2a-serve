@@ -21,22 +21,19 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 // sectionAnnotation is the flag annotation naming the help section of a flag.
 const sectionAnnotation = "a2a-serve-section"
 
-const (
-	sectionGeneral   = "General"
-	sectionWorkspace = "Workspace"
-	sectionSandbox   = "Sandbox"
-	sectionNetwork   = "Network"
-	sectionAccess    = "Access"
-	sectionApprovals = "Approvals"
-	sectionRun       = "Run (not saved)"
-)
+const sectionRun = "Run (not saved)"
 
-var sections = []string{sectionGeneral, sectionWorkspace, sectionSandbox, sectionNetwork, sectionAccess, sectionApprovals, sectionRun}
+var sections = []string{
+	agentdir.SectionGeneral, agentdir.SectionWorkspace, agentdir.SectionSandbox, agentdir.SectionNetwork,
+	agentdir.SectionAccess, agentdir.SectionApprovals, sectionRun,
+}
 
 // setSection puts the named flags in a help section.
 func setSection(f *pflag.FlagSet, section string, names ...string) {

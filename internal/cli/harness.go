@@ -86,7 +86,7 @@ existing agent, the flags change them like ` + "`a2a-serve config set`" + `.
 			return runAgent(cmd.Context(), cfg, d, mode)
 		},
 	}
-	flags.register(cmd, coreSettings)
+	flags.register(cmd, agentdir.CoreFlags)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory (default: the current directory)")
 	mode.addRunFlags(f)

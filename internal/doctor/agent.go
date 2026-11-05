@@ -48,6 +48,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 	} else {
 		group = fmt.Sprintf("Agent %s (%s)", cfg.Name, d.Root)
 		results = append(results, checkConfig(cfg)...)
+		if r, ok := checkConfigKeys(d); ok {
+			results = append(results, r)
+		}
 		secrets, err := d.LoadSecrets()
 		if err != nil {
 			results = append(results, Result{ID: "secrets", Status: StatusFail, Message: err.Error(), Fix: fixEdit})
@@ -91,6 +94,31 @@ func checkConfig(cfg *agentdir.Config) []Result {
 		results = append(results, Result{ID: "config", Status: StatusFail, Message: e.Error(), Fix: fixEdit})
 	}
 	return results
+}
+
+// checkConfigKeys warns about the snake_case keys of older versions in
+// config.yaml, which the fix renames to camelCase.
+func checkConfigKeys(d agentdir.Dir) (Result, bool) {
+	data, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		return Result{ID: "config-keys", Status: StatusFail, Message: err.Error()}, true
+	}
+	keys, err := agentdir.LegacyKeys(data)
+	if err != nil || len(keys) == 0 {
+		return Result{}, false
+	}
+	return Result{
+		ID:      "config-keys",
+		Status:  StatusWarn,
+		Message: "config.yaml uses old snake_case keys: " + strings.Join(keys, ", "),
+		Fix:     fixCommand,
+		apply: func() (string, error) {
+			if err := d.UpdateConfig(func(*agentdir.Config) error { return nil }); err != nil {
+				return "", err
+			}
+			return "renamed the keys of " + d.ConfigPath() + " to camelCase", nil
+		},
+	}, true
 }
 
 // unjoin returns the errors joined in err, or err itself.

@@ -135,7 +135,7 @@ func (c *Channel) LinkHint(code string) string {
 // Run implements [channel.Channel]. It reconnects with backoff.
 func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 	if c.cfg.TrustedAuthServ == "" {
-		return errors.New("email: trusted_authserv must be set, or no mail could be trusted")
+		return errors.New("email: trustedAuthServ must be set, or no mail could be trusted")
 	}
 	retry := backoff.New(time.Second, 5*time.Minute, time.Minute)
 	for ctx.Err() == nil {

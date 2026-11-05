@@ -19,6 +19,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 )
 
@@ -29,7 +30,8 @@ type Settings struct {
 	Harness     string
 	Name        string
 	Description string
-	Command     []string
+	// Command is the command line of the agent, as shell words.
+	Command string
 	// Secrets are names of environment variables passed to the harness.
 	// Their values are taken from SecretValues, copied from the stored
 	// secret SecretSources names, or else read from the CLI's environment,
@@ -120,82 +122,103 @@ const (
 // the secrets to store. It doesn't validate the result.
 func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	secrets := Secrets{}
-	set := func(dst *string, v string) {
-		if v != "" {
-			*dst = v
+	for _, f := range fields {
+		entries := f.entries(&s)
+		if len(entries) == 0 {
+			continue
+		}
+		var err error
+		if f.merge != nil {
+			err = f.merge(&s, cfg, d, secrets)
+		} else {
+			err = f.mergeEntries(cfg, d, entries, secrets)
+		}
+		if err != nil {
+			return nil, err
 		}
 	}
-	set(&cfg.Harness, s.Harness)
-	set(&cfg.Name, s.Name)
 	if cfg.Name == "" {
 		cfg.Name = d.DefaultName()
 	}
 	cfg.Name = SanitizeName(cfg.Name)
-	set(&cfg.Description, s.Description)
-	set(&cfg.Sandbox, s.Sandbox)
-	set(&cfg.Image, s.Image)
-	setNetwork(&cfg.Network.Private, s.Private)
-	setNetwork(&cfg.Network.Public, s.Public)
-	set(&cfg.Network.TailscaleControlURL, s.TailscaleControlURL)
-	set(&cfg.Policy.PrivateAccess, s.PrivateAccess)
-	set(&cfg.Policy.PublicAccess, s.PublicAccess)
 	cfg.Policy.normalize()
-	set(&cfg.Backup.To, s.Backup)
-	set(&cfg.Backup.Interval, s.BackupInterval)
-	set(&cfg.Backup.Retention, s.BackupRetention)
-	set(&cfg.TaskTTL, s.TaskTTL)
-	set(&cfg.Limits.Memory, s.Memory)
-	set(&cfg.Limits.CPUs, s.CPUs)
-	if s.PIDs != 0 {
-		cfg.Limits.PIDs = s.PIDs
+	return secrets, nil
+}
+
+// entries returns the entries the flag of f sets in s.
+func (f field) entries(s *Settings) []string {
+	switch v := f.arg(s).(type) {
+	case *string:
+		return nonEmpty(*v)
+	case *int:
+		if *v == 0 {
+			return nil
+		}
+		return []string{strconv.Itoa(*v)}
+	case *[]string:
+		return *v
 	}
-	if len(s.Command) > 0 {
-		cfg.Command = s.Command
-	}
-	if s.Port != 0 {
-		cfg.Port = s.Port
-	}
-	if s.Workspace != "" {
-		m, err := ParseMount(s.Workspace)
+	return nil
+}
+
+// mergeEntries overrides a scalar with the entry, or adds the entries to a
+// list, replacing the entries with the same key. Secret values are replaced
+// by references, and added to secrets.
+func (f field) mergeEntries(cfg *Config, d Dir, entries []string, secrets Secrets) error {
+	parsed := make([]string, 0, len(entries))
+	for _, v := range entries {
+		v, err := f.parseEntry(d, v, secrets)
 		if err != nil {
-			return nil, fmt.Errorf("--workspace: %w", err)
+			return fmt.Errorf("%s: %w", f.label(), err)
 		}
-		cfg.Workspace = m.String()
-		if m == (Mount{Src: d.Root, Dst: d.Root}) {
-			cfg.Workspace = ""
+		parsed = append(parsed, v)
+	}
+	if !f.list {
+		f.put(cfg, parsed)
+		return nil
+	}
+	cur := f.get(cfg)
+	for _, v := range parsed {
+		cur = putKeyed(cur, v, f.key)
+	}
+	f.put(cfg, cur)
+	return nil
+}
+
+func (f field) parseEntry(d Dir, v string, secrets Secrets) (string, error) {
+	if f.parse != nil {
+		var err error
+		if v, err = f.parse(d, v); err != nil {
+			return "", err
 		}
 	}
-	for _, spec := range s.Mounts {
-		m, err := ParseMount(spec)
+	switch {
+	case f.secretOnly:
+		// Network providers read their secrets by well-known names.
+		if ref, ok := strings.CutPrefix(v, SecretPrefix); ok && ref != f.secret {
+			return "", fmt.Errorf("the network provider reads the secret %s; pass the value or env:VAR instead of %s", f.secret, v)
+		}
+		_, sec, err := ResolveInput(v, f.secret)
 		if err != nil {
-			return nil, fmt.Errorf("--mount: %w", err)
+			return "", err
 		}
-		cfg.Mounts = putKeyed(cfg.Mounts, m.String(), mountKey)
-	}
-	for _, kv := range s.Env {
-		cfg.Env = putKeyed(cfg.Env, kv, envKey)
-	}
-	for _, v := range s.AllowTools {
-		cfg.Approvals.Allow = putKeyed(cfg.Approvals.Allow, v, nil)
-	}
-	for _, v := range s.DenyTools {
-		cfg.Approvals.Deny = putKeyed(cfg.Approvals.Deny, v, nil)
-	}
-	if s.OwnerChat != "" {
-		cfg.Approvals.OwnerChat = s.OwnerChat
-	}
-	for _, v := range s.DisableMCP {
-		cfg.MCP.Disabled = putKeyed(cfg.MCP.Disabled, strings.TrimSpace(v), nil)
-	}
-	for _, v := range s.AllowEmails {
-		cfg.Policy.AllowEmails = putKeyed(cfg.Policy.AllowEmails, strings.TrimSpace(v), strings.ToLower)
-	}
-	if name, ok := strings.CutPrefix(s.GoogleClientID, "env:"); ok {
-		if s.GoogleClientID = os.Getenv(name); s.GoogleClientID == "" {
-			return nil, fmt.Errorf("--google-client-id: environment variable %s is empty", name)
+		for _, val := range sec {
+			secrets[f.secret] = val
 		}
+		return "", nil
+	case f.secret != "":
+		ref, sec, err := ResolveInput(v, f.secret)
+		if err != nil {
+			return "", err
+		}
+		maps.Copy(secrets, sec)
+		return ref, nil
 	}
-	set(&cfg.Auth.GoogleClientID, s.GoogleClientID)
+	return v, nil
+}
+
+// mergeSecrets adds the --secret names to cfg and their values to secrets.
+func mergeSecrets(s *Settings, cfg *Config, d Dir, secrets Secrets) error {
 	var stored Secrets
 	for _, name := range s.Secrets {
 		v := s.SecretValues[name]
@@ -203,107 +226,23 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 			if stored == nil {
 				var err error
 				if stored, err = d.LoadSecrets(); err != nil {
-					return nil, err
+					return err
 				}
 			}
 			if v = stored[src]; v == "" {
-				return nil, fmt.Errorf("--secret %s: no stored secret %s", name, src)
+				return fmt.Errorf("--secret %s: no stored secret %s", name, src)
 			}
 		}
 		if v == "" {
 			v = os.Getenv(name)
 		}
 		if v == "" {
-			return nil, fmt.Errorf("--secret %s: the environment variable is not set", name)
+			return fmt.Errorf("--secret %s: the environment variable is not set", name)
 		}
 		secrets[name] = v
 		cfg.Secrets = putKeyed(cfg.Secrets, name, nil)
 	}
-	resolve := func(v, fallback string) (string, error) {
-		ref, sec, err := ResolveInput(v, fallback)
-		if err != nil {
-			return "", err
-		}
-		maps.Copy(secrets, sec)
-		return ref, nil
-	}
-	if s.Telegram != "" {
-		ref, err := resolve(s.Telegram, SecretTelegram)
-		if err != nil {
-			return nil, fmt.Errorf("telegram token: %w", err)
-		}
-		cfg.Channels.Telegram = &TelegramConfig{Token: ref}
-	}
-	if s.Discord != "" {
-		ref, err := resolve(s.Discord, SecretDiscord)
-		if err != nil {
-			return nil, fmt.Errorf("discord token: %w", err)
-		}
-		cfg.Channels.Discord = &DiscordConfig{Token: ref}
-	}
-	if s.GoogleClientSecret != "" {
-		ref, err := resolve(s.GoogleClientSecret, SecretGoogleClient)
-		if err != nil {
-			return nil, fmt.Errorf("--google-client-secret: %w", err)
-		}
-		cfg.Auth.GoogleClientSecret = ref
-	}
-	if s.BackupKey != "" {
-		ref, err := resolve(s.BackupKey, SecretBackupKey)
-		if err != nil {
-			return nil, fmt.Errorf("--backup-key: %w", err)
-		}
-		cfg.Backup.Key = ref
-	}
-	if e := s.Email; e != nil && *e != (EmailSettings{}) {
-		next := EmailConfig{}
-		if cfg.Channels.Email != nil {
-			next = *cfg.Channels.Email
-		}
-		set(&next.Address, e.Address)
-		set(&next.IMAP, e.IMAP)
-		set(&next.SMTP, e.SMTP)
-		set(&next.Username, e.Username)
-		set(&next.Mailbox, e.Mailbox)
-		set(&next.TrustedAuthServ, e.TrustedAuthServ)
-		set(&next.OAuthTokenURL, e.OAuthTokenURL)
-		set(&next.OAuthClientID, e.OAuthClientID)
-		for _, s := range []struct {
-			flag, value, name string
-			dst               *string
-		}{
-			{"email-password", e.Password, SecretEmailPassword, &next.Password},
-			{"email-oauth-client-secret", e.OAuthClientSecret, SecretEmailClient, &next.OAuthClientSecret},
-			{"email-oauth-refresh-token", e.OAuthRefreshToken, SecretEmailOAuth, &next.OAuthRefreshToken},
-		} {
-			if s.value == "" {
-				continue
-			}
-			ref, err := resolve(s.value, s.name)
-			if err != nil {
-				return nil, fmt.Errorf("--%s: %w", s.flag, err)
-			}
-			*s.dst = ref
-		}
-		cfg.Channels.Email = &next
-	}
-	// Network providers read their secrets by well-known names.
-	for name, v := range map[string]string{SecretTailscaleKey: s.TailscaleAuthKey, SecretRelayToken: s.RelayToken} {
-		if v == "" {
-			continue
-		}
-		if ref, ok := strings.CutPrefix(v, SecretPrefix); ok && ref != name {
-			return nil, fmt.Errorf("%s: the network provider reads the secret %s; pass the value or env:VAR instead of %s", name, name, v)
-		}
-		_, sec, err := ResolveInput(v, name)
-		if err != nil {
-			return nil, fmt.Errorf("%s: %w", name, err)
-		}
-		for _, val := range sec {
-			secrets[name] = val
-		}
-	}
-	return secrets, nil
+	return nil
 }
 
 // putKeyed adds entry to list, replacing the entry with the same key. A nil
@@ -367,42 +306,37 @@ func (d Dir) ApplySettings(s Settings) (*Config, Secrets, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	secrets, err := s.Apply(conf, d)
-	if err != nil {
-		return nil, nil, &SettingsError{Err: err}
-	}
-	stored, err := d.LoadSecrets()
+	secrets, err := d.applySettings(conf, s)
 	if err != nil {
 		return nil, nil, err
-	}
-	maps.Copy(stored, secrets)
-	if err := d.CheckConfig(conf, stored); err != nil {
-		return nil, nil, &SettingsError{Err: err}
 	}
 	return conf, secrets, nil
 }
 
+// applySettings merges s into conf and validates the result.
+func (d Dir) applySettings(conf *Config, s Settings) (Secrets, error) {
+	secrets, err := s.Apply(conf, d)
+	if err != nil {
+		return nil, &SettingsError{Err: err}
+	}
+	stored, err := d.LoadSecrets()
+	if err != nil {
+		return nil, err
+	}
+	maps.Copy(stored, secrets)
+	if err := d.CheckConfig(conf, stored); err != nil {
+		return nil, &SettingsError{Err: err}
+	}
+	return secrets, nil
+}
+
 // SaveSettings merges settings into the agent's config and secrets.
 func (d Dir) SaveSettings(s Settings) error {
-	return d.LockConfig(func() error {
-		conf, secrets, err := d.ApplySettings(s)
+	return d.UpdateConfig(func(conf *Config) error {
+		secrets, err := d.applySettings(conf, s)
 		if err != nil {
 			return err
 		}
-		if err := d.SaveSecrets(secrets); err != nil {
-			return err
-		}
-		return d.SaveConfig(conf)
+		return d.SaveSecrets(secrets)
 	})
-}
-
-// setNetwork sets a provider; "none" removes it.
-func setNetwork(dst *string, v string) {
-	switch v {
-	case "":
-	case NetworkNone:
-		*dst = ""
-	default:
-		*dst = v
-	}
 }

@@ -92,7 +92,7 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 			return nil, fmt.Errorf("email is not configured")
 		}
 		if ec.TrustedAuthServ == "" {
-			return nil, fmt.Errorf("email: trusted_authserv must be set, or no mail could be trusted")
+			return nil, fmt.Errorf("email: trustedAuthServ must be set, or no mail could be trusted")
 		}
 		pw, err := secrets.Resolve(ec.Password)
 		if err != nil {
