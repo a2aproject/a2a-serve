@@ -422,3 +422,40 @@ func TestListenCardUsesTheServerHost(t *testing.T) {
 		t.Fatalf("listenCard() host = %q, want %q", host, "127.0.0.1")
 	}
 }
+
+func TestProtect(t *testing.T) {
+	t.Parallel()
+	loopback := &net.TCPAddr{IP: net.IPv4(127, 0, 0, 1), Port: 4000}
+	anyAddr := &net.TCPAddr{IP: net.IPv4zero, Port: 4000}
+	tests := []struct {
+		name     string
+		addr     net.Addr
+		method   string
+		host     string
+		fetch    string
+		wantCode int
+	}{
+		{name: "loopback IP", addr: loopback, method: http.MethodPost, host: "127.0.0.1:4000", wantCode: http.StatusOK},
+		{name: "localhost", addr: loopback, method: http.MethodPost, host: "localhost:4000", wantCode: http.StatusOK},
+		{name: "IPv6 loopback", addr: loopback, method: http.MethodGet, host: "[::1]:4000", wantCode: http.StatusOK},
+		{name: "other host on a loopback listener", addr: loopback, method: http.MethodGet, host: "evil.example:4000", wantCode: http.StatusForbidden},
+		{name: "cross-site POST", addr: loopback, method: http.MethodPost, host: "127.0.0.1:4000", fetch: "cross-site", wantCode: http.StatusForbidden},
+		{name: "cross-site GET", addr: loopback, method: http.MethodGet, host: "127.0.0.1:4000", fetch: "cross-site", wantCode: http.StatusOK},
+		{name: "other host on a listener for every address", addr: anyAddr, method: http.MethodPost, host: "devbox.example:4000", wantCode: http.StatusOK},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := protect(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}), tc.addr)
+			req := httptest.NewRequest(tc.method, "http://"+tc.host+"/", nil)
+			if tc.fetch != "" {
+				req.Header.Set("Sec-Fetch-Site", tc.fetch)
+			}
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("protect() %s %s status = %d, want %d", tc.method, tc.host, rec.Code, tc.wantCode)
+			}
+		})
+	}
+}

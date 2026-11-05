@@ -45,7 +45,8 @@ func TestWriteSection(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			path := filepath.Join(t.TempDir(), "dir", "AGENTS.md")
+			home := t.TempDir()
+			path := filepath.Join(home, "dir", "AGENTS.md")
 			if tc.existing != "" {
 				if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 					t.Fatal(err)
@@ -54,7 +55,7 @@ func TestWriteSection(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := writeSection(path, "new\n"); err != nil {
+			if err := writeSection(home, filepath.Join("dir", "AGENTS.md"), "new\n"); err != nil {
 				t.Fatalf("writeSection() error = %v", err)
 			}
 			got, err := os.ReadFile(path)
@@ -66,6 +67,80 @@ func TestWriteSection(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestHomeWritesRefuseSymlinksOutOfHome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		link      string
+		targetDir bool
+		write     func(home string) error
+	}{
+		{
+			name:  "section through a linked file",
+			link:  filepath.Join(".claude", "CLAUDE.md"),
+			write: func(home string) error { return writeSection(home, filepath.Join(".claude", "CLAUDE.md"), "new\n") },
+		},
+		{
+			name:      "section through a linked folder",
+			link:      ".claude",
+			targetDir: true,
+			write:     func(home string) error { return writeSection(home, filepath.Join(".claude", "CLAUDE.md"), "new\n") },
+		},
+		{
+			name:      "credential helper through a linked folder",
+			link:      ".local",
+			targetDir: true,
+			write: func(home string) error {
+				_, err := writeHarnessHelper(home, "host.docker.internal", "k3y")
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home, outside := t.TempDir(), t.TempDir()
+			target := filepath.Join(outside, "target")
+			if err := os.MkdirAll(filepath.Join(home, filepath.Dir(tc.link)), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink(target, filepath.Join(home, tc.link)); err != nil {
+				t.Fatal(err)
+			}
+			if tc.targetDir {
+				if err := os.MkdirAll(target, 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := tc.write(home); err == nil {
+				t.Fatalf("write through %s error = nil, want an error", tc.link)
+			}
+			if diff := cmp.Diff([]string{}, filesUnder(t, outside)); diff != "" {
+				t.Fatalf("write through %s wrote outside the home (-want +got) diff = %s", tc.link, diff)
+			}
+		})
+	}
+}
+
+// filesUnder lists the regular files under dir.
+func filesUnder(t *testing.T, dir string) []string {
+	t.Helper()
+	files := []string{}
+	err := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type().IsRegular() {
+			files = append(files, path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return files
 }
 
 func TestWithAgentsLine(t *testing.T) {

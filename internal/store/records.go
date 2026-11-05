@@ -152,7 +152,8 @@ type Node struct {
 	Description string
 	Webhook     string
 	Headers     map[string]string
-	// Secret signs wakes with HMAC-SHA256.
+	// Secret signs wakes with HMAC-SHA256: the key derived from the node
+	// token, or a random one until the node pairs.
 	Secret    string
 	TokenHash string
 	Created   time.Time

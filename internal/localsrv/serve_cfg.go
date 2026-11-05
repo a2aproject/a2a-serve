@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 
 	"google.golang.org/grpc"
 
@@ -59,7 +60,7 @@ func serve(ctx context.Context, cfg Config, handler a2asrv.RequestHandler, card 
 
 func startHTTPServer(ctx context.Context, cfg Config, handler http.Handler) error {
 	addr := cfg.Listener.Addr().String()
-	srv := &http.Server{Handler: handler}
+	srv := &http.Server{Handler: protect(handler, cfg.Listener.Addr())}
 
 	go func() {
 		<-ctx.Done()
@@ -76,6 +77,37 @@ func startHTTPServer(ctx context.Context, cfg Config, handler http.Handler) erro
 		return err
 	}
 	return nil
+}
+
+// protect refuses cross-site requests that change state. On a loopback
+// listener it also refuses other host names, which a web page reaches
+// through DNS rebinding.
+func protect(h http.Handler, addr net.Addr) http.Handler {
+	h = http.NewCrossOriginProtection().Handler(h)
+	tcp, ok := addr.(*net.TCPAddr)
+	if !ok || !tcp.IP.IsLoopback() {
+		return h
+	}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !loopbackHost(r.Host) {
+			http.Error(w, "the server answers only requests for localhost", http.StatusForbidden)
+			return
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
+func loopbackHost(hostport string) bool {
+	host, _, err := net.SplitHostPort(hostport)
+	if err != nil {
+		host = hostport
+	}
+	host = strings.TrimSuffix(strings.Trim(host, "[]"), ".")
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // listenCard opens the agent card listener of a gRPC server on the host of

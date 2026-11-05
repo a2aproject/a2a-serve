@@ -15,6 +15,8 @@ a2a-serve pair rm grok
 
 The node reads its instructions at `<agent-url>/mailbox/skill.md` and answers with `a2a-serve mailbox reply <task> --final "…"`. A task with no reply for 10 minutes fails.
 
+Give every webhook a credential that only the server sends, such as a `--webhook-header` token or a secret in the webhook URL. Anyone who learns an unprotected webhook URL can send the node a wake. A node that runs code on each wake can also check it with `a2a-serve mailbox verify`, which needs only the node token.
+
 Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as an authenticated caller.
 
 ## Advertised pairings

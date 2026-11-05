@@ -117,13 +117,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	}
 	node.mu.Lock()
 	node.client = client
-	node.secret = func() string {
-		n, err := ts.srv.store.Node(context.Background(), id)
-		if err != nil {
-			t.Errorf("Node() error = %v", err)
-		}
-		return n.Secret
-	}
+	node.secret = func() string { return mailboxapi.WakeKey(paired.Token) }
 	node.mu.Unlock()
 	return node
 }

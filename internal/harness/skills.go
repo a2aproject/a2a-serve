@@ -44,8 +44,9 @@ func (claude) homeSkillDir() string       { return filepath.Join(".claude", "ski
 // LinkSkills links the project skills which p doesn't read from the
 // project into the skill folder of its home, so every harness gets every
 // project skill. It removes the links of skills which are gone, and leaves
-// the skills the user put there alone.
-func LinkSkills(p Profile, ws Workspace) error {
+// the skills the user put there alone. The harness can change its home, so
+// symlinks that lead out of it are refused.
+func LinkSkills(p Profile, ws Workspace) (err error) {
 	if c, ok := p.(custom); ok {
 		p = c.base
 	}
@@ -72,33 +73,42 @@ func LinkSkills(p Profile, ws Workspace) error {
 	for name := range native {
 		delete(want, name)
 	}
-	home := filepath.Join(ws.Home, r.homeSkillDir())
-	if err := removeStaleSkillLinks(home, ws.Dir, want); err != nil {
+	root, err := os.OpenRoot(ws.Home)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	home := r.homeSkillDir()
+	if err := removeStaleSkillLinks(root, home, ws.Dir, want); err != nil {
 		return err
 	}
 	for _, name := range slices.Sorted(maps.Keys(want)) {
 		link := filepath.Join(home, name)
-		if _, err := os.Lstat(link); err == nil {
+		if _, err := root.Lstat(link); err == nil {
 			continue
 		}
-		if err := os.MkdirAll(home, 0o700); err != nil {
+		if err := root.MkdirAll(home, 0o700); err != nil {
 			return err
 		}
-		if err := os.Symlink(want[name], link); err != nil {
+		if err := root.Symlink(want[name], link); err != nil {
 			return fmt.Errorf("linking skill %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-// removeStaleSkillLinks removes the links in home to project skill folders
-// of root which aren't wanted any more.
-func removeStaleSkillLinks(home, root string, want map[string]string) error {
-	entries, err := os.ReadDir(home)
+// removeStaleSkillLinks removes the links in the folder home of root to
+// project skill folders of dir which aren't wanted any more.
+func removeStaleSkillLinks(root *os.Root, home, dir string, want map[string]string) error {
+	f, err := root.Open(home)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
+		return err
+	}
+	entries, err := f.ReadDir(-1)
+	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 	for _, e := range entries {
@@ -106,14 +116,14 @@ func removeStaleSkillLinks(home, root string, want map[string]string) error {
 			continue
 		}
 		link := filepath.Join(home, e.Name())
-		target, err := os.Readlink(link)
+		target, err := root.Readlink(link)
 		if err != nil {
 			return err
 		}
-		if !isProjectSkill(root, target) || want[e.Name()] == target {
+		if !isProjectSkill(dir, target) || want[e.Name()] == target {
 			continue
 		}
-		if err := os.Remove(link); err != nil {
+		if err := root.Remove(link); err != nil {
 			return err
 		}
 	}

@@ -290,6 +290,40 @@ func TestBootstrap(t *testing.T) {
 	}
 }
 
+func TestBootstrapRefusesSymlinksOutOfHome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		harness string
+		link    string
+	}{
+		{harness: "opencode", link: ".config"},
+		{harness: "claude", link: ".claude"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.harness, func(t *testing.T) {
+			t.Parallel()
+			home, outside := t.TempDir(), t.TempDir()
+			if err := os.Symlink(outside, filepath.Join(home, tc.link)); err != nil {
+				t.Fatal(err)
+			}
+			p, err := Lookup(tc.harness, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := p.Bootstrap(Workspace{Dir: t.TempDir(), Home: home}); err == nil {
+				t.Fatalf("Bootstrap() through linked %s error = nil, want an error", tc.link)
+			}
+			entries, err := os.ReadDir(outside)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("Bootstrap() through linked %s wrote %v outside the home, want nothing", tc.link, entries)
+			}
+		})
+	}
+}
+
 func TestDockerfiles(t *testing.T) {
 	t.Parallel()
 	for _, name := range ProfileNames() {
