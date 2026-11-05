@@ -18,11 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -312,6 +314,104 @@ func TestRemove(t *testing.T) {
 	}
 	if _, err := s.Remove(ctx, "anna"); kindOf(err) != NotFound {
 		t.Fatalf("Remove(anna) again error = %v, want not found", err)
+	}
+}
+
+// fakeUsers records the users Stop stops, and checks what Remove does
+// while they are stopped.
+type fakeUsers struct {
+	t        *testing.T
+	s        *Service
+	homes    agentdir.Dir
+	err      error
+	stopped  []string
+	released bool
+}
+
+func (u *fakeUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	u.stopped = append(u.stopped, principals...)
+	return func() {
+		if _, err := os.Stat(u.homes.UserHomeDir(principals[0])); !errors.Is(err, os.ErrNotExist) {
+			u.t.Errorf("home of %s at release error = %v, want it deleted while its user is stopped", principals[0], err)
+		}
+		if p, err := u.s.Store.Pairing(ctx, "anna"); !errors.Is(err, store.ErrNotFound) {
+			u.t.Errorf("Pairing() at release = %+v, %v, want it deleted while its users are stopped", p, err)
+		}
+		u.released = true
+	}, nil
+}
+
+func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	users := &fakeUsers{t: t, s: s, homes: d}
+	s.Users, s.Homes = users, d
+	for _, name := range []string{"anna", "bob"} {
+		redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: name}).Code, pairapi.PairingPerson)
+	}
+	for _, id := range []string{"pair:anna", "node:anna", "pair:bob"} {
+		if err := os.MkdirAll(d.UserHomeDir(id), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", id, err)
+		}
+	}
+
+	if _, err := s.Remove(ctx, "anna"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"pair:anna", "node:anna"}, users.stopped); diff != "" {
+		t.Fatalf("Remove() stopped wrong users (-want +got) diff = %s", diff)
+	}
+	if !users.released {
+		t.Fatalf("Remove() didn't let anna's users start again")
+	}
+	for _, id := range []string{"pair:anna", "node:anna"} {
+		if _, err := os.Stat(d.UserHomeDir(id)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Stat() of the home of %s error = %v, want %v", id, err, os.ErrNotExist)
+		}
+	}
+	if _, err := os.Stat(d.UserHomeDir("pair:bob")); err != nil {
+		t.Fatalf("Stat() of another user's home error = %v", err)
+	}
+	if _, err := s.Remove(ctx, LocalOwner); err != nil {
+		t.Fatalf("Remove(local) error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"pair:anna", "node:anna"}, users.stopped); diff != "" {
+		t.Fatalf("Remove(local) stopped users (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRemoveKeepsPairingWhenUsersDontStop(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	s.Users, s.Homes = &fakeUsers{t: t, s: s, homes: d, err: errors.New("cancel failed")}, d
+	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
+	if err := os.MkdirAll(d.UserHomeDir("pair:anna"), 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
+
+	if _, err := s.Remove(ctx, "anna"); err == nil {
+		t.Fatalf("Remove() error = nil, want the failure to stop anna")
+	}
+
+	if _, err := s.Store.Pairing(ctx, "anna"); err != nil {
+		t.Fatalf("Pairing() after a failed Remove() error = %v, want it kept", err)
+	}
+	if _, err := os.Stat(d.UserHomeDir("pair:anna")); err != nil {
+		t.Fatalf("Stat() of the home after a failed Remove() error = %v, want it kept", err)
 	}
 }
 

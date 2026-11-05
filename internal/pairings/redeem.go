@@ -143,6 +143,9 @@ func (s *Service) Redeem(ctx context.Context, code string, via Via) (*Redemption
 // grant decides what the pending code c is exchanged for, filling r.
 // Codes it refuses stay pending.
 func (s *Service) grant(ctx context.Context, c store.Code, via Via, kind string, r *Redemption) (store.Grant, error) {
+	if s.isRemoving(c.Pairing) {
+		return store.Grant{}, store.ErrNotFound
+	}
 	if via.Chat != nil {
 		if c.Kind == pairapi.PairingWebhook {
 			return store.Grant{}, store.ErrNotFound

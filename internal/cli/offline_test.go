@@ -16,6 +16,8 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -50,8 +52,15 @@ func TestManageStoppedAgent(t *testing.T) {
 	if out := run("pair", "get", "anna"); !strings.Contains(out, "anna (not joined yet, owner)") {
 		t.Fatalf("a2a-serve pair get of a stopped agent = %q, want anna", out)
 	}
+	home := d.UserHomeDir("pair:anna")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("MkdirAll() error = %v", err)
+	}
 	if out := run("pair", "rm", "anna"); !strings.Contains(out, "anna can no longer call the agent") {
 		t.Fatalf("a2a-serve pair rm of a stopped agent = %q, want anna revoked", out)
+	}
+	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of anna's agent home after pair rm error = %v, want %v", err, os.ErrNotExist)
 	}
 	run("pair", "invite", "bob")
 	if out := run("config", "set", "--private", "tailscale", "--allow-email", "*@example.com"); !strings.Contains(out, "who may call:\n  you: this machine and your tailnet devices\n  everyone on the tailnet, emails matching *@example.com, 1 pairing\n") {

@@ -313,3 +313,34 @@ func TestLinkCode(t *testing.T) {
 		}
 	}
 }
+
+type redeemingUsers struct {
+	s    *Service
+	code string
+	err  error
+}
+
+func (u *redeemingUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
+	_, u.err = u.s.Redeem(ctx, u.code, Via{URL: base})
+	return func() {}, nil
+}
+
+func TestRedeemRefusesPairingBeingRemoved(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	code := invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
+	users := &redeemingUsers{s: s, code: code}
+	s.Users = users
+
+	if _, err := s.Remove(ctx, "anna"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	if !errors.Is(users.err, ErrInvalidCode) {
+		t.Fatalf("Redeem() while anna is removed error = %v, want %v", users.err, ErrInvalidCode)
+	}
+	if _, err := s.Redeem(ctx, code, Via{Client: "9.9.9.9", URL: base}); !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("Redeem() after anna is removed error = %v, want %v", err, ErrInvalidCode)
+	}
+}

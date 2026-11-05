@@ -300,6 +300,36 @@ func (t *Tailscale) WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
 	return p, nil
 }
 
+// Member implements [Provider].
+func (t *Tailscale) Member(ctx context.Context, node string) (*Peer, error) {
+	if !t.started.Load() {
+		return nil, ErrNoIdentity
+	}
+	lc, err := t.srv.LocalClient()
+	if err != nil {
+		return nil, err
+	}
+	st, err := lc.Status(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for _, ps := range st.Peer {
+		if string(ps.ID) != node {
+			continue
+		}
+		p := &Peer{Node: node, Machine: ps.HostName}
+		if ps.Tags != nil && ps.Tags.Len() > 0 {
+			return p, nil
+		}
+		if login := st.User[ps.UserID].LoginName; IsEmail(login) {
+			p.Email = login
+		}
+		p.Self = st.Self != nil && ps.UserID == st.Self.UserID
+		return p, nil
+	}
+	return nil, ErrNoIdentity
+}
+
 // Peers implements [Provider].
 func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 	if !t.started.Load() {

@@ -67,6 +67,11 @@ func (r *Result) Empty() bool { return len(r.Changes) == 0 && len(r.Secrets) == 
 // the secrets to delete.
 type Mutation func(cfg *agentdir.Config) (store agentdir.Secrets, del []string, err error)
 
+// Step is a write of [ApplyThen] made after config.yaml is saved, such as
+// files of the agent's workspace that belong with its settings. It gets
+// the saved config.
+type Step func(cfg *agentdir.Config) error
+
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
 	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
@@ -93,7 +98,7 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		*cfg = *next
 		return nil, nil, nil
-	}, dryRun, data)
+	}, nil, dryRun, data)
 }
 
 // Apply changes the agent's config with mutate, validates the result and
@@ -103,11 +108,18 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 // against a start while Apply saves. Invalid settings are a
 // [agentdir.SettingsError] and nothing is saved.
 func Apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, dryRun bool) (*Result, error) {
-	return apply(ctx, d, client, mutate, dryRun, nil)
+	return apply(ctx, d, client, mutate, nil, dryRun, nil)
 }
 
-// apply is [Apply], saving raw as config.yaml if set.
-func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, dryRun bool, raw []byte) (_ *Result, err error) {
+// ApplyThen is [Apply], running then after config.yaml is saved and before
+// a running server applies the live settings. The directory of a stopped
+// agent stays locked while then runs. A dry run skips it.
+func ApplyThen(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, then Step, dryRun bool) (*Result, error) {
+	return apply(ctx, d, client, mutate, then, dryRun, nil)
+}
+
+// apply is [ApplyThen], saving raw as config.yaml if set.
+func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, then Step, dryRun bool, raw []byte) (_ *Result, err error) {
 	created := !d.Exists()
 	old, err := d.LoadOrNewConfig()
 	if err != nil {
@@ -160,6 +172,11 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	}
 	if err := saveConfig(d, next, raw); err != nil {
 		return nil, err
+	}
+	if then != nil {
+		if err := then(next); err != nil {
+			return nil, err
+		}
 	}
 	if res.Running {
 		if err := reload(ctx, client, next, res); err != nil {

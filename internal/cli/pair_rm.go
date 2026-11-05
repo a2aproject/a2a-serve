@@ -21,28 +21,51 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
 
 func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	return &cobra.Command{
+	var email string
+	cmd := &cobra.Command{
 		Use:     "rm <name|agent-url>",
 		Aliases: []string{"delete"},
 		Short:   "Revoke a pairing, remove a webhook node, or forget an agent you joined",
 		Long: `Delete a pairing with its tokens, linked messenger accounts, pending
-codes and the schedules that run as it, or remove a webhook node with its
-schedules. The person may still call the agent through
-the private network or an --allow-email rule; the command says so, and
-prints who may call afterwards.
+codes, the schedules that run as it, and its tasks, approvals and
+conversations, or remove a webhook node with its schedules. Its running
+tasks are canceled, its agent process stops, and its agent home directory
+is deleted. A new pairing with the same name starts with none of them. The
+person may still call the agent through the private network or an
+--allow-email rule; the command says so, and prints who may call
+afterwards.
 
 ` + "`a2a-serve pair rm local`" + ` revokes the token of this machine and your linked
 chat accounts, and keeps the pairing; the next start issues a new token.
 
-With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" + `.`,
-		Args:              cobra.ExactArgs(1),
+With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" + `.
+
+With --email, revoke the Google sign-ins of a person. They can sign in
+again while an --allow-email rule matches their email; remove the rule with
+` + "`a2a-serve config unset allow-email`" + ` to stop that.`,
+		Example: `  a2a-serve pair rm anna
+  a2a-serve pair rm https://coder.tail1234.ts.net
+  a2a-serve pair rm --email anna@example.com`,
+		Args: func(cmd *cobra.Command, args []string) error {
+			if !cmd.Flags().Changed("email") {
+				return cobra.ExactArgs(1)(cmd, args)
+			}
+			if len(args) > 0 {
+				return clierr.Usage("--email takes no pairing name or agent URL")
+			}
+			return nil
+		},
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if cmd.Flags().Changed("email") {
+				return signOut(cmd.Context(), cfg, sf, email)
+			}
 			if isAgentURL(args[0]) {
 				store, err := cfg.credentialStore()
 				if err != nil {
@@ -85,6 +108,31 @@ With an agent URL, forget the token you saved with ` + "`a2a-serve pair join`" +
 			return printAccess(cfg, resp.Access)
 		},
 	}
+	cmd.Flags().StringVar(&email, "email", "", "Revoke the Google sign-ins of the email `address`")
+	return cmd
+}
+
+func signOut(ctx context.Context, cfg *globalConfig, sf *serverFlags, email string) (err error) {
+	c, closer, err := sf.manager(ctx)
+	if err != nil {
+		return err
+	}
+	defer joinClose(&err, closer)
+	resp, err := c.SignOut(ctx, email)
+	if err != nil {
+		return err
+	}
+	if cfg.IsJSON() {
+		out := map[string]any{"removed": true, "kind": "google", "name": resp.Email, "tokens": resp.Tokens}
+		if resp.Access != nil {
+			out["access"] = resp.Access
+		}
+		return cfg.PrintJSON(out)
+	}
+	if _, err := fmt.Fprintf(cfg.Out, "✓ revoked %d Google sign-in token(s) of %s\n", resp.Tokens, resp.Email); err != nil {
+		return err
+	}
+	return printAccess(cfg, resp.Access)
 }
 
 func removedText(name string, resp *controlapi.RevokeResponse) string {

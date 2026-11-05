@@ -82,6 +82,7 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /pairings/{name}", a.pairing)
 	mux.HandleFunc("PATCH /pairings/{name}", a.updatePairing)
 	mux.HandleFunc("DELETE /pair/{name}", a.revoke)
+	mux.HandleFunc("DELETE /signins/{email}", a.signOut)
 	mux.HandleFunc("GET /peers", a.peers)
 	mux.HandleFunc("GET /contacts", a.contacts)
 	mux.HandleFunc("POST /contacts", a.addContact)
@@ -149,6 +150,12 @@ func (a *api) updatePairing(w http.ResponseWriter, r *http.Request) {
 // revoke removes the pairing called name with its tokens, links and codes.
 func (a *api) revoke(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.deps.Pairings.Remove(r.Context(), r.PathValue("name"))
+	reply(w, resp, err)
+}
+
+// signOut revokes the Google sign-in tokens of an email.
+func (a *api) signOut(w http.ResponseWriter, r *http.Request) {
+	resp, err := a.deps.Pairings.SignOut(r.Context(), r.PathValue("email"))
 	reply(w, resp, err)
 }
 

@@ -161,11 +161,20 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 
 // Refresh gives a principal stored to act later, such as the user a
 // schedule runs as, its role now: the pairing's current role, whether its
-// webhook node still exists, and the policy in force. A zero identity is
-// rebuilt from the ID.
+// webhook node still exists, what the private network reports of its
+// machine, and the policy in force. A zero identity is rebuilt from the ID.
 func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Principal, error) {
 	if identity == (Identity{}) {
 		identity = IdentityOf(id)
+	}
+	if identity.Network == network.ListenerPrivate {
+		var err error
+		if identity, err = a.refreshNetwork(ctx, identity); err != nil {
+			return Principal{}, err
+		}
+	}
+	if id == OwnerID {
+		identity.Self = true
 	}
 	if identity.Pairing != "" {
 		identity.PairingRole = ""
@@ -194,6 +203,37 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 	}
 	p.ID = id
 	return p, nil
+}
+
+// refreshNetwork replaces the claims the private network made about the
+// caller's machine with what it reports now, and drops them once it no
+// longer has the machine. A network that can't look machines up, such as
+// a relay, keeps them.
+func (a *Chain) refreshNetwork(ctx context.Context, id Identity) (Identity, error) {
+	var peer *network.Peer
+	if a.Net != nil && a.Net.Name() == id.Provider && id.Node != "" {
+		p, err := a.Net.Member(ctx, id.Node)
+		switch {
+		case errors.Is(err, network.ErrUnsupported):
+			return id, nil
+		case err == nil:
+			peer = p
+		case !errors.Is(err, network.ErrNoIdentity):
+			return Identity{}, err
+		}
+	}
+	id.Node, id.Self = "", false
+	if id.EmailSource == EmailFromNetwork {
+		id.Email, id.EmailSource = "", ""
+	}
+	if peer == nil {
+		return id, nil
+	}
+	id.Node, id.Self = peer.Node, peer.Self
+	if peer.Email != "" {
+		id.Email, id.EmailSource, id.Domain = peer.Email, EmailFromNetwork, ""
+	}
+	return id, nil
 }
 
 func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error) {
