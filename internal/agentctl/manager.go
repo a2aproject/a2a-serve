@@ -92,7 +92,8 @@ const lockWait = 3 * time.Second
 // locks the agent directory and returns the function that releases it;
 // release is nil while the agent runs. It returns an
 // [agenterr.BusyError] while the server starts or stops: then it holds
-// the directory without serving its control socket.
+// the directory without serving its control socket. It waits for the lock
+// for lockWait, or until the deadline of ctx if that comes first.
 func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (release func() error, err error) {
 	_, err = client.Status(ctx)
 	if err == nil || !errors.Is(err, controlapi.ErrNotRunning) {
@@ -106,6 +107,15 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 		return nil, err
 	}
 	deadline := time.Now().Add(lockWait)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
+	busy := func(err error) error {
+		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return &agenterr.BusyError{Name: cfg.Name}
+		}
+		return err
+	}
 	for {
 		release, err = d.Lock()
 		if !errors.Is(err, fsutil.ErrLocked) {
@@ -113,15 +123,15 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 		}
 		_, err = client.Status(ctx)
 		if err == nil || !errors.Is(err, controlapi.ErrNotRunning) {
-			return nil, err
+			return nil, busy(err)
 		}
 		if time.Now().After(deadline) {
 			return nil, &agenterr.BusyError{Name: cfg.Name}
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(100 * time.Millisecond):
+			return nil, busy(ctx.Err())
+		case <-time.After(min(100*time.Millisecond, time.Until(deadline))):
 		}
 	}
 }

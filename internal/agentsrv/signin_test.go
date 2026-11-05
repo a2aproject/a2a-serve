@@ -72,6 +72,7 @@ func TestServerPrunesSignInsOfRemovedEmails(t *testing.T) {
 	if err := dir.Init(); err != nil {
 		t.Fatalf("Init() error = %v", err)
 	}
+	seedDB(t, dir.DBPath())
 	st, err := store.Open(dir.DBPath())
 	if err != nil {
 		t.Fatalf("store.Open() error = %v", err)
