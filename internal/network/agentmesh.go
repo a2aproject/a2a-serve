@@ -230,6 +230,12 @@ func (a *agentMesh) WhoIs(_ context.Context, remoteAddr string) (*Peer, error) {
 	return p, nil
 }
 
+// Member implements [Provider]. The relay looks peers up only by their
+// connections.
+func (a *agentMesh) Member(context.Context, string) (*Peer, error) {
+	return nil, ErrUnsupported
+}
+
 func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {
 	srv := a.session()
 	if srv == nil {

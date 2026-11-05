@@ -86,6 +86,13 @@ func (p *fakeProvider) WhoIs(context.Context, string) (*network.Peer, error) {
 	return &network.Peer{Node: "peer"}, nil
 }
 
+func (p *fakeProvider) Member(_ context.Context, node string) (*network.Peer, error) {
+	if p.unidentified {
+		return nil, network.ErrNoIdentity
+	}
+	return &network.Peer{Node: node}, nil
+}
+
 func (p *fakeProvider) Peers(context.Context) ([]network.PeerInfo, error) {
 	p.net.mu.Lock()
 	defer p.net.mu.Unlock()
