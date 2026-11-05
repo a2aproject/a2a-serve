@@ -25,10 +25,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -216,6 +219,29 @@ func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	}
 }
 
+func TestHarnessSchedulesAreLimited(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ctx := context.Background()
+
+	ts.ch.write("telegram:1", "dm1", `call schedules add fast --cron "@every 1s" --prompt "x"`)
+	ts.ch.waitFor(t, "dm1", hasText("at least 5 minutes apart"))
+	for i := range manage.AgentLimits.PerUser {
+		if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
+			Name: fmt.Sprintf("s%d", i), Cron: "@daily", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew, CreatedBy: auth.OwnerID,
+		}); err != nil {
+			t.Fatalf("AddSchedule() error = %v", err)
+		}
+	}
+	ts.ch.write("telegram:1", "dm1", `call schedules add one-more --cron @daily --prompt "x"`)
+	ts.ch.waitFor(t, "dm1", hasText("at most 50 schedules"))
+
+	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "fast", Cron: "@every 1s", Prompt: "x"}); err != nil {
+		t.Fatalf("AddSchedule() by the owner past the agent limits error = %v", err)
+	}
+}
+
 func TestMissedScheduleRunsOnStart(t *testing.T) {
 	t.Parallel()
 	d, err := os.MkdirTemp("", "a2a")
@@ -316,8 +342,99 @@ func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	restarted.waitReady(t)
 	ts.srv.schedules.runDue(ctx)
 
-	if _, err := ts.srv.store.Schedule(ctx, "once"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("Schedule() after the retry error = %v, want %v", err, store.ErrNotFound)
+	waitFor(t, "the schedule to be removed after the retry", func() bool {
+		_, err := ts.srv.store.Schedule(ctx, "once")
+		return errors.Is(err, store.ErrNotFound)
+	})
+}
+
+type schedulesFixture struct {
+	*turnsFixture
+	sc *schedules
+}
+
+func newSchedulesFixture(t *testing.T) *schedulesFixture {
+	t.Helper()
+	fx := newTurnsFixture(t)
+	sc := newSchedules(fx.ctx, schedulesDeps{Store: fx.store, Turns: fx.turns, Supervisor: fx.supervisor, Chain: fx.chain, Now: time.Now})
+	return &schedulesFixture{turnsFixture: fx, sc: sc}
+}
+
+func (fx *schedulesFixture) addSchedule(t *testing.T, s store.Schedule) {
+	t.Helper()
+	s.Prompt, s.UserID, s.CreatedBy = "x", auth.OwnerID, auth.OwnerID
+	s.Conversation, s.ContextID = schedule.ThreadSame, "c-schedule"
+	if err := fx.store.AddSchedule(fx.ctx, s); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+}
+
+func (fx *schedulesFixture) schedule(t *testing.T, name string) store.Schedule {
+	t.Helper()
+	s, err := fx.store.Schedule(fx.ctx, name)
+	if err != nil {
+		t.Fatalf("Schedule(%s) error = %v", name, err)
+	}
+	return s
+}
+
+func TestSchedulesOneTimeRunEndsWhenItsTurnIsAccepted(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "once", At: due, NextRun: due})
+	fx.putTask(t, "t1", "c-schedule", a2a.TaskStateInputRequired)
+
+	fx.sc.runDue(fx.ctx)
+	fx.sc.runDue(fx.ctx)
+
+	fx.sender.wantIdle(t)
+	if got := fx.schedule(t, "once"); !got.NextRun.Equal(due) {
+		t.Fatalf("Schedule() while its turn is held = %+v, want it still due at %v", got, due)
+	}
+	fx.endExecution(t, "t1", "c-schedule", a2a.TaskStateCompleted)
+	fx.sender.nextSend(t)
+	waitFor(t, "the schedule to be removed", func() bool {
+		_, err := fx.store.Schedule(fx.ctx, "once")
+		return errors.Is(err, store.ErrNotFound)
+	})
+	fx.sender.wantIdle(t)
+}
+
+func TestSchedulesRecordFailedSends(t *testing.T) {
+	t.Parallel()
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	tests := []struct {
+		name      string
+		sched     store.Schedule
+		wantRetry bool
+	}{
+		{name: "one-time", sched: store.Schedule{Name: "once", At: due, NextRun: due}, wantRetry: true},
+		{name: "recurring", sched: store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newSchedulesFixture(t)
+			fx.sender.sendErr = errors.New("the agent is not running")
+			fx.addSchedule(t, tc.sched)
+
+			fx.sc.runDue(fx.ctx)
+
+			fx.sender.nextSend(t)
+			waitFor(t, "the failure to be recorded", func() bool {
+				return strings.Contains(fx.schedule(t, tc.sched.Name).LastError, "the agent is not running")
+			})
+			if due := !fx.schedule(t, tc.sched.Name).NextRun.After(time.Now()); due != tc.wantRetry {
+				t.Fatalf("Schedule() after a failed send is due = %v, want %v", due, tc.wantRetry)
+			}
+			fx.sc.runDue(fx.ctx)
+			if !tc.wantRetry {
+				fx.sender.wantIdle(t)
+				return
+			}
+			fx.sender.nextSend(t)
+		})
 	}
 }
 

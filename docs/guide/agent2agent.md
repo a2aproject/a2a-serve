@@ -11,6 +11,6 @@ a2a-serve contact rm coder
 ```
 
 - Each prompt tells the agent which agents it can call.
-- With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation.
+- With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. The server watches the task for at most 7 days. It also stops when the task keeps the same state for 24 hours, not counting the time the task waits for your approval. Either way, the agent gets a message that says so.
 - When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it.
 - A chain of calls stops after 3 hops, so agents can't call each other in a loop.

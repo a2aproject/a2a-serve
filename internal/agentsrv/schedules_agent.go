@@ -29,6 +29,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -41,11 +42,13 @@ import (
 // the same conversation.
 const schedulesAgent = pairings.SchedulesAgent
 
-const schedulesUsage = `Commands (one per message):
+var schedulesUsage = fmt.Sprintf(`Commands (one per message):
   add <name> (--cron "<expr>" | --at "<YYYY-MM-DD HH:MM>") [--tz <zone>] --prompt "<prompt>"
   list
   rm <name>
-A run sends the prompt to you in this conversation, as the user who asked.`
+A run sends the prompt to you in this conversation, as the user who asked.
+A user can have at most %d schedules, and runs must be at least %d minutes apart.`,
+	manage.AgentLimits.PerUser, int(manage.AgentLimits.MinInterval.Minutes()))
 
 // schedulesExecutor runs the commands the harness sends to the schedules
 // agent for the conversation and user of claims.
@@ -126,7 +129,7 @@ func (e *schedulesExecutor) add(ctx context.Context, who auth.Principal, args []
 		return "", fmt.Errorf("add takes one name\n\n%s", schedulesUsage)
 	}
 	req.Name = fs.Arg(0)
-	s, err := e.sc.add(ctx, req, who, e.claims.ContextID)
+	s, err := e.sc.addByAgent(ctx, req, who, e.claims.ContextID)
 	if err != nil {
 		return "", err
 	}

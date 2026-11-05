@@ -225,6 +225,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV13)
 		return err
 	},
+	// 14: watches count the calls that watched their task again, so that
+	// posting a result deletes only the watch it was read from, and record
+	// the task's last state, so that a watch of a stuck task ends.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV14)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -391,6 +398,12 @@ CREATE INDEX codes_pairing ON codes (pairing);
 const schemaV13 = `
 UPDATE schedules SET user_id = 'user:owner', user_identity = '' WHERE user_id = 'pair:local';
 UPDATE schedules SET deliver_user = 'user:owner' WHERE deliver_user = 'pair:local';
+`
+
+const schemaV14 = `
+ALTER TABLE watches ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE watches ADD COLUMN state TEXT NOT NULL DEFAULT '';
+ALTER TABLE watches ADD COLUMN state_changed INTEGER NOT NULL DEFAULT 0;
 `
 
 func (s *Store) migrate(ctx context.Context) error {
