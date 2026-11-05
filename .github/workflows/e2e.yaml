@@ -1,5 +1,6 @@
 # Runs the end-to-end tests of the core user journeys in ./e2e: a2a-serve,
-# the pinned a2a CLI and the scripted fakeacp agent as separate processes.
+# the pinned a2a CLI and the scripted fakeacp agent as separate processes,
+# with the agents on the host and in Docker.
 name: E2E
 
 on:
@@ -29,3 +30,21 @@ jobs:
 
     - name: E2E
       run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
+
+  # Runs the tests of what the sandbox changes: how the agent process starts,
+  # crashes and restarts, what it sees, and how it reaches the server.
+  e2e-docker:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: E2E
+      env:
+        E2E_SANDBOX: docker
+      run: >-
+        go test -tags e2e -mod=readonly -v -count=1 -shuffle=on
+        -run 'TestOwnerServesAndCallsAgent|TestOwnerAnswersApproval|TestRestartResumesConversation|TestAgentProcessCrash|TestAgentCallsContact|TestConversationHandleWorksOnlyInItsTurn|TestPairedUserRunsInOwnAgentProcess|TestDockerSandbox'
+        ./e2e/...

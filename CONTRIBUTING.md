@@ -89,11 +89,13 @@ bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 
 ### End-to-end tests
 
-`./e2e` drives the core user journeys the same way: serving and calling an agent, approvals, restarts, pairing callers, agent contacts and webhook nodes. Each test user gets its own `HOME`, set up with `a2a-serve doctor --fix`. The tests build `a2a-serve` and `fakeacp` and install the pinned `a2a` CLI; set `E2E_A2A_CLI` to the path of an `a2a` binary to skip the install:
+`./e2e` drives the core user journeys the same way: serving and calling an agent, approvals, restarts, pairing callers, user isolation, agent contacts, webhook nodes, schedules, backups and the inspector. Each test user gets its own `HOME`, set up with `a2a-serve doctor --fix`. The tests build `a2a-serve` and `fakeacp` and install the `a2a` CLI at `a2acli.MinVersion`; set `E2E_A2A_CLI` to the path of an `a2a` binary to skip the install:
 
 ```sh
 go test -tags e2e ./e2e/...
 ```
+
+The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in Docker, in an image the tests build from `fakeacp`. This also runs the tests of the Docker sandbox, which are skipped otherwise. CI runs the whole suite locally, and in Docker only the tests that depend on the sandbox: how the agent process starts, crashes and restarts, what it sees, and how it reaches the server. Add a test of that kind to the `-run` list of the `e2e-docker` job in `.github/workflows/e2e.yaml`.
 
 Add a test there when a change affects a journey across commands or processes.
 
