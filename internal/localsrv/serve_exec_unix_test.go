@@ -17,6 +17,7 @@
 package localsrv
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -25,6 +26,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -69,5 +71,47 @@ func TestExecExecutor_ChunkedStopsTheCommandWhenTheConsumerLeaves(t *testing.T) 
 				t.Fatalf("command process %d after Execute() returned: kill(0) error = %v, want %v", pid, err, syscall.ESRCH)
 			}
 		})
+	}
+}
+
+func TestExecExecutor_CancelStopsTheCommandsChildren(t *testing.T) {
+	t.Parallel()
+	pidFile := filepath.Join(t.TempDir(), "pid")
+	e := newExecExecutor(ScriptOptions{Command: fmt.Sprintf("sleep 30 & echo $! > %s; wait", pidFile)})
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("go"))
+	execCtx := &a2asrv.ExecutorContext{Message: msg, TaskID: a2a.NewTaskID(), ContextID: "ctx"}
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for range e.Execute(ctx, execCtx) {
+		}
+	}()
+	var pid int
+	for deadline := time.Now().Add(10 * time.Second); pid == 0; time.Sleep(10 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("the command didn't start its child")
+		}
+		data, err := os.ReadFile(pidFile)
+		if err != nil || !strings.HasSuffix(string(data), "\n") {
+			continue
+		}
+		if pid, err = strconv.Atoi(strings.TrimSpace(string(data))); err != nil {
+			t.Fatalf("strconv.Atoi() error = %v", err)
+		}
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Execute() didn't return after its context was canceled")
+	}
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(10 * time.Millisecond) {
+		if err := syscall.Kill(pid, 0); errors.Is(err, syscall.ESRCH) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("child process %d still runs after Execute() returned", pid)
+		}
 	}
 }
