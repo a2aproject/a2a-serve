@@ -36,12 +36,13 @@ the whole command (default 10m). `--version` prints what `version` prints.
 Errors follow the error contract of the
 [a2a CLI](https://github.com/a2aproject/a2a-cli) (`specification/SPEC.md`):
 with `-o json` they are printed as `{"error": {"code", "message", "hint"}}`.
+A failure that the running agent reports keeps its code.
 
 | Exit | Code | |
 | --- | --- | --- |
 | 0 | | Success |
 | 1 | `A2ACLI_ERR_INTERNAL`, `A2ACLI_ERR_PROTOCOL` | Any other failure |
-| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags or settings, or a name the agent doesn't have, such as `pair rm` of an unknown pairing |
+| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags, flag combinations or settings, a missing setting such as the backup destination, or a name the agent doesn't have, such as `pair rm` of an unknown pairing or of an agent you haven't joined |
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
 | 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` or `--deadline` expired |
 | 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the agent server, which isn't running: `a2a-serve start --detach` |

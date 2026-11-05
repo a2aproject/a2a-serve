@@ -41,7 +41,8 @@ a2a-serve start echo --port 9000
 ## a2a-serve start acp
 
 Start any ACP agent (--command) in this directory. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like `a2a-serve config set`.
+existing agent, the flags change them like `a2a-serve config set`. In a
+subdirectory of an agent, pass --dir to create a separate agent.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -121,7 +122,8 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 ## a2a-serve start claude
 
 Start a claude agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like `a2a-serve config set`.
+existing agent, the flags change them like `a2a-serve config set`. In a
+subdirectory of an agent, pass --dir to create a separate agent.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -273,7 +275,8 @@ a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTE
 ## a2a-serve start opencode
 
 Start an opencode agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like `a2a-serve config set`.
+existing agent, the flags change them like `a2a-serve config set`. In a
+subdirectory of an agent, pass --dir to create a separate agent.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal

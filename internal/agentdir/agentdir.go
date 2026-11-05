@@ -27,6 +27,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -34,12 +35,12 @@ import (
 const Name = ".a2a"
 
 // ErrNotFound is returned by [Find] when no agent directory is found.
-var ErrNotFound error = &notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a-serve start <agent>` or pass --dir"}
+var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no .a2a directory found here or in any parent directory; start an agent with `a2a-serve start <agent>` or pass --dir"})
 
 // NotFoundIn returns an error, matching [ErrNotFound], for a root without
 // an agent.
 func NotFoundIn(root string) error {
-	return &notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"}
+	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"})
 }
 
 type notFoundError struct{ msg string }
@@ -47,9 +48,6 @@ type notFoundError struct{ msg string }
 func (e *notFoundError) Error() string { return e.msg }
 
 func (e *notFoundError) Is(target error) bool { return target == ErrNotFound }
-
-// NoAgent marks the error for the CLI's exit code.
-func (e *notFoundError) NoAgent() bool { return true }
 
 // Dir is the .a2a directory of one agent.
 type Dir struct {

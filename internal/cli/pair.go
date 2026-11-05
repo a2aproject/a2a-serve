@@ -15,11 +15,11 @@
 package cli
 
 import (
-	"errors"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 )
 
@@ -76,7 +76,14 @@ func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, erro
 			return c, nil
 		}
 	}
-	return credstore.Credential{}, errors.New("you haven't joined " + url + "; join with `a2a-serve pair join <agent-url> <code>`")
+	return credstore.Credential{}, notJoined(url)
+}
+
+// notJoined is the not-found error of an agent URL without a saved token.
+func notJoined(url string) error {
+	e := clierr.Usage("you haven't joined " + url + "; join with `a2a-serve pair join <agent-url> <code>`")
+	e.Hint = "run `a2a-serve pair list --joined` to see the agents you joined"
+	return e
 }
 
 // joinedCompletions completes the agent URLs of the saved tokens.

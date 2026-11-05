@@ -94,8 +94,8 @@ func TestInspectScopeValidatedFirst(t *testing.T) {
 	if err == nil || err.Error() != want {
 		t.Fatalf("a2a-serve inspect --url public error = %v, want %q", err, want)
 	}
-	if got := clierr.Classify(err).Exit; got != 1 {
-		t.Fatalf("a2a-serve inspect --url public exit = %d, want 1", got)
+	if got := clierr.Classify(err).Exit; got != 2 {
+		t.Fatalf("a2a-serve inspect --url public exit = %d, want 2", got)
 	}
 }
 

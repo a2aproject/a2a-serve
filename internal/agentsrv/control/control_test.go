@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -89,7 +90,7 @@ func TestHandler(t *testing.T) {
 			name:   "remove unknown channel",
 			deps:   Deps{RemoveChannel: func(string) error { return errNotFound }},
 			method: http.MethodDelete, path: "/channels/slack", wantStatus: http.StatusNotFound,
-			want: map[string]any{"error": errNotFound.Error(), "kind": "channel", "name": "slack"},
+			want: map[string]any{"error": errNotFound.Error(), "kind": "channel", "name": "slack", "code": clierr.CodeUsage, "hint": clierr.UsageHint},
 		},
 		{
 			name:   "inspector login",

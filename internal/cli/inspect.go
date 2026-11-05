@@ -21,8 +21,10 @@ import (
 	"runtime"
 	"strings"
 
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/spf13/cobra"
+
+	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 func newInspectCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -44,7 +46,7 @@ URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := controlapi.CheckInspectorScope(scope); err != nil {
-				return err
+				return clierr.Usage(err.Error())
 			}
 			c, err := sf.control()
 			if err != nil {
@@ -56,7 +58,7 @@ URL.`,
 			}
 			base, err := st.InspectorURL(scope)
 			if err != nil {
-				return err
+				return clierr.Usage(err.Error())
 			}
 			login, err := c.InspectorLogin(cmd.Context())
 			if err != nil {

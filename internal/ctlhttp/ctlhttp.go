@@ -28,6 +28,7 @@ import (
 	"path/filepath"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
@@ -56,17 +57,24 @@ func IsDialError(err error) bool {
 }
 
 // errorBody is the body of a failed control call. Kind and Name are set
-// for an [agenterr.NotFoundError].
+// for an [agenterr.NotFoundError]. Code, Hint and A2ACode carry the class
+// of the error for the CLI's exit code; servers before them sent none.
 type errorBody struct {
-	Error string `json:"error"`
-	Kind  string `json:"kind,omitempty"`
-	Name  string `json:"name,omitempty"`
+	Error   string `json:"error"`
+	Kind    string `json:"kind,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Code    string `json:"code,omitempty"`
+	Hint    string `json:"hint,omitempty"`
+	A2ACode string `json:"a2aCode,omitempty"`
 }
 
 // WriteError writes err as the response of a failed control call, with the
 // status of its [agenterr] type; [ResponseError] turns it back into that type.
 func WriteError(w http.ResponseWriter, err error) {
 	body := errorBody{Error: err.Error()}
+	if ce := clierr.Classify(err); ce.Code != clierr.CodeInternal {
+		body.Code, body.Hint, body.A2ACode = ce.Code, ce.Hint, ce.A2ACode
+	}
 	status := http.StatusInternalServerError
 	var (
 		nf *agenterr.NotFoundError
@@ -91,6 +99,16 @@ func ResponseError(status string, code int, data []byte) error {
 	if err := json.Unmarshal(data, &body); err != nil || body.Error == "" {
 		return errors.New(jsonhttp.ErrorMessage(status, data))
 	}
+	err := typedError(code, body)
+	if body.Code == "" {
+		return err
+	}
+	ce := clierr.Wrap(body.Code, err)
+	ce.Hint, ce.A2ACode = body.Hint, body.A2ACode
+	return ce
+}
+
+func typedError(code int, body errorBody) error {
 	switch code {
 	case http.StatusNotFound:
 		if body.Kind != "" {

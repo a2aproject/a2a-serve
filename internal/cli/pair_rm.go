@@ -76,7 +76,7 @@ again while an --allow-email rule matches their email; remove the rule with
 					return err
 				}
 				if !ok {
-					return fmt.Errorf("you haven't joined %s", args[0])
+					return notJoined(args[0])
 				}
 				return cfg.PrintRemoved("joined", args[0], "✓ deleted the token for "+args[0])
 			}
