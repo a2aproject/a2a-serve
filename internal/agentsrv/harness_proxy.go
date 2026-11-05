@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"cmp"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -26,6 +27,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -288,24 +290,68 @@ func (g *guardedHandler) GetTask(ctx context.Context, req *a2a.GetTaskRequest) (
 	return g.RequestHandler.GetTask(ctx, req)
 }
 
-// ListTasks lists the tasks of the page which this conversation started.
+// Paging limits of ListTasks, which match the ones of the task stores.
+const (
+	defaultListPageSize = 50
+	maxListPageSize     = 100
+)
+
+// ListTasks lists the tasks which this conversation started. It filters
+// before it pages, so that pages and the total count hold its tasks only.
+// A page token is the index of the first task of the page.
 func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
-	res, err := g.RequestHandler.ListTasks(ctx, req)
+	pageSize := cmp.Or(req.PageSize, defaultListPageSize)
+	if pageSize < 1 || pageSize > maxListPageSize {
+		return nil, fmt.Errorf("page size must be between 1 and %d inclusive, got %d: %w", maxListPageSize, pageSize, a2a.ErrInvalidRequest)
+	}
+	offset := 0
+	if req.PageToken != "" {
+		var err error
+		if offset, err = strconv.Atoi(req.PageToken); err != nil || offset < 0 {
+			return nil, fmt.Errorf("invalid page token: %w", a2a.ErrInvalidRequest)
+		}
+	}
+	own, err := g.ownTasks(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	out := *res
-	out.Tasks = nil
-	for _, t := range res.Tasks {
-		ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
+	out := &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, TotalSize: len(own), PageSize: pageSize}
+	if offset >= len(own) {
+		return out, nil
+	}
+	end := min(offset+pageSize, len(own))
+	out.Tasks = own[offset:end]
+	if end < len(own) {
+		out.NextPageToken = strconv.Itoa(end)
+	}
+	return out, nil
+}
+
+// ownTasks lists the tasks matching req, whatever its page, which this
+// conversation started.
+func (g *guardedHandler) ownTasks(ctx context.Context, req *a2a.ListTasksRequest) ([]*a2a.Task, error) {
+	scan := *req
+	scan.PageSize, scan.PageToken = maxListPageSize, ""
+	var own []*a2a.Task
+	for {
+		res, err := g.RequestHandler.ListTasks(ctx, &scan)
 		if err != nil {
 			return nil, err
 		}
-		if ok {
-			out.Tasks = append(out.Tasks, t)
+		for _, t := range res.Tasks {
+			ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				own = append(own, t)
+			}
 		}
+		if res.NextPageToken == "" || res.NextPageToken == scan.PageToken {
+			return own, nil
+		}
+		scan.PageToken = res.NextPageToken
 	}
-	return &out, nil
 }
 
 func (g *guardedHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
@@ -370,11 +416,21 @@ func (g *guardedHandler) checkTask(ctx context.Context, id a2a.TaskID) error {
 	return nil
 }
 
-// checkMessage refuses a message to a task or a context this conversation
-// didn't start, and a reply to a pending permission question.
+// checkMessage refuses a message to, a reference to or a push config for a
+// task, or a message to a context, this conversation didn't start, and a reply to a pending permission question.
 func (g *guardedHandler) checkMessage(ctx context.Context, req *a2a.SendMessageRequest) error {
 	if req.Message == nil {
 		return nil
+	}
+	for _, id := range req.Message.ReferenceTasks {
+		if err := g.checkTask(ctx, id); err != nil {
+			return err
+		}
+	}
+	if pc := configPush(req); pc != nil && pc.TaskID != "" {
+		if err := g.checkTask(ctx, pc.TaskID); err != nil {
+			return err
+		}
 	}
 	switch m := req.Message; {
 	case m.TaskID != "":
@@ -391,6 +447,13 @@ func (g *guardedHandler) checkMessage(ctx context.Context, req *a2a.SendMessageR
 		}
 	}
 	return g.checkAnswer(ctx, req)
+}
+
+func configPush(req *a2a.SendMessageRequest) *a2a.PushConfig {
+	if req.Config == nil {
+		return nil
+	}
+	return req.Config.PushConfig
 }
 
 // checkAnswer rejects a reply to a pending permission question.

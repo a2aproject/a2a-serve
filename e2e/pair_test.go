@@ -53,6 +53,7 @@ func TestPairedCallerCallsAgentUntilRevoked(t *testing.T) {
 
 func TestAgentCallsContact(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner := newUser(t)
 	coder, reviewer := owner.startAgent("coder"), owner.startAgent("reviewer")
 

@@ -521,6 +521,69 @@ func TestPutNodeNeedsWebhookPairing(t *testing.T) {
 	}
 }
 
+func TestUpdateNode(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		prepare func(t *testing.T, s *Store, read Node)
+		wantErr error
+	}{
+		{name: "unchanged node"},
+		{
+			name: "node updated meanwhile",
+			prepare: func(t *testing.T, s *Store, read Node) {
+				other := read
+				other.Description = "changed"
+				if err := s.UpdateNode(context.Background(), read, other); err != nil {
+					t.Fatalf("UpdateNode() error = %v", err)
+				}
+			},
+			wantErr: ErrChanged,
+		},
+		{
+			name: "node removed meanwhile",
+			prepare: func(t *testing.T, s *Store, read Node) {
+				if err := s.DeletePairing(context.Background(), read.ID); err != nil {
+					t.Fatalf("DeletePairing() error = %v", err)
+				}
+			},
+			wantErr: ErrNotFound,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			if err := s.PutNode(ctx, Node{ID: "grok", Name: "grok", Webhook: "https://x", Secret: "s1", Headers: map[string]string{"A": "b"}}); err != nil {
+				t.Fatalf("PutNode() error = %v", err)
+			}
+			read, err := s.Node(ctx, "grok")
+			if err != nil {
+				t.Fatalf("Node() error = %v", err)
+			}
+			if tc.prepare != nil {
+				tc.prepare(t, s, read)
+			}
+			next := read
+			next.Secret = "s2"
+
+			err = s.UpdateNode(ctx, read, next)
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("s.UpdateNode() error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil {
+				return
+			}
+			got, err := s.Node(ctx, "grok")
+			if err != nil || got.Secret != "s2" {
+				t.Fatalf("s.Node() = %+v, %v, want secret s2", got, err)
+			}
+		})
+	}
+}
+
 func TestFirstSeen(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

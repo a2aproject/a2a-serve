@@ -24,6 +24,10 @@
 //	recall           replies with the stored value
 //	crash            exits mid-turn
 //	mcp              replies with the MCP servers of session/new
+//	pid              replies with the host name and process ID
+//	agents           replies with the agents URL and the socket that
+//	                 reaches it
+//	ls <dir>         replies with the entries of dir
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
 //	acall <agent> <t> the same, without waiting for the result
@@ -403,7 +407,28 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		}
 		end("end_turn")
 	case "pid":
-		a.chunk(sid, fmt.Sprintf("pid %d", os.Getpid()))
+		host, err := os.Hostname()
+		if err != nil {
+			a.fail(m.ID, err.Error())
+			return
+		}
+		a.chunk(sid, fmt.Sprintf("pid %s/%d", host, os.Getpid()))
+		end("end_turn")
+	case "agents":
+		a.chunk(sid, agentsURL+" "+os.Getenv("A2ACLI_UNIX_SOCKET"))
+		end("end_turn")
+	case "ls":
+		entries, err := os.ReadDir(arg)
+		if err != nil {
+			a.chunk(sid, "ls error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		var names []string
+		for _, e := range entries {
+			names = append(names, e.Name())
+		}
+		a.chunk(sid, "ls: "+strings.Join(names, " "))
 		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")

@@ -150,6 +150,25 @@ func localCode(t *testing.T, s *Service) string {
 	return code
 }
 
+func TestRedeemDoesNotRecreateRemovedNode(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s := newService(t)
+	code := invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
+	if _, err := s.Remove(ctx, "grok"); err != nil {
+		t.Fatalf("Remove() error = %v", err)
+	}
+
+	_, err := s.Redeem(ctx, code, Via{URL: base})
+
+	if !errors.Is(err, ErrInvalidCode) {
+		t.Fatalf("Redeem() error = %v, want %v", err, ErrInvalidCode)
+	}
+	if _, err := s.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Store.Node() error = %v, want %v", err, store.ErrNotFound)
+	}
+}
+
 func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
