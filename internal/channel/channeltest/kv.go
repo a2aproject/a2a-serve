@@ -54,6 +54,14 @@ func (kv *KV) Set(_ context.Context, key, value string) error {
 	return nil
 }
 
+// Delete implements [channel.KV].
+func (kv *KV) Delete(_ context.Context, key string) error {
+	kv.mu.Lock()
+	defer kv.mu.Unlock()
+	delete(kv.m, key)
+	return nil
+}
+
 // All returns a copy of the stored values.
 func (kv *KV) All() map[string]string {
 	kv.mu.Lock()

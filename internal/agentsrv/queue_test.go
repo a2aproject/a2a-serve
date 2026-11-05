@@ -19,6 +19,9 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel"
 )
 
 func hasTurn(t *convTicket) bool {
@@ -149,5 +152,89 @@ func TestConversationQueueLockDoesNotBlockOtherConversations(t *testing.T) {
 	case <-done:
 	case <-time.After(waitTimeout):
 		t.Fatal("lock() of an idle conversation blocked on another conversation")
+	}
+}
+
+// waitingMessages counts the messages that wait in the line of a
+// conversation.
+func waitingMessages(q *ConversationQueue, ch string, conv channel.ConvKey) int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	n := 0
+	for _, tk := range q.convs[ch+"\x00"+string(conv)] {
+		if tk.msg != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func waitingFrom(identity, text string) *waitingMessage {
+	return &waitingMessage{in: channel.Inbound{Identity: identity, Text: text}, p: auth.Principal{ID: identity}}
+}
+
+func TestConversationQueueWaitTurnTakesMessagesOfTheSameSenderWaitingBehind(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		// line is who sent the messages behind the running turn; "" holds
+		// a place without a message yet.
+		line []string
+		want [][]string
+	}{
+		{name: "messages of one sender go together", line: []string{"anna", "anna", "anna"}, want: [][]string{{"0", "1", "2"}}},
+		{name: "another sender starts a turn of their own", line: []string{"anna", "anna", "bob", "anna"}, want: [][]string{{"0", "1"}, {"2"}, {"3"}}},
+		{name: "a place without a message keeps the order", line: []string{"anna", "", "anna"}, want: [][]string{{"0"}, {"2"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			q := newConversationQueue()
+			running := q.enqueue("fake", "dm1")
+			turns := make(chan []string, len(tc.line))
+			waiting := 0
+			var places []*convTicket
+			for i, sender := range tc.line {
+				tk := q.enqueue("fake", "dm1")
+				if sender == "" {
+					places = append(places, tk)
+					continue
+				}
+				waiting++
+				m := waitingFrom(sender, string(rune('0'+i)))
+				go func() {
+					batch := q.waitTurn(tk, m)
+					if batch == nil {
+						return
+					}
+					var texts []string
+					for _, b := range batch {
+						texts = append(texts, b.in.Text)
+					}
+					turns <- texts
+					q.release(tk)
+				}()
+			}
+			waitFor(t, "the messages to wait", func() bool { return waitingMessages(q, "fake", "dm1") == waiting })
+
+			q.release(running)
+
+			var got [][]string
+			for range tc.want {
+				select {
+				case turn := <-turns:
+					got = append(got, turn)
+					for _, tk := range places {
+						q.release(tk)
+					}
+				case <-time.After(waitTimeout):
+					t.Fatalf("turns = %v, want %v", got, tc.want)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("q.waitTurn() turns wrong result (-want +got) diff = %s", diff)
+			}
+			waitFor(t, "the conversation to be free", func() bool { return !q.busy("fake", "dm1") })
+		})
 	}
 }

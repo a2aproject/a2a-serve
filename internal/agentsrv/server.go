@@ -432,6 +432,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Sender:     s.sender,
 		Bus:        s.bus,
 		Unattended: unattended,
+		Budget:     s.budget,
 		AgentName:  agentName,
 	})
 	s.schedules = newSchedules(ctx, schedulesDeps{

@@ -33,11 +33,15 @@ func newConversationQueue() *ConversationQueue {
 }
 
 // convTicket is a place in the line of a conversation. turn is closed when
-// the ticket is first in line.
+// the ticket is first in line, or when a turn ahead took its message.
 type convTicket struct {
 	key  string
 	turn chan struct{}
 	once sync.Once
+	// msg is the message the ticket waits with, and taken is set when a
+	// turn ahead took it. The queue's mu guards both.
+	msg   *waitingMessage
+	taken bool
 }
 
 // enqueue puts a ticket at the end of the line of a conversation.
@@ -73,6 +77,38 @@ func (q *ConversationQueue) release(t *convTicket) {
 			close(line[0].turn)
 		}
 	})
+}
+
+// waitTurn waits for the turn of t with message m. It returns m and the
+// messages waiting right behind it that m joins, which leave the line, so
+// that messages that arrived during a turn reach the agent in one turn. It
+// returns nil if a turn ahead took m.
+func (q *ConversationQueue) waitTurn(t *convTicket, m *waitingMessage) []*waitingMessage {
+	q.mu.Lock()
+	t.msg = m
+	q.mu.Unlock()
+	<-t.turn
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	t.msg = nil
+	if t.taken {
+		return nil
+	}
+	batch := []*waitingMessage{m}
+	line := q.convs[t.key]
+	if len(line) == 0 || line[0] != t {
+		return batch
+	}
+	end := 1
+	for end < len(line) && line[end].msg != nil && m.joins(line[end].msg) {
+		next := line[end]
+		batch = append(batch, next.msg)
+		next.msg, next.taken = nil, true
+		close(next.turn)
+		end++
+	}
+	q.convs[t.key] = slices.Delete(line, 1, end)
+	return batch
 }
 
 // lock serializes the handling of one conversation's messages in the

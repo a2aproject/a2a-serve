@@ -74,7 +74,8 @@ type runningChannel struct {
 	ch     channel.Channel
 	cancel context.CancelFunc
 	done   chan struct{}
-	// err is the last error of Run, cleared when it runs again.
+	// err is the last error of Run or the last one it reported, cleared
+	// when it runs again or reports that it is connected.
 	err error
 }
 
@@ -105,7 +106,7 @@ func (sv *ChannelSupervisor) run(ctx context.Context, rc *runningChannel) {
 	retry := backoff.New(sv.retryMin, channelRetryMax, channelHealthy)
 	for {
 		started := time.Now()
-		err := rc.ch.Run(ctx, sv.in)
+		err := rc.ch.Run(ctx, sv.in, func(err error) { sv.setError(rc, err) })
 		if ctx.Err() != nil {
 			return
 		}
@@ -114,18 +115,20 @@ func (sv *ChannelSupervisor) run(ctx context.Context, rc *runningChannel) {
 		}
 		delay := retry.Next(time.Since(started))
 		slog.Error("channel stopped; restarting", "channel", rc.ch.Name(), "in", delay, "error", err)
-		sv.mu.Lock()
-		rc.err = err
-		sv.mu.Unlock()
+		sv.setError(rc, err)
 		select {
 		case <-ctx.Done():
 			return
 		case <-time.After(delay):
 		}
-		sv.mu.Lock()
-		rc.err = nil
-		sv.mu.Unlock()
+		sv.setError(rc, nil)
 	}
+}
+
+func (sv *ChannelSupervisor) setError(rc *runningChannel, err error) {
+	sv.mu.Lock()
+	defer sv.mu.Unlock()
+	rc.err = err
 }
 
 // remove stops a channel and waits until it stopped, so that a replacement
