@@ -41,3 +41,14 @@ func RedactURL(u string) string {
 	p.User = nil
 	return p.String()
 }
+
+// Origin returns the scheme and host of a webhook URL, which is all of it
+// that is safe to log: providers such as Discord and Slack keep the secret
+// in the path.
+func Origin(u string) string {
+	p, err := url.Parse(u)
+	if err != nil {
+		return ""
+	}
+	return (&url.URL{Scheme: p.Scheme, Host: p.Host}).String()
+}

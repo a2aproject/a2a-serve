@@ -59,6 +59,12 @@ What a role allows:
 
 Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.
 
+## Calls to other agents and webhooks
+
+The server calls contacts and wakes webhook nodes at the URLs you configure. A contact's card and a webhook's redirects can point the server elsewhere. When the URL you configured leads to a public address, the server connects only to public addresses for it. It refuses loopback, private, link-local and tailnet addresses, and it checks the address of each connection it opens. Contacts and webhooks that you configure on the tailnet or the LAN can reach those networks. A connection through a proxy set in the environment goes wherever the proxy sends it.
+
+The server refuses redirects from https to http. A node sees only the HTTP status of a failed wake, and the server log has the details.
+
 ## Tokens and secrets
 
 | Token | Grants | Stored | Revoke |

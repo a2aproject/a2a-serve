@@ -1046,6 +1046,44 @@ func TestCallTasks(t *testing.T) {
 	}
 }
 
+func TestCallTasksListsNewestFirst(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for _, c := range []CallTask{
+		{ContextID: "c1", Agent: "coder", TaskID: "t1", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t2", RemoteContextID: "r2"},
+		{ContextID: "c2", Agent: "coder", TaskID: "t3", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "reviewer", TaskID: "t4", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t5", RemoteContextID: "r1"},
+	} {
+		if err := s.PutCallTask(ctx, c); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+	tests := []struct {
+		name            string
+		remoteContextID string
+		want            []string
+	}{
+		{name: "all contexts", want: []string{"t5", "t2", "t1"}},
+		{name: "one context", remoteContextID: "r1", want: []string{"t5", "t1"}},
+		{name: "unknown context", remoteContextID: "r9"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := s.CallTasks(ctx, "c1", "coder", tc.remoteContextID)
+			if err != nil {
+				t.Fatalf("CallTasks() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("CallTasks() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestHasOthersTasks(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

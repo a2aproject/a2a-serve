@@ -344,7 +344,8 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key, text str
 		}
 		ws.deleteWatch(context.WithoutCancel(ctx), w)
 	}
-	if err := ws.turns.injectTurn(ctx, postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Accepted: accepted}); err != nil {
+	text, files := resultTurn(text)
+	if err := ws.turns.injectTurn(ctx, postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}); err != nil {
 		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
 		return false
 	}
@@ -366,6 +367,33 @@ func (ws *Watches) watchPrincipal(ctx context.Context, w store.Watch) auth.Princ
 		return auth.Principal{ID: w.OnBehalfOf}
 	}
 	return user
+}
+
+// maxInlineResult is the size of the longest watched result posted as
+// text. A longer one is posted as a file, with its first lines inline, so
+// that a contact can't flood the conversation.
+const maxInlineResult = 16 << 10
+
+// The inline part of a result posted as a file.
+const (
+	previewLines = 20
+	previewBytes = 2 << 10
+)
+
+const resultFile = "result.txt"
+
+// resultTurn returns the text and the files of a turn that posts text.
+func resultTurn(text string) (string, []channel.File) {
+	if len(text) <= maxInlineResult {
+		return text, nil
+	}
+	lines := strings.SplitAfterN(text, "\n", previewLines+1)
+	preview := strings.Join(lines[:min(len(lines), previewLines)], "")
+	if len(preview) > previewBytes {
+		preview = strings.ToValidUTF8(preview[:previewBytes], "")
+	}
+	note := fmt.Sprintf("[The full result, %d bytes, is attached as %s.]", len(text), resultFile)
+	return strings.TrimRight(preview, "\n") + "\n…\n" + note, []channel.File{{Name: resultFile, MediaType: "text/plain", Data: []byte(text)}}
 }
 
 // resultText is the text of a finished task: its artifacts, or its status message.
