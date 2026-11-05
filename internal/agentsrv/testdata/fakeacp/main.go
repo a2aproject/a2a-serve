@@ -415,7 +415,12 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		a.chunk(sid, fmt.Sprintf("pid %s/%d", host, os.Getpid()))
 		end("end_turn")
 	case "agents":
-		a.chunk(sid, agentsURL+" "+os.Getenv("A2ACLI_UNIX_SOCKET"))
+		host, err := os.Hostname()
+		if err != nil {
+			a.fail(m.ID, err.Error())
+			return
+		}
+		a.chunk(sid, agentsURL+" "+os.Getenv("A2ACLI_UNIX_SOCKET")+" "+host)
 		end("end_turn")
 	case "ls":
 		entries, err := os.ReadDir(arg)

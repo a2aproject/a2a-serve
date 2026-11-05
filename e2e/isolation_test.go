@@ -17,13 +17,14 @@
 package e2e
 
 import (
+	"fmt"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -120,21 +121,29 @@ func calledTaskID(t *testing.T, task *a2a.Task) string {
 }
 
 // agentsOf returns the agents URL of the answer to the agents prompt, and the
-// host path of the socket that reaches it.
+// host path of the socket that reaches it from the agent process.
 func (a *agent) agentsOf(task *a2a.Task) (url, socket string) {
 	t := a.u.t
 	t.Helper()
 	text := resultOf(task).Text
-	url, socket, ok := strings.Cut(text, " ")
-	if !ok || url == "" || socket == "" {
-		t.Fatalf("a2a send agents = %q, want the agents URL and the socket", text)
+	fields := strings.Fields(text)
+	if len(fields) != 3 {
+		t.Fatalf("a2a send agents = %q, want the agents URL, the socket and the hostname", text)
 	}
+	url, socket, host := fields[0], fields[1], fields[2]
 	if sandbox != "docker" {
 		return url, socket
 	}
-	d, err := agentdir.Open(a.dir)
+	// The hostname of a container is its ID, and its socket directory is a
+	// mount of the process's own directory on the host.
+	format := fmt.Sprintf(`{{range .Mounts}}{{if eq .Destination %q}}{{.Source}}{{end}}{{end}}`, filepath.Dir(socket))
+	out, err := exec.Command("docker", "inspect", "--format", format, host).Output()
 	if err != nil {
-		t.Fatalf("agentdir.Open(%q) error = %v", a.dir, err)
+		t.Fatalf("docker inspect %s error = %v", host, err)
 	}
-	return url, filepath.Join(d.HarnessSocketDir(), filepath.Base(socket))
+	src := strings.TrimSpace(string(out))
+	if src == "" {
+		t.Fatalf("docker inspect %s has no mount at %s", host, filepath.Dir(socket))
+	}
+	return url, filepath.Join(src, filepath.Base(socket))
 }
