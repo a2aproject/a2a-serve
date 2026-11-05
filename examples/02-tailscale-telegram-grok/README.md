@@ -237,6 +237,7 @@ a2a-serve logs -f
 | --- | --- |
 | `HTTPS certificates are disabled in this tailnet` | Step 1: enable HTTPS on the DNS page. |
 | No `public` URL | The `funnel` attribute in the tailnet policy (step 1). |
+| The URL is `coder-1.your-tailnet.ts.net` | Another machine is named `coder`. Remove it in the admin console, and rename this one to `coder`. |
 | The URL doesn't resolve | On the tailnet, the calling machine must run Tailscale with MagicDNS. From the internet, a new Funnel name can take several minutes to appear in public DNS; check with `dig <name> @8.8.8.8`. |
 | `! tailscale: getting the certificate` | HTTPS certificates on the DNS page (step 1); the error says what Tailscale rejected. |
 | The bot never answers | `a2a-serve logs`: a wake that failed shows the webhook's status, such as `webhook returned 401` for a wrong token. `a2a-serve pair list` shows whether the node is paired. |
