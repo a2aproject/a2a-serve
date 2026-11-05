@@ -34,6 +34,7 @@ import (
 	_ "modernc.org/sqlite" // registers the sqlite driver
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Paths in a snapshot, relative to the .a2a directory.
@@ -82,12 +83,12 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.MkdirTemp(d.StateDir(), "backup-")
+	tmp, release, err := stageDir(d.StateDir())
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if rerr := os.RemoveAll(tmp); rerr != nil {
+		if rerr := errors.Join(release(), os.RemoveAll(tmp)); rerr != nil {
 			slog.Warn("removing the staged backup files", "error", rerr)
 		}
 	}()
@@ -117,6 +118,62 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 		return err
 	}
 	return gz.Close()
+}
+
+// stageLock is the file in a staging directory that its backup holds
+// locked, so that a directory a crash left behind can be told from one in
+// use.
+const stageLock = "lock"
+
+// stageDir creates a directory in stateDir to stage the files of a backup
+// in, and returns it locked. It first removes the directories of
+// interrupted backups, which can hold a plaintext copy of the database.
+// The CLI and the server take backups at the same time, so a directory
+// that another backup holds locked is kept.
+func stageDir(stateDir string) (dir string, release func() error, err error) {
+	err = fsutil.WithLock(filepath.Join(stateDir, "backup"), func() error {
+		removeLeftoverStages(stateDir)
+		if dir, err = os.MkdirTemp(stateDir, "backup-"); err != nil {
+			return err
+		}
+		if release, err = fsutil.TryLock(filepath.Join(dir, stageLock)); err != nil {
+			return errors.Join(err, os.RemoveAll(dir))
+		}
+		return nil
+	})
+	return dir, release, err
+}
+
+// removeLeftoverStages removes the staging directories in stateDir that no
+// backup holds locked.
+func removeLeftoverStages(stateDir string) {
+	removeLeftovers(filepath.Join(stateDir, "backup-*"), func(dir string) (func() error, error) {
+		return fsutil.TryLock(filepath.Join(dir, stageLock))
+	})
+}
+
+// removeLeftovers removes the directories matching pattern whose lock it
+// can take, keeping the ones in use. A failure is logged: it doesn't stop
+// the operation that cleans up.
+func removeLeftovers(pattern string, lock func(dir string) (release func() error, err error)) {
+	dirs, err := filepath.Glob(pattern)
+	if err != nil {
+		slog.Warn("listing leftover directories", "pattern", pattern, "error", err)
+		return
+	}
+	for _, dir := range dirs {
+		release, err := lock(dir)
+		if errors.Is(err, fsutil.ErrLocked) {
+			continue
+		}
+		if err != nil {
+			slog.Warn("checking a leftover directory", "dir", dir, "error", err)
+			continue
+		}
+		if err := errors.Join(release(), os.RemoveAll(dir)); err != nil {
+			slog.Warn("removing a leftover directory", "dir", dir, "error", err)
+		}
+	}
 }
 
 // addDB adds a copy of the database made with VACUUM INTO, which is
@@ -357,13 +414,16 @@ func (s *snapshotter) addEntry(info fs.FileInfo, readlink func() (string, error)
 
 // extractArchive extracts a snapshot into dst, the .a2a directory of the
 // agent to restore. The network identity is extracted only with takeOver.
-func extractArchive(r io.Reader, dst string, takeOver bool) error {
+func extractArchive(ctx context.Context, r io.Reader, dst string, takeOver bool) error {
 	gz, err := gzip.NewReader(r)
 	if err != nil {
 		return fmt.Errorf("reading the snapshot: %w", err)
 	}
 	tr := tar.NewReader(gz)
 	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		hdr, err := tr.Next()
 		if errors.Is(err, io.EOF) {
 			break

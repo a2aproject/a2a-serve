@@ -232,6 +232,36 @@ func TestAnswerClosedQuestion(t *testing.T) {
 	}
 }
 
+func TestCloseKeepsQuestionClosed(t *testing.T) {
+	t.Parallel()
+	h := &sendingHandler{}
+	svc := newService(t, h)
+	ctx := context.Background()
+	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+	q := FromMessage(permissionMessage(t))
+	rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+	if err != nil {
+		t.Fatalf("NewRecord() error = %v", err)
+	}
+
+	svc.Close(ctx, rec.ID)
+
+	closed, err := svc.store.QuestionByID(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("QuestionByID() error = %v", err)
+	}
+	if err := svc.Answer(ctx, closed, auth.Owner(), q.Options[0]); !errors.Is(err, ErrClosed) {
+		t.Fatalf("Answer() error = %v, want %v", err, ErrClosed)
+	}
+	open, err := svc.store.UnansweredQuestions(ctx)
+	if err != nil {
+		t.Fatalf("UnansweredQuestions() error = %v", err)
+	}
+	if len(open) != 0 {
+		t.Fatalf("UnansweredQuestions() = %+v, want none", open)
+	}
+}
+
 func TestOnQuestion(t *testing.T) {
 	t.Parallel()
 	owner := Chat{Channel: "telegram", Conv: "dm1"}

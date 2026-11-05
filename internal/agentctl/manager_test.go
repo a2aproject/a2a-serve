@@ -17,6 +17,7 @@ package agentctl
 import (
 	"errors"
 	"fmt"
+	"os"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -110,6 +111,30 @@ func TestOpenLocksStoppedAgent(t *testing.T) {
 	}
 	if unlockedErr != nil {
 		t.Fatalf("fsutil.TryLock() after Close() error = %v, want nil", unlockedErr)
+	}
+}
+
+func TestOpenRemovesStalePIDFile(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := os.WriteFile(d.PIDPath(), []byte("12345"), 0o600); err != nil {
+		t.Fatalf("os.WriteFile(PIDPath) error = %v", err)
+	}
+
+	_, closer, err := Open(t.Context(), d, controlapi.NewClient(d))
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	_, statErr := os.Stat(d.PIDPath())
+	if err := closer.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("os.Stat(PIDPath) while open error = %v, want %v", statErr, os.ErrNotExist)
 	}
 }
 

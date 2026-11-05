@@ -173,7 +173,7 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 	}
 	mesh, err := r.startMesh(ctx, MeshConfig{URL: publicURL, Port: port, DataDir: d.MeshDir(), AdminToken: conf.AdminToken, Database: conf.Database, Issuer: issuer})
 	if err != nil {
-		return err
+		return stoppedOr(ctx, err)
 	}
 	defer func() { err = errors.Join(err, mesh.stop()) }()
 	if err := waitReady(ctx, admin, mesh); err != nil {

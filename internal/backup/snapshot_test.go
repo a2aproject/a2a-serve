@@ -27,6 +27,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -405,6 +406,49 @@ func TestWriteArchiveRemovesStagedFiles(t *testing.T) {
 	left, err := filepath.Glob(filepath.Join(d.StateDir(), "backup-*"))
 	if err != nil || len(left) != 0 {
 		t.Fatalf("writeArchive() left %v in the state directory, %v, want nothing", left, err)
+	}
+}
+
+// blockingWriter blocks the first write until release is closed.
+type blockingWriter struct {
+	once    sync.Once
+	started chan struct{}
+	release chan struct{}
+}
+
+func (w *blockingWriter) Write(p []byte) (int, error) {
+	w.once.Do(func() {
+		close(w.started)
+		<-w.release
+	})
+	return len(p), nil
+}
+
+func TestWriteArchiveRemovesLeftoverStagedFiles(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t)
+	leftover := filepath.Join(d.StateDir(), "backup-1")
+	if err := os.Mkdir(leftover, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, leftover, map[string]string{"server.db": "plaintext"})
+	running := &blockingWriter{started: make(chan struct{}), release: make(chan struct{})}
+	first := make(chan error, 1)
+	go func() { first <- writeArchive(context.Background(), d, running) }()
+	<-running.started
+
+	err := writeArchive(context.Background(), d, io.Discard)
+	left, globErr := filepath.Glob(filepath.Join(d.StateDir(), "backup-*"))
+	close(running.release)
+	if firstErr := <-first; firstErr != nil {
+		t.Fatalf("writeArchive() of the running backup error = %v", firstErr)
+	}
+
+	if err != nil {
+		t.Fatalf("writeArchive() error = %v", err)
+	}
+	if globErr != nil || len(left) != 1 || left[0] == leftover {
+		t.Fatalf("writeArchive() left %v in the state directory, %v, want only the running backup", left, globErr)
 	}
 }
 

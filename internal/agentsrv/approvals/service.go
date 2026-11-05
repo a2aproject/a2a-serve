@@ -296,8 +296,12 @@ func (r *Records) Starter(ctx context.Context, taskID a2a.TaskID) string {
 }
 
 // Waiting reports whether the task of a question still waits for its
-// answer. Questions of remote agents wait until they are answered.
+// answer. Questions of remote agents wait until they are answered, and
+// closed questions never wait again.
 func (r *Records) Waiting(ctx context.Context, rec store.Question) (bool, error) {
+	if rec.Closed {
+		return false, nil
+	}
 	if rec.Contact != "" {
 		return true, nil
 	}
@@ -338,10 +342,13 @@ func (s *Service) CloseStale(ctx context.Context) {
 	s.Close(ctx, ids...)
 }
 
-// Close stops questions from taking typed replies, and shows where they
-// were asked that they can no longer be answered.
+// Close marks questions closed, stops them from taking typed replies, and
+// shows where they were asked that they can no longer be answered.
 func (s *Service) Close(ctx context.Context, ids ...string) {
 	for _, id := range ids {
+		if err := s.store.CloseQuestion(ctx, id); err != nil {
+			slog.Warn("marking a question closed", "question", id, "error", err)
+		}
 		if err := s.store.ForgetPendingQuestion(ctx, id); err != nil {
 			slog.Warn("forgetting a closed question", "question", id, "error", err)
 		}

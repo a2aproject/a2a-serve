@@ -24,6 +24,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 )
 
 // MaxBody is the largest request body Read accepts.
@@ -79,22 +80,100 @@ func RequireJSON(next http.Handler) http.Handler {
 	})
 }
 
+// Timeouts of reading request bodies.
+const (
+	// UnauthenticatedReadTimeout bounds reading a whole body on routes that
+	// read it before they know the caller.
+	UnauthenticatedReadTimeout = 10 * time.Second
+	// ReadIdleTimeout bounds the wait for more of a body on other routes.
+	ReadIdleTimeout = 30 * time.Second
+)
+
 // LimitBody refuses request bodies larger than [MaxBody]: up front when the
-// request declares its length, and once read past it otherwise.
+// request declares its length, and once read past it otherwise. Reads of
+// the body fail after [ReadIdleTimeout] without progress.
 func LimitBody(next http.Handler) http.Handler {
 	return LimitBodyTo(MaxBody, next)
 }
 
 // LimitBodyTo is [LimitBody] with a limit of n bytes.
 func LimitBodyTo(n int64, next http.Handler) http.Handler {
+	return Limit{Max: n, Idle: ReadIdleTimeout}.Handler(next)
+}
+
+// LimitUnauthenticatedBody is [LimitBodyTo] for routes that read the body
+// before they know the caller: reading the whole body fails after
+// [UnauthenticatedReadTimeout].
+func LimitUnauthenticatedBody(n int64, next http.Handler) http.Handler {
+	return Limit{Max: n, Total: UnauthenticatedReadTimeout}.Handler(next)
+}
+
+// Limit bounds the size of a request body and the time to read it.
+type Limit struct {
+	// Max is the largest body in bytes.
+	Max int64
+	// Total bounds the time to read the whole body.
+	Total time.Duration
+	// Idle bounds the time between reads that return data.
+	Idle time.Duration
+}
+
+// Handler refuses bodies larger than l.Max and sets the connection's read
+// deadline while the body is read. The deadline is cleared once the body
+// ends, so it doesn't cut a response streamed after it.
+func (l Limit) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.ContentLength > n {
+		if r.ContentLength > l.Max {
 			Error(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
-		r.Body = http.MaxBytesReader(w, r.Body, n)
+		r.Body = http.MaxBytesReader(w, r.Body, l.Max)
+		if r.Body != http.NoBody && (l.Total > 0 || l.Idle > 0) {
+			r.Body = newDeadlineBody(w, r.Body, l)
+		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+// deadlineBody moves the read deadline of the connection as its body is
+// read.
+type deadlineBody struct {
+	io.ReadCloser
+	rc   *http.ResponseController
+	idle time.Duration
+	done bool
+}
+
+func newDeadlineBody(w http.ResponseWriter, body io.ReadCloser, l Limit) io.ReadCloser {
+	b := &deadlineBody{ReadCloser: body, rc: http.NewResponseController(w)}
+	timeout := l.Total
+	if timeout == 0 {
+		timeout, b.idle = l.Idle, l.Idle
+	}
+	if err := b.rc.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		slog.Debug("no read deadline for the request body", "error", err)
+		return body
+	}
+	return b
+}
+
+func (b *deadlineBody) Read(p []byte) (int, error) {
+	n, err := b.ReadCloser.Read(p)
+	switch {
+	case b.done:
+	case err != nil:
+		b.done = true
+		b.setDeadline(time.Time{})
+	case n > 0 && b.idle > 0:
+		b.setDeadline(time.Now().Add(b.idle))
+	}
+	return n, err
+}
+
+func (b *deadlineBody) setDeadline(t time.Time) {
+	if err := b.rc.SetReadDeadline(t); err != nil {
+		slog.Debug("setting the read deadline of a request body", "error", err)
+	}
 }
 
 func isJSON(contentType string) bool {

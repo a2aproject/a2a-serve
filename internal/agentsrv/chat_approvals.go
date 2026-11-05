@@ -158,8 +158,12 @@ func (a *ChatApprovals) render(ctx context.Context, ch channel.Channel, conv cha
 	}
 }
 
-// MarkAnswered replaces the buttons of a question with who answered it.
+// MarkAnswered stops a question from taking typed replies, and replaces
+// its buttons with who answered it.
 func (a *ChatApprovals) MarkAnswered(ctx context.Context, questionID, label, who string) {
+	if err := a.store.ForgetPendingQuestion(ctx, questionID); err != nil {
+		slog.Warn("forgetting an answered question", "question", questionID, "error", err)
+	}
 	a.endQuestion(ctx, questionID, fmt.Sprintf("✓ %s by %s", label, who))
 }
 
@@ -227,7 +231,7 @@ func (a *ChatApprovals) answerHint(ctx context.Context, rec store.Question, q *a
 // answers it. The text is shown literally: the owner has to see all of what
 // they approve.
 func (a *ChatApprovals) sendQuestion(ctx context.Context, ch channel.Channel, out channel.Outbound, questionID, text string, r *retrier) {
-	if err := a.store.SetPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
+	if err := a.store.AddPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
 		slog.Warn("recording pending question", "error", err)
 	}
 	out.Literal = true
@@ -239,7 +243,7 @@ func (a *ChatApprovals) sendQuestion(ctx context.Context, ch channel.Channel, ou
 	})
 	if err != nil {
 		slog.Warn("sending question", "channel", ch.Name(), "error", err)
-		if err := a.store.ClearPendingQuestion(ctx, ch.Name(), string(out.Conv)); err != nil {
+		if err := a.store.ForgetPendingQuestion(ctx, questionID); err != nil {
 			slog.Warn("clearing pending question", "error", err)
 		}
 		return

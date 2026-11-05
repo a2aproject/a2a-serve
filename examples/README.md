@@ -13,3 +13,7 @@ Make the agent reachable from anywhere: on your tailnet with no pairing, on a pu
 ### 3. Agent Mesh Relay (Experimental) — [`03-agentmesh-relay/`](03-agentmesh-relay/)
 
 Run an Agent Mesh relay on your machine and join two agents to it with no Tailscale account. Let one call the other over the relay, and pair a caller at an agent's public URL on the relay.
+
+### 4. Observability Agent — [`04-observability-agent/`](04-observability-agent/)
+
+Create an agent from a recipe that answers questions about production with your metrics, logs, traces and profiles through Grafana. Give it read-only identities, describe your environment, share it with your team, and update it to a newer version of its recipe.
