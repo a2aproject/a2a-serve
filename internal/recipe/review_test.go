@@ -172,6 +172,11 @@ func TestRecipePlan(t *testing.T) {
 	}
 	cfg.Mounts = append(cfg.Mounts, "/srv/data:/data")
 	r.DropMounts(cfg, []string{"kubernetes"})
+	restored := cfg.Clone()
+	r.RestoreMounts(restored, r.Config, []string{"kubernetes"})
+	if diff := cmp.Diff([]string{"/srv/data:/data", "~/.kube/a2a-o11y:/kube:ro"}, restored.Mounts); diff != "" {
+		t.Fatalf("Recipe.RestoreMounts() wrong mounts (-want +got) diff = %s", diff)
+	}
 	if diff := cmp.Diff([]string{"/srv/data:/data"}, cfg.Mounts); diff != "" {
 		t.Fatalf("Recipe.DropMounts() wrong mounts (-want +got) diff = %s", diff)
 	}

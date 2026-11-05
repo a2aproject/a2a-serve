@@ -16,13 +16,19 @@ is; where it is reachable and who may call it stay yours. The flags of
 `a2a-serve config set` apply on top of the recipe. Start the agent with
 `a2a-serve start`.
 
+Run recipe again in the agent's directory, without a source, to update the
+agent to a newer version of its recipe: a branch moves to its newest
+commit, a tag or a commit stays. The update keeps your changes. A file
+changed both here and in the recipe stays as it is, and the recipe's
+version is saved next to it as &lt;file&gt;.recipe.
+
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
 (one flag per command); anything else is the value itself. In agent
 settings, secret:NAME reuses a value stored in .a2a/state/secrets.
 
 ```
-a2a-serve recipe <source> [flags]
+a2a-serve recipe [<source>] [flags]
 ```
 
 **Examples**
@@ -31,6 +37,7 @@ a2a-serve recipe <source> [flags]
 a2a-serve recipe https://github.com/acme/agents/tree/v1.2/experts/elk --name elk
 a2a-serve recipe git@github.com:acme/agents.git#v1.2:experts/elk --dry-run
 a2a-serve recipe ./experts/elk --yes --disable-mcp kubernetes --secret GRAFANA_TOKEN
+a2a-serve recipe --dry-run
 ```
 
 **General flags**
@@ -43,11 +50,11 @@ a2a-serve recipe ./experts/elk --yes --disable-mcp kubernetes --secret GRAFANA_T
 | `--backup-key string` |  | Passphrase the snapshots are encrypted with; keep a copy away from the backups (secret value: env:VAR, -, or the value) |
 | `--backup-retention duration` |  | How long snapshots are kept, a duration in hours or days such as 48h or 7d; the latest is always kept (default 7d) |
 | `--description string` |  | Agent description for its card |
-| `--dir string` |  | Directory of the new agent (default: ./&lt;name&gt;) |
+| `--dir string` |  | Agent directory: a new agent's, or the agent to update (default: the agent here, or ./&lt;name&gt; for a new one) |
 | `--dry-run` |  | Fetch the recipe and print the review without saving |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 | `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d) |
-| `-y, --yes` |  | Create the agent without asking; the review still prints |
+| `-y, --yes` |  | Create or update the agent without asking; the review still prints |
 
 **Workspace flags**
 

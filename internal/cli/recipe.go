@@ -42,8 +42,8 @@ func newRecipeCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		dryRun bool
 	)
 	cmd := &cobra.Command{
-		Use:   "recipe <source>",
-		Short: "Create an agent from a recipe, a directory with a ready-made agent",
+		Use:   "recipe [<source>]",
+		Short: "Create an agent from a recipe, a directory with a ready-made agent, or update it",
 		Long: `Create an agent from a recipe: a directory with a committed
 .a2a/config.yaml, and optionally AGENTS.md, skills, .mcp.json and
 .a2a/recipe.yaml, which describes its MCP servers. The source is a tree URL
@@ -58,49 +58,67 @@ is; where it is reachable and who may call it stay yours. The flags of
 ` + "`a2a-serve config set`" + ` apply on top of the recipe. Start the agent with
 ` + "`a2a-serve start`" + `.
 
+Run recipe again in the agent's directory, without a source, to update the
+agent to a newer version of its recipe: a branch moves to its newest
+commit, a tag or a commit stays. The update keeps your changes. A file
+changed both here and in the recipe stays as it is, and the recipe's
+version is saved next to it as <file>.recipe.
+
 ` + secretref.Help,
 		Example: `  a2a-serve recipe https://github.com/acme/agents/tree/v1.2/experts/elk --name elk
   a2a-serve recipe git@github.com:acme/agents.git#v1.2:experts/elk --dry-run
-  a2a-serve recipe ./experts/elk --yes --disable-mcp kubernetes --secret GRAFANA_TOKEN`,
-		Args: cobra.ExactArgs(1),
+  a2a-serve recipe ./experts/elk --yes --disable-mcp kubernetes --secret GRAFANA_TOKEN
+  a2a-serve recipe --dry-run`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			interactive := cfg.isTerminal() && !yes
 			if !interactive && !yes && !dryRun {
-				return clierr.Usage("recipe asks before it creates the agent; without a terminal, pass --yes or --dry-run")
+				return clierr.Usage("recipe asks before it changes anything; without a terminal, pass --yes or --dry-run")
 			}
-			src, err := recipe.ParseSource(args[0])
-			if err != nil {
-				return clierr.Usage(err.Error())
+			run := &recipeRun{cfg: cfg, sf: sf, dir: sf.dir, interactive: interactive, dryRun: dryRun, getenv: cfg.env}
+			if len(args) == 1 {
+				src, err := recipe.ParseSource(args[0])
+				if err != nil {
+					return clierr.Usage(err.Error())
+				}
+				run.src, run.hasSource = src, true
 			}
 			s, err := flags.settings(cfg.secretReader(cfg.stderr()))
 			if err != nil {
 				return err
 			}
-			run := &recipeRun{cfg: cfg, src: src, s: s, dir: sf.dir, interactive: interactive, dryRun: dryRun, getenv: cfg.env}
-			return run.create(cmd.Context())
+			run.s = s
+			return run.run(cmd.Context())
 		},
 	}
 	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
 	cmd.SetUsageFunc(sectionedUsage)
 	f := cmd.Flags()
-	f.StringVar(&sf.dir, "dir", "", "Directory of the new agent (default: ./<name>)")
-	f.BoolVarP(&yes, "yes", "y", false, "Create the agent without asking; the review still prints")
+	f.StringVar(&sf.dir, "dir", "", "Agent directory: a new agent's, or the agent to update (default: the agent here, or ./<name> for a new one)")
+	f.BoolVarP(&yes, "yes", "y", false, "Create or update the agent without asking; the review still prints")
 	f.BoolVar(&dryRun, "dry-run", false, "Fetch the recipe and print the review without saving")
 	setSection(f, sectionGeneral, "dir", "yes", "dry-run")
 	markTextOnly(cmd)
 	return cmd
 }
 
-// recipeRun creates an agent from a recipe.
+// recipeRun creates an agent from a recipe, or updates it.
 type recipeRun struct {
 	cfg         *globalConfig
+	sf          *serverFlags
 	src         recipe.Source
+	hasSource   bool
 	s           agentdir.Settings
 	dir         string
 	interactive bool
 	dryRun      bool
 	getenv      func(string) string
 	prompter    *wizard.Prompter
+	// stored are the secrets of an agent being updated.
+	stored agentdir.Secrets
+	// known are the MCP servers of the recipe at the recorded commit, which
+	// an update doesn't ask about again.
+	known []string
 }
 
 func (r *recipeRun) printf(format string, args ...any) error {
@@ -108,13 +126,22 @@ func (r *recipeRun) printf(format string, args ...any) error {
 	return err
 }
 
-func (r *recipeRun) create(ctx context.Context) (err error) {
-	parent, err := r.parent()
-	if err != nil {
-		return err
-	}
-	if outer, err := agentdir.Find(parent); err == nil {
-		return clierr.Usage(fmt.Sprintf("%s is inside the agent in %s, which could read the new agent's secrets; create it elsewhere or pass --dir", parent, outer.Root))
+// run fetches the recipe, and updates the agent it belongs to or creates
+// a new one.
+func (r *recipeRun) run(ctx context.Context) error {
+	var (
+		d      agentdir.Dir
+		record *recipe.Record
+		err    error
+	)
+	if !r.hasSource {
+		if d, err = r.sf.agentDir(); err != nil {
+			return err
+		}
+		if record, err = readRecord(d); err != nil {
+			return err
+		}
+		r.src = record.Source()
 	}
 	work, err := os.MkdirTemp("", "a2a-recipe-*")
 	if err != nil {
@@ -128,6 +155,58 @@ func (r *recipeRun) create(ctx context.Context) (err error) {
 	fetched, rec, err := r.fetch(ctx, work)
 	if err != nil {
 		return err
+	}
+	if record != nil {
+		return r.update(ctx, d, record, fetched, rec)
+	}
+	if r.dir != "" {
+		if d, err = agentdir.Open(r.dir); err != nil {
+			return err
+		}
+		if !d.Exists() {
+			return r.create(ctx, fetched, rec)
+		}
+		if record, err = readRecord(d); err != nil {
+			return err
+		}
+		return r.update(ctx, d, record, fetched, rec)
+	}
+	wd, err := os.Getwd()
+	if err != nil {
+		return err
+	}
+	if d, err := agentdir.Find(wd); err == nil {
+		if record, err := recipe.ReadRecord(d); err == nil && sameSource(record.Source(), fetched.Source) {
+			return r.update(ctx, d, record, fetched, rec)
+		}
+	}
+	return r.create(ctx, fetched, rec)
+}
+
+// readRecord reads the record of the agent d, which must have come from a
+// recipe.
+func readRecord(d agentdir.Dir) (*recipe.Record, error) {
+	record, err := recipe.ReadRecord(d)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, clierr.Usage(fmt.Sprintf("the agent in %s wasn't created from a recipe; create a new agent from one with `a2a-serve recipe <source> --dir <new directory>`", d.Root))
+	}
+	return record, err
+}
+
+// sameSource reports whether a and b are the same directory of the same
+// repository, at any ref.
+func sameSource(a, b recipe.Source) bool {
+	return a.Repo == b.Repo && a.Path == b.Path && a.Dir == b.Dir
+}
+
+// create creates a new agent from the fetched recipe rec.
+func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *recipe.Recipe) (err error) {
+	parent, err := r.parent()
+	if err != nil {
+		return err
+	}
+	if outer, err := agentdir.Find(parent); err == nil {
+		return clierr.Usage(fmt.Sprintf("%s is inside the agent in %s, which could read the new agent's secrets; create it elsewhere or pass --dir", parent, outer.Root))
 	}
 	name := agentdir.SanitizeName(firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name()))
 	target := r.dir
@@ -337,7 +416,7 @@ func (r *recipeRun) ask(rec *recipe.Recipe, cfg *agentdir.Config) (off []string,
 			return nil, err
 		}
 	}
-	if r.prompter != nil && wizard.NeedsAPIKey(cfg.Harness, slices.Concat(cfg.Secrets, r.s.Secrets)) {
+	if r.stored == nil && r.prompter != nil && wizard.NeedsAPIKey(cfg.Harness, slices.Concat(cfg.Secrets, r.s.Secrets)) {
 		keys, err := r.prompter.APIKeys(cfg.Harness, r.getenv)
 		if err != nil {
 			return nil, err
@@ -379,11 +458,11 @@ func (r *recipeRun) ask(rec *recipe.Recipe, cfg *agentdir.Config) (off []string,
 	return off, nil
 }
 
-// useServer asks whether to use an optional MCP server. Without asking,
-// one is used when its variables have values. One whose tied mounts have no
-// source stays off.
+// useServer asks whether to use an optional MCP server new to the agent.
+// Without asking, one is used when its variables have values. One whose
+// tied mounts have no source stays off.
 func (r *recipeRun) useServer(rec *recipe.Recipe, cfg *agentdir.Config, name string, optional bool, vars []recipe.Var) (bool, error) {
-	if !optional {
+	if !optional || slices.Contains(r.known, name) {
 		return true, nil
 	}
 	if missing := rec.MissingMounts(cfg, name); len(missing) > 0 {
@@ -400,9 +479,9 @@ func (r *recipeRun) useServer(rec *recipe.Recipe, cfg *agentdir.Config, name str
 }
 
 // provided reports whether the agent gets a value for the variable name:
-// from the flags, or from the env of the recipe.
+// from the flags, the env of the config, or a stored secret it passes.
 func (r *recipeRun) provided(cfg *agentdir.Config, name string) bool {
-	if slices.Contains(r.s.Secrets, name) {
+	if slices.Contains(r.s.Secrets, name) || slices.Contains(cfg.Secrets, name) && r.stored[name] != "" {
 		return true
 	}
 	return slices.ContainsFunc(slices.Concat(cfg.Env, r.s.Env), func(kv string) bool {

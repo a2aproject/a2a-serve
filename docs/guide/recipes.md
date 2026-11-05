@@ -24,7 +24,7 @@ The command fetches the recipe with your `git`, so your SSH keys, credential hel
 The command then:
 
 1. Shows what the agent will run: the agent, the sandbox, the mounts, the MCP servers, the skills and the approvals. It marks risky entries with `!`.
-2. Asks before it creates the agent in `./<name>`, or in `--dir`. `--yes` skips the question, and `--dry-run` only prints the review.
+2. Asks before it creates the agent in `./<name>`, or in `--dir`. `--yes` skips the question, and `--dry-run` only prints the review. It refuses a directory with files in it, and a directory inside another agent's directory, whose agent could read the new agent's secrets.
 3. Asks for the secrets the agent lacks, and whether to use each optional MCP server. A value set in your shell is offered first.
 4. Saves the agent. Start it with `a2a-serve start`.
 
@@ -32,7 +32,30 @@ Without a terminal, pass `--yes` and give the values with `--secret`, `--env` or
 
 The flags of `a2a-serve config set` apply on top of the recipe, such as `--memory 8g` or `--sandbox local`. See the [command reference](../reference/commands/recipe.md) for every flag.
 
-Updating an agent from a newer version of its recipe is planned.
+## Update an agent
+
+Run `a2a-serve recipe` without a source in the agent's directory to update the agent to a newer version of its recipe:
+
+```sh
+cd elk
+a2a-serve recipe
+```
+
+A branch moves to its newest commit. A tag or a commit stays where it is, so to move to a new version, pass the source with the new ref: `a2a-serve recipe https://github.com/acme/agents/tree/v1.3/experts/elk`. A source with the same repository and path updates the agent of the current directory. Another source needs `--dir`, and the update shows the change of source.
+
+The update shows what changes and asks before it saves, like the first run. It keeps your changes:
+
+- A file you didn't change takes the recipe's new version. A file the recipe didn't change stays as you left it. Files outside the recipe, such as the agent's notes, stay as they are.
+- A file changed both here and in the recipe stays as it is here. The recipe's version is saved next to it as `<file>.recipe`. Compare the two, edit your file, and delete the copy. Updates list the copies until you do, and remove a copy that matches its file.
+- Settings merge one by one the same way. A list merges entry by entry: secrets by name, env by NAME and mounts by destination. When both sides changed a setting, your value stays.
+- Your settings for where the agent is reachable and who may call it stay as they are. Servers you turned off stay off.
+- The command asks for the secrets of new settings and new MCP servers, and whether to use new optional servers.
+
+The update also reports changes made here to `.mcp.json` and to the agent's configuration files, marked `!`, since they decide what the agent runs. The agent may have made them.
+
+A running agent applies the settings it can at once, and the update lists the others for `a2a-serve restart`. New conversations get the new files. Added or removed skills need a restart.
+
+`a2a-serve status` shows the recipe and the commit the agent is at.
 
 ## What a recipe sets
 
