@@ -40,7 +40,7 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 
 You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
 
-The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there. A relay that admits people by sign-in admits anyone its identity provider accepts, so on such a relay `--private-access` defaults to `paired` until you set it.
+The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there.
 
 ### Common tasks
 

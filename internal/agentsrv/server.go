@@ -724,14 +724,7 @@ func (s *Server) viewer(ctx context.Context) (string, bool, error) {
 
 // policy is the access policy in force.
 func (s *Server) policy() auth.Policy {
-	return access.Policy(s.config().Policy, s.signIn())
-}
-
-// signIn reports whether the private network admits people by sign-in,
-// whose identity provider may accept anyone with an account there.
-func (s *Server) signIn() bool {
-	sn, ok := s.private.(network.SignInNetwork)
-	return ok && sn.AdmitsBySignIn()
+	return access.Policy(s.config().Policy)
 }
 
 // access describes who may call the agent now.
@@ -740,7 +733,7 @@ func (s *Server) access(ctx context.Context) (*controlapi.Access, error) {
 	if err != nil {
 		return nil, err
 	}
-	networks := access.Network{Public: s.public != nil, SignIn: s.signIn()}
+	networks := access.Network{Public: s.public != nil}
 	if s.private != nil {
 		networks.Private = s.private.Name()
 	}
