@@ -79,9 +79,7 @@ func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View
 func channelSecrets(cfg *agentdir.Config) []string {
 	var out []string
 	for _, kind := range channelKinds {
-		if name := channelSecret(cfg, kind); name != "" {
-			out = append(out, name)
-		}
+		out = append(out, channelSecretsOf(cfg, kind)...)
 	}
 	return out
 }

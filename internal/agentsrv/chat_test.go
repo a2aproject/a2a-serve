@@ -156,6 +156,22 @@ func TestRouterTypedAnswer(t *testing.T) {
 	ts.ch.waitFor(t, "thread1", hasText("Push denied."))
 }
 
+func TestRouterTypedAnswerWithMoreTextIsAmbiguous(t *testing.T) {
+	t.Parallel()
+	ch := newFakeChannel("fake")
+	ch.buttons = false
+	ts := startServer(t, serverOpts{channel: ch})
+	linkOwner(t, ts, "me@example.com", "thread1")
+	ts.ch.write("me@example.com", "thread1", "ask")
+	ts.ch.waitFor(t, "thread1", hasText("Reply approve, always, deny"))
+
+	ts.ch.write("me@example.com", "thread1", "yes\n\nbut only in tests/")
+
+	ts.ch.waitFor(t, "thread1", hasText("Reply with only one of: approve, always, deny."))
+	ts.ch.write("me@example.com", "thread1", "deny")
+	ts.ch.waitFor(t, "thread1", hasText("Push denied."))
+}
+
 func TestRouterTypedReplyAfterStoppedQuestionReachesAgent(t *testing.T) {
 	t.Parallel()
 	ch := newFakeChannel("fake")

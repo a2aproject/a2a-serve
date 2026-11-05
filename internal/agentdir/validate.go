@@ -155,7 +155,13 @@ func (c *Config) Validate() error {
 	}
 	if e := c.Channels.Email; e != nil {
 		var missing []string
-		for flag, v := range map[string]string{"email-address": e.Address, "email-imap": e.IMAP, "email-smtp": e.SMTP, "email-password": e.Password, "email-trusted-authserv": e.TrustedAuthServ} {
+		required := map[string]string{"email-address": e.Address, "email-imap": e.IMAP, "email-smtp": e.SMTP, "email-password": e.Password, "email-trusted-authserv": e.TrustedAuthServ}
+		if e.OAuthRefreshToken != "" {
+			delete(required, "email-password")
+			required["email-oauth-token-url"] = e.OAuthTokenURL
+			required["email-oauth-client-id"] = e.OAuthClientID
+		}
+		for flag, v := range required {
 			if v == "" {
 				missing = append(missing, "--"+flag)
 			}
@@ -308,8 +314,12 @@ func (c *Config) secretRefs() []secretRef {
 	if dc := c.Channels.Discord; dc != nil && strings.HasPrefix(dc.Token, SecretPrefix) {
 		refs = append(refs, secretRef{"discord", dc.Token})
 	}
-	if e := c.Channels.Email; e != nil && strings.HasPrefix(e.Password, SecretPrefix) {
-		refs = append(refs, secretRef{"email-password", e.Password})
+	if e := c.Channels.Email; e != nil {
+		for flag, v := range map[string]string{"email-password": e.Password, "email-oauth-client-secret": e.OAuthClientSecret, "email-oauth-refresh-token": e.OAuthRefreshToken} {
+			if strings.HasPrefix(v, SecretPrefix) {
+				refs = append(refs, secretRef{flag, v})
+			}
+		}
 	}
 	if strings.HasPrefix(c.Auth.GoogleClientSecret, SecretPrefix) {
 		refs = append(refs, secretRef{"google-client-secret", c.Auth.GoogleClientSecret})

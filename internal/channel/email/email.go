@@ -14,12 +14,14 @@
 
 // Package email is the email channel of an agent server: IMAP IDLE on a
 // dedicated mailbox and SMTP for replies, so no MX record or public URL is
-// needed. Only mail which passed DMARC or aligned DKIM at the trusted
-// receiving server can instruct the agent or answer approvals.
+// needed. Only mail which passed DMARC, or DKIM of the sender's domain, at
+// the trusted receiving server is read; other mail is dropped unanswered.
 package email
 
 import (
+	"bufio"
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/tls"
 	"errors"
@@ -28,7 +30,9 @@ import (
 	"log/slog"
 	"net"
 	"net/smtp"
+	"net/textproto"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -36,9 +40,11 @@ import (
 
 	"github.com/emersion/go-imap/v2"
 	"github.com/emersion/go-imap/v2/imapclient"
+	"github.com/emersion/go-message"
 	_ "github.com/emersion/go-message/charset" // decodes non-UTF-8 mail
 	"github.com/emersion/go-message/mail"
-	"golang.org/x/net/publicsuffix"
+	mtextproto "github.com/emersion/go-message/textproto"
+	"golang.org/x/oauth2"
 
 	"github.com/a2aproject/a2a-serve/internal/backoff"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -53,22 +59,36 @@ type Config struct {
 	SMTP     string
 	Username string
 	Password string
-	Mailbox  string
+	// OAuth, if set, signs in with XOAUTH2, and Password is unused.
+	OAuth   *OAuthConfig
+	Mailbox string
 	// TrustedAuthServ is the authserv-id of the receiving server whose
 	// Authentication-Results headers are trusted.
 	TrustedAuthServ string
+	// MaxMessage is the size of the largest mail read, 64 MiB if zero.
+	MaxMessage int64
 }
 
 const (
 	maxText     = 100_000
 	idleLimit   = 25 * time.Minute
 	smtpTimeout = 2 * time.Minute
+	dialTimeout = 30 * time.Second
+	// maxHeader bounds the header read to authenticate a mail. The trusted
+	// Authentication-Results header is on top, so a cut header still has it.
+	maxHeader         = 256 << 10
+	maxPart           = 20 << 20
+	defaultMaxMessage = 64 << 20
+	fetchBatch        = 20
+	sendAttempts      = 4
 )
 
 // Channel is a mailbox.
 type Channel struct {
-	cfg Config
-	kv  channel.KV
+	cfg     Config
+	kv      channel.KV
+	tokens  oauth2.TokenSource
+	threads *threads
 
 	mu sync.Mutex
 }
@@ -78,7 +98,8 @@ var (
 	_ channel.Describer = (*Channel)(nil)
 )
 
-// New returns a channel for the mailbox. kv keeps the last UID processed.
+// New returns a channel for the mailbox. kv keeps the last UID processed
+// and the state of recent threads.
 func New(cfg Config, kv channel.KV) *Channel {
 	if cfg.Mailbox == "" {
 		cfg.Mailbox = "INBOX"
@@ -86,7 +107,14 @@ func New(cfg Config, kv channel.KV) *Channel {
 	if cfg.Username == "" {
 		cfg.Username = cfg.Address
 	}
-	return &Channel{cfg: cfg, kv: kv}
+	if cfg.MaxMessage == 0 {
+		cfg.MaxMessage = defaultMaxMessage
+	}
+	c := &Channel{cfg: cfg, kv: kv, threads: &threads{kv: kv}}
+	if cfg.OAuth != nil {
+		c.tokens = newTokenSource(*cfg.OAuth)
+	}
+	return c
 }
 
 // Name implements [channel.Channel].
@@ -127,17 +155,68 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 	return nil
 }
 
-func dialIMAP(addr string, opts *imapclient.Options) (*imapclient.Client, error) {
-	if strings.HasSuffix(addr, ":993") {
-		return imapclient.DialTLS(addr, opts)
+// dialIMAP connects to the IMAP server. Ending ctx aborts the connection.
+func (c *Channel) dialIMAP(ctx context.Context, opts *imapclient.Options) (*imapclient.Client, error) {
+	host, port, err := net.SplitHostPort(c.cfg.IMAP)
+	if err != nil {
+		return nil, fmt.Errorf("email: imap must be host:port: %w", err)
 	}
-	return imapclient.DialStartTLS(addr, opts)
+	if opts == nil {
+		opts = &imapclient.Options{}
+	}
+	opts.TLSConfig = &tls.Config{ServerName: host}
+	d := &net.Dialer{Timeout: dialTimeout}
+	if port == "993" {
+		conn, err := (&tls.Dialer{NetDialer: d, Config: &tls.Config{ServerName: host, NextProtos: []string{"imap"}}}).DialContext(ctx, "tcp", c.cfg.IMAP)
+		if err != nil {
+			return nil, err
+		}
+		return imapclient.New(conn, opts), nil
+	}
+	conn, err := d.DialContext(ctx, "tcp", c.cfg.IMAP)
+	if err != nil {
+		return nil, err
+	}
+	stop := context.AfterFunc(ctx, func() { closeConn(conn) })
+	client, err := imapclient.NewStartTLS(conn, opts)
+	if !stop() {
+		if err == nil {
+			closeIMAP(client)
+		}
+		return nil, ctx.Err()
+	}
+	return client, err
 }
 
-// session processes new mail, then idles until more arrives.
+func closeConn(conn net.Conn) {
+	if err := conn.Close(); err != nil {
+		slog.Debug("email: closing connection", "error", err)
+	}
+}
+
+func closeIMAP(client *imapclient.Client) {
+	if err := client.Close(); err != nil {
+		slog.Debug("email: closing IMAP", "error", err)
+	}
+}
+
+// login signs in with the password, or with an OAuth access token.
+func (c *Channel) login(ctx context.Context, client *imapclient.Client) error {
+	if c.tokens == nil {
+		return client.Login(c.cfg.Username, c.cfg.Password).Wait()
+	}
+	tok, err := c.accessToken(ctx)
+	if err != nil {
+		return err
+	}
+	return client.Authenticate(xoauth2Client{user: c.cfg.Username, token: tok})
+}
+
+// session processes new mail, then idles until more arrives. Ending ctx
+// closes the connection, which unblocks any command in flight.
 func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error {
 	wake := make(chan struct{}, 1)
-	client, err := dialIMAP(c.cfg.IMAP, &imapclient.Options{
+	client, err := c.dialIMAP(ctx, &imapclient.Options{
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
 			Mailbox: func(data *imapclient.UnilateralDataMailbox) {
 				if data.NumMessages != nil {
@@ -152,17 +231,19 @@ func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error 
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if err := client.Close(); err != nil {
-			slog.Debug("email: closing IMAP", "error", err)
-		}
-	}()
-	if err := client.Login(c.cfg.Username, c.cfg.Password).Wait(); err != nil {
+	closeOnce := sync.OnceFunc(func() { closeIMAP(client) })
+	stop := context.AfterFunc(ctx, closeOnce)
+	defer stop()
+	defer closeOnce()
+	if err := c.login(ctx, client); err != nil {
 		return fmt.Errorf("IMAP login: %w", err)
 	}
 	sel, err := client.Select(c.cfg.Mailbox, nil).Wait()
 	if err != nil {
 		return fmt.Errorf("selecting %s: %w", c.cfg.Mailbox, err)
+	}
+	if err := c.threads.load(ctx); err != nil {
+		return err
 	}
 	if err := c.checkValidity(ctx, sel, func() (imap.UID, error) { return highestUID(client, sel.NumMessages) }); err != nil {
 		return err
@@ -236,117 +317,275 @@ func highestUID(client *imapclient.Client, n uint32) (imap.UID, error) {
 	return msgs[0].UID, nil
 }
 
+var (
+	headerSection = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, Peek: true, Partial: &imap.SectionPartial{Size: maxHeader}}
+	fullSection   = &imap.FetchItemBodySection{Peek: true}
+)
+
+// fetchNew processes the mail after the last UID processed. It lists UIDs
+// and sizes first, because "UID last+1:*" also returns the newest message
+// when there is no new one. Then it reads the headers of a batch, and the
+// body of each authenticated mail on its own.
 func (c *Channel) fetchNew(ctx context.Context, client *imapclient.Client, in chan<- channel.Inbound) error {
 	lastStr, ok, err := c.kv.Get(ctx, lastUIDKey)
 	if err != nil {
 		return err
 	}
-	var last uint64
+	var last imap.UID
 	if ok {
-		if last, err = strconv.ParseUint(lastStr, 10, 32); err != nil {
+		n, err := strconv.ParseUint(lastStr, 10, 32)
+		if err != nil {
 			return fmt.Errorf("email: invalid last UID %q: %w", lastStr, err)
 		}
+		last = imap.UID(n)
 	}
 	var set imap.UIDSet
-	set.AddRange(imap.UID(last+1), 0)
-	section := &imap.FetchItemBodySection{Peek: true}
-	msgs, err := client.Fetch(set, &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{section}}).Collect()
+	set.AddRange(last+1, 0)
+	listed, err := client.Fetch(set, &imap.FetchOptions{UID: true, RFC822Size: true}).Collect()
 	if err != nil {
 		return fmt.Errorf("IMAP fetch: %w", err)
 	}
-	for _, m := range msgs {
-		if uint64(m.UID) <= last {
-			continue
+	listed = slices.DeleteFunc(listed, func(m *imapclient.FetchMessageBuffer) bool { return m.UID <= last })
+	slices.SortFunc(listed, func(a, b *imapclient.FetchMessageBuffer) int { return cmp.Compare(a.UID, b.UID) })
+	for batch := range slices.Chunk(listed, fetchBatch) {
+		uids := make([]imap.UID, len(batch))
+		for i, m := range batch {
+			uids[i] = m.UID
 		}
-		raw := m.FindBodySection(section)
-		msg, ok, err := c.parse(raw)
-		switch {
-		case err != nil:
-			slog.Warn("email: parsing message", "uid", m.UID, "error", err)
-		case ok:
-			select {
-			case in <- msg:
-			case <-ctx.Done():
+		headers, err := fetchSection(client, uids, headerSection, maxHeader)
+		if err != nil {
+			return fmt.Errorf("IMAP fetch: %w", err)
+		}
+		for _, m := range batch {
+			if err := c.process(ctx, client, m.UID, m.RFC822Size, headers[m.UID], in); err != nil {
+				return err
+			}
+			if ctx.Err() != nil {
 				return nil
 			}
-		}
-		last = uint64(m.UID)
-		if err := c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(last, 10)); err != nil {
-			return err
+			if err := c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(uint64(m.UID), 10)); err != nil {
+				return err
+			}
 		}
 	}
 	return nil
 }
 
-// parse turns a raw message into an inbound message. It reports false for
-// mail the agent must not answer: its own, auto-replies and lists.
-func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
-	r, err := mail.CreateReader(bytes.NewReader(raw))
+// fetchSection fetches a section of each message, reading at most limit
+// bytes of it. Longer sections are left out.
+func fetchSection(client *imapclient.Client, uids []imap.UID, section *imap.FetchItemBodySection, limit int64) (map[imap.UID][]byte, error) {
+	cmd := client.Fetch(imap.UIDSetNum(uids...), &imap.FetchOptions{UID: true, BodySection: []*imap.FetchItemBodySection{section}})
+	out := map[imap.UID][]byte{}
+	for msg := cmd.Next(); msg != nil; msg = cmd.Next() {
+		var (
+			uid  imap.UID
+			data []byte
+		)
+		for item := msg.Next(); item != nil; item = msg.Next() {
+			switch item := item.(type) {
+			case imapclient.FetchItemDataUID:
+				uid = item.UID
+			case imapclient.FetchItemDataBodySection:
+				if item.Literal == nil {
+					continue
+				}
+				b, err := io.ReadAll(io.LimitReader(item.Literal, limit+1))
+				if err != nil {
+					return nil, errors.Join(err, cmd.Close())
+				}
+				if int64(len(b)) <= limit {
+					data = b
+				}
+			}
+		}
+		if uid != 0 && data != nil {
+			out[uid] = data
+		}
+	}
+	return out, cmd.Close()
+}
+
+// process reads a listed message and delivers it to in. It drops mail which
+// is malformed, unauthenticated or too large, and only returns errors of the
+// IMAP connection and the channel's state.
+func (c *Channel) process(ctx context.Context, client *imapclient.Client, uid imap.UID, size int64, header []byte, in chan<- channel.Inbound) error {
+	if len(header) >= maxHeader {
+		slog.Info("email: dropped mail", "uid", uid, "reason", "header too large")
+		return nil
+	}
+	env, err := c.envelope(header)
+	if errors.Is(err, ErrTemporary) {
+		slog.Warn("email: dropped mail because the mail server couldn't check its sender; ask the sender to send it again", "uid", uid, "reason", err)
+		return nil
+	}
 	if err != nil {
-		return channel.Inbound{}, false, err
+		slog.Info("email: dropped mail", "uid", uid, "reason", err)
+		return nil
 	}
-	h := r.Header
+	if size > c.cfg.MaxMessage {
+		slog.Warn("email: dropped mail larger than the limit", "uid", uid, "from", env.sender, "size", size, "limit", c.cfg.MaxMessage)
+		return nil
+	}
+	bodies, err := fetchSection(client, []imap.UID{uid}, fullSection, c.cfg.MaxMessage)
+	if err != nil {
+		return fmt.Errorf("IMAP fetch: %w", err)
+	}
+	raw, ok := bodies[uid]
+	if !ok {
+		slog.Warn("email: dropped mail whose body couldn't be read", "uid", uid, "from", env.sender)
+		return nil
+	}
+	msg, ok, err := c.inbound(ctx, env, raw)
+	if err != nil || !ok {
+		return err
+	}
+	select {
+	case in <- msg:
+	case <-ctx.Done():
+	}
+	return nil
+}
+
+// envelope is what the header of an authenticated mail tells.
+type envelope struct {
+	sender, name, msgID, subject string
+	references, inReplyTo        []string
+}
+
+// reply reports whether the mail answers another one, and isn't a forward.
+func (e envelope) reply() bool {
+	return (len(e.references) > 0 || len(e.inReplyTo) > 0) && !forwardPrefix.MatchString(e.subject)
+}
+
+// envelope parses the header of a mail. It returns an error for mail the
+// agent must not read: malformed, unauthenticated, its own, auto-replies
+// and lists.
+func (c *Channel) envelope(raw []byte) (envelope, error) {
+	th, err := mtextproto.ReadHeader(bufio.NewReader(bytes.NewReader(raw)))
+	if err != nil {
+		return envelope{}, fmt.Errorf("malformed header: %w", err)
+	}
+	h := mail.Header{Header: message.Header{Header: th}}
+	// DMARC checks a single From domain, and receiving servers may check
+	// another copy of a repeated header than the one read here.
+	for _, f := range []string{"From", "Message-Id"} {
+		if n := len(h.Values(f)); n != 1 {
+			return envelope{}, fmt.Errorf("%d %s headers, want one", n, f)
+		}
+	}
+	for _, f := range []string{"Sender", "Subject"} {
+		if n := len(h.Values(f)); n > 1 {
+			return envelope{}, fmt.Errorf("%d %s headers, want at most one", n, f)
+		}
+	}
 	from, err := h.AddressList("From")
-	if err != nil || len(from) == 0 {
-		return channel.Inbound{}, false, fmt.Errorf("no From address: %w", err)
+	if err != nil || len(from) != 1 {
+		return envelope{}, fmt.Errorf("%d From addresses, want one (%v)", len(from), err)
 	}
-	// DMARC checks one of several From domains, so the sender would be ambiguous.
-	if len(from) > 1 {
-		return channel.Inbound{}, false, nil
+	if h.Has("Sender") {
+		if s, err := h.AddressList("Sender"); err != nil || len(s) != 1 {
+			return envelope{}, fmt.Errorf("%d Sender addresses, want one (%v)", len(s), err)
+		}
 	}
 	sender := strings.ToLower(from[0].Address)
 	if strings.EqualFold(sender, c.cfg.Address) {
-		return channel.Inbound{}, false, nil
+		return envelope{}, errors.New("sent by the agent")
 	}
 	if auto := strings.ToLower(h.Get("Auto-Submitted")); auto != "" && auto != "no" {
-		return channel.Inbound{}, false, nil
+		return envelope{}, errors.New("auto-submitted")
 	}
 	switch strings.ToLower(h.Get("Precedence")) {
 	case "bulk", "list", "junk", "auto_reply":
-		return channel.Inbound{}, false, nil
+		return envelope{}, errors.New("bulk mail")
 	}
 	if h.Get("List-Id") != "" || h.Get("List-Unsubscribe") != "" {
-		return channel.Inbound{}, false, nil
+		return envelope{}, errors.New("list mail")
 	}
 	msgID, err := h.MessageID()
 	if err != nil || msgID == "" {
-		return channel.Inbound{}, false, fmt.Errorf("no Message-ID: %w", err)
+		return envelope{}, fmt.Errorf("no Message-ID (%v)", err)
 	}
-	root := msgID
-	if refs, err := h.MsgIDList("References"); err == nil && len(refs) > 0 {
-		root = refs[0]
-	} else if irt, err := h.MsgIDList("In-Reply-To"); err == nil && len(irt) > 0 {
-		root = irt[0]
+	if err := Authenticate(h.Values("Authentication-Results"), c.cfg.TrustedAuthServ, domainOf(sender)); err != nil {
+		return envelope{}, fmt.Errorf("unauthenticated sender %s: %w", sender, err)
 	}
 	subject, err := h.Subject()
 	if err != nil {
 		slog.Debug("email: undecodable subject", "error", err)
 		subject = ""
 	}
-
-	identity := sender
-	authentic := Authentic(h.Values("Authentication-Results"), c.cfg.TrustedAuthServ, domainOf(sender))
-	in := channel.Inbound{
-		Channel:   c.Name(),
-		MessageID: dedupID(identity, msgID, authentic),
-		Identity:  identity,
-		Name:      from[0].Name,
-		Conv:      ConvKey(sender, root, subject),
-		Direct:    true,
-		Authentic: authentic,
+	env := envelope{sender: sender, name: from[0].Name, msgID: msgID, subject: subject}
+	if env.references, err = h.MsgIDList("References"); err != nil {
+		slog.Debug("email: malformed References", "error", err)
 	}
-	var text string
+	if env.inReplyTo, err = h.MsgIDList("In-Reply-To"); err != nil {
+		slog.Debug("email: malformed In-Reply-To", "error", err)
+	}
+	return env, nil
+}
+
+// conv returns the conversation of a mail: the one in which the agent sent
+// a message the mail references, or else the thread root with the sender.
+func (c *Channel) conv(ctx context.Context, env envelope) (channel.ConvKey, error) {
+	root := env.msgID
+	switch {
+	case len(env.references) > 0:
+		root = env.references[0]
+	case len(env.inReplyTo) > 0:
+		root = env.inReplyTo[0]
+	}
+	return c.threads.convOf(ctx, env.sender, root, slices.Concat(env.references, env.inReplyTo), root != env.msgID, env.subject)
+}
+
+// inbound turns an authenticated mail into a message. It drops a mail whose
+// body can't be parsed, and returns errors of the channel's state.
+func (c *Channel) inbound(ctx context.Context, env envelope, raw []byte) (channel.Inbound, bool, error) {
+	text, files, err := body(raw, env.reply())
+	if err != nil {
+		slog.Warn("email: dropped mail whose body couldn't be parsed", "from", env.sender, "error", err)
+		return channel.Inbound{}, false, nil
+	}
+	conv, err := c.conv(ctx, env)
+	if err != nil {
+		return channel.Inbound{}, false, err
+	}
+	if err := c.threads.received(ctx, conv, env.subject); err != nil {
+		return channel.Inbound{}, false, err
+	}
+	return channel.Inbound{
+		Channel:   c.Name(),
+		MessageID: env.sender + "|" + env.msgID,
+		Identity:  env.sender,
+		Name:      env.name,
+		Conv:      conv,
+		Direct:    true,
+		Authentic: true,
+		Text:      text,
+		Files:     files,
+	}, true, nil
+}
+
+// body returns the new text of a mail and its attachments. Mail without a
+// text/plain part falls back to its text/html part.
+func body(raw []byte, reply bool) (string, []channel.File, error) {
+	r, err := mail.CreateReader(bytes.NewReader(raw))
+	if err != nil {
+		return "", nil, err
+	}
+	var (
+		plain, html string
+		files       []channel.File
+	)
 	for {
 		p, err := r.NextPart()
 		if errors.Is(err, io.EOF) {
 			break
 		}
 		if err != nil {
-			return channel.Inbound{}, false, err
+			return "", nil, err
 		}
-		body, err := io.ReadAll(io.LimitReader(p.Body, 20<<20))
+		data, err := io.ReadAll(io.LimitReader(p.Body, maxPart))
 		if err != nil {
-			return channel.Inbound{}, false, err
+			return "", nil, err
 		}
 		switch ph := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -355,8 +594,11 @@ func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
 				slog.Debug("email: inline part without a valid content type", "error", err)
 				continue
 			}
-			if ct == "text/plain" && text == "" {
-				text = string(body)
+			switch {
+			case ct == "text/plain" && plain == "":
+				plain = string(data)
+			case ct == "text/html" && html == "":
+				html = string(data)
 			}
 		case *mail.AttachmentHeader:
 			name, err := ph.Filename()
@@ -368,32 +610,46 @@ func (c *Channel) parse(raw []byte) (channel.Inbound, bool, error) {
 				slog.Debug("email: attachment without a valid content type", "error", err)
 				ct = "application/octet-stream"
 			}
-			in.Files = append(in.Files, channel.File{Name: name, MediaType: ct, Data: body})
+			files = append(files, channel.File{Name: name, MediaType: ct, Data: data})
 		}
 	}
-	in.Text = StripQuoted(text)
-	return in, true, nil
-}
-
-// dedupID is the dedup key of a message. The Message-ID is chosen by the
-// sender, so it is scoped to the sender and whether it was authenticated:
-// forged mail can't use up the Message-ID of a genuine one.
-func dedupID(identity, msgID string, authentic bool) string {
-	if !authentic {
-		return "unverified|" + identity + "|" + msgID
+	if strings.TrimSpace(plain) == "" && html != "" {
+		if plain, err = htmlText(strings.NewReader(html)); err != nil {
+			return "", nil, fmt.Errorf("reading the HTML part: %w", err)
+		}
 	}
-	return identity + "|" + msgID
+	return StripQuoted(plain, reply), files, nil
 }
 
-// ConvKey identifies an email thread: the correspondent, the thread root and
-// the subject without reply and forward prefixes, separated by tabs.
-func ConvKey(addr, root, subject string) channel.ConvKey {
-	return channel.ConvKey(addr + "\t" + root + "\t" + strings.ReplaceAll(baseSubject(subject), "\t", " "))
+// ConvKey identifies an email thread: the correspondent and the thread
+// root, separated by a tab. Keys made before also had the base subject as
+// a third field, which [parseConv] still accepts.
+func ConvKey(addr, root string) channel.ConvKey {
+	return channel.ConvKey(addr + "\t" + root)
 }
+
+// legacyConvKey is the key of a conversation started before the subject
+// left the key: the correspondent, the thread root and the subject without
+// the prefixes the old pattern stripped.
+func legacyConvKey(addr, root, subject string) channel.ConvKey {
+	for {
+		loc := legacySubjectPrefix.FindStringIndex(subject)
+		if loc == nil {
+			break
+		}
+		subject = subject[loc[1]:]
+	}
+	return channel.ConvKey(addr + "\t" + root + "\t" + strings.ReplaceAll(strings.TrimSpace(subject), "\t", " "))
+}
+
+var legacySubjectPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?|aw|wg|sv)(\[\d+\])?\s*:\s*`)
 
 // subjectPrefix matches one reply or forward prefix, such as "Re:", "RE[2]:",
-// "Fwd:", the German "AW:" and "WG:" or the Swedish "SV:".
-var subjectPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?|aw|wg|sv)(\[\d+\])?\s*:\s*`)
+// "Fwd:", the German "AW:" and "WG:", the Swedish "SV:" or the Chinese "回复：".
+var subjectPrefix = regexp.MustCompile(`(?i)^\s*(re|fwd?|aw|wg|sv|antw|res|odp|tr|rv|回复|答复|转发)(\[\d+\])?\s*[:：]\s*`)
+
+// forwardPrefix matches a forward prefix at the start of a subject.
+var forwardPrefix = regexp.MustCompile(`(?i)^\s*(fwd?|wg|tr|rv|i|转发)(\[\d+\])?\s*[:：]`)
 
 // baseSubject strips the reply and forward prefixes of a subject.
 func baseSubject(subject string) string {
@@ -419,81 +675,23 @@ func domainOf(addr string) string {
 	return strings.ToLower(d)
 }
 
-// Authentic reports whether the topmost Authentication-Results header added
-// by the trusted server shows dmarc=pass for the sender's domain, or dkim=pass
-// aligned with it. Headers further down may have been forged by the sender.
-func Authentic(results []string, trusted, fromDomain string) bool {
-	for _, r := range results {
-		id, rest, ok := strings.Cut(r, ";")
-		if !ok || !strings.EqualFold(strings.Fields(id + " x")[0], trusted) {
-			continue
-		}
-		_, parsed, err := parseAuthResults(r)
-		if err != nil {
-			slog.Warn("email: malformed Authentication-Results of the trusted server", "error", err, "results", rest)
-			return false
-		}
-		for _, res := range parsed {
-			if res.result != "pass" {
-				continue
-			}
-			switch res.method {
-			case "dmarc":
-				if strings.EqualFold(res.props["header.from"], fromDomain) {
-					return true
-				}
-			case "dkim":
-				if aligned(strings.ToLower(res.props["header.d"]), fromDomain) {
-					return true
-				}
-			}
-		}
-		return false
-	}
-	return false
-}
-
-// aligned reports DMARC relaxed alignment: both domains share their
-// organizational domain, such as mail.alice.org and alice.org.
-func aligned(d, fromDomain string) bool {
-	a, err := publicsuffix.EffectiveTLDPlusOne(d)
-	if err != nil {
-		return false
-	}
-	b, err := publicsuffix.EffectiveTLDPlusOne(fromDomain)
-	return err == nil && a == b
-}
-
-// StripQuoted drops the quoted text of a reply.
-func StripQuoted(text string) string {
-	var out []string
-	for line := range strings.SplitSeq(strings.ReplaceAll(text, "\r\n", "\n"), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, ">") {
-			continue
-		}
-		if strings.HasPrefix(trimmed, "On ") && strings.HasSuffix(trimmed, "wrote:") {
-			break
-		}
-		if trimmed == "-- " || trimmed == "--" {
-			break
-		}
-		out = append(out, line)
-	}
-	return strings.TrimSpace(strings.Join(out, "\n"))
-}
-
 // Send implements [channel.Channel].
 func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, error) {
-	to, root, subject := parseConv(m.Conv)
+	to, root, keySubject := parseConv(m.Conv)
 	if to == "" {
 		return channel.Ref{}, fmt.Errorf("email: no recipient in conversation %q", m.Conv)
 	}
-	if subject == "" {
-		subject = m.Subject
+	subject, err := c.threads.subject(ctx, m.Conv)
+	if err != nil {
+		return channel.Ref{}, err
 	}
-	if root != "" && !strings.HasPrefix(strings.ToLower(subject), "re:") {
-		subject = "Re: " + subject
+	for _, s := range []string{keySubject, m.Subject} {
+		if subject == "" {
+			subject = s
+		}
+	}
+	if root != "" {
+		subject = "Re: " + baseSubject(subject)
 	}
 	msgID := cryptoutil.RandomString(24, cryptoutil.Alphanumeric) + "@" + domainOf(c.cfg.Address)
 	h := mailHeader(c.cfg.Address, to)
@@ -508,12 +706,43 @@ func (c *Channel) Send(ctx context.Context, m channel.Outbound) (channel.Ref, er
 	if err := writeMessage(&buf, h, m); err != nil {
 		return channel.Ref{}, err
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if err := c.sendSMTP(ctx, to, buf.Bytes()); err != nil {
+	if err := c.threads.sent(ctx, m.Conv, msgID); err != nil {
+		return channel.Ref{}, err
+	}
+	if err := c.deliver(ctx, to, buf.Bytes()); err != nil {
 		return channel.Ref{}, err
 	}
 	return channel.Ref{Conv: m.Conv, ID: msgID}, nil
+}
+
+// deliver sends msg, retrying with backoff while ctx lasts. A 5xx reply
+// isn't retried, because the server would refuse the message again.
+func (c *Channel) deliver(ctx context.Context, to string, msg []byte) error {
+	retry := backoff.New(time.Second, 30*time.Second, time.Hour)
+	for attempt := 1; ; attempt++ {
+		err := c.sendOnce(ctx, to, msg)
+		if err == nil || attempt == sendAttempts || permanent(err) || ctx.Err() != nil {
+			return err
+		}
+		delay := retry.Next(0)
+		slog.Warn("email: sending failed, retrying", "error", err, "in", delay)
+		select {
+		case <-ctx.Done():
+			return err
+		case <-time.After(delay):
+		}
+	}
+}
+
+func (c *Channel) sendOnce(ctx context.Context, to string, msg []byte) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.sendSMTP(ctx, to, msg)
+}
+
+func permanent(err error) bool {
+	var tp *textproto.Error
+	return errors.As(err, &tp) && tp.Code >= 500
 }
 
 func mailHeader(from, to string) mail.Header {
@@ -572,24 +801,19 @@ func writeMessage(w io.Writer, h mail.Header, m channel.Outbound) error {
 func (c *Channel) Validate(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	client, err := dialIMAP(c.cfg.IMAP, nil)
+	client, err := c.dialIMAP(ctx, nil)
 	if err != nil {
 		return fmt.Errorf("IMAP %s: %w", c.cfg.IMAP, err)
 	}
-	stop := context.AfterFunc(ctx, func() {
-		if err := client.Close(); err != nil {
-			slog.Debug("email: closing IMAP", "error", err)
-		}
-	})
+	closeOnce := sync.OnceFunc(func() { closeIMAP(client) })
+	stop := context.AfterFunc(ctx, closeOnce)
 	defer stop()
-	if err := client.Login(c.cfg.Username, c.cfg.Password).Wait(); err != nil {
-		return errors.Join(fmt.Errorf("IMAP login: %w", err), client.Close())
+	defer closeOnce()
+	if err := c.login(ctx, client); err != nil {
+		return fmt.Errorf("IMAP login: %w", err)
 	}
 	if err := client.Logout().Wait(); err != nil {
 		slog.Debug("email: IMAP logout", "error", err)
-	}
-	if err := client.Close(); err != nil {
-		slog.Debug("email: closing IMAP", "error", err)
 	}
 	smtpClient, err := c.dialSMTP(ctx)
 	if err != nil {
@@ -624,7 +848,11 @@ func (c *Channel) sendSMTP(ctx context.Context, to string, msg []byte) error {
 	if err := w.Close(); err != nil {
 		return err
 	}
-	return client.Quit()
+	// The server accepted the message; failing here would send it again.
+	if err := client.Quit(); err != nil {
+		slog.Debug("email: SMTP quit", "error", err)
+	}
+	return nil
 }
 
 // dialSMTP connects and logs in to the SMTP server.
@@ -633,7 +861,7 @@ func (c *Channel) dialSMTP(ctx context.Context) (*smtp.Client, error) {
 	if err != nil {
 		return nil, fmt.Errorf("email: smtp must be host:port: %w", err)
 	}
-	d := net.Dialer{Timeout: 30 * time.Second}
+	d := net.Dialer{Timeout: dialTimeout}
 	var conn net.Conn
 	if strings.HasSuffix(c.cfg.SMTP, ":465") {
 		conn, err = (&tls.Dialer{NetDialer: &d, Config: &tls.Config{ServerName: host}}).DialContext(ctx, "tcp", c.cfg.SMTP)
@@ -665,10 +893,27 @@ func (c *Channel) dialSMTP(ctx context.Context) (*smtp.Client, error) {
 	case !implicitTLS && !isLoopback(host):
 		return nil, errors.Join(fmt.Errorf("email: %s doesn't offer STARTTLS; refusing to send the password unencrypted", c.cfg.SMTP), client.Close())
 	}
-	if err := client.Auth(smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, host)); err != nil {
+	a, err := c.smtpAuth(ctx, host)
+	if err != nil {
+		return nil, errors.Join(err, client.Close())
+	}
+	if err := client.Auth(a); err != nil {
 		return nil, errors.Join(fmt.Errorf("email: SMTP auth: %w", err), client.Close())
 	}
 	return client, nil
+}
+
+// smtpAuth returns the SMTP login with the password, or with an OAuth
+// access token.
+func (c *Channel) smtpAuth(ctx context.Context, host string) (smtp.Auth, error) {
+	if c.tokens == nil {
+		return smtp.PlainAuth("", c.cfg.Username, c.cfg.Password, host), nil
+	}
+	tok, err := c.accessToken(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return xoauth2Auth{user: c.cfg.Username, token: tok}, nil
 }
 
 func isLoopback(host string) bool {

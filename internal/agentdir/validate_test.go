@@ -96,6 +96,22 @@ func TestValidate(t *testing.T) {
 		{name: "task ttl", modify: func(c *Config) { c.TaskTTL = "a month" }, wantErr: "--task-ttl: invalid duration"},
 		{name: "task ttl too short", modify: func(c *Config) { c.TaskTTL = "10m" }, wantErr: "--task-ttl 10m: want at least 1h"},
 		{
+			name: "email with OAuth",
+			modify: func(c *Config) {
+				c.Channels.Email = &EmailConfig{
+					Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx",
+					OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id", OAuthRefreshToken: "secret:EMAIL_OAUTH_REFRESH_TOKEN",
+				}
+			},
+		},
+		{
+			name: "incomplete email OAuth",
+			modify: func(c *Config) {
+				c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx", OAuthRefreshToken: "r"}
+			},
+			wantErr: "the email channel needs --email-oauth-client-id, --email-oauth-token-url",
+		},
+		{
 			name:    "incomplete email",
 			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },
 			wantErr: "the email channel needs --email-password, --email-smtp, --email-trusted-authserv",
