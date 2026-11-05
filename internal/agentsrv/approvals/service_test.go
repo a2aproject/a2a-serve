@@ -46,7 +46,7 @@ func (h *sendingHandler) SendMessage(ctx context.Context, _ *a2a.SendMessageRequ
 	return nil, h.err
 }
 
-func newService(t *testing.T, h a2asrv.RequestHandler) *Service {
+func newService(t *testing.T, h a2asrv.RequestHandler, opts ...func(*Deps)) *Service {
 	t.Helper()
 	s, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
@@ -59,12 +59,21 @@ func newService(t *testing.T, h a2asrv.RequestHandler) *Service {
 	})
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
 	policy := auth.Policy{Anonymous: []string{auth.MemberAnyone}}
-	return &Service{
-		Store: s, Tasks: s.Tasks("", all), Handler: h, Notifier: &fakeNotifier{},
-		Chain:     &auth.Chain{Store: s, Policy: func() auth.Policy { return policy }},
-		BaseURL:   func() string { return "https://agent.example" },
+	deps := Deps{
+		Records: NewRecords(RecordsDeps{
+			Store:   s,
+			Tasks:   s.Tasks("", all),
+			Chain:   &auth.Chain{Store: s, Policy: func() auth.Policy { return policy }},
+			BaseURL: func() string { return "https://agent.example" },
+		}),
+		Sender:    h,
+		Notifier:  &fakeNotifier{},
 		AgentName: func() string { return "assistant" },
 	}
+	for _, opt := range opts {
+		opt(&deps)
+	}
+	return New(deps)
 }
 
 // fakeNotifier records the questions sent to chats.
@@ -104,7 +113,7 @@ func (n *fakeNotifier) Follow(_ context.Context, _ store.Question, _ auth.Princi
 func storeTask(t *testing.T, svc *Service, id a2a.TaskID, state a2a.TaskState) {
 	t.Helper()
 	task := &a2a.Task{ID: id, ContextID: "c1", Status: a2a.TaskStatus{State: state, Message: permissionMessage(t)}}
-	if _, err := svc.Tasks.Create(context.Background(), task); err != nil {
+	if _, err := svc.tasks.Create(context.Background(), task); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 }
@@ -125,7 +134,7 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 		t.Fatalf("Answer() with a failing delivery error = nil, want error")
 	}
 
-	got, err := svc.Store.QuestionByID(ctx, rec.ID)
+	got, err := svc.store.QuestionByID(ctx, rec.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,7 +221,7 @@ func TestAnswerClosedQuestion(t *testing.T) {
 			if h.caller.ID != "" {
 				t.Fatalf("Answer() sent the answer as %q, want it not sent", h.caller.ID)
 			}
-			got, err := svc.Store.QuestionByID(ctx, rec.ID)
+			got, err := svc.store.QuestionByID(ctx, rec.ID)
 			if err != nil {
 				t.Fatalf("QuestionByID() error = %v", err)
 			}
@@ -242,10 +251,11 @@ func TestOnQuestion(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			svc := newService(t, &sendingHandler{})
 			n := &fakeNotifier{ownerChat: tc.ownerChat, done: make(chan struct{})}
-			svc.Notifier = n
-			svc.Unattended = func(string) bool { return tc.unattended }
+			svc := newService(t, &sendingHandler{}, func(d *Deps) {
+				d.Notifier = n
+				d.Unattended = func(string) bool { return tc.unattended }
+			})
 			q := tc.question
 			if q == nil {
 				q = FromMessage(permissionMessage(t))
@@ -258,7 +268,7 @@ func TestOnQuestion(t *testing.T) {
 			deadline := time.Now().Add(5 * time.Second)
 			for time.Now().Before(deadline) {
 				var err error
-				if recs, err = svc.Store.UnansweredQuestions(ctx); err != nil {
+				if recs, err = svc.store.UnansweredQuestions(ctx); err != nil {
 					t.Fatalf("UnansweredQuestions() error = %v", err)
 				}
 				if !tc.wantRecord || len(recs) > 0 {
@@ -304,9 +314,8 @@ func TestHandlePage(t *testing.T) {
 			t.Parallel()
 			h := &sendingHandler{}
 			svc := newService(t, h)
-			svc.Notifier = &fakeNotifier{}
 			ctx := context.Background()
-			if _, err := svc.Store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
 			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
@@ -331,7 +340,7 @@ func TestHandlePage(t *testing.T) {
 				t.Fatalf("HandlePage() POST status = %d, want %d", got, tc.wantPost)
 			}
 
-			got, err := svc.Store.QuestionByID(ctx, rec.ID)
+			got, err := svc.store.QuestionByID(ctx, rec.ID)
 			if err != nil {
 				t.Fatalf("QuestionByID() error = %v", err)
 			}
@@ -362,7 +371,7 @@ func TestPageURL(t *testing.T) {
 			t.Parallel()
 			svc := newService(t, &sendingHandler{})
 			ctx := context.Background()
-			if _, err := svc.Store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, FromMessage(permissionMessage(t)))

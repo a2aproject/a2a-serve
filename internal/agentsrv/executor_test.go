@@ -105,7 +105,7 @@ func openTestStore(t *testing.T) *store.Store {
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: &approvals.Service{Store: openTestStore(t)}}
+	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -149,11 +149,11 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	ctx := auth.WithPrincipal(context.Background(), auth.Owner())
 	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
 	contextID := a2a.NewContextID()
-	ts.srv.router.setUnattended(contextID)
+	ts.srv.chatTurns.unattended.add(contextID)
 	exec := &observedExecutor{
 		inner:     statusExecutor{state: a2a.TaskStateInputRequired, msg: asked.Status.Message},
 		bus:       newEventBus(),
-		peers:     ts.srv.peers,
+		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}

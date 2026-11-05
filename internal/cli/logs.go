@@ -17,7 +17,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
-	"github.com/a2aproject/a2a-serve/internal/launch"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
 func newLogsCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -36,7 +36,7 @@ func newLogsCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			}
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
-			return launch.FollowLog(ctx, d, lines, follow, cfg.Out)
+			return lifecycle.FollowLog(ctx, d, lines, follow, cfg.Out)
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Keep printing new lines")

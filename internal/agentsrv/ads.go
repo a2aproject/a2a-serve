@@ -26,7 +26,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -108,7 +107,7 @@ func (s *Server) runGossip(ctx context.Context) {
 }
 
 func (s *Server) gossipRound(ctx context.Context) {
-	peers, err := s.peers.discover(ctx)
+	peers, err := s.clients.discover(ctx)
 	if err != nil {
 		slog.Debug("finding peers to gossip with", "error", err)
 		return
@@ -175,12 +174,4 @@ func postJSON(ctx context.Context, hc *http.Client, url string, in, out any) err
 		return nil
 	}
 	return json.Unmarshal(data, out)
-}
-
-func (s *Server) ctlAds(w http.ResponseWriter, _ *http.Request) {
-	out := []controlapi.Advertisement{}
-	for _, e := range s.ads.Live() {
-		out = append(out, controlapi.Advertisement{Key: e.Key(), Name: e.Name, Host: e.Host, Description: e.Description, Expires: e.Expires})
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
 }

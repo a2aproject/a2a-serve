@@ -62,19 +62,44 @@ type RemoteAnswerer interface {
 	AnswerRemote(ctx context.Context, rec store.Question, q *Question, opt Option, by auth.Principal) error
 }
 
-// Service handles the questions of the agent and of agents it calls. Its
-// fields are set once, before the server serves.
-type Service struct {
+// Sender sends answers to the agent's own questions to its A2A handler.
+type Sender interface {
+	// SendMessage sends a message to the agent.
+	SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error)
+}
+
+// RecordsDeps are the dependencies of [Records].
+type RecordsDeps struct {
 	Store *store.Store
 	// Tasks is the agent's task store.
 	Tasks *store.TaskStore
-	// Handler is the agent's A2A handler, where answers to its own
-	// questions are sent.
-	Handler  a2asrv.RequestHandler
-	Notifier Notifier
-	Remote   RemoteAnswerer
 	// Chain gives the user of a question the role they have now.
 	Chain *auth.Chain
+	// BaseURL returns the URL people reach the agent at.
+	BaseURL func() string
+}
+
+// Records stores questions and looks up who may answer them, without
+// showing or delivering them.
+type Records struct {
+	store   *store.Store
+	tasks   *store.TaskStore
+	chain   *auth.Chain
+	baseURL func() string
+}
+
+// NewRecords returns the question records of deps.
+func NewRecords(deps RecordsDeps) *Records {
+	return &Records{store: deps.Store, tasks: deps.Tasks, chain: deps.Chain, baseURL: deps.BaseURL}
+}
+
+// Deps are the dependencies of [Service].
+type Deps struct {
+	Records *Records
+	// Sender is where answers to the agent's own questions are sent.
+	Sender   Sender
+	Notifier Notifier
+	Remote   RemoteAnswerer
 	// Unattended reports whether nobody watches the tasks of a context,
 	// such as the runs of a schedule without a chat. Their questions go to
 	// the owner chat.
@@ -84,10 +109,34 @@ type Service struct {
 	// rejected after AnonymousTimeout.
 	Anonymous        func(ctx context.Context, contextID string) bool
 	AnonymousTimeout time.Duration
-	// BaseURL returns the URL people reach the agent at.
-	BaseURL func() string
 	// AgentName returns the name of the agent.
 	AgentName func() string
+}
+
+// Service handles the questions of the agent and of agents it calls.
+type Service struct {
+	*Records
+	sender           Sender
+	notifier         Notifier
+	remote           RemoteAnswerer
+	unattended       func(contextID string) bool
+	anonymous        func(ctx context.Context, contextID string) bool
+	anonymousTimeout time.Duration
+	agentName        func() string
+}
+
+// New returns the approvals service of deps.
+func New(deps Deps) *Service {
+	return &Service{
+		Records:          deps.Records,
+		sender:           deps.Sender,
+		notifier:         deps.Notifier,
+		remote:           deps.Remote,
+		unattended:       deps.Unattended,
+		anonymous:        deps.Anonymous,
+		anonymousTimeout: deps.AnonymousTimeout,
+		agentName:        deps.AgentName,
+	}
 }
 
 // ErrNotApprover is returned when someone who may not approve answers an approval.
@@ -100,7 +149,7 @@ var ErrClosed = errors.New("the task no longer waits for an answer to this quest
 // contact is the agent whose task asked, or empty for this agent; user is
 // who may answer it besides owners. It returns [store.ErrExists] for a
 // remote question stored before.
-func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact, user string, q *Question) (store.Question, error) {
+func (r *Records) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, contact, user string, q *Question) (store.Question, error) {
 	rec := store.Question{
 		ID:        cryptoutil.RandomString(8, cryptoutil.Alphanumeric),
 		Token:     cryptoutil.RandomString(32, cryptoutil.Alphanumeric),
@@ -115,7 +164,7 @@ func (s *Service) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 		rec.Data = maps.Clone(q.Data)
 		rec.Data["text"] = q.Text
 	}
-	return rec, s.Store.PutQuestion(ctx, rec)
+	return rec, r.store.PutQuestion(ctx, rec)
 }
 
 // MayAnswer reports whether p may answer a permission question of a task
@@ -132,18 +181,18 @@ func MayAnswer(p auth.Principal, user string) bool {
 
 // PageURL is the page where the user of a question answers it, or empty
 // when they may not answer it.
-func (s *Service) PageURL(ctx context.Context, rec store.Question) (string, error) {
-	p, err := s.pageUser(ctx, rec)
+func (r *Records) PageURL(ctx context.Context, rec store.Question) (string, error) {
+	p, err := r.pageUser(ctx, rec)
 	if err != nil || !MayAnswer(p, rec.User) {
 		return "", err
 	}
-	return s.BaseURL() + "/hitl/" + rec.Token, nil
+	return r.baseURL() + "/hitl/" + rec.Token, nil
 }
 
 // pageUser is who answers a question on its page: its user, with the role
 // they have now. A user the policy refuses now has no role.
-func (s *Service) pageUser(ctx context.Context, rec store.Question) (auth.Principal, error) {
-	p, err := s.Chain.Refresh(ctx, rec.User, auth.Identity{})
+func (r *Records) pageUser(ctx context.Context, rec store.Question) (auth.Principal, error) {
+	p, err := r.chain.Refresh(ctx, rec.User, auth.Identity{})
 	var refused *auth.RefusedError
 	if errors.As(err, &refused) || errors.Is(err, auth.ErrNoCredential) {
 		return auth.Principal{ID: rec.User}, nil
@@ -159,8 +208,8 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 	if q.Type != TypePermission {
 		return
 	}
-	anonymous := s.Anonymous != nil && s.Anonymous(ctx, execCtx.ContextID)
-	if !anonymous && (s.Unattended == nil || !s.Unattended(execCtx.ContextID)) {
+	anonymous := s.anonymous != nil && s.anonymous(ctx, execCtx.ContextID)
+	if !anonymous && (s.unattended == nil || !s.unattended(execCtx.ContextID)) {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
@@ -173,16 +222,16 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 		}
 		header := fmt.Sprintf("%s needs your approval", auth.DisplayPrincipal(starter))
 		if anonymous {
-			time.AfterFunc(s.AnonymousTimeout, func() { s.expire(ctx, rec.ID) })
-			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", anonymousName(starter), ApprovalTimeout(s.AnonymousTimeout))
+			time.AfterFunc(s.anonymousTimeout, func() { s.expire(ctx, rec.ID) })
+			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", anonymousName(starter), ApprovalTimeout(s.anonymousTimeout))
 		}
-		to, ok := s.Notifier.OwnerChat(ctx)
+		to, ok := s.notifier.OwnerChat(ctx)
 		if !ok {
 			slog.Info("approval waits in the inspector: no owner chat", "task", execCtx.TaskID, "question", rec.ID)
 			return
 		}
 		slog.Info("approval sent to the owner chat", "task", execCtx.TaskID, "from", starter, "question", rec.ID, "channel", to.Channel)
-		s.Notifier.Ask(ctx, to, header, rec)
+		s.notifier.Ask(ctx, to, header, rec)
 	}()
 }
 
@@ -207,7 +256,7 @@ var timeoutPrincipal = auth.Principal{ID: "timeout", Role: auth.RoleOwner}
 
 // expire rejects a question if nobody answered it yet.
 func (s *Service) expire(ctx context.Context, id string) {
-	rec, err := s.Store.QuestionByID(ctx, id)
+	rec, err := s.store.QuestionByID(ctx, id)
 	if err != nil {
 		slog.Warn("loading an expired question", "question", id, "error", err)
 		return
@@ -230,12 +279,12 @@ func (s *Service) expire(ctx context.Context, id string) {
 		return
 	}
 	slog.Info("rejected an unanswered approval", "task", rec.TaskID, "question", id)
-	s.Notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
+	s.notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
 }
 
 // Starter returns the user who started the task.
-func (s *Service) Starter(ctx context.Context, taskID a2a.TaskID) string {
-	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+func (r *Records) Starter(ctx context.Context, taskID a2a.TaskID) string {
+	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err == nil {
 		return stored.User
 	}
@@ -247,11 +296,11 @@ func (s *Service) Starter(ctx context.Context, taskID a2a.TaskID) string {
 
 // Waiting reports whether the task of a question still waits for its
 // answer. Questions of remote agents wait until they are answered.
-func (s *Service) Waiting(ctx context.Context, rec store.Question) (bool, error) {
+func (r *Records) Waiting(ctx context.Context, rec store.Question) (bool, error) {
 	if rec.Contact != "" {
 		return true, nil
 	}
-	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), a2a.TaskID(rec.TaskID))
+	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), a2a.TaskID(rec.TaskID))
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return false, nil
 	}
@@ -266,7 +315,7 @@ func (s *Service) Waiting(ctx context.Context, rec store.Question) (bool, error)
 // waits for input. The questions are listed before it returns, so that a
 // question the task asks next stays open, and closed in the background.
 func (s *Service) CloseQuestions(ctx context.Context, taskID a2a.TaskID) {
-	ids, err := s.Store.UnansweredQuestionsOf(ctx, string(taskID))
+	ids, err := s.store.UnansweredQuestionsOf(ctx, string(taskID))
 	if err != nil {
 		slog.Warn("listing the questions of a task", "task", taskID, "error", err)
 		return
@@ -280,7 +329,7 @@ func (s *Service) CloseQuestions(ctx context.Context, taskID a2a.TaskID) {
 // CloseStale closes the questions of tasks which stopped waiting for input
 // while the server didn't run.
 func (s *Service) CloseStale(ctx context.Context) {
-	ids, err := s.Store.StaleQuestions(ctx)
+	ids, err := s.store.StaleQuestions(ctx)
 	if err != nil {
 		slog.Warn("listing stale questions", "error", err)
 		return
@@ -292,17 +341,17 @@ func (s *Service) CloseStale(ctx context.Context) {
 // were asked that they can no longer be answered.
 func (s *Service) Close(ctx context.Context, ids ...string) {
 	for _, id := range ids {
-		if err := s.Store.ForgetPendingQuestion(ctx, id); err != nil {
+		if err := s.store.ForgetPendingQuestion(ctx, id); err != nil {
 			slog.Warn("forgetting a closed question", "question", id, "error", err)
 		}
-		s.Notifier.MarkClosed(ctx, id)
+		s.notifier.MarkClosed(ctx, id)
 	}
 }
 
 // CheckAnswer rejects a reply to the agent's pending permission question
 // from a caller other than the task's starter or an owner.
-func (s *Service) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.TaskID) error {
-	stored, err := s.Tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.TaskID) error {
+	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return nil
 	}
@@ -339,14 +388,14 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 	if !waiting {
 		return ErrClosed
 	}
-	if err := s.Store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
+	if err := s.store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
 		return err
 	}
-	err = s.Notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) })
+	err = s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) })
 	if err == nil {
 		return nil
 	}
-	if uerr := s.Store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); uerr != nil {
+	if uerr := s.store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); uerr != nil {
 		return errors.Join(err, fmt.Errorf("clearing the undelivered answer: %w", uerr))
 	}
 	return err
@@ -354,13 +403,13 @@ func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Princip
 
 func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option) error {
 	if rec.Contact != "" {
-		return s.Remote.AnswerRemote(ctx, rec, q, option, p)
+		return s.remote.AnswerRemote(ctx, rec, q, option, p)
 	}
 	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
 	if err != nil {
 		return err
 	}
-	_, err = s.Handler.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
+	_, err = s.sender.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{
 		Message: msg,
 		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
 	})
@@ -383,7 +432,7 @@ button{font-size:1rem;margin:.25rem;padding:.5rem 1rem}</style></head>
 // of the question's user: it is sent only where they may answer, and the answer is sent
 // as them.
 func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
-	rec, err := s.Store.QuestionByToken(r.Context(), r.PathValue("token"))
+	rec, err := s.store.QuestionByToken(r.Context(), r.PathValue("token"))
 	if err != nil {
 		http.Error(w, "This question does not exist.", http.StatusNotFound)
 		return
@@ -415,18 +464,18 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Couldn't send the answer. Try again.", http.StatusInternalServerError)
 			return
 		}
-		s.Notifier.MarkAnswered(r.Context(), rec.ID, opt.Label, "web")
+		s.notifier.MarkAnswered(r.Context(), rec.ID, opt.Label, "web")
 		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return
 	}
-	if rec, err = s.Store.QuestionByToken(r.Context(), r.PathValue("token")); err != nil {
+	if rec, err = s.store.QuestionByToken(r.Context(), r.PathValue("token")); err != nil {
 		slog.Error("reloading question", "error", err)
 		http.Error(w, "Couldn't load the question. Try again.", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := hitlPage.Execute(w, map[string]any{
-		"Agent": s.AgentName(), "Text": q.Display(), "Options": q.Options,
+		"Agent": s.agentName(), "Text": q.Display(), "Options": q.Options,
 		"Answered": rec.Answer, "By": auth.DisplayPrincipal(rec.AnsweredBy),
 	}); err != nil {
 		slog.Warn("rendering hitl page", "error", err)

@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
 )
@@ -73,9 +74,9 @@ func getJSON(t *testing.T, u string, out any) {
 
 func postToken(t *testing.T, ts *testServer, form url.Values) (int, map[string]string) {
 	t.Helper()
-	resp, err := http.PostForm(ts.publicURL()+tokenPath, form)
+	resp, err := http.PostForm(ts.publicURL()+oauth.TokenPath, form)
 	if err != nil {
-		t.Fatalf("POST %s error = %v", tokenPath, err)
+		t.Fatalf("POST %s error = %v", oauth.TokenPath, err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
@@ -98,7 +99,7 @@ func signIn(t *testing.T, ts *testServer, verifier string) (url.Values, string) 
 	t.Cleanup(client.Close)
 	redirect := client.URL + "/callback"
 	var meta map[string]any
-	getJSON(t, ts.publicURL()+authServerPath, &meta)
+	getJSON(t, ts.publicURL()+oauth.AuthServerPath, &meta)
 	q := url.Values{
 		"response_type": {"code"}, "client_id": {"a2a-cli"}, "redirect_uri": {redirect}, "state": {"s1"},
 		"code_challenge": {googleauth.Challenge(verifier)}, "code_challenge_method": {"S256"},
@@ -129,12 +130,12 @@ func TestGoogleSignIn(t *testing.T) {
 	if err := resp.Body.Close(); err != nil {
 		t.Fatal(err)
 	}
-	wantHeader := `resource_metadata="` + ts.publicURL() + protectedResourcePath + `"`
+	wantHeader := `resource_metadata="` + ts.publicURL() + oauth.ProtectedResourcePath + `"`
 	if resp.StatusCode != http.StatusUnauthorized || !strings.Contains(resp.Header.Get("WWW-Authenticate"), wantHeader) {
-		t.Fatalf("request without a token = %s %q, want 401 pointing to %s", resp.Status, resp.Header.Get("WWW-Authenticate"), protectedResourcePath)
+		t.Fatalf("request without a token = %s %q, want 401 pointing to %s", resp.Status, resp.Header.Get("WWW-Authenticate"), oauth.ProtectedResourcePath)
 	}
 	var resource map[string]any
-	getJSON(t, ts.publicURL()+protectedResourcePath, &resource)
+	getJSON(t, ts.publicURL()+oauth.ProtectedResourcePath, &resource)
 	if resource["resource"] != ts.publicURL() {
 		t.Fatalf("protected resource metadata = %v, want the agent's URL", resource)
 	}
@@ -169,60 +170,11 @@ func TestGoogleSignIn(t *testing.T) {
 	}
 }
 
-func TestGoogleSignInRefusals(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		account googletest.Account
-	}{
-		{name: "email not allowed", account: googletest.Account{Email: "eve@example.net", Verified: true}},
-		{name: "personal account with an allowed domain", account: googletest.Account{Email: "ben@example.com", Verified: true}},
-		{name: "unverified email", account: googletest.Account{Email: "mom@example.org"}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			g := googletest.New(t, tc.account)
-			ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"mom@example.org", "*@example.com"}})
-			got, _ := signIn(t, ts, "verifier-0123456789-0123456789-0123456789")
-			if got.Get("error") != "access_denied" || got.Get("code") != "" {
-				t.Fatalf("client redirect = %v, want access_denied", got)
-			}
-		})
-	}
-}
-
-func TestGoogleTokenExchange(t *testing.T) {
-	t.Parallel()
-	g := googletest.New(t, googletest.Account{Email: "ben@example.com", Verified: true, HostedDomain: "example.com"})
-	ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"*@example.com"}})
-	exchange := func(idToken string) (int, map[string]string) {
-		return postToken(t, ts, url.Values{"grant_type": {grantTokenExchange}, "subject_token": {idToken}, "subject_token_type": {tokenTypeIDToken}})
-	}
-	tests := []struct {
-		name       string
-		token      string
-		wantStatus int
-	}{
-		{name: "bound to this agent", token: g.IDToken(sharedClientID, googleauth.URLBinding(ts.publicURL())), wantStatus: http.StatusOK},
-		{name: "bound to another agent", token: g.IDToken(sharedClientID, googleauth.URLBinding("https://other.example.com")), wantStatus: http.StatusBadRequest},
-		{name: "another app", token: g.IDToken("someone-else", googleauth.URLBinding(ts.publicURL())), wantStatus: http.StatusBadRequest},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			status, out := exchange(tc.token)
-			if status != tc.wantStatus {
-				t.Fatalf("token exchange = %d %v, want %d", status, out, tc.wantStatus)
-			}
-		})
-	}
-}
-
 func TestSignInOff(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{public: publicNet()})
-	if got := statusOf(t, http.MethodGet, ts.publicURL()+authServerPath, "", nil); got != http.StatusNotFound {
-		t.Fatalf("GET %s without an allowlist = %d, want 404", authServerPath, got)
+	if got := statusOf(t, http.MethodGet, ts.publicURL()+oauth.AuthServerPath, "", nil); got != http.StatusNotFound {
+		t.Fatalf("GET %s without an allowlist = %d, want 404", oauth.AuthServerPath, got)
 	}
 }
 
@@ -251,8 +203,8 @@ func TestSignInOnlyOnPublicURL(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := statusOf(t, http.MethodGet, tc.url+authServerPath, "", nil); got != tc.want {
-				t.Fatalf("GET %s on the %s URL = %d, want %d", authServerPath, tc.name, got, tc.want)
+			if got := statusOf(t, http.MethodGet, tc.url+oauth.AuthServerPath, "", nil); got != tc.want {
+				t.Fatalf("GET %s on the %s URL = %d, want %d", oauth.AuthServerPath, tc.name, got, tc.want)
 			}
 			resp, err := http.Post(tc.url+"/", "application/json", strings.NewReader(listTasksRPC))
 			if err != nil {

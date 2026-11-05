@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -65,7 +66,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
-		Turn:         s.peers.turn,
+		Turn:         s.claims.turn,
 	})
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.prepared.Stop(ctx))
@@ -90,7 +91,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
-		Turn:         s.peers.turn,
+		Turn:         s.claims.turn,
 		// Approvals reject questions after AnonymousQuestionTimeout; this
 		// stops the turn if that answer doesn't arrive.
 		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
@@ -118,7 +119,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
-		Turn:         s.peers.turn,
+		Turn:         s.claims.turn,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
@@ -308,7 +309,7 @@ func (s *Server) listenHarnessSocket() (net.Listener, harnessBridge, error) {
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
 	bus       *eventBus
-	peers     *Peers
+	claims    *CallClaims
 	approvals *approvals.Service
 }
 
@@ -331,11 +332,11 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	ctx, withLine := e.peers.withAgentsLine(ctx, execCtx)
+	ctx, withLine := e.claims.withAgentsLine(ctx, execCtx)
 	if execCtx.Message != nil {
-		e.peers.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
+		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.peers.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine))))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
 		return e.observe(ctx, execCtx, events)
 	}
@@ -471,7 +472,7 @@ func logTransition(id a2a.TaskID, ev a2a.Event, start time.Time) {
 	if !state.Terminal() && state != a2a.TaskStateInputRequired && state != a2a.TaskStateAuthRequired {
 		return
 	}
-	slog.Info("task "+stateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
+	slog.Info("task "+a2atext.StateName(state), "task", id, "duration", time.Since(start).Round(time.Millisecond))
 }
 
 // eventState returns the task state an event reports, if it reports one.

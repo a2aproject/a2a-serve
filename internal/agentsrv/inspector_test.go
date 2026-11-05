@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -106,10 +107,10 @@ func TestInspectorLogin(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	c := newInspectorClient(t, ts)
-	if code, _ := c.get(InspectorPath + "/"); code != http.StatusUnauthorized {
-		t.Fatalf("GET %s/ without a session = %d, want %d", InspectorPath, code, http.StatusUnauthorized)
+	if code, _ := c.get(inspector.Path + "/"); code != http.StatusUnauthorized {
+		t.Fatalf("GET %s/ without a session = %d, want %d", inspector.Path, code, http.StatusUnauthorized)
 	}
-	if code, _ := c.get(InspectorPath + "/login?code=guess"); code != http.StatusUnauthorized {
+	if code, _ := c.get(inspector.Path + "/login?code=guess"); code != http.StatusUnauthorized {
 		t.Fatalf("GET login with an unknown code = %d, want %d", code, http.StatusUnauthorized)
 	}
 
@@ -124,8 +125,8 @@ func TestInspectorLogin(t *testing.T) {
 	if code, _ := other.get(link.Path); code != http.StatusUnauthorized {
 		t.Fatalf("GET %s a second time = %d, want %d", link.Path, code, http.StatusUnauthorized)
 	}
-	if code, _ := c.get(InspectorPath + "/"); code != http.StatusOK {
-		t.Fatalf("GET %s/ with the session = %d, want %d", InspectorPath, code, http.StatusOK)
+	if code, _ := c.get(inspector.Path + "/"); code != http.StatusOK {
+		t.Fatalf("GET %s/ with the session = %d, want %d", inspector.Path, code, http.StatusOK)
 	}
 }
 
@@ -173,11 +174,11 @@ func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 			t.Fatalf("overview = %q, want it to contain %q", overview, want)
 		}
 	}
-	code, page := c.get(InspectorPath + "/conversations/" + hello.ContextID)
+	code, page := c.get(inspector.Path + "/conversations/" + hello.ContextID)
 	if code != http.StatusOK || !strings.Contains(page, "Hello from fakeacp.") {
 		t.Fatalf("GET conversation = %d %q, want the agent's answer", code, page)
 	}
-	if code, _ := c.get(InspectorPath + "/conversations/unknown"); code != http.StatusNotFound {
+	if code, _ := c.get(inspector.Path + "/conversations/unknown"); code != http.StatusNotFound {
 		t.Fatalf("GET unknown conversation = %d, want %d", code, http.StatusNotFound)
 	}
 
@@ -185,7 +186,7 @@ func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 	if m == nil {
 		t.Fatalf("overview = %q, want a form with a CSRF token", overview)
 	}
-	action := regexp.MustCompile(`action="(` + InspectorPath + `/[^"]+)"`).FindStringSubmatch(overview)
+	action := regexp.MustCompile(`action="(` + inspector.Path + `/[^"]+)"`).FindStringSubmatch(overview)
 	if action == nil {
 		t.Fatalf("overview = %q, want an approval form", overview)
 	}
@@ -214,7 +215,7 @@ func TestInspectorAnswersMembersApproval(t *testing.T) {
 
 	c := newInspectorClient(t, ts)
 	var overview string
-	action := regexp.MustCompile(`action="(` + InspectorPath + `/tasks/[^"]+)"`)
+	action := regexp.MustCompile(`action="(` + inspector.Path + `/tasks/[^"]+)"`)
 	for range 100 {
 		if overview = c.login(); action.MatchString(overview) {
 			break

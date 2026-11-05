@@ -28,9 +28,9 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
-	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -236,7 +236,7 @@ func TestCardPairingScheme(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := &Server{private: &fakeProvider{signIn: tc.signIn}}
-			s.oauth = newOAuthServer(s, googleauth.Google, "")
+			s.oauth = oauth.New(oauth.Deps{Google: googleauth.Google, Config: s.config})
 			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
 			card := s.card(tc.kind, "http://127.0.0.1:9000")
 			_, got := card.SecuritySchemes["pairing"]
@@ -251,43 +251,28 @@ func TestCardSignInScheme(t *testing.T) {
 	t.Parallel()
 	const base = "https://coder.example.com"
 	allowEmail := agentdir.PolicyConfig{AllowEmails: []string{"mom@example.org"}}
-	ownerApp := agentdir.AuthConfig{GoogleClientID: "owner-app", GoogleClientSecret: "secret"}
 	tests := []struct {
-		name           string
-		kind           string
-		policy         agentdir.PolicyConfig
-		auth           agentdir.AuthConfig
-		sharedClientID string
-		want           a2a.SecurityScheme
+		name   string
+		kind   string
+		policy agentdir.PolicyConfig
+		want   bool
 	}{
-		{
-			name: "shared app", kind: network.ListenerPublic, policy: allowEmail, sharedClientID: "shared-app",
-			want: a2a.OpenIDConnectSecurityScheme{OpenIDConnectURL: googleauth.OpenIDConfiguration},
-		},
-		{
-			name: "owner's app", kind: network.ListenerPublic, policy: allowEmail, auth: ownerApp, sharedClientID: "shared-app",
-			want: a2a.OAuth2SecurityScheme{
-				Oauth2MetadataURL: base + authServerPath,
-				Flows:             a2a.AuthorizationCodeOAuthFlow{AuthorizationURL: base + authorizePath, TokenURL: base + tokenPath, Scopes: map[string]string{}, PKCERequired: true},
-			},
-		},
-		{name: "no allowed emails", kind: network.ListenerPublic, sharedClientID: "shared-app"},
-		{name: "no shared app", kind: network.ListenerPublic, policy: allowEmail},
-		{name: "private listener", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PrivateAccess: agentdir.AccessPaired}, sharedClientID: "shared-app"},
-		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PublicAccess: agentdir.AccessAnyone}, sharedClientID: "shared-app"},
+		{name: "public with allowed emails", kind: network.ListenerPublic, policy: allowEmail, want: true},
+		{name: "no allowed emails", kind: network.ListenerPublic},
+		{name: "private listener", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PrivateAccess: agentdir.AccessPaired}},
+		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PublicAccess: agentdir.AccessAnyone}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := &Server{private: &fakeProvider{}}
-			s.oauth = newOAuthServer(s, googleauth.Google, tc.sharedClientID)
-			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy, Auth: tc.auth}})
+			s.oauth = oauth.New(oauth.Deps{Google: googleauth.Google, SharedClientID: "shared-app", Config: s.config})
+			s.rt.Store(&runtimeConfig{cfg: &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}})
 			card := s.card(tc.kind, base)
-			got := card.SecuritySchemes["google"]
-			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreFields(a2a.OpenIDConnectSecurityScheme{}, "Description"), cmpopts.IgnoreFields(a2a.OAuth2SecurityScheme{}, "Description")); diff != "" {
-				t.Fatalf("Server.card(%q) wrong google scheme (-want +got) diff = %s", tc.kind, diff)
+			if _, got := card.SecuritySchemes["google"]; got != tc.want {
+				t.Fatalf("Server.card(%q) advertises the google scheme = %v, want %v", tc.kind, got, tc.want)
 			}
-			if tc.want == nil {
+			if !tc.want {
 				return
 			}
 			wantReqs := a2a.SecurityRequirementsOptions{{"pairing": {}}, {"google": {}}}

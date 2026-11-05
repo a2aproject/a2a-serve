@@ -79,7 +79,7 @@ func (s *Server) privateListener(u *url.URL) listener {
 // routes returns the HTTP handler of one listener.
 func (s *Server) routes(l listener) http.Handler {
 	if l.kind == network.ListenerHarness {
-		return s.peers.harnessRoutes(s.bridge.key)
+		return s.proxy.routes(s.bridge.key)
 	}
 	baseURL := l.baseURL
 	mux := http.NewServeMux()
@@ -105,13 +105,13 @@ func (s *Server) routes(l listener) http.Handler {
 	mux.Handle("POST "+pairapi.Path, jsonhttp.RequireJSON(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l.tunneled) })))
 	mux.HandleFunc("/hitl/{token}", s.approvals.HandlePage)
 	if l.kind == network.ListenerPublic {
-		s.oauth.register(mux, func(r *http.Request) string { return base(baseURL, r) })
+		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) })
 	}
 	if l.kind == network.ListenerPrivate {
 		s.registerGossip(mux)
 	}
 	if l.inspector {
-		s.inspector.register(mux)
+		s.inspector.Register(mux)
 	}
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
 	mux.Handle("POST /{$}", jsonhttp.RequireJSON(jsonhttp.LimitBody(s.authenticate(l.kind, jsonrpc))))
@@ -158,7 +158,7 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			jsonhttp.Error(w, http.StatusForbidden, refused.Error()+"; "+pairHint)
 			return
 		case errors.Is(err, auth.ErrNoCredential):
-			w.Header().Set("WWW-Authenticate", s.oauth.challengeHeader(kind, base(s.listenerURL(kind), r)))
+			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
 			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
 			return
 		case err != nil:
@@ -222,7 +222,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 		return card
 	}
 	// The sign-in schemes are alternatives to pairing.
-	if scheme := s.oauth.cardScheme(baseURL); scheme != nil {
+	if scheme := s.oauth.CardScheme(baseURL); scheme != nil {
 		card.SecuritySchemes["google"] = scheme
 		card.SecurityRequirements = append(card.SecurityRequirements, a2a.SecurityRequirements{"google": {}})
 	}

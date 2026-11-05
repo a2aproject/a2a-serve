@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package a2atext extracts the text of A2A messages and parts.
+// Package a2atext extracts the text of A2A messages and parts, and names task
+// states.
 package a2atext
 
 import (
@@ -38,4 +39,10 @@ func Message(m *a2a.Message) string {
 		return ""
 	}
 	return Parts(m.Parts)
+}
+
+// StateName is the short lowercase name of a task state, such as
+// "input-required".
+func StateName(s a2a.TaskState) string {
+	return strings.ReplaceAll(strings.ToLower(strings.TrimPrefix(string(s), "TASK_STATE_")), "_", "-")
 }

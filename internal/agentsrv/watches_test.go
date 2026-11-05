@@ -1,0 +1,520 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentsrv
+
+import (
+	"context"
+	"fmt"
+	"testing"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
+	"github.com/a2aproject/a2a-serve/internal/store"
+)
+
+var watchTimings = Timings{WatchInterval: time.Millisecond, WatchMaxInterval: 4 * time.Millisecond}
+
+type watchesFixture struct {
+	ws      *Watches
+	clients *ContactClients
+	store   *store.Store
+	chat    *fakeQuestionChat
+	turns   *fakeTurnInjector
+	remote  *fakeContact
+}
+
+func newWatchesFixture(t *testing.T) *watchesFixture {
+	t.Helper()
+	return newWatchesFixtureWith(t, watchTimings)
+}
+
+func newWatchesFixtureWith(t *testing.T, timings Timings) *watchesFixture {
+	t.Helper()
+	st := openTestStore(t)
+	remote := newFakeContact(t)
+	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	clients := newTestContactClients(t, st, nil)
+	chain := &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
+	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), remote: remote}
+	ctx, cancel := context.WithCancel(context.Background())
+	f.ws = newWatches(ctx, WatchesDeps{
+		Store:   st,
+		Clients: clients,
+		Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Chain: chain, BaseURL: func() string { return "http://assistant.test" }}),
+		Chat:    f.chat,
+		Turns:   f.turns,
+		Chain:   chain,
+		Timings: timings,
+	})
+	t.Cleanup(func() {
+		cancel()
+		f.waitIdle(t)
+	})
+	return f
+}
+
+func (f *watchesFixture) waitIdle(t *testing.T) {
+	t.Helper()
+	waitFor(t, "the watches to stop", func() bool {
+		f.ws.mu.Lock()
+		defer f.ws.mu.Unlock()
+		return len(f.ws.watching) == 0
+	})
+}
+
+func (f *watchesFixture) addWatch(t *testing.T, task *a2a.Task, user string) store.Watch {
+	t.Helper()
+	w := store.Watch{Contact: "coder", TaskID: string(task.ID), RemoteContextID: task.ContextID, OriginContextID: "origin", OnBehalfOf: user}
+	if err := f.store.PutWatch(context.Background(), w); err != nil {
+		t.Fatalf("store.PutWatch() error = %v", err)
+	}
+	return w
+}
+
+func (f *watchesFixture) nextTurn(t *testing.T) injectedTurn {
+	t.Helper()
+	select {
+	case turn := <-f.turns.turns:
+		return turn
+	case <-time.After(10 * time.Second):
+		t.Fatalf("no turn was injected")
+		return injectedTurn{}
+	}
+}
+
+func (f *watchesFixture) wantNoWatches(t *testing.T) {
+	t.Helper()
+	got, err := f.store.Watches(context.Background())
+	if err != nil {
+		t.Fatalf("store.Watches() error = %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("store.Watches() = %+v, want none", got)
+	}
+}
+
+func (f *watchesFixture) waitPolls(t *testing.T, n int64) {
+	t.Helper()
+	want := f.remote.gets.Load() + n
+	waitFor(t, "more polls of the watched task", func() bool { return f.remote.gets.Load() >= want })
+}
+
+func permissionQuestion(t *testing.T, title string) *approvals.Question {
+	t.Helper()
+	req := permissionRequest()
+	req.Schema.Title = title
+	ev, err := structuredinput.NewRequestEvent(&a2a.Task{ID: "t1", ContextID: "remote"}, req, a2a.NewTextPart("Run git push?"))
+	if err != nil {
+		t.Fatalf("structuredinput.NewRequestEvent() error = %v", err)
+	}
+	q := approvals.FromStatus(ev.Status)
+	if q == nil {
+		t.Fatalf("approvals.FromStatus() = nil, want a permission question")
+	}
+	return q
+}
+
+func TestWatchesWatchPostsResultAndEnds(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		prompt string
+		want   func(id a2a.TaskID) string
+	}{
+		{name: "completed", prompt: promptDone, want: func(id a2a.TaskID) string {
+			return fmt.Sprintf("[coder finished task %s: completed]\n%s", id, fakeContactResult)
+		}},
+		{name: "failed", prompt: promptFail, want: func(id a2a.TaskID) string {
+			return fmt.Sprintf("[coder finished task %s: failed]\nboom", id)
+		}},
+		{name: "plain question", prompt: promptQuestion, want: func(id a2a.TaskID) string {
+			return fmt.Sprintf("[coder asks, on task %s]\nWhich branch?\nAnswer with: a2a send -a <agents URL>/coder --task-id %s \"...\"", id, id)
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			task := f.remote.startTask(t, tc.prompt)
+			w := f.addWatch(t, task, auth.OwnerID)
+
+			f.ws.watch(w)
+
+			got := f.nextTurn(t)
+			want := injectedTurn{ContextID: "origin", User: auth.Owner(), Text: tc.want(task.ID)}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("injected turn wrong result (-want +got) diff = %s", diff)
+			}
+			f.wantNoWatches(t)
+		})
+	}
+}
+
+func TestWatchesWatchWaitsForTaskToFinish(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptHold)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+
+	f.waitPolls(t, 3)
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("turns injected while the task runs = %d, want 0", n)
+	}
+	if got, err := f.store.Watches(context.Background()); err != nil || len(got) != 1 {
+		t.Fatalf("store.Watches() while the task runs = %+v, %v, want the watch", got, err)
+	}
+	f.remote.releaseHeld()
+
+	got := f.nextTurn(t)
+	if want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactResult); got.Text != want {
+		t.Fatalf("injected text = %q, want %q", got.Text, want)
+	}
+	f.wantNoWatches(t)
+}
+
+func TestWatchesWatchPostsOnceForTheSameTask(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptHold)
+	w := f.addWatch(t, task, auth.OwnerID)
+	f.ws.watch(w)
+	f.ws.watch(w)
+	f.remote.releaseHeld()
+
+	f.nextTurn(t)
+	f.waitIdle(t)
+
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("further turns injected for the same task = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchPostsAsItsUser(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		user     string
+		identity string
+		pairing  string
+		want     auth.Principal
+		wantPost bool
+	}{
+		{
+			name: "owner", user: auth.OwnerID, wantPost: true,
+			want: auth.Owner(),
+		},
+		{
+			name: "member with the role they have now", user: "pair:anna", pairing: "anna", wantPost: true,
+			want: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: "anna", PairingRole: auth.RoleAuthenticated}},
+		},
+		{
+			name: "member whose pairing was removed", user: "pair:gone",
+		},
+		{
+			name: "unreadable identity", user: auth.OwnerID, identity: "{",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			if tc.pairing != "" {
+				if _, err := f.store.EnsurePairing(context.Background(), store.Pairing{Name: tc.pairing, Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated}); err != nil {
+					t.Fatalf("store.EnsurePairing() error = %v", err)
+				}
+			}
+			task := f.remote.startTask(t, promptDone)
+			w := f.addWatch(t, task, tc.user)
+			w.Identity = tc.identity
+
+			f.ws.watch(w)
+
+			if !tc.wantPost {
+				waitFor(t, "the watch to end", func() bool {
+					got, err := f.store.Watches(context.Background())
+					return err == nil && len(got) == 0
+				})
+				f.waitIdle(t)
+				if n := len(f.turns.turns); n != 0 {
+					t.Fatalf("turns injected for a user who can't call this agent = %d, want 0", n)
+				}
+				return
+			}
+			got := f.nextTurn(t)
+			if diff := cmp.Diff(tc.want, got.User); diff != "" {
+				t.Fatalf("injected turn user wrong result (-want +got) diff = %s", diff)
+			}
+			f.wantNoWatches(t)
+		})
+	}
+}
+
+func TestWatchesWatchOfRemovedContactEnds(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	w := store.Watch{Contact: "gone", TaskID: "t1", OriginContextID: "origin", OnBehalfOf: auth.OwnerID}
+	if err := f.store.PutWatch(context.Background(), w); err != nil {
+		t.Fatalf("store.PutWatch() error = %v", err)
+	}
+
+	f.ws.watch(w)
+
+	waitFor(t, "the watch to end", func() bool {
+		got, err := f.store.Watches(context.Background())
+		return err == nil && len(got) == 0
+	})
+	f.waitIdle(t)
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("turns injected for a removed contact = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchKeepsPollingWhileContactIsUnreachable(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	w := f.addWatch(t, &a2a.Task{ID: "missing", ContextID: "remote"}, auth.OwnerID)
+
+	f.ws.watch(w)
+	waitFor(t, "the failure to be recorded", func() bool {
+		got, err := f.store.Watches(context.Background())
+		return err == nil && len(got) == 1 && !got[0].FailingSince.IsZero()
+	})
+	f.waitPolls(t, 3)
+
+	got, err := f.store.Watches(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("store.Watches() = %+v, %v, want the watch kept", got, err)
+	}
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("turns injected for an unreachable task = %d, want 0", n)
+	}
+}
+
+func TestWatchesResume(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptDone)
+	f.addWatch(t, task, auth.OwnerID)
+
+	f.ws.resume(context.Background())
+
+	got := f.nextTurn(t)
+	if want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactResult); got.Text != want {
+		t.Fatalf("injected text = %q, want %q", got.Text, want)
+	}
+	f.wantNoWatches(t)
+}
+
+func TestWatchesRelay(t *testing.T) {
+	t.Parallel()
+	task := &a2a.Task{ID: "t1", ContextID: "remote"}
+	tests := []struct {
+		name      string
+		setup     func(t *testing.T, st *store.Store)
+		ownerChat *approvals.Chat
+		user      auth.Principal
+		title     string
+		wantAsked []askedQuestion
+		wantUser  string
+	}{
+		{
+			name: "conversation chat",
+			setup: func(t *testing.T, st *store.Store) {
+				if err := st.SetContext(context.Background(), "fake", "dm1", "origin"); err != nil {
+					t.Fatalf("store.SetContext() error = %v", err)
+				}
+			},
+			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			user:      anna,
+			title:     "git push",
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "fake", Conv: "dm1"}, Header: "coder wants to run git push"}},
+			wantUser:  "pair:anna",
+		},
+		{
+			name: "no title",
+			setup: func(t *testing.T, st *store.Store) {
+				if err := st.SetContext(context.Background(), "fake", "dm1", "origin"); err != nil {
+					t.Fatalf("store.SetContext() error = %v", err)
+				}
+			},
+			user:      anna,
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "fake", Conv: "dm1"}, Header: "coder wants to"}},
+			wantUser:  "pair:anna",
+		},
+		{
+			name: "direct chat of the user",
+			setup: func(t *testing.T, st *store.Store) {
+				linkChat(t, st, "anna", "telegram", "telegram:2", "dm2")
+			},
+			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			user:      anna,
+			title:     "git push",
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "telegram", Conv: "dm2"}, Header: "coder wants to run git push"}},
+			wantUser:  "pair:anna",
+		},
+		{
+			name: "direct chat of the owner",
+			setup: func(t *testing.T, st *store.Store) {
+				linkChat(t, st, auth.LocalPairing, "telegram", "telegram:1", "dm1")
+			},
+			user:      auth.Owner(),
+			title:     "git push",
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "telegram", Conv: "dm1"}, Header: "coder wants to run git push"}},
+			wantUser:  auth.OwnerID,
+		},
+		{
+			name:      "owner chat when the user has none",
+			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			user:      anna,
+			title:     "git push",
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "owner", Conv: "oc"}, Header: "coder wants to run git push for anna"}},
+			wantUser:  "pair:anna",
+		},
+		{
+			name:      "user without an account goes to the owner chat as the owner",
+			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			user:      auth.Principal{},
+			title:     "git push",
+			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "owner", Conv: "oc"}, Header: "coder wants to run git push for owner"}},
+			wantUser:  auth.OwnerID,
+		},
+		{
+			name:     "no chat at all",
+			user:     anna,
+			title:    "git push",
+			wantUser: "pair:anna",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			if tc.setup != nil {
+				tc.setup(t, f.store)
+			}
+			if tc.ownerChat != nil {
+				f.chat.owner, f.chat.hasOwn = *tc.ownerChat, true
+			}
+			ctx := context.Background()
+
+			f.ws.relay(ctx, callerClaims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
+			f.ws.relay(ctx, callerClaims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
+
+			got := f.chat.questions()
+			if diff := cmp.Diff(tc.wantAsked, got, cmpopts.IgnoreFields(askedQuestion{}, "Rec")); diff != "" {
+				t.Fatalf("Watches.relay() questions asked wrong result (-want +got) diff = %s", diff)
+			}
+			for _, a := range got {
+				want := store.Question{TaskID: "t1", ContextID: "remote", Contact: "coder", HitlID: "tool1", User: tc.wantUser}
+				if diff := cmp.Diff(want, a.Rec, cmpopts.IgnoreFields(store.Question{}, "ID", "Token", "Data", "Created")); diff != "" {
+					t.Fatalf("Watches.relay() question record wrong result (-want +got) diff = %s", diff)
+				}
+				stored, err := f.store.QuestionByID(ctx, a.Rec.ID)
+				if err != nil {
+					t.Fatalf("store.QuestionByID() error = %v", err)
+				}
+				if stored.Contact != "coder" || stored.TaskID != "t1" || stored.User != tc.wantUser {
+					t.Fatalf("stored question = %+v, want the remote question of %s", stored, tc.wantUser)
+				}
+			}
+		})
+	}
+}
+
+func TestWatchesWatchRelaysPermissionQuestionOnce(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	if err := f.store.SetContext(context.Background(), "fake", "dm1", "origin"); err != nil {
+		t.Fatalf("store.SetContext() error = %v", err)
+	}
+	task := f.remote.startTask(t, promptAsk)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+
+	waitFor(t, "the question to be asked", func() bool { return len(f.chat.questions()) > 0 })
+	f.waitPolls(t, 3)
+
+	asked := f.chat.questions()
+	if len(asked) != 1 {
+		t.Fatalf("questions asked while the task waits = %d, want 1", len(asked))
+	}
+	if want := (approvals.Chat{Channel: "fake", Conv: channel.ConvKey("dm1")}); asked[0].To != want {
+		t.Fatalf("question asked in %+v, want %+v", asked[0].To, want)
+	}
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("turns injected while the task waits for an answer = %d, want 0", n)
+	}
+	got, err := f.store.Watches(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("store.Watches() while the question is open = %+v, %v, want the watch kept", got, err)
+	}
+
+	rec := asked[0].Rec
+	q := approvals.FromRecord(rec)
+	if err := f.clients.AnswerRemote(context.Background(), rec, q, q.Options[0], auth.Owner()); err != nil {
+		t.Fatalf("ContactClients.AnswerRemote() error = %v", err)
+	}
+	turn := f.nextTurn(t)
+	if want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactAnswer); turn.Text != want {
+		t.Fatalf("injected text = %q, want %q", turn.Text, want)
+	}
+	f.wantNoWatches(t)
+}
+
+func linkChat(t *testing.T, st *store.Store, pairing, channelName, identity, conv string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: pairing, Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated}); err != nil {
+		t.Fatalf("store.EnsurePairing() error = %v", err)
+	}
+	if err := st.PutLink(ctx, store.Link{Channel: channelName, Identity: identity, Pairing: pairing, Conv: conv}, pairapi.PairingPerson); err != nil {
+		t.Fatalf("store.PutLink() error = %v", err)
+	}
+}
+
+func TestResultText(t *testing.T) {
+	t.Parallel()
+	status := func(text string) a2a.TaskStatus {
+		return a2a.TaskStatus{Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(text))}
+	}
+	tests := []struct {
+		name string
+		task *a2a.Task
+		want string
+	}{
+		{name: "one artifact", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a"), a2a.NewTextPart("b")}}}}, want: "ab"},
+		{name: "artifacts", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}, {Parts: a2a.ContentParts{a2a.NewTextPart("b")}}}}, want: "a\n\nb"},
+		{name: "artifact without text", task: &a2a.Task{Artifacts: []*a2a.Artifact{{}}, Status: status("fallback")}, want: "fallback"},
+		{name: "artifacts win over the status", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}}, Status: status("fallback")}, want: "a"},
+		{name: "status message", task: &a2a.Task{Status: status("boom")}, want: "boom"},
+		{name: "nothing", task: &a2a.Task{}, want: a2atext.Message(nil)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := resultText(tc.task); got != tc.want {
+				t.Fatalf("resultText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

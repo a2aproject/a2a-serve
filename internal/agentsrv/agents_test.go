@@ -217,7 +217,7 @@ func TestContactClientIsShared(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p, ctx := assistant.srv.peers, context.Background()
+	p, ctx := assistant.srv.clients, context.Background()
 
 	first, err := p.contactClient(ctx, "coder")
 	if err != nil {
@@ -267,7 +267,7 @@ func TestContactCountsHops(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p, ctx := assistant.srv.peers, context.Background()
+	p, ctx := assistant.srv.clients, context.Background()
 	tests := []struct {
 		name    string
 		hops    int
@@ -296,7 +296,7 @@ func TestContactCountsHops(t *testing.T) {
 func TestAgentsURLHandles(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	p := ts.srv.peers
+	p := ts.srv.claims
 	ctx := context.Background()
 	h, err := p.handle(ctx, "ctx1")
 	if err != nil {
@@ -315,7 +315,7 @@ func TestAgentsURLHandles(t *testing.T) {
 		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, errNoTurn)
 	}
 
-	turn := callClaims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
+	turn := callerClaims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
 	end := p.beginTurn(turn)
 	got, err := p.claimsOf(ctx, h)
 	if err != nil {
@@ -345,11 +345,11 @@ func turnURL(t *testing.T, ts *testServer, contextID string) string {
 // user, which ends with the test.
 func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Principal) string {
 	t.Helper()
-	u, err := ts.srv.peers.agentsURL(context.Background(), contextID)
+	u, err := ts.srv.claims.agentsURL(context.Background(), contextID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ts.srv.peers.beginTurn(callClaims{ContextID: contextID, User: user}))
+	t.Cleanup(ts.srv.claims.beginTurn(callerClaims{ContextID: contextID, User: user}))
 	return u
 }
 
@@ -412,7 +412,7 @@ func TestAgentsProxy(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
 	u := turnURL(t, ts, "c1")
-	idle, err := ts.srv.peers.agentsURL(context.Background(), "c2")
+	idle, err := ts.srv.claims.agentsURL(context.Background(), "c2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -475,7 +475,7 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	hs := httptest.NewServer(ts.srv.peers.harnessRoutes("harness-key"))
+	hs := httptest.NewServer(ts.srv.proxy.routes("harness-key"))
 	t.Cleanup(hs.Close)
 	h := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
 	tests := []struct {
@@ -620,7 +620,7 @@ func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	g := &guardedHandler{RequestHandler: streamingHandler{}, p: ts.srv.peers, claims: callClaims{ContextID: "c1", User: auth.Owner()}, agent: "grok"}
+	g := &guardedHandler{RequestHandler: streamingHandler{}, proxy: ts.srv.proxy, claims: callerClaims{ContextID: "c1", User: auth.Owner()}, agent: "grok"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -644,7 +644,7 @@ func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
 func TestWatchOfRemovedContactEnds(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
-	p, ctx := ts.srv.peers, context.Background()
+	p, ctx := ts.srv.watches, context.Background()
 	w := store.Watch{Contact: "gone", TaskID: "t1", OriginContextID: "c1", OnBehalfOf: auth.OwnerID}
 	if err := p.store.PutWatch(ctx, w); err != nil {
 		t.Fatal(err)
@@ -685,7 +685,7 @@ func TestConcurrentContactClientsAreOne(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p := assistant.srv.peers
+	p := assistant.srv.clients
 
 	clients := make([]*a2aclient.Client, 8)
 	var wg sync.WaitGroup
@@ -790,7 +790,7 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 		},
 	}
 	ts := startServer(t, serverOpts{})
-	p := ts.srv.peers
+	p := ts.srv.claims
 	h, err := p.handle(context.Background(), "c1")
 	if err != nil {
 		t.Fatal(err)
@@ -803,7 +803,7 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 			if err != nil {
 				t.Fatalf("claimsOf() during the turn error = %v", err)
 			}
-			if diff := cmp.Diff(callClaims{ContextID: "c1", User: tc.want}, got); diff != "" {
+			if diff := cmp.Diff(callerClaims{ContextID: "c1", User: tc.want}, got); diff != "" {
 				t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
 			}
 			if _, err := p.claimsOf(context.Background(), h); !errors.Is(err, errNoTurn) {

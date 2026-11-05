@@ -12,7 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+// Package inspector serves the owner's web inspector of the agent.
+package inspector
 
 import (
 	"context"
@@ -38,40 +39,63 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// InspectorPath is where the owner's web inspector is served.
-const InspectorPath = "/inspect"
+// Path is where the owner's web inspector is served.
+const Path = "/inspect"
 
 const (
-	inspectorCodeTTL    = 5 * time.Minute
-	inspectorSessionTTL = 12 * time.Hour
-	inspectorCookie     = "a2a_inspect"
-	// inspectorTasks is how many recent tasks the overview groups into
+	codeTTL    = 5 * time.Minute
+	sessionTTL = 12 * time.Hour
+	cookieName = "a2a_inspect"
+	// recentTasks is how many recent tasks the overview groups into
 	// conversations.
-	inspectorTasks = 100
+	recentTasks = 100
 )
 
-// inspector serves a page where the owner sees what the agent is doing.
+// Sender sends messages to the agent's A2A handler.
+type Sender interface {
+	// SendMessage delivers a message as the caller of ctx.
+	SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error)
+}
+
+// Deps are what the inspector reads and calls.
+type Deps struct {
+	Store     *store.Store
+	Tasks     *store.TaskStore
+	Approvals *approvals.Service
+	Sender    Sender
+	AgentName func() string
+	BaseURL   func() string
+	// ListPairings describes the agent's pairings.
+	ListPairings func(ctx context.Context) ([]controlapi.Pairing, error)
+	// Status describes the running server.
+	Status func(ctx context.Context) (*controlapi.Status, error)
+	// MarkAnswered updates the chat message of a question that was answered.
+	MarkAnswered func(ctx context.Context, questionID, label, who string)
+}
+
+// Inspector serves a page where the owner sees what the agent is doing.
 // Only someone with access to the control socket can mint the one-time
 // login code which opens a session, so only the owner gets in.
-type inspector struct {
-	s *Server
+type Inspector struct {
+	deps Deps
 
 	mu       sync.Mutex
 	codes    map[string]time.Time
-	sessions map[string]inspectorSession
+	sessions map[string]session
 }
 
-type inspectorSession struct {
+type session struct {
 	expires time.Time
 	csrf    string
 }
 
-func newInspector(s *Server) *inspector {
-	return &inspector{s: s, codes: map[string]time.Time{}, sessions: map[string]inspectorSession{}}
+// New returns an inspector with no sessions.
+func New(deps Deps) *Inspector {
+	return &Inspector{deps: deps, codes: map[string]time.Time{}, sessions: map[string]session{}}
 }
 
-// loginCode mints a one-time code for /inspect/login.
-func (in *inspector) loginCode() string {
+// LoginCode mints a one-time code for /inspect/login.
+func (in *Inspector) LoginCode() string {
 	code := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
 	in.mu.Lock()
 	defer in.mu.Unlock()
@@ -81,16 +105,17 @@ func (in *inspector) loginCode() string {
 			delete(in.codes, c)
 		}
 	}
-	in.codes[code] = now.Add(inspectorCodeTTL)
+	in.codes[code] = now.Add(codeTTL)
 	return code
 }
 
-func (in *inspector) register(mux *http.ServeMux) {
-	mux.HandleFunc("GET "+InspectorPath+"/login", in.handleLogin)
-	mux.HandleFunc("GET "+InspectorPath+"/{$}", in.page(in.handleOverview))
-	mux.HandleFunc("GET "+InspectorPath+"/conversations/{id}", in.page(in.handleConversation))
-	mux.HandleFunc("POST "+InspectorPath+"/questions/{id}", in.page(in.handleAnswer))
-	mux.HandleFunc("POST "+InspectorPath+"/tasks/{id}/answer", in.page(in.handleTaskAnswer))
+// Register serves the inspector on mux.
+func (in *Inspector) Register(mux *http.ServeMux) {
+	mux.HandleFunc("GET "+Path+"/login", in.handleLogin)
+	mux.HandleFunc("GET "+Path+"/{$}", in.page(in.handleOverview))
+	mux.HandleFunc("GET "+Path+"/conversations/{id}", in.page(in.handleConversation))
+	mux.HandleFunc("POST "+Path+"/questions/{id}", in.page(in.handleAnswer))
+	mux.HandleFunc("POST "+Path+"/tasks/{id}/answer", in.page(in.handleTaskAnswer))
 }
 
 func setInspectorHeaders(w http.ResponseWriter) {
@@ -101,7 +126,7 @@ func setInspectorHeaders(w http.ResponseWriter) {
 	h.Set("Cache-Control", "no-store")
 }
 
-func (in *inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
+func (in *Inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
 	setInspectorHeaders(w)
 	code := r.URL.Query().Get("code")
 	in.mu.Lock()
@@ -110,7 +135,7 @@ func (in *inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var token string
 	if ok && time.Now().Before(exp) {
 		token = cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
-		in.sessions[token] = inspectorSession{expires: time.Now().Add(inspectorSessionTTL), csrf: cryptoutil.RandomString(32, cryptoutil.Alphanumeric)}
+		in.sessions[token] = session{expires: time.Now().Add(sessionTTL), csrf: cryptoutil.RandomString(32, cryptoutil.Alphanumeric)}
 	}
 	in.mu.Unlock()
 	if token == "" {
@@ -118,17 +143,17 @@ func (in *inspector) handleLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: inspectorCookie, Value: token, Path: InspectorPath, HttpOnly: true, Secure: r.TLS != nil,
-		SameSite: http.SameSiteStrictMode, MaxAge: int(inspectorSessionTTL.Seconds()),
+		Name: cookieName, Value: token, Path: Path, HttpOnly: true, Secure: r.TLS != nil,
+		SameSite: http.SameSiteStrictMode, MaxAge: int(sessionTTL.Seconds()),
 	})
-	http.Redirect(w, r, InspectorPath+"/", http.StatusSeeOther)
+	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
 
 // page requires a session, and for POSTs its CSRF token.
-func (in *inspector) page(h func(http.ResponseWriter, *http.Request, inspectorSession)) http.HandlerFunc {
+func (in *Inspector) page(h func(http.ResponseWriter, *http.Request, session)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		setInspectorHeaders(w)
-		c, err := r.Cookie(inspectorCookie)
+		c, err := r.Cookie(cookieName)
 		if err != nil {
 			http.Error(w, "Open the inspector with `a2a-serve inspect`.", http.StatusUnauthorized)
 			return
@@ -152,7 +177,8 @@ func (in *inspector) page(h func(http.ResponseWriter, *http.Request, inspectorSe
 	}
 }
 
-type inspectorApproval struct {
+// Approval is a question waiting for the owner's answer.
+type Approval struct {
 	// Action is where the answer is posted.
 	Action    string
 	Text      string
@@ -162,7 +188,7 @@ type inspectorApproval struct {
 	Created   time.Time
 }
 
-type inspectorConversation struct {
+type conversation struct {
 	ContextID string
 	User      string
 	Chat      string
@@ -172,18 +198,18 @@ type inspectorConversation struct {
 	Updated   time.Time
 }
 
-type inspectorOverview struct {
+type overview struct {
 	Agent         string
 	CSRF          string
 	Status        *controlapi.Status
-	Approvals     []inspectorApproval
-	Conversations []inspectorConversation
+	Approvals     []Approval
+	Conversations []conversation
 	Pairings      []controlapi.Pairing
 	Nodes         []controlapi.NodeInfo
 	Contacts      []store.Contact
 }
 
-func (in *inspector) handleOverview(w http.ResponseWriter, r *http.Request, sess inspectorSession) {
+func (in *Inspector) handleOverview(w http.ResponseWriter, r *http.Request, sess session) {
 	ctx := r.Context()
 	page, err := in.overview(ctx)
 	if err != nil {
@@ -195,55 +221,54 @@ func (in *inspector) handleOverview(w http.ResponseWriter, r *http.Request, sess
 	render(w, "overview", page)
 }
 
-func (in *inspector) overview(ctx context.Context) (*inspectorOverview, error) {
-	s := in.s
-	st, err := s.status(ctx)
+func (in *Inspector) overview(ctx context.Context) (*overview, error) {
+	st, err := in.deps.Status(ctx)
 	if err != nil {
 		return nil, err
 	}
-	page := &inspectorOverview{Agent: st.Name, Status: st}
-	if page.Approvals, err = in.pendingApprovals(ctx); err != nil {
+	page := &overview{Agent: st.Name, Status: st}
+	if page.Approvals, err = in.PendingApprovals(ctx); err != nil {
 		return nil, err
 	}
 	if page.Conversations, err = in.conversations(ctx); err != nil {
 		return nil, err
 	}
-	if page.Pairings, err = s.pairings.List(ctx); err != nil {
+	if page.Pairings, err = in.deps.ListPairings(ctx); err != nil {
 		return nil, err
 	}
-	nodes, err := s.store.Nodes(ctx)
+	nodes, err := in.deps.Store.Nodes(ctx)
 	if err != nil {
 		return nil, err
 	}
 	for _, n := range nodes {
-		page.Nodes = append(page.Nodes, pairings.NodeInfo(s.bestURL(), n))
+		page.Nodes = append(page.Nodes, pairings.NodeInfo(in.deps.BaseURL(), n))
 	}
-	if page.Contacts, err = s.store.Contacts(ctx); err != nil {
+	if page.Contacts, err = in.deps.Store.Contacts(ctx); err != nil {
 		return nil, err
 	}
 	return page, nil
 }
 
-// pendingApprovals are the questions of this agent's tasks waiting for
+// PendingApprovals are the questions of this agent's tasks waiting for
 // input, and the unanswered questions of remote agents relayed here. A
 // question which was sent to a chat has a record, answered like the chat
 // would; one asked of an A2A caller is answered on its task.
-func (in *inspector) pendingApprovals(ctx context.Context) ([]inspectorApproval, error) {
-	recs, err := in.s.store.UnansweredQuestions(ctx)
+func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
+	recs, err := in.deps.Store.UnansweredQuestions(ctx)
 	if err != nil {
 		return nil, err
 	}
 	byTask := map[string]store.Question{}
-	var out []inspectorApproval
+	var out []Approval
 	for _, rec := range recs {
 		if rec.Contact == "" {
 			byTask[rec.TaskID] = rec
 			continue
 		}
 		q := approvals.FromRecord(rec)
-		out = append(out, inspectorApproval{Action: InspectorPath + "/questions/" + rec.ID, Text: q.Display(), ContextID: rec.ContextID, Contact: rec.Contact, Options: q.Options, Created: rec.Created})
+		out = append(out, Approval{Action: Path + "/questions/" + rec.ID, Text: q.Display(), ContextID: rec.ContextID, Contact: rec.Contact, Options: q.Options, Created: rec.Created})
 	}
-	resp, err := in.s.tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100})
+	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100})
 	if err != nil {
 		return nil, err
 	}
@@ -252,12 +277,12 @@ func (in *inspector) pendingApprovals(ctx context.Context) ([]inspectorApproval,
 		if q == nil {
 			continue
 		}
-		a := inspectorApproval{Action: InspectorPath + "/tasks/" + string(t.ID) + "/answer", Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
+		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
 		}
 		if rec, ok := byTask[string(t.ID)]; ok {
-			a.Action = InspectorPath + "/questions/" + rec.ID
+			a.Action = Path + "/questions/" + rec.ID
 		}
 		out = append(out, a)
 	}
@@ -265,13 +290,13 @@ func (in *inspector) pendingApprovals(ctx context.Context) ([]inspectorApproval,
 }
 
 // conversations groups the recent tasks by context, the most recent first.
-func (in *inspector) conversations(ctx context.Context) ([]inspectorConversation, error) {
+func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) {
 	history := 1
-	resp, err := in.s.tasks.List(ctx, &a2a.ListTasksRequest{PageSize: inspectorTasks, HistoryLength: &history})
+	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{PageSize: recentTasks, HistoryLength: &history})
 	if err != nil {
 		return nil, err
 	}
-	var out []inspectorConversation
+	var out []conversation
 	index := map[string]int{}
 	for _, t := range resp.Tasks {
 		if i, ok := index[t.ContextID]; ok {
@@ -281,18 +306,18 @@ func (in *inspector) conversations(ctx context.Context) ([]inspectorConversation
 			}
 			continue
 		}
-		stored, err := in.s.tasks.Get(ctx, t.ID)
+		stored, err := in.deps.Tasks.Get(ctx, t.ID)
 		if err != nil {
 			return nil, err
 		}
-		c := inspectorConversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(stored.User), State: stateName(t.Status.State), Tasks: 1}
+		c := conversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(stored.User), State: a2atext.StateName(t.Status.State), Tasks: 1}
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
 		if len(t.History) > 0 {
 			c.Snippet = snippet(a2atext.Message(t.History[0]))
 		}
-		if ch, _, err := in.s.store.ConvOf(ctx, t.ContextID); err == nil {
+		if ch, _, err := in.deps.Store.ConvOf(ctx, t.ContextID); err == nil {
 			c.Chat = ch
 		} else if !errors.Is(err, store.ErrNotFound) {
 			return nil, err
@@ -311,31 +336,31 @@ func snippet(s string) string {
 	return s
 }
 
-type inspectorMessage struct {
+type message struct {
 	Role string
 	Text string
 }
 
-type inspectorTask struct {
+type task struct {
 	ID        string
 	State     string
 	User      string
 	Updated   time.Time
-	Messages  []inspectorMessage
-	Artifacts []inspectorMessage
+	Messages  []message
+	Artifacts []message
 }
 
-type inspectorConversationPage struct {
+type conversationPage struct {
 	Agent     string
 	ContextID string
 	Chat      string
-	Tasks     []inspectorTask
+	Tasks     []task
 }
 
-func (in *inspector) handleConversation(w http.ResponseWriter, r *http.Request, _ inspectorSession) {
+func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	resp, err := in.s.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, IncludeArtifacts: true})
+	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, IncludeArtifacts: true})
 	if err != nil {
 		http.Error(w, "Couldn't load the conversation: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -344,26 +369,26 @@ func (in *inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "No such conversation.", http.StatusNotFound)
 		return
 	}
-	page := inspectorConversationPage{Agent: in.s.config().Name, ContextID: id}
-	if ch, conv, err := in.s.store.ConvOf(ctx, id); err == nil {
+	page := conversationPage{Agent: in.deps.AgentName(), ContextID: id}
+	if ch, conv, err := in.deps.Store.ConvOf(ctx, id); err == nil {
 		page.Chat = ch + " " + conv
 	}
 	for _, t := range slices.Backward(resp.Tasks) {
-		it := inspectorTask{ID: string(t.ID), State: stateName(t.Status.State)}
-		if stored, err := in.s.tasks.Get(ctx, t.ID); err == nil {
+		it := task{ID: string(t.ID), State: a2atext.StateName(t.Status.State)}
+		if stored, err := in.deps.Tasks.Get(ctx, t.ID); err == nil {
 			it.User = auth.DisplayPrincipal(stored.User)
 		}
 		if t.Status.Timestamp != nil {
 			it.Updated = *t.Status.Timestamp
 		}
 		for _, m := range t.History {
-			it.Messages = append(it.Messages, inspectorMessage{Role: roleName(m.Role), Text: partsText(m.Parts, "\n")})
+			it.Messages = append(it.Messages, message{Role: roleName(m.Role), Text: partsText(m.Parts, "\n")})
 		}
 		if m := t.Status.Message; m != nil && !slices.ContainsFunc(t.History, func(h *a2a.Message) bool { return h.ID == m.ID }) {
-			it.Messages = append(it.Messages, inspectorMessage{Role: roleName(m.Role), Text: partsText(m.Parts, "\n")})
+			it.Messages = append(it.Messages, message{Role: roleName(m.Role), Text: partsText(m.Parts, "\n")})
 		}
 		for _, a := range t.Artifacts {
-			it.Artifacts = append(it.Artifacts, inspectorMessage{Role: a.Name, Text: partsText(a.Parts, "")})
+			it.Artifacts = append(it.Artifacts, message{Role: a.Name, Text: partsText(a.Parts, "")})
 		}
 		page.Tasks = append(page.Tasks, it)
 	}
@@ -401,9 +426,9 @@ func partsText(parts []*a2a.Part, sep string) string {
 	return strings.Join(out, sep)
 }
 
-func (in *inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ inspectorSession) {
+func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
-	rec, err := in.s.store.QuestionByID(ctx, r.PathValue("id"))
+	rec, err := in.deps.Store.QuestionByID(ctx, r.PathValue("id"))
 	if err != nil {
 		http.Error(w, "This approval does not exist.", http.StatusNotFound)
 		return
@@ -414,9 +439,9 @@ func (in *inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ insp
 		http.Error(w, "Unknown option.", http.StatusBadRequest)
 		return
 	}
-	err = in.s.approvals.Answer(ctx, rec, auth.Owner(), opt)
+	err = in.deps.Approvals.Answer(ctx, rec, auth.Owner(), opt)
 	if errors.Is(err, approvals.ErrClosed) {
-		in.s.approvals.Close(ctx, rec.ID)
+		in.deps.Approvals.Close(ctx, rec.ID)
 		http.Error(w, "This approval is no longer open.", http.StatusConflict)
 		return
 	}
@@ -425,15 +450,15 @@ func (in *inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ insp
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	in.s.router.MarkAnswered(ctx, rec.ID, opt.Label, "the inspector")
-	http.Redirect(w, r, InspectorPath+"/", http.StatusSeeOther)
+	in.deps.MarkAnswered(ctx, rec.ID, opt.Label, "the inspector")
+	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
 
 // handleTaskAnswer answers the question of a task asked of its A2A caller,
 // as the owner.
-func (in *inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ inspectorSession) {
+func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
-	stored, err := in.s.tasks.Get(ctx, a2a.TaskID(r.PathValue("id")))
+	stored, err := in.deps.Tasks.Get(ctx, a2a.TaskID(r.PathValue("id")))
 	if err != nil {
 		http.Error(w, "This task does not exist.", http.StatusNotFound)
 		return
@@ -441,7 +466,7 @@ func (in *inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 	t := stored.Task
 	q := approvals.FromStatus(t.Status)
 	if t.Status.State != a2a.TaskStateInputRequired || q == nil {
-		http.Redirect(w, r, InspectorPath+"/", http.StatusSeeOther)
+		http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 		return
 	}
 	opt, ok := q.Match(r.FormValue("option"))
@@ -451,12 +476,12 @@ func (in *inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 	}
 	msg, err := approvals.AnswerMessage(t.ID, t.ContextID, q.ID, opt.ID)
 	if err == nil {
-		_, err = in.s.handler.SendMessage(auth.InProcess(ctx, auth.Owner()), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+		_, err = in.deps.Sender.SendMessage(auth.InProcess(ctx, auth.Owner()), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
 	}
 	if err != nil {
 		slog.Error("answering a task from the inspector", "task", t.ID, "error", err)
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	http.Redirect(w, r, InspectorPath+"/", http.StatusSeeOther)
+	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package inspector
 
 import (
 	"html/template"
@@ -21,7 +21,7 @@ import (
 	"time"
 )
 
-var inspectorPages = template.Must(template.New("").Funcs(template.FuncMap{
+var pages = template.Must(template.New("").Funcs(template.FuncMap{
 	"since": func(t time.Time) string {
 		if t.IsZero() {
 			return "-"
@@ -34,7 +34,7 @@ var inspectorPages = template.Must(template.New("").Funcs(template.FuncMap{
 		}
 		return t.Local().Format("2006-01-02 15:04")
 	},
-	"path": func() string { return InspectorPath },
+	"path": func() string { return Path },
 }).Parse(`
 {{define "head"}}<!doctype html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -117,7 +117,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 
 func render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	if err := inspectorPages.ExecuteTemplate(w, name, data); err != nil {
+	if err := pages.ExecuteTemplate(w, name, data); err != nil {
 		slog.Warn("rendering the inspector", "page", name, "error", err)
 	}
 }

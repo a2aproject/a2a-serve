@@ -14,7 +14,7 @@
 
 //go:build unix
 
-package agentctl
+package lifecycle
 
 import "golang.org/x/sys/unix"
 

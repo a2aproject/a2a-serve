@@ -107,9 +107,9 @@ func TestAgentsLineOncePerSession(t *testing.T) {
 func TestAgentsLineAgainAfterManyTokens(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	ts.srv.peers.linedMu.Lock()
-	ts.srv.peers.lineEvery = 10
-	ts.srv.peers.linedMu.Unlock()
+	ts.srv.claims.linedMu.Lock()
+	ts.srv.claims.lineEvery = 10
+	ts.srv.claims.linedMu.Unlock()
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 
 	first := send(t, owner, userText("line", "", ""))

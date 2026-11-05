@@ -40,9 +40,10 @@ const maxScheduleWait = time.Minute
 // owner and for the harness.
 type schedules struct {
 	// ctx ends when the server stops; runs happen in it.
-	ctx    context.Context
-	store  *store.Store
-	router *Router
+	ctx        context.Context
+	store      *store.Store
+	turns      *ChatTurns
+	supervisor *ChannelSupervisor
 	// chain gives the user a schedule runs as its role at each run.
 	chain *auth.Chain
 	now   func() time.Time
@@ -52,8 +53,27 @@ type schedules struct {
 	wake chan struct{}
 }
 
-func newSchedules(ctx context.Context, st *store.Store, router *Router, chain *auth.Chain, now func() time.Time, minWait time.Duration) *schedules {
-	return &schedules{ctx: ctx, store: st, router: router, chain: chain, now: now, minWait: minWait, wake: make(chan struct{}, 1)}
+// schedulesDeps are the dependencies of [schedules].
+type schedulesDeps struct {
+	Store      *store.Store
+	Turns      *ChatTurns
+	Supervisor *ChannelSupervisor
+	Chain      *auth.Chain
+	Now        func() time.Time
+	MinWait    time.Duration
+}
+
+func newSchedules(ctx context.Context, deps schedulesDeps) *schedules {
+	return &schedules{
+		ctx:        ctx,
+		store:      deps.Store,
+		turns:      deps.Turns,
+		supervisor: deps.Supervisor,
+		chain:      deps.Chain,
+		now:        deps.Now,
+		minWait:    deps.MinWait,
+		wake:       make(chan struct{}, 1),
+	}
 }
 
 // run runs due schedules until ctx ends. A run missed while the agent was
@@ -150,7 +170,7 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.router.injectTurn(sc.ctx, contextID, user, text); err != nil {
+	if err := sc.turns.injectTurn(sc.ctx, contextID, user, text); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
@@ -166,7 +186,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 		}
 		return a2a.NewContextID(), nil
 	}
-	if sc.router.channel(s.DeliverChannel) == nil {
+	if sc.supervisor.channel(s.DeliverChannel) == nil {
 		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
 	}
 	conv, err := manage.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
@@ -174,7 +194,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 		return "", err
 	}
 	if s.Conversation == schedule.ThreadSame {
-		return sc.router.contextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
+		return sc.turns.contextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
 	}
 	id := a2a.NewContextID()
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)

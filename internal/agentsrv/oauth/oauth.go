@@ -12,9 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+// Package oauth is the agent's OAuth authorization server, which signs people
+// in with Google.
+package oauth
 
 import (
+	"context"
 	"crypto/subtle"
 	"errors"
 	"log/slog"
@@ -28,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -39,28 +43,41 @@ import (
 // The agent is its own OAuth authorization server: people sign in at Google,
 // and the agent issues its own access tokens, which work only at this agent.
 const (
-	protectedResourcePath = "/.well-known/oauth-protected-resource"
-	authServerPath        = "/.well-known/oauth-authorization-server"
-	authorizePath         = "/oauth/authorize"
-	callbackPath          = "/oauth/callback"
-	tokenPath             = "/oauth/token"
+	ProtectedResourcePath = "/.well-known/oauth-protected-resource"
+	AuthServerPath        = "/.well-known/oauth-authorization-server"
+	AuthorizePath         = "/oauth/authorize"
+	CallbackPath          = "/oauth/callback"
+	TokenPath             = "/oauth/token"
 
-	grantTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
-	tokenTypeIDToken   = "urn:ietf:params:oauth:token-type:id_token"
+	GrantTokenExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
+	TokenTypeIDToken   = "urn:ietf:params:oauth:token-type:id_token"
 
 	oauthPendingTTL = 10 * time.Minute
 )
 
-// oauthServer signs people in with Google at the public URL, limited to the
+// TokenStore keeps the access tokens the server issues.
+type TokenStore interface {
+	// PutToken stores a token by its value; kind is the pairing kind.
+	PutToken(ctx context.Context, token string, t store.Token, kind string) error
+}
+
+// Deps are what the OAuth server reads and calls.
+type Deps struct {
+	Google googleauth.Endpoints
+	// SharedClientID is the client ID of the shared app, or empty when
+	// there is none.
+	SharedClientID string
+	Tokens         TokenStore
+	Config         func() *agentdir.Config
+	Secrets        func() agentdir.Secrets
+}
+
+// Server signs people in with Google at the public URL, limited to the
 // emails the policy names.
-type oauthServer struct {
-	s        *Server
-	google   googleauth.Endpoints
+type Server struct {
+	deps     Deps
 	verifier *googleauth.Verifier
 	hc       *http.Client
-	// sharedClientID is the client ID of the shared app, or empty when
-	// there is none.
-	sharedClientID string
 
 	mu sync.Mutex
 	// pending are sign-ins sent to Google, by the state sent there.
@@ -90,19 +107,22 @@ type issuedCode struct {
 	expires   time.Time
 }
 
-func newOAuthServer(s *Server, google googleauth.Endpoints, sharedClientID string) *oauthServer {
+// New returns an OAuth server with no sign-ins in progress.
+func New(deps Deps) *Server {
 	hc := &http.Client{Timeout: 30 * time.Second}
-	return &oauthServer{
-		s: s, google: google, hc: hc, sharedClientID: sharedClientID,
-		verifier: &googleauth.Verifier{Endpoints: google, HTTP: hc},
+	return &Server{
+		deps: deps, hc: hc,
+		verifier: &googleauth.Verifier{Endpoints: deps.Google, HTTP: hc},
 		pending:  map[string]pendingSignIn{}, codes: map[string]issuedCode{},
 	}
 }
 
-func (o *oauthServer) enabled() bool { return len(o.s.config().Policy.AllowEmails) > 0 }
+func (o *Server) enabled() bool { return len(o.deps.Config().Policy.AllowEmails) > 0 }
 
-func (o *oauthServer) register(mux *http.ServeMux, base func(*http.Request) string) {
-	mux.HandleFunc("GET "+protectedResourcePath, o.on(func(w http.ResponseWriter, r *http.Request) {
+// Register serves the sign-in routes on mux, where base is the URL the
+// request reached the agent at.
+func (o *Server) Register(mux *http.ServeMux, base func(*http.Request) string) {
+	mux.HandleFunc("GET "+ProtectedResourcePath, o.on(func(w http.ResponseWriter, r *http.Request) {
 		b := base(r)
 		jsonhttp.Write(w, http.StatusOK, map[string]any{
 			"resource":                 b,
@@ -110,12 +130,12 @@ func (o *oauthServer) register(mux *http.ServeMux, base func(*http.Request) stri
 			"bearer_methods_supported": []string{"header"},
 		})
 	}))
-	mux.HandleFunc("GET "+authServerPath, o.on(func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("GET "+AuthServerPath, o.on(func(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Write(w, http.StatusOK, o.metadata(base(r)))
 	}))
-	mux.HandleFunc("GET "+authorizePath, o.on(func(w http.ResponseWriter, r *http.Request) { o.authorize(w, r, base(r)) }))
-	mux.HandleFunc("GET "+callbackPath, o.on(o.callback))
-	mux.HandleFunc("POST "+tokenPath, o.on(func(w http.ResponseWriter, r *http.Request) { o.token(w, r, base(r)) }))
+	mux.HandleFunc("GET "+AuthorizePath, o.on(func(w http.ResponseWriter, r *http.Request) { o.authorize(w, r, base(r)) }))
+	mux.HandleFunc("GET "+CallbackPath, o.on(o.callback))
+	mux.HandleFunc("POST "+TokenPath, o.on(func(w http.ResponseWriter, r *http.Request) { o.token(w, r, base(r)) }))
 }
 
 // signInFlow is how callers sign in with Google at the public listener.
@@ -133,13 +153,13 @@ const (
 
 // flow returns the sign-in the agent offers, which the agent card and the
 // authorization server metadata advertise.
-func (o *oauthServer) flow() signInFlow {
+func (o *Server) flow() signInFlow {
 	switch {
 	case !o.enabled():
 		return signInOff
-	case o.s.config().Auth.GoogleClientID != "":
+	case o.deps.Config().Auth.GoogleClientID != "":
 		return signInOwnerApp
-	case o.sharedClientID != "":
+	case o.deps.SharedClientID != "":
 		return signInShared
 	}
 	return signInOff
@@ -148,42 +168,42 @@ func (o *oauthServer) flow() signInFlow {
 // metadata is the authorization server metadata at base (RFC 8414). The
 // token exchange stays on with the owner's app, for clients that signed in
 // with the shared one.
-func (o *oauthServer) metadata(base string) map[string]any {
+func (o *Server) metadata(base string) map[string]any {
 	grants := []string{}
-	if o.sharedClientID != "" {
-		grants = append(grants, grantTokenExchange)
+	if o.deps.SharedClientID != "" {
+		grants = append(grants, GrantTokenExchange)
 	}
 	meta := map[string]any{
 		"issuer":                                base,
-		"token_endpoint":                        base + tokenPath,
+		"token_endpoint":                        base + TokenPath,
 		"token_endpoint_auth_methods_supported": []string{"none"},
 		"code_challenge_methods_supported":      []string{"S256"},
 	}
 	if o.flow() == signInOwnerApp {
 		grants = append(grants, "authorization_code")
-		meta["authorization_endpoint"] = base + authorizePath
+		meta["authorization_endpoint"] = base + AuthorizePath
 		meta["response_types_supported"] = []string{"code"}
 	}
 	meta["grant_types_supported"] = grants
 	return meta
 }
 
-// cardScheme is the security scheme of the agent card for the sign-in at
+// CardScheme is the security scheme of the agent card for the sign-in at
 // base, or nil when sign-in is off.
-func (o *oauthServer) cardScheme(base string) a2a.SecurityScheme {
+func (o *Server) CardScheme(base string) a2a.SecurityScheme {
 	switch o.flow() {
 	case signInShared:
 		return a2a.OpenIDConnectSecurityScheme{
-			Description:      "Google sign-in with the A2A project's shared app and the nonce URLBinding(agent URL), followed by the token exchange at " + base + tokenPath + ". Only emails the owner allows may sign in.",
+			Description:      "Google sign-in with the A2A project's shared app and the nonce URLBinding(agent URL), followed by the token exchange at " + base + TokenPath + ". Only emails the owner allows may sign in.",
 			OpenIDConnectURL: googleauth.OpenIDConfiguration,
 		}
 	case signInOwnerApp:
 		return a2a.OAuth2SecurityScheme{
 			Description:       "Google sign-in through the agent. Only emails the owner allows may sign in.",
-			Oauth2MetadataURL: base + authServerPath,
+			Oauth2MetadataURL: base + AuthServerPath,
 			Flows: a2a.AuthorizationCodeOAuthFlow{
-				AuthorizationURL: base + authorizePath,
-				TokenURL:         base + tokenPath,
+				AuthorizationURL: base + AuthorizePath,
+				TokenURL:         base + TokenPath,
 				Scopes:           map[string]string{},
 				PKCERequired:     true,
 			},
@@ -193,7 +213,7 @@ func (o *oauthServer) cardScheme(base string) a2a.SecurityScheme {
 }
 
 // on serves h while sign-in is on, and 404 otherwise.
-func (o *oauthServer) on(h http.HandlerFunc) http.HandlerFunc {
+func (o *Server) on(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !o.enabled() {
 			jsonhttp.Error(w, http.StatusNotFound, "this agent doesn't let people sign in with Google")
@@ -203,14 +223,14 @@ func (o *oauthServer) on(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
-// challengeHeader is the WWW-Authenticate header of a 401 on the listener
+// ChallengeHeader is the WWW-Authenticate header of a 401 on the listener
 // kind, which points clients to the agent's auth metadata when sign-in is
 // on there.
-func (o *oauthServer) challengeHeader(kind, base string) string {
+func (o *Server) ChallengeHeader(kind, base string) string {
 	if kind != network.ListenerPublic || !o.enabled() {
 		return `Bearer realm="a2a"`
 	}
-	return `Bearer realm="a2a", resource_metadata="` + base + protectedResourcePath + `"`
+	return `Bearer realm="a2a", resource_metadata="` + base + ProtectedResourcePath + `"`
 }
 
 // loopbackRedirect reports whether a client's redirect URI is on loopback,
@@ -233,8 +253,8 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 }
 
 // authorize sends a client's sign-in to Google with the owner's app.
-func (o *oauthServer) authorize(w http.ResponseWriter, r *http.Request, base string) {
-	cfg := o.s.config()
+func (o *Server) authorize(w http.ResponseWriter, r *http.Request, base string) {
+	cfg := o.deps.Config()
 	q := r.URL.Query()
 	if cfg.Auth.GoogleClientID == "" {
 		oauthError(w, http.StatusBadRequest, "unsupported_response_type", "this agent signs people in with the A2A project's shared Google app; use a client that supports it")
@@ -259,11 +279,11 @@ func (o *oauthServer) authorize(w http.ResponseWriter, r *http.Request, base str
 	o.prune()
 	o.pending[state] = p
 	o.mu.Unlock()
-	http.Redirect(w, r, o.google.AuthCodeURL(cfg.Auth.GoogleClientID, base+callbackPath, state, p.nonce, googleauth.Challenge(p.googleVerifier)), http.StatusFound)
+	http.Redirect(w, r, o.deps.Google.AuthCodeURL(cfg.Auth.GoogleClientID, base+CallbackPath, state, p.nonce, googleauth.Challenge(p.googleVerifier)), http.StatusFound)
 }
 
 // prune drops expired sign-ins and codes. o.mu is held.
-func (o *oauthServer) prune() {
+func (o *Server) prune() {
 	now := time.Now()
 	for k, p := range o.pending {
 		if now.After(p.expires) {
@@ -279,7 +299,7 @@ func (o *oauthServer) prune() {
 
 // callback takes the account back from Google, checks it against the
 // allowlist and sends the client an authorization code.
-func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
+func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	o.mu.Lock()
 	p, ok := o.pending[q.Get("state")]
@@ -293,14 +313,14 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {"Google sign-in: " + e}})
 		return
 	}
-	cfg := o.s.config()
-	secret, err := o.s.secrets().Resolve(cfg.Auth.GoogleClientSecret)
+	cfg := o.deps.Config()
+	secret, err := o.deps.Secrets().Resolve(cfg.Auth.GoogleClientSecret)
 	if err != nil {
 		slog.Error("signing in with Google", "error", err)
 		http.Error(w, "The agent's Google app isn't set up: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	idToken, err := o.google.Exchange(r.Context(), o.hc, cfg.Auth.GoogleClientID, secret, q.Get("code"), p.issuer+callbackPath, p.googleVerifier)
+	idToken, err := o.deps.Google.Exchange(r.Context(), o.hc, cfg.Auth.GoogleClientID, secret, q.Get("code"), p.issuer+CallbackPath, p.googleVerifier)
 	if err != nil {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {err.Error()}})
 		return
@@ -327,7 +347,7 @@ func (o *oauthServer) callback(w http.ResponseWriter, r *http.Request) {
 
 var errNonce = errors.New("the Google sign-in doesn't belong to this request")
 
-func (o *oauthServer) redirectClient(w http.ResponseWriter, r *http.Request, p pendingSignIn, v url.Values) {
+func (o *Server) redirectClient(w http.ResponseWriter, r *http.Request, p pendingSignIn, v url.Values) {
 	u, err := url.Parse(p.clientRedirect)
 	if err != nil {
 		http.Error(w, "Invalid redirect.", http.StatusBadRequest)
@@ -344,7 +364,7 @@ func (o *oauthServer) redirectClient(w http.ResponseWriter, r *http.Request, p p
 
 // token issues the agent's access token for an authorization code, or for
 // a Google ID token of the shared app bound to this agent's URL.
-func (o *oauthServer) token(w http.ResponseWriter, r *http.Request, base string) {
+func (o *Server) token(w http.ResponseWriter, r *http.Request, base string) {
 	switch r.FormValue("grant_type") {
 	case "authorization_code":
 		o.mu.Lock()
@@ -361,7 +381,7 @@ func (o *oauthServer) token(w http.ResponseWriter, r *http.Request, base string)
 		default:
 			o.issue(w, r, base, c.email, c.domain)
 		}
-	case grantTokenExchange:
+	case GrantTokenExchange:
 		o.exchange(w, r, base)
 	default:
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "want authorization_code or token exchange")
@@ -371,16 +391,16 @@ func (o *oauthServer) token(w http.ResponseWriter, r *http.Request, base string)
 // exchange trades a Google ID token of the shared app for the agent's own
 // token. The token's nonce must bind it to this agent's URL, so another
 // agent of the same app can't use a caller's token here.
-func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base string) {
-	if o.sharedClientID == "" {
+func (o *Server) exchange(w http.ResponseWriter, r *http.Request, base string) {
+	if o.deps.SharedClientID == "" {
 		oauthError(w, http.StatusBadRequest, "unsupported_grant_type", "the shared Google app isn't available yet; the agent's owner can register their own with --google-client-id")
 		return
 	}
-	if r.FormValue("subject_token_type") != tokenTypeIDToken {
-		oauthError(w, http.StatusBadRequest, "invalid_request", "want subject_token_type "+tokenTypeIDToken)
+	if r.FormValue("subject_token_type") != TokenTypeIDToken {
+		oauthError(w, http.StatusBadRequest, "invalid_request", "want subject_token_type "+TokenTypeIDToken)
 		return
 	}
-	claims, err := o.verifier.Verify(r.Context(), r.FormValue("subject_token"), []string{o.sharedClientID})
+	claims, err := o.verifier.Verify(r.Context(), r.FormValue("subject_token"), []string{o.deps.SharedClientID})
 	if err != nil {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		return
@@ -389,7 +409,7 @@ func (o *oauthServer) exchange(w http.ResponseWriter, r *http.Request, base stri
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the Google token was requested for another agent")
 		return
 	}
-	if !googleauth.Allowed(o.s.config().Policy.AllowEmails, claims) {
+	if !googleauth.Allowed(o.deps.Config().Policy.AllowEmails, claims) {
 		oauthError(w, http.StatusForbidden, "access_denied", claims.Email+" may not call this agent; ask its owner to allow it")
 		return
 	}
@@ -408,10 +428,10 @@ func workspaceDomain(c googleauth.Claims) string {
 
 // issue stores a new access token for email and returns it. The token
 // carries the email, and the policy decides each request it makes.
-func (o *oauthServer) issue(w http.ResponseWriter, r *http.Request, base, email, domain string) {
+func (o *Server) issue(w http.ResponseWriter, r *http.Request, base, email, domain string) {
 	ctx := r.Context()
 	tok := auth.NewToken()
-	if err := o.s.store.PutToken(ctx, tok, store.Token{Email: email, Domain: domain, URL: base}, ""); err != nil {
+	if err := o.deps.Tokens.PutToken(ctx, tok, store.Token{Email: email, Domain: domain, URL: base}, ""); err != nil {
 		oauthError(w, http.StatusInternalServerError, "server_error", err.Error())
 		return
 	}

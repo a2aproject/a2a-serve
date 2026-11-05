@@ -21,6 +21,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
@@ -72,7 +73,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 			if !restart || len(res.Restart) == 0 {
 				return nil
 			}
-			return agentctl.Restart(cmd.Context(), d, sf.controlClient(d), false, cfg.progress())
+			return lifecycle.Restart(cmd.Context(), d, sf.controlClient(d), false, cfg.progress())
 		},
 	}
 	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)

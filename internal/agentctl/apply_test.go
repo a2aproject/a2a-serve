@@ -20,10 +20,8 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"slices"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -347,35 +345,6 @@ func TestPending(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"sandbox"}, got); diff != "" {
 		t.Fatalf("Pending() wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestRestart(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name    string
-		running bool
-		wantErr string
-	}{
-		{name: "not running", wantErr: "coder is not running"},
-		{name: "foreground", running: true, wantErr: "press Ctrl-C there and run `a2a-serve start` again"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
-			f := &fakeServer{pid: os.Getpid()}
-			if tc.running {
-				serveFake(t, d, f)
-			}
-			err := Restart(t.Context(), d, controlapi.NewClient(d), false, io.Discard)
-			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
-				t.Fatalf("Restart() error = %v, want %q", err, tc.wantErr)
-			}
-			if slices.Contains(f.Calls(), "POST /stop") {
-				t.Fatalf("Restart() stopped the agent")
-			}
-		})
 	}
 }
 

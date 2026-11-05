@@ -39,7 +39,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/turns"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -109,6 +112,7 @@ type Server struct {
 	store   *store.Store
 	tasks   *store.TaskStore
 	handler a2asrv.RequestHandler
+	sender  *turns.Sender
 	chain   *auth.Chain
 	bus     *eventBus
 
@@ -126,17 +130,22 @@ type Server struct {
 	privateURL string
 	publicURL  string
 
-	router    *Router
-	peers     *Peers
-	schedules *schedules
-	nodes     *nodes.Host
-	pairings  *pairings.Service
-	approvals *approvals.Service
-	oauth     *oauthServer
+	supervisor    *ChannelSupervisor
+	chatApprovals *ChatApprovals
+	chatTurns     *ChatTurns
+	claims        *CallClaims
+	clients       *ContactClients
+	watches       *Watches
+	proxy         *HarnessProxy
+	schedules     *schedules
+	nodes         *nodes.Host
+	pairings      *pairings.Service
+	approvals     *approvals.Service
+	oauth         *oauth.Server
 	// ads are the advertised pairings of the private network.
 	ads       *gossip.Table
 	backups   backups
-	inspector *inspector
+	inspector *inspector.Inspector
 	// split runs the conversations of anonymous callers and of each
 	// authenticated user in their own agent processes, and budget limits
 	// the tasks of anonymous callers.
@@ -289,6 +298,9 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 }
 
 // build creates the components and starts the harness. Nothing serves yet.
+// Each component gets the ones it uses, so they are created in dependency
+// order; the agent's handler runs them all, so it comes last and the
+// components which send it turns hold s.sender, which it is set into.
 func (s *Server) build(ctx context.Context, closers *stack, opts Options) error {
 	agentName := func() string { return s.config().Name }
 	ads, err := gossip.Open(filepath.Join(s.dir.StateDir(), "ads.json"), s.config().Name)
@@ -301,14 +313,13 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
 	}
-	s.oauth = newOAuthServer(s, google, opts.SharedGoogleClientID)
-	s.approvals = &approvals.Service{
-		Store:     s.store,
-		Tasks:     s.tasks,
-		Chain:     s.chain,
-		BaseURL:   s.bestURL,
-		AgentName: agentName,
-	}
+	s.oauth = oauth.New(oauth.Deps{
+		Google:         google,
+		SharedClientID: opts.SharedGoogleClientID,
+		Tokens:         s.store,
+		Config:         s.config,
+		Secrets:        s.secrets,
+	})
 	s.nodes = nodes.New(ctx, nodes.Config{
 		Store:          s.store,
 		Viewer:         s.viewer,
@@ -318,51 +329,114 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		WebhookRetries: s.timings.WebhookRetries,
 		Advertised:     s.ads.Advertised,
 	})
-	s.router = &Router{
-		store:     s.store,
-		tasks:     s.tasks,
-		chain:     s.chain,
-		approvals: s.approvals,
-		bus:       s.bus,
-		agentName: agentName,
-		ownerChat: func() string { return s.config().Approvals.OwnerChat },
-		logf:      s.logf,
-		timings:   s.timings,
-	}
+	s.supervisor = newChannelSupervisor(ctx, SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
 	s.pairings = &pairings.Service{
 		Store:     s.store,
 		BaseURL:   s.bestURL,
 		Ads:       s.ads,
-		LinkHints: s.router.linkHints,
+		LinkHints: s.supervisor.linkHints,
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 	}
-	s.schedules = newSchedules(ctx, s.store, s.router, s.chain, opts.Now, s.timings.ScheduleMinWait)
-	s.inspector = newInspector(s)
-	s.peers = &Peers{
-		store:     s.store,
-		private:   s.private,
-		nodes:     s.nodes,
-		approvals: s.approvals,
-		chat:      s.router,
-		schedules: s.schedules,
-		chain:     s.chain,
-		ads:       s.ads,
-		agentName: agentName,
-		bridge:    s.bridge,
-		timings:   s.timings,
-		ctx:       ctx,
-		watching:  map[string]bool{},
-		clients:   map[string]*contactClient{},
-		turns:     map[string]*callClaims{},
-		sessions:  s.store.Sessions(),
-		lined:     map[string]*linedSession{},
-		lineEvery: agentsLineEvery,
-	}
-	closers.push(s.peers.close)
-
+	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
+	closers.push(s.clients.close)
+	s.claims = newCallClaims(CallClaimsDeps{
+		Store:  s.store,
+		Bridge: s.bridge,
+		Chain:  s.chain,
+		// The executor's turns use the claims, so they come first; split
+		// exists before the first turn.
+		AgentKey: func(ctx context.Context, contextID string) (string, error) { return s.split.agentKey(ctx, contextID) },
+		Sessions: s.store.Sessions(),
+	})
 	s.refreshInstructions(ctx)
+	if err := s.buildExecutor(ctx, closers, opts); err != nil {
+		return err
+	}
+
+	s.sender = &turns.Sender{}
+	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
+	s.chatApprovals = newChatApprovals(ctx, ChatApprovalsDeps{
+		Store:      s.store,
+		Tasks:      s.tasks,
+		Records:    records,
+		Supervisor: s.supervisor,
+		Bus:        s.bus,
+		AgentName:  agentName,
+		OwnerChat:  func() string { return s.config().Approvals.OwnerChat },
+		Anonymous:  s.split.Anonymous,
+		Timings:    s.timings,
+	})
+	unattended := &contextSet{}
+	s.approvals = approvals.New(approvals.Deps{
+		Records:          records,
+		Sender:           s.sender,
+		Notifier:         s.chatApprovals,
+		Remote:           s.clients,
+		Unattended:       unattended.has,
+		Anonymous:        s.split.Anonymous,
+		AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
+		AgentName:        agentName,
+	})
+	s.chatTurns = newChatTurns(ChatTurnsDeps{
+		Store:      s.store,
+		Tasks:      s.tasks,
+		Chain:      s.chain,
+		Approvals:  s.approvals,
+		Chat:       s.chatApprovals,
+		Supervisor: s.supervisor,
+		Queue:      newConversationQueue(),
+		Sender:     s.sender,
+		Unattended: unattended,
+		AgentName:  agentName,
+		Timings:    s.timings,
+	})
+	s.schedules = newSchedules(ctx, schedulesDeps{
+		Store:      s.store,
+		Turns:      s.chatTurns,
+		Supervisor: s.supervisor,
+		Chain:      s.chain,
+		Now:        opts.Now,
+		MinWait:    s.timings.ScheduleMinWait,
+	})
+	s.watches = newWatches(ctx, WatchesDeps{
+		Store:   s.store,
+		Clients: s.clients,
+		Records: records,
+		Chat:    s.chatApprovals,
+		Turns:   s.chatTurns,
+		Chain:   s.chain,
+		Timings: s.timings,
+	})
+	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
+	s.inspector = inspector.New(inspector.Deps{
+		Store:        s.store,
+		Tasks:        s.tasks,
+		Approvals:    s.approvals,
+		ListPairings: s.pairings.List,
+		Sender:       s.sender,
+		AgentName:    agentName,
+		BaseURL:      s.bestURL,
+		Status:       s.status,
+		MarkAnswered: s.chatApprovals.MarkAnswered,
+	})
+
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals},
+		a2asrv.WithTaskStore(s.tasks),
+		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
+		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
+		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
+		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
+		a2asrv.WithLogger(slog.Default()),
+	)
+	s.sender.Set(s.handler)
+	return nil
+}
+
+// buildExecutor starts the harness, and the executor which runs anonymous
+// conversations in their own agent process.
+func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options) error {
 	exec := opts.Executor
 	if exec == nil {
 		progress := opts.ImageProgress
@@ -387,36 +461,16 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		}
 	}
 	closers.push(s.split.close)
-	s.peers.agentKey = s.split.agentKey
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, peers: s.peers, approvals: s.approvals},
-		a2asrv.WithTaskStore(s.tasks),
-		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
-		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
-		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
-		a2asrv.WithLogger(slog.Default()),
-	)
-	// The handler runs the executor, which hands questions to approvals;
-	// approvals and the router send answers and turns back to the handler,
-	// and approvals asks people through the router.
-	s.router.handler = s.handler
-	s.approvals.Handler = s.handler
-	s.approvals.Notifier = s.router
-	s.approvals.Unattended = s.router.Unattended
-	s.approvals.Anonymous = s.split.Anonymous
-	s.approvals.AnonymousTimeout = s.timings.AnonymousQuestionTimeout
-	s.router.anonymous = s.split.Anonymous
-	s.approvals.Remote = s.peers
 	return nil
 }
 
-// serve starts the router, serves every listener and the control socket,
+// serve starts the chat turns, serves every listener and the control socket,
 // starts the channels and resumes watches. Errors of listeners after the
 // start arrive on the returned channel.
 func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listener, chans []channel.Channel) (<-chan error, error) {
 	errc := make(chan error, 1)
-	s.router.start(ctx)
-	closers.push(s.router.stopAll)
+	s.chatTurns.start(ctx)
+	closers.push(s.supervisor.stopAll)
 	closers.push(s.serveHTTP(ctx, harnessLn, listener{kind: network.ListenerHarness}, errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
@@ -434,10 +488,10 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 		return nil, err
 	}
 	for _, ch := range chans {
-		s.router.add(ch)
+		s.supervisor.add(ch)
 	}
 	go s.approvals.CloseStale(ctx)
-	s.peers.resumeWatches(ctx)
+	s.watches.resume(ctx)
 	go s.pruneLoop(ctx)
 	go s.schedules.run(ctx)
 	go s.runGossip(ctx)
@@ -631,7 +685,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if w := localSandboxWarning(s.config().Sandbox, a); w != "" {
 		s.logf("! %s", w)
 	}
-	return s.router.announce(ctx)
+	return s.supervisor.announce(ctx)
 }
 
 // localSandboxWarning warns when an agent without a sandbox may be called
