@@ -188,6 +188,20 @@ func TestHarnessProxyRoutesWithoutKeyConfigured(t *testing.T) {
 	}
 }
 
+func TestHarnessProxyRefusesOversizedBody(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	putContact(t, f.store, store.Contact{Name: "coder", URL: f.remote.URL})
+	srv := f.serve(t, "")
+	handle := f.runTurn(t, "c1", auth.Owner())
+
+	got := postOversized(t, srv.URL+"/"+handle+"/coder/message:send", "")
+
+	if got != http.StatusRequestEntityTooLarge {
+		t.Fatalf("POST to coder status = %d, want %d", got, http.StatusRequestEntityTooLarge)
+	}
+}
+
 func TestHarnessProxyServesCardAtTheAgentsURL(t *testing.T) {
 	t.Parallel()
 	f := newProxyFixture(t)

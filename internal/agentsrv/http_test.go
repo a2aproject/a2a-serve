@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
@@ -283,41 +284,63 @@ func TestCardSignInScheme(t *testing.T) {
 	}
 }
 
-func TestOversizedA2ABody(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{})
-	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
-	u, err := url.Parse(ts.localURL())
+// postOversized declares a body over jsonhttp.MaxBody to u without sending
+// it and returns the status of the response.
+func postOversized(t *testing.T, u, authorization string) int {
+	t.Helper()
+	parsed, err := url.Parse(u)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"/", "/message:send"} {
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	}()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", parsed.RequestURI(), parsed.Host, authorization, jsonhttp.MaxBody+1)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("POST %s error = %v, want a response", u, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+func TestOversizedA2ABody(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	addNode(t, ts, "grok", 0)
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	for _, path := range []string{"/", "/message:send", "/n/grok", "/n/grok/message:send"} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			conn, err := net.Dial("tcp", u.Host)
-			if err != nil {
-				t.Fatal(err)
-			}
-			defer func() {
-				if err := conn.Close(); err != nil {
-					t.Errorf("closing the connection: %v", err)
-				}
-			}()
-			req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", path, u.Host, bearer, jsonhttp.MaxBody+1)
-			if _, err := io.WriteString(conn, req); err != nil {
-				t.Fatal(err)
-			}
-			resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := resp.Body.Close(); err != nil {
-				t.Fatal(err)
-			}
-			if resp.StatusCode != http.StatusRequestEntityTooLarge {
-				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
+			if got := postOversized(t, ts.localURL()+path, bearer); got != http.StatusRequestEntityTooLarge {
+				t.Fatalf("POST %s status = %d, want %d", path, got, http.StatusRequestEntityTooLarge)
 			}
 		})
+	}
+}
+
+func TestOversizedHeader(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+
+	got := statusOf(t, http.MethodGet, ts.localURL()+"/healthz", "", http.Header{"X-Padding": {strings.Repeat("a", 512<<10)}})
+
+	if got != http.StatusRequestHeaderFieldsTooLarge {
+		t.Fatalf("GET /healthz with a large header status = %d, want %d", got, http.StatusRequestHeaderFieldsTooLarge)
 	}
 }
 
