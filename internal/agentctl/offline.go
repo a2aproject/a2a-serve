@@ -17,15 +17,12 @@ package agentctl
 import (
 	"context"
 	"errors"
-	"maps"
 	"os"
 	"path/filepath"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
-	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
@@ -43,7 +40,6 @@ const placeholderURL = "<agent-url>"
 // picks the changes up when it starts.
 type offline struct {
 	*agentops.Service
-	dir     agentdir.Dir
 	release func() error
 	store   *store.Store
 }
@@ -75,7 +71,7 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 		// A stopped agent runs with no secrets.
 		Runtime: agentdir.NewRuntime(d, cfg, nil),
 	})
-	return &offline{Service: ops, dir: d, release: release, store: st}, nil
+	return &offline{Service: ops, release: release, store: st}, nil
 }
 
 // savedAccess describes who may call the agent in d with its saved config
@@ -111,46 +107,3 @@ func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, clie
 func (o *offline) Close() error { return errors.Join(o.store.Close(), o.release()) }
 
 func (o *offline) Running() bool { return false }
-
-// AddChannel checks the channel's credentials and saves it for the next
-// start.
-func (o *offline) AddChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error) {
-	cfg, err := o.dir.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
-	if err := cfg.SetChannel(req.Kind, req.Token, req.Email); err != nil {
-		return nil, agenterr.Invalid(err)
-	}
-	secrets, err := o.dir.LoadSecrets()
-	if err != nil {
-		return nil, err
-	}
-	maps.Copy(secrets, req.Secrets)
-	if err := configured.Validate(ctx, cfg, secrets, req.Kind); err != nil {
-		return nil, err
-	}
-	if err := o.dir.SaveSecrets(req.Secrets); err != nil {
-		return nil, err
-	}
-	if err := o.dir.UpdateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
-		return nil, err
-	}
-	return &controlapi.ChannelStatus{Name: req.Kind}, nil
-}
-
-// DeleteChannel removes a channel from config.yaml.
-func (o *offline) DeleteChannel(_ context.Context, kind string) error {
-	cfg, err := o.dir.LoadConfig()
-	if err != nil {
-		return err
-	}
-	had := cfg.HasChannel(kind)
-	if err := cfg.SetChannel(kind, "", nil); err != nil {
-		return agenterr.Invalid(err)
-	}
-	if !had {
-		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
-	}
-	return o.dir.UpdateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) })
-}

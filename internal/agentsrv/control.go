@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,8 +26,6 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
@@ -67,8 +64,6 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Config:         s.rt.Config,
 		ReloadConfig:   s.rt.Reload,
 		Peers:          s.clients.Discover,
-		AddChannel:     s.addChannel,
-		RemoveChannel:  s.deleteChannel,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
@@ -142,44 +137,9 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	return st, nil
 }
 
-// addChannel checks the channel of req, saves it and starts it.
-func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error) {
-	secrets, err := s.dir.LoadSecrets()
-	if err != nil {
-		return nil, err
-	}
-	maps.Copy(secrets, req.Secrets)
-	next := s.rt.Config()
-	if err := next.SetChannel(req.Kind, req.Token, req.Email); err != nil {
-		return nil, agenterr.Invalid(err)
-	}
-	ch, err := s.buildChannel(next, secrets, req.Kind)
-	if err != nil {
-		return nil, agenterr.Invalid(err)
-	}
-	if err := channel.Validate(ctx, ch); err != nil {
-		return nil, err
-	}
-	if err := s.rt.SaveSecrets(req.Secrets); err != nil {
-		return nil, err
-	}
-	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
-		return nil, err
-	}
+// startChannel starts a channel that was added, and describes it with the
+// link for the owner if nobody is linked on it yet.
+func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controlapi.ChannelStatus {
 	s.supervisor.Add(ch)
-	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch)), nil
-}
-
-func (s *Server) deleteChannel(kind string) error {
-	if err := (&agentdir.Config{}).SetChannel(kind, "", nil); err != nil {
-		return agenterr.Invalid(err)
-	}
-	if !s.rt.Config().HasChannel(kind) {
-		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
-	}
-	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
-		return err
-	}
-	s.supervisor.Remove(kind)
-	return nil
+	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch))
 }

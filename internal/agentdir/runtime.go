@@ -87,6 +87,10 @@ func (r *Runtime) Reload() error {
 	return nil
 }
 
+// SavedSecrets reads the secrets file, which can hold secrets saved since
+// the agent started.
+func (r *Runtime) SavedSecrets() (Secrets, error) { return r.dir.LoadSecrets() }
+
 // SaveSecrets merges s into the secrets file, and uses all the secrets it
 // holds then.
 func (r *Runtime) SaveSecrets(s Secrets) error {

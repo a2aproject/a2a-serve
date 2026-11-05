@@ -45,10 +45,6 @@ type Deps struct {
 	ReloadConfig func() error
 	// Peers lists the agents on the private network.
 	Peers func(ctx context.Context) ([]network.PeerInfo, error)
-	// AddChannel checks a channel, saves it and starts it.
-	AddChannel func(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error)
-	// RemoveChannel stops a channel and removes it from the config.
-	RemoveChannel func(kind string) error
 	// Ads are the advertised pairings of the private network.
 	Ads *gossip.Table
 	// InspectorLogin returns the path which logs in to the inspector once.
@@ -190,13 +186,13 @@ func (a *api) addChannel(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	st, err := a.deps.AddChannel(r.Context(), req)
+	st, err := a.deps.Ops.AddChannel(r.Context(), req)
 	reply(w, st, err)
 }
 
 func (a *api) deleteChannel(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	err := a.deps.RemoveChannel(kind)
+	err := a.deps.Ops.DeleteChannel(r.Context(), kind)
 	reply(w, map[string]string{"removed": kind}, err)
 }
 

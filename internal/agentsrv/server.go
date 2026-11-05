@@ -457,13 +457,18 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MinWait:    s.timings.ScheduleMinWait,
 	})
 	s.ops = agentops.New(agentops.Deps{
-		Store:       s.store,
-		Pairings:    s.pairings,
-		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions},
-		Schedules:   s.schedules.Service(),
-		Runtime:     s.rt,
-		Network:     s.networks,
-		RunSchedule: s.schedules.RunNow,
+		Store:     s.store,
+		Pairings:  s.pairings,
+		Contacts:  contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions},
+		Schedules: s.schedules.Service(),
+		Runtime:   s.rt,
+		Network:   s.networks,
+		Hooks: agentops.Hooks{
+			NewChannel:     s.buildChannel,
+			ChannelAdded:   s.startChannel,
+			ChannelRemoved: s.supervisor.Remove,
+			RunSchedule:    s.schedules.RunNow,
+		},
 	})
 	s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.inspector = inspector.New(inspector.Deps{
