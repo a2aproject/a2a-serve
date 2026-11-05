@@ -238,59 +238,6 @@ func resolveFrom(p string, hops int) string {
 	return filepath.Join(resolveFrom(parent, hops), filepath.Base(p))
 }
 
-// Pins are the mount sources and hidden paths of an agent with symlinks
-// resolved, as they were when its server started.
-type Pins map[string]string
-
-// Pin resolves the sources of mounts and the hidden paths.
-func Pin(mounts []agentdir.Mount, hidden []string) Pins {
-	p := Pins{}
-	for _, m := range mounts {
-		p[m.Src] = resolvePath(m.Src)
-	}
-	for _, h := range hidden {
-		p[h] = resolvePath(h)
-	}
-	return p
-}
-
-// check refuses a pinned mount source or hidden path that lies inside
-// another writable mount and resolves elsewhere now. The harness can
-// replace a directory in a writable mount with a symlink, which docker
-// would follow at the next start.
-func (p Pins) check(mounts []agentdir.Mount, hidden []string) error {
-	paths := slices.Clone(hidden)
-	for _, m := range mounts {
-		paths = append(paths, m.Src)
-	}
-	for _, path := range paths {
-		pinned, ok := p[path]
-		if !ok || !p.inWritableMount(path, mounts) {
-			continue
-		}
-		if now := resolvePath(path); now != pinned {
-			return fmt.Errorf("%s resolved to %s when the agent server started and resolves to %s now; the agent may have replaced a directory with a symlink, so check it and restart the agent server", path, pinned, now)
-		}
-	}
-	return nil
-}
-
-// inWritableMount reports whether the pinned path lies strictly inside the
-// pinned source of a writable mount.
-func (p Pins) inWritableMount(path string, mounts []agentdir.Mount) bool {
-	for _, m := range mounts {
-		src, ok := p[m.Src]
-		if m.ReadOnly || !ok || m.Src == path {
-			continue
-		}
-		rel, err := filepath.Rel(src, p[path])
-		if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return true
-		}
-	}
-	return false
-}
-
 // containerStopTimeout bounds removing a container, which gets its own
 // budget so that a slow shutdown of other components doesn't leave it running.
 const containerStopTimeout = 30 * time.Second

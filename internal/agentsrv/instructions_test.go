@@ -26,7 +26,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func TestWriteSection(t *testing.T) {
@@ -170,6 +172,59 @@ func TestWithAgentsLine(t *testing.T) {
 
 			if hasLine := strings.Contains(a2atext.Message(got.Message), agentsLinePrefix); hasLine != tc.wantLine {
 				t.Fatalf("withAgentsLine() message = %q, want the agents line %v", a2atext.Message(got.Message), tc.wantLine)
+			}
+		})
+	}
+}
+
+func TestWriteInstructionsSkipsHomeThatFailsTheSandboxCheck(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		replace   bool
+		wantWrite bool
+	}{
+		{name: "unchanged", wantWrite: true},
+		{name: "agent directory replaced and its home a symlink", replace: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.Init(); err != nil {
+				t.Fatal(err)
+			}
+			pins, err := harness.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			if err != nil {
+				t.Fatalf("harness.NewPins() error = %v", err)
+			}
+			s := &Server{dir: dir, pins: pins, store: openTestStore(t)}
+			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
+			s.rt.Store(&runtimeConfig{cfg: cfg, secrets: agentdir.Secrets{}})
+			home := dir.HomeDir()
+			if tc.replace {
+				home = t.TempDir()
+				if err := os.Rename(dir.Root, dir.Root+".old"); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.MkdirAll(dir.StateDir(), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(home, dir.HomeDir()); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := s.writeInstructions(context.Background()); err != nil {
+				t.Fatalf("Server.writeInstructions() error = %v", err)
+			}
+
+			_, err = os.Stat(filepath.Join(home, instructionFiles[0]))
+			if gotWrite := err == nil; gotWrite != tc.wantWrite {
+				t.Fatalf("Server.writeInstructions() wrote into %s = %v, want %v (stat error = %v)", home, gotWrite, tc.wantWrite, err)
 			}
 		})
 	}

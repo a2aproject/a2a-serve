@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,10 +92,16 @@ func (s *Server) writeInstructions(ctx context.Context) error {
 }
 
 // writeInstructionsIn writes the instruction files into homes. A local
-// harness uses your own home, which is left alone.
+// harness uses your own home, which is left alone. A home that fails the
+// sandbox checks is skipped, since the agent may have redirected it.
 func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error {
-	if s.config().Sandbox == harness.SandboxLocal {
+	cfg := s.config()
+	if cfg.Sandbox == harness.SandboxLocal {
 		return nil
+	}
+	mounts, err := s.dir.Mounts(cfg)
+	if err != nil {
+		return err
 	}
 	s.instructionsMu.Lock()
 	defer s.instructionsMu.Unlock()
@@ -117,6 +124,10 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	}
 	var errs []error
 	for _, home := range homes {
+		if err := s.checkHome(cfg, mounts, home); err != nil {
+			slog.Warn("skipped writing the instructions into an agent home", "home", home, "error", err)
+			continue
+		}
 		for _, f := range instructionFiles {
 			errs = append(errs, writeSection(home, f, sb.String()))
 		}
