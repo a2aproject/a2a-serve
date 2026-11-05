@@ -78,6 +78,25 @@ func (r *Recipe) MissingMounts(cfg *agentdir.Config, server string) []string {
 	return out
 }
 
+// RestoreMounts adds to local the mounts of base that recipe.yaml ties to
+// the MCP servers off, which the agent leaves out, so that a merge sees
+// them unchanged and doesn't take them for local removals.
+func (r *Recipe) RestoreMounts(local, base *agentdir.Config, off []string) {
+	have := map[string]bool{}
+	for _, spec := range local.Mounts {
+		if m, err := agentdir.ParseMount(spec); err == nil {
+			have[m.Dst] = true
+		}
+	}
+	for _, spec := range base.Mounts {
+		m, err := agentdir.ParseMount(spec)
+		if err != nil || have[m.Dst] || !slices.Contains(off, r.Manifest.MountServer(m.Dst)) {
+			continue
+		}
+		local.Mounts = append(local.Mounts, spec)
+	}
+}
+
 // DropMounts removes the mounts of cfg that recipe.yaml ties to the MCP
 // servers off, which then don't need their sources.
 func (r *Recipe) DropMounts(cfg *agentdir.Config, off []string) {
