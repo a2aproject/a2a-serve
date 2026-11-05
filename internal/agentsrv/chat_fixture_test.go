@@ -36,15 +36,15 @@ const waitTimeout = 10 * time.Second
 // stubChannel is a channel whose Run is scripted.
 type stubChannel struct {
 	name string
-	run  func(ctx context.Context, in chan<- channel.Inbound) error
+	run  func(ctx context.Context, in chan<- channel.Inbound, report func(error)) error
 }
 
 func (s *stubChannel) Name() string { return s.name }
 
 func (s *stubChannel) Caps() channel.Caps { return channel.Caps{} }
 
-func (s *stubChannel) Run(ctx context.Context, in chan<- channel.Inbound) error {
-	return s.run(ctx, in)
+func (s *stubChannel) Run(ctx context.Context, in chan<- channel.Inbound, report func(error)) error {
+	return s.run(ctx, in, report)
 }
 
 func (s *stubChannel) Send(context.Context, channel.Outbound) (channel.Ref, error) {
@@ -60,7 +60,7 @@ func (d *describedStub) Describe() string { return "@" + d.name }
 
 func (d *describedStub) LinkHint(code string) string { return "/start " + code }
 
-func blockUntilDone(ctx context.Context, _ chan<- channel.Inbound) error {
+func blockUntilDone(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 	<-ctx.Done()
 	return nil
 }

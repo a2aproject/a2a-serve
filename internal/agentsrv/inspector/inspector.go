@@ -276,15 +276,12 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 		q := approvals.FromRecord(rec)
 		out = append(out, Approval{Action: Path + "/questions/" + rec.ID, Text: q.Display(), ContextID: rec.ContextID, Contact: rec.Contact, Options: q.Options, Created: rec.Created})
 	}
-	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100})
+	tasks, err := in.waitingTasks(ctx)
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range resp.Tasks {
+	for _, t := range tasks {
 		q := approvals.FromStatus(t.Status)
-		if q == nil {
-			continue
-		}
 		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
@@ -297,28 +294,54 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	return out, nil
 }
 
+// ApprovalCount is the number of [Inspector.PendingApprovals].
+func (in *Inspector) ApprovalCount(ctx context.Context) (int, error) {
+	remote, err := in.deps.Store.UnansweredRemoteQuestions(ctx)
+	if err != nil {
+		return 0, err
+	}
+	tasks, err := in.waitingTasks(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return remote + len(tasks), nil
+}
+
+// waitingTasks are the tasks of this agent waiting for an answer to a
+// question, without their history and artifacts.
+func (in *Inspector) waitingTasks(ctx context.Context) ([]*a2a.Task, error) {
+	noHistory := 0
+	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{Status: a2a.TaskStateInputRequired, PageSize: 100, HistoryLength: &noHistory})
+	if err != nil {
+		return nil, err
+	}
+	var out []*a2a.Task
+	for _, t := range resp.Tasks {
+		if approvals.FromStatus(t.Status) != nil {
+			out = append(out, t)
+		}
+	}
+	return out, nil
+}
+
 // conversations groups the recent tasks by context, the most recent first.
 func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) {
 	history := 1
-	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{PageSize: recentTasks, HistoryLength: &history})
+	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{PageSize: recentTasks, HistoryLength: &history})
 	if err != nil {
 		return nil, err
 	}
 	var out []conversation
 	index := map[string]int{}
-	for _, t := range resp.Tasks {
-		if i, ok := index[t.ContextID]; ok {
-			out[i].Tasks++
+	for i, t := range resp.Tasks {
+		if j, ok := index[t.ContextID]; ok {
+			out[j].Tasks++
 			if len(t.History) > 0 {
-				out[i].Snippet = snippet(a2atext.Message(t.History[0]))
+				out[j].Snippet = snippet(a2atext.Message(t.History[0]))
 			}
 			continue
 		}
-		stored, err := in.deps.Tasks.Get(ctx, t.ID)
-		if err != nil {
-			return nil, err
-		}
-		c := conversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(stored.User), State: a2atext.StateName(t.Status.State), Tasks: 1}
+		c := conversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(owners[i]), State: a2atext.StateName(t.Status.State), Tasks: 1}
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
@@ -368,7 +391,7 @@ type conversationPage struct {
 func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	resp, err := in.deps.Tasks.List(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, IncludeArtifacts: true})
+	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, IncludeArtifacts: true})
 	if err != nil {
 		http.Error(w, "Couldn't load the conversation: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -381,11 +404,8 @@ func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 	if ch, conv, err := in.deps.Store.ConvOf(ctx, id); err == nil {
 		page.Chat = ch + " " + conv
 	}
-	for _, t := range slices.Backward(resp.Tasks) {
-		it := task{ID: string(t.ID), State: a2atext.StateName(t.Status.State)}
-		if stored, err := in.deps.Tasks.Get(ctx, t.ID); err == nil {
-			it.User = auth.DisplayPrincipal(stored.User)
-		}
+	for i, t := range slices.Backward(resp.Tasks) {
+		it := task{ID: string(t.ID), State: a2atext.StateName(t.Status.State), User: auth.DisplayPrincipal(owners[i])}
 		if t.Status.Timestamp != nil {
 			it.Updated = *t.Status.Timestamp
 		}

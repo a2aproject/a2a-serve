@@ -38,6 +38,8 @@ const issuer = "https://accounts.google.test"
 
 // Account is who the fake signs in.
 type Account struct {
+	// Subject defaults to 1234.
+	Subject      string
 	Email        string
 	Verified     bool
 	HostedDomain string
@@ -54,10 +56,13 @@ type Google struct {
 	mu      sync.Mutex
 	account Account
 	codes   map[string]authCode
+	// refresh maps the refresh tokens the fake issued to their app.
+	refresh map[string]string
 }
 
 type authCode struct {
 	clientID, nonce, challenge string
+	offline                    bool
 }
 
 // New starts a fake which signs in account.
@@ -67,7 +72,7 @@ func New(t *testing.T, account Account) *Google {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g := &Google{t: t, key: key, Secret: "client-secret", account: account, codes: map[string]authCode{}}
+	g := &Google{t: t, key: key, Secret: "client-secret", account: account, codes: map[string]authCode{}, refresh: map[string]string{}}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /auth", g.auth)
 	mux.HandleFunc("POST /token", g.token)
@@ -93,7 +98,7 @@ func (g *Google) auth(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	code := rand.Text()
 	g.mu.Lock()
-	g.codes[code] = authCode{clientID: q.Get("client_id"), nonce: q.Get("nonce"), challenge: q.Get("code_challenge")}
+	g.codes[code] = authCode{clientID: q.Get("client_id"), nonce: q.Get("nonce"), challenge: q.Get("code_challenge"), offline: q.Get("access_type") == "offline"}
 	g.mu.Unlock()
 	back, err := url.Parse(q.Get("redirect_uri"))
 	if err != nil {
@@ -107,20 +112,53 @@ func (g *Google) auth(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, back.String(), http.StatusFound)
 }
 
+// RevokeRefreshTokens makes every refresh token the fake issued invalid, as
+// when the person removes the app's access.
+func (g *Google) RevokeRefreshTokens() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	clear(g.refresh)
+}
+
 func (g *Google) token(w http.ResponseWriter, r *http.Request) {
+	if r.FormValue("grant_type") == "refresh_token" {
+		g.mu.Lock()
+		clientID, ok := g.refresh[r.FormValue("refresh_token")]
+		g.mu.Unlock()
+		if !ok || r.FormValue("client_secret") != g.Secret || r.FormValue("client_id") != clientID {
+			g.invalidGrant(w)
+			return
+		}
+		g.write(w, map[string]string{"id_token": g.IDToken(clientID, "")})
+		return
+	}
 	g.mu.Lock()
 	c, ok := g.codes[r.FormValue("code")]
 	delete(g.codes, r.FormValue("code"))
 	g.mu.Unlock()
 	if !ok || r.FormValue("client_secret") != g.Secret || googleauth.Challenge(r.FormValue("code_verifier")) != c.challenge {
-		w.WriteHeader(http.StatusBadRequest)
-		if err := json.NewEncoder(w).Encode(map[string]string{"error": "invalid_grant"}); err != nil {
-			g.t.Errorf("writing the token error: %v", err)
-		}
+		g.invalidGrant(w)
 		return
 	}
-	if err := json.NewEncoder(w).Encode(map[string]string{"id_token": g.IDToken(c.clientID, c.nonce)}); err != nil {
-		g.t.Errorf("writing the token: %v", err)
+	resp := map[string]string{"id_token": g.IDToken(c.clientID, c.nonce)}
+	if c.offline {
+		refresh := rand.Text()
+		g.mu.Lock()
+		g.refresh[refresh] = c.clientID
+		g.mu.Unlock()
+		resp["refresh_token"] = refresh
+	}
+	g.write(w, resp)
+}
+
+func (g *Google) invalidGrant(w http.ResponseWriter) {
+	w.WriteHeader(http.StatusBadRequest)
+	g.write(w, map[string]string{"error": "invalid_grant"})
+}
+
+func (g *Google) write(w http.ResponseWriter, v any) {
+	if err := json.NewEncoder(w).Encode(v); err != nil {
+		g.t.Errorf("writing a token response: %v", err)
 	}
 }
 
@@ -141,8 +179,12 @@ func (g *Google) IDToken(audience, nonce string) string {
 	g.mu.Lock()
 	a := g.account
 	g.mu.Unlock()
+	sub := a.Subject
+	if sub == "" {
+		sub = "1234"
+	}
 	claims := map[string]any{
-		"iss": issuer, "aud": audience, "sub": "1234", "email": a.Email, "email_verified": a.Verified,
+		"iss": issuer, "aud": audience, "sub": sub, "email": a.Email, "email_verified": a.Verified,
 		"nonce": nonce, "iat": time.Now().Unix(), "exp": time.Now().Add(time.Hour).Unix(),
 	}
 	if a.HostedDomain != "" {

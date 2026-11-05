@@ -258,6 +258,13 @@ func (s *Server) Fail(method string, f Failure) {
 	s.failures[method] = f
 }
 
+// Recover makes method answer normally again after [Server.Fail].
+func (s *Server) Recover(method string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.failures, method)
+}
+
 // SetFile serves data for download at path. A nil data never answers.
 func (s *Server) SetFile(path string, data []byte) {
 	s.mu.Lock()

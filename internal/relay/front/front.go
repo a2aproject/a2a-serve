@@ -14,8 +14,9 @@
 
 // Package front is the HTTP front of a relay. It serves the relay's public
 // port: it reports the relay's versions, serves the control API to callers
-// with the admin token, blocks Agent Mesh's admin, console and metrics
-// routes, and proxies everything else to agentmesh-one.
+// with the admin token and the relay's identity provider, blocks Agent
+// Mesh's admin, console and metrics routes, and proxies everything else to
+// agentmesh-one.
 package front
 
 import (
@@ -31,20 +32,23 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 )
 
 // Front is the handler of a relay's public port.
 type Front struct {
 	info    agentmesh.Info
 	control http.Handler
+	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
 }
 
 // New returns the front of a relay that reports info and serves control,
-// which checks the admin token itself, at [control.RemotePath]. It answers
-// 503 on proxied routes until [Front.Open].
-func New(info agentmesh.Info, ctl http.Handler) *Front {
-	return &Front{info: info, control: ctl}
+// which checks the admin token itself, at [control.RemotePath], and signIn
+// at [signin.Path], or nil when agents can't sign in. It answers 503 on
+// proxied routes until [Front.Open].
+func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
+	return &Front{info: info, control: ctl, signIn: signIn}
 }
 
 // Open starts proxying to the agentmesh-one at upstream.
@@ -104,8 +108,15 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		jsonhttp.Write(w, http.StatusOK, f.info)
 		return
-	case p == control.RemotePath || strings.HasPrefix(p, control.RemotePath+"/"):
+	case under(p, control.RemotePath):
 		http.StripPrefix(control.RemotePath, f.control).ServeHTTP(w, r)
+		return
+	case under(p, signin.Path):
+		if f.signIn == nil {
+			jsonhttp.Error(w, http.StatusNotFound, "this relay doesn't let agents sign in; join it with an invite")
+			return
+		}
+		http.StripPrefix(signin.Path, f.signIn).ServeHTTP(w, r)
 		return
 	case blocked(p, r.Method):
 		jsonhttp.Error(w, http.StatusNotFound, "not found")
@@ -120,12 +131,16 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	proxy.ServeHTTP(w, r)
 }
 
+func under(p, prefix string) bool {
+	return p == prefix || strings.HasPrefix(p, prefix+"/")
+}
+
 // blocked reports whether the front refuses a route of Agent Mesh. The
 // relay is managed through the control API and its policy comes from its
 // settings; the console and metrics answer without authentication.
 func blocked(p, method string) bool {
 	for _, prefix := range []string{"/admin", "/console", "/metrics"} {
-		if p == prefix || strings.HasPrefix(p, prefix+"/") {
+		if under(p, prefix) {
 			return true
 		}
 	}

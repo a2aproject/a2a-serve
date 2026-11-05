@@ -101,6 +101,77 @@ func TestLoginXOAUTH2(t *testing.T) {
 	}
 }
 
+func TestLoginXOAUTH2SavesRotatedRefreshToken(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		rotated string
+		want    []string
+	}{
+		{name: "rotated token", rotated: "refresh-2", want: []string{"refresh-2"}},
+		{name: "same token", rotated: "refresh-1"},
+		{name: "no new token"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := startIMAP(t, "coder@example.com", "", "access-1")
+			tokens := rotatingTokenServer(t, "refresh-1", "access-1", tc.rotated)
+			var saved []string
+			c := New(Config{
+				Address: "coder@example.com", TrustedAuthServ: "mx.example.com",
+				OAuth: &OAuthConfig{
+					TokenURL: tokens.URL, ClientID: "id", RefreshToken: "refresh-1",
+					SaveRefreshToken: func(tok string) error {
+						saved = append(saved, tok)
+						return nil
+					},
+				},
+			}, channeltest.NewKV(nil))
+
+			for range 2 {
+				if err := c.login(t.Context(), srv.dial(t)); err != nil {
+					t.Fatalf("login() error = %v", err)
+				}
+			}
+
+			if diff := cmp.Diff(tc.want, saved); diff != "" {
+				t.Fatalf("login() saved refresh tokens wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestLoginXOAUTH2RetriesSavingRotatedRefreshToken(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "", "access-1")
+	tokens := rotatingTokenServer(t, "refresh-1", "access-1", "refresh-2")
+	var attempts int
+	c := New(Config{
+		Address: "coder@example.com", TrustedAuthServ: "mx.example.com",
+		OAuth: &OAuthConfig{
+			TokenURL: tokens.URL, ClientID: "id", RefreshToken: "refresh-1",
+			SaveRefreshToken: func(string) error {
+				attempts++
+				if attempts == 1 {
+					return errors.New("disk full")
+				}
+				return nil
+			},
+		},
+	}, channeltest.NewKV(nil))
+
+	for range 3 {
+		if err := c.login(t.Context(), srv.dial(t)); err != nil {
+			t.Fatalf("login() error = %v", err)
+		}
+	}
+
+	if attempts != 2 {
+		t.Fatalf("SaveRefreshToken() calls = %d, want 2", attempts)
+	}
+}
+
 func TestLoginXOAUTH2RefusedToken(t *testing.T) {
 	t.Parallel()
 	srv := startIMAP(t, "coder@example.com", "", "access-1")
@@ -153,7 +224,7 @@ func TestSessionEndsWithContext(t *testing.T) {
 	c := New(Config{Address: "coder@example.com", IMAP: silentServer(t), TrustedAuthServ: "mx.example.com"}, channeltest.NewKV(nil))
 	ctx, cancel := context.WithCancel(t.Context())
 	errc := make(chan error, 1)
-	go func() { errc <- c.session(ctx, make(chan channel.Inbound)) }()
+	go func() { errc <- c.session(ctx, make(chan channel.Inbound), func(error) {}) }()
 	time.Sleep(50 * time.Millisecond)
 
 	cancel()
@@ -165,6 +236,44 @@ func TestSessionEndsWithContext(t *testing.T) {
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatalf("session() still runs 5s after its context ended")
+	}
+}
+
+func TestRunReportsFailedSessions(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatalf("closing the listener: %v", err)
+	}
+	c := New(Config{Address: "coder@example.com", IMAP: addr, TrustedAuthServ: "mx.example.com"}, channeltest.NewKV(nil))
+	ctx, cancel := context.WithCancel(t.Context())
+	reports := make(chan error, 1)
+	done := make(chan error, 1)
+
+	go func() {
+		done <- c.Run(ctx, make(chan channel.Inbound), func(err error) {
+			select {
+			case reports <- err:
+			default:
+			}
+		})
+	}()
+
+	select {
+	case err := <-reports:
+		if err == nil || !strings.Contains(err.Error(), "refused") {
+			t.Fatalf("Run() reported %v, want the refused connection", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("Run() reported nothing after a failed session")
+	}
+	cancel()
+	if err := <-done; err != nil {
+		t.Fatalf("Run() error = %v", err)
 	}
 }
 

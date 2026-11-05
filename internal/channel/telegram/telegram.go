@@ -57,8 +57,10 @@ type Channel struct {
 	bot    *bot.Bot
 	me     *models.User
 
-	mu sync.Mutex
-	in chan<- channel.Inbound
+	mu     sync.Mutex
+	in     chan<- channel.Inbound
+	report func(error)
+	runCtx context.Context
 }
 
 var (
@@ -93,8 +95,13 @@ func (c *Channel) connect(ctx context.Context) error {
 		// Handlers run in a goroutine per update otherwise, so that messages
 		// of a conversation could reach the router out of order.
 		bot.WithNotAsyncHandlers(),
+		// The bot confirms the updates it fetched with its next poll. Without
+		// a buffer, it polls again only once the handler took all but the
+		// last of them, so that a stop leaves the rest to the next run.
+		bot.WithUpdatesChannelCap(0),
 		bot.WithAllowedUpdates(bot.AllowedUpdates{"message", "callback_query"}),
-		bot.WithHTTPClient(50*time.Second, &http.Client{Timeout: 70 * time.Second}),
+		bot.WithHTTPClient(50*time.Second, &pollClient{client: &http.Client{Timeout: 70 * time.Second}, polled: func() { c.reportState(nil) }}),
+		bot.WithErrorsHandler(c.pollFailed),
 		bot.WithSkipGetMe(),
 	}
 	if c.ServerURL != "" {
@@ -143,13 +150,14 @@ func (c *Channel) LinkHint(code string) string {
 }
 
 // Run implements [channel.Channel]. Telegram keeps pending updates for a
-// while, so a server that was briefly offline catches up on restart.
-func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
+// while, so a server that was briefly offline catches up on restart. It
+// reports each failed poll, and the next one that succeeds.
+func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound, report func(error)) error {
 	if err := c.connect(ctx); err != nil {
 		return err
 	}
 	c.mu.Lock()
-	c.in = in
+	c.in, c.report, c.runCtx = in, report, ctx
 	c.mu.Unlock()
 	if _, err := c.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
 		{Command: "new", Description: "Start a new conversation"},
@@ -159,6 +167,46 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 	}
 	c.bot.Start(ctx)
 	return nil
+}
+
+func (c *Channel) reportState(err error) {
+	c.mu.Lock()
+	report := c.report
+	c.mu.Unlock()
+	if report != nil {
+		report(err)
+	}
+}
+
+// pollFailed receives the errors of the bot, which are those of polling for
+// updates. The bot keeps polling with backoff.
+func (c *Channel) pollFailed(err error) {
+	c.mu.Lock()
+	ctx := c.runCtx
+	c.mu.Unlock()
+	// Updates fetched but not handled when Run stops are fetched again
+	// on the next run, so the bot's warning about them is moot.
+	if ctx != nil && ctx.Err() != nil {
+		return
+	}
+	slog.Warn("telegram: polling for updates", "error", err)
+	c.reportState(fmt.Errorf("telegram: %w", err))
+}
+
+// pollClient tells when a poll for updates succeeds, which the bot doesn't.
+// A long poll answers when an update arrives or it times out, so an idle
+// bot shows that it recovered after up to the poll timeout.
+type pollClient struct {
+	client *http.Client
+	polled func()
+}
+
+func (p *pollClient) Do(req *http.Request) (*http.Response, error) {
+	resp, err := p.client.Do(req)
+	if err == nil && resp.StatusCode == http.StatusOK && strings.HasSuffix(req.URL.Path, "/getUpdates") {
+		p.polled()
+	}
+	return resp, err
 }
 
 func (c *Channel) deliver(ctx context.Context, m channel.Inbound) {

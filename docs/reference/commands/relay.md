@@ -84,7 +84,13 @@ Aliases: `ls`
 Remove agents from the relay at once: the agent with that name or peer ID,
 or every agent of a person, given their email. The relay refuses their next
 request, and the other agents drop them. A removed agent can't join again
-with its identity.
+with its identity, and removing an agent that signed in bans the Google
+account behind it, so the person can't sign in again either.
+
+For people who sign in, --allow-email decides: when the relay starts, it
+removes the agents of people the list no longer admits, and lets back the
+removed people it admits. To keep someone out, also drop them from
+--allow-email. Invite a removed invited agent again to let it back.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -117,6 +123,11 @@ tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
 TLS, and give that address as --url. --tunnel cloudflare runs a Cloudflare
 quick tunnel for a demo; its URL changes on every start.
 
+People sign in to the relay from their agents with Google, limited to
+--allow-email, once you register a Google app for the relay and give it with
+--google-client-id and --google-client-secret. Agents that can't sign in
+join with `a2a-serve relay invite`.
+
 The flags are saved in .a2a/relay.yaml, so later runs need none. A newer
 a2a-serve that pins a newer Agent Mesh backs up the relay's database first,
 and an older one refuses to run on it.
@@ -134,6 +145,8 @@ a2a-serve relay run [flags]
 
 ```bash
 a2a-serve relay run --url https://relay.example.com
+a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
+  --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
 a2a-serve relay run --tunnel cloudflare
 a2a-serve relay run --service
 ```
@@ -143,8 +156,11 @@ a2a-serve relay run --service
 | Flag | Default | Description |
 |---|---|---|
 | `--admin-token string` |  | The relay's admin token, at least 32 characters, as a secret value: env:VAR, -, or the value (default: generated on the first run) |
+| `--allow-email email` |  | People who may sign in to the relay with Google: an email, or \*@domain for the accounts of a Google Workspace domain; replaces the saved list, and none turns sign-in off and forgets the Google app (repeatable; commas also separate values) |
 | `--database string` |  | A PostgreSQL DSN, as a secret value: env:VAR, -, or the value (default: SQLite in the relay directory; none goes back to it) |
 | `--dir string` |  | Relay directory (default: the nearest relay directory up from the current one, or else the current directory) |
+| `--google-client-id string` |  | Client ID of the relay's Google app, which people sign in with (none removes the app) |
+| `--google-client-secret string` |  | Client secret of the relay's Google app, as a secret value: env:VAR, -, or the value |
 | `--listen string` |  | Address to serve HTTP on (default 127.0.0.1:8443) |
 | `--service` |  | Install and start the relay as a launchd or systemd user service |
 | `--tunnel string` |  | Publish the relay through a Cloudflare quick tunnel (cloudflare, or none); needs cloudflared on PATH |

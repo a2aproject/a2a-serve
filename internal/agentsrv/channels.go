@@ -15,6 +15,8 @@
 package agentsrv
 
 import (
+	"maps"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/channel/configured"
@@ -30,5 +32,22 @@ func (s *Server) buildChannel(cfg *agentdir.Config, secrets agentdir.Secrets, ki
 }
 
 func (s *Server) channelOptions() configured.Options {
-	return configured.Options{KV: s.store.ChannelState(), TelegramURL: s.telegramServerURL}
+	return configured.Options{KV: s.store.ChannelState(), TelegramURL: s.telegramServerURL, SaveSecret: s.saveChannelSecret}
+}
+
+// saveChannelSecret stores a secret that a running channel replaced, and
+// uses it from now on.
+func (s *Server) saveChannelSecret(name, value string) error {
+	update := agentdir.Secrets{name: value}
+	if err := s.dir.LockConfig(func() error { return s.dir.SaveSecrets(update) }); err != nil {
+		return err
+	}
+	s.cfgMu.Lock()
+	defer s.cfgMu.Unlock()
+	cur := s.rt.Load()
+	next := agentdir.Secrets{}
+	maps.Copy(next, cur.secrets)
+	maps.Copy(next, update)
+	s.rt.Store(&runtimeConfig{cfg: cur.cfg, secrets: next})
+	return nil
 }

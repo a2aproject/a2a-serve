@@ -19,10 +19,17 @@ package relay
 import (
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
+
+// SignInSession is how long a signed-in agent stays on the relay without
+// a fresh ID token. Agents renew it with theirs every [signin.IDTokenTTL],
+// and the relay bans agents its allowlist drops when it starts.
+const SignInSession = 24 * time.Hour
 
 // MeshConfig is what agentmesh-one runs with.
 type MeshConfig struct {
@@ -35,6 +42,9 @@ type MeshConfig struct {
 	AdminToken string
 	// Database is a PostgreSQL DSN, or "" for SQLite in DataDir.
 	Database string
+	// Issuer is the URL of the relay's identity provider, or "" when
+	// agents can't sign in.
+	Issuer string
 }
 
 // MeshArgs returns the flags of agentmesh-one. No other code builds them.
@@ -51,6 +61,16 @@ func MeshArgs(c MeshConfig) []string {
 	}
 	if c.Database != "" {
 		args = append(args, "--db-driver", "postgres")
+	}
+	if c.Issuer != "" {
+		// A workload issuer's tokens may enroll nodes, and Agent Mesh refuses
+		// them on its user API, which would let anyone signed in mint join
+		// tokens past the allowlist. --issuer advertises it on /info.
+		args = append(args,
+			"--issuer", c.Issuer, "--workload-issuer", c.Issuer,
+			"--oidc-client-id", signin.ClientID, "--allowed-audiences", signin.ClientID,
+			"--control-plane-workload-session-ttl", SignInSession.String(),
+		)
 	}
 	return args
 }
@@ -73,9 +93,11 @@ func MeshEnv(c MeshConfig, base []string) []string {
 
 // Policy returns the mesh policy. Every node may call, publish and expose
 // A2A services, the one kind an agent serves. Public URLs forward requests
-// unchanged, so the agent's own auth applies there.
-func Policy() meshadmin.Policy {
-	return meshadmin.Policy{Roles: []meshadmin.Role{
+// unchanged, so the agent's own auth applies there. With signIn, everyone
+// the relay's identity provider vouches for joins as a node; it is the only
+// issuer Agent Mesh trusts, and it checks the allowlist.
+func Policy(signIn bool) meshadmin.Policy {
+	p := meshadmin.Policy{Roles: []meshadmin.Role{
 		{Name: meshadmin.RoleRouter, AllowedServices: []string{"*"}, AllowedTargets: []string{"*"}},
 		{
 			Name:            meshadmin.RoleNode,
@@ -88,4 +110,8 @@ func Policy() meshadmin.Policy {
 			}},
 		},
 	}}
+	if signIn {
+		p.Bindings = []meshadmin.Binding{{Role: meshadmin.RoleNode, Members: []string{meshadmin.SystemAuthenticated}}}
+	}
+	return p
 }

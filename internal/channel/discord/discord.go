@@ -47,6 +47,9 @@ const (
 	maxCatchUpMessages = 1000
 	// convsKey lists the conversations to catch up on after a reconnect.
 	convsKey = "discord:convs"
+	// maxConvs bounds the conversations kept; the least recently active
+	// ones are forgotten.
+	maxConvs = 200
 )
 
 // Channel is a Discord bot.
@@ -64,9 +67,12 @@ type Channel struct {
 	// threadRetry is the first delay before starting a thread is tried again.
 	threadRetry time.Duration
 
-	mu    sync.Mutex
-	in    chan<- channel.Inbound
-	ctx   context.Context
+	mu     sync.Mutex
+	in     chan<- channel.Inbound
+	ctx    context.Context
+	report func(error)
+	// convs are the conversations to catch up on, least recently active
+	// first.
 	convs []string
 
 	// cursorMu serializes updates of the last message seen of conversations.
@@ -113,7 +119,12 @@ func (c *Channel) connect() error {
 		return fmt.Errorf("discord: checking the bot token: %w", err)
 	}
 	s.Identify.Intents = discordgo.IntentsGuildMessages | discordgo.IntentsDirectMessages | discordgo.IntentMessageContent
+	// Handlers run one at a time in the order of the events, so they must
+	// not block: they queue the work, which runs in order per conversation.
+	s.SyncEvents = true
 	s.AddHandler(c.onReady)
+	s.AddHandler(c.onConnect)
+	s.AddHandler(c.onDisconnect)
 	s.AddHandler(c.onMessage)
 	s.AddHandler(c.onInteraction)
 	c.s, c.me = s, me
@@ -136,8 +147,9 @@ func (c *Channel) LinkHint(code string) string {
 	return fmt.Sprintf("send %s a direct message: /join %s", c.Describe(), code)
 }
 
-// Run implements [channel.Channel].
-func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
+// Run implements [channel.Channel]. The session reconnects by itself, and
+// reports when it disconnects and connects.
+func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound, report func(error)) error {
 	if err := c.connect(); err != nil {
 		return err
 	}
@@ -146,7 +158,7 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 		return fmt.Errorf("discord: loading conversations: %w", err)
 	}
 	c.mu.Lock()
-	c.in, c.ctx = in, ctx
+	c.in, c.ctx, c.report = in, ctx, report
 	if ok && v != "" {
 		c.convs = strings.Split(v, ",")
 	}
@@ -158,19 +170,67 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
 	return c.s.Close()
 }
 
-func (c *Channel) deliver(m channel.Inbound) {
+// deliver hands m to the router and reports whether it did before the
+// channel stopped.
+func (c *Channel) deliver(m channel.Inbound) bool {
 	c.mu.Lock()
 	in, ctx := c.in, c.ctx
 	c.mu.Unlock()
 	select {
 	case in <- m:
+		return true
 	case <-ctx.Done():
+		return false
 	}
 }
 
-// onReady registers the application commands and catches up on messages
-// missed while disconnected, since the gateway doesn't replay them.
-func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) {
+func (c *Channel) reportState(err error) {
+	c.mu.Lock()
+	report := c.report
+	c.mu.Unlock()
+	if report != nil {
+		report(err)
+	}
+}
+
+func (c *Channel) onConnect(*discordgo.Session, *discordgo.Connect) { c.reportState(nil) }
+
+func (c *Channel) onDisconnect(*discordgo.Session, *discordgo.Disconnect) {
+	c.reportState(errors.New("discord: disconnected from the gateway; reconnecting"))
+}
+
+func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) { c.ready(s, s.State, r.User.ID) }
+
+// readyAPI is the part of the Discord REST API that a new gateway session
+// uses.
+type readyAPI interface {
+	restAPI
+	ApplicationCommandBulkOverwrite(appID string, guildID string, commands []*discordgo.ApplicationCommand, options ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error)
+}
+
+// ready catches up on messages missed while disconnected, since the gateway
+// doesn't replay them, and registers the application commands. The catch-up
+// starts from the cursors as they are now and is queued before the live
+// messages of its conversation, which move the cursors.
+func (c *Channel) ready(api readyAPI, st *discordgo.State, appID string) {
+	c.mu.Lock()
+	convs, ctx := slices.Clone(c.convs), c.ctx
+	c.mu.Unlock()
+	for _, conv := range convs {
+		last, ok, err := c.kv.Get(ctx, lastKey(conv))
+		if err != nil {
+			slog.Warn("discord: loading the last message seen", "channel", conv, "error", err)
+			continue
+		}
+		if !ok || last == "" {
+			continue
+		}
+		c.queue.do(conv, func() { c.catchUp(api, st, conv, last) })
+	}
+	go registerCommands(api, appID)
+}
+
+func registerCommands(api readyAPI, appID string) {
 	cmds := []*discordgo.ApplicationCommand{
 		{Name: "join", Description: "Join with a pairing code from the agent's owner", Options: []*discordgo.ApplicationCommandOption{
 			{Type: discordgo.ApplicationCommandOptionString, Name: "code", Description: "The pairing code", Required: true},
@@ -178,14 +238,8 @@ func (c *Channel) onReady(s *discordgo.Session, r *discordgo.Ready) {
 		{Name: "new", Description: "Start a new conversation"},
 		{Name: "stop", Description: "Stop the current task"},
 	}
-	if _, err := s.ApplicationCommandBulkOverwrite(r.User.ID, "", cmds); err != nil {
+	if _, err := api.ApplicationCommandBulkOverwrite(appID, "", cmds); err != nil {
 		slog.Warn("discord: registering commands", "error", err)
-	}
-	c.mu.Lock()
-	convs := slices.Clone(c.convs)
-	c.mu.Unlock()
-	for _, conv := range convs {
-		c.queue.do(conv, func() { c.catchUp(s, s.State, conv) })
 	}
 }
 
@@ -202,18 +256,8 @@ type threadStarter interface {
 	MessageThreadStartComplex(channelID, messageID string, data *discordgo.ThreadStart, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 }
 
-func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
-	c.mu.Lock()
-	ctx := c.ctx
-	c.mu.Unlock()
-	last, ok, err := c.kv.Get(ctx, lastKey(conv))
-	if err != nil {
-		slog.Warn("discord: loading the last message seen", "channel", conv, "error", err)
-		return
-	}
-	if !ok || last == "" {
-		return
-	}
+// catchUp delivers the messages of conv after last.
+func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv, last string) {
 	msgs, skipped, err := missed(s, conv, last)
 	if err != nil {
 		slog.Warn("discord: catching up", "channel", conv, "error", err)
@@ -228,10 +272,9 @@ func (c *Channel) catchUp(s restAPI, st *discordgo.State, conv string) {
 	}
 	direct := isDirect(s, st, conv)
 	for _, m := range msgs {
-		if ctx.Err() != nil {
+		if !c.handleMessage(s, m, direct) {
 			return
 		}
-		c.handleMessage(s, m, direct)
 		c.trackInbound(conv, m.ID)
 	}
 }
@@ -332,19 +375,31 @@ func (c *Channel) setCursor(conv, msgID string, replace func(old string, ok bool
 	}
 }
 
-// remember adds conv to the conversations to catch up on.
+// remember marks conv as the most recently active conversation, and
+// forgets the least recently active ones beyond maxConvs, with their rows.
 func (c *Channel) remember(conv string) {
+	ctx := context.Background()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if slices.Contains(c.convs, conv) {
+	if n := len(c.convs); n > 0 && c.convs[n-1] == conv {
 		return
 	}
-	c.convs = append(c.convs, conv)
-	if len(c.convs) > 200 {
-		c.convs = c.convs[len(c.convs)-200:]
+	c.convs = append(slices.DeleteFunc(c.convs, func(x string) bool { return x == conv }), conv)
+	var evicted []string
+	if len(c.convs) > maxConvs {
+		evicted = slices.Clone(c.convs[:len(c.convs)-maxConvs])
+		c.convs = slices.Delete(c.convs, 0, len(evicted))
 	}
-	if err := c.kv.Set(context.Background(), convsKey, strings.Join(c.convs, ",")); err != nil {
+	if err := c.kv.Set(ctx, convsKey, strings.Join(c.convs, ",")); err != nil {
 		slog.Warn("discord: recording conversations", "error", err)
+		return
+	}
+	for _, old := range evicted {
+		for _, key := range []string{lastKey(old), threadKey(old)} {
+			if err := c.kv.Delete(ctx, key); err != nil {
+				slog.Warn("discord: forgetting a conversation", "channel", old, "error", err)
+			}
+		}
 	}
 }
 
@@ -359,25 +414,27 @@ func (c *Channel) ownThread(id string) bool {
 	return ok && v == "1"
 }
 
-// onMessage queues the message, because the gateway runs handlers on
-// goroutines of their own.
+// onMessage queues the message, so that the gateway isn't held up while the
+// router is busy.
 func (c *Channel) onMessage(s *discordgo.Session, m *discordgo.MessageCreate) {
 	c.queue.do(m.ChannelID, func() { c.handleMessage(s, m.Message, m.GuildID == "") })
 }
 
-func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bool) {
+// handleMessage delivers m if it is meant for the bot, and moves the cursor
+// of its conversation past it once delivered. It reports false if the
+// channel stopped first.
+func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bool) bool {
 	if m.Author == nil || m.Author.Bot || m.Author.ID == c.me.ID {
-		return
+		return true
 	}
 	text := m.Content
 	// In guild channels the bot answers when mentioned and moves the
 	// conversation into a thread of its own, once the sender is allowed in.
 	newThread := !direct && !c.ownThread(m.ChannelID)
 	if newThread && !slices.ContainsFunc(m.Mentions, func(u *discordgo.User) bool { return u.ID == c.me.ID }) {
-		return
+		return true
 	}
 	text = strings.TrimSpace(strings.ReplaceAll(strings.ReplaceAll(text, "<@"+c.me.ID+">", ""), "<@!"+c.me.ID+">", ""))
-	c.trackInbound(m.ChannelID, m.ID)
 	in := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: m.ID,
@@ -403,6 +460,7 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 					}
 				}
 				in.Conv = channel.ConvKey(th.ID)
+				c.remember(th.ID)
 				if err := c.kv.Set(ctx, threadKey(th.ID), "1"); err != nil {
 					errs = append(errs, fmt.Errorf("discord: recording thread: %w", err))
 				}
@@ -418,7 +476,11 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 			return errors.Join(errs...)
 		}
 	}
-	c.deliver(in)
+	if !c.deliver(in) {
+		return false
+	}
+	c.trackInbound(m.ChannelID, m.ID)
+	return true
 }
 
 // startThread starts the thread of a conversation under m, trying again a
@@ -523,7 +585,7 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		if data.Name == "join" && len(data.Options) > 0 {
 			in.Text = "join " + data.Options[0].StringValue()
 		}
-		respond(s, i, &discordgo.InteractionResponse{
+		go respond(s, i, &discordgo.InteractionResponse{
 			Type: discordgo.InteractionResponseChannelMessageWithSource,
 			Data: &discordgo.InteractionResponseData{Content: "…", Flags: discordgo.MessageFlagsEphemeral},
 		})
@@ -536,13 +598,16 @@ func (c *Channel) onInteraction(s *discordgo.Session, i *discordgo.InteractionCr
 		if i.Message != nil {
 			in.ReplyTo = channel.Ref{Conv: in.Conv, ID: i.Message.ID}
 		}
-		respond(s, i, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate})
+		go respond(s, i, &discordgo.InteractionResponse{Type: discordgo.InteractionResponseDeferredMessageUpdate})
 	default:
 		return
 	}
 	c.queue.do(i.ChannelID, func() { c.deliver(in) })
 }
 
+// respond acknowledges an interaction, which Discord fails unless it is
+// acknowledged within 3 seconds. Handlers call it on a goroutine of its own,
+// so that it doesn't wait for the events before it.
 func respond(s *discordgo.Session, i *discordgo.InteractionCreate, r *discordgo.InteractionResponse) {
 	if err := s.InteractionRespond(i.Interaction, r); err != nil {
 		slog.Debug("discord: responding to interaction", "error", err)
