@@ -4,6 +4,7 @@
 * Keep the CLI package clean, create a file-per-command. Try extracting logic into a different package.
 * Ask clarifying questions from the user if details important for the task are missing.
 * When working on a bug fix, follow the RED-GREEN-BLUE TDD approach.
+* Before reviewing code, read `review/baseline.md` and don't report the findings it lists unless the code changed in a way that makes them reachable or worse.
 
 ### Code Style
 
