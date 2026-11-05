@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math/rand/v2"
 	"net"
 	"net/http"
 	"net/url"
@@ -357,7 +358,27 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess) 
 	}
 }
 
+// Ports from freePortMin up to freePortMax lie below the ephemeral ranges of
+// Linux, macOS and Windows.
+const (
+	freePortMin = 20000
+	freePortMax = 32768
+)
+
+// freePort returns a free loopback port for agentmesh-one, which listens on it
+// after it starts. The system hands out ephemeral ports to outgoing
+// connections and to listeners on port 0 too, so one of those would often be
+// taken by then; ports below the ephemeral range are only taken by another
+// program that listens on that exact port.
 func freePort() (int, error) {
+	for range 20 {
+		port := freePortMin + rand.IntN(freePortMax-freePortMin)
+		ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+		if err != nil {
+			continue
+		}
+		return port, ln.Close()
+	}
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, err
