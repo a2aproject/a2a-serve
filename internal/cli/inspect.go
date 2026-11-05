@@ -24,7 +24,6 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
 func newInspectCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -45,7 +44,7 @@ URL of a tailnet, which is HTTPS. It is never served on a relay or the public
 URL.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := controlapi.CheckInspectorScope(scope); err != nil {
+			if err := checkInspectorScope(scope); err != nil {
 				return clierr.Usage(err.Error())
 			}
 			c, err := sf.control()
@@ -56,7 +55,7 @@ URL.`,
 			if err != nil {
 				return err
 			}
-			base, err := st.InspectorURL(scope)
+			base, err := inspectorURL(st, scope)
 			if err != nil {
 				return clierr.Usage(err.Error())
 			}
@@ -78,8 +77,8 @@ URL.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&scope, "url", controlapi.ScopeLocal, "Open the inspector at the agent's `scope` URL: local, or private on a tailnet")
-	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(controlapi.ScopeLocal, controlapi.ScopePrivate)))
+	f.StringVar(&scope, "url", scopeLocal, "Open the inspector at the agent's `scope` URL: local, or private on a tailnet")
+	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate)))
 	f.BoolVar(&noBrowser, "no-browser", false, "Print the link without opening a browser")
 	sf.addControlFlags(f)
 	return cmd

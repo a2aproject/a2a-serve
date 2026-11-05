@@ -92,8 +92,8 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	want := struct{ User, DeliverUser, Chat string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, Chat: "telegram:owner"}
-	if diff := cmp.Diff(want, struct{ User, DeliverUser, Chat string }{got.UserID, got.DeliverUser, Info(got).Chat}); diff != "" {
+	want := struct{ User, DeliverUser, DeliverChannel string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, DeliverChannel: "telegram"}
+	if diff := cmp.Diff(want, struct{ User, DeliverUser, DeliverChannel string }{got.UserID, got.DeliverUser, got.DeliverChannel}); diff != "" {
 		t.Fatalf("Add() wrong result (-want +got) diff = %s", diff)
 	}
 }

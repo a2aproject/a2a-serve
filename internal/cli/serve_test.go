@@ -255,7 +255,7 @@ func TestServerPairAndSend(t *testing.T) {
 	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--dir", dir); err != nil {
 		t.Fatalf("a2a-serve pair invite anna error = %v", err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--owner", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set anna --owner") {
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--owner", "--dir", dir); err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve pair set anna --owner") {
 		t.Fatalf("a2a-serve pair invite --owner of an authenticated pairing error = %v, want a hint to pair set", err)
 	}
 	out, err = send(t, creds, status.Local, "hello")
@@ -280,7 +280,7 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "pair", "join", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
 		t.Fatalf("a2a-serve pair join with a node code = %q, %v, want the node token", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "grok", "--webhook", "https://example.com/new", "--dir", dir); err == nil || !strings.Contains(err.Error(), "a2a-serve pair set grok") {
+	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "grok", "--webhook", "https://example.com/new", "--dir", dir); err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve pair set grok") {
 		t.Fatalf("a2a-serve pair invite of an existing node with --webhook error = %v, want a hint to pair set", err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "pair", "set", "grok", "--description", "searches", "--dir", dir); err != nil || !strings.Contains(out, "✓ updated grok") {

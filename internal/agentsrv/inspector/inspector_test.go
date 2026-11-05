@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -70,8 +71,8 @@ func startInspector(t *testing.T) *testInspector {
 		Store:     st,
 		Tasks:     tasks,
 		Approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Tasks: tasks})}),
-		ListPairings: func(context.Context) ([]controlapi.Pairing, error) {
-			return []controlapi.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
+		ListPairings: func(context.Context) ([]pairings.Pairing, error) {
+			return []pairings.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
 		},
 		Sender:    fakeSender{},
 		AgentName: func() string { return "coder" },

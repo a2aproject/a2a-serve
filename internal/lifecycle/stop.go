@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
@@ -60,7 +61,7 @@ type StopResult struct {
 func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts StopOptions) (StopResult, error) {
 	var res StopResult
 	_, err := client.Status(ctx)
-	if err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+	if err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
 		return res, err
 	}
 	res.Running = err == nil
@@ -82,7 +83,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 		if err := terminate(pid); err != nil {
 			return res, fmt.Errorf("stopping the server (pid %d): %w", pid, err)
 		}
-	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
+	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
 		return res, err
 	}
 	if opts.Wait {

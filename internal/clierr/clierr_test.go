@@ -82,6 +82,12 @@ func TestClassify(t *testing.T) {
 			wantExit: 6,
 		},
 		{
+			name:     "agent server not running, from agenterr",
+			err:      fmt.Errorf("coder: %w", agenterr.NotRunning("coder")),
+			wantCode: CodeNotRunning,
+			wantExit: 6,
+		},
+		{
 			name:     "no agent directory",
 			err:      fmt.Errorf("loading: %w", NoAgent(errors.New("no .a2a directory found"))),
 			wantCode: CodeNoAgent,
@@ -218,5 +224,26 @@ func TestClassifyTimeoutHint(t *testing.T) {
 
 	if want := "increase --timeout"; got.Hint != want {
 		t.Fatalf("Classify(context.DeadlineExceeded).Hint = %q, want %q", got.Hint, want)
+	}
+}
+
+func TestClassifyWordsHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		err      error
+		wantHint string
+	}{
+		{name: "not running", err: agenterr.ErrNotRunning, wantHint: "start it with `a2a-serve start --detach`"},
+		{name: "hint with an argument", err: agenterr.WithHint(agenterr.Conflictf("anna is already paired"), agenterr.HintPairRm, "anna"), wantHint: "pick another name, or run `a2a-serve pair rm anna` first"},
+		{name: "usage error without a hint", err: agenterr.Invalidf("bad"), wantHint: UsageHint},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Classify(tc.err).Hint; got != tc.wantHint {
+				t.Fatalf("Classify(%v).Hint = %q, want %q", tc.err, got, tc.wantHint)
+			}
+		})
 	}
 }

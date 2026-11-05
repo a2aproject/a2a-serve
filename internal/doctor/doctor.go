@@ -101,7 +101,7 @@ type Env struct {
 	Run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	HTTP *http.Client
 	// Status returns the status of the running agent, or
-	// [controlapi.ErrNotRunning].
+	// [agenterr.ErrNotRunning].
 	Status func(context.Context, agentdir.Dir) (*controlapi.Status, error)
 	// PortFree reports whether a localhost port can be listened on.
 	PortFree func(port int) bool

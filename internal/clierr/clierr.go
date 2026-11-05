@@ -172,11 +172,22 @@ type usageError interface{ UsageError() bool }
 // Classify maps an arbitrary error to a classified CLI Error with a stable code
 // and exit status. It returns nil for a nil error and passes an already
 // classified *Error (e.g. from Usage or CardResolution) through unchanged; a
-// wrapped one keeps the message of err.
+// wrapped one keeps the message of err. An [agenterr.Hint] of err becomes
+// the hint, worded as the command that fixes it.
 func Classify(err error) *Error {
 	if err == nil {
 		return nil
 	}
+	ce := classify(err)
+	if text := hintText(err); text != "" && ce.Hint != text {
+		hinted := *ce
+		hinted.Hint = text
+		return &hinted
+	}
+	return ce
+}
+
+func classify(err error) *Error {
 
 	var classified *Error
 	if errors.As(err, &classified) {
@@ -191,6 +202,10 @@ func Classify(err error) *Error {
 	var ue usageError
 	if agenterr.IsRequest(err) || errors.As(err, &ue) && ue.UsageError() {
 		return Wrap(CodeUsage, err)
+	}
+
+	if errors.Is(err, agenterr.ErrNotRunning) {
+		return Wrap(CodeNotRunning, err)
 	}
 
 	var busy *agenterr.BusyError

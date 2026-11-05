@@ -96,7 +96,7 @@ const lockWait = 3 * time.Second
 // for lockWait, or until the deadline of ctx if that comes first.
 func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (release func() error, err error) {
 	_, err = client.Status(ctx)
-	if err == nil || !errors.Is(err, controlapi.ErrNotRunning) {
+	if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
 		return nil, err
 	}
 	cfg, err := d.LoadConfig()
@@ -122,7 +122,7 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 			return release, err
 		}
 		_, err = client.Status(ctx)
-		if err == nil || !errors.Is(err, controlapi.ErrNotRunning) {
+		if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
 			return nil, busy(err)
 		}
 		if time.Now().After(deadline) {

@@ -30,8 +30,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backoff"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
@@ -125,7 +125,8 @@ func RequireToken(token string, failures *backoff.Failures, next http.Handler) h
 }
 
 // ErrNotRunning is returned when no relay answers on the control socket.
-var ErrNotRunning error = clierr.NotRunning(errors.New("the relay is not running; start it with `a2a-serve relay run`"))
+// It matches [agenterr.ErrNotRunning] too, for the CLI's exit code.
+var ErrNotRunning error = &agenterr.NotRunningError{Msg: "the relay is not running", Hint: agenterr.HintRelayRun}
 
 // Client calls the control API of a relay.
 type Client struct {

@@ -23,7 +23,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -95,11 +94,33 @@ func CountPairings(ps []store.Pairing) Pairings {
 	return n
 }
 
+// Description says who may call an agent.
+type Description struct {
+	// PrivateAccess is everyone or paired, set with a private network;
+	// PublicAccess is paired or anyone, set with a public URL.
+	PrivateAccess string
+	PublicAccess  string
+	// Owner, Authenticated and Anonymous are the members of each role.
+	Owner         []string
+	Authenticated []string
+	Anonymous     []string
+	// Pairings counts the pairings besides the local one, and OwnerPairings
+	// those of them that are owners.
+	Pairings      int
+	OwnerPairings int
+	// Others describes who may call without a pairing, such as everyone on
+	// the tailnet.
+	Others []string
+	// Summary says who may call, one line each for you, everyone else and
+	// the networks that need a pairing.
+	Summary []string
+}
+
 // Describe says who may call an agent with the settings p on the networks
 // net, which has the pairings n.
-func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *controlapi.Access {
+func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 	pol := Policy(p)
-	a := &controlapi.Access{
+	a := &Description{
 		Owner: []string{auth.MemberSelf}, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
 		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private),
 	}

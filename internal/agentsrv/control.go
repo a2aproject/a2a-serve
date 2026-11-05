@@ -29,17 +29,15 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // serveControl serves the control socket, through which management commands
@@ -63,21 +61,14 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		return errors.Join(err, ln.Close())
 	}
 	mux := control.Handler(control.Deps{
-		Status:        s.status,
-		Stop:          s.Stop,
-		Config:        s.config,
-		ReloadConfig:  s.reloadSavedConfig,
-		Pairings:      s.pairings,
-		Peers:         s.clients.discover,
-		Contacts:      s.contacts,
-		AddChannel:    s.addChannel,
-		RemoveChannel: s.deleteChannel,
-		Store:         s.store,
-		AddSchedule: func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			return s.schedules.add(ctx, req, by)
-		},
-		RunSchedule:    s.schedules.runNow,
-		RemoveSchedule: s.schedules.remove,
+		Ops:            s.ops,
+		Status:         s.status,
+		Stop:           s.Stop,
+		Config:         s.config,
+		ReloadConfig:   s.reloadSavedConfig,
+		Peers:          s.clients.discover,
+		AddChannel:     s.addChannel,
+		RemoveChannel:  s.deleteChannel,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
@@ -143,18 +134,12 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
-	if st.Access, err = s.access(ctx); err != nil {
+	a, err := s.ops.Access(ctx)
+	if err != nil {
 		return nil, err
 	}
+	st.Access = agentops.AccessInfo(a)
 	return st, nil
-}
-
-// contacts manages the contacts, refreshing the harness instructions
-// which list them.
-func (s *Server) contacts() contacts.Service {
-	m := s.clients.contacts()
-	m.Changed = s.refreshInstructions
-	return m
 }
 
 // addChannel checks the channel of req, saves it and starts it.

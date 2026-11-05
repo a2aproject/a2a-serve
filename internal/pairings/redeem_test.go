@@ -25,7 +25,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -58,7 +57,7 @@ func TestRedeem(t *testing.T) {
 		{
 			name: "caller code",
 			code: func(t *testing.T, s *Service) string {
-				return invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
+				return invite(t, s, InviteRequest{Name: "anna"}).Code
 			},
 			via:  Via{Client: "1.2.3.4", URL: base, Kind: pairapi.PairingDevice},
 			want: &Redemption{Kind: pairapi.KindCaller, Pairing: "anna", Principal: auth.PairPrincipal("anna"), URL: base},
@@ -66,7 +65,7 @@ func TestRedeem(t *testing.T) {
 		{
 			name: "node code",
 			code: func(t *testing.T, s *Service) string {
-				return invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
+				return invite(t, s, InviteRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
 			},
 			via:  Via{Client: "1.2.3.4", URL: base},
 			want: &Redemption{Kind: pairapi.KindNode, Pairing: "grok", Principal: auth.NodePrincipal("grok"), URL: base + "/n/grok", Node: "grok"},
@@ -81,7 +80,7 @@ func TestRedeem(t *testing.T) {
 		{
 			name: "unknown kind",
 			code: func(t *testing.T, s *Service) string {
-				return invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
+				return invite(t, s, InviteRequest{Name: "anna"}).Code
 			},
 			via:         Via{Client: "1.2.3.4", URL: base, Kind: pairapi.PairingWebhook},
 			wantKind:    Invalid,
@@ -102,7 +101,7 @@ func TestRedeem(t *testing.T) {
 		{
 			name: "node code in chat",
 			code: func(t *testing.T, s *Service) string {
-				return invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
+				return invite(t, s, InviteRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
 			},
 			via:         chatVia("telegram:9"),
 			wantErr:     ErrInvalidCode,
@@ -154,7 +153,7 @@ func TestRedeemDoesNotRecreateRemovedNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	s := newService(t)
-	code := invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
+	code := invite(t, s, InviteRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code
 	if _, err := s.Remove(ctx, "grok"); err != nil {
 		t.Fatalf("Remove() error = %v", err)
 	}
@@ -174,7 +173,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	ctx := context.Background()
 	s := newService(t)
 
-	caller, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, Via{URL: base, Kind: pairapi.PairingDevice})
+	caller, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "anna"}).Code, Via{URL: base, Kind: pairapi.PairingDevice})
 	if err != nil {
 		t.Fatalf("Redeem(caller code) error = %v", err)
 	}
@@ -186,7 +185,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 		t.Fatalf("Pairing(anna) = %+v, %v, want kind %s", p, err, pairapi.PairingDevice)
 	}
 
-	node, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code, Via{URL: base})
+	node, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "grok", Webhook: "https://example.com/hook"}).Code, Via{URL: base})
 	if err != nil {
 		t.Fatalf("Redeem(node code) error = %v", err)
 	}
@@ -195,7 +194,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	}
 
 	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:9", Conv: "dm9", Direct: true, Authentic: true}
-	if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "ben"}).Code, Via{Chat: in}); err != nil {
+	if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "ben"}).Code, Via{Chat: in}); err != nil {
 		t.Fatalf("Redeem(chat) error = %v", err)
 	}
 	if l, err := s.deps.Store.LinkOf(ctx, "telegram", "telegram:9"); err != nil || l.Pairing != "ben" || l.Conv != "dm9" {
@@ -223,14 +222,14 @@ func TestRedeemLimitsFailuresPerClient(t *testing.T) {
 					t.Fatalf("Redeem(wrong code) error = %v, want %v", err, ErrInvalidCode)
 				}
 			}
-			if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, tc.via); err != nil {
+			if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "anna"}).Code, tc.via); err != nil {
 				t.Fatalf("Redeem() of a valid code below the limit error = %v", err)
 			}
 			if _, err := s.Redeem(ctx, "WRONG-CODE", tc.via); !errors.Is(err, ErrInvalidCode) {
 				t.Fatalf("Redeem(wrong code) error = %v, want %v", err, ErrInvalidCode)
 			}
 
-			code := invite(t, s, controlapi.PairCodeRequest{Name: "ben"}).Code
+			code := invite(t, s, InviteRequest{Name: "ben"}).Code
 			var limited *RateLimitError
 			if _, err := s.Redeem(ctx, code, tc.via); !errors.As(err, &limited) {
 				t.Fatalf("Redeem() over the limit error = %v, want a rate limit", err)
@@ -238,7 +237,7 @@ func TestRedeemLimitsFailuresPerClient(t *testing.T) {
 			if !pending(t, s, code) {
 				t.Fatalf("code pending after a rate-limited Redeem() = false, want true")
 			}
-			if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "carl"}).Code, tc.other); err != nil {
+			if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "carl"}).Code, tc.other); err != nil {
 				t.Fatalf("Redeem() by another client error = %v", err)
 			}
 		})
@@ -253,13 +252,13 @@ func TestRedeemBacksOffClientsThatShareAnAddress(t *testing.T) {
 		t.Fatalf("Redeem(wrong code) error = %v, want %v", err, ErrInvalidCode)
 	}
 	var limited *RateLimitError
-	if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, Via{URL: base}); !errors.As(err, &limited) {
+	if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "anna"}).Code, Via{URL: base}); !errors.As(err, &limited) {
 		t.Fatalf("Redeem() during the backoff error = %v, want a rate limit", err)
 	}
 	if limited.Wait <= 0 {
 		t.Fatalf("RateLimitError.Wait = %v, want > 0", limited.Wait)
 	}
-	if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "ben"}).Code, Via{Client: "1.2.3.4", URL: base}); err != nil {
+	if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "ben"}).Code, Via{Client: "1.2.3.4", URL: base}); err != nil {
 		t.Fatalf("Redeem() by an identified client error = %v", err)
 	}
 }
@@ -330,7 +329,7 @@ func TestRedeemRefusesPairingBeingRemoved(t *testing.T) {
 	ctx := context.Background()
 	users := &redeemingUsers{}
 	s := newService(t, withUsers(users, nil))
-	users.s, users.code = s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
+	users.s, users.code = s, invite(t, s, InviteRequest{Name: "anna"}).Code
 
 	if _, err := s.Remove(ctx, "anna"); err != nil {
 		t.Fatalf("Remove() error = %v", err)

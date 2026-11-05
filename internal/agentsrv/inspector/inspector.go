@@ -67,7 +67,7 @@ type Deps struct {
 	AgentName func() string
 	BaseURL   func() string
 	// ListPairings describes the agent's pairings.
-	ListPairings func(ctx context.Context) ([]controlapi.Pairing, error)
+	ListPairings func(ctx context.Context) ([]pairings.Pairing, error)
 	// Status describes the running server.
 	Status func(ctx context.Context) (*controlapi.Status, error)
 	// MarkAnswered updates the chat message of a question that was answered.
@@ -207,8 +207,8 @@ type overview struct {
 	Status        *controlapi.Status
 	Approvals     []Approval
 	Conversations []conversation
-	Pairings      []controlapi.Pairing
-	Nodes         []controlapi.NodeInfo
+	Pairings      []pairings.Pairing
+	Nodes         []pairings.Node
 	Contacts      []store.Contact
 }
 

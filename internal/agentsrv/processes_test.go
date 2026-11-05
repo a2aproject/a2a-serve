@@ -26,8 +26,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -129,13 +129,13 @@ func TestLocalSandboxWarning(t *testing.T) {
 	tests := []struct {
 		name     string
 		sandbox  string
-		access   controlapi.Access
+		access   access.Description
 		wantWarn bool
 	}{
-		{name: "docker with others", sandbox: harness.SandboxDocker, access: controlapi.Access{Pairings: 1}},
-		{name: "local for you only", sandbox: harness.SandboxLocal, access: controlapi.Access{Pairings: 1, OwnerPairings: 1}},
-		{name: "local with a paired user", sandbox: harness.SandboxLocal, access: controlapi.Access{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
-		{name: "local open to others", sandbox: harness.SandboxLocal, access: controlapi.Access{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
+		{name: "docker with others", sandbox: harness.SandboxDocker, access: access.Description{Pairings: 1}},
+		{name: "local for you only", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
+		{name: "local with a paired user", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
+		{name: "local open to others", sandbox: harness.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

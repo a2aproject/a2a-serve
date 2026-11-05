@@ -141,11 +141,6 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 	return peers, nil
 }
 
-// contacts manages the contacts, found by name on the private network.
-func (cc *ContactClients) contacts() contacts.Service {
-	return contacts.Service{Store: cc.store, Locate: cc.locate, HTTPClient: cc.httpClient}
-}
-
 // locate returns the URL of the contact name, an advertised pairing or an
 // agent found by name on the private network, when u is empty, and the
 // route to it.

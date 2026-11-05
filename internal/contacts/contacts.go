@@ -27,8 +27,6 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
@@ -42,8 +40,8 @@ const (
 )
 
 // ErrNeedsNetwork is returned for a contact found by name, which needs the
-// private network of a running agent.
-var ErrNeedsNetwork error = clierr.NotRunning(errors.New("finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"))
+// private network of a running agent. It matches [agenterr.ErrNotRunning].
+var ErrNeedsNetwork error = &agenterr.NotRunningError{Msg: "finding an agent by name needs its private network", Hint: agenterr.HintStartOrURL}
 
 // Service adds, lists and removes the agents an agent may call.
 type Service struct {
@@ -59,9 +57,19 @@ type Service struct {
 	Changed func(ctx context.Context)
 }
 
+// Request adds a contact. Without URL, the contact is looked up by name
+// among the peers on the private network. Code pairs with the contact;
+// Token sets the outbound token directly.
+type Request struct {
+	Name  string
+	URL   string
+	Code  string
+	Token string
+}
+
 // Add pairs with an agent with a code, or stores its token, and checks that
 // it answers.
-func (m Service) Add(ctx context.Context, req controlapi.ContactRequest) (store.Contact, error) {
+func (m Service) Add(ctx context.Context, req Request) (store.Contact, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
 		return store.Contact{}, agenterr.Invalidf("contact name must be non-empty, without spaces or slashes")
@@ -120,17 +128,9 @@ func (m Service) changed(ctx context.Context) {
 	}
 }
 
-// List describes the contacts.
-func (m Service) List(ctx context.Context) ([]controlapi.ContactInfo, error) {
-	cs, err := m.Store.Contacts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	out := []controlapi.ContactInfo{}
-	for _, c := range cs {
-		out = append(out, Info(c))
-	}
-	return out, nil
+// List returns the contacts.
+func (m Service) List(ctx context.Context) ([]store.Contact, error) {
+	return m.Store.Contacts(ctx)
 }
 
 // Remove removes a contact. It returns [store.ErrNotFound] for a name which
@@ -145,11 +145,6 @@ func (m Service) Remove(ctx context.Context, name string) error {
 	}
 	m.changed(ctx)
 	return nil
-}
-
-// Info describes a contact for the control API.
-func Info(c store.Contact) controlapi.ContactInfo {
-	return controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""}
 }
 
 // TokenClient returns base, which sends the token of c with requests to the

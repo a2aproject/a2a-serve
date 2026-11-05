@@ -19,6 +19,7 @@ import (
 	"errors"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -41,7 +42,7 @@ type Channel struct {
 // configures when it doesn't run.
 func Channels(ctx context.Context, d agentdir.Dir, client *controlapi.Client) ([]Channel, error) {
 	st, err := client.Status(ctx)
-	if errors.Is(err, controlapi.ErrNotRunning) {
+	if errors.Is(err, agenterr.ErrNotRunning) {
 		return configuredChannels(d)
 	}
 	if err != nil {

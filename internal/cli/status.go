@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
@@ -59,7 +60,7 @@ picked its port.`,
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if scope != urlFurthest {
-				if err := controlapi.CheckScope(scope); err != nil {
+				if err := checkScope(scope); err != nil {
 					return clierr.Usage(err.Error())
 				}
 			}
@@ -72,7 +73,7 @@ picked its port.`,
 			if scope != "" {
 				return printStatusURL(cfg, d, st, err, scope)
 			}
-			if errors.Is(err, controlapi.ErrNotRunning) {
+			if errors.Is(err, agenterr.ErrNotRunning) {
 				conf, cerr := d.LoadConfig()
 				if cerr != nil {
 					return cerr
@@ -99,7 +100,7 @@ picked its port.`,
 	f := cmd.Flags()
 	f.StringVar(&scope, "url", "", "Print only the agent's `scope` URL: local, private or public; without a value, the one which reaches furthest")
 	f.Lookup("url").NoOptDefVal = urlFurthest
-	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(controlapi.ScopeLocal, controlapi.ScopePrivate, controlapi.ScopePublic)))
+	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate, scopePublic)))
 	sf.addControlFlags(f)
 	return cmd
 }
@@ -110,7 +111,7 @@ func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, er
 	if scope == urlFurthest {
 		scope = ""
 	}
-	if errors.Is(err, controlapi.ErrNotRunning) && scope == controlapi.ScopeLocal {
+	if errors.Is(err, agenterr.ErrNotRunning) && scope == scopeLocal {
 		conf, cerr := d.LoadConfig()
 		if cerr != nil {
 			return cerr
@@ -123,7 +124,7 @@ func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, er
 	if err != nil {
 		return err
 	}
-	u, err := st.URL(scope)
+	u, err := statusURL(st, scope)
 	if err != nil {
 		return clierr.Usage(err.Error())
 	}

@@ -38,13 +38,14 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -147,6 +148,7 @@ type Server struct {
 	schedules     *schedules
 	nodes         *nodes.Host
 	pairings      *pairings.Service
+	ops           *agentops.Service
 	approvals     *approvals.Service
 	oauth         *oauth.Server
 	// ads are the advertised pairings of the private network.
@@ -374,7 +376,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Forget:    s.nodes.Forget,
 		Changed:   s.refreshInstructions,
-		Access:    s.access,
 		Users:     stopUsers{s},
 		Homes:     userHomes{s},
 	})
@@ -449,6 +450,15 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Turns:   s.chatTurns,
 		Chain:   s.chain,
 		Timings: s.timings,
+	})
+	s.ops = agentops.New(agentops.Deps{
+		Store:       s.store,
+		Pairings:    s.pairings,
+		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.locate, HTTPClient: s.clients.httpClient, Changed: s.refreshInstructions},
+		Schedules:   s.schedules.service(),
+		Config:      s.config,
+		Network:     s.networks,
+		RunSchedule: s.schedules.runNow,
 	})
 	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.inspector = inspector.New(inspector.Deps{
@@ -720,7 +730,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 			s.logf("! %s", p)
 		}
 	}
-	a, err := s.access(ctx)
+	a, err := s.ops.Access(ctx)
 	if err != nil {
 		return err
 	}
@@ -733,7 +743,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 // localSandboxWarning warns when an agent without a sandbox may be called
 // by others than you: their conversations run in separate processes, but
 // on the host as you, so they can read each other's files and yours.
-func localSandboxWarning(sandbox string, a *controlapi.Access) string {
+func localSandboxWarning(sandbox string, a *access.Description) string {
 	if sandbox != harness.SandboxLocal || a.Pairings == a.OwnerPairings && len(a.Others) == 0 {
 		return ""
 	}
@@ -755,17 +765,13 @@ func (s *Server) policy() auth.Policy {
 	return access.Policy(s.config().Policy)
 }
 
-// access describes who may call the agent now.
-func (s *Server) access(ctx context.Context) (*controlapi.Access, error) {
-	all, err := s.store.Pairings(ctx)
-	if err != nil {
-		return nil, err
-	}
-	networks := access.Network{Public: s.public != nil}
+// networks are the networks the agent is on.
+func (s *Server) networks() access.Network {
+	n := access.Network{Public: s.public != nil}
 	if s.private != nil {
-		networks.Private = s.private.Name()
+		n.Private = s.private.Name()
 	}
-	return access.Describe(s.config().Policy, networks, access.CountPairings(all)), nil
+	return n
 }
 
 func pid() int { return os.Getpid() }

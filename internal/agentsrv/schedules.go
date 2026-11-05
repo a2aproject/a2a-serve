@@ -307,19 +307,23 @@ func storedPrincipal(ctx context.Context, chain *auth.Chain, id, identity string
 	return p, err
 }
 
-// add creates a schedule the owner made.
-func (sc *schedules) add(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-	return sc.manage(schedulesvc.Limits{}).Add(ctx, req, by, "")
-}
-
 // addByAgent creates a schedule the agent made for by in the conversation
 // contextID, within [schedulesvc.AgentLimits].
 func (sc *schedules) addByAgent(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	return sc.manage(schedulesvc.AgentLimits).Add(ctx, req, by, contextID)
 }
 
+// service adds, lists and removes the schedules the owner makes, which
+// have no limits.
+func (sc *schedules) service() schedulesvc.Service { return sc.manage(schedulesvc.Limits{}) }
+
+// manage adds, lists and removes the schedules this runner runs, within
+// limits. Changes wake it, and a removal drops the schedule's runs that wait
+// to be posted.
 func (sc *schedules) manage(limits schedulesvc.Limits) schedulesvc.Service {
-	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits}
+	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits, Removed: func(name string) {
+		sc.turns.dropPosted(scheduleTurnKey(name))
+	}}
 }
 
 // runNow starts a run of a schedule at once, without changing when it runs
@@ -343,14 +347,10 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 // remove removes a schedule which by may manage, and its runs that wait
 // to be posted.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	if err := sc.manage(schedulesvc.Limits{}).Remove(ctx, name, by); err != nil {
-		return err
-	}
-	sc.turns.dropPosted(scheduleTurnKey(name))
-	return nil
+	return sc.service().Remove(ctx, name, by)
 }
 
 // visible lists the schedules by can see.
 func (sc *schedules) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
-	return sc.manage(schedulesvc.Limits{}).Visible(ctx, by)
+	return sc.service().Visible(ctx, by)
 }

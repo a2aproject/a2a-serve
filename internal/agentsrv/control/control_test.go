@@ -27,12 +27,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 func serve(t *testing.T, deps Deps, method, path, body string) (int, map[string]any) {
@@ -142,31 +139,6 @@ func TestHandlerStatus(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, &got); diff != "" {
 		t.Fatalf("GET /status wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestHandlerSchedulesActAsOwner(t *testing.T) {
-	t.Parallel()
-	var added, removed auth.Principal
-	deps := Deps{
-		AddSchedule: func(_ context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			added = by
-			return store.Schedule{Name: req.Name}, nil
-		},
-		RemoveSchedule: func(_ context.Context, _ string, by auth.Principal) error {
-			removed = by
-			return nil
-		},
-	}
-
-	if status, _ := serve(t, deps, http.MethodPost, "/schedules", `{"name":"daily","every":"24h","prompt":"hi"}`); status != http.StatusOK {
-		t.Fatalf("POST /schedules status = %d, want %d", status, http.StatusOK)
-	}
-	if status, _ := serve(t, deps, http.MethodDelete, "/schedules/daily", ""); status != http.StatusOK {
-		t.Fatalf("DELETE /schedules/daily status = %d, want %d", status, http.StatusOK)
-	}
-	if diff := cmp.Diff([]auth.Principal{auth.Owner(), auth.Owner()}, []auth.Principal{added, removed}); diff != "" {
-		t.Fatalf("Handler() wrong principals (-want +got) diff = %s", diff)
 	}
 }
 

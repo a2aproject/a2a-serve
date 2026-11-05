@@ -219,7 +219,7 @@ func TestClientErrors(t *testing.T) {
 			if err == nil {
 				t.Fatalf("Client.DeleteChannel() error = nil, want an error")
 			}
-			if got := errors.Is(err, ErrNotRunning); got != tc.wantNotRunning {
+			if got := errors.Is(err, agenterr.ErrNotRunning); got != tc.wantNotRunning {
 				t.Fatalf("Client.DeleteChannel() error = %v, want ErrNotRunning %v", err, tc.wantNotRunning)
 			}
 			if tc.wantErr != "" && err.Error() != tc.wantErr {
@@ -344,6 +344,19 @@ func TestClientErrorWithoutClass(t *testing.T) {
 	}
 }
 
+func TestClientRequestErrorKeepsHint(t *testing.T) {
+	t.Parallel()
+	err := agenterr.WithHint(agenterr.Conflictf("anna is already paired"), agenterr.HintPairRm, "anna")
+	dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, err) }))
+
+	got := clierr.Classify(NewClient(dir).DeleteChannel(t.Context(), "telegram"))
+
+	want := &clierr.Error{Code: clierr.CodeUsage, Message: "anna is already paired", Hint: "pick another name, or run `a2a-serve pair rm anna` first", Exit: 2}
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(clierr.Error{})); diff != "" {
+		t.Fatalf("Client.DeleteChannel() wrong error (-want +got) diff = %s", diff)
+	}
+}
+
 func TestClientWithTimeout(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -373,105 +386,6 @@ func TestClientWithTimeout(t *testing.T) {
 
 			if gotErr := err != nil; gotErr != tc.wantErr {
 				t.Fatalf("Client.Status() error = %v, want error %t", err, tc.wantErr)
-			}
-		})
-	}
-}
-
-func TestStatusURL(t *testing.T) {
-	t.Parallel()
-	all := &Status{Name: "coder", Local: "http://127.0.0.1:4000", Private: "http://coder.tail.ts.net", Public: "https://coder.example.com"}
-	localOnly := &Status{Name: "coder", Local: "http://127.0.0.1:4000"}
-	tests := []struct {
-		name    string
-		status  *Status
-		scope   string
-		want    string
-		wantErr string
-	}{
-		{name: "best is public", status: all, want: "https://coder.example.com"},
-		{name: "best is private without public", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, want: "https://coder.tail.ts.net"},
-		{name: "best is local without networks", status: localOnly, want: "http://127.0.0.1:4000"},
-		{name: "local", status: all, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
-		{name: "private", status: all, scope: ScopePrivate, want: "http://coder.tail.ts.net"},
-		{name: "public", status: all, scope: ScopePublic, want: "https://coder.example.com"},
-		{name: "no private URL", status: localOnly, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
-		{name: "no public URL", status: localOnly, scope: ScopePublic, wantErr: "coder has no public URL; add one with `a2a-serve config set --public tailscale` (or a relay URL), then `a2a-serve restart`"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := tc.status.URL(tc.scope)
-			if tc.wantErr != "" {
-				if err == nil || err.Error() != tc.wantErr {
-					t.Fatalf("Status.URL(%q) error = %v, want %q", tc.scope, err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Status.URL(%q) error = %v, want nil", tc.scope, err)
-			}
-			if got != tc.want {
-				t.Fatalf("Status.URL(%q) = %q, want %q", tc.scope, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestStatusInspectorURL(t *testing.T) {
-	t.Parallel()
-	const plainHTTP = "the inspector isn't served on http://192.168.1.5:4000, because its login link and session would cross the network unencrypted; run `a2a-serve inspect --url local` on the agent's machine"
-	tests := []struct {
-		name    string
-		status  *Status
-		scope   string
-		want    string
-		wantErr string
-	}{
-		{name: "local", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: ScopeLocal, want: "http://127.0.0.1:4000"},
-		{name: "public", status: &Status{Local: "http://127.0.0.1:4000", Public: "https://coder.example.com"}, scope: ScopePublic, wantErr: "the inspector isn't served on the public URL; want local or private"},
-		{name: "tailnet", status: &Status{Local: "http://127.0.0.1:4000", Private: "https://coder.tail.ts.net"}, scope: ScopePrivate, want: "https://coder.tail.ts.net"},
-		{name: "plain HTTP", status: &Status{Local: "http://127.0.0.1:4000", Private: "http://192.168.1.5:4000"}, scope: ScopePrivate, wantErr: plainHTTP},
-		{name: "no private URL", status: &Status{Name: "coder", Local: "http://127.0.0.1:4000"}, scope: ScopePrivate, wantErr: "coder has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			got, err := tc.status.InspectorURL(tc.scope)
-			if tc.wantErr != "" {
-				if err == nil || err.Error() != tc.wantErr {
-					t.Fatalf("Status.InspectorURL(%q) error = %v, want %q", tc.scope, err, tc.wantErr)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatalf("Status.InspectorURL(%q) error = %v, want nil", tc.scope, err)
-			}
-			if got != tc.want {
-				t.Fatalf("Status.InspectorURL(%q) = %q, want %q", tc.scope, got, tc.want)
-			}
-		})
-	}
-}
-
-func TestLocalOnly(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		url  string
-		want bool
-	}{
-		{url: "http://127.0.0.1:4000", want: true},
-		{url: "http://localhost:4000/n/grok", want: true},
-		{url: "http://[::1]:4000", want: true},
-		{url: "http://coder.tail.ts.net", want: false},
-		{url: "https://coder.example.com", want: false},
-		{url: "http://192.168.1.10:4000", want: false},
-	}
-	for _, tc := range tests {
-		t.Run(tc.url, func(t *testing.T) {
-			t.Parallel()
-			if got := LocalOnly(tc.url); got != tc.want {
-				t.Fatalf("LocalOnly(%q) = %v, want %v", tc.url, got, tc.want)
 			}
 		})
 	}

@@ -21,21 +21,19 @@ import (
 	"net/http"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/contacts"
+	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
-	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Deps are what the control API reads and changes. Only the owner reaches
 // the control socket, so changes are made as the owner.
 type Deps struct {
+	// Ops are the management operations, which a stopped agent shares.
+	Ops *agentops.Service
 	// Status describes the running server.
 	Status func(ctx context.Context) (*controlapi.Status, error)
 	// Stop shuts the server down.
@@ -45,22 +43,12 @@ type Deps struct {
 	// ReloadConfig applies the live settings of config.yaml, which the CLI
 	// has validated and saved.
 	ReloadConfig func() error
-	Pairings     *pairings.Service
 	// Peers lists the agents on the private network.
 	Peers func(ctx context.Context) ([]network.PeerInfo, error)
-	// Contacts manages the contacts.
-	Contacts func() contacts.Service
 	// AddChannel checks a channel, saves it and starts it.
 	AddChannel func(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error)
 	// RemoveChannel stops a channel and removes it from the config.
 	RemoveChannel func(kind string) error
-	Store         *store.Store
-	// AddSchedule creates a schedule made by by.
-	AddSchedule func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error)
-	// RunSchedule starts a run of a schedule at once.
-	RunSchedule func(ctx context.Context, name string) (store.Schedule, error)
-	// RemoveSchedule removes a schedule as by.
-	RemoveSchedule func(ctx context.Context, name string, by auth.Principal) error
 	// Ads are the advertised pairings of the private network.
 	Ads *gossip.Table
 	// InspectorLogin returns the path which logs in to the inspector once.
@@ -123,17 +111,17 @@ func (a *api) pair(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	resp, err := a.deps.Pairings.Invite(r.Context(), req)
+	resp, err := a.deps.Ops.Pair(r.Context(), req)
 	reply(w, resp, err)
 }
 
 func (a *api) pairings(w http.ResponseWriter, r *http.Request) {
-	out, err := a.deps.Pairings.List(r.Context())
+	out, err := a.deps.Ops.Pairings(r.Context())
 	reply(w, out, err)
 }
 
 func (a *api) pairing(w http.ResponseWriter, r *http.Request) {
-	p, err := a.deps.Pairings.Get(r.Context(), r.PathValue("name"))
+	p, err := a.deps.Ops.Pairing(r.Context(), r.PathValue("name"))
 	reply(w, p, err)
 }
 
@@ -142,25 +130,25 @@ func (a *api) updatePairing(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	resp, err := a.deps.Pairings.Update(r.Context(), r.PathValue("name"), req)
+	resp, err := a.deps.Ops.UpdatePairing(r.Context(), r.PathValue("name"), req)
 	reply(w, resp, err)
 }
 
 // revoke removes the pairing called name with its tokens, links and codes.
 func (a *api) revoke(w http.ResponseWriter, r *http.Request) {
-	resp, err := a.deps.Pairings.Remove(r.Context(), r.PathValue("name"))
+	resp, err := a.deps.Ops.Revoke(r.Context(), r.PathValue("name"))
 	reply(w, resp, err)
 }
 
 // previewRevoke describes what revoke would remove.
 func (a *api) previewRevoke(w http.ResponseWriter, r *http.Request) {
-	resp, err := a.deps.Pairings.PreviewRemove(r.Context(), r.PathValue("name"))
+	resp, err := a.deps.Ops.PreviewRevoke(r.Context(), r.PathValue("name"))
 	reply(w, resp, err)
 }
 
 // signOut revokes the Google sign-in tokens of an email.
 func (a *api) signOut(w http.ResponseWriter, r *http.Request) {
-	resp, err := a.deps.Pairings.SignOut(r.Context(), r.PathValue("email"))
+	resp, err := a.deps.Ops.SignOut(r.Context(), r.PathValue("email"))
 	reply(w, resp, err)
 }
 
@@ -178,7 +166,7 @@ func (a *api) peers(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) contacts(w http.ResponseWriter, r *http.Request) {
-	out, err := a.deps.Contacts().List(r.Context())
+	out, err := a.deps.Ops.Contacts(r.Context())
 	reply(w, out, err)
 }
 
@@ -187,17 +175,13 @@ func (a *api) addContact(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	c, err := a.deps.Contacts().Add(r.Context(), req)
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, contacts.Info(c))
+	c, err := a.deps.Ops.AddContact(r.Context(), req)
+	reply(w, c, err)
 }
 
 func (a *api) deleteContact(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	err := a.deps.Contacts().Remove(r.Context(), name)
+	err := a.deps.Ops.DeleteContact(r.Context(), name)
 	reply(w, map[string]string{"deleted": name}, err)
 }
 
@@ -217,16 +201,8 @@ func (a *api) deleteChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *api) schedules(w http.ResponseWriter, r *http.Request) {
-	all, err := a.deps.Store.Schedules(r.Context())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	out := []controlapi.ScheduleInfo{}
-	for _, sc := range all {
-		out = append(out, schedulesvc.Info(sc))
-	}
-	jsonhttp.Write(w, http.StatusOK, out)
+	out, err := a.deps.Ops.Schedules(r.Context())
+	reply(w, out, err)
 }
 
 func (a *api) addSchedule(w http.ResponseWriter, r *http.Request) {
@@ -234,26 +210,18 @@ func (a *api) addSchedule(w http.ResponseWriter, r *http.Request) {
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	sc, err := a.deps.AddSchedule(r.Context(), req, auth.Owner())
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, schedulesvc.Info(sc))
+	sc, err := a.deps.Ops.AddSchedule(r.Context(), req)
+	reply(w, sc, err)
 }
 
 func (a *api) runSchedule(w http.ResponseWriter, r *http.Request) {
-	sc, err := a.deps.RunSchedule(r.Context(), r.PathValue("name"))
-	if err != nil {
-		controlapi.WriteError(w, err)
-		return
-	}
-	jsonhttp.Write(w, http.StatusOK, schedulesvc.Info(sc))
+	sc, err := a.deps.Ops.RunSchedule(r.Context(), r.PathValue("name"))
+	reply(w, sc, err)
 }
 
 func (a *api) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	err := a.deps.RemoveSchedule(r.Context(), name, auth.Owner())
+	err := a.deps.Ops.DeleteSchedule(r.Context(), name)
 	reply(w, map[string]string{"deleted": name}, err)
 }
 
