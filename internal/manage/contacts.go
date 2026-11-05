@@ -174,7 +174,7 @@ func TokenClient(base *http.Client, c store.Contact) *http.Client {
 	if u, err := url.Parse(c.URL); err == nil {
 		host = u.Host
 	}
-	return &http.Client{Transport: &headerTransport{base: rt, host: host, header: h}}
+	return &http.Client{Transport: &headerTransport{base: rt, host: host, header: h}, CheckRedirect: base.CheckRedirect}
 }
 
 type headerTransport struct {

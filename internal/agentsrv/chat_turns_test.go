@@ -488,6 +488,30 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 	fx.sender.wantIdle(t)
 }
 
+func TestChatTurnsInjectTurnAttachesFiles(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	file := channel.File{Name: "result.txt", MediaType: "text/plain", Data: []byte("the full result")}
+
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "the result", Files: []channel.File{file}}); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	call := fx.sender.nextSend(t)
+	var got []channel.File
+	for _, p := range call.req.Message.Parts {
+		if raw := p.Raw(); raw != nil {
+			got = append(got, channel.File{Name: p.Filename, MediaType: p.MediaType, Data: raw})
+		}
+	}
+	if diff := cmp.Diff([]channel.File{file}, got); diff != "" {
+		t.Fatalf("SendMessage() files wrong result (-want +got) diff = %s", diff)
+	}
+	if text := a2atext.Parts(call.req.Message.Parts); text != "the result" {
+		t.Fatalf("SendMessage() text = %q, want %q", text, "the result")
+	}
+}
+
 func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)

@@ -556,6 +556,26 @@ func (s *Store) HasCallTask(ctx context.Context, contextID, agent, taskID string
 	return s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM call_tasks WHERE context_id = ? AND agent = ? AND task_id = ?)`, contextID, agent, taskID)
 }
 
+// CallTasks returns the IDs of the tasks a conversation started at an
+// agent, newest first. A remoteContextID other than "" keeps the tasks in
+// that context of the agent.
+func (s *Store) CallTasks(ctx context.Context, contextID, agent, remoteContextID string) ([]string, error) {
+	rows, err := s.reads.QueryContext(ctx, `SELECT task_id FROM call_tasks WHERE context_id = ? AND agent = ? AND (? = '' OR remote_context_id = ?)
+		ORDER BY rowid DESC`, contextID, agent, remoteContextID, remoteContextID)
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		ids = append(ids, id)
+	}
+	return ids, errors.Join(rows.Err(), rows.Close())
+}
+
 // HasCallContext reports whether a conversation started a task in a context
 // of an agent.
 func (s *Store) HasCallContext(ctx context.Context, contextID, agent, remoteContextID string) (bool, error) {
