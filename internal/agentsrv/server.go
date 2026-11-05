@@ -51,6 +51,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -606,12 +607,7 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 // serveHTTP serves the routes of a listener in the background and returns
 // the function which shuts the listener down.
 func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
-	srv := &http.Server{
-		Handler:           s.routes(l),
-		ReadHeaderTimeout: 30 * time.Second,
-		IdleTimeout:       2 * time.Minute,
-		BaseContext:       func(net.Listener) context.Context { return ctx },
-	}
+	srv := httpserver.New(ctx, s.routes(l))
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))

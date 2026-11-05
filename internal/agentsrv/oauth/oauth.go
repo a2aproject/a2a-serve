@@ -20,6 +20,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
+	"fmt"
 	"log/slog"
 	"maps"
 	"net"
@@ -53,6 +54,12 @@ const (
 	TokenTypeIDToken   = "urn:ietf:params:oauth:token-type:id_token"
 
 	oauthPendingTTL = 10 * time.Minute
+
+	// MaxPendingSignIns bounds the sign-ins sent to Google and not back yet;
+	// a new one beyond it drops the oldest.
+	MaxPendingSignIns = 1000
+	// MaxParamLen bounds each client parameter of an authorization request.
+	MaxParamLen = 2048
 )
 
 // TokenStore keeps the access tokens the server issues.
@@ -269,6 +276,12 @@ func (o *Server) authorize(w http.ResponseWriter, r *http.Request, base string) 
 		oauthError(w, http.StatusBadRequest, "invalid_request", "want response_type=code, a client_id and a PKCE S256 code_challenge")
 		return
 	}
+	for _, name := range []string{"redirect_uri", "client_id", "state", "code_challenge"} {
+		if len(q.Get(name)) > MaxParamLen {
+			oauthError(w, http.StatusBadRequest, "invalid_request", fmt.Sprintf("%s is longer than %d bytes", name, MaxParamLen))
+			return
+		}
+	}
 	p := pendingSignIn{
 		issuer: base, clientRedirect: redirect, clientState: q.Get("state"), clientID: q.Get("client_id"),
 		challenge: q.Get("code_challenge"), googleVerifier: cryptoutil.RandomString(64, cryptoutil.Alphanumeric),
@@ -277,6 +290,9 @@ func (o *Server) authorize(w http.ResponseWriter, r *http.Request, base string) 
 	state := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
 	o.mu.Lock()
 	o.prune()
+	if len(o.pending) >= MaxPendingSignIns {
+		o.dropOldestPending()
+	}
 	o.pending[state] = p
 	o.mu.Unlock()
 	http.Redirect(w, r, o.deps.Google.AuthCodeURL(cfg.Auth.GoogleClientID, base+CallbackPath, state, p.nonce, googleauth.Challenge(p.googleVerifier)), http.StatusFound)
@@ -295,6 +311,18 @@ func (o *Server) prune() {
 			delete(o.codes, k)
 		}
 	}
+}
+
+// dropOldestPending drops the sign-in which expires first. o.mu is held.
+func (o *Server) dropOldestPending() {
+	var oldest string
+	var expires time.Time
+	for k, p := range o.pending {
+		if oldest == "" || p.expires.Before(expires) {
+			oldest, expires = k, p.expires
+		}
+	}
+	delete(o.pending, oldest)
 }
 
 // callback takes the account back from Google, checks it against the
