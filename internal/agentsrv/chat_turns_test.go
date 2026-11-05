@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"slices"
 	"strconv"
 	"sync"
 	"testing"
@@ -248,6 +249,17 @@ func (fx *turnsFixture) askPendingQuestion(t *testing.T, conv string, state a2a.
 	return rec
 }
 
+// askInDM1 sends the question of task taskID of context contextID to chat
+// dm1, as the owner chat gets it, and returns it with the ID of its message.
+func (fx *turnsFixture) askInDM1(t *testing.T, taskID a2a.TaskID, contextID string) (store.Question, string) {
+	t.Helper()
+	fx.putTask(t, taskID, contextID, a2a.TaskStateInputRequired)
+	rec := fx.newQuestion(t, taskID, contextID, auth.OwnerID)
+	fx.chat.Ask(fx.ctx, approvals.Chat{Channel: "fake", Conv: "dm1"}, "coder asks", rec)
+	ref, _ := fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Question != nil && m.Question.ID == rec.ID })
+	return rec, ref
+}
+
 func (fx *turnsFixture) question(t *testing.T, id string) store.Question {
 	t.Helper()
 	rec, err := fx.store.QuestionByID(fx.ctx, id)
@@ -259,8 +271,8 @@ func (fx *turnsFixture) question(t *testing.T, id string) store.Question {
 
 func (fx *turnsFixture) wantNoPendingQuestion(t *testing.T, conv string) {
 	t.Helper()
-	if id, err := fx.store.PendingQuestion(fx.ctx, "fake", conv); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("PendingQuestion() = %q, %v, want error %v", id, err, store.ErrNotFound)
+	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", conv); err != nil || len(ids) != 0 {
+		t.Fatalf("PendingQuestions() = %q, %v, want none", ids, err)
 	}
 }
 
@@ -498,6 +510,30 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 	fx.sender.wantIdle(t)
 }
 
+func TestChatTurnsInjectTurnAttachesFiles(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	file := channel.File{Name: "result.txt", MediaType: "text/plain", Data: []byte("the full result")}
+
+	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "the result", Files: []channel.File{file}}); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	call := fx.sender.nextSend(t)
+	var got []channel.File
+	for _, p := range call.req.Message.Parts {
+		if raw := p.Raw(); raw != nil {
+			got = append(got, channel.File{Name: p.Filename, MediaType: p.MediaType, Data: raw})
+		}
+	}
+	if diff := cmp.Diff([]channel.File{file}, got); diff != "" {
+		t.Fatalf("SendMessage() files wrong result (-want +got) diff = %s", diff)
+	}
+	if text := a2atext.Parts(call.req.Message.Parts); text != "the result" {
+		t.Fatalf("SendMessage() text = %q, want %q", text, "the result")
+	}
+}
+
 func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
@@ -687,6 +723,77 @@ func TestChatTurnsTypedAnswer(t *testing.T) {
 			fx.wantNoPendingQuestion(t, "dm1")
 			fx.ch.waitFor(t, "dm1", hasText("✓ "+tc.wantLabel+" by telegram:1"))
 		})
+	}
+}
+
+func TestChatTurnsTypedAnswerWithSeveralOpenQuestions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		replyTo   int
+		wantTask  a2a.TaskID
+		wantReply string
+	}{
+		{name: "reply to the first question", replyTo: 1, wantTask: "t1"},
+		{name: "reply to the second question", replyTo: 2, wantTask: "t2"},
+		{name: "no reply", wantReply: "Several questions wait for an answer here. Reply to the message of the question you answer."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			fx := newTurnsFixture(t)
+			first, firstRef := fx.askInDM1(t, "t1", "c1")
+			second, secondRef := fx.askInDM1(t, "t2", "c2")
+			in := fx.ch.message("telegram:1", "dm1", "approve")
+			switch tc.replyTo {
+			case 1:
+				in.ReplyTo = channel.Ref{Conv: "dm1", ID: firstRef}
+			case 2:
+				in.ReplyTo = channel.Ref{Conv: "dm1", ID: secondRef}
+			}
+
+			fx.ch.deliver(in)
+
+			if tc.wantReply != "" {
+				fx.ch.waitFor(t, "dm1", hasText(tc.wantReply))
+				fx.sender.wantIdle(t)
+			} else if got := fx.sender.nextSend(t).req.Message.TaskID; got != tc.wantTask {
+				t.Fatalf("SendMessage() task = %q, want %q", got, tc.wantTask)
+			}
+			answered := map[a2a.TaskID]string{}
+			for _, rec := range []store.Question{first, second} {
+				if by := fx.question(t, rec.ID).AnsweredBy; by != "" {
+					answered[a2a.TaskID(rec.TaskID)] = by
+				}
+			}
+			want := map[a2a.TaskID]string{}
+			if tc.wantTask != "" {
+				want[tc.wantTask] = auth.OwnerID
+			}
+			if diff := cmp.Diff(want, answered); diff != "" {
+				t.Fatalf("answered questions wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestChatTurnsTypedAnswerAfterButtonAnswersTheOtherQuestion(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	first, firstRef := fx.askInDM1(t, "t1", "c1")
+	second, _ := fx.askInDM1(t, "t2", "c2")
+
+	fx.ch.click("telegram:1", "dm1", firstRef, &channel.Question{ID: first.ID}, 0)
+	if got := fx.sender.nextSend(t).req.Message.TaskID; got != "t1" {
+		t.Fatalf("SendMessage() task = %q, want t1", got)
+	}
+	fx.ch.write("telegram:1", "dm1", "deny")
+
+	if got := fx.sender.nextSend(t).req.Message.TaskID; got != "t2" {
+		t.Fatalf("SendMessage() task = %q, want t2", got)
+	}
+	if got := fx.question(t, second.ID).Answer; got != "reject" {
+		t.Fatalf("question answer = %q, want %q", got, "reject")
 	}
 }
 
@@ -986,8 +1093,8 @@ func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
 	fx := newTurnsFixture(t)
 	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
 	rec.ID = "missing1"
-	if err := fx.store.SetPendingQuestion(fx.ctx, "fake", "dm1", rec.ID); err != nil {
-		t.Fatalf("SetPendingQuestion() error = %v", err)
+	if err := fx.store.AddPendingQuestion(fx.ctx, "fake", "dm1", rec.ID); err != nil {
+		t.Fatalf("AddPendingQuestion() error = %v", err)
 	}
 	q := approvals.FromRecord(rec)
 	in := channel.Inbound{Channel: "fake", Conv: "dm1", Text: "approve"}
@@ -995,7 +1102,7 @@ func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
 	fx.turns.answerIn(fx.ctx, fx.ch, in, auth.Owner(), rec, q, q.Options[0])
 
 	fx.ch.waitFor(t, "dm1", hasText("Couldn't record the answer. Try again."))
-	if id, err := fx.store.PendingQuestion(fx.ctx, "fake", "dm1"); err != nil || id != rec.ID {
-		t.Fatalf("PendingQuestion() = %q, %v, want %q, nil", id, err, rec.ID)
+	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1"); err != nil || !slices.Contains(ids, rec.ID) {
+		t.Fatalf("PendingQuestions() = %q, %v, want %q among them", ids, err, rec.ID)
 	}
 }

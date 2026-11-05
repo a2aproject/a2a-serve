@@ -31,6 +31,8 @@ Every A2A request needs a known caller. These routes are public: the agent card,
 
 The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
+The public routes also limit the open requests of each caller and the size and send time of their bodies. This keeps capacity free for callers who authenticate ([request limits](../reference/http-routes.md#request-limits)).
+
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 
 | Network | Who gets in |
@@ -58,6 +60,12 @@ What a role allows:
 | Continue another user's waiting task in a shared chat | yes | no | no |
 
 Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.
+
+## Calls to other agents and webhooks
+
+The server calls contacts and wakes webhook nodes at the URLs you configure. A contact's card and a webhook's redirects can point the server elsewhere. When the URL you configured leads to a public address, the server connects only to public addresses for it. It refuses loopback, private, link-local and tailnet addresses, and it checks the address of each connection it opens. Contacts and webhooks that you configure on the tailnet or the LAN can reach those networks. A connection through a proxy set in the environment goes wherever the proxy sends it.
+
+The server refuses redirects from https to http. A node sees only the HTTP status of a failed wake, and the server log has the details.
 
 ## Tokens and secrets
 

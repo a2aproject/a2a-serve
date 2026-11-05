@@ -26,6 +26,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"time"
 
@@ -294,9 +295,11 @@ const (
 	maxListPageSize     = 100
 )
 
-// ListTasks lists the tasks which this conversation started. It filters
-// before it pages, so that pages and the total count hold its tasks only.
-// A page token is the index of the first task of the page.
+// ListTasks lists the tasks which this conversation started, newest first,
+// from the call tasks the server recorded. It gets the tasks on the page
+// from the agent, or every task when req filters by status, and leaves out
+// a task the agent no longer has. A page token is the index of the first
+// task of the page.
 func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
 	pageSize := cmp.Or(req.PageSize, defaultListPageSize)
 	if pageSize < 1 || pageSize > maxListPageSize {
@@ -309,47 +312,65 @@ func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksReques
 			return nil, fmt.Errorf("invalid page token: %w", a2a.ErrInvalidRequest)
 		}
 	}
-	own, err := g.ownTasks(ctx, req)
+	ids, err := g.proxy.store.CallTasks(ctx, g.claims.ContextID, g.agent, req.ContextID)
 	if err != nil {
 		return nil, err
 	}
-	out := &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, TotalSize: len(own), PageSize: pageSize}
-	if offset >= len(own) {
-		return out, nil
+	page := func(total int) (start, end int) {
+		return min(offset, total), min(offset+pageSize, total)
 	}
-	end := min(offset+pageSize, len(own))
-	out.Tasks = own[offset:end]
-	if end < len(own) {
+	out := &a2a.ListTasksResponse{PageSize: pageSize}
+	var start, end int
+	if req.Status == "" && req.StatusTimestampAfter == nil {
+		out.TotalSize = len(ids)
+		start, end = page(len(ids))
+		if out.Tasks, err = g.getTasks(ctx, ids[start:end], req); err != nil {
+			return nil, err
+		}
+	} else {
+		all, err := g.getTasks(ctx, ids, req)
+		if err != nil {
+			return nil, err
+		}
+		all = slices.DeleteFunc(all, func(t *a2a.Task) bool { return !statusMatches(t, req) })
+		out.TotalSize = len(all)
+		start, end = page(len(all))
+		out.Tasks = all[start:end]
+	}
+	if end < out.TotalSize {
 		out.NextPageToken = strconv.Itoa(end)
 	}
 	return out, nil
 }
 
-// ownTasks lists the tasks matching req, whatever its page, which this
-// conversation started.
-func (g *guardedHandler) ownTasks(ctx context.Context, req *a2a.ListTasksRequest) ([]*a2a.Task, error) {
-	scan := *req
-	scan.PageSize, scan.PageToken = maxListPageSize, ""
-	var own []*a2a.Task
-	for {
-		res, err := g.RequestHandler.ListTasks(ctx, &scan)
+// getTasks gets the tasks with ids from the agent, with the history length
+// of req, and leaves out the ones the agent no longer has.
+func (g *guardedHandler) getTasks(ctx context.Context, ids []string, req *a2a.ListTasksRequest) ([]*a2a.Task, error) {
+	tasks := []*a2a.Task{}
+	for _, id := range ids {
+		t, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(id), HistoryLength: req.HistoryLength})
+		if errors.Is(err, a2a.ErrTaskNotFound) {
+			continue
+		}
 		if err != nil {
 			return nil, err
 		}
-		for _, t := range res.Tasks {
-			ok, err := g.proxy.store.HasCallTask(ctx, g.claims.ContextID, g.agent, string(t.ID))
-			if err != nil {
-				return nil, err
-			}
-			if ok {
-				own = append(own, t)
-			}
+		if !req.IncludeArtifacts {
+			listed := *t
+			listed.Artifacts = nil
+			t = &listed
 		}
-		if res.NextPageToken == "" || res.NextPageToken == scan.PageToken {
-			return own, nil
-		}
-		scan.PageToken = res.NextPageToken
+		tasks = append(tasks, t)
 	}
+	return tasks, nil
+}
+
+func statusMatches(t *a2a.Task, req *a2a.ListTasksRequest) bool {
+	if req.Status != "" && t.Status.State != req.Status {
+		return false
+	}
+	after := req.StatusTimestampAfter
+	return after == nil || (t.Status.Timestamp != nil && t.Status.Timestamp.After(*after))
 }
 
 func (g *guardedHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {

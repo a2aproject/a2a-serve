@@ -318,8 +318,8 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
 		}
 	}
-	if err := s.SetPendingQuestion(ctx, "telegram", "anna-dm", "q-anna"); err != nil {
-		t.Fatalf("SetPendingQuestion() error = %v", err)
+	if err := s.AddPendingQuestion(ctx, "telegram", "anna-dm", "q-anna"); err != nil {
+		t.Fatalf("AddPendingQuestion() error = %v", err)
 	}
 	for conv, contextID := range map[string]string{"anna-dm": "c-anna", "bob-dm": "c-bob", "group": "c-shared"} {
 		if err := s.SetContext(ctx, "telegram", conv, contextID); err != nil {
@@ -358,8 +358,8 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	if _, err := s.QuestionByID(ctx, "q-bob"); err != nil {
 		t.Fatalf("QuestionByID() of another user's question error = %v", err)
 	}
-	if _, err := s.PendingQuestion(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("PendingQuestion() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	if ids, err := s.PendingQuestions(ctx, "telegram", "anna-dm"); err != nil || len(ids) != 0 {
+		t.Fatalf("PendingQuestions() after DeletePairing() = %q, %v, want none", ids, err)
 	}
 	if _, err := s.ContextOf(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ContextOf() of the removed user's chat error = %v, want %v", err, ErrNotFound)
@@ -940,6 +940,15 @@ func TestUnansweredQuestions(t *testing.T) {
 	if err := s.AnswerQuestion(ctx, "q2", "user:owner", "once"); err != nil {
 		t.Fatalf("AnswerQuestion() error = %v", err)
 	}
+	if err := s.PutQuestion(ctx, Question{ID: "q4", Token: "tok-q4", TaskID: "t", ContextID: "c", Data: map[string]any{"id": "q4"}}); err != nil {
+		t.Fatalf("PutQuestion(q4) error = %v", err)
+	}
+	if err := s.CloseQuestion(ctx, "q4"); err != nil {
+		t.Fatalf("CloseQuestion() error = %v", err)
+	}
+	if ids, err := s.UnansweredQuestionsOf(ctx, "t"); err != nil || !cmp.Equal(ids, []string{"q1", "q3"}, cmpopts.SortSlices(func(a, b string) bool { return a < b })) {
+		t.Fatalf("UnansweredQuestionsOf() = %q, %v, want [q1 q3]", ids, err)
+	}
 	got, err := s.UnansweredQuestions(ctx)
 	if err != nil {
 		t.Fatalf("UnansweredQuestions() error = %v", err)
@@ -981,26 +990,63 @@ func TestQuestionMessages(t *testing.T) {
 	}
 }
 
-func TestPendingQuestion(t *testing.T) {
+func TestPendingQuestions(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if _, err := s.PendingQuestion(ctx, "telegram", "1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("PendingQuestion() error = %v, want %v", err, ErrNotFound)
-	}
-	for _, id := range []string{"q1", "q2"} {
-		if err := s.SetPendingQuestion(ctx, "telegram", "1", id); err != nil {
-			t.Fatalf("SetPendingQuestion() error = %v", err)
+	for _, p := range []struct{ conv, id string }{{"1", "q1"}, {"1", "q2"}, {"1", "q1"}, {"2", "q2"}} {
+		if err := s.AddPendingQuestion(ctx, "telegram", p.conv, p.id); err != nil {
+			t.Fatalf("AddPendingQuestion() error = %v", err)
 		}
 	}
-	if id, err := s.PendingQuestion(ctx, "telegram", "1"); err != nil || id != "q2" {
-		t.Fatalf("PendingQuestion() = %q, %v, want q2", id, err)
+	got, err := s.PendingQuestions(ctx, "telegram", "1")
+	if err != nil {
+		t.Fatalf("PendingQuestions() error = %v", err)
 	}
-	if err := s.ClearPendingQuestion(ctx, "telegram", "1"); err != nil {
-		t.Fatalf("ClearPendingQuestion() error = %v", err)
+	if diff := cmp.Diff([]string{"q1", "q2"}, got); diff != "" {
+		t.Fatalf("PendingQuestions() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := s.PendingQuestion(ctx, "telegram", "1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("PendingQuestion() after clearing error = %v, want %v", err, ErrNotFound)
+	if err := s.ForgetPendingQuestion(ctx, "q2"); err != nil {
+		t.Fatalf("ForgetPendingQuestion() error = %v", err)
+	}
+	for conv, want := range map[string][]string{"1": {"q1"}, "2": nil} {
+		got, err := s.PendingQuestions(ctx, "telegram", conv)
+		if err != nil {
+			t.Fatalf("PendingQuestions(%s) error = %v", conv, err)
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Fatalf("PendingQuestions(%s) after ForgetPendingQuestion() wrong result (-want +got) diff = %s", conv, diff)
+		}
+	}
+}
+
+func TestQuestionOfMessage(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	if err := s.PutQuestion(ctx, Question{ID: "q1", Token: "t1", TaskID: "task"}); err != nil {
+		t.Fatalf("PutQuestion() error = %v", err)
+	}
+	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q1", Channel: "telegram", Conv: "1", MessageID: "10", Text: "approve?"}); err != nil {
+		t.Fatalf("AddQuestionMessage() error = %v", err)
+	}
+	tests := []struct {
+		channel, conv, messageID string
+		wantErr                  error
+	}{
+		{channel: "telegram", conv: "1", messageID: "10"},
+		{channel: "telegram", conv: "2", messageID: "10", wantErr: ErrNotFound},
+		{channel: "discord", conv: "1", messageID: "10", wantErr: ErrNotFound},
+		{channel: "telegram", conv: "1", messageID: "11", wantErr: ErrNotFound},
+	}
+	for _, tc := range tests {
+		id, err := s.QuestionOfMessage(ctx, tc.channel, tc.conv, tc.messageID)
+		if !errors.Is(err, tc.wantErr) {
+			t.Fatalf("QuestionOfMessage(%s, %s, %s) error = %v, want %v", tc.channel, tc.conv, tc.messageID, err, tc.wantErr)
+		}
+		if tc.wantErr == nil && id != "q1" {
+			t.Fatalf("QuestionOfMessage(%s, %s, %s) = %q, want q1", tc.channel, tc.conv, tc.messageID, id)
+		}
 	}
 }
 
@@ -1061,6 +1107,44 @@ func TestCallTasks(t *testing.T) {
 			}
 			if got != tc.want {
 				t.Fatalf("check = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestCallTasksListsNewestFirst(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for _, c := range []CallTask{
+		{ContextID: "c1", Agent: "coder", TaskID: "t1", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t2", RemoteContextID: "r2"},
+		{ContextID: "c2", Agent: "coder", TaskID: "t3", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "reviewer", TaskID: "t4", RemoteContextID: "r1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t5", RemoteContextID: "r1"},
+	} {
+		if err := s.PutCallTask(ctx, c); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+	tests := []struct {
+		name            string
+		remoteContextID string
+		want            []string
+	}{
+		{name: "all contexts", want: []string{"t5", "t2", "t1"}},
+		{name: "one context", remoteContextID: "r1", want: []string{"t5", "t1"}},
+		{name: "unknown context", remoteContextID: "r9"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := s.CallTasks(ctx, "c1", "coder", tc.remoteContextID)
+			if err != nil {
+				t.Fatalf("CallTasks() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("CallTasks() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -1202,8 +1286,8 @@ func TestPrune(t *testing.T) {
 			t.Fatalf("PutQuestion() error = %v", err)
 		}
 	}
-	if err := s.SetPendingQuestion(ctx, "telegram", "1", "q-old"); err != nil {
-		t.Fatalf("SetPendingQuestion() error = %v", err)
+	if err := s.AddPendingQuestion(ctx, "telegram", "1", "q-old"); err != nil {
+		t.Fatalf("AddPendingQuestion() error = %v", err)
 	}
 	for _, h := range []Handle{{Handle: "ab", ContextID: "c-old"}, {Handle: "cd", ContextID: "c-running"}} {
 		if err := s.PutHandle(ctx, h); err != nil {
@@ -1238,8 +1322,8 @@ func TestPrune(t *testing.T) {
 	if _, err := s.QuestionByID(ctx, "q-running"); err != nil {
 		t.Fatalf("QuestionByID() of a recently updated task error = %v", err)
 	}
-	if _, err := s.PendingQuestion(ctx, "telegram", "1"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("PendingQuestion() of a pruned question error = %v, want %v", err, ErrNotFound)
+	if ids, err := s.PendingQuestions(ctx, "telegram", "1"); err != nil || len(ids) != 0 {
+		t.Fatalf("PendingQuestions() of a pruned question = %q, %v, want none", ids, err)
 	}
 	if _, err := s.HandleByName(ctx, "ab"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("HandleByName() of a pruned context error = %v, want %v", err, ErrNotFound)
@@ -1351,8 +1435,8 @@ func TestStaleQuestions(t *testing.T) {
 		}
 	}
 	for conv, id := range map[string]string{"1": "q-waiting", "2": "q-failed", "3": "q-answered", "4": "q-pruned", "5": "q-remote"} {
-		if err := s.SetPendingQuestion(ctx, "telegram", conv, id); err != nil {
-			t.Fatalf("SetPendingQuestion() error = %v", err)
+		if err := s.AddPendingQuestion(ctx, "telegram", conv, id); err != nil {
+			t.Fatalf("AddPendingQuestion() error = %v", err)
 		}
 	}
 	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q-shown", Channel: "telegram", Conv: "6", MessageID: "m1", Text: "git push?"}); err != nil {

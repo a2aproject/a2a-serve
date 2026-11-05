@@ -535,7 +535,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 		})
 	}
 	n.fabric.mu.RUnlock()
-	return network.ProbeAgents(ctx, n.HTTPClient(), candidates), nil
+	return network.ProbeAgents(ctx, n.HTTPClient(), candidates, []string{n.cfg.AgentName}), nil
 }
 
 func (n *testRelayNode) HTTPClient() *http.Client {

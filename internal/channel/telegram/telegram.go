@@ -288,6 +288,9 @@ func (c *Channel) handleMessage(ctx context.Context, b *bot.Bot, msg *models.Mes
 		Text:      text,
 		Authentic: true,
 	}
+	if msg.ReplyToMessage != nil {
+		m.ReplyTo = channel.Ref{Conv: conv, ID: strconv.Itoa(msg.ReplyToMessage.ID)}
+	}
 	type attachment struct{ id, name, mediaType string }
 	var files []attachment
 	if msg.Document != nil {

@@ -427,13 +427,14 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, a2atext.Message(msg))
 		return
 	}
-	out := channel.Outbound{Conv: rd.conv, Text: q.Text, ReplyTo: rd.replyTo, Subject: rd.subject()}
+	text := q.Display()
+	out := channel.Outbound{Conv: rd.conv, Text: text, ReplyTo: rd.replyTo, Subject: rd.subject()}
 	if rd.caps.Buttons {
 		out.Question = &channel.Question{ID: rec.ID, Options: q.Labels()}
 	} else {
 		out.Text += rd.a.answerHint(ctx, rec, q)
 	}
-	rd.a.sendQuestion(ctx, rd.ch, out, rec.ID, q.Text, rd.lim)
+	rd.a.sendQuestion(ctx, rd.ch, out, rec.ID, text, rd.lim)
 }
 
 // waitingForOwner returns the task which waits for an owner's answer.

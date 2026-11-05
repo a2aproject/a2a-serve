@@ -36,6 +36,8 @@ func TestChannel(t *testing.T) {
 	api := telegramtest.NewServer(t, telegramtest.Options{})
 	api.Push(`{"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna","username":"anna"},"text":"/start K7Q2-9XF4"}}`)
 	api.Push(`{"callback_query":{"id":"cb1","from":{"id":42,"is_bot":false,"first_name":"Anna"},"data":"h:abcd1234:1","message":{"message_id":7,"date":1700000000,"chat":{"id":42,"type":"private"}}}}`)
+	api.Push(`{"message":{"message_id":8,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna","username":"anna"},"text":"approve",` +
+		`"reply_to_message":{"message_id":7,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":99,"is_bot":true,"first_name":"Coder"}}}}`)
 	c := New("123:abc")
 	c.ServerURL = api.URL
 
@@ -54,18 +56,20 @@ func TestChannel(t *testing.T) {
 		}
 	}()
 	var got []channel.Inbound
-	for len(got) < 2 {
+	for len(got) < 3 {
 		select {
 		case m := <-in:
 			got = append(got, m)
 		case <-time.After(10 * time.Second):
-			t.Fatalf("Run() delivered %d messages, want 2", len(got))
+			t.Fatalf("Run() delivered %d messages, want 3", len(got))
 		}
 	}
 	want := []channel.Inbound{
 		{Channel: "telegram", MessageID: "42:5", Identity: "telegram:42", Name: "@anna", Conv: "42", Direct: true, Text: "/start K7Q2-9XF4", Authentic: true},
 		{Channel: "telegram", MessageID: "cb:cb1", Identity: "telegram:42", Name: "Anna", Conv: "42", Direct: true, Authentic: true,
 			Action: &channel.Action{QuestionID: "abcd1234", Option: 1}, ReplyTo: channel.Ref{Conv: "42", ID: "7"}},
+		{Channel: "telegram", MessageID: "42:8", Identity: "telegram:42", Name: "@anna", Conv: "42", Direct: true, Text: "approve", Authentic: true,
+			ReplyTo: channel.Ref{Conv: "42", ID: "7"}},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Run() wrong messages (-want +got) diff = %s", diff)

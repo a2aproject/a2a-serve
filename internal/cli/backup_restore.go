@@ -65,6 +65,9 @@ on the old host before taking over.
 			if err != nil {
 				return err
 			}
+			// Installed after the key prompt, which Ctrl-C still interrupts.
+			ctx, stop := signalContext(ctx)
+			defer stop()
 			dest, err := backup.Open(args[0], nil)
 			if err != nil {
 				return clierr.Usage(err.Error())

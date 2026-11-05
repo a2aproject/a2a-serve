@@ -17,12 +17,17 @@ package nodes
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -174,6 +179,80 @@ func TestPostWebhookRedirects(t *testing.T) {
 				if has := res.header.Get(name) != ""; has != tc.wantHeaders {
 					t.Fatalf("redirected wake has %s = %v, want %v", name, has, tc.wantHeaders)
 				}
+			}
+		})
+	}
+}
+
+func TestWakeClientRefusesRedirectFromHTTPSToHTTP(t *testing.T) {
+	t.Parallel()
+	req := func(u string) *http.Request {
+		t.Helper()
+		parsed, err := url.Parse(u)
+		if err != nil {
+			t.Fatalf("url.Parse(%q) error = %v", u, err)
+		}
+		return &http.Request{URL: parsed, Header: http.Header{}}
+	}
+	c := wakeClient(store.Node{ID: "grok", Webhook: "https://hook.example/wake"})
+
+	err := c.CheckRedirect(req("http://hook.example/wake"), []*http.Request{req("https://hook.example/wake")})
+
+	if !errors.Is(err, egress.ErrInsecureRedirect) {
+		t.Fatalf("wakeClient().CheckRedirect() error = %v, want %v", err, egress.ErrInsecureRedirect)
+	}
+}
+
+func TestWakeLastErrorIsGeneric(t *testing.T) {
+	t.Parallel()
+	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "bad key", http.StatusUnauthorized)
+	}))
+	t.Cleanup(failing.Close)
+	closed := httptest.NewServer(http.NotFoundHandler())
+	closed.Close()
+	tests := []struct {
+		name    string
+		webhook string
+		want    string
+	}{
+		{name: "error status", webhook: failing.URL + "/hook", want: "webhook returned 401 Unauthorized"},
+		{name: "unreachable", webhook: closed.URL + "/hook", want: errWakeUnreachable},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+			if err != nil {
+				t.Fatalf("store.Open() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := st.Close(); err != nil {
+					t.Errorf("Close() error = %v", err)
+				}
+			})
+			if err := st.PutNode(t.Context(), store.Node{ID: "grok", Name: "grok", Webhook: tc.webhook, Secret: "s"}); err != nil {
+				t.Fatalf("store.PutNode() error = %v", err)
+			}
+			h := New(t.Context(), Config{Store: st, WebhookRetries: []time.Duration{0}, BaseURL: func() string { return "http://agent.example" }})
+
+			entry := h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing})
+
+			deadline := time.Now().Add(10 * time.Second)
+			for {
+				h.mu.Lock()
+				attempts, got := entry.Attempts, entry.LastError
+				h.mu.Unlock()
+				if attempts > 0 {
+					if got != tc.want {
+						t.Fatalf("wake LastError = %q, want %q", got, tc.want)
+					}
+					return
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("wake made no attempt within 10s")
+				}
+				time.Sleep(10 * time.Millisecond)
 			}
 		})
 	}

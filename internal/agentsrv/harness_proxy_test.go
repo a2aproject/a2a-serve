@@ -331,6 +331,8 @@ type recordingAgent struct {
 	listed []*a2a.Task
 	// stream are the events it streams before it waits for the end of the call.
 	stream []a2a.Event
+	// historyLengths are the history lengths GetTask was asked for, -1 for none.
+	historyLengths []int
 }
 
 func (a *recordingAgent) reach(method string) {
@@ -362,8 +364,24 @@ func (a *recordingAgent) SendStreamingMessage(ctx context.Context, _ *a2a.SendMe
 	}
 }
 
-func (a *recordingAgent) GetTask(context.Context, *a2a.GetTaskRequest) (*a2a.Task, error) {
+// GetTask returns the listed task with the ID, or else a.task.
+func (a *recordingAgent) GetTask(_ context.Context, req *a2a.GetTaskRequest) (*a2a.Task, error) {
 	a.reach("GetTask")
+	length := -1
+	if req.HistoryLength != nil {
+		length = *req.HistoryLength
+	}
+	a.mu.Lock()
+	a.historyLengths = append(a.historyLengths, length)
+	a.mu.Unlock()
+	for _, t := range a.listed {
+		if t.ID == req.ID {
+			return t, nil
+		}
+	}
+	if a.task == nil {
+		return nil, a2a.ErrTaskNotFound
+	}
 	return a.task, nil
 }
 
@@ -841,6 +859,7 @@ func TestGuardedHandlerListTasksPagesOnlyItsTasks(t *testing.T) {
 	for _, id := range []a2a.TaskID{"t1", "t2", "t3", "t4", "t5", "t6", "t7"} {
 		listed = append(listed, completedTask(id, "r"+string(id[1:])))
 	}
+	listed[5].Status.State = a2a.TaskStateWorking
 	agent := &recordingAgent{listed: listed}
 	g := f.guarded(agent, "c1", auth.Owner())
 	tests := []struct {
@@ -850,9 +869,11 @@ func TestGuardedHandlerListTasksPagesOnlyItsTasks(t *testing.T) {
 		wantTotalSize int
 		wantNextPage  bool
 	}{
-		{name: "everything on one page", wantIDs: []a2a.TaskID{"t2", "t5", "t6"}, wantTotalSize: 3},
-		{name: "first page is not empty when others' tasks come first", req: a2a.ListTasksRequest{PageSize: 2}, wantIDs: []a2a.TaskID{"t2", "t5"}, wantTotalSize: 3, wantNextPage: true},
-		{name: "page of one", req: a2a.ListTasksRequest{PageSize: 1}, wantIDs: []a2a.TaskID{"t2"}, wantTotalSize: 3, wantNextPage: true},
+		{name: "everything on one page", wantIDs: []a2a.TaskID{"t6", "t5", "t2"}, wantTotalSize: 3},
+		{name: "first page is not empty when others' tasks come first", req: a2a.ListTasksRequest{PageSize: 2}, wantIDs: []a2a.TaskID{"t6", "t5"}, wantTotalSize: 3, wantNextPage: true},
+		{name: "page of one", req: a2a.ListTasksRequest{PageSize: 1}, wantIDs: []a2a.TaskID{"t6"}, wantTotalSize: 3, wantNextPage: true},
+		{name: "remote context", req: a2a.ListTasksRequest{ContextID: "r5"}, wantIDs: []a2a.TaskID{"t5"}, wantTotalSize: 1},
+		{name: "status", req: a2a.ListTasksRequest{Status: a2a.TaskStateWorking}, wantIDs: []a2a.TaskID{"t6"}, wantTotalSize: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -910,8 +931,46 @@ func TestGuardedHandlerListTasksFollowsPageTokens(t *testing.T) {
 		req = &a2a.ListTasksRequest{PageSize: 3, PageToken: res.NextPageToken}
 	}
 
-	if diff := cmp.Diff([]a2a.TaskID{"t0", "t2", "t4", "t6"}, got); diff != "" {
+	if diff := cmp.Diff([]a2a.TaskID{"t6", "t4", "t2", "t0"}, got); diff != "" {
 		t.Fatalf("guardedHandler.ListTasks() pages wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestGuardedHandlerListTasksGetsOnlyThePage(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	var listed []*a2a.Task
+	for i := range 5 {
+		id := a2a.TaskID(fmt.Sprintf("t%d", i))
+		f.recordStarted(t, "c1", string(id), "r"+string(id))
+		task := completedTask(id, "r"+string(id))
+		task.Artifacts = []*a2a.Artifact{{ID: "a1", Parts: a2a.ContentParts{a2a.NewTextPart("result")}}}
+		listed = append(listed, task)
+	}
+	agent := &recordingAgent{listed: listed}
+	g := f.guarded(agent, "c1", auth.Owner())
+
+	res, err := g.ListTasks(context.Background(), &a2a.ListTasksRequest{PageSize: 2, HistoryLength: new(3)})
+	if err != nil {
+		t.Fatalf("guardedHandler.ListTasks() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"GetTask", "GetTask"}, agent.calls()); diff != "" {
+		t.Fatalf("calls that reached the agent wrong result (-want +got) diff = %s", diff)
+	}
+	agent.mu.Lock()
+	gotLengths := agent.historyLengths
+	agent.mu.Unlock()
+	if diff := cmp.Diff([]int{3, 3}, gotLengths); diff != "" {
+		t.Fatalf("GetTask() history lengths wrong result (-want +got) diff = %s", diff)
+	}
+	for _, task := range res.Tasks {
+		if task.Artifacts != nil {
+			t.Fatalf("guardedHandler.ListTasks() task %s artifacts = %v, want none without IncludeArtifacts", task.ID, task.Artifacts)
+		}
+	}
+	if listed[4].Artifacts == nil {
+		t.Fatalf("guardedHandler.ListTasks() dropped the artifacts of the agent's task, want them kept")
 	}
 }
 

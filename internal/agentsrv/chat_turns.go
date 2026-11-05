@@ -244,6 +244,10 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		c.queue.release(t)
 		c.reply(ctx, ch, in, "Your reply has more text than an answer, so I didn't take it as one. Reply with only one of: "+q.Words()+".")
 		return
+	case unaddressedAnswer:
+		c.queue.release(t)
+		c.reply(ctx, ch, in, "Several questions wait for an answer here. Reply to the message of the question you answer.")
+		return
 	}
 
 	switch {

@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -649,14 +650,14 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 		if err == nil {
 			entry.Delivered, entry.LastError = true, ""
 		} else {
-			entry.LastError = err.Error()
+			entry.LastError = wakeError(err)
 		}
 		n.mu.Unlock()
 		if err == nil {
 			slog.Info("woke node", "node", node.ID, "kind", env.Kind, "task", env.TaskID)
 			return
 		}
-		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", webhook.RedactURL(node.Webhook), "attempt", i+1, "error", err)
+		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", webhook.Origin(node.Webhook), "attempt", i+1, "error", err)
 	}
 }
 
@@ -674,7 +675,9 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 	for k, v := range node.Headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := wakeClient(node).Do(req)
+	client := wakeClient(node)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return withoutURL(err)
 	}
@@ -684,9 +687,31 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 		}
 	}()
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("webhook returned %s", resp.Status)
+		return &statusError{code: resp.StatusCode}
 	}
 	return nil
+}
+
+// statusError is the error of a wake the webhook answered with a status
+// other than 2xx.
+type statusError struct{ code int }
+
+func (e *statusError) Error() string {
+	return fmt.Sprintf("webhook returned %d %s", e.code, http.StatusText(e.code))
+}
+
+// errWakeUnreachable is what the node sees of a wake that got no response.
+const errWakeUnreachable = "the webhook couldn't be reached"
+
+// wakeError is what the node sees of a failed wake. It keeps only the
+// status of a response, so that wakes can't probe the networks the server
+// reaches.
+func wakeError(err error) string {
+	var se *statusError
+	if errors.As(err, &se) {
+		return se.Error()
+	}
+	return errWakeUnreachable
 }
 
 // wakeTimeout bounds one wake delivery, redirects included.
@@ -694,13 +719,15 @@ const wakeTimeout = 20 * time.Second
 
 // wakeClient returns the HTTP client for the wakes of a node. It follows
 // redirects, but doesn't send the node's headers and signature to another
-// host than the webhook.
+// host than the webhook. Redirects can't lead from https to http, or from
+// a public webhook into a private network.
 func wakeClient(node store.Node) *http.Client {
 	return &http.Client{
-		Timeout: wakeTimeout,
+		Timeout:   wakeTimeout,
+		Transport: egress.Transport(node.Webhook),
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
+			if err := egress.CheckRedirect(req, via); err != nil {
+				return err
 			}
 			if req.URL.Host == via[0].URL.Host {
 				return nil

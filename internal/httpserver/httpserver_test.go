@@ -62,6 +62,56 @@ func TestLimitConcurrency(t *testing.T) {
 	}
 }
 
+func TestKeyedLimiter(t *testing.T) {
+	t.Parallel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	l := NewKeyedLimiter(2, 1, func(r *http.Request) string { return r.Header.Get("X-Key") })
+	h := l.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/block" {
+			entered <- struct{}{}
+			<-release
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	serve := func(path, key string) *httptest.ResponseRecorder {
+		w := httptest.NewRecorder()
+		r := httptest.NewRequest(http.MethodGet, path, nil)
+		r.Header.Set("X-Key", key)
+		h.ServeHTTP(w, r)
+		return w
+	}
+	blocked := make(chan int, 2)
+	for _, key := range []string{"a", "b"} {
+		go func() { blocked <- serve("/block", key).Code }()
+		<-entered
+	}
+
+	sameKey := serve("/", "a")
+	full := serve("/", "c")
+	close(release)
+	for range 2 {
+		if code := <-blocked; code != http.StatusOK {
+			t.Fatalf("KeyedLimiter.Handler() blocking request status = %d, want %d", code, http.StatusOK)
+		}
+	}
+	after := serve("/", "a")
+
+	if sameKey.Code != http.StatusTooManyRequests || sameKey.Header().Get("Retry-After") == "" {
+		t.Fatalf("KeyedLimiter.Handler() request over the key's limit = %d with Retry-After %q, want %d with Retry-After", sameKey.Code, sameKey.Header().Get("Retry-After"), http.StatusTooManyRequests)
+	}
+	if full.Code != http.StatusServiceUnavailable || full.Header().Get("Retry-After") == "" {
+		t.Fatalf("KeyedLimiter.Handler() request over the total limit = %d with Retry-After %q, want %d with Retry-After", full.Code, full.Header().Get("Retry-After"), http.StatusServiceUnavailable)
+	}
+	for _, w := range []*httptest.ResponseRecorder{sameKey, full} {
+		if got := w.Header().Get("Connection"); got != "close" {
+			t.Fatalf("KeyedLimiter.Handler() refused request Connection header = %q, want %q", got, "close")
+		}
+	}
+	if after.Code != http.StatusOK {
+		t.Fatalf("KeyedLimiter.Handler() request after the key's request ended status = %d, want %d", after.Code, http.StatusOK)
+	}
+}
+
 func TestNewLimitsHeaders(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

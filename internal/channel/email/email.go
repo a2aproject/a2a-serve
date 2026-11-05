@@ -557,7 +557,7 @@ func (c *Channel) inbound(ctx context.Context, env envelope, raw []byte) (channe
 	if err := c.threads.received(ctx, conv, env.subject); err != nil {
 		return channel.Inbound{}, false, err
 	}
-	return channel.Inbound{
+	in := channel.Inbound{
 		Channel:   c.Name(),
 		MessageID: env.sender + "|" + env.msgID,
 		Identity:  env.sender,
@@ -567,7 +567,11 @@ func (c *Channel) inbound(ctx context.Context, env envelope, raw []byte) (channe
 		Authentic: true,
 		Text:      text,
 		Files:     files,
-	}, true, nil
+	}
+	if env.reply() && len(env.inReplyTo) > 0 {
+		in.ReplyTo = channel.Ref{Conv: conv, ID: env.inReplyTo[0]}
+	}
+	return in, true, nil
 }
 
 // body returns the new text of a mail and its attachments. Mail without a

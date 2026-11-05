@@ -27,7 +27,9 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/jsonschema-go/jsonschema"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
@@ -217,6 +219,49 @@ func TestInspectorPendingApprovals(t *testing.T) {
 		if !strings.Contains(overview, text) {
 			t.Fatalf("overview = %q, want it to contain %q", overview, text)
 		}
+	}
+}
+
+func TestInspectorPendingApprovalsAnswerTheCurrentQuestionOfATask(t *testing.T) {
+	t.Parallel()
+	ti := startInspector(t)
+	ctx := context.Background()
+	optionSchema := &jsonschema.Schema{Type: "string", OneOf: []*jsonschema.Schema{{Const: jsonschema.Ptr[any]("once"), Title: "Allow"}}}
+	part, err := structuredinput.NewSchemaPart("tool2", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"option": optionSchema}})
+	if err != nil {
+		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
+	}
+	task := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{
+		State:   a2a.TaskStateInputRequired,
+		Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("git push"), part),
+	}}
+	if _, err := ti.tasks.Create(ctx, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	for _, rec := range []store.Question{
+		{ID: "q-old", Token: "tok-old", TaskID: "t1", ContextID: "c1", HitlID: "tool1", Data: map[string]any{"id": "tool1", "type": "permission"}},
+		{ID: "q-current", Token: "tok-current", TaskID: "t1", ContextID: "c1", HitlID: "tool2", Data: map[string]any{"id": "tool2", "type": "permission"}},
+		{ID: "q-closed", Token: "tok-closed", TaskID: "t1", ContextID: "c1", HitlID: "tool2", Data: map[string]any{"id": "tool2", "type": "permission"}},
+	} {
+		if err := ti.store.PutQuestion(ctx, rec); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", rec.ID, err)
+		}
+	}
+	if err := ti.store.CloseQuestion(ctx, "q-closed"); err != nil {
+		t.Fatalf("CloseQuestion() error = %v", err)
+	}
+
+	got, err := ti.PendingApprovals(ctx)
+
+	if err != nil {
+		t.Fatalf("Inspector.PendingApprovals() error = %v", err)
+	}
+	want := []inspector.Approval{{
+		Action: inspector.Path + "/questions/q-current", Text: "git push", ContextID: "c1",
+		Options: []approvals.Option{{ID: "once", Label: "Allow"}},
+	}}
+	if diff := cmp.Diff(want, got, cmp.FilterPath(func(p cmp.Path) bool { return p.Last().String() == ".Created" }, cmp.Ignore())); diff != "" {
+		t.Fatalf("Inspector.PendingApprovals() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
