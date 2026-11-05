@@ -30,6 +30,19 @@ const SignatureHeader = "X-A2A-Serve-Signature"
 // WakeHeader carries the ID of a wake, the same for every retry of it.
 const WakeHeader = "X-A2A-Serve-Wake"
 
+// MaxSkew is how far the time of a wake signature may be from the node's
+// clock.
+const MaxSkew = 5 * time.Minute
+
+// WakeKey is the key that wakes to the node of token are signed with. The
+// server derives it when it issues the token, so the node needs only its
+// token to check a wake, and the key doesn't reveal the token.
+func WakeKey(token string) string {
+	m := hmac.New(sha256.New, []byte(token))
+	m.Write([]byte("a2a-serve wake signing key"))
+	return hex.EncodeToString(m.Sum(nil))
+}
+
 // Sign returns the signature header value of a wake body.
 func Sign(secret string, t time.Time, body []byte) string {
 	ts := strconv.FormatInt(t.Unix(), 10)

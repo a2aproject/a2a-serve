@@ -276,7 +276,7 @@ func (n *Host) Mailbox(id string) (waiting, open int) {
 }
 
 // Pair issues a new node token for the node of a taken node code, replacing
-// the previous one.
+// the previous one and the key its wakes are signed with.
 func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) {
 	node, err := n.cfg.Store.Node(r.Context(), id)
 	if err != nil {
@@ -285,7 +285,7 @@ func (n *Host) Pair(w http.ResponseWriter, r *http.Request, baseURL, id string) 
 	}
 	secret := cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
 	token := mailboxapi.NewNodeToken(mailboxapi.APIBase(baseURL), node.ID, secret)
-	node.TokenHash = cryptoutil.Hash(token)
+	node.TokenHash, node.Secret = cryptoutil.Hash(token), mailboxapi.WakeKey(token)
 	if err := n.cfg.Store.PutNode(r.Context(), node); err != nil {
 		jsonhttp.Error(w, http.StatusInternalServerError, err.Error())
 		return
@@ -686,6 +686,8 @@ func withoutURL(err error) error {
 }
 
 // instructions tell an LLM-driven node what a wake means and how to answer.
+// Anyone who knows the webhook can send a wake with other instructions, so
+// they point to the skill for anything that needs the node token.
 func instructions(env mailboxapi.Envelope) string {
 	switch env.Kind {
 	case mailboxapi.KindTask, mailboxapi.KindMessage:
@@ -696,8 +698,8 @@ func instructions(env mailboxapi.Envelope) string {
 		return fmt.Sprintf("%s %s from %s. "+
 			"Reply with `%s reply %s --final \"<answer>\"` (add --artifact <file> to attach files). "+
 			"Use `--status working --text \"<progress>\"` to report progress, `--input-required \"<question>\"` to ask the caller, "+
-			"`--fail \"<reason>\"` to give up. Without the CLI, POST {\"state\":\"completed\",\"text\":\"<answer>\",\"idempotencyKey\":\"<unique>\"} "+
-			"to replyUrl with the header `Authorization: Bearer <node token>`. The task fails if you post nothing for %s.",
+			"`--fail \"<reason>\"` to give up. Without the CLI, follow \"Without the CLI\" in the skill you paired with. "+
+			"The task fails if you post nothing for %s.",
 			what, env.TaskID, env.Sender, mailboxapi.CLI, env.TaskID, nodeTaskTimeout)
 	case mailboxapi.KindCanceled:
 		return fmt.Sprintf("The caller canceled task %s. Stop working on it; replies are no longer accepted.", env.TaskID)

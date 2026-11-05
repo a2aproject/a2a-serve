@@ -66,7 +66,7 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Messenger link | Messages from that account with the pairing's current role | `server.db` | `a2a-serve pair rm <name>` |
 | Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as an authenticated caller | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
 | Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>` |
-| Webhook signing secret | Proves that wakes come from this agent | `server.db` | `a2a-serve pair set <node> --rotate` |
+| Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
 | Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |
 | Inspector link and session | The inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |

@@ -93,3 +93,32 @@ a2a-serve mailbox reply <task> --fail "Could not reach the repo"
 | `--status string` |  | Task state: working, input-required, completed, failed, rejected |
 | `--text string` |  | Status message, or the result for completed (with --status) |
 | `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
+
+## a2a-serve mailbox verify
+
+Check that the wake body on stdin was signed by the agent hosting the node,
+within 5m0s of now. Pass the value of the X-A2A-Serve-Signature
+header with --signature. The key comes from the node token, so the command
+makes no request. It fails for a wake that anyone else sent; don't act on one.
+
+Secret values: env:VAR reads the value from the environment variable VAR; -
+reads it from a prompt without echo, or from stdin when it isn't a terminal
+(one flag per command); anything else is the value itself. In agent
+settings, secret:NAME reuses a value stored in .a2a/state/secrets.
+
+```
+a2a-serve mailbox verify --signature <header> < wake.json [flags]
+```
+
+**Examples**
+
+```bash
+printf '%s' "$WAKE_BODY" | a2a-serve mailbox verify --signature "$WAKE_SIGNATURE"
+```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--signature string` |  | Value of the X-A2A-Serve-Signature header of the wake |
+| `--token string` |  | Node token (default: $A2A_NODE_TOKEN or the token saved by a2a-serve pair join) (secret value: env:VAR, -, or the value) |
