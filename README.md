@@ -2,6 +2,7 @@
 
 <p align="center">
   <a href="./LICENSE"><img src="https://img.shields.io/github/license/a2aproject/a2a-serve" alt="License: Apache-2.0"></a>
+  <a href="https://github.com/a2aproject/a2a-serve/actions/workflows/nightly.yaml"><img src="https://github.com/a2aproject/a2a-serve/actions/workflows/nightly.yaml/badge.svg" alt="Nightly"></a>
 </p>
 
 <div align="center">
