@@ -127,6 +127,12 @@ func (d Dir) UserHomeDir(id string) string {
 	return filepath.Join(d.UserHomesDir(), UserKey(id))
 }
 
+// RemoveUserHome deletes the home of the agent process of the user with
+// the principal ID id, if there is one.
+func (d Dir) RemoveUserHome(id string) error {
+	return os.RemoveAll(d.UserHomeDir(id))
+}
+
 // UserKey is a short stable name of the principal ID id, for paths and
 // container names.
 func UserKey(id string) string {
@@ -136,6 +142,10 @@ func UserKey(id string) string {
 
 // LogPath returns the path of the server log.
 func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log") }
+
+// MCPMaskPath is the file with no MCP servers which a sandbox mounts over
+// the workspace's .mcp.json.
+func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask.json") }
 
 // LockPath returns the path of the file the running server holds locked.
 func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock") }

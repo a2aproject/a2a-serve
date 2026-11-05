@@ -63,6 +63,8 @@ type Settings struct {
 	DenyTools  []string
 	// OwnerChat is <channel>[:<who>].
 	OwnerChat string
+	// DisableMCP are MCP servers of the project's .mcp.json to turn off.
+	DisableMCP []string
 
 	TailscaleControlURL string
 	// TailscaleAuthKey is env:VAR, secret:NAME or the value.
@@ -174,6 +176,9 @@ func (s Settings) Apply(cfg *Config, d Dir) (Secrets, error) {
 	}
 	if s.OwnerChat != "" {
 		cfg.Approvals.OwnerChat = s.OwnerChat
+	}
+	for _, v := range s.DisableMCP {
+		cfg.MCP.Disabled = putKeyed(cfg.MCP.Disabled, strings.TrimSpace(v), nil)
 	}
 	for _, v := range s.AllowEmails {
 		cfg.Policy.AllowEmails = putKeyed(cfg.Policy.AllowEmails, strings.TrimSpace(v), strings.ToLower)

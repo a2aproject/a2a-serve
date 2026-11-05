@@ -53,6 +53,8 @@ func TestValidate(t *testing.T) {
 		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
 		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
 		{name: "unknown denied tool kind", modify: func(c *Config) { c.Approvals.Deny = []string{"shell"} }, wantErr: `invalid --deny-tools "shell"`},
+		{name: "disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{"github"} }},
+		{name: "empty disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{""} }, wantErr: `invalid --disable-mcp ""`},
 		{name: "owner chat", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:anna" }},
 		{name: "owner chat channel", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
 		{name: "owner chat without who", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:" }, wantErr: `invalid --owner-chat "telegram:"`},

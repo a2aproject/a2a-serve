@@ -263,3 +263,44 @@ INSERT INTO nodes (id, name, webhook, secret, token_hash, created) VALUES ('grok
 		t.Fatalf("PendingCodes() = %+v, %v, want none", codes, err)
 	}
 }
+
+func TestMigrateLocalPairingSchedulesToOwner(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 12 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO schedules (name, cron, prompt, user_id, deliver_channel, deliver_user, conversation, created_by, created) VALUES
+	('local', '@daily', 'p', 'pair:local', 'telegram', 'pair:local', 'new', 'user:owner', 1),
+	('anna', '@daily', 'p', 'pair:anna', 'telegram', 'pair:local', 'new', 'user:owner', 1);
+`); err != nil {
+		t.Fatalf("inserting schedules: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s := openStoreAt(t, path)
+	all, err := s.Schedules(ctx)
+	if err != nil {
+		t.Fatalf("Schedules() error = %v", err)
+	}
+	type users struct{ Name, User, DeliverUser string }
+	var got []users
+	for _, sc := range all {
+		got = append(got, users{sc.Name, sc.UserID, sc.DeliverUser})
+	}
+	want := []users{{"anna", "pair:anna", "user:owner"}, {"local", "user:owner", "user:owner"}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Schedules() wrong result (-want +got) diff = %s", diff)
+	}
+}

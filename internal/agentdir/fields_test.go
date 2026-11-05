@@ -38,6 +38,7 @@ func fullConfig() *Config {
 		},
 		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "telegram"},
 		Limits:    LimitsConfig{Memory: "8g"},
+		MCP:       MCPConfig{Disabled: []string{"github", "kubernetes"}},
 	}
 }
 
@@ -63,6 +64,8 @@ func TestUnset(t *testing.T) {
 		{setting: "env", modify: func(c *Config) { c.Env = nil }},
 		{setting: "mount", entries: []string{"/docs"}, modify: func(c *Config) { c.Mounts = []string{"/data:/data"} }},
 		{setting: "allow-tools", entries: []string{"search"}, modify: func(c *Config) { c.Approvals.Allow = []string{"read"} }},
+		{setting: "disable-mcp", entries: []string{"github"}, modify: func(c *Config) { c.MCP.Disabled = []string{"kubernetes"} }},
+		{setting: "disable-mcp", modify: func(c *Config) { c.MCP.Disabled = nil }},
 		{setting: "secret", entries: []string{"KEY"}, modify: func(c *Config) { c.Secrets = []string{"OTHER"} }, wantDeleted: []string{"KEY"}},
 		{setting: "telegram", wantErr: true},
 		{setting: "email", wantErr: true},
@@ -220,7 +223,7 @@ func TestAgentSettings(t *testing.T) {
 func TestOwnerSettings(t *testing.T) {
 	t.Parallel()
 	got := fullConfig().OwnerSettings()
-	want := []string{"name", "workspace", "port", "private", "private-access", "allow-email", "telegram", "email-address", "email-imap", "email-smtp", "email-password", "email-trusted-authserv", "owner-chat"}
+	want := []string{"name", "workspace", "port", "private", "private-access", "allow-email", "telegram", "email-address", "email-imap", "email-smtp", "email-password", "email-trusted-authserv", "disable-mcp", "owner-chat"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Config.OwnerSettings() wrong result (-want +got) diff = %s", diff)
 	}

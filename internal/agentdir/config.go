@@ -68,6 +68,19 @@ type Config struct {
 	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
+	MCP       MCPConfig       `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+}
+
+// MCPConfig decides which MCP servers of the project's .mcp.json the agent
+// gets.
+type MCPConfig struct {
+	// Disabled are the names of servers left out of the agent's sessions.
+	Disabled []string `yaml:"disabled,omitempty" json:"disabled,omitempty"`
+}
+
+// MCPDisabled reports whether the MCP server name is turned off.
+func (c *Config) MCPDisabled(name string) bool {
+	return slices.Contains(c.MCP.Disabled, name)
 }
 
 // PolicyConfig decides who may call the agent besides the user running it,
@@ -396,6 +409,7 @@ func (c *Config) Clone() *Config {
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
 	out.Policy = c.Policy.clone()
+	out.MCP.Disabled = slices.Clone(c.MCP.Disabled)
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
 	}
