@@ -25,6 +25,7 @@ import (
 
 func TestOwnerServesAndCallsAgent(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 
@@ -45,6 +46,7 @@ func TestOwnerServesAndCallsAgent(t *testing.T) {
 
 func TestOwnerAnswersApproval(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	tests := []struct {
 		name   string
 		answer string
@@ -74,6 +76,7 @@ func TestOwnerAnswersApproval(t *testing.T) {
 
 func TestRestartResumesConversation(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 	task := owner.mustSend(coder.url, "remember banana")

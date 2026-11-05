@@ -62,6 +62,7 @@ func TestPairedUserCantReachOwnerTasks(t *testing.T) {
 
 func TestPairedUserRunsInOwnAgentProcess(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner, anna := newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
 	anna.pairJoin(coder.url, coder.invite("anna"))
@@ -78,6 +79,7 @@ func TestPairedUserRunsInOwnAgentProcess(t *testing.T) {
 
 func TestConversationHandleWorksOnlyInItsTurn(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner := newUser(t)
 	coder, reviewer := owner.startAgent("coder"), owner.startAgent("reviewer")
 	coder.serve("contact", "add", "reviewer", "--url", reviewer.url, "--code", reviewer.invite("coder"))

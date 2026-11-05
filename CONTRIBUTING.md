@@ -95,7 +95,7 @@ bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 go test -tags e2e ./e2e/...
 ```
 
-The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in Docker, in an image the tests build from `fakeacp`. This also runs the tests of the Docker sandbox, which are skipped otherwise. CI runs the whole suite locally, and in Docker only the tests that depend on the sandbox: how the agent process starts, crashes and restarts, what it sees, and how it reaches the server. Add a test of that kind to the `-run` list of the `e2e-docker` job in `.github/workflows/e2e.yaml`.
+The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in Docker, in an image the tests build from `fakeacp`. In Docker, only the tests marked with `dependsOnSandbox` run: those of how the agent process starts, crashes and restarts, what it sees, and how it reaches the server. Mark a new test of that kind. CI runs the suite both ways.
 
 Add a test there when a change affects a journey across commands or processes.
 

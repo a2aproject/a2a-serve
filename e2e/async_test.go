@@ -113,6 +113,7 @@ func TestRestartFailsOpenTasks(t *testing.T) {
 
 func TestAgentProcessCrash(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 	first := owner.mustSend(coder.url, "remember banana")

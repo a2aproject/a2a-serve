@@ -25,6 +25,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -45,6 +46,9 @@ type user struct {
 
 func newUser(t *testing.T) *user {
 	t.Helper()
+	if _, marked := sandboxTests.Load(topName(t)); sandbox == "docker" && !marked {
+		t.Skip("doesn't depend on the sandbox; mark it with dependsOnSandbox to run it with E2E_SANDBOX=docker")
+	}
 	home, err := os.MkdirTemp("", "a2a-e2e-home-")
 	if err != nil {
 		t.Fatalf("os.MkdirTemp() error = %v", err)
@@ -245,10 +249,28 @@ func sandboxFlags() []string {
 	return []string{"--sandbox", "local", "--command", filepath.Join(binDir, "fakeacp")}
 }
 
-// requireDocker skips a test of the docker sandbox when the agents run
-// locally.
+// sandboxTests holds the names of the top-level tests marked with
+// dependsOnSandbox.
+var sandboxTests sync.Map
+
+// dependsOnSandbox marks a test of what the sandbox changes: how the agent
+// process starts, crashes and restarts, what it sees, and how it reaches the
+// server. Only marked tests run with E2E_SANDBOX=docker; call it before
+// newUser.
+func dependsOnSandbox(t *testing.T) {
+	sandboxTests.Store(topName(t), true)
+}
+
+func topName(t *testing.T) string {
+	name, _, _ := strings.Cut(t.Name(), "/")
+	return name
+}
+
+// requireDocker marks a test of the docker sandbox, and skips it when the
+// agents run locally.
 func requireDocker(t *testing.T) {
 	t.Helper()
+	dependsOnSandbox(t)
 	if sandbox != "docker" {
 		t.Skip("needs E2E_SANDBOX=docker")
 	}
