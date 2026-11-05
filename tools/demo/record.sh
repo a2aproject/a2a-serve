@@ -156,10 +156,8 @@ if [[ -n "$DEMO_FAKE" ]]; then
   AGENT_FLAGS="--sandbox local --command fakeacp"
 else
   AGENT="${DEMO_AGENT:-opencode}"
-  AGENT_FLAGS="--secret ${DEMO_SECRET:-OPENROUTER_API_KEY}"
+  AGENT_FLAGS="--model ${DEMO_MODEL:-openrouter/~google/gemini-flash-latest} --secret ${DEMO_SECRET:-OPENROUTER_API_KEY}"
 fi
-# The opencode model that set_model configures, one the API key can use.
-DEMO_MODEL="${DEMO_MODEL:-openrouter/~google/gemini-flash-latest}"
 
 # shellcheck source=lib.sh
 source "$DEMO_TOOLS/lib.sh"

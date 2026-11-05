@@ -87,14 +87,14 @@ layout() {
 scene() {
   say B "2. Create the agent from the recipe"
   run B "cd ~"
-  start B "a2a-serve recipe $O11Y_RECIPE --name o11y"
+  start B "a2a-serve recipe $O11Y_RECIPE \\
+  --name o11y --model openrouter/~google/gemini-flash-latest"
   answer B 'Create o11y in \./o11y\? \(y, n\) \[y\]: *$' y
   answer B 'API keys to pass to the agent .*\]: *$' ""
   answer B 'Use github .*\? \(y, n\) \[y\]: *$' n
   answer B 'GRAFANA_SERVICE_ACCOUNT_TOKEN is set in this shell.*\[y\]: *$' y
   answer B 'GRAFANA_URL is set in this shell.*\[y\]: *$' y
   wait_ready B
-  set_model "$HOME/o11y"
   pause 3
 
   clear_pane B

@@ -94,7 +94,7 @@ func Lookup(name string, command []string) (Profile, error) {
 func Warnings(cfg *agentdir.Config) []string {
 	var out []string
 	if cfg.Harness == "opencode" && cfg.Model == "" && slices.Contains(cfg.Secrets, "OPENROUTER_API_KEY") {
-		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/google/gemini-flash-latest")
+		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/~google/gemini-flash-latest")
 	}
 	return out
 }
@@ -109,18 +109,28 @@ const ImageTag = "latest"
 // instead of its default of approving them.
 const opencodePermission = `{"bash":"ask","edit":"ask","webfetch":"ask"}`
 
-// opencodeConfig keeps opencode working after a tool call is denied, by a
-// rule or by the user, so that it can answer another way. By default it
-// ends the turn without an answer.
-const opencodeConfig = `{"experimental":{"continue_loop_on_deny":true}}`
+// opencodeConfigEnv is opencode's inline config, which it reads on every
+// start, also in agent homes bootstrapped before a setting existed. It keeps
+// opencode working after a tool call is denied, by a rule or by the user, so
+// that it can answer another way; by default it ends the turn without an
+// answer. A non-empty model overrides the model of opencode.json.
+func opencodeConfigEnv(model string) []string {
+	cfg := map[string]any{"experimental": map[string]any{"continue_loop_on_deny": true}}
+	if model != "" {
+		cfg["model"] = model
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return []string{"OPENCODE_CONFIG_CONTENT=" + string(data), "CLOUDCODE_CONFIG_CONTENT=" + string(data)}
+}
 
-// opencodeEnv configures opencode on every start, also in agent homes
-// bootstrapped before a setting existed.
-var opencodeEnv = []string{
+// opencodeEnv configures opencode on every start.
+var opencodeEnv = append([]string{
 	"OPENCODE_PERMISSION=" + opencodePermission,
 	"CLOUDCODE_PERMISSION=" + opencodePermission,
-	"OPENCODE_CONFIG_CONTENT=" + opencodeConfig,
-}
+}, opencodeConfigEnv("")...)
 
 type opencode struct{}
 
@@ -136,15 +146,9 @@ func (opencode) Command(ws Workspace) Command {
 	}
 }
 
-// ModelEnv sets the model in inline config, which overrides the model of
-// opencode.json in the harness home.
-func (opencode) ModelEnv(model string) []string {
-	data, err := json.Marshal(map[string]string{"model": model})
-	if err != nil {
-		panic(err)
-	}
-	return []string{"OPENCODE_CONFIG_CONTENT=" + string(data), "CLOUDCODE_CONFIG_CONTENT=" + string(data)}
-}
+// ModelEnv sets the model in opencode's inline config, which overrides the
+// model of opencode.json in the harness home.
+func (opencode) ModelEnv(model string) []string { return opencodeConfigEnv(model) }
 
 func (opencode) Bootstrap(ws Workspace) error {
 	var permission map[string]any

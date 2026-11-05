@@ -71,7 +71,14 @@ func TestPrepareModel(t *testing.T) {
 		model   string
 		want    []string
 	}{
-		{name: "opencode", model: "openrouter/a/b", want: []string{`OPENCODE_CONFIG_CONTENT={"model":"openrouter/a/b"}`, `CLOUDCODE_CONFIG_CONTENT={"model":"openrouter/a/b"}`}},
+		{name: "opencode", model: "openrouter/a/b", want: []string{
+			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true},"model":"openrouter/a/b"}`,
+			`CLOUDCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true},"model":"openrouter/a/b"}`,
+		}},
+		{name: "opencode", want: []string{
+			`OPENCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true}}`,
+			`CLOUDCODE_CONFIG_CONTENT={"experimental":{"continue_loop_on_deny":true}}`,
+		}},
 		{name: "claude", model: "sonnet", want: []string{"ANTHROPIC_MODEL=sonnet"}},
 		{name: "claude", command: []string{"my-claude"}, model: "opus", want: []string{"ANTHROPIC_MODEL=opus"}},
 		{name: "claude"},

@@ -218,11 +218,18 @@ func writeIfMissing(path string, data []byte) error {
 }
 
 // profileCommand is the command of the profile, with the model of spec.
+// The model's variables replace the command's own of the same name.
 func profileCommand(spec Spec, ws Workspace) Command {
 	c := spec.Profile.Command(ws)
-	if spec.Model != "" {
-		c.Env = append(slices.Clone(c.Env), spec.Profile.ModelEnv(spec.Model)...)
+	if spec.Model == "" {
+		return c
 	}
+	model := spec.Profile.ModelEnv(spec.Model)
+	env := slices.DeleteFunc(slices.Clone(c.Env), func(kv string) bool {
+		name, _, _ := strings.Cut(kv, "=")
+		return slices.ContainsFunc(model, func(m string) bool { return strings.HasPrefix(m, name+"=") })
+	})
+	c.Env = append(env, model...)
 	return c
 }
 
