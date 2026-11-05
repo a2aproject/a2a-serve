@@ -1,0 +1,11 @@
+{
+  "name": "a2a-serve-demo-browser",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "setup": "playwright install chromium"
+  },
+  "dependencies": {
+    "playwright": "^1.50.0"
+  }
+}
