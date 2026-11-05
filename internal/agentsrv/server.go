@@ -370,7 +370,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
-		Limiter:   pairings.NewLimiter(),
+		Limiter:   pairings.NewLimiter(time.Now),
 		Users:     stopUsers{s},
 		Homes:     s.dir,
 	}

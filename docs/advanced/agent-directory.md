@@ -7,6 +7,7 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
 ├── …project files…        # the workspace
 └── .a2a/
     ├── config.yaml        # agent settings, no secrets; can be committed
+    ├── recipe.lock        # the recipe the agent came from, if any; can be committed
     ├── .gitignore         # "state/"
     └── state/             # never committed
         ├── server.db      # tasks, sessions, tokens, contacts, nodes
@@ -23,6 +24,8 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
 ```
 
 `a2a-serve` commands talk to the running agent over `server.sock`.
+
+`recipe.lock` records the [recipe](../guide/recipes.md) the agent was created from: the repository, ref, path and commit, or the local directory, with a hash of each of the recipe's files and the recipe's `config.yaml`. It holds no secrets. The sandbox hides `.a2a`, so the agent can't edit it.
 
 ## Relay directory
 
