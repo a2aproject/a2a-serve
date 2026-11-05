@@ -49,6 +49,8 @@ type fakeNode struct {
 	secret func() string
 	wakes  []mailboxapi.Envelope
 	badSig bool
+	// silent nodes never answer.
+	silent bool
 }
 
 func (n *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -67,10 +69,10 @@ func (n *fakeNode) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if mailboxapi.Verify(n.secret(), r.Header.Get(mailboxapi.SignatureHeader), body, time.Now(), time.Minute) != nil {
 		n.badSig = true
 	}
-	client := n.client
+	client, silent := n.client, n.silent
 	n.mu.Unlock()
 	w.WriteHeader(http.StatusAccepted)
-	if env.Kind != mailboxapi.KindTask {
+	if env.Kind != mailboxapi.KindTask || silent {
 		return
 	}
 	go func() {

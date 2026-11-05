@@ -28,9 +28,10 @@ import (
 // findStarting returns the PID of a server that holds the lock of dir but
 // doesn't serve its control socket yet, as while it pulls an image or logs
 // in to a network. The lock tells a live server from a PID file that a
-// crash left behind. Anything unreadable means that no server is starting.
+// crash left behind, and other holders of the lock remove such a file when
+// they take it. Anything unreadable means that no server is starting.
 func findStarting(dir agentdir.Dir) (int, bool) {
-	release, err := fsutil.TryLock(dir.LockPath())
+	release, err := dir.Lock()
 	if err == nil {
 		if err := release(); err != nil {
 			slog.Debug("releasing the agent directory lock", "error", err)

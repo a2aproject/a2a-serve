@@ -19,6 +19,8 @@ package network
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -28,6 +30,7 @@ import (
 	"net/http"
 	"net/mail"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -117,12 +120,14 @@ func IsEmail(s string) bool {
 }
 
 // ProbeAgents keeps the candidates which serve an A2A agent card, filling in
-// their name and description from it.
-func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo) []PeerInfo {
+// their description from it. Candidates come named by the network, and taken
+// are the network names of the other machines, such as this one and offline
+// ones. See [nameAgents] for the names the agents get.
+func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo, taken []string) []PeerInfo {
 	var (
-		mu  sync.Mutex
-		wg  sync.WaitGroup
-		out []PeerInfo
+		mu     sync.Mutex
+		wg     sync.WaitGroup
+		agents []probedAgent
 	)
 	for _, c := range candidates {
 		wg.Go(func() {
@@ -131,16 +136,74 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 				return
 			}
 			c.Description = card.Description
-			if card.Name != "" {
-				c.Name = card.Name
-			}
 			mu.Lock()
-			out = append(out, c)
+			agents = append(agents, probedAgent{PeerInfo: c, card: card.Name})
 			mu.Unlock()
 		})
 	}
 	wg.Wait()
+	machines := slices.Clone(taken)
+	for _, c := range candidates {
+		machines = append(machines, c.Name)
+	}
+	return nameAgents(agents, machines)
+}
+
+type probedAgent struct {
+	PeerInfo
+	card string
+}
+
+// nameAgents names each agent by its network name, or by its card name when
+// no other agent declares it and no other machine has it as its network name.
+// Agents that still share a name get a suffix derived from their node, so a
+// name never stands for two agents. machines are the network names of every
+// machine on the network but this one.
+func nameAgents(agents []probedAgent, machines []string) []PeerInfo {
+	machineNames, cardNames := map[string]int{}, map[string]int{}
+	for _, m := range machines {
+		machineNames[strings.ToLower(m)]++
+	}
+	for _, a := range agents {
+		cardNames[strings.ToLower(a.card)]++
+	}
+	out := make([]PeerInfo, 0, len(agents))
+	for _, a := range agents {
+		card := strings.ToLower(a.card)
+		othersNamed := machineNames[card]
+		if card == strings.ToLower(a.Name) {
+			othersNamed--
+		}
+		if a.card != "" && cardNames[card] == 1 && othersNamed == 0 {
+			a.Name = a.card
+		}
+		out = append(out, a.PeerInfo)
+	}
+	counts := countNames(out)
+	for i := range out {
+		if counts[strings.ToLower(out[i].Name)] > 1 {
+			out[i].Name += "-" + nodeSuffix(out[i].Node)
+		}
+	}
+	// A suffixed name still collides only with a name picked to match it.
+	// The agents left sharing a name are dropped.
+	counts = countNames(out)
+	out = slices.DeleteFunc(out, func(p PeerInfo) bool { return counts[strings.ToLower(p.Name)] > 1 })
+	slices.SortFunc(out, func(a, b PeerInfo) int { return strings.Compare(a.Name, b.Name) })
 	return out
+}
+
+func countNames(peers []PeerInfo) map[string]int {
+	counts := map[string]int{}
+	for _, p := range peers {
+		counts[strings.ToLower(p.Name)]++
+	}
+	return counts
+}
+
+func nodeSuffix(node string) string {
+	sum := sha256.Sum256([]byte(node))
+	return hex.EncodeToString(sum[:4])
 }
 
 // FetchCard fetches the agent card served at base.

@@ -180,7 +180,7 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	h = a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
 		a2asrv.WithTaskStore(ts),
 		a2asrv.WithUpdateMaterializer(ts.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(&nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised}),
+		a2asrv.WithCallInterceptors(&nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised, tasks: ts}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),
 	)
@@ -224,6 +224,7 @@ type nodeCallerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	node       string
 	advertised func(id string) bool
+	tasks      *store.TaskStore
 }
 
 const errNodeCaller = "webhook nodes are reachable by the hosting agent and its owner"
@@ -234,7 +235,7 @@ func mayCallNode(p auth.Principal, advertised func(id string) bool, node string)
 	return p.IsOwner() || hosting || (p.Role == auth.RoleAuthenticated && advertised != nil && advertised(node))
 }
 
-func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, _ *a2asrv.Request) (context.Context, any, error) {
+func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
 	p, ok := auth.Caller(ctx)
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
@@ -243,6 +244,12 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 		return ctx, nil, fmt.Errorf("%w: %s", a2a.ErrUnauthorized, errNodeCaller)
 	}
 	auth.SetCallUser(callCtx, p)
+	// a2a-go streams a running task to any subscriber, so subscribers get
+	// the same scoping as GetTask.
+	if sub, ok := req.Payload.(*a2a.SubscribeToTaskRequest); ok {
+		_, err := c.tasks.Get(ctx, sub.ID)
+		return ctx, nil, err
+	}
 	return ctx, nil, nil
 }
 

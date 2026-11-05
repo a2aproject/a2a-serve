@@ -647,6 +647,12 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	if !p.IsOwner() {
 		ctx = limiter.AttachScope(ctx, p.ID)
 	}
+	// a2a-go streams a running task to any subscriber, so subscribers get
+	// the same scoping as GetTask.
+	if sub, ok := req.Payload.(*a2a.SubscribeToTaskRequest); ok {
+		_, err := i.tasks.Get(ctx, sub.ID)
+		return ctx, nil, err
+	}
 	// Anonymous callers who proved nothing share one principal, so they
 	// list only the conversation they name, whose ID proves it is theirs.
 	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.AnonymousID && list.ContextID == "" {

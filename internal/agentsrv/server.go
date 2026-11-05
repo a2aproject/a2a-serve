@@ -239,10 +239,10 @@ func Run(ctx context.Context, opts Options) error {
 	}()
 
 	if err := s.open(ctx, &closers, opts.Executor == nil); err != nil {
-		return err
+		return startupError(ctx, err)
 	}
 	if err := s.build(ctx, &closers, opts); err != nil {
-		return err
+		return startupError(ctx, err)
 	}
 	chans := opts.Channels
 	if chans == nil {
@@ -253,12 +253,7 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	errc, err := s.serve(ctx, &closers, chans)
 	if err != nil {
-		// The control socket already serves, so a stop may come before
-		// startup finishes.
-		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
-			return nil
-		}
-		return err
+		return startupError(ctx, err)
 	}
 	if opts.Ready != nil {
 		opts.Ready(s)
@@ -271,13 +266,25 @@ func Run(ctx context.Context, opts Options) error {
 	}
 }
 
+// startupError is the error a startup step failed with, or nil when a
+// signal or a stop through the control socket ended ctx: then the step may
+// fail with an error that doesn't wrap the cancellation, as a killed image
+// pull does, and a service manager would restart a server that exits with it.
+func startupError(ctx context.Context, err error) error {
+	if ctx.Err() == nil {
+		return err
+	}
+	slog.Debug("startup interrupted", "error", err)
+	return nil
+}
+
 // open locks the agent directory and opens its database, the network
 // providers and the listeners agent processes reach the server through.
 func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error {
 	if err := s.dir.Init(); err != nil {
 		return err
 	}
-	release, err := fsutil.TryLock(s.dir.LockPath())
+	release, err := s.dir.Lock()
 	if errors.Is(err, fsutil.ErrLocked) {
 		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
@@ -338,6 +345,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if err != nil {
 		return err
 	}
+	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
 	google := googleauth.Google
@@ -370,7 +378,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Forget:    s.nodes.Forget,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
-		Limiter:   pairings.NewLimiter(),
+		Limiter:   pairings.NewLimiter(time.Now),
 		Users:     stopUsers{s},
 		Homes:     s.dir,
 	}

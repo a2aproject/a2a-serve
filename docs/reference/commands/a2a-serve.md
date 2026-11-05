@@ -33,6 +33,7 @@ git finds a repository, or take --dir.
 | [`backup`](backup.md) | Take, list and restore encrypted backup snapshots of the agent |
 | [`channel`](channel.md) | Manage the messengers the agent is reachable from |
 | [`config`](config.md) | Show and change the agent's settings |
+| [`recipe`](recipe.md) | Create an agent from a recipe, a directory with a ready-made agent, or update it |
 | [`schedule`](schedule.md) | Run prompts on a schedule |
 
 ## Pairing and contacts
