@@ -141,3 +141,28 @@ func TestPolicyOthers(t *testing.T) {
 		})
 	}
 }
+
+func TestPolicyAllowsSignIn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		policy Policy
+		email  string
+		domain string
+		want   bool
+	}{
+		{name: "listed email", policy: testPolicy(true, []string{"Anna@Example.com"}), email: "anna@example.com", want: true},
+		{name: "workspace domain", policy: testPolicy(false, []string{"*@example.com"}), email: "anna@example.com", domain: "example.com", want: true},
+		{name: "personal account in the domain", policy: testPolicy(false, []string{"*@example.com"}), email: "anna@example.com"},
+		{name: "removed email", policy: testPolicy(true, []string{"bob@example.com"}), email: "anna@example.com"},
+		{name: "anyone on the public URL", policy: Policy{Anonymous: []string{MemberAnyone}}, email: "anna@example.com"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.policy.AllowsSignIn(tc.email, tc.domain); got != tc.want {
+				t.Fatalf("Policy.AllowsSignIn(%q, %q) = %v, want %v", tc.email, tc.domain, got, tc.want)
+			}
+		})
+	}
+}

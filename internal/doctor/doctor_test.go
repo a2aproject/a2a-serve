@@ -570,6 +570,38 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"mcp", StatusWarn}, {"running", StatusWarn}},
 		},
 		{
+			name: "project MCP servers turned off",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, MCP: agentdir.MCPConfig{Disabled: []string{"api", "github"}}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp", "env": {"T": "${GH_TOKEN}"}}, "api": {"url": "https://x/${KEY}"}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "project MCP servers turned off for Claude Code without a sandbox",
+			cfg:  agentdir.Config{Name: "coder", Harness: "claude", Sandbox: agentdir.SandboxLocal, MCP: agentdir.MCPConfig{Disabled: []string{"github"}}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["claude-agent-acp"] = "/usr/bin/claude-agent-acp"
+				mcp := `{"mcpServers": {"github": {"command": "gh-mcp"}}}`
+				if err := os.WriteFile(filepath.Join(d.Root, project.MCPFile), []byte(mcp), 0o644); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
+			name: "turned off MCP server missing from the project",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, MCP: agentdir.MCPConfig{Disabled: []string{"gone"}}},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"mcp", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
 			name: "invalid project MCP file",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {

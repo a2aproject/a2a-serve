@@ -51,52 +51,69 @@ func (s *Store) Prune(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
 			return err
 		}
-		pruned, err := pruneTasks(ctx, tx, cutoff)
+		pruned, err := deleteTasks(ctx, tx, `updated < ?`, cutoff)
 		if err != nil {
 			return err
 		}
-		contexts := map[string]bool{}
-		for _, t := range pruned {
-			contexts[t.contextID] = true
-			if _, err := tx.ExecContext(ctx, `DELETE FROM task_blobs WHERE scope = ? AND task_id = ?`, t.scope, t.id); err != nil {
-				return err
-			}
-			if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE task_id = ? AND contact = ''`, t.id); err != nil {
-				return err
-			}
-		}
-		for c := range contexts {
-			for _, table := range []string{"handles", "call_tasks"} {
-				if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE context_id = ? AND NOT EXISTS (SELECT 1 FROM tasks WHERE context_id = ?)`, c, c); err != nil {
-					return err
-				}
-			}
+		if err := forgetTasks(ctx, tx, pruned, "handles", "call_tasks"); err != nil {
+			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE contact != '' AND created < ?`, cutoff); err != nil {
 			return err
 		}
-		if _, err := tx.ExecContext(ctx, `DELETE FROM pending_questions WHERE question_id NOT IN (SELECT id FROM questions)`); err != nil {
-			return err
-		}
-		_, err = tx.ExecContext(ctx, `DELETE FROM blobs WHERE NOT EXISTS (SELECT 1 FROM task_blobs WHERE task_blobs.hash = blobs.hash)`)
-		return err
+		return deleteOrphans(ctx, tx)
 	})
 }
 
-type prunedTask struct{ scope, id, contextID string }
+// deleteOrphans deletes pending questions whose question is gone, and
+// attachments no task refers to.
+func deleteOrphans(ctx context.Context, tx *sql.Tx) error {
+	if _, err := tx.ExecContext(ctx, `DELETE FROM pending_questions WHERE question_id NOT IN (SELECT id FROM questions)`); err != nil {
+		return err
+	}
+	_, err := tx.ExecContext(ctx, `DELETE FROM blobs WHERE NOT EXISTS (SELECT 1 FROM task_blobs WHERE task_blobs.hash = blobs.hash)`)
+	return err
+}
 
-func pruneTasks(ctx context.Context, tx *sql.Tx, cutoff int64) ([]prunedTask, error) {
-	rows, err := tx.QueryContext(ctx, `DELETE FROM tasks WHERE updated < ? RETURNING scope, id, context_id`, cutoff)
+type deletedTask struct{ scope, id, contextID string }
+
+// deleteTasks deletes the tasks matching where, with their events and
+// snapshots, and returns them.
+func deleteTasks(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]deletedTask, error) {
+	rows, err := tx.QueryContext(ctx, `DELETE FROM tasks WHERE `+where+` RETURNING scope, id, context_id`, args...)
 	if err != nil {
 		return nil, err
 	}
-	var out []prunedTask
+	var out []deletedTask
 	for rows.Next() {
-		var t prunedTask
+		var t deletedTask
 		if err := rows.Scan(&t.scope, &t.id, &t.contextID); err != nil {
 			return nil, errors.Join(err, rows.Close())
 		}
 		out = append(out, t)
 	}
 	return out, errors.Join(rows.Err(), rows.Close())
+}
+
+// forgetTasks deletes the attachment references and questions of deleted
+// tasks, and the rows of contextTables for the contexts left without tasks.
+func forgetTasks(ctx context.Context, tx *sql.Tx, deleted []deletedTask, contextTables ...string) error {
+	contexts := map[string]bool{}
+	for _, t := range deleted {
+		contexts[t.contextID] = true
+		if _, err := tx.ExecContext(ctx, `DELETE FROM task_blobs WHERE scope = ? AND task_id = ?`, t.scope, t.id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM questions WHERE task_id = ? AND contact = ''`, t.id); err != nil {
+			return err
+		}
+	}
+	for c := range contexts {
+		for _, table := range contextTables {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM `+table+` WHERE context_id = ? AND NOT EXISTS (SELECT 1 FROM tasks WHERE context_id = ?)`, c, c); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }

@@ -17,6 +17,6 @@ a2a-serve schedule rm morning-brief
 - `--chat <channel>[:<who>]` posts each run to that user's chat, where they can reply and answer approvals. `--thread new` (the default) starts a new conversation each run; `--thread same` continues the current one. Without `--chat`, approvals go to the owner chat.
 - A run missed while the agent was stopped runs once on the next start.
 
-The agent can create schedules too. When someone asks "remind me on Friday at 5", the agent adds a schedule that runs as that person and reports back in the same conversation. People can list and remove only their own schedules; `a2a-serve schedule list` shows all of them.
+The agent can create schedules too. When someone asks "remind me on Friday at 5", the agent adds a schedule that runs as that person and reports back in the same conversation. People can list and remove only their own schedules; `a2a-serve schedule list` shows all of them. Each run gets the access its person has at that time, so the schedule of someone on the tailnet fails once they leave it.
 
 Not in this version: schedules in `config.yaml`, and editing a schedule. Remove it and add it again.

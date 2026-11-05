@@ -102,6 +102,8 @@ type MCPServerStatus struct {
 	// Missing are the variables it references which have no value, so the
 	// harness doesn't get it.
 	Missing []string `json:"missing,omitempty"`
+	// Disabled is set when the config turns the server off.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BackupStatus describes the agent's backup snapshots.
@@ -317,6 +319,15 @@ type RevokeResponse struct {
 	// Kept is set when the pairing stays and only its credentials were
 	// revoked, as for the local pairing.
 	Kept bool `json:"kept,omitempty"`
+	// Access is who may call the agent afterwards.
+	Access *Access `json:"access,omitempty"`
+}
+
+// SignOutResponse tells what `pair rm --email` revoked.
+type SignOutResponse struct {
+	Email string `json:"email"`
+	// Tokens is the number of Google sign-in tokens revoked.
+	Tokens int `json:"tokens"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
 }
@@ -586,6 +597,12 @@ func (c *Client) Pair(ctx context.Context, req PairCodeRequest) (*PairCodeRespon
 func (c *Client) Revoke(ctx context.Context, name string) (*RevokeResponse, error) {
 	var out RevokeResponse
 	return &out, c.do(ctx, http.MethodDelete, "/pair/"+url.PathEscape(name), nil, &out)
+}
+
+// SignOut revokes the Google sign-in tokens of email.
+func (c *Client) SignOut(ctx context.Context, email string) (*SignOutResponse, error) {
+	var out SignOutResponse
+	return &out, c.do(ctx, http.MethodDelete, "/signins/"+url.PathEscape(email), nil, &out)
 }
 
 // Pairings lists the callers and webhook nodes paired with the agent.
