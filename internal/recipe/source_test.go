@@ -130,6 +130,24 @@ func TestParseSource(t *testing.T) {
 	}
 }
 
+func TestSourceDescribe(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		src  Source
+		want string
+	}{
+		{src: Source{Repo: "https://github.com/acme/agents.git", Ref: "main", Path: "experts/elk"}, want: "experts/elk from github.com/acme/agents at main"},
+		{src: Source{Repo: "git@github.com:acme/agents.git", Ref: "v1.2"}, want: "github.com/acme/agents at v1.2"},
+		{src: Source{Repo: "ssh://git@example.com/acme/agents.git", Path: "elk"}, want: "elk from example.com/acme/agents at the default branch"},
+		{src: Source{Dir: "/src/elk"}, want: "/src/elk"},
+	}
+	for _, tc := range tests {
+		if got := tc.src.Describe(); got != tc.want {
+			t.Fatalf("Source.Describe() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
 func TestParseSourceRefused(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

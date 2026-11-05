@@ -73,6 +73,7 @@ nav:
       - Secrets: guide/secrets.md
       - Sandbox: guide/sandbox.md
       - MCP and Skills: guide/mcp-and-skills.md
+      - Recipes: guide/recipes.md
       - Approvals: guide/approvals.md
       - Inspector: guide/inspector.md
       - Identities: guide/identities.md
@@ -105,6 +106,7 @@ nav:
           - restart: reference/commands/restart.md
           - inspect: reference/commands/inspect.md
           - config: reference/commands/config.md
+          - recipe: reference/commands/recipe.md
           - channel: reference/commands/channel.md
           - schedule: reference/commands/schedule.md
           - backup: reference/commands/backup.md
