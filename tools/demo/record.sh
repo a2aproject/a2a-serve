@@ -132,6 +132,18 @@ if [[ -z "${PLAYWRIGHT_BROWSERS_PATH:-}" ]]; then
     export PLAYWRIGHT_BROWSERS_PATH="$REAL_HOME/.cache/ms-playwright"
   fi
 fi
+# Git finds credentials, such as the macOS keychain's, through HOME. This
+# helper asks the real HOME's helpers, so that a recipe can be fetched from a
+# private repository.
+cat >"$DEMO_WORK/bin/git-credential-realhome" <<EOF
+#!/bin/sh
+[ "\$1" = get ] || exit 0
+HOME="$REAL_HOME" GIT_TERMINAL_PROMPT=0 exec git credential fill
+EOF
+chmod 700 "$DEMO_WORK/bin/git-credential-realhome"
+if [[ -z "${GIT_CONFIG_COUNT:-}" ]]; then
+  export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=realhome
+fi
 export DEMO_REAL_HOME="$REAL_HOME" DEMO_PAUSE_SCALE
 export HOME="$DEMO_WORK/you"
 export BASH_SILENCE_DEPRECATION_WARNING=1
@@ -146,6 +158,8 @@ else
   AGENT="${DEMO_AGENT:-opencode}"
   AGENT_FLAGS="--secret ${DEMO_SECRET:-OPENROUTER_API_KEY}"
 fi
+# The opencode model that set_model configures, one the API key can use.
+DEMO_MODEL="${DEMO_MODEL:-openrouter/~google/gemini-flash-latest}"
 
 # shellcheck source=lib.sh
 source "$DEMO_TOOLS/lib.sh"

@@ -136,6 +136,29 @@ start() {
   t send-keys -t "$(pane_id "$1")" Enter
 }
 
+# answer <pane> <ERE> <reply> waits for a question of a running command and
+# types the reply, an empty one to take the default.
+answer() {
+  wait_text "$1" "$2"
+  pause 1
+  type_keys "$1" "$3"
+  sleep 0.3
+  t send-keys -t "$(pane_id "$1")" Enter
+}
+
+# set_model <dir> makes the opencode agent in <dir> use $DEMO_MODEL, off
+# camera. Without a model, opencode uses its own free model and ignores the
+# API key. The server writes the agent's opencode config on its first start,
+# so the agent is started and stopped once first.
+set_model() {
+  local cfg="$1/.a2a/state/home/.config/opencode/opencode.json"
+  if [[ ! -f "$cfg" ]]; then
+    a2a-serve start --detach --dir "$1" >/dev/null 2>&1 || die "starting the agent in $1 to configure its model"
+    a2a-serve stop --dir "$1" >/dev/null 2>&1 || die "stopping the agent in $1"
+  fi
+  jq --arg m "$DEMO_MODEL" '.model = $m' "$cfg" >"$cfg.tmp" && mv "$cfg.tmp" "$cfg" || die "setting the model in $cfg"
+}
+
 # say <pane> <text> types a comment line, as narration.
 say() {
   run "$1" "# $2"
@@ -193,18 +216,24 @@ until_ok() {
   done
 }
 
-# approve_pending <pane> [flags] approves the task the pane's last a2a send
-# left in input-required, and the ones that follow, up to three. Flags such as
-# "-a <url>" are repeated on each a2a send.
-approve_pending() {
+# reply_pending <pane> <reply> [flags] answers the task the pane's last
+# a2a send left in input-required with reply, such as approve or reject, and
+# the ones that follow, up to three. Flags such as "-a <url>" are repeated on
+# each a2a send.
+reply_pending() {
   local i task
   for i in 1 2 3; do
     [[ "$(last_match "$1" 'Status: +[a-z-]+')" == *input-required ]] || return 0
     pause 3
     task="$(last_match "$1" 'a2a send --task-id [^ ]+')"
     clear_pane "$1"
-    run "$1" "a2a send ${2:+$2 }--task-id ${task##* } approve"
+    run "$1" "a2a send ${3:+$3 }--task-id ${task##* } $2"
   done
+}
+
+# approve_pending <pane> [flags] approves what reply_pending answers.
+approve_pending() {
+  reply_pending "$1" approve "${2:-}"
 }
 
 # fake <real> <fake> prints <fake> in fake mode and <real> otherwise, for
