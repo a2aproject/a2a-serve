@@ -95,8 +95,20 @@ func newStore(db, reads *sql.DB, path string) (*Store, error) {
 	if err := s.migrate(context.Background()); err != nil {
 		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), s.closeDBs())
 	}
+	if _, err := s.db.Exec(indexes); err != nil {
+		return nil, errors.Join(fmt.Errorf("indexing %s: %w", path, err), s.closeDBs())
+	}
 	return s, nil
 }
+
+// indexes are created when the store opens, outside the migrations, so that
+// an older a2a-serve, which doesn't know them, still opens the database.
+const indexes = `
+CREATE INDEX IF NOT EXISTS tasks_context_updated ON tasks (scope, context_id, updated DESC, id);
+CREATE INDEX IF NOT EXISTS tasks_owner_updated ON tasks (scope, owner, updated DESC, id);
+CREATE INDEX IF NOT EXISTS questions_task ON questions (task_id);
+CREATE INDEX IF NOT EXISTS questions_unanswered ON questions (created) WHERE answered_by = '';
+`
 
 // Close waits for the writes in progress and closes the database. Later
 // writes fail with ErrClosed.
@@ -437,6 +449,19 @@ func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	}
 	defer done()
 	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
+// readTx runs fn in a read transaction, whose queries all see the same state
+// of the database.
+func (s *Store) readTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.reads.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}

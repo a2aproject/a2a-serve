@@ -78,7 +78,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--backup-retention duration` |  | How long snapshots are kept, a duration in hours or days such as 48h or 7d; the latest is always kept (default 7d) |
 | `--description string` |  | Agent description for its card |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
-| `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d) |
+| `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 
 **Workspace flags**
 

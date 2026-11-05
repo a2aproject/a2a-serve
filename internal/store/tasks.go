@@ -194,78 +194,181 @@ func (ts *TaskStore) append(ctx context.Context, tx *sql.Tx, h *taskHeader, ev *
 	if n, err := res.RowsAffected(); err != nil || n == 0 {
 		return 0, errors.Join(taskstore.ErrConcurrentModification, err)
 	}
-	return version, ts.insertEvent(ctx, tx, next.ID, version, ev)
+	if err := ts.insertEvent(ctx, tx, next.ID, version, ev); err != nil {
+		return 0, err
+	}
+	state := next.Status.State
+	if version%snapshotEvery != 0 && state != a2a.TaskStateInputRequired && !state.Terminal() {
+		return version, nil
+	}
+	return version, ts.snapshotInTx(ctx, tx, &taskHeader{owner: h.owner, version: version, updated: h.updated, task: next})
 }
 
-// materialize returns the full task of h, with raw parts still referring to
-// blobs. Terminal tasks are folded from their events once, then read from
-// their snapshot.
-func (ts *TaskStore) materialize(ctx context.Context, h *taskHeader) (*a2a.Task, error) {
-	terminal := h.task.Status.State.Terminal()
-	if terminal {
-		var data string
-		err := ts.s.reads.QueryRowContext(ctx, `SELECT data FROM task_snapshots WHERE scope = ? AND task_id = ? AND version = ?`,
-			ts.scope, string(h.task.ID), h.version).Scan(&data)
-		if err == nil {
-			task := &a2a.Task{}
-			if err := json.Unmarshal([]byte(data), task); err != nil {
-				return nil, fmt.Errorf("decoding snapshot of task %s: %w", h.task.ID, err)
-			}
-			return task, nil
-		}
-		if !errors.Is(err, sql.ErrNoRows) {
-			return nil, err
-		}
-	}
-	events, err := ts.events(ctx, h.task.ID, h.version)
+// snapshotEvery is how many events a task may have after its snapshot.
+const snapshotEvery = 100
+
+// snapshotInTx stores the task of h, folded from its snapshot and the events
+// after it, as its snapshot at the version of h. A task which can't be folded
+// keeps its events only, so that the update which led here still succeeds.
+func (ts *TaskStore) snapshotInTx(ctx context.Context, tx *sql.Tx, h *taskHeader) error {
+	logs, err := ts.logs(ctx, tx, []*taskHeader{h})
 	if err != nil {
-		return nil, err
+		return err
 	}
-	task, err := fold(events)
+	task, err := logs[0].fold()
 	if err != nil {
-		return nil, fmt.Errorf("materializing task %s: %w", h.task.ID, err)
+		slog.Warn("folding a task for its snapshot", "task", h.task.ID, "error", err)
+		return nil
 	}
-	if terminal {
-		ts.snapshot(ctx, task, h.version)
-	}
-	return task, nil
+	return ts.putSnapshot(ctx, tx, task, h.version)
 }
 
-// events returns the events of a task up to version, oldest first.
-func (ts *TaskStore) events(ctx context.Context, taskID a2a.TaskID, version int64) ([]a2a.Event, error) {
-	rows, err := ts.s.reads.QueryContext(ctx, `SELECT kind, data FROM task_events WHERE scope = ? AND task_id = ? AND version <= ? ORDER BY version`,
-		ts.scope, string(taskID), version)
-	if err != nil {
-		return nil, err
-	}
-	defer closeRows(rows)
-	var events []a2a.Event
-	for rows.Next() {
-		var kind, data string
-		if err := rows.Scan(&kind, &data); err != nil {
-			return nil, err
-		}
-		ev, err := decodeEvent(kind, data)
-		if err != nil {
-			return nil, fmt.Errorf("task %s: %w", taskID, err)
-		}
-		events = append(events, ev)
-	}
-	return events, rows.Err()
-}
-
-// snapshot caches the materialized task at version. A failure only costs
-// folding the events again on the next read.
-func (ts *TaskStore) snapshot(ctx context.Context, task *a2a.Task, version int64) {
+// putSnapshot stores task as its snapshot at version. A terminal task never
+// changes again, so its snapshot replaces its events.
+func (ts *TaskStore) putSnapshot(ctx context.Context, tx *sql.Tx, task *a2a.Task, version int64) error {
 	data, err := json.Marshal(task)
-	if err == nil {
-		_, err = ts.s.exec(ctx, `INSERT INTO task_snapshots (scope, task_id, version, data) VALUES (?, ?, ?, ?)
-			ON CONFLICT (scope, task_id) DO UPDATE SET version = excluded.version, data = excluded.data`,
-			ts.scope, string(task.ID), version, string(data))
-	}
 	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO task_snapshots (scope, task_id, version, data) VALUES (?, ?, ?, ?)
+		ON CONFLICT (scope, task_id) DO UPDATE SET version = excluded.version, data = excluded.data`,
+		ts.scope, string(task.ID), version, string(data)); err != nil {
+		return err
+	}
+	if !task.Status.State.Terminal() {
+		return nil
+	}
+	_, err = tx.ExecContext(ctx, `DELETE FROM task_events WHERE scope = ? AND task_id = ? AND version <= ?`,
+		ts.scope, string(task.ID), version)
+	return err
+}
+
+// materialize returns the full tasks of logs, with raw parts still referring
+// to blobs. A terminal task without a snapshot at its version, as older
+// versions of a2a-serve left them, is folded from its events once and then
+// read from its snapshot. It writes, so it must not run in a read transaction.
+func (ts *TaskStore) materialize(ctx context.Context, logs []*taskLog) ([]*a2a.Task, error) {
+	tasks := make([]*a2a.Task, len(logs))
+	for i, l := range logs {
+		var err error
+		if tasks[i], err = l.fold(); err != nil {
+			return nil, fmt.Errorf("materializing task %s: %w", l.header.task.ID, err)
+		}
+		if l.header.task.Status.State.Terminal() && l.snapshotVersion != l.header.version {
+			ts.snapshot(ctx, tasks[i], l.header.version)
+		}
+	}
+	return tasks, nil
+}
+
+// snapshot stores the snapshot of a terminal task read from its events. A
+// failure only costs folding the events again on the next read.
+func (ts *TaskStore) snapshot(ctx context.Context, task *a2a.Task, version int64) {
+	if err := ts.s.inTx(ctx, func(tx *sql.Tx) error { return ts.putSnapshot(ctx, tx, task, version) }); err != nil {
 		slog.Warn("saving a task snapshot", "task", task.ID, "error", err)
 	}
+}
+
+// taskLog is what a task is folded from: its snapshot, if it has one, and
+// the events after it up to the version of its header.
+type taskLog struct {
+	header          *taskHeader
+	snapshot        *a2a.Task
+	snapshotVersion int64
+	events          []a2a.Event
+}
+
+func (l *taskLog) fold() (*a2a.Task, error) { return fold(l.snapshot, l.events) }
+
+// querier runs queries on the read pool or in a transaction.
+type querier interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// logs reads the logs of the tasks of headers, with one query for their
+// snapshots and one for their events. A terminal task loses its events, so
+// readers read the headers and logs in one transaction. CROSS JOIN makes SQLite look up the
+// rows of each task, which it otherwise may find by scanning all events.
+func (ts *TaskStore) logs(ctx context.Context, q querier, headers []*taskHeader) ([]*taskLog, error) {
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	logs := make([]*taskLog, len(headers))
+	byID := make(map[string]*taskLog, len(headers))
+	args := make([]any, 0, 3*len(headers)+1)
+	for i, h := range headers {
+		logs[i] = &taskLog{header: h}
+		byID[string(h.task.ID)] = logs[i]
+		args = append(args, string(h.task.ID), h.version)
+	}
+	err := queryEach(ctx, q, pageValues(len(headers), 2)+`SELECT s.task_id, s.version, s.data FROM page
+		CROSS JOIN task_snapshots s ON s.scope = ? AND s.task_id = page.id AND s.version <= page.v1`,
+		append(args, ts.scope), func(rows *sql.Rows) error {
+			var (
+				id, data string
+				version  int64
+			)
+			if err := rows.Scan(&id, &version, &data); err != nil {
+				return err
+			}
+			task := &a2a.Task{}
+			if err := json.Unmarshal([]byte(data), task); err != nil {
+				return fmt.Errorf("decoding snapshot of task %s: %w", id, err)
+			}
+			byID[id].snapshot, byID[id].snapshotVersion = task, version
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	args = args[:0]
+	for _, l := range logs {
+		args = append(args, string(l.header.task.ID), l.snapshotVersion, l.header.version)
+	}
+	err = queryEach(ctx, q, pageValues(len(headers), 3)+`SELECT e.task_id, e.kind, e.data FROM page
+		CROSS JOIN task_events e ON e.scope = ? AND e.task_id = page.id AND e.version > page.v1 AND e.version <= page.v2
+		ORDER BY e.task_id, e.version`,
+		append(args, ts.scope), func(rows *sql.Rows) error {
+			var id, kind, data string
+			if err := rows.Scan(&id, &kind, &data); err != nil {
+				return err
+			}
+			ev, err := decodeEvent(kind, data)
+			if err != nil {
+				return fmt.Errorf("task %s: %w", id, err)
+			}
+			byID[id].events = append(byID[id].events, ev)
+			return nil
+		})
+	if err != nil {
+		return nil, err
+	}
+	return logs, nil
+}
+
+// pageValues starts a query with the table page of n rows of an id and
+// columns-1 numbers v1, v2 and so on, bound as parameters.
+func pageValues(n, columns int) string {
+	names := []string{"id"}
+	for i := 1; i < columns; i++ {
+		names = append(names, "v"+strconv.Itoa(i))
+	}
+	row := "(" + strings.TrimSuffix(strings.Repeat("?, ", columns), ", ") + ")"
+	return "WITH page (" + strings.Join(names, ", ") + ") AS (VALUES " + strings.TrimSuffix(strings.Repeat(row+", ", n), ", ") + ") "
+}
+
+// queryEach runs query and calls fn for each row.
+func queryEach(ctx context.Context, q querier, query string, args []any, fn func(*sql.Rows) error) error {
+	rows, err := q.QueryContext(ctx, query, args...)
+	if err != nil {
+		return err
+	}
+	for rows.Next() {
+		if err := fn(rows); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+	}
+	return errors.Join(rows.Err(), rows.Close())
 }
 
 // Get implements [taskstore.Store].
@@ -274,18 +377,28 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 	if err != nil {
 		return nil, err
 	}
-	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
-		ts.scope, string(taskID)))
-	if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
-		return nil, a2a.ErrTaskNotFound
-	}
+	var logs []*taskLog
+	err = ts.s.readTx(ctx, func(tx *sql.Tx) error {
+		h, err := scanHeader(tx.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
+			ts.scope, string(taskID)))
+		if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
+			return a2a.ErrTaskNotFound
+		}
+		if err != nil {
+			return err
+		}
+		logs, err = ts.logs(ctx, tx, []*taskHeader{h})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	task, err := ts.materialize(ctx, h)
+	h := logs[0].header
+	tasks, err := ts.materialize(ctx, logs)
 	if err != nil {
 		return nil, err
 	}
+	task := tasks[0]
 	if err := ts.s.loadBlobs(ctx, task); err != nil {
 		return nil, err
 	}
@@ -299,16 +412,23 @@ const (
 
 // List implements [taskstore.Store].
 func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	resp, _, err := ts.ListWithOwners(ctx, req)
+	return resp, err
+}
+
+// ListWithOwners is [TaskStore.List] that also returns the owner of each
+// listed task, in the order of the tasks.
+func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, []string, error) {
 	user, all, err := ts.viewer(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	pageSize := req.PageSize
 	if pageSize == 0 {
 		pageSize = defaultPageSize
 	}
 	if pageSize < 1 || pageSize > 100 {
-		return nil, fmt.Errorf("page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
+		return nil, nil, fmt.Errorf("page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
 	}
 
 	where := []string{"scope = ?"}
@@ -331,54 +451,68 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 	}
 	filter := strings.Join(where, " AND ")
 
-	var total int
-	if err := ts.s.reads.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&total); err != nil {
-		return nil, err
-	}
-
-	pageWhere, pageArgs := filter, args
-	if req.PageToken != "" {
-		updated, id, err := decodePageToken(req.PageToken)
-		if err != nil {
-			return nil, err
-		}
-		pageWhere += " AND (updated < ? OR (updated = ? AND id > ?))"
-		pageArgs = append(append([]any{}, args...), updated, updated, id)
-	}
-	rows, err := ts.s.reads.QueryContext(ctx, "SELECT "+headerColumns+" FROM tasks WHERE "+pageWhere+
-		" ORDER BY updated DESC, id LIMIT ?", append(pageArgs, pageSize+1)...)
-	if err != nil {
-		return nil, err
-	}
-	var headers []*taskHeader
-	for rows.Next() {
-		h, err := scanHeader(rows)
-		if err != nil {
-			return nil, errors.Join(err, rows.Close())
-		}
-		headers = append(headers, h)
-	}
-	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
-		return nil, err
-	}
-
 	history := defaultMaxHistory
 	if req.HistoryLength != nil {
 		history = *req.HistoryLength
 	}
+	var (
+		total   int
+		more    bool
+		headers []*taskHeader
+		logs    []*taskLog
+	)
+	err = ts.s.readTx(ctx, func(tx *sql.Tx) error {
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&total); err != nil {
+			return err
+		}
+		pageWhere, pageArgs := filter, args
+		if req.PageToken != "" {
+			updated, id, err := decodePageToken(req.PageToken)
+			if err != nil {
+				return err
+			}
+			pageWhere += " AND (updated < ? OR (updated = ? AND id > ?))"
+			pageArgs = append(append([]any{}, args...), updated, updated, id)
+		}
+		err := queryEach(ctx, tx, "SELECT "+headerColumns+" FROM tasks WHERE "+pageWhere+" ORDER BY updated DESC, id LIMIT ?",
+			append(pageArgs, pageSize+1), func(rows *sql.Rows) error {
+				h, err := scanHeader(rows)
+				headers = append(headers, h)
+				return err
+			})
+		if err != nil {
+			return err
+		}
+		if more = len(headers) > pageSize; more {
+			headers = headers[:pageSize]
+		}
+		if history > 0 || req.IncludeArtifacts {
+			logs, err = ts.logs(ctx, tx, headers)
+		}
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+
 	resp := &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, TotalSize: total, PageSize: pageSize}
-	if len(headers) > pageSize {
-		headers = headers[:pageSize]
+	if more {
 		last := headers[pageSize-1]
 		resp.NextPageToken = encodePageToken(last.updated, string(last.task.ID))
 	}
-	for _, h := range headers {
-		task := h.task
-		if history > 0 || req.IncludeArtifacts {
-			if task, err = ts.materialize(ctx, h); err != nil {
-				return nil, err
-			}
+	var full []*a2a.Task
+	if logs != nil {
+		if full, err = ts.materialize(ctx, logs); err != nil {
+			return nil, nil, err
 		}
+	}
+	owners := make([]string, 0, len(headers))
+	for i, h := range headers {
+		task := h.task
+		if full != nil {
+			task = full[i]
+		}
+		owners = append(owners, h.owner)
 		switch {
 		case history <= 0:
 			task.History = []*a2a.Message{}
@@ -391,9 +525,9 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 		resp.Tasks = append(resp.Tasks, task)
 	}
 	if err := ts.s.loadBlobs(ctx, resp.Tasks...); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return resp, nil
+	return resp, owners, nil
 }
 
 func encodePageToken(updated int64, id string) string {
@@ -476,22 +610,30 @@ func (ts *TaskStore) UnfinishedOf(ctx context.Context, user string) ([]a2a.TaskI
 
 // LatestInContext returns the most recently updated task of a context.
 func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2a.Task, error) {
-	h, err := scanHeader(ts.s.reads.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
-		ts.scope, contextID))
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil, ErrNotFound
-	}
+	var logs []*taskLog
+	err := ts.s.readTx(ctx, func(tx *sql.Tx) error {
+		h, err := scanHeader(tx.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
+			ts.scope, contextID))
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		logs, err = ts.logs(ctx, tx, []*taskHeader{h})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	task, err := ts.materialize(ctx, h)
+	tasks, err := ts.materialize(ctx, logs)
 	if err != nil {
 		return nil, err
 	}
-	if err := ts.s.loadBlobs(ctx, task); err != nil {
+	if err := ts.s.loadBlobs(ctx, tasks[0]); err != nil {
 		return nil, err
 	}
-	return task, nil
+	return tasks[0], nil
 }
 
 // LatestStateInContext returns the ID and state of the most recently
