@@ -22,7 +22,9 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"slices"
 	"strings"
 	"syscall"
@@ -34,8 +36,18 @@ import (
 )
 
 // fakeMeshEnv makes the test binary act as agentmesh-one. Its value is how
-// long the fake runs before it exits on its own, or "" to run until SIGTERM.
+// long the fake runs before it exits on its own, "" to run until SIGTERM, or
+// one of the modes below.
 const fakeMeshEnv = "A2A_SERVE_TEST_FAKE_AGENTMESH"
+
+const (
+	// fakeMeshPortTaken makes the first fake hand its port to a holder
+	// process and exit, as if another process took the port first.
+	fakeMeshPortTaken = "port-taken"
+	fakeMeshHoldPort  = "hold-port"
+	// fakeMeshServing is created in the data directory by a fake that serves.
+	fakeMeshServing = "serving"
+)
 
 func TestMain(m *testing.M) {
 	if v, ok := os.LookupEnv(fakeMeshEnv); ok {
@@ -45,6 +57,10 @@ func TestMain(m *testing.M) {
 }
 
 func runFakeMesh(exitAfter string) int {
+	if exitAfter == fakeMeshHoldPort {
+		time.Sleep(5 * time.Second)
+		return 0
+	}
 	i := slices.Index(os.Args, "--port")
 	if i < 0 || i+1 >= len(os.Args) {
 		return 2
@@ -52,6 +68,21 @@ func runFakeMesh(exitAfter string) int {
 	ln, err := net.Listen("tcp", "127.0.0.1:"+os.Args[i+1])
 	if err != nil {
 		return 2
+	}
+	if exitAfter == fakeMeshPortTaken {
+		const marker = "port-taken"
+		if _, err := os.Stat(marker); errors.Is(err, os.ErrNotExist) {
+			if err := os.WriteFile(marker, nil, 0o600); err != nil {
+				return 1
+			}
+			if err := holdPort(ln.(*net.TCPListener)); err != nil {
+				return 1
+			}
+			return 2
+		}
+	}
+	if err := os.WriteFile(fakeMeshServing, nil, 0o600); err != nil {
+		return 1
 	}
 	go func() {
 		if err := http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -76,6 +107,18 @@ func runFakeMesh(exitAfter string) int {
 	case <-after:
 		return 3
 	}
+}
+
+// holdPort passes ln to a process that keeps it open for a while.
+func holdPort(ln *net.TCPListener) error {
+	f, err := ln.File()
+	if err != nil {
+		return err
+	}
+	cmd := exec.Command(os.Args[0])
+	cmd.Env = append(os.Environ(), fakeMeshEnv+"="+fakeMeshHoldPort)
+	cmd.ExtraFiles = []*os.File{f}
+	return errors.Join(cmd.Start(), f.Close())
 }
 
 // runFake runs a relay over the fake agentmesh-one and returns its
@@ -152,6 +195,32 @@ func TestRunReturnsWhenAgentMeshExits(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "agentmesh-one exited") {
 		t.Fatalf("Relay.Run() error = %v, want agentmesh-one exited", err)
+	}
+}
+
+func TestRunPicksAnotherPortWhenAgentMeshLosesIt(t *testing.T) {
+	d, c, cancel, done := runFake(t, fakeMeshPortTaken)
+	waitRunning(t, c, done)
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		select {
+		case err := <-done:
+			t.Fatalf("Relay.Run() error = %v, want it to start agentmesh-one on another port", err)
+		default:
+		}
+		if _, err := os.Stat(filepath.Join(d.MeshDir(), fakeMeshServing)); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("agentmesh-one didn't start on another port")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	cancel()
+
+	if err := wait(t, done); err != nil {
+		t.Fatalf("Relay.Run() error = %v", err)
 	}
 }
 
