@@ -20,6 +20,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -381,6 +382,46 @@ func ParseConfig(data []byte) (*Config, error) {
 	}
 	cfg.Policy.normalize()
 	return &cfg, nil
+}
+
+// UnknownKeys returns the keys of the config.yaml content data that Config
+// doesn't have, as dotted paths such as network.allowlist, sorted.
+func UnknownKeys(data []byte) ([]string, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(data, &doc); err != nil {
+		return nil, err
+	}
+	if len(doc.Content) == 0 {
+		return nil, nil
+	}
+	var out []string
+	unknownKeys(doc.Content[0], reflect.TypeFor[Config](), "", &out)
+	slices.Sort(out)
+	return out, nil
+}
+
+func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	if t.Kind() != reflect.Struct || n.Kind != yaml.MappingNode {
+		return
+	}
+	known := map[string]reflect.Type{}
+	for f := range t.Fields() {
+		if name, _, _ := strings.Cut(f.Tag.Get("yaml"), ","); name != "" && name != "-" {
+			known[name] = f.Type
+		}
+	}
+	for i := 0; i+1 < len(n.Content); i += 2 {
+		key := n.Content[i].Value
+		ft, ok := known[key]
+		if !ok {
+			*out = append(*out, prefix+key)
+			continue
+		}
+		unknownKeys(n.Content[i+1], ft, prefix+key+".", out)
+	}
 }
 
 // MarshalConfig returns the content of config.yaml for cfg.
