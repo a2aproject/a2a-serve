@@ -152,7 +152,7 @@ func (p *Printer) PrintEvent(event a2a.Event) error {
 	case *a2a.TaskStatusUpdateEvent:
 		state := shortState(e.Status.State)
 		if e.Status.Message != nil {
-			s = fmt.Sprintf("[status] %s: %s\n", state, MessageText(e.Status.Message))
+			s = fmt.Sprintf("[status] %s: %s\n", state, messageText(e.Status.Message))
 		} else {
 			s = fmt.Sprintf("[status] %s\n", state)
 		}
@@ -232,7 +232,7 @@ func formatTask(task *a2a.Task) string {
 	}
 	fmt.Fprintf(&sb, "\n")
 	if task.Status.Message != nil {
-		fmt.Fprintf(&sb, "  %s\n", MessageText(task.Status.Message))
+		fmt.Fprintf(&sb, "  %s\n", messageText(task.Status.Message))
 	}
 
 	if len(task.Artifacts) > 0 {
@@ -253,7 +253,7 @@ func formatTask(task *a2a.Task) string {
 			if msg.Role == a2a.MessageRoleAgent {
 				role = "agent"
 			}
-			fmt.Fprintf(&sb, "  [%s] %s\n", role, MessageText(msg))
+			fmt.Fprintf(&sb, "  [%s] %s\n", role, messageText(msg))
 		}
 	}
 
@@ -276,11 +276,11 @@ func formatMessage(msg *a2a.Message) string {
 	if msg.Role == a2a.MessageRoleAgent {
 		role = "agent"
 	}
-	return fmt.Sprintf("[%s] %s\n", role, MessageText(msg))
+	return fmt.Sprintf("[%s] %s\n", role, messageText(msg))
 }
 
-// MessageText returns the concatenated textual representation of a message's parts.
-func MessageText(msg *a2a.Message) string {
+// messageText returns the concatenated textual representation of a message's parts.
+func messageText(msg *a2a.Message) string {
 	return partsText(msg.Parts)
 }
 

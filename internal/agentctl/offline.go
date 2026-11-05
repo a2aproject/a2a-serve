@@ -26,11 +26,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel/configured"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -46,8 +47,8 @@ type offline struct {
 	release   func() error
 	store     *store.Store
 	pairings  *pairings.Service
-	contacts  manage.Contacts
-	schedules manage.Schedules
+	contacts  contacts.Service
+	schedules schedulesvc.Service
 }
 
 // openOffline opens the database of the agent in d, whose directory lock
@@ -73,15 +74,15 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 		dir:     d,
 		release: release,
 		store:   st,
-		pairings: &pairings.Service{Store: st, BaseURL: func() string { return base }, Ads: ads, Access: func(ctx context.Context) (*controlapi.Access, error) {
+		pairings: pairings.New(pairings.Deps{Store: st, BaseURL: func() string { return base }, Ads: ads, Access: func(ctx context.Context) (*controlapi.Access, error) {
 			all, err := st.Pairings(ctx)
 			if err != nil {
 				return nil, err
 			}
 			return access.Describe(cfg.Policy, access.NetworkOf(cfg), access.CountPairings(all)), nil
-		}, Homes: d},
-		contacts:  manage.Contacts{Store: st},
-		schedules: manage.Schedules{Store: st},
+		}, Homes: d}),
+		contacts:  contacts.Service{Store: st},
+		schedules: schedulesvc.Service{Store: st},
 	}, nil
 }
 
@@ -166,7 +167,7 @@ func (o *offline) AddContact(ctx context.Context, req controlapi.ContactRequest)
 	if err != nil {
 		return nil, err
 	}
-	info := manage.ContactInfo(c)
+	info := contacts.Info(c)
 	return &info, nil
 }
 
@@ -183,7 +184,7 @@ func (o *offline) Schedules(ctx context.Context) ([]controlapi.ScheduleInfo, err
 	}
 	out := []controlapi.ScheduleInfo{}
 	for _, s := range all {
-		out = append(out, manage.ScheduleInfo(s))
+		out = append(out, schedulesvc.Info(s))
 	}
 	return out, nil
 }
@@ -194,7 +195,7 @@ func (o *offline) AddSchedule(ctx context.Context, req schedule.Request) (*contr
 	if err != nil {
 		return nil, err
 	}
-	info := manage.ScheduleInfo(s)
+	info := schedulesvc.Info(s)
 	return &info, nil
 }
 

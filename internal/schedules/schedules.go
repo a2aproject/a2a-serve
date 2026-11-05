@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package manage adds, lists and removes what an agent keeps in its
-// database: schedules and contacts. The control socket of a running agent
-// and the CLI of a stopped one share it.
-package manage
+// Package schedules adds, lists and removes the schedules of an agent. The
+// control socket of a running agent and the CLI of a stopped one share it.
+package schedules
 
 import (
 	"context"
@@ -33,8 +32,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// Schedules adds, lists and removes schedules.
-type Schedules struct {
+// Service adds, lists and removes schedules.
+type Service struct {
 	Store *store.Store
 	// Now returns the current time; nil is time.Now.
 	Now func() time.Time
@@ -70,14 +69,14 @@ func (l Limits) check(when schedule.When) error {
 	return nil
 }
 
-func (m Schedules) now() time.Time {
+func (m Service) now() time.Time {
 	if m.Now != nil {
 		return m.Now()
 	}
 	return time.Now()
 }
 
-func (m Schedules) changed() {
+func (m Service) changed() {
 	if m.Changed != nil {
 		m.Changed()
 	}
@@ -85,7 +84,7 @@ func (m Schedules) changed() {
 
 // Add creates a schedule made by by. A schedule made in a conversation
 // (contextID set) runs as the conversation's user and continues it.
-func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
+func (m Service) Add(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	if err := req.Validate(); err != nil {
 		return store.Schedule{}, agenterr.Invalid(err)
 	}
@@ -149,7 +148,7 @@ func (m Schedules) Add(ctx context.Context, req schedule.Request, by auth.Princi
 
 // Remove removes a schedule. Only the owner and the user a schedule runs as
 // or who made it can remove it.
-func (m Schedules) Remove(ctx context.Context, name string, by auth.Principal) error {
+func (m Service) Remove(ctx context.Context, name string, by auth.Principal) error {
 	s, err := m.Store.Schedule(ctx, name)
 	if errors.Is(err, store.ErrNotFound) || err == nil && !canManage(s, by) {
 		return &agenterr.NotFoundError{Kind: "schedule", Name: name}
@@ -166,7 +165,7 @@ func (m Schedules) Remove(ctx context.Context, name string, by auth.Principal) e
 
 // Visible lists the schedules by can see: all for the owner, otherwise the
 // ones they run as or made.
-func (m Schedules) Visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
+func (m Service) Visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
 	all, err := m.Store.Schedules(ctx)
 	if err != nil {
 		return nil, err
@@ -184,8 +183,8 @@ func canManage(s store.Schedule, by auth.Principal) bool {
 	return by.IsOwner() || by.ID == s.UserID || by.ID == s.CreatedBy
 }
 
-// ScheduleInfo describes a schedule for the control API.
-func ScheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
+// Info describes a schedule for the control API.
+func Info(s store.Schedule) controlapi.ScheduleInfo {
 	info := controlapi.ScheduleInfo{
 		Name: s.Name, Cron: s.Cron, At: s.At, TZ: s.TZ, Prompt: s.Prompt, User: s.UserID,
 		Thread: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,

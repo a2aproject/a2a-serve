@@ -33,10 +33,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -127,7 +127,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	for _, l := range links {
 		st.Owners = append(st.Owners, l.Identity)
 	}
-	contacts, err := s.store.Contacts(ctx)
+	cs, err := s.store.Contacts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +135,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	st.Contacts, st.Nodes = len(contacts), len(nodes)
+	st.Contacts, st.Nodes = len(cs), len(nodes)
 	if st.Approvals, err = s.inspector.ApprovalCount(ctx); err != nil {
 		return nil, err
 	}
@@ -151,7 +151,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 
 // contacts manages the contacts, refreshing the harness instructions
 // which list them.
-func (s *Server) contacts() manage.Contacts {
+func (s *Server) contacts() contacts.Service {
 	m := s.clients.contacts()
 	m.Changed = s.refreshInstructions
 	return m

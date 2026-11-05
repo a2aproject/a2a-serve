@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package manage
+// Package contacts adds, lists and removes the agents an agent may call. The
+// control socket of a running agent and the CLI of a stopped one share it.
+package contacts
 
 import (
 	"context"
@@ -43,8 +45,8 @@ const (
 // private network of a running agent.
 var ErrNeedsNetwork error = clierr.NotRunning(errors.New("finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"))
 
-// Contacts adds, lists and removes the agents an agent may call.
-type Contacts struct {
+// Service adds, lists and removes the agents an agent may call.
+type Service struct {
 	Store *store.Store
 	// Locate returns the URL of the contact name on the private network
 	// when url is empty, and the route to the URL. Nil adds only contacts
@@ -59,7 +61,7 @@ type Contacts struct {
 
 // Add pairs with an agent with a code, or stores its token, and checks that
 // it answers.
-func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store.Contact, error) {
+func (m Service) Add(ctx context.Context, req controlapi.ContactRequest) (store.Contact, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" || strings.ContainsAny(req.Name, " /") {
 		return store.Contact{}, agenterr.Invalidf("contact name must be non-empty, without spaces or slashes")
@@ -105,35 +107,35 @@ func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store
 	return c, nil
 }
 
-func (m Contacts) client(c store.Contact) *http.Client {
+func (m Service) client(c store.Contact) *http.Client {
 	if m.HTTPClient != nil {
 		return m.HTTPClient(c)
 	}
 	return TokenClient(http.DefaultClient, c)
 }
 
-func (m Contacts) changed(ctx context.Context) {
+func (m Service) changed(ctx context.Context) {
 	if m.Changed != nil {
 		m.Changed(ctx)
 	}
 }
 
 // List describes the contacts.
-func (m Contacts) List(ctx context.Context) ([]controlapi.ContactInfo, error) {
+func (m Service) List(ctx context.Context) ([]controlapi.ContactInfo, error) {
 	cs, err := m.Store.Contacts(ctx)
 	if err != nil {
 		return nil, err
 	}
 	out := []controlapi.ContactInfo{}
 	for _, c := range cs {
-		out = append(out, ContactInfo(c))
+		out = append(out, Info(c))
 	}
 	return out, nil
 }
 
 // Remove removes a contact. It returns [store.ErrNotFound] for a name which
 // isn't one.
-func (m Contacts) Remove(ctx context.Context, name string) error {
+func (m Service) Remove(ctx context.Context, name string) error {
 	err := m.Store.DeleteContact(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return &agenterr.NotFoundError{Kind: "contact", Name: name}
@@ -145,8 +147,8 @@ func (m Contacts) Remove(ctx context.Context, name string) error {
 	return nil
 }
 
-// ContactInfo describes a contact for the control API.
-func ContactInfo(c store.Contact) controlapi.ContactInfo {
+// Info describes a contact for the control API.
+func Info(c store.Contact) controlapi.ContactInfo {
 	return controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""}
 }
 

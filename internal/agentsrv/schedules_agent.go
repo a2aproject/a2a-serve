@@ -28,11 +28,11 @@ import (
 	"github.com/google/shlex"
 	"github.com/spf13/pflag"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/manage"
-	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -48,7 +48,7 @@ var schedulesUsage = fmt.Sprintf(`Commands (one per message):
   rm <name>
 A run sends the prompt to you in this conversation, as the user who asked.
 A user can have at most %d schedules, and runs must be at least %d minutes apart.`,
-	manage.AgentLimits.PerUser, int(manage.AgentLimits.MinInterval.Minutes()))
+	schedulesvc.AgentLimits.PerUser, int(schedulesvc.AgentLimits.MinInterval.Minutes()))
 
 // schedulesExecutor runs the commands the harness sends to the schedules
 // agent for the conversation and user of claims.
@@ -63,7 +63,7 @@ func (e *schedulesExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executo
 			return
 		}
 		state := a2a.TaskStateCompleted
-		text, err := e.run(ctx, output.MessageText(execCtx.Message))
+		text, err := e.run(ctx, a2atext.Message(execCtx.Message))
 		if err != nil {
 			state, text = a2a.TaskStateFailed, err.Error()
 		}

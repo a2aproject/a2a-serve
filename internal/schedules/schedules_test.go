@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package manage
+package schedules
 
 import (
 	"context"
@@ -87,13 +87,13 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 
-	got, err := Schedules{Store: s}.Add(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "brief me", As: auth.LocalPairing, Chat: "telegram:local"}, auth.Owner(), "")
+	got, err := Service{Store: s}.Add(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "brief me", As: auth.LocalPairing, Chat: "telegram:local"}, auth.Owner(), "")
 	if err != nil {
 		t.Fatalf("Add() error = %v", err)
 	}
 
 	want := struct{ User, DeliverUser, Chat string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, Chat: "telegram:owner"}
-	if diff := cmp.Diff(want, struct{ User, DeliverUser, Chat string }{got.UserID, got.DeliverUser, ScheduleInfo(got).Chat}); diff != "" {
+	if diff := cmp.Diff(want, struct{ User, DeliverUser, Chat string }{got.UserID, got.DeliverUser, Info(got).Chat}); diff != "" {
 		t.Fatalf("Add() wrong result (-want +got) diff = %s", diff)
 	}
 }
@@ -120,7 +120,7 @@ func TestAddScheduleWithinLimits(t *testing.T) {
 			t.Parallel()
 			s := openStore(t)
 			ctx := context.Background()
-			m := Schedules{Store: s, Limits: tc.limits}
+			m := Service{Store: s, Limits: tc.limits}
 			for i := range tc.existing {
 				if _, err := m.Add(ctx, schedule.Request{Name: fmt.Sprintf("old%d", i), Cron: "@daily", Prompt: "x"}, auth.Owner(), "ctx1"); err != nil {
 					t.Fatalf("Add() error = %v", err)

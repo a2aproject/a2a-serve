@@ -40,9 +40,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -264,7 +264,7 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	if err != nil {
 		t.Fatalf("credstore.Pair() error = %v, want nil", err)
 	}
-	extHTTP := manage.TokenClient(http.DefaultClient, store.Contact{URL: pubURL, Token: extCred.Token})
+	extHTTP := contacts.TokenClient(http.DefaultClient, store.Contact{URL: pubURL, Token: extCred.Token})
 	card, err := agentcard.NewResolver(extHTTP).Resolve(ctx, pubURL)
 	if err != nil {
 		t.Fatalf("agentcard.Resolve(public) error = %v, want nil", err)

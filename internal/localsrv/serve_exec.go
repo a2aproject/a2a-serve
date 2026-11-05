@@ -31,7 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
 // Environment variables of the script, so it can keep state per task or
@@ -137,7 +137,7 @@ func (e *execExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
 			return
 		}
-		input := output.MessageText(execCtx.Message)
+		input := a2atext.Message(execCtx.Message)
 
 		if !e.streaming() {
 			e.executeBuffered(ctx, execCtx, input, yield)

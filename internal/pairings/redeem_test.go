@@ -38,7 +38,7 @@ func chatVia(identity string) Via {
 
 func pending(t *testing.T, s *Service, code string) bool {
 	t.Helper()
-	_, err := s.Store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode)
+	_, err := s.deps.Store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode)
 	return err == nil
 }
 
@@ -143,7 +143,7 @@ func TestRedeem(t *testing.T) {
 
 func localCode(t *testing.T, s *Service) string {
 	t.Helper()
-	code, _, err := auth.MintCode(context.Background(), s.Store, LocalOwner)
+	code, _, err := auth.MintCode(context.Background(), s.deps.Store, LocalOwner)
 	if err != nil {
 		t.Fatalf("MintCode() error = %v", err)
 	}
@@ -164,7 +164,7 @@ func TestRedeemDoesNotRecreateRemovedNode(t *testing.T) {
 	if !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("Redeem() error = %v, want %v", err, ErrInvalidCode)
 	}
-	if _, err := s.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.deps.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Store.Node() error = %v, want %v", err, store.ErrNotFound)
 	}
 }
@@ -178,11 +178,11 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Redeem(caller code) error = %v", err)
 	}
-	tok, err := s.Store.LookupToken(ctx, caller.Token)
+	tok, err := s.deps.Store.LookupToken(ctx, caller.Token)
 	if err != nil || tok.Pairing != "anna" || tok.URL != base {
 		t.Fatalf("LookupToken() = %+v, %v, want a token of anna at %s", tok, err, base)
 	}
-	if p, err := s.Store.Pairing(ctx, "anna"); err != nil || p.Kind != pairapi.PairingDevice {
+	if p, err := s.deps.Store.Pairing(ctx, "anna"); err != nil || p.Kind != pairapi.PairingDevice {
 		t.Fatalf("Pairing(anna) = %+v, %v, want kind %s", p, err, pairapi.PairingDevice)
 	}
 
@@ -190,7 +190,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Redeem(node code) error = %v", err)
 	}
-	if got, ok, err := auth.NodeOfToken(ctx, s.Store, node.Token); err != nil || !ok || got.ID != "grok" {
+	if got, ok, err := auth.NodeOfToken(ctx, s.deps.Store, node.Token); err != nil || !ok || got.ID != "grok" {
 		t.Fatalf("NodeOfToken() = %+v, %v, %v, want node grok", got, ok, err)
 	}
 
@@ -198,7 +198,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 	if _, err := s.Redeem(ctx, invite(t, s, controlapi.PairCodeRequest{Name: "ben"}).Code, Via{Chat: in}); err != nil {
 		t.Fatalf("Redeem(chat) error = %v", err)
 	}
-	if l, err := s.Store.LinkOf(ctx, "telegram", "telegram:9"); err != nil || l.Pairing != "ben" || l.Conv != "dm9" {
+	if l, err := s.deps.Store.LinkOf(ctx, "telegram", "telegram:9"); err != nil || l.Pairing != "ben" || l.Conv != "dm9" {
 		t.Fatalf("LinkOf() = %+v, %v, want a link to ben in dm9", l, err)
 	}
 }
@@ -328,10 +328,9 @@ func (u *redeemingUsers) Stop(ctx context.Context, principals ...string) (func()
 func TestRedeemRefusesPairingBeingRemoved(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
-	code := invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
-	users := &redeemingUsers{s: s, code: code}
-	s.Users = users
+	users := &redeemingUsers{}
+	s := newService(t, withUsers(users, nil))
+	users.s, users.code = s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code
 
 	if _, err := s.Remove(ctx, "anna"); err != nil {
 		t.Fatalf("Remove() error = %v", err)
@@ -340,7 +339,7 @@ func TestRedeemRefusesPairingBeingRemoved(t *testing.T) {
 	if !errors.Is(users.err, ErrInvalidCode) {
 		t.Fatalf("Redeem() while anna is removed error = %v, want %v", users.err, ErrInvalidCode)
 	}
-	if _, err := s.Redeem(ctx, code, Via{Client: "9.9.9.9", URL: base}); !errors.Is(err, ErrInvalidCode) {
+	if _, err := s.Redeem(ctx, users.code, Via{Client: "9.9.9.9", URL: base}); !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("Redeem() after anna is removed error = %v, want %v", err, ErrInvalidCode)
 	}
 }

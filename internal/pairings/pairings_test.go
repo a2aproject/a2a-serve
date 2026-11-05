@@ -46,7 +46,7 @@ func (a fakeAds) Advertised(name string) bool {
 	return ok
 }
 
-func newService(t *testing.T) *Service {
+func newService(t *testing.T, opts ...func(*Deps)) *Service {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
 	if err != nil {
@@ -57,14 +57,18 @@ func newService(t *testing.T) *Service {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter(frozenClock)}
+	deps := Deps{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter(frozenClock)}
+	for _, o := range opts {
+		o(&deps)
+	}
+	return New(deps)
 }
 
 // redeem exchanges code for a token as a redeemer of kind, as POST /pair
 // does.
 func redeem(t *testing.T, s *Service, code, kind string) {
 	t.Helper()
-	if _, err := s.Redeem(context.Background(), code, Via{URL: s.BaseURL(), Kind: kind}); err != nil {
+	if _, err := s.Redeem(context.Background(), code, Via{URL: s.deps.BaseURL(), Kind: kind}); err != nil {
 		t.Fatalf("Redeem() error = %v", err)
 	}
 }
@@ -236,14 +240,15 @@ func TestUpdate(t *testing.T) {
 func TestUpdateNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
+	ads := &flakyAds{Advertiser: fakeAds{}}
+	s := newService(t, withAds(ads))
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
-	node, err := s.Store.Node(ctx, "grok")
+	node, err := s.deps.Store.Node(ctx, "grok")
 	if err != nil {
 		t.Fatalf("Node() error = %v", err)
 	}
 	node.TokenHash = "paired"
-	if err := s.Store.PutNode(ctx, node); err != nil {
+	if err := s.deps.Store.PutNode(ctx, node); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
 	}
 
@@ -271,19 +276,20 @@ func TestUpdateNode(t *testing.T) {
 func TestRemove(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
 	everyone := &controlapi.Access{Others: []string{"everyone on the tailnet"}, Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet"}}
-	s.Access = func(context.Context) (*controlapi.Access, error) { return everyone, nil }
 	var forgotten []string
-	s.Forget = func(id string) { forgotten = append(forgotten, id) }
+	s := newService(t, func(d *Deps) {
+		d.Access = func(context.Context) (*controlapi.Access, error) { return everyone, nil }
+		d.Forget = func(id string) { forgotten = append(forgotten, id) }
+	})
 	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
-	if _, _, err := auth.IssueToken(ctx, s.Store, LocalOwner, "http://127.0.0.1:4000", ""); err != nil {
+	if _, _, err := auth.IssueToken(ctx, s.deps.Store, LocalOwner, "http://127.0.0.1:4000", ""); err != nil {
 		t.Fatalf("IssueToken(local) error = %v", err)
 	}
 	for _, user := range []string{auth.PairPrincipal("anna"), auth.NodePrincipal("grok"), auth.PairPrincipal(LocalOwner)} {
-		if err := s.Store.AddSchedule(ctx, store.Schedule{Name: user, Cron: "@daily", Prompt: "p", UserID: user}); err != nil {
+		if err := s.deps.Store.AddSchedule(ctx, store.Schedule{Name: user, Cron: "@daily", Prompt: "p", UserID: user}); err != nil {
 			t.Fatalf("AddSchedule(%s) error = %v", user, err)
 		}
 	}
@@ -305,7 +311,7 @@ func TestRemove(t *testing.T) {
 			t.Fatalf("Remove(%q) wrong result (-want +got) diff = %s", tc.name, diff)
 		}
 	}
-	if s.Ads.Advertised("grok") {
+	if s.deps.Ads.Advertised("grok") {
 		t.Fatalf("Remove(grok) kept its advertisement")
 	}
 	if diff := cmp.Diff([]string{"grok"}, forgotten); diff != "" {
@@ -315,7 +321,7 @@ func TestRemove(t *testing.T) {
 	if err != nil || len(all) != 1 || all[0].Name != LocalOwner || len(all[0].Tokens) != 0 {
 		t.Fatalf("List() after Remove() = %+v, %v, want only the local pairing, without tokens", all, err)
 	}
-	schedules, err := s.Store.Schedules(ctx)
+	schedules, err := s.deps.Store.Schedules(ctx)
 	if err != nil {
 		t.Fatalf("Schedules() error = %v", err)
 	}
@@ -347,7 +353,7 @@ func (u *fakeUsers) Stop(ctx context.Context, principals ...string) (func(), err
 		if _, err := os.Stat(u.homes.UserHomeDir(principals[0])); !errors.Is(err, os.ErrNotExist) {
 			u.t.Errorf("home of %s at release error = %v, want it deleted while its user is stopped", principals[0], err)
 		}
-		if p, err := u.s.Store.Pairing(ctx, "anna"); !errors.Is(err, store.ErrNotFound) {
+		if p, err := u.s.deps.Store.Pairing(ctx, "anna"); !errors.Is(err, store.ErrNotFound) {
 			u.t.Errorf("Pairing() at release = %+v, %v, want it deleted while its users are stopped", p, err)
 		}
 		u.released = true
@@ -357,13 +363,13 @@ func (u *fakeUsers) Stop(ctx context.Context, principals ...string) (func(), err
 func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
 	d, err := agentdir.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("agentdir.Open() error = %v", err)
 	}
-	users := &fakeUsers{t: t, s: s, homes: d}
-	s.Users, s.Homes = users, d
+	users := &fakeUsers{t: t, homes: d}
+	s := newService(t, withUsers(users, d))
+	users.s = s
 	for _, name := range []string{"anna", "bob"} {
 		redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: name}).Code, pairapi.PairingPerson)
 	}
@@ -402,12 +408,13 @@ func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {
 func TestRemoveKeepsPairingWhenUsersDontStop(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
 	d, err := agentdir.Open(t.TempDir())
 	if err != nil {
 		t.Fatalf("agentdir.Open() error = %v", err)
 	}
-	s.Users, s.Homes = &fakeUsers{t: t, s: s, homes: d, err: errors.New("cancel failed")}, d
+	users := &fakeUsers{t: t, homes: d, err: errors.New("cancel failed")}
+	s := newService(t, withUsers(users, d))
+	users.s = s
 	redeem(t, s, invite(t, s, controlapi.PairCodeRequest{Name: "anna"}).Code, pairapi.PairingPerson)
 	if err := os.MkdirAll(d.UserHomeDir("pair:anna"), 0o700); err != nil {
 		t.Fatalf("MkdirAll() error = %v", err)
@@ -417,7 +424,7 @@ func TestRemoveKeepsPairingWhenUsersDontStop(t *testing.T) {
 		t.Fatalf("Remove() error = nil, want the failure to stop anna")
 	}
 
-	if _, err := s.Store.Pairing(ctx, "anna"); err != nil {
+	if _, err := s.deps.Store.Pairing(ctx, "anna"); err != nil {
 		t.Fatalf("Pairing() after a failed Remove() error = %v, want it kept", err)
 	}
 	if _, err := os.Stat(d.UserHomeDir("pair:anna")); err != nil {
@@ -439,7 +446,7 @@ func TestInviteRacesPrune(t *testing.T) {
 				return
 			default:
 			}
-			if err := s.Store.Prune(ctx); err != nil {
+			if err := s.deps.Store.Prune(ctx); err != nil {
 				pruned <- err
 				return
 			}
@@ -487,17 +494,22 @@ func (a *flakyAds) Withdraw(name string) error {
 	return a.Advertiser.Withdraw(name)
 }
 
-func countChanges(s *Service) *int {
-	n := new(int)
-	s.Changed = func(context.Context) { *n++ }
-	return n
+func withUsers(u Users, h Homes) func(*Deps) {
+	return func(d *Deps) { d.Users, d.Homes = u, h }
+}
+
+func withAds(a Advertiser) func(*Deps) {
+	return func(d *Deps) { d.Ads = a }
+}
+
+func countChanges(n *int) func(*Deps) {
+	return func(d *Deps) { d.Changed = func(context.Context) { *n++ } }
 }
 
 func TestInviteNodeWithFailingAdvertisementLeavesNoNode(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
-	s.Ads = &flakyAds{Advertiser: s.Ads, advertiseErr: errors.New("saving the table")}
+	s := newService(t, withAds(&flakyAds{Advertiser: fakeAds{}, advertiseErr: errors.New("saving the table")}))
 	on := true
 
 	_, err := s.Invite(ctx, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
@@ -505,7 +517,7 @@ func TestInviteNodeWithFailingAdvertisementLeavesNoNode(t *testing.T) {
 	if err == nil {
 		t.Fatalf("s.Invite() with a failing advertisement error = nil, want error")
 	}
-	if _, err := s.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
+	if _, err := s.deps.Store.Node(ctx, "grok"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("s.Store.Node() after the failed invitation error = %v, want %v", err, store.ErrNotFound)
 	}
 	if _, err := s.Get(ctx, "grok"); kindOf(err) != NotFound {
@@ -515,8 +527,8 @@ func TestInviteNodeWithFailingAdvertisementLeavesNoNode(t *testing.T) {
 
 func TestInviteNodeNotifiesChange(t *testing.T) {
 	t.Parallel()
-	s := newService(t)
-	changes := countChanges(s)
+	changes := new(int)
+	s := newService(t, countChanges(changes))
 
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
 
@@ -528,18 +540,19 @@ func TestInviteNodeNotifiesChange(t *testing.T) {
 func TestUpdateNodeRotateWithFailingAdvertisementKeepsToken(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
+	ads := &flakyAds{Advertiser: fakeAds{}}
+	s := newService(t, withAds(ads))
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
-	node, err := s.Store.Node(ctx, "grok")
+	node, err := s.deps.Store.Node(ctx, "grok")
 	if err != nil {
 		t.Fatalf("Node() error = %v", err)
 	}
 	next := node
 	next.TokenHash = "paired"
-	if err := s.Store.UpdateNode(ctx, node, next); err != nil {
+	if err := s.deps.Store.UpdateNode(ctx, node, next); err != nil {
 		t.Fatalf("UpdateNode() error = %v", err)
 	}
-	s.Ads = &flakyAds{Advertiser: s.Ads, advertiseErr: errors.New("saving the table")}
+	ads.advertiseErr = errors.New("saving the table")
 	on := true
 
 	_, err = s.Update(ctx, "grok", controlapi.PairingUpdate{Rotate: true, Advertised: &on})
@@ -547,7 +560,7 @@ func TestUpdateNodeRotateWithFailingAdvertisementKeepsToken(t *testing.T) {
 	if err == nil {
 		t.Fatalf("s.Update() with a failing advertisement error = nil, want error")
 	}
-	got, err := s.Store.Node(ctx, "grok")
+	got, err := s.deps.Store.Node(ctx, "grok")
 	if err != nil {
 		t.Fatalf("s.Store.Node() error = %v", err)
 	}
@@ -559,20 +572,19 @@ func TestUpdateNodeRotateWithFailingAdvertisementKeepsToken(t *testing.T) {
 func TestUpdateNodeRestoresAdvertisementWhenNodeChangedMeanwhile(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
+	ads := &flakyAds{Advertiser: fakeAds{}}
+	s := newService(t, withAds(ads))
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
-	ads := &flakyAds{Advertiser: s.Ads}
-	s.Ads = ads
 	ads.onAdvertise = func() {
 		ads.onAdvertise = nil
-		node, err := s.Store.Node(ctx, "grok")
+		node, err := s.deps.Store.Node(ctx, "grok")
 		if err != nil {
 			t.Errorf("Node() error = %v", err)
 			return
 		}
 		next := node
 		next.Webhook = "https://example.com/other"
-		if err := s.Store.UpdateNode(ctx, node, next); err != nil {
+		if err := s.deps.Store.UpdateNode(ctx, node, next); err != nil {
 			t.Errorf("UpdateNode() error = %v", err)
 		}
 	}
@@ -583,7 +595,7 @@ func TestUpdateNodeRestoresAdvertisementWhenNodeChangedMeanwhile(t *testing.T) {
 	if kindOf(err) != Conflict {
 		t.Fatalf("s.Update() of a node changed meanwhile error = %v, want conflict", err)
 	}
-	if s.Ads.Advertised("grok") {
+	if ads.Advertised("grok") {
 		t.Fatalf("s.Update() of a node changed meanwhile left it advertised")
 	}
 }
@@ -591,9 +603,10 @@ func TestUpdateNodeRestoresAdvertisementWhenNodeChangedMeanwhile(t *testing.T) {
 func TestUpdateNodeNotifiesChange(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
+	changes := new(int)
+	s := newService(t, countChanges(changes))
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook"})
-	changes := countChanges(s)
+	*changes = 0
 	desc := "searches"
 
 	if _, err := s.Update(ctx, "grok", controlapi.PairingUpdate{Description: &desc}); err != nil {
@@ -608,11 +621,13 @@ func TestUpdateNodeNotifiesChange(t *testing.T) {
 func TestRemoveNodeNotifiesChangeWhenWithdrawFails(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	s := newService(t)
+	ads := &flakyAds{Advertiser: fakeAds{}}
+	changes := new(int)
+	s := newService(t, withAds(ads), countChanges(changes))
 	on := true
 	invite(t, s, controlapi.PairCodeRequest{Name: "grok", Webhook: "https://example.com/hook", Advertised: &on})
-	s.Ads = &flakyAds{Advertiser: s.Ads, withdrawErr: errors.New("saving the table")}
-	changes := countChanges(s)
+	ads.withdrawErr = errors.New("saving the table")
+	*changes = 0
 
 	_, err := s.Remove(ctx, "grok")
 

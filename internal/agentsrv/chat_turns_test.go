@@ -206,7 +206,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudg
 		Store:      fx.store,
 		Tasks:      fx.tasks,
 		Chain:      &auth.Chain{Store: fx.store, Policy: func() auth.Policy { return policy }},
-		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter(time.Now)},
+		Pairings:   pairings.New(pairings.Deps{Store: fx.store}),
 		Approvals:  svc,
 		Chat:       fx.chat,
 		Supervisor: fx.supervisor,

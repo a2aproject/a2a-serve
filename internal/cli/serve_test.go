@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -133,7 +134,7 @@ func send(t *testing.T, creds *credstore.Store, url, text string) (string, error
 	case *a2a.Task:
 		return testutil.AllArtifactText(r), nil
 	case *a2a.Message:
-		return output.MessageText(r), nil
+		return a2atext.Message(r), nil
 	default:
 		return "", fmt.Errorf("unexpected result %T", res)
 	}

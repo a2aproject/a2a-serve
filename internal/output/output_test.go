@@ -206,9 +206,9 @@ func TestMessageTextFileParts(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := MessageText(&a2a.Message{Parts: a2a.ContentParts{tt.part}})
+			got := messageText(&a2a.Message{Parts: a2a.ContentParts{tt.part}})
 			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Fatalf("MessageText() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("messageText() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

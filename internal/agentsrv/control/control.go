@@ -22,13 +22,14 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -48,7 +49,7 @@ type Deps struct {
 	// Peers lists the agents on the private network.
 	Peers func(ctx context.Context) ([]network.PeerInfo, error)
 	// Contacts manages the contacts.
-	Contacts func() manage.Contacts
+	Contacts func() contacts.Service
 	// AddChannel checks a channel, saves it and starts it.
 	AddChannel func(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error)
 	// RemoveChannel stops a channel and removes it from the config.
@@ -191,7 +192,7 @@ func (a *api) addContact(w http.ResponseWriter, r *http.Request) {
 		controlapi.WriteError(w, err)
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, manage.ContactInfo(c))
+	jsonhttp.Write(w, http.StatusOK, contacts.Info(c))
 }
 
 func (a *api) deleteContact(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +224,7 @@ func (a *api) schedules(w http.ResponseWriter, r *http.Request) {
 	}
 	out := []controlapi.ScheduleInfo{}
 	for _, sc := range all {
-		out = append(out, manage.ScheduleInfo(sc))
+		out = append(out, schedulesvc.Info(sc))
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }
@@ -238,7 +239,7 @@ func (a *api) addSchedule(w http.ResponseWriter, r *http.Request) {
 		controlapi.WriteError(w, err)
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
+	jsonhttp.Write(w, http.StatusOK, schedulesvc.Info(sc))
 }
 
 func (a *api) runSchedule(w http.ResponseWriter, r *http.Request) {
@@ -247,7 +248,7 @@ func (a *api) runSchedule(w http.ResponseWriter, r *http.Request) {
 		controlapi.WriteError(w, err)
 		return
 	}
-	jsonhttp.Write(w, http.StatusOK, manage.ScheduleInfo(sc))
+	jsonhttp.Write(w, http.StatusOK, schedulesvc.Info(sc))
 }
 
 func (a *api) deleteSchedule(w http.ResponseWriter, r *http.Request) {

@@ -27,15 +27,15 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // urlClient returns an A2A client of url authenticated with token.
 func urlClient(t *testing.T, url, token string) *a2aclient.Client {
 	t.Helper()
-	hc := manage.TokenClient(http.DefaultClient, store.Contact{URL: url, Token: token})
+	hc := contacts.TokenClient(http.DefaultClient, store.Contact{URL: url, Token: token})
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, url)
 	if err != nil {

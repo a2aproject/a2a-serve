@@ -31,8 +31,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -227,7 +227,7 @@ func TestHarnessSchedulesAreLimited(t *testing.T) {
 
 	ts.ch.write("telegram:1", "dm1", `call schedules add fast --cron "@every 1s" --prompt "x"`)
 	ts.ch.waitFor(t, "dm1", hasText("at least 5 minutes apart"))
-	for i := range manage.AgentLimits.PerUser {
+	for i := range schedulesvc.AgentLimits.PerUser {
 		if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
 			Name: fmt.Sprintf("s%d", i), Cron: "@daily", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew, CreatedBy: auth.OwnerID,
 		}); err != nil {

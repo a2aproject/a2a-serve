@@ -29,14 +29,14 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-serve/internal/a2aproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
-	"github.com/a2aproject/a2a-serve/internal/localsrv"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"golang.org/x/sync/singleflight"
@@ -87,8 +87,8 @@ func newContactClients(deps ContactClientsDeps) *ContactClients {
 
 // Contact routes.
 const (
-	ViaPrivate = manage.ViaPrivate
-	ViaHTTPS   = manage.ViaHTTPS
+	ViaPrivate = contacts.ViaPrivate
+	ViaHTTPS   = contacts.ViaHTTPS
 )
 
 // contactClient is the A2A client of a contact, built for the contact as
@@ -142,8 +142,8 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 }
 
 // contacts manages the contacts, found by name on the private network.
-func (cc *ContactClients) contacts() manage.Contacts {
-	return manage.Contacts{Store: cc.store, Locate: cc.locate, HTTPClient: cc.httpClient}
+func (cc *ContactClients) contacts() contacts.Service {
+	return contacts.Service{Store: cc.store, Locate: cc.locate, HTTPClient: cc.httpClient}
 }
 
 // locate returns the URL of the contact name, an advertised pairing or an
@@ -219,7 +219,7 @@ func (cc *ContactClients) httpClient(c store.Contact) *http.Client {
 		rt = http.DefaultTransport
 	}
 	limited := &http.Client{Transport: egress.LimitResponses(rt, maxContactResponse), CheckRedirect: base.CheckRedirect}
-	return manage.TokenClient(limited, c)
+	return contacts.TokenClient(limited, c)
 }
 
 // viaAgent returns ctx for calling another agent from a conversation hops
@@ -328,7 +328,7 @@ func (cc *ContactClients) agentHandler(ctx context.Context, c callerClaims, name
 	if err != nil {
 		return nil, nil, err
 	}
-	return &localsrv.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
+	return &a2aproxy.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
 		return viaAgent(ctx, c.User.Hops)
 	}}, nil, nil
 }

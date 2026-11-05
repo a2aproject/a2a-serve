@@ -29,8 +29,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -257,7 +257,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	if sc.supervisor.channel(s.DeliverChannel) == nil {
 		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
 	}
-	conv, err := manage.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
+	conv, err := schedulesvc.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
 	if err != nil {
 		return "", err
 	}
@@ -309,17 +309,17 @@ func storedPrincipal(ctx context.Context, chain *auth.Chain, id, identity string
 
 // add creates a schedule the owner made.
 func (sc *schedules) add(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-	return sc.manage(manage.Limits{}).Add(ctx, req, by, "")
+	return sc.manage(schedulesvc.Limits{}).Add(ctx, req, by, "")
 }
 
 // addByAgent creates a schedule the agent made for by in the conversation
-// contextID, within [manage.AgentLimits].
+// contextID, within [schedulesvc.AgentLimits].
 func (sc *schedules) addByAgent(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
-	return sc.manage(manage.AgentLimits).Add(ctx, req, by, contextID)
+	return sc.manage(schedulesvc.AgentLimits).Add(ctx, req, by, contextID)
 }
 
-func (sc *schedules) manage(limits manage.Limits) manage.Schedules {
-	return manage.Schedules{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits}
+func (sc *schedules) manage(limits schedulesvc.Limits) schedulesvc.Service {
+	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits}
 }
 
 // runNow starts a run of a schedule at once, without changing when it runs
@@ -343,7 +343,7 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 // remove removes a schedule which by may manage, and its runs that wait
 // to be posted.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	if err := sc.manage(manage.Limits{}).Remove(ctx, name, by); err != nil {
+	if err := sc.manage(schedulesvc.Limits{}).Remove(ctx, name, by); err != nil {
 		return err
 	}
 	sc.turns.dropPosted(scheduleTurnKey(name))
@@ -352,5 +352,5 @@ func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal)
 
 // visible lists the schedules by can see.
 func (sc *schedules) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
-	return sc.manage(manage.Limits{}).Visible(ctx, by)
+	return sc.manage(schedulesvc.Limits{}).Visible(ctx, by)
 }

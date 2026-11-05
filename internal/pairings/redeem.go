@@ -112,12 +112,12 @@ func (s *Service) Redeem(ctx context.Context, code string, via Via) (*Redemption
 			return nil, invalid("unknown kind %s", via.Kind)
 		}
 	}
-	wait, done := s.Limiter.attempt(client)
+	wait, done := s.deps.Limiter.attempt(client)
 	if wait > 0 {
 		return nil, &RateLimitError{Wait: wait}
 	}
 	var r Redemption
-	c, err := s.Store.RedeemCode(ctx, auth.NormalizeCode(code), func(c store.Code) (store.Grant, error) {
+	c, err := s.deps.Store.RedeemCode(ctx, auth.NormalizeCode(code), func(c store.Code) (store.Grant, error) {
 		return s.grant(ctx, c, via, kind, &r)
 	})
 	done(err == nil)
@@ -132,7 +132,7 @@ func (s *Service) Redeem(ctx context.Context, code string, via Via) (*Redemption
 		slog.Info("paired", "pairing", c.Pairing, "kind", r.Kind, "url", r.URL)
 		return &r, nil
 	}
-	p, err := s.Store.Pairing(ctx, c.Pairing)
+	p, err := s.deps.Store.Pairing(ctx, c.Pairing)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +163,7 @@ func (s *Service) grant(ctx context.Context, c store.Code, via Via, kind string,
 		r.Kind, r.Token, r.Principal, r.URL = pairapi.KindCaller, auth.NewToken(), auth.PairingPrincipal(c.Pairing), via.URL
 		return store.Grant{Token: r.Token, TokenURL: via.URL, Kind: kind}, nil
 	}
-	node, err := s.Store.Node(ctx, c.Pairing)
+	node, err := s.deps.Store.Node(ctx, c.Pairing)
 	if err != nil {
 		return store.Grant{}, err
 	}

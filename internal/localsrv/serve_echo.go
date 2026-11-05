@@ -20,7 +20,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
 // ServeEcho runs a local server whose agent echoes each incoming message back
@@ -64,7 +64,7 @@ func (e *echoExecutor) Execute(_ context.Context, execCtx *a2asrv.ExecutorContex
 		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {
 			return
 		}
-		text := output.MessageText(execCtx.Message)
+		text := a2atext.Message(execCtx.Message)
 		evt := a2a.NewArtifactEvent(execCtx, a2a.NewTextPart(text))
 		evt.LastChunk = true
 		if !yield(evt, nil) {

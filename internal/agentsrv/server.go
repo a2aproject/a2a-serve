@@ -366,7 +366,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Advertised:     s.ads.Advertised,
 	})
 	s.supervisor = newChannelSupervisor(ctx, SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
-	s.pairings = &pairings.Service{
+	s.pairings = pairings.New(pairings.Deps{
 		Store:     s.store,
 		BaseURL:   s.bestURL,
 		Ads:       s.ads,
@@ -375,10 +375,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Forget:    s.nodes.Forget,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
-		Limiter:   pairings.NewLimiter(time.Now),
 		Users:     stopUsers{s},
 		Homes:     userHomes{s},
-	}
+	})
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)
 	s.claims = newCallClaims(CallClaimsDeps{
