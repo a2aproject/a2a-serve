@@ -151,6 +151,8 @@ type Server struct {
 	// the tasks of anonymous callers.
 	split  *splitExecutor
 	budget *anonymousBudget
+	// background runs the server's loops, which Run waits for.
+	background sync.WaitGroup
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -243,6 +245,11 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	errc, err := s.serve(ctx, &closers, harnessLn, chans)
 	if err != nil {
+		// The control socket already serves, so a stop may come before
+		// startup finishes.
+		if ctx.Err() != nil && errors.Is(err, ctx.Err()) {
+			return nil
+		}
 		return err
 	}
 	if opts.Ready != nil {
@@ -490,11 +497,17 @@ func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listen
 	for _, ch := range chans {
 		s.supervisor.add(ch)
 	}
-	go s.approvals.CloseStale(ctx)
+	// Background work stops before the store closes: a query that starts
+	// during shutdown could otherwise reopen the database after it closed.
+	closers.push(func(context.Context) error {
+		s.background.Wait()
+		return nil
+	})
+	s.background.Go(func() { s.approvals.CloseStale(ctx) })
 	s.watches.resume(ctx)
-	go s.pruneLoop(ctx)
-	go s.schedules.run(ctx)
-	go s.runGossip(ctx)
+	s.background.Go(func() { s.pruneLoop(ctx) })
+	s.background.Go(func() { s.schedules.run(ctx) })
+	s.background.Go(func() { s.runGossip(ctx) })
 	s.startBackups(ctx)
 	return errc, s.printSummary(ctx, ownerErr)
 }

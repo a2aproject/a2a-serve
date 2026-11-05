@@ -65,7 +65,7 @@ func (s *Server) startBackups(ctx context.Context) {
 		st.To = cfg.Backup.To
 		st.Next = next
 	})
-	go s.runBackups(ctx, cfg, dest, bcfg, next)
+	s.background.Go(func() { s.runBackups(ctx, cfg, dest, bcfg, next) })
 }
 
 // runBackups takes snapshots until ctx ends. The first one is due an
