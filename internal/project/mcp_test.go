@@ -171,6 +171,38 @@ func TestMCPServerResolve(t *testing.T) {
 	}
 }
 
+func TestMCPServerVars(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		server MCPServer
+		want   []string
+	}{
+		{
+			name:   "stdio",
+			server: MCPServer{Type: MCPStdio, Command: "${BIN:-npx}", Args: []string{"--token=${TOKEN}"}, Env: map[string]string{"A": "${TOKEN}", "B": "${URL}"}},
+			want:   []string{"BIN", "TOKEN", "URL"},
+		},
+		{
+			name:   "http",
+			server: MCPServer{Type: MCPHTTP, URL: "https://${HOST}/mcp", Headers: map[string]string{"X-Key": "${KEY}${OTHER:-x}"}},
+			want:   []string{"HOST", "KEY", "OTHER"},
+		},
+		{
+			name:   "no references",
+			server: MCPServer{Type: MCPStdio, Command: "uvx", Args: []string{"mcp-server-git"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, tc.server.Vars()); diff != "" {
+				t.Fatalf("MCPServer.Vars() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestMCPServerACP(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

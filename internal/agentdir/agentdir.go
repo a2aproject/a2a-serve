@@ -149,6 +149,10 @@ func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log")
 // the workspace's .mcp.json.
 func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask.json") }
 
+// RecipeLockPath returns the path of the record of the recipe the agent
+// was created from.
+func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), "recipe.lock") }
+
 // LockPath returns the path of the file the running server holds locked.
 func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock") }
 

@@ -155,6 +155,29 @@ func (s MCPServer) Resolve(lookup func(name string) (string, bool)) (MCPServer, 
 	return out, slices.Sorted(maps.Keys(missing))
 }
 
+// Vars returns the names of the variables the server refers to, with or
+// without a default, sorted.
+func (s MCPServer) Vars() []string {
+	names := map[string]bool{}
+	add := func(v string) {
+		for _, m := range varRef.FindAllStringSubmatch(v, -1) {
+			names[m[1]] = true
+		}
+	}
+	add(s.Command)
+	add(s.URL)
+	for _, a := range s.Args {
+		add(a)
+	}
+	for _, v := range s.Env {
+		add(v)
+	}
+	for _, v := range s.Headers {
+		add(v)
+	}
+	return slices.Sorted(maps.Keys(names))
+}
+
 type acpPair struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
