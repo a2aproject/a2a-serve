@@ -27,7 +27,7 @@ func newContactRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:     "rm <name>",
 		Aliases: []string{"delete"},
 		Short:   "Remove a contact",
-		Args:    cobra.ExactArgs(1),
+		Args:    namedArgs,
 		ValidArgsFunction: controlCompletions(sf, func(ctx context.Context, c *controlapi.Client) ([]string, error) {
 			cs, err := c.Contacts(ctx)
 			if err != nil {

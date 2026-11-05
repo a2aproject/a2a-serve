@@ -134,6 +134,15 @@ func (s *Store) Delete(u string) (bool, error) {
 	return found, err
 }
 
+// Has reports whether [Store.Delete] would remove a credential for url.
+func (s *Store) Has(u string) (bool, error) {
+	creds, err := s.List()
+	if err != nil {
+		return false, err
+	}
+	return slices.ContainsFunc(creds, func(x Credential) bool { return x.URL == Normalize(u) }), nil
+}
+
 // Lookup returns the caller credential whose URL is target or the longest
 // prefix of it, so a token for an agent also covers its card and endpoints.
 // Without one, it returns a node token of the agent at target, so a webhook

@@ -19,8 +19,11 @@ import (
 	"database/sql"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -122,7 +125,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, principals ...st
 			if err != nil {
 				return err
 			}
-			if err := forgetTasks(ctx, tx, deleted, "convs", "sessions", "handles", "call_tasks"); err != nil {
+			if err := forgetTasks(ctx, tx, deleted); err != nil {
 				return err
 			}
 		}
@@ -131,6 +134,57 @@ func (s *Store) DeletePairing(ctx context.Context, name string, principals ...st
 		}
 		return deleteOneTx(ctx, tx, `DELETE FROM pairings WHERE name = ?`, name)
 	})
+}
+
+// PairingRemoval counts what [Store.DeletePairing] deletes for a pairing and
+// the users it acts as.
+type PairingRemoval struct {
+	Tokens    int
+	Links     int
+	Codes     int
+	Schedules int
+	Watches   int
+	// Questions are the approvals of the users.
+	Questions int
+	Tasks     int
+	// Unfinished is the number of Tasks that are canceled first.
+	Unfinished int
+	// Conversations are the channel conversations of contexts left without
+	// tasks.
+	Conversations int
+}
+
+// PairingRemoval counts what DeletePairing(name, principals...) would
+// delete, and changes nothing.
+func (s *Store) PairingRemoval(ctx context.Context, name string, principals ...string) (PairingRemoval, error) {
+	in := "(" + strings.TrimSuffix(strings.Repeat("?,", len(principals)), ",") + ")"
+	var users []any
+	for _, p := range principals {
+		users = append(users, p)
+	}
+	var r PairingRemoval
+	for _, c := range []struct {
+		dst   *int
+		query string
+		args  []any
+	}{
+		{&r.Tokens, `SELECT COUNT(*) FROM tokens WHERE pairing = ?`, []any{name}},
+		{&r.Links, `SELECT COUNT(*) FROM links WHERE pairing = ?`, []any{name}},
+		{&r.Codes, `SELECT COUNT(*) FROM codes WHERE pairing = ?`, []any{name}},
+		{&r.Schedules, `SELECT COUNT(*) FROM schedules WHERE user_id IN ` + in, users},
+		{&r.Watches, `SELECT COUNT(*) FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?) OR on_behalf_of IN ` + in, append([]any{name}, users...)},
+		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE owner IN ` + in + `))`, slices.Concat(users, users)},
+		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in, users},
+		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(users),
+			string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))},
+		{&r.Conversations, `SELECT COUNT(*) FROM convs WHERE context_id IN (SELECT context_id FROM tasks WHERE owner IN ` + in + `)
+			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = convs.context_id AND tasks.owner NOT IN ` + in + `)`, slices.Concat(users, users)},
+	} {
+		if err := s.reads.QueryRowContext(ctx, c.query, c.args...).Scan(c.dst); err != nil {
+			return PairingRemoval{}, err
+		}
+	}
+	return r, nil
 }
 
 // RevokeCredentials deletes the tokens, chat links and codes of a pairing,

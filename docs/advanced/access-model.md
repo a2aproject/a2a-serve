@@ -119,7 +119,7 @@ Every request yields one identity: verified claims, and where each came from.
 | pairing | the pairing whose token or chat link was used |
 | chat account | `telegram:<user id>`, `discord:<user id>`, or the email address |
 | self | Tailscale: the same user on an untagged device. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
-| via agent | the request came from another agent server, with a hop count of 1 or more |
+| via agent | the request came from another server, with a hop count of 1 or more |
 
 ### Roles
 

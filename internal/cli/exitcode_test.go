@@ -29,6 +29,7 @@ func TestExitCodes(t *testing.T) {
 		name     string
 		args     []string
 		noAgent  bool
+		noDir    bool
 		wantCode string
 		wantExit int
 	}{
@@ -39,6 +40,15 @@ func TestExitCodes(t *testing.T) {
 		{name: "channel rm of an unconfigured channel", args: []string{"channel", "rm", "telegram"}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "status without an agent", args: []string{"status"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
 		{name: "start without an agent", args: []string{"start"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
+		{name: "mutually exclusive flags", args: []string{"pair", "list", "--joined", "--invited"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "pair get of an agent not joined", args: []string{"pair", "get", "https://other.example.com"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "pair rm of an agent not joined", args: []string{"pair", "rm", "https://other.example.com"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "contact add of an unreachable URL", args: []string{"contact", "add", "grok", "--url", "http://127.0.0.1:1"}, wantCode: clierr.CodeIO, wantExit: 3},
+		{name: "backup now without a destination", args: []string{"backup", "now"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "backup list without a destination", args: []string{"backup", "list"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "backup restore into an agent", args: []string{"backup", "restore", "backups", "--snapshot", "coder-1", "--backup-key", "k"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "inspect on the public URL", args: []string{"inspect", "--url", "public"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "mailbox without a node token", args: []string{"mailbox", "list"}, noDir: true, wantCode: clierr.CodeUsage, wantExit: 2},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -47,7 +57,10 @@ func TestExitCodes(t *testing.T) {
 			if !tc.noAgent {
 				dir = newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root
 			}
-			args := append(slices.Clone(tc.args), "--dir", dir)
+			args := slices.Clone(tc.args)
+			if !tc.noDir {
+				args = append(args, "--dir", dir)
+			}
 			_, err := runCMD(t, args...)
 			got := clierr.Classify(err)
 			if got == nil {

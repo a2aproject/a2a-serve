@@ -59,23 +59,44 @@ func nanos(t time.Time) int64 {
 	return t.UnixNano()
 }
 
+// ErrLimit is returned for a schedule past the limit of its creator.
+var ErrLimit = errors.New("too many schedules")
+
 // AddSchedule stores a new schedule, or returns [ErrExists].
 func (s *Store) AddSchedule(ctx context.Context, sc Schedule) error {
-	res, err := s.exec(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT (name) DO NOTHING`,
-		sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.UserIdentity, sc.DeliverChannel, sc.DeliverUser, sc.Conversation, sc.ContextID,
-		sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
-	if err != nil {
-		return err
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return ErrExists
-	}
-	return nil
+	return s.AddScheduleCapped(ctx, sc, 0)
+}
+
+// AddScheduleCapped stores a new schedule, or returns [ErrExists], or
+// [ErrLimit] when its creator already made limit schedules. Zero is no
+// limit.
+func (s *Store) AddScheduleCapped(ctx context.Context, sc Schedule, limit int) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		if limit > 0 {
+			var n int
+			if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM schedules WHERE created_by = ?`, sc.CreatedBy).Scan(&n); err != nil {
+				return err
+			}
+			if n >= limit {
+				return ErrLimit
+			}
+		}
+		res, err := tx.ExecContext(ctx, `INSERT INTO schedules (`+scheduleColumns+`) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			ON CONFLICT (name) DO NOTHING`,
+			sc.Name, sc.Cron, nanos(sc.At), sc.TZ, sc.Prompt, sc.UserID, sc.UserIdentity, sc.DeliverChannel, sc.DeliverUser, sc.Conversation, sc.ContextID,
+			sc.CreatedBy, s.now().UnixNano(), nanos(sc.NextRun), nanos(sc.LastRun), sc.LastError)
+		if err != nil {
+			return err
+		}
+		n, err := res.RowsAffected()
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return ErrExists
+		}
+		return nil
+	})
 }
 
 func scanSchedule(row interface{ Scan(...any) error }) (Schedule, error) {

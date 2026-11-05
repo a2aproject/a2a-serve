@@ -76,7 +76,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return err
 	}
 	if resp.StatusCode/100 != 2 {
-		return fmt.Errorf("agent server: %s", jsonhttp.ErrorMessage(resp.Status, data))
+		return fmt.Errorf("server: %s", jsonhttp.ErrorMessage(resp.Status, data))
 	}
 	if out == nil {
 		return nil

@@ -28,16 +28,18 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
-// ErrNotFound is returned by [Find] when no relay directory is found.
-var ErrNotFound error = &notFoundError{msg: "no relay here or in any parent directory; run one with `a2a-serve relay run --url <url>`, or pass --dir or --url"}
+// ErrNotFound is returned by [Find] when no relay directory is found. It
+// exits like a missing agent.
+var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no relay here or in any parent directory; run one with `a2a-serve relay run --url <url>`, or pass --dir or --url"})
 
 // NotFoundIn returns an error, matching [ErrNotFound], for a root without a
 // relay.
 func NotFoundIn(root string) error {
-	return &notFoundError{msg: root + " has no .a2a/relay.yaml; run a relay there with `a2a-serve relay run --url <url>`"}
+	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/relay.yaml; run a relay there with `a2a-serve relay run --url <url>`"})
 }
 
 type notFoundError struct{ msg string }
@@ -45,10 +47,6 @@ type notFoundError struct{ msg string }
 func (e *notFoundError) Error() string { return e.msg }
 
 func (e *notFoundError) Is(target error) bool { return target == ErrNotFound }
-
-// NoAgent marks the error for the CLI's exit code, which is the same for a
-// missing agent and a missing relay.
-func (e *notFoundError) NoAgent() bool { return true }
 
 // ErrAgentDir is returned when a relay would be created in an agent directory.
 var ErrAgentDir = agenterr.Invalid(errors.New("this directory has an agent (.a2a/config.yaml); run the relay in another directory"))

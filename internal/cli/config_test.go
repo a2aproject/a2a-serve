@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/spf13/pflag"
 	"gopkg.in/yaml.v3"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
@@ -106,6 +107,8 @@ func TestConfigCommands(t *testing.T) {
 		{name: "unset agent", args: []string{"config", "unset", "agent"}, wantUsage: true},
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
 		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
+		{name: "config defaults", args: []string{"config", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
+		{name: "config as command", args: []string{"config", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
 	}
@@ -413,6 +416,33 @@ func TestSettingsFlagPlacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSettingsFlagsMatchSettings(t *testing.T) {
+	t.Parallel()
+	root := newRootCmd(&globalConfig{})
+	set, _, err := root.Find([]string{"config", "set"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	set.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if len(f.Annotations[sectionAnnotation]) > 0 {
+			got = append(got, f.Name)
+		}
+	})
+	if diff := cmp.Diff(agentdir.SettingNames(), got); diff != "" {
+		t.Fatalf("a2a-serve config set flags wrong result (-want +got) diff = %s", diff)
+	}
+	start, _, err := root.Find([]string{"start", "opencode"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	start.LocalFlags().VisitAll(func(f *pflag.Flag) {
+		if s := f.Annotations[sectionAnnotation]; len(s) > 0 && s[0] != sectionRun && set.LocalFlags().Lookup(f.Name) == nil {
+			t.Fatalf("a2a-serve start opencode --%s is a setting that config set doesn't take", f.Name)
+		}
+	})
 }
 
 func TestConfigUnsetValidatesSettingBeforeDirectory(t *testing.T) {

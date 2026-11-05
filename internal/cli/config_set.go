@@ -16,6 +16,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -76,11 +78,25 @@ may call the agent, or to its networks, prints who may call afterwards.
 			return lifecycle.Restart(cmd.Context(), d, sf.controlClient(d), false, cfg.progress())
 		},
 	}
-	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
+	flags.register(cmd, agentdir.AgentFlag|agentdir.CoreFlags|agentdir.OperationalFlags)
 	cmd.SetUsageFunc(sectionedUsage)
 	hideImageForLocalSandbox(cmd, sf.agentDir)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
 	f.BoolVar(&restart, "restart", false, "Restart the running agent if a change needs it")
 	return cmd
+}
+
+// configSetOnlyHint points an unknown flag of `start`, given in msg, at
+// `config set` if it takes the flag, or returns "".
+func configSetOnlyHint(cmd *cobra.Command, msg string) string {
+	name, ok := strings.CutPrefix(msg, "unknown flag: --")
+	if !ok || (cmd.Name() != "start" && (!cmd.HasParent() || cmd.Parent().Name() != "start")) {
+		return ""
+	}
+	set, _, err := cmd.Root().Find([]string{"config", "set"})
+	if err != nil || set.Flags().Lookup(name) == nil {
+		return ""
+	}
+	return fmt.Sprintf("--%s is a setting of `%s`: run `%s --%s <value>`, then `%s`", name, set.CommandPath(), set.CommandPath(), name, cmd.CommandPath())
 }

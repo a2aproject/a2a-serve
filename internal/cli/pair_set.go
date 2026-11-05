@@ -52,7 +52,7 @@ are signed with. Linked messenger accounts stay linked.
   a2a-serve pair set laptop --kind device
   a2a-serve pair set anna --rotate
   a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
-		Args:              cobra.ExactArgs(1),
+		Args:              namedArgs,
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			changes := []string{"owner", "kind", "webhook", "webhook-header", "description", "advertised", "rotate"}

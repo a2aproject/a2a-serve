@@ -80,7 +80,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	// A detached agent, or one the service manager didn't stop.
 	if starting {
 		if err := terminate(pid); err != nil {
-			return res, fmt.Errorf("stopping the agent server (pid %d): %w", pid, err)
+			return res, fmt.Errorf("stopping the server (pid %d): %w", pid, err)
 		}
 	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, controlapi.ErrNotRunning) {
 		return res, err
@@ -101,7 +101,7 @@ func waitStopped(ctx context.Context, d agentdir.Dir) error {
 			return release()
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the agent server did not stop in time; see %s", d.LogPath())
+			return fmt.Errorf("the server did not stop in time; see %s", d.LogPath())
 		}
 		select {
 		case <-ctx.Done():

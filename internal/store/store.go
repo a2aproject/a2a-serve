@@ -95,8 +95,20 @@ func newStore(db, reads *sql.DB, path string) (*Store, error) {
 	if err := s.migrate(context.Background()); err != nil {
 		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), s.closeDBs())
 	}
+	if _, err := s.db.Exec(indexes); err != nil {
+		return nil, errors.Join(fmt.Errorf("indexing %s: %w", path, err), s.closeDBs())
+	}
 	return s, nil
 }
+
+// indexes are created when the store opens, outside the migrations, so that
+// an older a2a-serve, which doesn't know them, still opens the database.
+const indexes = `
+CREATE INDEX IF NOT EXISTS tasks_context_updated ON tasks (scope, context_id, updated DESC, id);
+CREATE INDEX IF NOT EXISTS tasks_owner_updated ON tasks (scope, owner, updated DESC, id);
+CREATE INDEX IF NOT EXISTS questions_task ON questions (task_id);
+CREATE INDEX IF NOT EXISTS questions_unanswered ON questions (created) WHERE answered_by = '';
+`
 
 // Close waits for the writes in progress and closes the database. Later
 // writes fail with ErrClosed.
@@ -230,6 +242,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	// whose tasks stopped waiting for them are marked closed.
 	func(ctx context.Context, tx *sql.Tx) error {
 		_, err := tx.ExecContext(ctx, schemaV14)
+		return err
+	},
+	// 15: watches count the calls that watched their task again, so that
+	// posting a result deletes only the watch it was read from, and record
+	// the task's last state, so that a watch of a stuck task ends.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV15)
 		return err
 	},
 }
@@ -412,6 +431,12 @@ CREATE INDEX question_messages_message ON question_messages (channel, conv, mess
 ALTER TABLE questions ADD COLUMN closed INTEGER NOT NULL DEFAULT 0;
 `
 
+const schemaV15 = `
+ALTER TABLE watches ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE watches ADD COLUMN state TEXT NOT NULL DEFAULT '';
+ALTER TABLE watches ADD COLUMN state_changed INTEGER NOT NULL DEFAULT 0;
+`
+
 func (s *Store) migrate(ctx context.Context) error {
 	var version int
 	if err := s.db.QueryRowContext(ctx, `PRAGMA user_version`).Scan(&version); err != nil {
@@ -465,6 +490,19 @@ func (s *Store) inTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
 	return tx.Commit()
 }
 
+// readTx runs fn in a read transaction, whose queries all see the same state
+// of the database.
+func (s *Store) readTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.reads.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		return errors.Join(err, tx.Rollback())
+	}
+	return tx.Commit()
+}
+
 // addColumn adds a column to a table created before the column existed.
 func addColumn(ctx context.Context, tx *sql.Tx, table, column, decl string) error {
 	var n int
@@ -505,6 +543,12 @@ func (cs ChannelState) Get(ctx context.Context, key string) (string, bool, error
 func (cs ChannelState) Set(ctx context.Context, key, value string) error {
 	_, err := cs.s.exec(ctx, `INSERT INTO channel_state (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
+	return err
+}
+
+// Delete removes key.
+func (cs ChannelState) Delete(ctx context.Context, key string) error {
+	_, err := cs.s.exec(ctx, `DELETE FROM channel_state WHERE key = ?`, key)
 	return err
 }
 

@@ -18,7 +18,6 @@ package a2acli
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -48,23 +47,6 @@ func Path() (string, error) {
 // Skill returns the agent skill of the installed a2a CLI.
 func Skill(ctx context.Context) (string, error) {
 	return run(ctx, "skill")
-}
-
-// Version returns the version of the installed a2a CLI as a Go module
-// version, such as v0.4.0, or [MinVersion] when it is unknown or a
-// development build.
-func Version(ctx context.Context) string {
-	out, err := run(ctx, "version", "-o", "json")
-	if err != nil {
-		return MinVersion
-	}
-	var info struct {
-		Version string `json:"version"`
-	}
-	if err := json.Unmarshal([]byte(out), &info); err != nil {
-		return MinVersion
-	}
-	return ModuleVersion(info.Version)
 }
 
 // ModuleVersion turns the version `a2a version -o json` reports into a Go

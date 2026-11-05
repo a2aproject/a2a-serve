@@ -164,6 +164,14 @@ func TestTaskStoreList(t *testing.T) {
 	if len(resp.Tasks) != 1 || resp.Tasks[0].ID != "d" {
 		t.Fatalf("List() as bob = %v, want [d]", resp.Tasks)
 	}
+
+	_, owners, err := ts.ListWithOwners(asUser("owner"), &a2a.ListTasksRequest{})
+	if err != nil {
+		t.Fatalf("ListWithOwners() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"bob", "alice", "alice", "alice"}, owners); diff != "" {
+		t.Fatalf("ListWithOwners() owners wrong result (-want +got) diff = %s", diff)
+	}
 }
 
 func TestFailUnfinished(t *testing.T) {
@@ -287,6 +295,76 @@ func TestDeletePairing(t *testing.T) {
 	}
 	if err := s.DeletePairing(ctx, "grok"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeletePairing() of a missing pairing error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestPairingRemoval(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	finished := newTask("anna-done", "c-anna")
+	finished.Status.State = a2a.TaskStateCompleted
+	for user, tasks := range map[string][]*a2a.Task{
+		"pair:anna": {newTask("anna-1", "c-anna"), newTask("anna-shared", "c-shared"), finished},
+		"pair:bob":  {newTask("bob-1", "c-bob"), newTask("bob-shared", "c-shared")},
+	} {
+		for _, task := range tasks {
+			if _, err := ts.Create(asUser(user), task); err != nil {
+				t.Fatalf("Create(%s) error = %v", task.ID, err)
+			}
+		}
+	}
+	if err := s.PutToken(ctx, "a2p_anna", Token{Pairing: "anna", URL: "http://x"}, "person"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
+	}
+	if err := s.PutCode(ctx, "CODE", Code{Pairing: "anna", Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	for _, sc := range []Schedule{
+		{Name: "anna-daily", Cron: "@daily", Prompt: "p", UserID: "pair:anna"},
+		{Name: "bob-daily", Cron: "@daily", Prompt: "p", UserID: "pair:bob"},
+	} {
+		if err := s.AddSchedule(ctx, sc); err != nil {
+			t.Fatalf("AddSchedule(%s) error = %v", sc.Name, err)
+		}
+	}
+	if err := s.PutWatch(ctx, Watch{Contact: "ben", TaskID: "t1", OnBehalfOf: "pair:anna"}); err != nil {
+		t.Fatalf("PutWatch() error = %v", err)
+	}
+	for _, q := range []Question{
+		{ID: "q-anna", Token: "t-anna", TaskID: "anna-1", ContextID: "c-anna", User: "pair:anna"},
+		{ID: "q-bob", Token: "t-bob", TaskID: "bob-1", ContextID: "c-bob", User: "pair:bob"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	for conv, contextID := range map[string]string{"anna-dm": "c-anna", "bob-dm": "c-bob", "group": "c-shared"} {
+		if err := s.SetContext(ctx, "telegram", conv, contextID); err != nil {
+			t.Fatalf("SetContext(%s) error = %v", conv, err)
+		}
+	}
+
+	got, err := s.PairingRemoval(ctx, "anna", "pair:anna", "node:anna")
+	if err != nil {
+		t.Fatalf("Store.PairingRemoval() error = %v", err)
+	}
+
+	want := PairingRemoval{Tokens: 1, Links: 1, Codes: 1, Schedules: 1, Watches: 1, Questions: 1, Tasks: 3, Unfinished: 2, Conversations: 1}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Store.PairingRemoval() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := ts.Get(asUser("owner"), "anna-1"); err != nil {
+		t.Fatalf("Get() after PairingRemoval() error = %v, want the task kept", err)
+	}
+	if _, err := s.Pairing(ctx, "anna"); err != nil {
+		t.Fatalf("Pairing() after PairingRemoval() error = %v, want it kept", err)
 	}
 }
 
@@ -820,6 +898,26 @@ func TestOpenPathWithURLCharacters(t *testing.T) {
 	}
 }
 
+func TestChannelStateDelete(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	cs := s.ChannelState()
+	if err := cs.Set(ctx, "k", "v"); err != nil {
+		t.Fatalf("ChannelState().Set() error = %v", err)
+	}
+
+	for range 2 {
+		if err := cs.Delete(ctx, "k"); err != nil {
+			t.Fatalf("ChannelState().Delete() error = %v", err)
+		}
+	}
+
+	if v, ok, err := cs.Get(ctx, "k"); err != nil || ok {
+		t.Fatalf("ChannelState().Get() after Delete() = %q, %v, %v, want not set", v, ok, err)
+	}
+}
+
 func TestCloseWaitsForWrites(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -939,6 +1037,33 @@ func TestUnansweredQuestions(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"q3", "q1"}, ids); diff != "" {
 		t.Fatalf("UnansweredQuestions() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestUnansweredRemoteQuestions(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for _, q := range []Question{
+		{ID: "q1", Token: "t1", TaskID: "task", Contact: "peer", HitlID: "h1"},
+		{ID: "q2", Token: "t2", TaskID: "task", Contact: "peer", HitlID: "h2"},
+		{ID: "q3", Token: "t3", TaskID: "task", Contact: "peer", HitlID: "h3"},
+		{ID: "q4", Token: "t4", TaskID: "task"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	if err := s.AnswerQuestion(ctx, "q2", "user:owner", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+
+	got, err := s.UnansweredRemoteQuestions(ctx)
+	if err != nil {
+		t.Fatalf("UnansweredRemoteQuestions() error = %v", err)
+	}
+	if got != 2 {
+		t.Fatalf("UnansweredRemoteQuestions() = %d, want 2", got)
 	}
 }
 
@@ -1274,6 +1399,14 @@ func TestPrune(t *testing.T) {
 			t.Fatalf("PutHandle() error = %v", err)
 		}
 	}
+	for _, c := range []string{"c-old", "c-running"} {
+		if err := s.SetContext(ctx, "telegram", "chat-"+c, c); err != nil {
+			t.Fatalf("SetContext() error = %v", err)
+		}
+		if err := s.Sessions().Put(ctx, c, a2aacp.Session{ID: "s-" + c}); err != nil {
+			t.Fatalf("Sessions().Put() error = %v", err)
+		}
+	}
 	ensurePairing(t, s, Pairing{Name: "invited", Role: "authenticated"})
 	ensurePairing(t, s, Pairing{Name: "joined", Kind: "person", Role: "authenticated"})
 	for code, pairing := range map[string]string{"EXPIRED": "invited", "JOINED": "joined"} {
@@ -1310,6 +1443,18 @@ func TestPrune(t *testing.T) {
 	}
 	if _, err := s.HandleByName(ctx, "cd"); err != nil {
 		t.Fatalf("HandleByName() of a live context error = %v", err)
+	}
+	if _, err := s.ContextOf(ctx, "telegram", "chat-c-old"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ContextOf() of a pruned context error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.ContextOf(ctx, "telegram", "chat-c-running"); err != nil {
+		t.Fatalf("ContextOf() of a live context error = %v", err)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-old"); err != nil || ok {
+		t.Fatalf("Sessions().Get() of a pruned context = %v, %v, want false, nil", ok, err)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-running"); err != nil || !ok {
+		t.Fatalf("Sessions().Get() of a live context = %v, %v, want true, nil", ok, err)
 	}
 	if _, err := s.TakeCode(ctx, "EXPIRED", AnyCode); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("TakeCode() of an expired code error = %v, want %v", err, ErrNotFound)
@@ -1363,10 +1508,14 @@ func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
 	for _, q := range []Question{
 		{ID: "q-unanswered", Token: "t1", TaskID: "r1", Contact: "helper", HitlID: "h1"},
 		{ID: "q-answered", Token: "t2", TaskID: "r2", Contact: "helper", HitlID: "h2"},
+		{ID: "q-watched", Token: "t4", TaskID: "r4", Contact: "helper", HitlID: "h4"},
 	} {
 		if err := s.PutQuestion(ctx, q); err != nil {
 			t.Fatalf("PutQuestion() error = %v", err)
 		}
+	}
+	if err := s.PutWatch(ctx, Watch{Contact: "helper", TaskID: "r4"}); err != nil {
+		t.Fatalf("PutWatch() error = %v", err)
 	}
 	if err := s.AnswerQuestion(ctx, "q-answered", "owner", "once"); err != nil {
 		t.Fatalf("AnswerQuestion() error = %v", err)
@@ -1381,7 +1530,7 @@ func TestPruneForgetsOldRemoteQuestions(t *testing.T) {
 		t.Fatalf("Prune() error = %v", err)
 	}
 
-	for id, wantErr := range map[string]error{"q-unanswered": ErrNotFound, "q-answered": ErrNotFound, "q-fresh": nil} {
+	for id, wantErr := range map[string]error{"q-unanswered": ErrNotFound, "q-answered": ErrNotFound, "q-fresh": nil, "q-watched": nil} {
 		if _, err := s.QuestionByID(ctx, id); !errors.Is(err, wantErr) {
 			t.Fatalf("QuestionByID(%s) after Prune() error = %v, want %v", id, err, wantErr)
 		}
@@ -1706,12 +1855,11 @@ func TestPruneForgetsOldSeenKeys(t *testing.T) {
 	}
 }
 
-func TestSeenKeysAreIndexedByTime(t *testing.T) {
-	t.Parallel()
-	s := openStore(t)
-	rows, err := s.db.Query(`EXPLAIN QUERY PLAN DELETE FROM seen WHERE at < 1`)
+func queryPlan(t *testing.T, s *Store, query string, args ...any) string {
+	t.Helper()
+	rows, err := s.db.Query(`EXPLAIN QUERY PLAN `+query, args...)
 	if err != nil {
-		t.Fatalf("explaining the delete: %v", err)
+		t.Fatalf("explaining %q: %v", query, err)
 	}
 	defer closeRows(rows)
 	var plan []string
@@ -1726,7 +1874,62 @@ func TestSeenKeysAreIndexedByTime(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("reading the plan: %v", err)
 	}
-	if got := strings.Join(plan, "; "); !strings.Contains(got, "seen_at") {
+	return strings.Join(plan, "; ")
+}
+
+func TestSeenKeysAreIndexedByTime(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	if got := queryPlan(t, s, `DELETE FROM seen WHERE at < 1`); !strings.Contains(got, "seen_at") {
 		t.Fatalf("query plan of deleting old seen keys = %q, want it to use the seen_at index", got)
+	}
+}
+
+func TestQueriesUseIndexes(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	tests := []struct {
+		name  string
+		query string
+		args  []any
+		want  string
+	}{
+		{
+			name:  "latest task of a context",
+			query: `SELECT id, state FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
+			args:  []any{"", "c1"},
+			want:  "tasks_context_updated",
+		},
+		{
+			name:  "tasks of a context",
+			query: `SELECT ` + headerColumns + ` FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC, id LIMIT ?`,
+			args:  []any{"", "c1", 10},
+			want:  "tasks_context_updated",
+		},
+		{
+			name:  "tasks of an owner",
+			query: `SELECT ` + headerColumns + ` FROM tasks WHERE scope = ? AND owner = ? ORDER BY updated DESC, id LIMIT ?`,
+			args:  []any{"", "alice", 10},
+			want:  "tasks_owner_updated",
+		},
+		{
+			name:  "questions of a pruned task",
+			query: `DELETE FROM questions WHERE task_id = ? AND contact = ''`,
+			args:  []any{"t1"},
+			want:  "questions_task",
+		},
+		{
+			name:  "unanswered questions",
+			query: `SELECT ` + questionColumns + ` FROM questions WHERE answered_by = '' ORDER BY created DESC`,
+			want:  "questions_unanswered",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := queryPlan(t, s, tc.query, tc.args...); !strings.Contains(got, tc.want) {
+				t.Fatalf("query plan = %q, want it to use the %s index", got, tc.want)
+			}
+		})
 	}
 }

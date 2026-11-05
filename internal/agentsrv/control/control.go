@@ -66,9 +66,6 @@ type Deps struct {
 	InspectorLogin func() string
 }
 
-// applied are the settings which [Deps.ReloadConfig] applies.
-var applied = []string{"description", "allow-tools", "deny-tools", "owner-chat", "private-access", "public-access", "allow-email"}
-
 type api struct{ deps Deps }
 
 // Handler returns the handler of the control API.
@@ -82,6 +79,7 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("GET /pairings/{name}", a.pairing)
 	mux.HandleFunc("PATCH /pairings/{name}", a.updatePairing)
 	mux.HandleFunc("DELETE /pair/{name}", a.revoke)
+	mux.HandleFunc("GET /pair/{name}/removal", a.previewRevoke)
 	mux.HandleFunc("DELETE /signins/{email}", a.signOut)
 	mux.HandleFunc("GET /peers", a.peers)
 	mux.HandleFunc("GET /contacts", a.contacts)
@@ -150,6 +148,12 @@ func (a *api) updatePairing(w http.ResponseWriter, r *http.Request) {
 // revoke removes the pairing called name with its tokens, links and codes.
 func (a *api) revoke(w http.ResponseWriter, r *http.Request) {
 	resp, err := a.deps.Pairings.Remove(r.Context(), r.PathValue("name"))
+	reply(w, resp, err)
+}
+
+// previewRevoke describes what revoke would remove.
+func (a *api) previewRevoke(w http.ResponseWriter, r *http.Request) {
+	resp, err := a.deps.Pairings.PreviewRemove(r.Context(), r.PathValue("name"))
 	reply(w, resp, err)
 }
 
@@ -270,5 +274,5 @@ func (a *api) config(w http.ResponseWriter, _ *http.Request) {
 
 func (a *api) reloadConfig(w http.ResponseWriter, _ *http.Request) {
 	err := a.deps.ReloadConfig()
-	reply(w, controlapi.ReloadResponse{Applied: applied}, err)
+	reply(w, controlapi.ReloadResponse{Applied: agentdir.LiveSettings()}, err)
 }

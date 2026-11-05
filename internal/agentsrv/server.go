@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package agentsrv is the agent server behind `a2a-serve`: one coding agent
+// Package agentsrv is the server behind `a2a-serve`: one coding agent
 // per process, started from its project directory, reachable over A2A on
 // localhost, a private network and the internet, and from messengers.
 package agentsrv
@@ -98,7 +98,7 @@ type Options struct {
 	Timings Timings
 }
 
-// Server is a running agent server.
+// Server is a running server.
 type Server struct {
 	dir     agentdir.Dir
 	out     io.Writer
@@ -202,7 +202,7 @@ func (st stack) close() {
 	}
 }
 
-// Run starts the agent server and serves until ctx ends or the server is
+// Run starts the server and serves until ctx ends or the server is
 // stopped through its control socket. It opens the agent's state, builds
 // the components, then serves; on the way out, background work stops first
 // and everything opened is closed in reverse order.
@@ -285,7 +285,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	}
 	release, err := s.dir.Lock()
 	if errors.Is(err, fsutil.ErrLocked) {
-		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
+		return fmt.Errorf("the server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
 	if err != nil {
 		return fmt.Errorf("locking the agent directory: %w", err)
@@ -308,7 +308,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	s.store = st
 	st.SetTaskTTL(s.config().TaskTTLDuration())
 	s.tasks = st.Tasks("", s.viewer)
-	n, err := s.tasks.FailUnfinished(ctx, "The agent server restarted before this task finished. Send the message again.")
+	n, err := s.tasks.FailUnfinished(ctx, "The server restarted before this task finished. Send the message again.")
 	if err != nil {
 		return err
 	}
@@ -372,6 +372,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Ads:       s.ads,
 		LinkHints: s.supervisor.linkHints,
 		Mailbox:   s.nodes.Mailbox,
+		Forget:    s.nodes.Forget,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 		Limiter:   pairings.NewLimiter(time.Now),
@@ -430,6 +431,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Sender:     s.sender,
 		Bus:        s.bus,
 		Unattended: unattended,
+		Budget:     s.budget,
 		AgentName:  agentName,
 	})
 	s.schedules = newSchedules(ctx, schedulesDeps{
@@ -580,8 +582,9 @@ func (s *Server) reloadConfig(saved *agentdir.Config) {
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 }
 
-// updateConfig applies fn to the config and saves it. A config.yaml that
-// fails to parse is left alone and returned as the error.
+// updateConfig applies fn to the config in use and to config.yaml, which
+// may hold changes waiting for a restart. A config.yaml that fails to parse
+// is left alone and returned as the error.
 func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
@@ -590,22 +593,7 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	err := s.dir.LockConfig(func() error {
-		// config.yaml may hold changes waiting for a restart; keep them.
-		saved, err := s.dir.ReadConfig()
-		switch {
-		case errors.Is(err, agentdir.ErrNotFound):
-			saved = &next
-		case err != nil:
-			return err
-		default:
-			if err := fn(saved); err != nil {
-				return err
-			}
-		}
-		return s.dir.SaveConfig(saved)
-	})
-	if err != nil {
+	if err := s.dir.UpdateConfig(fn); err != nil {
 		return err
 	}
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})

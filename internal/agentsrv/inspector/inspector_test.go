@@ -222,6 +222,50 @@ func TestInspectorPendingApprovals(t *testing.T) {
 	}
 }
 
+func TestInspectorApprovalCount(t *testing.T) {
+	t.Parallel()
+	ti := startInspector(t)
+	ctx := context.Background()
+	for _, q := range []store.Question{
+		{ID: "q1", Token: "tok1", TaskID: "remote", ContextID: "c1", Contact: "reviewer", HitlID: "h1"},
+		{ID: "q2", Token: "tok2", TaskID: "remote", ContextID: "c1", Contact: "reviewer", HitlID: "h2"},
+		{ID: "q3", Token: "tok3", TaskID: "t1", ContextID: "c1"},
+	} {
+		if err := ti.store.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	if err := ti.store.AnswerQuestion(ctx, "q2", "user:owner", "allow"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+	options := &jsonschema.Schema{Type: "string", OneOf: []*jsonschema.Schema{{Const: jsonschema.Ptr[any]("allow"), Title: "Allow"}}}
+	schema, err := structuredinput.NewSchemaPart("tool1", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"option": options}})
+	if err != nil {
+		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
+	}
+	for id, status := range map[a2a.TaskID]a2a.TaskStatus{
+		"t1": {State: a2a.TaskStateInputRequired, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Push?"), schema)},
+		"t2": {State: a2a.TaskStateInputRequired, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?"))},
+		"t3": {State: a2a.TaskStateWorking},
+	} {
+		if _, err := ti.tasks.Create(ctx, &a2a.Task{ID: id, ContextID: "c1", Status: status}); err != nil {
+			t.Fatalf("TaskStore.Create(%s) error = %v", id, err)
+		}
+	}
+
+	pending, err := ti.PendingApprovals(ctx)
+	if err != nil {
+		t.Fatalf("Inspector.PendingApprovals() error = %v", err)
+	}
+	got, err := ti.ApprovalCount(ctx)
+	if err != nil {
+		t.Fatalf("Inspector.ApprovalCount() error = %v", err)
+	}
+	if got != 2 || len(pending) != 2 {
+		t.Fatalf("Inspector.ApprovalCount() = %d with %d pending approvals, want 2", got, len(pending))
+	}
+}
+
 func TestInspectorPendingApprovalsAnswerTheCurrentQuestionOfATask(t *testing.T) {
 	t.Parallel()
 	ti := startInspector(t)
@@ -319,11 +363,12 @@ func TestInspectorConversation(t *testing.T) {
 		Status:  a2a.TaskStatus{State: a2a.TaskStateCompleted, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("hi back"))},
 		History: []*a2a.Message{user},
 	}
-	if _, err := ti.tasks.Create(ctx, task); err != nil {
+	asBob := ti.store.Tasks("", func(context.Context) (string, bool, error) { return "pair:bob", false, nil })
+	if _, err := asBob.Create(ctx, task); err != nil {
 		t.Fatalf("TaskStore.Create() error = %v", err)
 	}
 	overview := ti.login(t)
-	for _, text := range []string{inspector.Path + "/conversations/c1", "hello there", "completed"} {
+	for _, text := range []string{inspector.Path + "/conversations/c1", "hello there", "completed", "<td>bob</td>"} {
 		if !strings.Contains(overview, text) {
 			t.Fatalf("overview = %q, want it to contain %q", overview, text)
 		}
@@ -332,7 +377,7 @@ func TestInspectorConversation(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("GET conversation = %d %q, want %d", code, page, http.StatusOK)
 	}
-	for _, text := range []string{"hello there", "hi back", "Task t1"} {
+	for _, text := range []string{"hello there", "hi back", "Task t1", "· bob ·"} {
 		if !strings.Contains(page, text) {
 			t.Fatalf("conversation = %q, want it to contain %q", page, text)
 		}

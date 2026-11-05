@@ -33,7 +33,7 @@ import (
 const outputYAML = "yaml"
 
 func newConfigCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	var show showFlags
+	show := newConfigShowCmd(cfg, sf)
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Show and change the agent's settings",
@@ -59,14 +59,12 @@ Without a subcommand, shows the settings.`,
 			}
 			return checkTextOnly(cmd, cfg)
 		},
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runConfigShow(cmd, cfg, sf, show)
-		},
+		RunE: show.RunE,
 	}
-	show.register(cmd)
+	cmd.Flags().AddFlagSet(show.Flags())
 	sf.addControlFlags(cmd.PersistentFlags())
 	cmd.AddCommand(
-		newConfigShowCmd(cfg, sf),
+		show,
 		newConfigSetCmd(cfg, sf),
 		newConfigUnsetCmd(cfg, sf),
 		newConfigEditCmd(cfg, sf),

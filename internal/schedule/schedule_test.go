@@ -47,12 +47,136 @@ func TestWhenNext(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got, ok, err := tc.when.Next(after)
+			got, ok, err := tc.when.Next(time.Time{}, after)
 			if err != nil {
 				t.Fatalf("When.Next() error = %v", err)
 			}
 			if !got.Equal(tc.want) || ok != tc.wantOK {
 				t.Fatalf("When.Next() = %v, %v, want %v, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestWhenNextAcrossDSTChanges(t *testing.T) {
+	t.Parallel()
+	newYork := mustLocation(t, "America/New_York")
+	zurich := mustLocation(t, "Europe/Zurich")
+	tests := []struct {
+		name  string
+		when  When
+		last  time.Time
+		after time.Time
+		want  time.Time
+	}{
+		{
+			name: "New York, daily in the repeated hour runs once",
+			when: When{Cron: "30 1 * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), after: time.Date(2026, 11, 1, 5, 30, 1, 0, time.UTC),
+			want: time.Date(2026, 11, 2, 1, 30, 0, 0, newYork),
+		},
+		{
+			name: "New York, after a restart in the repeated hour",
+			when: When{Cron: "30 1 * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 11, 1, 5, 30, 0, 0, time.UTC), after: time.Date(2026, 11, 1, 6, 10, 0, 0, time.UTC),
+			want: time.Date(2026, 11, 2, 1, 30, 0, 0, newYork),
+		},
+		{
+			name: "New York, every 15 minutes in the repeated hour runs each time once",
+			when: When{Cron: "*/15 1 * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 11, 1, 5, 45, 0, 0, time.UTC), after: time.Date(2026, 11, 1, 5, 45, 1, 0, time.UTC),
+			want: time.Date(2026, 11, 2, 1, 0, 0, 0, newYork),
+		},
+		{
+			name: "New York, hourly in the repeated hour",
+			when: When{Cron: "0 * * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 11, 1, 5, 0, 0, 0, time.UTC), after: time.Date(2026, 11, 1, 5, 0, 1, 0, time.UTC),
+			want: time.Date(2026, 11, 1, 7, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "New York, daily in the skipped hour runs right after it",
+			when: When{Cron: "30 2 * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 3, 7, 2, 30, 0, 0, newYork), after: time.Date(2026, 3, 7, 2, 30, 1, 0, newYork),
+			want: time.Date(2026, 3, 8, 7, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "New York, the day after the skipped hour",
+			when: When{Cron: "30 2 * * *", TZ: "America/New_York"},
+			last: time.Date(2026, 3, 8, 7, 0, 0, 0, time.UTC), after: time.Date(2026, 3, 8, 7, 0, 1, 0, time.UTC),
+			want: time.Date(2026, 3, 9, 2, 30, 0, 0, newYork),
+		},
+		{
+			name: "Zurich, daily in the repeated hour runs once",
+			when: When{Cron: "30 2 * * *", TZ: "Europe/Zurich"},
+			last: time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC), after: time.Date(2026, 10, 25, 0, 30, 1, 0, time.UTC),
+			want: time.Date(2026, 10, 26, 2, 30, 0, 0, zurich),
+		},
+		{
+			name: "Zurich, daily in the skipped hour runs right after it",
+			when: When{Cron: "30 2 * * *", TZ: "Europe/Zurich"},
+			last: time.Date(2026, 3, 28, 2, 30, 0, 0, zurich), after: time.Date(2026, 3, 28, 2, 30, 1, 0, zurich),
+			want: time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "Zurich, every minute in the skipped hour runs once right after it",
+			when: When{Cron: "* 2 * * *", TZ: "Europe/Zurich"},
+			last: time.Date(2026, 3, 28, 2, 59, 0, 0, zurich), after: time.Date(2026, 3, 28, 2, 59, 1, 0, zurich),
+			want: time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC),
+		},
+		{
+			name:  "Zurich, a first run in the skipped hour",
+			when:  When{Cron: "30 2 * * *", TZ: "Europe/Zurich"},
+			after: time.Date(2026, 3, 28, 12, 0, 0, 0, zurich),
+			want:  time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC),
+		},
+		{
+			name: "Zurich, every hour of elapsed time ignores the change",
+			when: When{Cron: "@every 1h", TZ: "Europe/Zurich"},
+			last: time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC), after: time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC),
+			want: time.Date(2026, 10, 25, 1, 30, 0, 0, time.UTC),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, ok, err := tc.when.Next(tc.last, tc.after)
+			if err != nil {
+				t.Fatalf("When.Next() error = %v", err)
+			}
+			if !got.Equal(tc.want) || !ok {
+				t.Fatalf("When.Next() = %v, %v, want %v, true", got, ok, tc.want)
+			}
+		})
+	}
+}
+
+func TestWhenMinInterval(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		when When
+		want time.Duration
+	}{
+		{name: "once", when: When{At: time.Date(2026, 11, 6, 17, 0, 0, 0, time.UTC)}, want: 0},
+		{name: "every", when: When{Cron: "@every 90s"}, want: 90 * time.Second},
+		{name: "every minute", when: When{Cron: "* * * * *"}, want: time.Minute},
+		{name: "every 5 minutes", when: When{Cron: "*/5 * * * *"}, want: 5 * time.Minute},
+		{name: "two minutes close together", when: When{Cron: "0,2 9 * * *"}, want: 2 * time.Minute},
+		{name: "across midnight", when: When{Cron: "0,57 0,23 * * *"}, want: 3 * time.Minute},
+		{name: "end and start of consecutive hours", when: When{Cron: "0,58 9,10 * * *"}, want: 2 * time.Minute},
+		{name: "twice a day", when: When{Cron: "0 9,17 * * 1-5"}, want: 8 * time.Hour},
+		{name: "daily", when: When{Cron: "@daily"}, want: 24 * time.Hour},
+		{name: "leap days", when: When{Cron: "0 12 29 2 *"}, want: 24 * time.Hour},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := tc.when.MinInterval()
+			if err != nil {
+				t.Fatalf("When.MinInterval() error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("When.MinInterval() = %v, want %v", got, tc.want)
 			}
 		})
 	}

@@ -88,16 +88,20 @@ type Host struct {
 
 	handlerMu sync.Mutex
 
+	// failMu serializes failing the interrupted tasks of nodes.
+	failMu sync.Mutex
+	failed map[string]bool
+
 	mu       sync.Mutex
 	handlers map[string]a2asrv.RequestHandler
 	open     map[a2a.TaskID]*nodeWaiter
 	keys     map[a2a.TaskID]*turnKeys
 	inbox    map[string][]*mailboxapi.InboxEntry
-	failed   map[string]bool
 }
 
 type nodeWaiter struct {
 	node   string
+	caller string
 	events chan nodeDelivery
 	done   chan struct{}
 	once   sync.Once
@@ -109,7 +113,15 @@ func (w *nodeWaiter) close() { w.once.Do(func() { close(w.done) }) }
 // same question in a later turn isn't taken for a retry.
 type turnKeys struct {
 	w    *nodeWaiter
-	seen map[string]mailboxapi.EventResult
+	seen map[string]*keyedEvent
+}
+
+// keyedEvent is an event posted with an idempotency key. done is closed
+// once the event is applied or fails; a failed event loses its key.
+type keyedEvent struct {
+	done chan struct{}
+	res  mailboxapi.EventResult
+	err  error
 }
 
 type nodeDelivery struct {
@@ -136,23 +148,26 @@ func New(ctx context.Context, cfg Config) *Host {
 func nodeScope(id string) string { return "n/" + id }
 
 // tasks returns the task store of a node. Tasks that were open when the
-// server stopped are failed the first time it is used.
+// server stopped are failed on its first use, which is retried on later
+// uses until it succeeds.
 func (n *Host) tasks(ctx context.Context, id string) *store.TaskStore {
 	ts := n.cfg.Store.Tasks(nodeScope(id), n.cfg.Viewer)
-	n.mu.Lock()
-	first := !n.failed[id]
-	n.failed[id] = true
-	n.mu.Unlock()
-	if first {
-		if _, err := ts.FailUnfinished(ctx, "The agent server restarted before the node answered."); err != nil {
-			slog.Error("failing interrupted node tasks", "node", id, "error", err)
-		}
+	n.failMu.Lock()
+	defer n.failMu.Unlock()
+	if n.failed[id] {
+		return ts
 	}
+	if _, err := ts.FailUnfinished(context.WithoutCancel(ctx), "The server restarted before the node answered."); err != nil {
+		slog.Error("failing interrupted node tasks", "node", id, "error", err)
+		return ts
+	}
+	n.failed[id] = true
 	return ts
 }
 
 // Handler returns the A2A handler of a node.
 func (n *Host) Handler(id string) a2asrv.RequestHandler {
+	ts := n.tasks(context.Background(), id)
 	// Two handlers for one node would keep separate queues of its tasks.
 	n.handlerMu.Lock()
 	defer n.handlerMu.Unlock()
@@ -162,7 +177,6 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	if ok {
 		return h
 	}
-	ts := n.tasks(context.Background(), id)
 	h = a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
 		a2asrv.WithTaskStore(ts),
 		a2asrv.WithUpdateMaterializer(ts.UpdateMaterializer()),
@@ -174,6 +188,32 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	n.handlers[id] = h
 	n.mu.Unlock()
 	return h
+}
+
+// Forget drops what the host keeps in memory for the node id: its handler,
+// open tasks, idempotency keys and inbox. Call it when the node is removed,
+// so a node paired later under the same name starts with none of them.
+func (n *Host) Forget(id string) {
+	n.failMu.Lock()
+	delete(n.failed, id)
+	n.failMu.Unlock()
+	n.handlerMu.Lock()
+	defer n.handlerMu.Unlock()
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	delete(n.handlers, id)
+	delete(n.inbox, id)
+	for taskID, w := range n.open {
+		if w.node == id {
+			w.close()
+			delete(n.open, taskID)
+		}
+	}
+	for taskID, k := range n.keys {
+		if k.w.node == id {
+			delete(n.keys, taskID)
+		}
+	}
 }
 
 // nodeCallerInterceptor lets owners and the hosting agent call nodes; the
@@ -388,61 +428,97 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 		}
 	}
 
-	n.mu.Lock()
-	wt := n.open[taskID]
-	if wt != nil && wt.node != node.ID {
-		wt = nil
-	}
-	keys := n.keys[taskID]
-	if ev.IdempotencyKey != "" && keys != nil {
-		if res, seen := keys.seen[ev.IdempotencyKey]; seen {
-			n.mu.Unlock()
-			res.Duplicate = true
-			jsonhttp.Write(w, http.StatusOK, res)
-			return
-		}
-	}
-	if wt == nil {
-		n.mu.Unlock()
-		current := "unknown"
-		if t, err := n.tasks(r.Context(), node.ID).Get(auth.WithPrincipal(r.Context(), auth.Owner()), taskID); err == nil {
-			current = mailboxapi.StateName(t.Task.Status.State)
-		}
-		jsonhttp.Error(w, http.StatusConflict, fmt.Sprintf("task %s is %s and not waiting for an event from the node", taskID, current))
-		return
-	}
-	res := mailboxapi.EventResult{TaskID: string(taskID), State: mailboxapi.StateName(state)}
-	if ev.IdempotencyKey != "" {
-		if keys == nil || keys.w != wt {
-			keys = &turnKeys{w: wt, seen: map[string]mailboxapi.EventResult{}}
-			n.keys[taskID] = keys
-		}
-		keys.seen[ev.IdempotencyKey] = res
-	}
-	n.mu.Unlock()
-
-	d := nodeDelivery{ev: ev, result: make(chan error, 1)}
-	var err error
-	select {
-	case wt.events <- d:
-		err = <-d.result
-	case <-wt.done:
-		err = errors.New("the task is no longer waiting for events")
-	case <-r.Context().Done():
-		err = r.Context().Err()
-	}
+	res, err := n.postEvent(r.Context(), node.ID, taskID, ev)
 	if err != nil {
-		if ev.IdempotencyKey != "" {
-			n.mu.Lock()
-			if k := n.keys[taskID]; k != nil {
-				delete(k.seen, ev.IdempotencyKey)
-			}
-			n.mu.Unlock()
-		}
-		jsonhttp.Error(w, http.StatusConflict, fmt.Sprintf("task %s: %v", taskID, err))
+		jsonhttp.Error(w, http.StatusConflict, err.Error())
 		return
 	}
 	jsonhttp.Write(w, http.StatusOK, res)
+}
+
+// postEvent hands ev to the open task taskID of node. A retry of an event
+// that is still being applied waits for its result, and is applied itself
+// if the first attempt fails.
+func (n *Host) postEvent(ctx context.Context, node string, taskID a2a.TaskID, ev mailboxapi.Event) (mailboxapi.EventResult, error) {
+	for {
+		n.mu.Lock()
+		wt := n.open[taskID]
+		if wt != nil && wt.node != node {
+			wt = nil
+		}
+		keys := n.keys[taskID]
+		if prev := keys.lookup(ev.IdempotencyKey); prev != nil {
+			n.mu.Unlock()
+			select {
+			case <-prev.done:
+			case <-ctx.Done():
+				return mailboxapi.EventResult{}, fmt.Errorf("task %s: %v", taskID, ctx.Err())
+			}
+			if prev.err != nil {
+				continue
+			}
+			res := prev.res
+			res.Duplicate = true
+			return res, nil
+		}
+		if wt == nil {
+			n.mu.Unlock()
+			current := "unknown"
+			if t, err := n.tasks(ctx, node).Get(auth.WithPrincipal(ctx, auth.Owner()), taskID); err == nil {
+				current = mailboxapi.StateName(t.Task.Status.State)
+			}
+			return mailboxapi.EventResult{}, fmt.Errorf("task %s is %s and not waiting for an event from the node", taskID, current)
+		}
+		state, _ := mailboxapi.ParseState(ev.State)
+		res := mailboxapi.EventResult{TaskID: string(taskID), State: mailboxapi.StateName(state)}
+		var claim *keyedEvent
+		if ev.IdempotencyKey != "" {
+			if keys == nil || keys.w != wt {
+				keys = &turnKeys{w: wt, seen: map[string]*keyedEvent{}}
+				n.keys[taskID] = keys
+			}
+			claim = &keyedEvent{done: make(chan struct{}), res: res}
+			keys.seen[ev.IdempotencyKey] = claim
+		}
+		n.mu.Unlock()
+
+		err := deliverEvent(ctx, wt, ev)
+		if claim != nil {
+			n.mu.Lock()
+			if err != nil && keys.seen[ev.IdempotencyKey] == claim {
+				delete(keys.seen, ev.IdempotencyKey)
+			}
+			claim.err = err
+			close(claim.done)
+			n.mu.Unlock()
+		}
+		if err != nil {
+			return mailboxapi.EventResult{}, fmt.Errorf("task %s: %v", taskID, err)
+		}
+		return res, nil
+	}
+}
+
+// lookup returns the event posted with key, if any.
+func (k *turnKeys) lookup(key string) *keyedEvent {
+	if k == nil || key == "" {
+		return nil
+	}
+	return k.seen[key]
+}
+
+// deliverEvent hands ev to the execution waiting on w and returns the
+// result of applying it.
+func deliverEvent(ctx context.Context, w *nodeWaiter, ev mailboxapi.Event) error {
+	d := nodeDelivery{ev: ev, result: make(chan error, 1)}
+	select {
+	case w.events <- d:
+		return <-d.result
+	case <-w.done:
+		return errTaskClosed
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // nodeExecutor wakes a node and turns its events into A2A updates. An
@@ -458,6 +534,13 @@ var _ a2asrv.AgentExecutor = (*nodeExecutor)(nil)
 func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		n := e.n
+		w, err := n.openTask(ec.TaskID, e.node, cappedCaller(ctx), ec.StoredTask == nil)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		defer n.closeTask(ec.TaskID, w)
+
 		kind, state := mailboxapi.KindMessage, a2a.TaskStateWorking
 		if ec.StoredTask == nil {
 			kind, state = mailboxapi.KindTask, a2a.TaskStateSubmitted
@@ -467,9 +550,6 @@ func (e *nodeExecutor) Execute(ctx context.Context, ec *a2asrv.ExecutorContext) 
 		} else if !yield(a2a.NewStatusUpdateEvent(ec, a2a.TaskStateWorking, nil), nil) {
 			return
 		}
-
-		w := n.openTask(ec.TaskID, e.node)
-		defer n.closeTask(ec.TaskID, w)
 
 		n.wake(e.node, mailboxapi.Envelope{
 			Kind: kind, TaskID: string(ec.TaskID), ContextID: ec.ContextID, Sender: senderOf(ctx, n.cfg.AgentName()),
@@ -564,16 +644,61 @@ func senderOf(ctx context.Context, agent string) mailboxapi.Sender {
 	return mailboxapi.Sender{Kind: mailboxapi.SenderOwner, Name: p.ID}
 }
 
-func (n *Host) openTask(id a2a.TaskID, node string) *nodeWaiter {
-	w := &nodeWaiter{node: node, events: make(chan nodeDelivery), done: make(chan struct{})}
+// The open tasks a node takes from callers other than its owners and the
+// hosting agent, per caller and in all.
+const (
+	maxCallerOpenTasks = 20
+	maxNodeOpenTasks   = 100
+)
+
+// openTask opens task id of node for events. caller is the capped caller
+// the task is for, or empty; a new task past its caps is refused.
+func (n *Host) openTask(id a2a.TaskID, node, caller string, isNew bool) (*nodeWaiter, error) {
+	w := &nodeWaiter{node: node, caller: caller, events: make(chan nodeDelivery), done: make(chan struct{})}
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	if isNew && caller != "" {
+		if err := n.checkCaps(node, caller); err != nil {
+			return nil, err
+		}
+	}
 	if old := n.open[id]; old != nil {
 		old.close()
 	}
 	delete(n.keys, id)
 	n.open[id] = w
-	return w
+	return w, nil
+}
+
+// checkCaps returns an error if caller may open no more tasks on node.
+// n.mu is held.
+func (n *Host) checkCaps(node, caller string) error {
+	ofCaller, capped := 0, 0
+	for _, w := range n.open {
+		if w.node != node || w.caller == "" {
+			continue
+		}
+		capped++
+		if w.caller == caller {
+			ofCaller++
+		}
+	}
+	if ofCaller >= maxCallerOpenTasks {
+		return fmt.Errorf("%w: you have %d open tasks on %s; send more when one finishes", a2a.ErrUnauthorized, ofCaller, node)
+	}
+	if capped >= maxNodeOpenTasks {
+		return fmt.Errorf("%w: %s has %d open tasks; try again when one finishes", a2a.ErrUnauthorized, node, capped)
+	}
+	return nil
+}
+
+// cappedCaller returns the caller of ctx if the open task caps apply to it.
+func cappedCaller(ctx context.Context) string {
+	p, ok := auth.Caller(ctx)
+	if !ok || p.IsOwner() || p.Network == network.ListenerHarness {
+		return ""
+	}
+	return p.ID
 }
 
 // idempotencyRetention is how long the idempotency keys of a closed task are

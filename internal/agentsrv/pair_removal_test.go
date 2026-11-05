@@ -28,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -105,6 +106,36 @@ func harnessSocketDirs(t *testing.T, ts *testServer) []string {
 		names[i] = e.Name()
 	}
 	return names
+}
+
+func TestPairRmPreviewChangesNothing(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	pid := pidOf(t, send(t, anna, userText("pid", "", "")))
+	home := ts.dir.UserHomeDir("pair:anna")
+
+	got, err := controlapi.NewClient(ts.dir).PreviewRevoke(ctx, "anna")
+	if err != nil {
+		t.Fatalf("PreviewRevoke() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{home}, got.AgentHomes); diff != "" {
+		t.Fatalf("PreviewRevoke() agent homes wrong result (-want +got) diff = %s", diff)
+	}
+	if got.Tasks != 1 || got.Tokens != 1 {
+		t.Fatalf("PreviewRevoke() = %+v, want 1 task and 1 token", got)
+	}
+	if !processRuns(pid) {
+		t.Fatalf("anna's agent process %d stopped by PreviewRevoke(), want it running", pid)
+	}
+	if _, err := os.Stat(home); err != nil {
+		t.Fatalf("Stat() of anna's agent home after PreviewRevoke() error = %v, want it kept", err)
+	}
+	if _, err := controlapi.NewClient(ts.dir).PreviewRevoke(ctx, "nobody"); err == nil {
+		t.Fatalf("PreviewRevoke() of an unknown name error = nil, want error")
+	}
 }
 
 func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {

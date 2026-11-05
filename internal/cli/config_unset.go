@@ -40,7 +40,7 @@ Settings: ` + strings.Join(agentdir.SettingNames(), ", "),
   a2a-serve config unset mount /docs
   a2a-serve config unset allow-email '*@example.com'
   a2a-serve config unset private`,
-		Args:      cobra.MinimumNArgs(1),
+		Args:      namedArgs,
 		ValidArgs: agentdir.SettingNames(),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := agentdir.CheckUnset(args[0]); err != nil {

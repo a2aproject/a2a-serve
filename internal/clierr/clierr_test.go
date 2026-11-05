@@ -23,6 +23,8 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
@@ -75,13 +77,13 @@ func TestClassify(t *testing.T) {
 		},
 		{
 			name:     "agent server not running",
-			err:      fmt.Errorf("coder: %w", markedNotRunning{}),
+			err:      fmt.Errorf("coder: %w", NotRunning(errors.New("the agent server is not running"))),
 			wantCode: CodeNotRunning,
 			wantExit: 6,
 		},
 		{
 			name:     "no agent directory",
-			err:      fmt.Errorf("loading: %w", markedNoAgent{}),
+			err:      fmt.Errorf("loading: %w", NoAgent(errors.New("no .a2a directory found"))),
 			wantCode: CodeNoAgent,
 			wantExit: 7,
 		},
@@ -150,15 +152,43 @@ type markedUsage struct{}
 func (markedUsage) Error() string    { return "invalid setting" }
 func (markedUsage) UsageError() bool { return true }
 
-type markedNotRunning struct{}
+func TestClassifyWrapped(t *testing.T) {
+	t.Parallel()
+	err := fmt.Errorf("coder: %w", NotRunning(errors.New("the agent server is not running")))
 
-func (markedNotRunning) Error() string    { return "the agent server is not running" }
-func (markedNotRunning) NotRunning() bool { return true }
+	got := Classify(err)
 
-type markedNoAgent struct{}
+	want := &Error{Code: CodeNotRunning, Message: "coder: the agent server is not running", Exit: 6}
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Error{})); diff != "" {
+		t.Fatalf("Classify() wrong result (-want +got) diff = %s", diff)
+	}
+}
 
-func (markedNoAgent) Error() string { return "no .a2a directory found" }
-func (markedNoAgent) NoAgent() bool { return true }
+func TestWrap(t *testing.T) {
+	t.Parallel()
+	cause := errors.New("can't reach http://127.0.0.1:1")
+	tests := []struct {
+		name string
+		code string
+		want *Error
+	}{
+		{name: "io", code: CodeIO, want: &Error{Code: CodeIO, Message: cause.Error(), Hint: IOHint, Exit: 3}},
+		{name: "busy", code: CodeBusy, want: &Error{Code: CodeBusy, Message: cause.Error(), Exit: 8}},
+		{name: "unknown code", code: "A2ASERVE_ERR_FUTURE", want: &Error{Code: "A2ASERVE_ERR_FUTURE", Message: cause.Error(), Exit: 1}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := Wrap(tc.code, cause)
+			if diff := cmp.Diff(tc.want, got, cmpopts.IgnoreUnexported(Error{})); diff != "" {
+				t.Fatalf("Wrap() wrong result (-want +got) diff = %s", diff)
+			}
+			if !errors.Is(got, cause) {
+				t.Fatalf("Wrap() = %v, want it to wrap %v", got, cause)
+			}
+		})
+	}
+}
 
 func TestClassifyNil(t *testing.T) {
 	t.Parallel()

@@ -24,6 +24,8 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -76,6 +78,57 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	}
 	task = send(t, ts.client(renewed), userText("hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
+func TestOwnerTokenReplacedWhenLocalURLChanges(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	other := credstore.Credential{URL: "http://127.0.0.1:1/other", Token: "a2p_other", Agent: "other"}
+	if err := creds.Put(other); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+	ts := startServer(t, serverOpts{name: "assistant", credentials: creds})
+	oldURL := ts.localURL()
+	dir := ts.dir.Root
+	ts.stop()
+
+	ts = startServer(t, serverOpts{dir: dir, credentials: creds, configure: func(c *agentdir.Config) { c.Port = freePort(t) }})
+
+	if ts.localURL() == oldURL {
+		t.Fatalf("local URL after changing the port = %q, want a new one", oldURL)
+	}
+	all, err := creds.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var urls []string
+	for _, c := range all {
+		urls = append(urls, c.URL)
+	}
+	want := []string{other.URL, credstore.Normalize(ts.localURL())}
+	if diff := cmp.Diff(want, urls, cmpopts.SortSlices(func(a, b string) bool { return a < b })); diff != "" {
+		t.Fatalf("saved credential URLs after the local URL changed wrong result (-want +got) diff = %s", diff)
+	}
+	lookupOwnerToken(t, creds, ts.localURL())
+}
+
+func TestOwnerTokenKeepsAgentNameCurrent(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	ts := startServer(t, serverOpts{name: "assistant", credentials: creds})
+	token := lookupOwnerToken(t, creds, ts.localURL())
+	dir := ts.dir.Root
+	ts.stop()
+
+	ts = startServer(t, serverOpts{dir: dir, credentials: creds, configure: func(c *agentdir.Config) { c.Name = "renamed" }})
+
+	got, ok, err := creds.Lookup(ts.localURL())
+	if err != nil || !ok {
+		t.Fatalf("Lookup() = %v, %v, want the owner token", ok, err)
+	}
+	if got.Token != token || got.Agent != "renamed" {
+		t.Fatalf("saved owner token after renaming the agent = %+v, want token %q for agent %q", got, token, "renamed")
+	}
 }
 
 func TestOwnerTokenWorksOnlyOnLocalURL(t *testing.T) {

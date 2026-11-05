@@ -16,7 +16,7 @@ package agentdir
 
 import (
 	"fmt"
-	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -31,6 +31,9 @@ type placement int
 const (
 	// placeCore settings are flags of `start <agent>` and `config set`.
 	placeCore placement = iota
+	// placeAgent is --agent of `config set`, which `start` takes as its
+	// argument.
+	placeAgent
 	// placeOperational settings are flags of `config set` only.
 	placeOperational
 	// placeChannel settings are flags of `channel add` only.
@@ -49,33 +52,65 @@ const (
 	scopeOwner
 )
 
-// field is a setting of config.yaml, named by its flag. A scalar has at
-// most one entry.
+// Help sections of the settings flags.
+const (
+	SectionGeneral   = "General"
+	SectionWorkspace = "Workspace"
+	SectionSandbox   = "Sandbox"
+	SectionNetwork   = "Network"
+	SectionAccess    = "Access"
+	SectionApprovals = "Approvals"
+)
+
+// field is a setting, named by its flag. A scalar has at most one entry.
 type field struct {
-	flag  string
-	place placement
-	scope scope
-	list  bool
+	access
+	flag string
+	// path is the dotted key in config.yaml, empty for a stored secret.
+	path    string
+	usage   string
+	section string
+	place   placement
+	scope   scope
 	// live settings are applied by a running server without a restart.
 	live bool
+	// split says commas also separate the entries of a list flag.
+	split bool
+	// secret is the name a secret value of the flag is stored under.
+	secret string
+	// secretOnly settings are kept in the secrets file alone.
+	secretOnly bool
+	// values are the completions of the flag.
+	values []string
+	// key returns the key of an entry, or of an argument naming it.
+	key func(string) string
+	// parse normalizes an entry of the flag before it is merged.
+	parse func(d Dir, v string) (string, error)
+	// merge replaces the default merge of the flag's entries into cfg.
+	merge func(s *Settings, cfg *Config, d Dir, secrets Secrets) error
+}
+
+// access reads and writes a setting of a config, and points to the value of
+// its flag in [Settings].
+type access struct {
+	list bool
 	get  func(*Config) []string
 	// put replaces the entries with what get returns; nil resets the setting.
 	put func(*Config, []string)
-	// key returns the key of an entry, or of an argument naming it.
-	key func(string) string
+	// arg points to the flag value: a *string, *int or *[]string.
+	arg func(*Settings) any
 }
 
-func scalar(flag string, live bool, p func(*Config) *string) field {
-	return field{
-		flag: flag, live: live,
+func str(p func(*Config) *string, arg func(*Settings) *string) access {
+	return access{
 		get: func(c *Config) []string { return nonEmpty(*p(c)) },
 		put: func(c *Config, v []string) { *p(c) = first(v) },
+		arg: func(s *Settings) any { return arg(s) },
 	}
 }
 
-func intField(flag string, p func(*Config) *int) field {
-	return field{
-		flag: flag,
+func num(p func(*Config) *int, arg func(*Settings) *int) access {
+	return access{
 		get: func(c *Config) []string {
 			if *p(c) == 0 {
 				return nil
@@ -89,36 +124,21 @@ func intField(flag string, p func(*Config) *int) field {
 			}
 			*p(c) = n
 		},
+		arg: func(s *Settings) any { return arg(s) },
 	}
 }
 
-func list(flag string, live bool, p func(*Config) *[]string, key func(string) string) field {
-	return field{
-		flag: flag, list: true, live: live, key: key,
-		get: func(c *Config) []string { return *p(c) },
-		put: func(c *Config, v []string) { *p(c) = v },
+func strs(p func(*Config) *[]string, arg func(*Settings) *[]string) access {
+	return access{
+		list: true,
+		get:  func(c *Config) []string { return *p(c) },
+		put:  func(c *Config, v []string) { *p(c) = v },
+		arg:  func(s *Settings) any { return arg(s) },
 	}
 }
 
-// operational marks f as a flag of `config set` only.
-func operational(f field) field {
-	f.place = placeOperational
-	return f
-}
-
-func agentScope(f field) field {
-	f.scope = scopeAgent
-	return f
-}
-
-func ownerScope(f field) field {
-	f.scope = scopeOwner
-	return f
-}
-
-func emailField(flag string, p func(*EmailConfig) *string) field {
-	return field{
-		flag: flag, live: true, place: placeChannel, scope: scopeOwner,
+func email(p func(*EmailConfig) *string, arg func(*EmailSettings) *string) access {
+	return access{
 		get: func(c *Config) []string {
 			if c.Channels.Email == nil {
 				return nil
@@ -131,14 +151,29 @@ func emailField(flag string, p func(*EmailConfig) *string) field {
 			}
 			*p(c.Channels.Email) = first(v)
 		},
+		arg: func(s *Settings) any {
+			if s.Email == nil {
+				s.Email = &EmailSettings{}
+			}
+			return arg(s.Email)
+		},
 	}
 }
 
-func tokenField(kind string, set func(*Config, string)) field {
-	return field{
-		flag: kind, live: true, place: placeChannel, scope: scopeOwner,
+func token(kind string, set func(*Config, string), arg func(*Settings) *string) access {
+	return access{
 		get: func(c *Config) []string { return nonEmpty(c.ChannelToken(kind)) },
 		put: func(c *Config, v []string) { set(c, first(v)) },
+		arg: func(s *Settings) any { return arg(s) },
+	}
+}
+
+// storedSecret is a setting kept in the secrets file alone.
+func storedSecret(arg func(*Settings) *string) access {
+	return access{
+		get: func(*Config) []string { return nil },
+		put: func(*Config, []string) {},
+		arg: func(s *Settings) any { return arg(s) },
 	}
 }
 
@@ -165,73 +200,295 @@ func mountArgKey(s string) string {
 	return filepath.Clean(s)
 }
 
-var fields = []field{
-	agentScope(scalar("agent", false, func(c *Config) *string { return &c.Harness })),
-	ownerScope(scalar("name", false, func(c *Config) *string { return &c.Name })),
-	agentScope(scalar("description", true, func(c *Config) *string { return &c.Description })),
-	{
-		flag:  "command",
-		scope: scopeAgent,
-		get:   func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
-		put:   func(c *Config, v []string) { c.Command = shellSplit(first(v)) },
-	},
-	agentScope(scalar("image", false, func(c *Config) *string { return &c.Image })),
-	agentScope(scalar("sandbox", false, func(c *Config) *string { return &c.Sandbox })),
-	ownerScope(scalar("workspace", false, func(c *Config) *string { return &c.Workspace })),
-	agentScope(list("mount", false, func(c *Config) *[]string { return &c.Mounts }, mountArgKey)),
-	agentScope(list("secret", false, func(c *Config) *[]string { return &c.Secrets }, identity)),
-	agentScope(list("env", false, func(c *Config) *[]string { return &c.Env }, envKey)),
-	ownerScope(intField("port", func(c *Config) *int { return &c.Port })),
-	ownerScope(scalar("private", false, func(c *Config) *string { return &c.Network.Private })),
-	ownerScope(scalar("public", false, func(c *Config) *string { return &c.Network.Public })),
-	ownerScope(scalar("private-access", true, func(c *Config) *string { return &c.Policy.PrivateAccess })),
-	ownerScope(scalar("public-access", true, func(c *Config) *string { return &c.Policy.PublicAccess })),
-	ownerScope(list("allow-email", true, func(c *Config) *[]string { return &c.Policy.AllowEmails }, strings.ToLower)),
-	ownerScope(operational(scalar("tailscale-control-url", false, func(c *Config) *string { return &c.Network.TailscaleControlURL }))),
-	tokenField(ChannelTelegram, func(c *Config, v string) {
-		c.Channels.Telegram = nil
-		if v != "" {
-			c.Channels.Telegram = &TelegramConfig{Token: v}
-		}
-	}),
-	tokenField(ChannelDiscord, func(c *Config, v string) {
-		c.Channels.Discord = nil
-		if v != "" {
-			c.Channels.Discord = &DiscordConfig{Token: v}
-		}
-	}),
-	emailField("email-address", func(e *EmailConfig) *string { return &e.Address }),
-	emailField("email-imap", func(e *EmailConfig) *string { return &e.IMAP }),
-	emailField("email-smtp", func(e *EmailConfig) *string { return &e.SMTP }),
-	emailField("email-username", func(e *EmailConfig) *string { return &e.Username }),
-	emailField("email-password", func(e *EmailConfig) *string { return &e.Password }),
-	emailField("email-mailbox", func(e *EmailConfig) *string { return &e.Mailbox }),
-	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
-	emailField("email-oauth-token-url", func(e *EmailConfig) *string { return &e.OAuthTokenURL }),
-	emailField("email-oauth-client-id", func(e *EmailConfig) *string { return &e.OAuthClientID }),
-	emailField("email-oauth-client-secret", func(e *EmailConfig) *string { return &e.OAuthClientSecret }),
-	emailField("email-oauth-refresh-token", func(e *EmailConfig) *string { return &e.OAuthRefreshToken }),
-	agentScope(list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity)),
-	agentScope(list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity)),
-	ownerScope(list("disable-mcp", true, func(c *Config) *[]string { return &c.MCP.Disabled }, identity)),
-	ownerScope(scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat })),
-	agentScope(operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }))),
-	agentScope(operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }))),
-	agentScope(operational(intField("pids", func(c *Config) *int { return &c.Limits.PIDs }))),
-	ownerScope(operational(scalar("google-client-id", false, func(c *Config) *string { return &c.Auth.GoogleClientID }))),
-	ownerScope(operational(scalar("google-client-secret", false, func(c *Config) *string { return &c.Auth.GoogleClientSecret }))),
-	ownerScope(operational(scalar("backup", false, func(c *Config) *string { return &c.Backup.To }))),
-	ownerScope(operational(scalar("backup-key", false, func(c *Config) *string { return &c.Backup.Key }))),
-	ownerScope(operational(scalar("backup-interval", false, func(c *Config) *string { return &c.Backup.Interval }))),
-	ownerScope(operational(scalar("backup-retention", false, func(c *Config) *string { return &c.Backup.Retention }))),
-	ownerScope(operational(scalar("task-ttl", false, func(c *Config) *string { return &c.TaskTTL }))),
+func trimSpace(_ Dir, v string) (string, error) { return strings.TrimSpace(v), nil }
+
+// parseNetwork reads "none" as no provider.
+func parseNetwork(_ Dir, v string) (string, error) {
+	if v == NetworkNone {
+		return "", nil
+	}
+	return v, nil
 }
 
-// unsetOnly are settings which `config unset` accepts besides the fields:
-// the stored network secrets.
-var unsetOnly = map[string]string{
-	"tailscale-authkey": SecretTailscaleKey,
-	"relay-token":       SecretRelayToken,
+func parseCommand(_ Dir, v string) (string, error) {
+	argv, err := shlex.Split(v)
+	if err != nil || len(argv) == 0 {
+		return "", fmt.Errorf("invalid command line %q", v)
+	}
+	return ShellJoin(argv), nil
+}
+
+// parseWorkspace returns the spec of a workspace, empty for the directory
+// holding .a2a.
+func parseWorkspace(d Dir, v string) (string, error) {
+	m, err := ParseMount(v)
+	if err != nil {
+		return "", err
+	}
+	if m == (Mount{Src: d.Root, Dst: d.Root}) {
+		return "", nil
+	}
+	return m.String(), nil
+}
+
+func parseMountArg(_ Dir, v string) (string, error) {
+	m, err := ParseMount(v)
+	if err != nil {
+		return "", err
+	}
+	return m.String(), nil
+}
+
+// parseEnvRef reads env:VAR from the environment of the CLI.
+func parseEnvRef(_ Dir, v string) (string, error) {
+	name, ok := strings.CutPrefix(v, "env:")
+	if !ok {
+		return v, nil
+	}
+	if v = os.Getenv(name); v == "" {
+		return "", fmt.Errorf("environment variable %s is empty", name)
+	}
+	return v, nil
+}
+
+var fields = []field{
+	{
+		access: str(func(c *Config) *string { return &c.Harness }, func(s *Settings) *string { return &s.Harness }),
+		flag:   "agent", path: "agent", place: placeAgent, scope: scopeAgent, section: SectionGeneral,
+		usage:  "Agent: claude, opencode, or acp with --command",
+		values: append(slices.Clone(Harnesses), HarnessACP),
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Name }, func(s *Settings) *string { return &s.Name }),
+		flag:   "name", path: "name", scope: scopeOwner, section: SectionGeneral,
+		usage: "Agent name, also its tailnet machine name (default: the directory name)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Description }, func(s *Settings) *string { return &s.Description }),
+		flag:   "description", path: "description", scope: scopeAgent, live: true, section: SectionGeneral,
+		usage: "Agent description for its card",
+	},
+	{
+		access: access{
+			get: func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
+			put: func(c *Config, v []string) { c.Command = shellSplit(first(v)) },
+			arg: func(s *Settings) any { return &s.Command },
+		},
+		flag: "command", path: "command", scope: scopeAgent, section: SectionSandbox, parse: parseCommand,
+		usage: "Command line of the agent, as shell `words`, such as \"cloudcode acp\"; replaces its default command",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Image }, func(s *Settings) *string { return &s.Image }),
+		flag:   "image", path: "image", scope: scopeAgent, section: SectionSandbox,
+		usage: "Container image of the agent; only applies to --sandbox docker",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Sandbox }, func(s *Settings) *string { return &s.Sandbox }),
+		flag:   "sandbox", path: "sandbox", scope: scopeAgent, section: SectionSandbox,
+		usage:  "Where the agent runs: docker (default) or local",
+		values: []string{SandboxDocker, SandboxLocal},
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Workspace }, func(s *Settings) *string { return &s.Workspace }),
+		flag:   "workspace", path: "workspace", scope: scopeOwner, section: SectionWorkspace, parse: parseWorkspace,
+		usage: "Workspace directory: `src[:dst][:ro]`, such as ~/src/app (default: the directory holding .a2a)",
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Mounts }, func(s *Settings) *[]string { return &s.Mounts }),
+		flag:   "mount", path: "mounts", scope: scopeAgent, section: SectionWorkspace, key: mountArgKey, parse: parseMountArg,
+		usage: "Extra directory to mount: `src[:dst][:ro]`, such as ~/docs:/docs:ro; keyed by dst",
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Secrets }, func(s *Settings) *[]string { return &s.Secrets }),
+		flag:   "secret", path: "secrets", scope: scopeAgent, section: SectionWorkspace, key: identity, merge: mergeSecrets,
+		usage: "Environment variable to pass to the agent, such as an API key: `NAME[=value]`, stored in .a2a/state/secrets; without a value, read from your environment or prompted",
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Env }, func(s *Settings) *[]string { return &s.Env }),
+		flag:   "env", path: "env", scope: scopeAgent, section: SectionWorkspace, key: envKey,
+		usage: "Extra variable for the agent: `NAME=value`, such as DEBUG=1; keyed by NAME",
+	},
+	{
+		access: num(func(c *Config) *int { return &c.Port }, func(s *Settings) *int { return &s.Port }),
+		flag:   "port", path: "port", scope: scopeOwner, section: SectionNetwork,
+		usage: "Localhost port, 1-65535 (default: a free port, kept across runs)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Network.Private }, func(s *Settings) *string { return &s.Private }),
+		flag:   "private", path: "network.private", scope: scopeOwner, section: SectionNetwork, parse: parseNetwork,
+		usage:  "Private network: tailscale, none, or the URL of an Agent Mesh relay such as https://relay.example.com",
+		values: []string{NetworkTailscale, NetworkNone},
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Network.Public }, func(s *Settings) *string { return &s.Public }),
+		flag:   "public", path: "network.public", scope: scopeOwner, section: SectionNetwork, parse: parseNetwork,
+		usage:  "Public URL: tailscale (Funnel), none, or the URL of an Agent Mesh relay",
+		values: []string{NetworkTailscale, NetworkNone},
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Policy.PrivateAccess }, func(s *Settings) *string { return &s.PrivateAccess }),
+		flag:   "private-access", path: "policy.privateAccess", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)",
+		values: []string{AccessEveryone, AccessPaired},
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Policy.PublicAccess }, func(s *Settings) *string { return &s.PublicAccess }),
+		flag:   "public-access", path: "policy.publicAccess", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)",
+		values: []string{AccessPaired, AccessAnyone},
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Policy.AllowEmails }, func(s *Settings) *[]string { return &s.AllowEmails }),
+		flag:   "allow-email", path: "policy.allowEmails", scope: scopeOwner, live: true, section: SectionAccess, split: true,
+		key: strings.ToLower, parse: trimSpace,
+		usage: "People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Network.TailscaleControlURL }, func(s *Settings) *string { return &s.TailscaleControlURL }),
+		flag:   "tailscale-control-url", path: "network.tailscaleControlURL", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
+		usage: "Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server",
+	},
+	{
+		access: storedSecret(func(s *Settings) *string { return &s.TailscaleAuthKey }),
+		flag:   "tailscale-authkey", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
+		secret: SecretTailscaleKey, secretOnly: true,
+		usage: "Tailscale auth key, to join without the login link",
+	},
+	{
+		access: storedSecret(func(s *Settings) *string { return &s.RelayToken }),
+		flag:   "relay-token", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
+		secret: SecretRelayToken, secretOnly: true,
+		usage: "Join token of an Agent Mesh relay, to join without the sign-in link",
+	},
+	{
+		access: token(ChannelTelegram, func(c *Config, v string) {
+			c.Channels.Telegram = nil
+			if v != "" {
+				c.Channels.Telegram = &TelegramConfig{Token: v}
+			}
+		}, func(s *Settings) *string { return &s.Telegram }),
+		flag: ChannelTelegram, path: "channels.telegram.token", place: placeChannel, scope: scopeOwner, live: true, secret: SecretTelegram,
+	},
+	{
+		access: token(ChannelDiscord, func(c *Config, v string) {
+			c.Channels.Discord = nil
+			if v != "" {
+				c.Channels.Discord = &DiscordConfig{Token: v}
+			}
+		}, func(s *Settings) *string { return &s.Discord }),
+		flag: ChannelDiscord, path: "channels.discord.token", place: placeChannel, scope: scopeOwner, live: true, secret: SecretDiscord,
+	},
+	emailField("address", "address", "Email channel: the agent's address",
+		email(func(e *EmailConfig) *string { return &e.Address }, func(e *EmailSettings) *string { return &e.Address })),
+	emailField("imap", "imap", "Email channel: IMAP host:port, such as imap.example.com:993",
+		email(func(e *EmailConfig) *string { return &e.IMAP }, func(e *EmailSettings) *string { return &e.IMAP })),
+	emailField("smtp", "smtp", "Email channel: SMTP host:port, such as smtp.example.com:465",
+		email(func(e *EmailConfig) *string { return &e.SMTP }, func(e *EmailSettings) *string { return &e.SMTP })),
+	emailField("username", "username", "Email channel: login (default: the address)",
+		email(func(e *EmailConfig) *string { return &e.Username }, func(e *EmailSettings) *string { return &e.Username })),
+	emailSecret(emailField("password", "password", "Email channel: password",
+		email(func(e *EmailConfig) *string { return &e.Password }, func(e *EmailSettings) *string { return &e.Password })), SecretEmailPassword),
+	emailField("mailbox", "mailbox", "Email channel: mailbox to watch (default INBOX)",
+		email(func(e *EmailConfig) *string { return &e.Mailbox }, func(e *EmailSettings) *string { return &e.Mailbox })),
+	emailField("trusted-authserv", "trustedAuthServ", "Email channel: authserv-id of your mail server's Authentication-Results",
+		email(func(e *EmailConfig) *string { return &e.TrustedAuthServ }, func(e *EmailSettings) *string { return &e.TrustedAuthServ })),
+	emailField("oauth-token-url", "oauthTokenURL", "Email channel: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token",
+		email(func(e *EmailConfig) *string { return &e.OAuthTokenURL }, func(e *EmailSettings) *string { return &e.OAuthTokenURL })),
+	emailField("oauth-client-id", "oauthClientID", "Email channel: OAuth client ID",
+		email(func(e *EmailConfig) *string { return &e.OAuthClientID }, func(e *EmailSettings) *string { return &e.OAuthClientID })),
+	emailSecret(emailField("oauth-client-secret", "oauthClientSecret", "Email channel: OAuth client secret, if the client has one",
+		email(func(e *EmailConfig) *string { return &e.OAuthClientSecret }, func(e *EmailSettings) *string { return &e.OAuthClientSecret })), SecretEmailClient),
+	emailSecret(emailField("oauth-refresh-token", "oauthRefreshToken", "Email channel: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused",
+		email(func(e *EmailConfig) *string { return &e.OAuthRefreshToken }, func(e *EmailSettings) *string { return &e.OAuthRefreshToken })), SecretEmailOAuth),
+	{
+		access: strs(func(c *Config) *[]string { return &c.Approvals.Allow }, func(s *Settings) *[]string { return &s.AllowTools }),
+		flag:   "allow-tools", path: "approvals.allow", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: identity,
+		usage:  "ACP tool `kinds` approved without asking: " + strings.Join(ToolKinds, ", ") + ", or a glob",
+		values: ToolKinds,
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Approvals.Deny }, func(s *Settings) *[]string { return &s.DenyTools }),
+		flag:   "deny-tools", path: "approvals.deny", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: identity,
+		usage:  "ACP tool `kinds` denied without asking, like --allow-tools",
+		values: ToolKinds,
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.MCP.Disabled }, func(s *Settings) *[]string { return &s.DisableMCP }),
+		flag:   "disable-mcp", path: "mcp.disabled", scope: scopeOwner, live: true, section: SectionWorkspace, split: true, key: identity, parse: trimSpace,
+		usage: "MCP `servers` of the project's .mcp.json the agent doesn't get",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Approvals.OwnerChat }, func(s *Settings) *string { return &s.OwnerChat }),
+		flag:   "owner-chat", path: "approvals.ownerChat", scope: scopeOwner, live: true, section: SectionApprovals,
+		usage:  "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)",
+		values: ChannelKinds,
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Limits.Memory }, func(s *Settings) *string { return &s.Memory }),
+		flag:   "memory", path: "limits.memory", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
+		usage: "Container memory limit, such as 4g or 512m (default 4g)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Limits.CPUs }, func(s *Settings) *string { return &s.CPUs }),
+		flag:   "cpus", path: "limits.cpus", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
+		usage: "Container CPU limit, such as 2 or 1.5 (default 2)",
+	},
+	{
+		access: num(func(c *Config) *int { return &c.Limits.PIDs }, func(s *Settings) *int { return &s.PIDs }),
+		flag:   "pids", path: "limits.pids", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
+		usage: "Container process limit (default 512)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Auth.GoogleClientID }, func(s *Settings) *string { return &s.GoogleClientID }),
+		flag:   "google-client-id", path: "auth.googleClientID", place: placeOperational, scope: scopeOwner, section: SectionAccess, parse: parseEnvRef,
+		usage: "Client ID of your own Google app for sign-in (optional)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Auth.GoogleClientSecret }, func(s *Settings) *string { return &s.GoogleClientSecret }),
+		flag:   "google-client-secret", path: "auth.googleClientSecret", place: placeOperational, scope: scopeOwner, section: SectionAccess,
+		secret: SecretGoogleClient,
+		usage:  "Client secret of your own Google app",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Backup.To }, func(s *Settings) *string { return &s.Backup }),
+		flag:   "backup", path: "backup.to", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		usage: "Take backup snapshots to a directory, gs://bucket/prefix or s3://bucket/prefix",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Backup.Key }, func(s *Settings) *string { return &s.BackupKey }),
+		flag:   "backup-key", path: "backup.key", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		secret: SecretBackupKey,
+		usage:  "Passphrase the snapshots are encrypted with; keep a copy away from the backups",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Backup.Interval }, func(s *Settings) *string { return &s.BackupInterval }),
+		flag:   "backup-interval", path: "backup.interval", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		usage: "Time between snapshots, a `duration` such as 30m or 1h (default 24h)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Backup.Retention }, func(s *Settings) *string { return &s.BackupRetention }),
+		flag:   "backup-retention", path: "backup.retention", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		usage: "How long snapshots are kept, a `duration` in hours or days such as 48h or 7d; the latest is always kept (default 7d)",
+	},
+	{
+		access: str(func(c *Config) *string { return &c.TaskTTL }, func(s *Settings) *string { return &s.TaskTTL }),
+		flag:   "task-ttl", path: "taskTTL", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
+		usage: "How long tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted",
+	},
+}
+
+// emailField is the --email-<name> setting of the email channel, with the
+// key in channels.email.
+func emailField(name, key, usage string, a access) field {
+	return field{
+		access: a, flag: ChannelEmail + "-" + name, path: "channels.email." + key,
+		place: placeChannel, scope: scopeOwner, live: true, usage: usage,
+	}
+}
+
+func emailSecret(f field, name string) field {
+	f.secret = name
+	return f
 }
 
 func lookupField(flag string) (field, bool) {
@@ -244,7 +501,7 @@ func lookupField(flag string) (field, bool) {
 
 // SettingNames returns the names `config unset` accepts.
 func SettingNames() []string {
-	out := slices.Collect(maps.Keys(unsetOnly))
+	var out []string
 	for _, f := range fields {
 		if f.place != placeChannel {
 			out = append(out, f.flag)
@@ -257,9 +514,6 @@ func SettingNames() []string {
 // CheckUnset reports why `config unset` refuses a setting by its name alone,
 // before the agent's config is read.
 func CheckUnset(setting string) error {
-	if _, ok := unsetOnly[setting]; ok {
-		return nil
-	}
 	f, ok := lookupField(setting)
 	switch {
 	case !ok:
@@ -267,18 +521,22 @@ func CheckUnset(setting string) error {
 	case f.place == placeChannel:
 		kind, _, _ := strings.Cut(setting, "-")
 		return &SettingsError{Err: fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)}
-	case setting == "agent":
+	case f.place == placeAgent:
 		return &SettingsError{Err: fmt.Errorf("the agent can't be unset; switch it with `a2a-serve config set --agent <name>`")}
 	}
 	return nil
 }
+
+// liveSetting reports whether f is a setting of `config set` that a running
+// server applies without a restart.
+func (f field) liveSetting() bool { return f.live && f.place != placeChannel }
 
 // LiveSettings returns the names of the settings of `config set` that a
 // running server applies without a restart, in the order of the fields.
 func LiveSettings() []string {
 	var out []string
 	for _, f := range fields {
-		if f.live && f.place != placeChannel {
+		if f.liveSetting() {
 			out = append(out, f.flag)
 		}
 	}
@@ -373,12 +631,11 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	before := cfg.referencedSecrets()
 	var deleted []string
 	f, _ := lookupField(setting)
-	secret, extra := unsetOnly[setting]
 	switch {
-	case extra && len(entries) > 0:
+	case f.secretOnly && len(entries) > 0:
 		return nil, fmt.Errorf("%s takes no entries: run `a2a-serve config unset %s`", setting, setting)
-	case extra:
-		deleted = append(deleted, secret)
+	case f.secretOnly:
+		deleted = append(deleted, f.secret)
 	case !f.list && len(entries) > 0:
 		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
 	case setting == "name":
@@ -423,26 +680,25 @@ func (c *Config) Commands(stored Secrets) [][]string {
 	set := []string{"a2a-serve", "config", "set"}
 	channels := map[string][]string{}
 	for _, f := range fields {
-		if f.flag == "agent" || (f.flag == "name" && c.Name == "") {
+		if f.flag == "name" && c.Name == "" {
 			continue
 		}
-		switch f.place {
-		case placeCore:
+		switch {
+		case f.secretOnly:
+			if stored[f.secret] != "" {
+				set = appendFlag(set, f.flag, SecretPrefix+f.secret)
+			}
+		case f.place == placeCore:
 			start = appendFlag(start, f.flag, f.get(c)...)
-		case placeOperational:
+		case f.place == placeOperational:
 			set = appendFlag(set, f.flag, f.get(c)...)
-		case placeChannel:
+		case f.place == placeChannel:
 			kind, _, _ := strings.Cut(f.flag, "-")
 			flag := f.flag
 			if kind != ChannelEmail {
 				flag = "token"
 			}
 			channels[kind] = appendFlag(channels[kind], flag, f.get(c)...)
-		}
-	}
-	for _, flag := range slices.Sorted(maps.Keys(unsetOnly)) {
-		if name := unsetOnly[flag]; stored[name] != "" {
-			set = appendFlag(set, flag, SecretPrefix+name)
 		}
 	}
 	out := [][]string{start}
@@ -503,16 +759,121 @@ func shellQuote(s string) string {
 // CopyLive copies the settings a running server applies without a restart,
 // other than channels, from src to dst.
 func CopyLive(dst, src *Config) {
-	dst.Description = src.Description
-	dst.Approvals.OwnerChat = src.Approvals.OwnerChat
-	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
-	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
-	dst.Policy = src.Policy.clone()
-	dst.MCP.Disabled = slices.Clone(src.MCP.Disabled)
+	for _, f := range fields {
+		if f.liveSetting() {
+			f.put(dst, slices.Clone(f.get(src)))
+		}
+	}
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
 	return slices.Contains([]string{"private", "public", "private-access", "public-access", "allow-email"}, setting)
+}
+
+// label names the flag of f in errors.
+func (f field) label() string {
+	if f.flag == ChannelTelegram || f.flag == ChannelDiscord {
+		return f.flag + " token"
+	}
+	return "--" + f.flag
+}
+
+// Flag is a settings flag of the CLI.
+type Flag struct {
+	Name    string
+	Usage   string
+	Section string
+	// Value points to the value of the flag in [Settings]: a *string, *int
+	// or *[]string.
+	Value any
+	// Split says commas also separate the values of a list.
+	Split bool
+	// Secret says the flag takes secret values.
+	Secret bool
+	// Values are the completions of the flag.
+	Values []string
+}
+
+// FlagSet selects the settings flags of a command.
+type FlagSet int
+
+const (
+	// AgentFlag is --agent, which `start` takes as its argument.
+	AgentFlag FlagSet = 1 << iota
+	// CoreFlags are the flags of `start <agent>` and `config set`.
+	CoreFlags
+	// OperationalFlags are the flags of `config set` only: limits,
+	// network-provider options, backups and Google sign-in.
+	OperationalFlags
+	// EmailFlags are the --email-* flags of `channel add email`.
+	EmailFlags
+)
+
+func (p placement) flagSet() FlagSet {
+	switch p {
+	case placeAgent:
+		return AgentFlag
+	case placeOperational:
+		return OperationalFlags
+	case placeChannel:
+		return EmailFlags
+	}
+	return CoreFlags
+}
+
+// Flags returns the flags of sets, bound to the fields of s.
+func (s *Settings) Flags(sets FlagSet) []Flag {
+	var out []Flag
+	for _, f := range fields {
+		// The bot tokens have no usage: they are the --token flag of
+		// `channel add`.
+		if sets&f.place.flagSet() == 0 || f.usage == "" {
+			continue
+		}
+		out = append(out, Flag{
+			Name: f.flag, Usage: f.usage, Section: f.section, Value: f.arg(s), Split: f.split, Values: f.values,
+			// --secret takes NAME=value, stored under NAME.
+			Secret: f.secret != "" || f.flag == "secret",
+		})
+	}
+	return out
+}
+
+// SettingDoc describes a setting for the configuration reference.
+type SettingDoc struct {
+	// Flag is the flag which changes the setting, and Commands the commands
+	// which take it.
+	Flag     string
+	Commands []string
+	// Key is the dotted key in config.yaml. A setting without one is kept
+	// in the secrets file as Secret.
+	Key    string
+	Secret string
+}
+
+// SettingDocs describes the settings.
+func SettingDocs() []SettingDoc {
+	var out []SettingDoc
+	for _, f := range fields {
+		d := SettingDoc{Flag: f.flag, Key: f.path}
+		if f.secretOnly {
+			d.Secret = f.secret
+		}
+		switch f.place {
+		case placeCore:
+			d.Commands = []string{"start <agent>", "config set"}
+		case placeAgent, placeOperational:
+			d.Commands = []string{"config set"}
+		case placeChannel:
+			kind, _, _ := strings.Cut(f.flag, "-")
+			d.Commands = []string{"channel add " + kind}
+			if kind != ChannelEmail {
+				d.Flag = "token"
+			}
+		}
+		out = append(out, d)
+	}
+	return out
 }

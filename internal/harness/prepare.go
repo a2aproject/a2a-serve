@@ -82,7 +82,7 @@ type Spec struct {
 	Labels map[string]string
 
 	// Socket is the host path of the Unix socket through which the harness
-	// reaches the agent server, alone in its directory, which a container
+	// reaches the server, alone in its directory, which a container
 	// mounts read-only so the harness can't replace it. Empty when the
 	// harness reaches the server over TCP.
 	Socket string
@@ -191,7 +191,7 @@ func maskMCP(mask string, mounts []agentdir.Mount) ([]agentdir.Mount, error) {
 	}
 	file := filepath.Join(mounts[0].Src, project.MCPFile)
 	if err := writeIfMissing(file, []byte(emptyMCP)); err != nil {
-		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the harness: %w", file, err)
+		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the agent: %w", file, err)
 	}
 	var out []agentdir.Mount
 	for _, dst := range hiddenDsts(mounts, []string{file}) {

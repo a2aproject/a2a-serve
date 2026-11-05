@@ -293,6 +293,30 @@ func TestTaskLifecycleIsLogged(t *testing.T) {
 	}
 }
 
+// Not parallel: it changes PATH.
+func TestStartReportsOutdatedA2AOnce(t *testing.T) {
+	bin := t.TempDir()
+	script := "#!/bin/sh\necho '{\"version\":\"v0.1.0\"}'\n"
+	if err := os.WriteFile(filepath.Join(bin, "a2a"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	var out lockedBuffer
+	startServer(t, serverOpts{out: &out, setupProblems: func(context.Context) []string {
+		return []string{"a2a v0.1.0 at " + filepath.Join(bin, "a2a") + " is too old"}
+	}})
+
+	got := 0
+	for line := range strings.Lines(out.String()) {
+		if strings.Contains(line, "a2a v0.1.0") {
+			got++
+		}
+	}
+	if got != 1 {
+		t.Fatalf("lines about the outdated a2a at start = %d, want 1; output:\n%s", got, out.String())
+	}
+}
+
 func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})

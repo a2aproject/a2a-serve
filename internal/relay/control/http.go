@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/backoff"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
@@ -124,16 +125,7 @@ func RequireToken(token string, failures *backoff.Failures, next http.Handler) h
 }
 
 // ErrNotRunning is returned when no relay answers on the control socket.
-var ErrNotRunning error = notRunningError{}
-
-type notRunningError struct{}
-
-func (notRunningError) Error() string {
-	return "the relay is not running; start it with `a2a-serve relay run`"
-}
-
-// NotRunning marks the error for the CLI's exit code.
-func (notRunningError) NotRunning() bool { return true }
+var ErrNotRunning error = clierr.NotRunning(errors.New("the relay is not running; start it with `a2a-serve relay run`"))
 
 // Client calls the control API of a relay.
 type Client struct {

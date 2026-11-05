@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -37,7 +38,7 @@ func TestValidate(t *testing.T) {
 		{name: "unknown harness with a command", modify: func(c *Config) { c.Harness, c.Command = "gemini", []string{"gemini"} }},
 		{name: "no agent", modify: func(c *Config) { c.Harness = "" }, wantErr: "no agent"},
 		{name: "acp without a command", modify: func(c *Config) { c.Harness = "acp" }, wantErr: "agent acp needs a command"},
-		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown harness "gemini"`},
+		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown agent "gemini"`},
 		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
 		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale or none`},
@@ -317,6 +318,15 @@ func TestUnknownKeys(t *testing.T) {
 			data: "harness: opencode\napprovals:\n  approvers: [owner]\n",
 		},
 		{
+			name: "snake_case keys",
+			data: "task_ttl: 7d\npolicy:\n  allow_emails: [a@example.com]\nchannels:\n  email:\n    trusted_authserv: mx\n",
+		},
+		{
+			name: "snake_case key besides its camelCase key",
+			data: "taskTTL: 7d\ntask_ttl: 1d\n",
+			want: []string{"task_ttl"},
+		},
+		{
 			name: "empty",
 			data: "",
 		},
@@ -332,6 +342,87 @@ func TestUnknownKeys(t *testing.T) {
 				t.Fatalf("UnknownKeys() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestParseConfigSnakeCaseKeys(t *testing.T) {
+	t.Parallel()
+	data := `agent: opencode
+task_ttl: 7d
+network:
+  tailscale_control_url: https://headscale.example.com
+policy:
+  private_access: paired
+  public_access: anyone
+  allow_emails: [a@example.com]
+approvals:
+  owner_chat: telegram
+auth:
+  google_client_id: id
+  google_client_secret: secret:GOOGLE_CLIENT_SECRET
+channels:
+  email:
+    trusted_authserv: mx
+    oauth_token_url: https://login.example.com/token
+    oauth_client_id: client
+    oauth_client_secret: secret:EMAIL_OAUTH_CLIENT_SECRET
+    oauth_refresh_token: secret:EMAIL_OAUTH_REFRESH_TOKEN
+`
+	camel := `agent: opencode
+taskTTL: 7d
+network:
+  tailscaleControlURL: https://headscale.example.com
+policy:
+  privateAccess: paired
+  publicAccess: anyone
+  allowEmails: [a@example.com]
+approvals:
+  ownerChat: telegram
+auth:
+  googleClientID: id
+  googleClientSecret: secret:GOOGLE_CLIENT_SECRET
+channels:
+  email:
+    trustedAuthServ: mx
+    oauthTokenURL: https://login.example.com/token
+    oauthClientID: client
+    oauthClientSecret: secret:EMAIL_OAUTH_CLIENT_SECRET
+    oauthRefreshToken: secret:EMAIL_OAUTH_REFRESH_TOKEN
+`
+	want, err := ParseConfig([]byte(camel))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	got, err := ParseConfig([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("ParseConfig() wrong result (-want +got) diff = %s", diff)
+	}
+	if want.TaskTTL != "7d" || want.Channels.Email == nil || want.Channels.Email.OAuthRefreshToken == "" {
+		t.Fatalf("ParseConfig() = %+v, want the camelCase keys read", want)
+	}
+	legacy, err := LegacyKeys([]byte(data))
+	if err != nil {
+		t.Fatalf("LegacyKeys() error = %v", err)
+	}
+	wantLegacy := []string{
+		"auth.google_client_id", "auth.google_client_secret", "approvals.owner_chat",
+		"channels.email.oauth_client_id", "channels.email.oauth_client_secret", "channels.email.oauth_refresh_token",
+		"channels.email.oauth_token_url", "channels.email.trusted_authserv",
+		"network.tailscale_control_url", "policy.allow_emails", "policy.private_access", "policy.public_access", "task_ttl",
+	}
+	slices.Sort(wantLegacy)
+	if diff := cmp.Diff(wantLegacy, legacy); diff != "" {
+		t.Fatalf("LegacyKeys() wrong result (-want +got) diff = %s", diff)
+	}
+	saved, err := MarshalConfig(got)
+	if err != nil {
+		t.Fatalf("MarshalConfig() error = %v", err)
+	}
+	if legacy, err := LegacyKeys(saved); err != nil || len(legacy) > 0 {
+		t.Fatalf("LegacyKeys(MarshalConfig()) = %v, %v, want no snake_case keys", legacy, err)
 	}
 }
 

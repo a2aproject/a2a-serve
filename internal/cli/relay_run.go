@@ -35,6 +35,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/logfile"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
@@ -59,12 +60,19 @@ tokens are tied to it. Serve it behind a reverse proxy or a tunnel that ends
 TLS, and give that address as --url. --tunnel cloudflare runs a Cloudflare
 quick tunnel for a demo; its URL changes on every start.
 
+People sign in to the relay from their agents with Google, limited to
+--allow-email, once you register a Google app for the relay and give it with
+--google-client-id and --google-client-secret. Agents that can't sign in
+join with ` + "`a2a-serve relay invite`" + `.
+
 The flags are saved in .a2a/relay.yaml, so later runs need none. A newer
 a2a-serve that pins a newer Agent Mesh backs up the relay's database first,
 and an older one refuses to run on it.
 
 ` + flagparse.SecretHelp,
 		Example: `  a2a-serve relay run --url https://relay.example.com
+  a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
+    --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
   a2a-serve relay run --tunnel cloudflare
   a2a-serve relay run --service`,
 		Args: cobra.NoArgs,
@@ -101,6 +109,9 @@ and an older one refuses to run on it.
 	fs.StringVar(&s.Tunnel, "tunnel", "", "Publish the relay through a Cloudflare quick tunnel (cloudflare, or none); needs cloudflared on PATH")
 	fs.StringVar(&s.AdminToken, "admin-token", "", "The relay's admin token, at least 32 characters, as a "+flagparse.SecretSyntax+" (default: generated on the first run)")
 	fs.StringVar(&s.Database, "database", "", "A PostgreSQL DSN, as a "+flagparse.SecretSyntax+" (default: SQLite in the relay directory; none goes back to it)")
+	fs.StringSliceVar(&s.AllowEmails, "allow-email", nil, "People who may sign in to the relay with Google: an `email`, or *@domain for the accounts of a Google Workspace domain; replaces the saved list, and none turns sign-in off and forgets the Google app (repeatable; commas also separate values)")
+	fs.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of the relay's Google app, which people sign in with (none removes the app)")
+	fs.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of the relay's Google app, as a "+flagparse.SecretSyntax)
 	fs.BoolVar(&runService, "service", false, "Install and start the relay as a launchd or systemd user service")
 	must(cmd.RegisterFlagCompletionFunc("tunnel", fixedCompletions(relaydir.TunnelCloudflare, "none")))
 	return cmd
@@ -163,19 +174,22 @@ func saveRelaySettings(cmd *cobra.Command, cfg *globalConfig, d relaydir.Dir, s 
 			}
 		}
 	}
-	for _, name := range []string{"admin-token", "database"} {
-		if v := cmd.Flags().Lookup(name).Value.String(); v == flagparse.SecretStdin {
-			secret, err := cfg.secretReader(cfg.stderr()).Read("--" + name)
-			if err != nil {
-				return err
-			}
-			switch name {
-			case "admin-token":
-				s.AdminToken = secret
-			case "database":
-				s.Database = secret
-			}
+	for _, v := range []struct {
+		flag string
+		dst  *string
+	}{
+		{"admin-token", &s.AdminToken},
+		{"database", &s.Database},
+		{"google-client-secret", &s.GoogleClientSecret},
+	} {
+		if *v.dst != flagparse.SecretStdin {
+			continue
 		}
+		secret, err := cfg.secretReader(cfg.stderr()).Read("--" + v.flag)
+		if err != nil {
+			return err
+		}
+		*v.dst = secret
 	}
 	_, err := d.SaveSettings(s)
 	return err
@@ -260,7 +274,7 @@ func runRelay(ctx context.Context, cfg *globalConfig, d relaydir.Dir, bin string
 	ctx, stop := signalContext(ctx)
 	defer stop()
 	err = relay.New(relay.Options{
-		Dir: d, Binary: bin, Cloudflared: cloudflared, A2AServe: buildVersionInfo().Version,
+		Dir: d, Binary: bin, Cloudflared: cloudflared, A2AServe: buildVersionInfo().Version, Google: googleauth.Google,
 		Out: cfg.Out, MeshLog: meshLog, Now: time.Now,
 	}).Run(ctx)
 	if !errors.Is(err, relay.ErrRestart) {

@@ -84,7 +84,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 <h2>MCP servers and skills</h2>
 {{if .Status.ProjectError}}<p class="err">{{.Status.ProjectError}}</p>{{end}}
 {{if .Status.MCPServers}}<table><tr><th>MCP server</th><th>Runs</th><th></th></tr>
-{{range .Status.MCPServers}}<tr><td>{{.Name}}</td><td>{{.Summary}}</td><td>{{if .Disabled}}<span class="muted">off</span>{{end}}{{if .Missing}}<span class="err">not passed to the harness, unset: {{range .Missing}}{{.}} {{end}}(pass them with <code>--secret</code>)</span>{{end}}</td></tr>{{end}}
+{{range .Status.MCPServers}}<tr><td>{{.Name}}</td><td>{{.Summary}}</td><td>{{if .Disabled}}<span class="muted">off</span>{{end}}{{if .Missing}}<span class="err">not passed to the agent, unset: {{range .Missing}}{{.}} {{end}}(pass them with <code>--secret</code>)</span>{{end}}</td></tr>{{end}}
 </table>{{else}}<p class="muted">No MCP servers in <code>.mcp.json</code>.</p>{{end}}
 {{if .Status.Skills}}<p>Skills: {{range .Status.Skills}}{{.Name}} {{end}}</p>{{else}}<p class="muted">No skills.</p>{{end}}
 

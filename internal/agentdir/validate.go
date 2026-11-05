@@ -65,7 +65,7 @@ func (c *Config) Validate() error {
 	case c.Harness == HarnessACP && len(c.Command) == 0:
 		add(`agent acp needs a command, such as --command "gemini --experimental-acp"`)
 	case len(c.Command) == 0 && !slices.Contains(Harnesses, c.Harness):
-		add("unknown harness %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
+		add("unknown agent %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
 	if c.Name == "" {
 		add("no name: set one with --name")
@@ -218,15 +218,16 @@ func (p PolicyConfig) validate() []error {
 		errs = append(errs, fmt.Errorf("invalid --public-access %q: want paired or anyone", v))
 	}
 	for _, e := range p.AllowEmails {
-		if !validEmailPattern(e) {
+		if !ValidEmailPattern(e) {
 			errs = append(errs, fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", e))
 		}
 	}
 	return errs
 }
 
-// validEmailPattern reports whether entry is an email or *@domain.
-func validEmailPattern(entry string) bool {
+// ValidEmailPattern reports whether an --allow-email entry is an email or
+// *@domain.
+func ValidEmailPattern(entry string) bool {
 	local, domain, ok := strings.Cut(entry, "@")
 	return ok && local != "" && domain != "" && !strings.ContainsAny(domain, "@* ") && (!strings.Contains(local, "*") || local == "*")
 }
@@ -305,27 +306,17 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 
 type secretRef struct{ flag, value string }
 
-// secretRefs returns the secret references of the channels.
+// secretRefs returns the values of the settings which reference a stored
+// secret.
 func (c *Config) secretRefs() []secretRef {
 	var refs []secretRef
-	if t := c.Channels.Telegram; t != nil && strings.HasPrefix(t.Token, SecretPrefix) {
-		refs = append(refs, secretRef{"telegram", t.Token})
-	}
-	if dc := c.Channels.Discord; dc != nil && strings.HasPrefix(dc.Token, SecretPrefix) {
-		refs = append(refs, secretRef{"discord", dc.Token})
-	}
-	if e := c.Channels.Email; e != nil {
-		for flag, v := range map[string]string{"email-password": e.Password, "email-oauth-client-secret": e.OAuthClientSecret, "email-oauth-refresh-token": e.OAuthRefreshToken} {
-			if strings.HasPrefix(v, SecretPrefix) {
-				refs = append(refs, secretRef{flag, v})
-			}
+	for _, f := range fields {
+		if f.secret == "" {
+			continue
 		}
-	}
-	if strings.HasPrefix(c.Auth.GoogleClientSecret, SecretPrefix) {
-		refs = append(refs, secretRef{"google-client-secret", c.Auth.GoogleClientSecret})
-	}
-	if strings.HasPrefix(c.Backup.Key, SecretPrefix) {
-		refs = append(refs, secretRef{"backup-key", c.Backup.Key})
+		if v := first(f.get(c)); strings.HasPrefix(v, SecretPrefix) {
+			refs = append(refs, secretRef{f.flag, v})
+		}
 	}
 	return refs
 }

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package controlapi is the API of an agent server's control socket, through
+// Package controlapi is the API of a server's control socket, through
 // which management commands change the running server without a restart.
 package controlapi
 
@@ -33,12 +33,13 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 )
 
-// Status describes a running agent server.
+// Status describes a running server.
 type Status struct {
 	Name    string    `json:"name"`
 	Harness string    `json:"agent"`
@@ -199,7 +200,8 @@ func LocalOnly(rawURL string) bool {
 type ChannelStatus struct {
 	Name    string `json:"name"`
 	Account string `json:"account,omitempty"`
-	// Error is set while the channel is failing and waits to restart.
+	// Error is set while the channel can't reach its messenger: it waits
+	// to restart, or it reported a lost connection.
 	Error string `json:"error,omitempty"`
 	// OwnerLink is set when a channel is added and nobody is linked on it
 	// as owner yet.
@@ -342,6 +344,31 @@ type RevokeResponse struct {
 	Access *Access `json:"access,omitempty"`
 }
 
+// RemovalPreview tells what `pair rm` would remove, and removes nothing.
+type RemovalPreview struct {
+	// Kind is the kind of the pairing.
+	Kind string `json:"kind"`
+	// Kept is set when the pairing stays and only its credentials would be
+	// revoked, as for the local pairing.
+	Kept   bool `json:"kept,omitempty"`
+	Tokens int  `json:"tokens"`
+	// Accounts are the messenger accounts linked to the pairing.
+	Accounts []LinkedAccount `json:"accounts"`
+	// Codes is the number of pairing codes that would be deleted.
+	Codes int `json:"codes"`
+	// Node is set when a webhook node would be removed.
+	Node      bool `json:"node,omitempty"`
+	Schedules int  `json:"schedules"`
+	Watches   int  `json:"watches"`
+	Approvals int  `json:"approvals"`
+	Tasks     int  `json:"tasks"`
+	// RunningTasks is the number of Tasks that would be canceled first.
+	RunningTasks  int `json:"runningTasks"`
+	Conversations int `json:"conversations"`
+	// AgentHomes are the agent home directories that would be deleted.
+	AgentHomes []string `json:"agentHomes"`
+}
+
 // SignOutResponse tells what `pair rm --email` revoked.
 type SignOutResponse struct {
 	Email string `json:"email"`
@@ -416,11 +443,11 @@ func ChannelRequestFromConfig(conf *agentdir.Config, kind string) ChannelRequest
 	return ChannelRequest{Kind: kind, Token: conf.ChannelToken(kind), Email: conf.Channels.Email}
 }
 
-// ErrNotRunning is returned when no agent server answers on the control socket.
-var ErrNotRunning error = &notRunningError{name: "the agent server"}
+// ErrNotRunning is returned when no server answers on the control socket.
+var ErrNotRunning error = clierr.NotRunning(&notRunningError{name: "the server"})
 
 // NotRunning returns an error, matching [ErrNotRunning], for the agent name.
-func NotRunning(name string) error { return &notRunningError{name: name} }
+func NotRunning(name string) error { return clierr.NotRunning(&notRunningError{name: name}) }
 
 type notRunningError struct{ name string }
 
@@ -430,23 +457,20 @@ func (e *notRunningError) Error() string {
 
 func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
 
-// NotRunning marks the error for the CLI's exit code.
-func (e *notRunningError) NotRunning() bool { return true }
-
 // WriteError writes err as the response of a failed control call, with the
 // status of its [agenterr] type; [Client] turns it back into that type.
 func WriteError(w http.ResponseWriter, err error) { ctlhttp.WriteError(w, err) }
 
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
-var ErrUnsupported = errors.New("the running agent server doesn't support this call; restart it with `a2a-serve restart`")
+var ErrUnsupported = errors.New("the running server doesn't support this call; restart it with `a2a-serve restart`")
 
 // ReloadResponse lists the settings a server applied from config.yaml.
 type ReloadResponse struct {
 	Applied []string `json:"applied"`
 }
 
-// Client talks to a running agent server over its control socket.
+// Client talks to a running server over its control socket.
 type Client struct {
 	dir agentdir.Dir
 	hc  *http.Client
@@ -557,6 +581,12 @@ func (c *Client) Pair(ctx context.Context, req PairCodeRequest) (*PairCodeRespon
 func (c *Client) Revoke(ctx context.Context, name string) (*RevokeResponse, error) {
 	var out RevokeResponse
 	return &out, c.do(ctx, http.MethodDelete, "/pair/"+url.PathEscape(name), nil, &out)
+}
+
+// PreviewRevoke describes what Revoke would remove, and removes nothing.
+func (c *Client) PreviewRevoke(ctx context.Context, name string) (*RemovalPreview, error) {
+	var out RemovalPreview
+	return &out, c.do(ctx, http.MethodGet, "/pair/"+url.PathEscape(name)+"/removal", nil, &out)
 }
 
 // SignOut revokes the Google sign-in tokens of email.

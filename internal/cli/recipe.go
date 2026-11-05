@@ -91,13 +91,13 @@ version is saved next to it as <file>.recipe.
 			return run.run(cmd.Context())
 		},
 	}
-	flags.register(cmd, coreSettings|operationalSettings|harnessSetting)
+	flags.register(cmd, agentdir.AgentFlag|agentdir.CoreFlags|agentdir.OperationalFlags)
 	cmd.SetUsageFunc(sectionedUsage)
 	f := cmd.Flags()
 	f.StringVar(&sf.dir, "dir", "", "Agent directory: a new agent's, or the agent to update (default: the agent here, or ./<name> for a new one)")
 	f.BoolVarP(&yes, "yes", "y", false, "Create or update the agent without asking; the review still prints")
 	f.BoolVar(&dryRun, "dry-run", false, "Fetch the recipe and print the review without saving")
-	setSection(f, sectionGeneral, "dir", "yes", "dry-run")
+	setSection(f, agentdir.SectionGeneral, "dir", "yes", "dry-run")
 	markTextOnly(cmd)
 	return cmd
 }

@@ -31,7 +31,7 @@ import (
 func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var (
 		token string
-		email agentdir.EmailSettings
+		s     agentdir.Settings
 	)
 	cmd := &cobra.Command{
 		Use:   "add <telegram|discord|email>",
@@ -40,14 +40,13 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Example: `  a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
   a2a-serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
-		Args:      cobra.ExactArgs(1),
+		Args:      namedArgs,
 		ValidArgs: agentdir.ChannelKinds,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
-			var s agentdir.Settings
 			if !slices.Contains(agentdir.ChannelKinds, args[0]) {
 				return clierr.Usage("unknown channel " + args[0] + ": want telegram, discord or email")
 			}
@@ -55,30 +54,19 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return clierr.Usage("--token is required")
 			}
 			r := cfg.secretReader(cfg.stderr())
-			for flag, dst := range map[string]*string{
-				"token": &token, "email-password": &email.Password,
-				"email-oauth-client-secret": &email.OAuthClientSecret, "email-oauth-refresh-token": &email.OAuthRefreshToken,
-			} {
-				if *dst == "" {
-					continue
-				}
-				ref, err := flagparse.ParseSecret(flag, *dst, r)
-				if err != nil {
+			if token != "" {
+				if err := readSecretFlag("token", &token, r); err != nil {
 					return err
 				}
-				// Env and stored references stay references, which the
-				// settings store under their names.
-				if ref.Kind == flagparse.SecretLiteral || ref.Kind == flagparse.SecretPrompted {
-					*dst = ref.Value
-				}
+			}
+			if err := readSecretFlags(&s, agentdir.EmailFlags, r); err != nil {
+				return err
 			}
 			switch args[0] {
 			case agentdir.ChannelTelegram:
-				s.Telegram = token
+				s = agentdir.Settings{Telegram: token}
 			case agentdir.ChannelDiscord:
-				s.Discord = token
-			case agentdir.ChannelEmail:
-				s.Email = &email
+				s = agentdir.Settings{Discord: token}
 			}
 			conf, secrets, err := d.ApplySettings(s)
 			var se *agentdir.SettingsError
@@ -104,7 +92,9 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	}
 	f := cmd.Flags()
 	f.StringVar(&token, "token", "", secretUsage("Bot token"))
-	registerEmailFlags(f, &email)
+	for _, fl := range s.Flags(agentdir.EmailFlags) {
+		registerSettingFlag(cmd, fl)
+	}
 	return cmd
 }
 

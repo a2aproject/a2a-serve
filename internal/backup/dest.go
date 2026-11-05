@@ -26,6 +26,8 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 // Dest is where snapshots are kept.
@@ -74,9 +76,9 @@ func Open(to string, run Runner) (Dest, error) {
 	case strings.HasPrefix(to, "file://"):
 		return dirDest(strings.TrimPrefix(to, "file://")), nil
 	case strings.Contains(to, "://"):
-		return nil, fmt.Errorf("unsupported backup destination %q: want a directory, gs:// or s3://", to)
+		return nil, agenterr.Invalidf("unsupported backup destination %q: want a directory, gs:// or s3://", to)
 	case to == "":
-		return nil, errors.New("no backup destination: set one with `a2a-serve config set --backup <dir|gs://…|s3://…>`")
+		return nil, agenterr.Invalidf("no backup destination: set one with `a2a-serve config set --backup <dir|gs://…|s3://…>`")
 	}
 	return dirDest(to), nil
 }

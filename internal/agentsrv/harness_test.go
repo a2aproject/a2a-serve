@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"maps"
 	"math/rand/v2"
 	"net"
@@ -84,7 +85,7 @@ func TestMain(m *testing.M) {
 	os.Exit(code)
 }
 
-// testServer is an agent server running fakeacp in a temporary directory.
+// testServer is a server running fakeacp in a temporary directory.
 type testServer struct {
 	t    *testing.T
 	dir  agentdir.Dir
@@ -109,9 +110,11 @@ type serverOpts struct {
 	public         network.Provider
 	newRelay       func(network.RelayConfig) (network.Provider, error)
 	now            func() time.Time
+	out            io.Writer
+	setupProblems  func(context.Context) []string
 }
 
-// startServer starts an agent server and stops it when the test ends.
+// startServer starts a server and stops it when the test ends.
 func startServer(t *testing.T, o serverOpts) *testServer {
 	t.Helper()
 	if o.name == "" {
@@ -151,7 +154,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Timings: testTimings, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Out: o.out, SetupProblems: o.setupProblems, Timings: testTimings, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}
@@ -356,7 +359,7 @@ func (f *fakeChannel) Describe() string { return "@fake_bot" }
 
 func (f *fakeChannel) LinkHint(code string) string { return "/start " + code }
 
-func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound) error {
+func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound, _ func(error)) error {
 	f.mu.Lock()
 	if f.failures > 0 {
 		f.failures--

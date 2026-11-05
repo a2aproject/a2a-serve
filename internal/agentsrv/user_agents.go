@@ -154,6 +154,8 @@ func (h userHomes) RemoveUserHome(id string) error {
 	return h.s.dir.RemoveUserHome(id)
 }
 
+func (h userHomes) UserHomeDir(id string) string { return h.s.dir.UserHomeDir(id) }
+
 // errRemovedUser is returned when the agent process of a user whose
 // pairing or webhook node was removed would start.
 var errRemovedUser = errors.New("this user's pairing was removed")

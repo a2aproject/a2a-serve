@@ -82,7 +82,7 @@ func checkImage(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		image = profile.Image()
 	}
 	if image == "" {
-		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("harness %s has no container image", cfg.Harness), "a2a-serve config set --image IMAGE, or "+useLocalSandbox
+		r.Status, r.Message, r.Fix = StatusFail, fmt.Sprintf("agent %s has no container image", cfg.Harness), "a2a-serve config set --image IMAGE, or "+useLocalSandbox
 		return r, true
 	}
 	present := func(img string) bool {

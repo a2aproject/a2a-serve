@@ -100,7 +100,7 @@ func (p *Pins) checkLocked(dir string) error {
 	if err == nil && os.SameFile(p.dirs[dir], fi) {
 		return nil
 	}
-	return fmt.Errorf("%s was replaced after the agent server first used it; the agent may have renamed it through a writable mount, so check it and restart the agent server", dir)
+	return fmt.Errorf("%s was replaced after the server first used it; the agent may have renamed it through a writable mount, so check it and restart the server", dir)
 }
 
 // PrepareHome makes the home of spec a real directory and pins it. With

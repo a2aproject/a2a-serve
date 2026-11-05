@@ -23,7 +23,6 @@ package main
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/a2aproject/a2a-serve/internal/cli"
 )
@@ -32,7 +31,7 @@ func run(dir string) error {
 	if err := cli.WriteReference(dir); err != nil {
 		return err
 	}
-	return updateGuide(filepath.Join(dir, guidePath))
+	return updateGenerated(dir)
 }
 
 // DefaultDir is where the reference lives, relative to the repository root.

@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -163,14 +164,14 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return err
 	}
 	if d.Exists() {
-		return fmt.Errorf("%s already has an agent; restore into another directory", root)
+		return agenterr.Conflictf("%s already has an agent; restore into another directory", root)
 	}
 	entries, err := os.ReadDir(d.Path())
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	if len(entries) > 0 {
-		return fmt.Errorf("%s is not empty; restore into another directory", d.Path())
+		return agenterr.Conflictf("%s is not empty; restore into another directory", d.Path())
 	}
 	rc, err := dest.Get(ctx, name)
 	if err != nil {
@@ -250,7 +251,7 @@ func ForAgent(cfg *agentdir.Config, secrets agentdir.Secrets, run Runner) (Dest,
 		return nil, Config{}, err
 	}
 	if cfg.Backup.Key == "" {
-		return nil, Config{}, errors.New("no backup key: set one with `a2a-serve config set --backup-key env:VAR`")
+		return nil, Config{}, agenterr.Invalidf("no backup key: set one with `a2a-serve config set --backup-key env:VAR`")
 	}
 	key, err := secrets.Resolve(cfg.Backup.Key)
 	if err != nil {

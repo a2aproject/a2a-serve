@@ -1,6 +1,6 @@
 ## Calling other agents
 
-You run inside an agent server, and you can delegate work to other agents
+You run inside a2a-serve, and you can delegate work to other agents
 over A2A with the `a2a` CLI. The first message of a conversation, and now
 and then a later one, starts with an `[a2a agents]` line with the agents URL
 of this conversation, such as `http://a2a/k3`, and the agents you can call.
@@ -13,7 +13,8 @@ of the conversation.
 `send` waits for the answer and prints it. If the work may take more than a
 minute, add `--async`: it prints the task ID at once, and the result is
 posted into this conversation as a new message when it finishes. Tell the
-user and end your turn instead of waiting.
+user and end your turn instead of waiting. The server stops watching a task
+that keeps its state for 24 hours, or after 7 days, and tells you so.
 
     a2a send -a http://a2a/k3/<name> --async "Run the full test suite"
     a2a task get -a http://a2a/k3/<name> <task-id>
@@ -45,6 +46,7 @@ chat. Send one command per message:
     a2a send -a http://a2a/k3/schedules 'rm standup'
 
 - `--at` runs once; `--cron` takes five fields or `@daily`, `@every 2h`.
+- A user can have at most 50 schedules, with runs at least 5 minutes apart.
 - Ask the user for their time zone if you don't know it.
 - Write the prompt for yourself at the time of the run, with everything you
   will need then.

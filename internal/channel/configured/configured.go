@@ -18,6 +18,7 @@ package configured
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -33,6 +34,9 @@ type Options struct {
 	KV channel.KV
 	// TelegramURL overrides the Telegram Bot API URL.
 	TelegramURL string
+	// SaveSecret, if set, stores a secret that a channel replaced, such as
+	// a rotated OAuth refresh token.
+	SaveSecret func(name, value string) error
 }
 
 // All creates the channels of the config.
@@ -92,7 +96,7 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 			return nil, fmt.Errorf("email is not configured")
 		}
 		if ec.TrustedAuthServ == "" {
-			return nil, fmt.Errorf("email: trusted_authserv must be set, or no mail could be trusted")
+			return nil, fmt.Errorf("email: trustedAuthServ must be set, or no mail could be trusted")
 		}
 		pw, err := secrets.Resolve(ec.Password)
 		if err != nil {
@@ -112,6 +116,9 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 				return nil, fmt.Errorf("email: OAuth client secret: %w", err)
 			}
 			cfg.OAuth = &email.OAuthConfig{TokenURL: ec.OAuthTokenURL, ClientID: ec.OAuthClientID, ClientSecret: clientSecret, RefreshToken: refresh}
+			if name, ok := strings.CutPrefix(ec.OAuthRefreshToken, agentdir.SecretPrefix); ok && opts.SaveSecret != nil {
+				cfg.OAuth.SaveRefreshToken = func(tok string) error { return opts.SaveSecret(name, tok) }
+			}
 		}
 		return email.New(cfg, opts.KV), nil
 	}

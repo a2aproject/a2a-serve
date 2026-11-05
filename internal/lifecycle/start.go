@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package lifecycle starts, stops and restarts an agent server, in the
+// Package lifecycle starts, stops and restarts a server, in the
 // foreground, in the background or as a user service, and follows its log.
 package lifecycle
 
@@ -119,10 +119,10 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 		level = slog.LevelDebug
 	}
 	slog.SetDefault(slog.New(slog.NewTextHandler(logOut, &slog.HandlerOptions{Level: level})))
-	slog.Info("starting agent server", "name", cfg.Name, "harness", cfg.Harness, "dir", dir.Root)
+	slog.Info("starting the server", "name", cfg.Name, "agent", cfg.Harness, "dir", dir.Root)
 	srvOpts := agentsrv.Options{Dir: dir, Config: cfg, Secrets: secrets, Out: opts.Out, HarnessLog: logOut, ImageProgress: opts.Out, Credentials: opts.Credentials, SetupProblems: doctor.SetupProblems, SharedGoogleClientID: googleauth.SharedClientID}
 	if opts.Quiet {
-		lw := &logLines{msg: "harness image"}
+		lw := &logLines{msg: "agent image"}
 		defer lw.flush()
 		srvOpts.ImageProgress = lw
 	}
@@ -136,12 +136,12 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	return err
 }
 
-// checkNotRunning fails if an agent server holds the lock of dir. The lock
+// checkNotRunning fails if a server holds the lock of dir. The lock
 // is released at once: the server takes it again when it starts.
 func checkNotRunning(dir agentdir.Dir) error {
 	release, err := dir.Lock()
 	if errors.Is(err, fsutil.ErrLocked) {
-		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", dir.Root)
+		return fmt.Errorf("the server is already running in %s (a2a-serve status)", dir.Root)
 	}
 	if err != nil {
 		return fmt.Errorf("locking the agent directory: %w", err)
@@ -283,10 +283,10 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 		// A service manager restarts a server that failed, so the process
 		// may still be alive.
 		if stopped || !alive() {
-			return fmt.Errorf("the agent server exited:\n%s", strings.Join(tail, "\n"))
+			return fmt.Errorf("the server exited:\n%s", strings.Join(tail, "\n"))
 		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the agent server did not start in time; see %s", dir.LogPath())
+			return fmt.Errorf("the server did not start in time; see %s", dir.LogPath())
 		}
 		select {
 		case <-ctx.Done():

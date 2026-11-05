@@ -133,17 +133,21 @@ func (c *Channel) LinkHint(code string) string {
 }
 
 // Run implements [channel.Channel]. It reconnects with backoff.
-func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound) error {
+func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound, report func(error)) error {
 	if c.cfg.TrustedAuthServ == "" {
-		return errors.New("email: trusted_authserv must be set, or no mail could be trusted")
+		return errors.New("email: trustedAuthServ must be set, or no mail could be trusted")
 	}
 	retry := backoff.New(time.Second, 5*time.Minute, time.Minute)
 	for ctx.Err() == nil {
 		started := time.Now()
-		err := c.session(ctx, in)
+		err := c.session(ctx, in, report)
 		if ctx.Err() != nil {
 			return nil
 		}
+		if err == nil {
+			err = errors.New("the IMAP session ended")
+		}
+		report(fmt.Errorf("email: %w", err))
 		delay := retry.Next(time.Since(started))
 		slog.Warn("email: IMAP session ended, reconnecting", "error", err, "in", delay)
 		select {
@@ -212,9 +216,10 @@ func (c *Channel) login(ctx context.Context, client *imapclient.Client) error {
 	return client.Authenticate(xoauth2Client{user: c.cfg.Username, token: tok})
 }
 
-// session processes new mail, then idles until more arrives. Ending ctx
-// closes the connection, which unblocks any command in flight.
-func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error {
+// session processes new mail, then idles until more arrives. It reports
+// nil once it signed in and opened the mailbox. Ending ctx closes the
+// connection, which unblocks any command in flight.
+func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound, report func(error)) error {
 	wake := make(chan struct{}, 1)
 	client, err := c.dialIMAP(ctx, &imapclient.Options{
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
@@ -248,6 +253,7 @@ func (c *Channel) session(ctx context.Context, in chan<- channel.Inbound) error 
 	if err := c.checkValidity(ctx, sel, func() (imap.UID, error) { return highestUID(client, sel.NumMessages) }); err != nil {
 		return err
 	}
+	report(nil)
 	for {
 		if err := c.fetchNew(ctx, client, in); err != nil {
 			return err

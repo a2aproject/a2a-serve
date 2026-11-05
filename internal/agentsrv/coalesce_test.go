@@ -107,3 +107,40 @@ func TestCoalesceArtifactsKeepsErrorsAndStops(t *testing.T) {
 		t.Fatalf("coalesceArtifacts() = %d events, error %v, want 2 events ending with %v", n, gotErr, failure)
 	}
 }
+
+func TestMergeChunks(t *testing.T) {
+	t.Parallel()
+	last := chunk("a", "3", true)
+	last.LastChunk = true
+	last.Artifact.Metadata = map[string]any{"k": "v"}
+	withRaw := chunk("a", "2", true)
+	withRaw.Artifact.Parts = append(withRaw.Artifact.Parts, a2a.NewRawPart([]byte("png")))
+	tests := []struct {
+		name   string
+		chunks []*a2a.TaskArtifactUpdateEvent
+		want   *a2a.TaskArtifactUpdateEvent
+	}{
+		{
+			name:   "text joined",
+			chunks: []*a2a.TaskArtifactUpdateEvent{chunk("a", "1", false), chunk("a", "2", true), last},
+			want: &a2a.TaskArtifactUpdateEvent{TaskID: "t1", LastChunk: true, Artifact: &a2a.Artifact{
+				ID: "a", Parts: []*a2a.Part{a2a.NewTextPart("123")}, Metadata: map[string]any{"k": "v"},
+			}},
+		},
+		{
+			name:   "raw part kept",
+			chunks: []*a2a.TaskArtifactUpdateEvent{chunk("a", "1", true), withRaw, chunk("a", "3", true)},
+			want: &a2a.TaskArtifactUpdateEvent{TaskID: "t1", Append: true, Artifact: &a2a.Artifact{
+				ID: "a", Parts: []*a2a.Part{a2a.NewTextPart("12"), a2a.NewRawPart([]byte("png")), a2a.NewTextPart("3")},
+			}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, mergeChunks(tc.chunks)); diff != "" {
+				t.Fatalf("mergeChunks() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}

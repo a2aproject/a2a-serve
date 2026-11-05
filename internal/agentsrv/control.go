@@ -50,7 +50,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		return err
 	}
 	if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
-		return errors.Join(fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root), c.Close())
+		return errors.Join(fmt.Errorf("the server is already running in %s (a2a-serve status)", s.dir.Root), c.Close())
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
@@ -74,7 +74,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		RemoveChannel: s.deleteChannel,
 		Store:         s.store,
 		AddSchedule: func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			return s.schedules.add(ctx, req, by, "")
+			return s.schedules.add(ctx, req, by)
 		},
 		RunSchedule:    s.schedules.runNow,
 		RemoveSchedule: s.schedules.remove,
@@ -136,11 +136,9 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
-	approvals, err := s.inspector.PendingApprovals(ctx)
-	if err != nil {
+	if st.Approvals, err = s.inspector.ApprovalCount(ctx); err != nil {
 		return nil, err
 	}
-	st.Approvals = len(approvals)
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}

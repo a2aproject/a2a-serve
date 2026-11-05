@@ -65,7 +65,7 @@ them like any other caller from the private network.`,
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
 			if req.Webhook == "" && (len(headers) > 0 || req.Description != "" || cmd.Flags().Changed("advertised")) {
@@ -154,7 +154,7 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) error {
 	if offline {
 		if _, err := fmt.Fprint(w, "! the agent is stopped: the code works once it runs, within its expiry; start it with `a2a-serve start --detach`,\n"+
-			"  and `a2a-serve status --url` prints the URL to redeem it at\n"); err != nil {
+			"  `a2a-serve status --url=local` prints the local URL to redeem it at; the private and public URLs appear after the agent starts\n"); err != nil {
 			return err
 		}
 	}

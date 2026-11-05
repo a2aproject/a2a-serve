@@ -5,7 +5,7 @@
 > [!NOTE]
 > Experimental. Agents join relays in builds with `-tags agentmesh` (see [Networks](networks.md#agent-mesh-relays-experimental)). The relay commands work in every build.
 
-A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs on the relay. Today the relay admits agents you invite. Signing in with Google, limited to an email allowlist, is planned.
+A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs on the relay. The relay admits people who sign in with Google, limited to an email allowlist, and agents you invite.
 
 ## Run a relay
 
@@ -35,7 +35,37 @@ A relay keeps its data in SQLite in its relay directory, or in PostgreSQL with `
 
 `a2a-serve relay status` shows the relay's address, the versions it runs and how many agents are on it.
 
-## Invite agents
+## Let people sign in
+
+People sign in to the relay from their agents with Google. The relay checks each account against `--allow-email`, with the rules agents use: an entry is an email, or `*@example.com`, which matches only accounts of that Google Workspace domain.
+
+The relay signs people in with its own Google app, which you register once:
+
+1. In the Google Cloud console, create an OAuth client of type **Web application**.
+2. Add `https://relay.example.com/a2a-serve/signin/callback` as an authorized redirect URI, with your relay's URL. `a2a-serve doctor` in the relay directory prints it.
+3. Publish the app, as **Internal** for a Workspace domain or **In production** otherwise. Google expires the sign-ins of an app in testing after 7 days, and agents then have to sign in again.
+
+Give the app and the allowlist to the relay:
+
+```bash
+a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
+  --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
+```
+
+Sign-in needs a URL that doesn't change, since the Google app names it, so it doesn't work with `--tunnel cloudflare`. `--allow-email` replaces the saved list, and `--allow-email none` turns sign-in off. Restart the relay to change them. The restart applies the new list to agents already on the relay, as [Members and removal](#members-and-removal) explains.
+
+An agent joins without a token:
+
+```bash
+a2a-serve start opencode --private https://relay.example.com --public https://relay.example.com
+```
+
+```
+→ sign in to the relay https://relay.example.com: https://relay.example.com/a2a-serve/signin/device?link=… (code BCDF-GHJK)
+```
+
+Open the link, sign in with Google, and approve the sign-in if the page shows the code the agent printed. On another device, open `https://relay.example.com/a2a-serve/signin/device` and type the code. The agent keeps a refresh token, so it doesn't need you again when it renews its credential or restarts. Each renewal checks the account with Google and against the allowlist again. An agent prints a new link when its sign-in no longer works: after you revoke the relay's access in your Google account, or after the relay gets a new admin token.
+
 
 `relay invite` creates a single-use token that joins one agent:
 
@@ -58,9 +88,9 @@ a2a-serve relay members
 ```
 
 ```
-AGENT     WHO      JOINED            SEEN              PEER
-coder     invite   2026-11-04 10:12  2026-11-05 09:58  12D3KooWQx…
-reviewer  invite   2026-11-04 10:15  2026-11-05 09:58  12D3KooWLm…
+AGENT     WHO               JOINED            SEEN              PEER
+coder     anna@example.com  2026-11-04 10:12  2026-11-05 09:58  12D3KooWQx…
+reviewer  invite            2026-11-04 10:15  2026-11-05 09:58  12D3KooWLm…
 ```
 
 `relay remove` takes an agent name, a peer ID, or an email, which removes every agent of that person. The relay refuses the removed agent's next request, and the other agents drop it:
@@ -68,6 +98,10 @@ reviewer  invite   2026-11-04 10:15  2026-11-05 09:58  12D3KooWLm…
 ```bash
 a2a-serve relay remove reviewer
 ```
+
+Removing an agent that signed in bans the Google account behind it, so the person's other agents lose their place too, and they can't sign in again until the relay lets them back.
+
+For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email. Invite a removed invited agent again to let it back.
 
 ## Manage a relay elsewhere
 
@@ -101,6 +135,10 @@ docker run -p 8080:8080 -e RELAY_ADMIN_TOKEN -e RELAY_DATABASE ghcr.io/a2aprojec
 
 Run one container per relay. Agent Mesh runs a relay as one process, and two would form two meshes behind one URL. A guide for Cloud Run is planned.
 
+The relay's sign-in keys derive from its admin token, so a container keeps its signed-in agents across restarts when it gets the same admin token.
+
 ## Check a relay
 
-In the relay directory, `a2a-serve doctor` checks the relay's settings, the permissions of its state, the downloaded `agentmesh-one` and the version of its data. With `--online`, it also checks that the relay answers at its URL.
+In the relay directory, `a2a-serve doctor` checks the relay's settings, the permissions of its state, the downloaded `agentmesh-one` and the version of its data. With `--online`, it also checks that the relay answers at its URL, and that it serves its sign-in there.
+
+The relay reads its own sign-in at its URL when it starts, as `agentmesh-one` does. So the machine that runs the relay has to reach the relay's URL, and `relay run` fails with a reason when it can't.

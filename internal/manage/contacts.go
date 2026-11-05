@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -40,16 +41,7 @@ const (
 
 // ErrNeedsNetwork is returned for a contact found by name, which needs the
 // private network of a running agent.
-var ErrNeedsNetwork error = needsNetworkError{}
-
-type needsNetworkError struct{}
-
-func (needsNetworkError) Error() string {
-	return "finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"
-}
-
-// NotRunning marks the error for the CLI's exit code.
-func (needsNetworkError) NotRunning() bool { return true }
+var ErrNeedsNetwork error = clierr.NotRunning(errors.New("finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"))
 
 // Contacts adds, lists and removes the agents an agent may call.
 type Contacts struct {
@@ -73,7 +65,7 @@ func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store
 		return store.Contact{}, agenterr.Invalidf("contact name must be non-empty, without spaces or slashes")
 	}
 	if req.Name == pairings.SchedulesAgent {
-		return store.Contact{}, agenterr.Invalidf("%q is the agent the harness manages schedules with; pick another name", pairings.SchedulesAgent)
+		return store.Contact{}, agenterr.Invalidf("%q is the built-in agent that manages schedules; pick another name", pairings.SchedulesAgent)
 	}
 	if _, err := m.Store.Node(ctx, req.Name); err == nil {
 		return store.Contact{}, agenterr.Conflictf("%q is the name of a webhook node; pick another name", req.Name)

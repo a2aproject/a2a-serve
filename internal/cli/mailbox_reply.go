@@ -46,7 +46,7 @@ func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
   a2a-serve mailbox reply <task> --final "Done" --artifact report.pdf
   a2a-serve mailbox reply <task> --fail "Could not reach the repo"
   a2a-serve mailbox reply <task> --reject "Not something this node does"`,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			taskID := args[0]
 			var ev mailboxapi.Event

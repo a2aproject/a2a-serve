@@ -11,7 +11,7 @@ a2a-serve contact rm coder
 ```
 
 - Each prompt tells the agent which agents it can call.
-- With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. A result over 16 KiB arrives as the file `result.txt`, with its first lines in the message.
+- With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. A result over 16 KiB arrives as the file `result.txt`, with its first lines in the message. The server watches the task for at most 7 days. It also stops when the task keeps the same state for 24 hours, not counting the time the task waits for your approval. Either way, the agent gets a message that says so.
 - A response from a contact can be at most 32 MiB. Streams have no limit.
 - A contact on a public URL can't point the server into your private network (see [Security](../advanced/security.md#calls-to-other-agents-and-webhooks)).
 - When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it.

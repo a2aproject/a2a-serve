@@ -27,7 +27,10 @@ import (
 )
 
 func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	var email string
+	var (
+		email  string
+		dryRun bool
+	)
 	cmd := &cobra.Command{
 		Use:     "rm <name|agent-url>",
 		Aliases: []string{"delete"},
@@ -51,13 +54,17 @@ again while an --allow-email rule matches their email; remove the rule with
 ` + "`a2a-serve config unset allow-email`" + ` to stop that.`,
 		Example: `  a2a-serve pair rm anna
   a2a-serve pair rm https://coder.tail1234.ts.net
-  a2a-serve pair rm --email anna@example.com`,
+  a2a-serve pair rm --email anna@example.com
+  a2a-serve pair rm anna --dry-run`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if !cmd.Flags().Changed("email") {
-				return cobra.ExactArgs(1)(cmd, args)
+				return namedArgs(cmd, args)
 			}
 			if len(args) > 0 {
 				return clierr.Usage("--email takes no pairing name or agent URL")
+			}
+			if dryRun {
+				return clierr.Usage("--dry-run takes a pairing name or agent URL, not --email")
 			}
 			return nil
 		},
@@ -67,24 +74,20 @@ again while an --allow-email rule matches their email; remove the rule with
 				return signOut(cmd.Context(), cfg, sf, email)
 			}
 			if isAgentURL(args[0]) {
-				store, err := cfg.credentialStore()
-				if err != nil {
-					return err
-				}
-				ok, err := store.Delete(args[0])
-				if err != nil {
-					return err
-				}
-				if !ok {
-					return fmt.Errorf("you haven't joined %s", args[0])
-				}
-				return cfg.PrintRemoved("joined", args[0], "✓ deleted the token for "+args[0])
+				return forgetJoined(cfg, args[0], dryRun)
 			}
 			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
 			}
 			defer joinClose(&err, closer)
+			if dryRun {
+				preview, err := c.PreviewRevoke(cmd.Context(), args[0])
+				if err != nil {
+					return err
+				}
+				return printRemovalPreview(cfg, args[0], preview)
+			}
 			resp, err := c.Revoke(cmd.Context(), args[0])
 			if err != nil {
 				return err
@@ -109,7 +112,103 @@ again while an --allow-email rule matches their email; remove the rule with
 		},
 	}
 	cmd.Flags().StringVar(&email, "email", "", "Revoke the Google sign-ins of the email `address`")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print what would be removed without removing it")
 	return cmd
+}
+
+func forgetJoined(cfg *globalConfig, agentURL string, dryRun bool) error {
+	store, err := cfg.credentialStore()
+	if err != nil {
+		return err
+	}
+	if dryRun {
+		ok, err := store.Has(agentURL)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			return notJoined(agentURL)
+		}
+		if cfg.IsJSON() {
+			return cfg.PrintJSON(map[string]any{"dryRun": true, "kind": "joined", "name": agentURL})
+		}
+		_, err = fmt.Fprintf(cfg.Out, "would delete the token you saved for %s\n%s\n", agentURL, dryRunNote)
+		return err
+	}
+	ok, err := store.Delete(agentURL)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return notJoined(agentURL)
+	}
+	return cfg.PrintRemoved("joined", agentURL, "✓ deleted the token for "+agentURL)
+}
+
+const dryRunNote = "(dry run: nothing removed)"
+
+// removalPreviewJSON is the JSON output of `pair rm --dry-run`.
+type removalPreviewJSON struct {
+	DryRun bool   `json:"dryRun"`
+	Name   string `json:"name"`
+	*controlapi.RemovalPreview
+}
+
+func printRemovalPreview(cfg *globalConfig, name string, p *controlapi.RemovalPreview) error {
+	if cfg.IsJSON() {
+		return cfg.PrintJSON(removalPreviewJSON{DryRun: true, Name: name, RemovalPreview: p})
+	}
+	_, err := fmt.Fprint(cfg.Out, removalPreviewText(name, p))
+	return err
+}
+
+func removalPreviewText(name string, p *controlapi.RemovalPreview) string {
+	var sb strings.Builder
+	switch {
+	case p.Kept:
+		fmt.Fprintf(&sb, "would revoke the credentials of %s and keep the pairing:\n", name)
+	case p.Kind == pairapi.PairingWebhook:
+		fmt.Fprintf(&sb, "would remove the node %s:\n", name)
+	default:
+		fmt.Fprintf(&sb, "would remove the pairing %s:\n", name)
+	}
+	line := func(n int, one, many string) {
+		if n > 0 {
+			fmt.Fprintf(&sb, "  %d %s\n", n, plural(n, one, many))
+		}
+	}
+	line(p.Tokens, "token", "tokens")
+	if n := len(p.Accounts); n > 0 {
+		accounts := make([]string, n)
+		for i, a := range p.Accounts {
+			accounts[i] = a.Channel + " " + a.Account
+		}
+		fmt.Fprintf(&sb, "  %d %s: %s\n", n, plural(n, "linked chat account", "linked chat accounts"), strings.Join(accounts, ", "))
+	}
+	line(p.Codes, "pending code", "pending codes")
+	if p.Node {
+		sb.WriteString("  the webhook node\n")
+	}
+	line(p.Schedules, "schedule that runs as it", "schedules that run as it")
+	line(p.Watches, "watch", "watches")
+	line(p.Approvals, "approval", "approvals")
+	line(p.Tasks, "task", "tasks")
+	if p.RunningTasks > 0 {
+		fmt.Fprintf(&sb, "    %d of them running, canceled first\n", p.RunningTasks)
+	}
+	line(p.Conversations, "conversation", "conversations")
+	for _, dir := range p.AgentHomes {
+		fmt.Fprintf(&sb, "  the agent home directory %s\n", dir)
+	}
+	sb.WriteString(dryRunNote + "\n")
+	return sb.String()
+}
+
+func plural(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
 }
 
 func signOut(ctx context.Context, cfg *globalConfig, sf *serverFlags, email string) (err error) {

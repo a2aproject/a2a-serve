@@ -112,8 +112,12 @@ func (w When) Validate() error {
 }
 
 // Next returns the first run after after, or false when there is none: a
-// one-time schedule whose time passed.
-func (w When) Next(after time.Time) (time.Time, bool, error) {
+// one-time schedule whose time passed. last is the previous run, or zero.
+// Cron fields match local wall time, so across a DST change a run never
+// repeats a wall time up to that of last, and a run in the skipped hour
+// happens right after it. A descriptor such as @every 2h counts elapsed
+// time and ignores DST changes.
+func (w When) Next(last, after time.Time) (time.Time, bool, error) {
 	if w.Cron == "" {
 		return w.At, w.At.After(after), nil
 	}
@@ -126,7 +130,75 @@ func (w When) Next(after time.Time) (time.Time, bool, error) {
 		return time.Time{}, false, err
 	}
 	next := s.Next(after.In(loc))
+	spec, ok := s.(*cron.SpecSchedule)
+	if !ok {
+		return next, !next.IsZero(), nil
+	}
+	for !last.IsZero() && !next.IsZero() && !wallClock(next, loc).After(wallClock(last, loc)) {
+		next = s.Next(next)
+	}
+	if gap, ok := runInGap(spec, loc, after, next); ok {
+		next = gap
+	}
 	return next, !next.IsZero(), nil
+}
+
+// wallClock is the local wall time of t in loc, as a time in UTC.
+func wallClock(t time.Time, loc *time.Location) time.Time {
+	t = t.In(loc)
+	return time.Date(t.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), t.Nanosecond(), time.UTC)
+}
+
+// runInGap returns the end of the first spring-forward gap in loc between
+// after and before that has a wall time s matches.
+func runInGap(s *cron.SpecSchedule, loc *time.Location, after, before time.Time) (time.Time, bool) {
+	if before.IsZero() {
+		return time.Time{}, false
+	}
+	t := after.In(loc)
+	for {
+		_, end := t.ZoneBounds()
+		if end.IsZero() || !end.Before(before) {
+			return time.Time{}, false
+		}
+		_, offBefore := end.Add(-time.Nanosecond).Zone()
+		_, offAfter := end.Zone()
+		if skipped := time.Duration(offAfter-offBefore) * time.Second; skipped > 0 {
+			from := wallClock(end, loc).Add(-skipped)
+			if run := s.Next(from.Add(-time.Second)); run.Before(from.Add(skipped)) {
+				return end, true
+			}
+		}
+		t = end
+	}
+}
+
+// MinInterval returns the shortest time between two runs, or zero for a
+// one-time schedule. It counts elapsed time in UTC, so DST changes don't
+// shorten it.
+func (w When) MinInterval() (time.Duration, error) {
+	if w.Cron == "" {
+		return 0, nil
+	}
+	s, err := ParseCron(w.Cron)
+	if err != nil {
+		return 0, err
+	}
+	if d, ok := s.(cron.ConstantDelaySchedule); ok {
+		return d.Delay, nil
+	}
+	// Every day with runs has the same runs, so the runs of the first one
+	// show the shortest interval, assuming the next day has runs too.
+	first := s.Next(time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC).Add(-time.Second))
+	if first.IsZero() {
+		return 0, nil
+	}
+	dayEnd := time.Date(first.Year(), first.Month(), first.Day()+1, 0, 0, 0, 0, time.UTC)
+	shortest, last := 24*time.Hour, first
+	for next := s.Next(first); !next.IsZero() && next.Before(dayEnd); next = s.Next(next) {
+		shortest, last = min(shortest, next.Sub(last)), next
+	}
+	return min(shortest, first.Add(24*time.Hour).Sub(last)), nil
 }
 
 // Request is what a schedule is created from, by the CLI or the harness.

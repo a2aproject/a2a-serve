@@ -15,6 +15,7 @@
 package discord
 
 import (
+	"context"
 	"errors"
 	"maps"
 	"net/http"
@@ -42,6 +43,10 @@ type fakeAPI struct {
 	msgs    []*discordgo.Message
 	// failBefore, if set, fails requests for messages before it.
 	failBefore string
+	// commandsCalled, if set, is closed when commands are registered, which
+	// waits for commandsRelease if it is set.
+	commandsCalled  chan struct{}
+	commandsRelease chan struct{}
 }
 
 func (f *fakeAPI) ChannelMessages(channelID string, limit int, beforeID, afterID, _ string, _ ...discordgo.RequestOption) ([]*discordgo.Message, error) {
@@ -79,6 +84,16 @@ func (f *fakeAPI) Channel(string, ...discordgo.RequestOption) (*discordgo.Channe
 
 func (f *fakeAPI) MessageThreadStartComplex(string, string, *discordgo.ThreadStart, ...discordgo.RequestOption) (*discordgo.Channel, error) {
 	return nil, errors.New("not implemented")
+}
+
+func (f *fakeAPI) ApplicationCommandBulkOverwrite(string, string, []*discordgo.ApplicationCommand, ...discordgo.RequestOption) ([]*discordgo.ApplicationCommand, error) {
+	if f.commandsCalled != nil {
+		close(f.commandsCalled)
+	}
+	if f.commandsRelease != nil {
+		<-f.commandsRelease
+	}
+	return nil, nil
 }
 
 func message(id int, mention bool) *discordgo.Message {
@@ -175,7 +190,7 @@ func TestCatchUp(t *testing.T) {
 			c.me = &discordgo.User{ID: botID}
 			c.in, c.ctx = in, t.Context()
 
-			c.catchUp(tc.api, discordgo.NewState(), "c1")
+			c.catchUp(tc.api, discordgo.NewState(), "c1", "1000")
 			close(in)
 
 			var got []delivered
@@ -338,6 +353,101 @@ func TestOnMessageKeepsArrivalOrderWithoutWaitingForTheRouter(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("onMessage() delivered wrong order (-want +got) diff = %s", diff)
+	}
+}
+
+func TestReadyCatchesUpBeforeLiveMessagesMoveTheCursor(t *testing.T) {
+	t.Parallel()
+	api := &fakeAPI{
+		channel:         &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM},
+		msgs:            []*discordgo.Message{message(1001, false), message(1002, false)},
+		commandsCalled:  make(chan struct{}),
+		commandsRelease: make(chan struct{}),
+	}
+	kv := channeltest.NewKV(map[string]string{lastKey("c1"): "1000"})
+	c := New("token", kv)
+	c.me = &discordgo.User{ID: botID}
+	in := make(chan channel.Inbound, 10)
+	c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
+
+	go c.ready(api, discordgo.NewState(), botID)
+	<-api.commandsCalled
+	c.onMessage(nil, &discordgo.MessageCreate{Message: message(1500, false)})
+	close(api.commandsRelease)
+
+	var got []string
+	for len(got) < 3 {
+		select {
+		case m := <-in:
+			got = append(got, m.MessageID)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("delivered %v, want 3 messages", got)
+		}
+	}
+	if diff := cmp.Diff([]string{"1001", "1002", "1500"}, got); diff != "" {
+		t.Fatalf("ready() delivered wrong messages (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCursorStaysWhenDeliveryIsCutOff(t *testing.T) {
+	t.Parallel()
+	kv := channeltest.NewKV(map[string]string{lastKey("c1"): "1000"})
+	c := New("token", kv)
+	c.me = &discordgo.User{ID: botID}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+	c.in, c.ctx = make(chan channel.Inbound), ctx
+
+	c.handleMessage(nil, message(1001, false), true)
+
+	if got := kv.All()[lastKey("c1")]; got != "1000" {
+		t.Fatalf("cursor = %q, want 1000", got)
+	}
+}
+
+func TestRememberDropsRowsOfEvictedConversations(t *testing.T) {
+	t.Parallel()
+	kv := channeltest.NewKV(nil)
+	c := New("token", kv)
+	for i := range maxConvs {
+		conv := "c" + strconv.Itoa(i)
+		c.trackInbound(conv, "1000")
+		if err := kv.Set(t.Context(), threadKey(conv), "1"); err != nil {
+			t.Fatalf("KV.Set() error = %v", err)
+		}
+	}
+	c.trackInbound("c0", "1001")
+
+	c.trackInbound("new", "1000")
+
+	got := kv.All()
+	for _, key := range []string{lastKey("c1"), threadKey("c1")} {
+		if _, ok := got[key]; ok {
+			t.Errorf("%s is kept after c1 was evicted, want it removed", key)
+		}
+	}
+	for _, key := range []string{lastKey("c0"), threadKey("c0"), lastKey("c2"), lastKey("new")} {
+		if _, ok := got[key]; !ok {
+			t.Errorf("%s is removed, want it kept", key)
+		}
+	}
+	convs := strings.Split(got[convsKey], ",")
+	if len(convs) != maxConvs || slices.Contains(convs, "c1") {
+		t.Errorf("conversations = %d without c1: %v, want %d without c1", len(convs), !slices.Contains(convs, "c1"), maxConvs)
+	}
+}
+
+func TestConnectionEventsReportState(t *testing.T) {
+	t.Parallel()
+	c := New("token", channeltest.NewKV(nil))
+	var got []bool
+	c.report = func(err error) { got = append(got, err == nil) }
+
+	c.onDisconnect(nil, &discordgo.Disconnect{})
+	c.onConnect(nil, &discordgo.Connect{})
+
+	if diff := cmp.Diff([]bool{false, true}, got); diff != "" {
+		t.Fatalf("reported connected wrong result (-want +got) diff = %s", diff)
 	}
 }
 

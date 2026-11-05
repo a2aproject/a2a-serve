@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -125,7 +126,11 @@ func TestDeleteChannelNotConfigured(t *testing.T) {
 
 	err := controlapi.NewClient(ts.dir).DeleteChannel(context.Background(), "telegram")
 
-	if diff := cmp.Diff(&agenterr.NotFoundError{Kind: "channel", Name: "telegram"}, err); diff != "" {
+	var nf *agenterr.NotFoundError
+	if !errors.As(err, &nf) {
+		t.Fatalf("DeleteChannel() error = %v, want an agenterr.NotFoundError", err)
+	}
+	if diff := cmp.Diff(&agenterr.NotFoundError{Kind: "channel", Name: "telegram"}, nf); diff != "" {
 		t.Fatalf("DeleteChannel() wrong error (-want +got) diff = %s", diff)
 	}
 }

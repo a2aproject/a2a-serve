@@ -41,7 +41,7 @@
 * Write commands as `a2a-serve <command>` in docs, examples, skills, CLI help and errors. Only the command plugin section of `docs/reference/a2a-cli.md` shows the `a2a serve` form.
 * Don't repeat flag lists in prose; link to the command reference. It is generated from the command definitions, so fix help text there and run `go run ./internal/tools/gendocs`.
 * Write short, plain sentences with one idea each. Avoid metaphors, slogans and contrastive constructions ("X, not Y", "X rather than Y", "X instead of Y"); state the positive claim. Use "that" for restrictive clauses, and US English.
-* Call the coding agent "the agent" and a2a-serve "the server", and its home "the agent home directory". Don't write "harness" in user-facing text, including CLI help and errors.
+* Call the coding agent "the agent" and a2a-serve "the server", and its home "the agent home directory". Don't write "harness" in user-facing text, including CLI help and errors. The doctor check IDs `harness-image` and `harness-command` are the exception: they appear in `doctor -o json` and stay stable. Don't write "agent server" either.
 * Open each page with a plain sentence that summarizes it; the site uses it as the page's meta description. Put the pre-1.0 warning only in `README.md` and `docs/index.md`, and mark unreleased features as planned.
 * In examples, don't hardcode ports or URLs a reader's setup changes (use `a2a-serve status --url=local`), and don't repeat setup that `a2a-serve doctor --fix` does.
 * Write links between `docs/` and `examples/` as GitHub resolves them, and check the site with `site/build.sh`, which fails on broken links.
