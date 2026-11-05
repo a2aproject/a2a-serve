@@ -82,7 +82,8 @@ func wantEnded(t *testing.T, ended <-chan a2a.TaskState, want a2a.TaskState) {
 
 func pidOf(t *testing.T, task *a2a.Task) int {
 	t.Helper()
-	pid, err := strconv.Atoi(strings.TrimPrefix(resultText(task), "pid "))
+	text := resultText(task)
+	pid, err := strconv.Atoi(text[strings.LastIndex(text, "/")+1:])
 	if err != nil {
 		t.Fatalf("parsing the pid in %q: %v", resultText(task), err)
 	}

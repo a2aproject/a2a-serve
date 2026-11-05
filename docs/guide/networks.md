@@ -30,7 +30,7 @@ a2a-serve start opencode --private https://relay.example.com --public https://re
 a2a-serve config set --relay-token env:RELAY_TOKEN    # on servers: join with a token
 ```
 
-- A relay that admits people by sign-in accepts anyone its identity provider accepts, so on it `--private-access` defaults to `paired`: only you, your pairings and `--allow-email` matches can call. On a relay that agents join only with tokens, everyone on the relay can call.
+- A relay works like a tailnet: everyone the relay admits can call your agent. With `--private-access paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 

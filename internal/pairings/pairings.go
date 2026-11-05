@@ -67,7 +67,7 @@ type Service struct {
 	LinkHints func(code string) []string
 	// Mailbox counts the waiting wakes and open tasks of a node. Optional.
 	Mailbox func(id string) (waiting, open int)
-	// Changed is called after a node is added or removed. Optional.
+	// Changed is called after a node is added, changed or removed. Optional.
 	Changed func(ctx context.Context)
 	// Access describes who may call the agent, which responses to changes
 	// carry. Optional.
@@ -193,29 +193,41 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 	if _, err := s.Store.Contact(ctx, req.Name); err == nil {
 		return nil, agenterr.Conflictf("%q is already a contact", req.Name)
 	}
+	if req.Advertised != nil && s.Ads == nil {
+		return nil, invalid("advertising needs the private network of a running agent")
+	}
+	_, err := s.Store.Node(ctx, req.Name)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		return nil, err
+	}
+	existed := err == nil
 	node := store.Node{
 		ID: req.Name, Name: req.Name, Description: req.Description, Webhook: req.Webhook, Headers: req.Headers,
 		Secret: cryptoutil.RandomString(40, cryptoutil.Alphanumeric),
 	}
-	err := s.Store.PutNode(ctx, node)
+	err = s.Store.PutNode(ctx, node)
 	if errors.Is(err, store.ErrExists) {
 		return nil, agenterr.Conflictf("%s is already paired; pick another name", req.Name)
 	}
 	if err != nil {
 		return nil, err
 	}
+	defer s.changed(ctx)
 	resp, err := s.nodeCode(ctx, node, false)
-	if err != nil {
-		return nil, err
-	}
-	if req.Advertised != nil {
-		if err := s.setAdvertised(node, *req.Advertised); err != nil {
-			return nil, err
-		}
+	if err == nil && req.Advertised != nil {
+		err = s.setAdvertised(node, *req.Advertised)
 		resp.Advertised = *req.Advertised
 	}
-	s.changed(ctx)
-	return resp, nil
+	if err == nil {
+		return resp, nil
+	}
+	if existed {
+		return nil, err
+	}
+	if derr := s.Store.DeletePairing(ctx, node.ID, auth.PairPrincipal(node.ID), auth.NodePrincipal(node.ID)); derr != nil {
+		err = errors.Join(err, fmt.Errorf("removing the node that wasn't set up: %w", derr))
+	}
+	return nil, err
 }
 
 func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*controlapi.PairCodeResponse, error) {
@@ -326,6 +338,7 @@ func (s *Service) update(ctx context.Context, name string, req controlapi.Pairin
 }
 
 func (s *Service) updateNode(ctx context.Context, node store.Node, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
+	prev := node
 	if req.Owner != nil || req.Kind != "" {
 		return nil, invalid("--owner and --kind don't apply to webhook nodes")
 	}
@@ -345,27 +358,44 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		node.Secret = cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
 		node.TokenHash = ""
 	}
-	if err := s.Store.PutNode(ctx, node); err != nil {
-		return nil, err
-	}
 	advertised := s.Ads != nil && s.Ads.Advertised(node.ID)
+	wasAdvertised := advertised
 	if req.Advertised != nil {
 		advertised = *req.Advertised
 	}
-	if req.Advertised != nil || (advertised && req.Description != nil) {
+	setAds := req.Advertised != nil || (advertised && req.Description != nil)
+	// The node is stored last, so that a failure leaves its token valid.
+	if setAds {
 		if err := s.setAdvertised(node, advertised); err != nil {
 			return nil, err
 		}
+	}
+	undo := func(err error) error {
+		if !setAds {
+			return err
+		}
+		if rerr := s.setAdvertised(prev, wasAdvertised); rerr != nil {
+			return errors.Join(err, fmt.Errorf("restoring the advertisement of %s: %w", node.ID, rerr))
+		}
+		return err
 	}
 	var resp controlapi.PairingUpdateResponse
 	if req.Rotate {
 		code, err := s.nodeCode(ctx, node, true)
 		if err != nil {
-			return nil, err
+			return nil, undo(err)
 		}
 		code.Advertised = advertised
 		resp.Code = code
 	}
+	err := s.Store.UpdateNode(ctx, prev, node)
+	if errors.Is(err, store.ErrChanged) {
+		return nil, undo(agenterr.Conflictf("%s changed while it was updated; try again", node.ID))
+	}
+	if err != nil {
+		return nil, undo(err)
+	}
+	s.changed(ctx)
 	p, err := s.Get(ctx, node.ID)
 	if err != nil {
 		return nil, err
@@ -397,12 +427,12 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 		return nil, err
 	}
 	if p.Kind == pairapi.PairingWebhook {
+		defer s.changed(ctx)
 		if s.Ads != nil {
 			if err := s.Ads.Withdraw(name); err != nil {
 				return nil, fmt.Errorf("withdrawing the advertisement of %s: %w", name, err)
 			}
 		}
-		s.changed(ctx)
 		return resp, s.withAccess(ctx, &resp.Access)
 	}
 	if err := s.withAccess(ctx, &resp.Access); err != nil {

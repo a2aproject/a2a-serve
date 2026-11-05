@@ -44,11 +44,7 @@ type fakeProvider struct {
 	kind string
 	// unidentified makes WhoIs identify nobody.
 	unidentified bool
-	// signIn makes the network one which admits people by sign-in.
-	signIn bool
 }
-
-func (p *fakeProvider) AdmitsBySignIn() bool { return p.signIn }
 
 func (n *fakeNet) provider(name string) *fakeProvider { return &fakeProvider{net: n, name: name} }
 

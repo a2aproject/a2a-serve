@@ -17,6 +17,7 @@ package nodes
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -107,6 +108,72 @@ func TestPostWebhookErrorHidesSecrets(t *testing.T) {
 			err := postWebhook(t.Context(), store.Node{ID: "grok", Webhook: tc.webhook}, "wake_1", []byte("{}"))
 			if err == nil || strings.Contains(err.Error(), "s3cret") {
 				t.Fatalf("postWebhook() error = %v, want an error without the secret", err)
+			}
+		})
+	}
+}
+
+func TestPostWebhookRedirects(t *testing.T) {
+	t.Parallel()
+	type result struct {
+		header http.Header
+		body   string
+	}
+	target := func(t *testing.T) (*httptest.Server, chan result) {
+		t.Helper()
+		got := make(chan result, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			body, err := io.ReadAll(r.Body)
+			if err != nil {
+				t.Errorf("reading the redirected wake: %v", err)
+			}
+			got <- result{header: r.Header.Clone(), body: string(body)}
+		}))
+		t.Cleanup(srv.Close)
+		return srv, got
+	}
+	tests := []struct {
+		name        string
+		sameHost    bool
+		wantHeaders bool
+	}{
+		{name: "same host keeps the headers", sameHost: true, wantHeaders: true},
+		{name: "other host drops the headers"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			final, got := target(t)
+			mux := http.NewServeMux()
+			origin := httptest.NewServer(mux)
+			t.Cleanup(origin.Close)
+			mux.HandleFunc("/hook", func(w http.ResponseWriter, r *http.Request) {
+				dest := final.URL + "/final"
+				if tc.sameHost {
+					dest = origin.URL + "/final"
+				}
+				http.Redirect(w, r, dest, http.StatusTemporaryRedirect)
+			})
+			mux.HandleFunc("/final", func(w http.ResponseWriter, r *http.Request) {
+				final.Config.Handler.ServeHTTP(w, r)
+			})
+			node := store.Node{ID: "grok", Secret: "s", Webhook: origin.URL + "/hook", Headers: map[string]string{"Authorization": "Bearer hook", "X-Api-Key": "k"}}
+
+			if err := postWebhook(t.Context(), node, "wake_1", []byte(`{"a":1}`)); err != nil {
+				t.Fatalf("postWebhook() error = %v", err)
+			}
+
+			res := <-got
+			if res.body != `{"a":1}` {
+				t.Fatalf("redirected wake body = %q, want it kept", res.body)
+			}
+			if got := res.header.Get(mailboxapi.WakeHeader); got != "wake_1" {
+				t.Fatalf("redirected wake %s = %q, want wake_1", mailboxapi.WakeHeader, got)
+			}
+			for _, name := range []string{"Authorization", "X-Api-Key", mailboxapi.SignatureHeader} {
+				if has := res.header.Get(name) != ""; has != tc.wantHeaders {
+					t.Fatalf("redirected wake has %s = %v, want %v", name, has, tc.wantHeaders)
+				}
 			}
 		})
 	}

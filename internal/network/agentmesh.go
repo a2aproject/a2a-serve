@@ -52,11 +52,8 @@ type meshSession interface {
 type agentMesh struct {
 	cfg RelayConfig
 
-	mu      sync.Mutex
-	started atomic.Bool
-	// tokenOnly is set once the relay is known to admit agents only with
-	// tokens.
-	tokenOnly  atomic.Bool
+	mu         sync.Mutex
+	started    atomic.Bool
 	srv        meshSession
 	epClose    func() error
 	private    *splitListener
@@ -74,9 +71,6 @@ func NewRelay(cfg RelayConfig) (Provider, error) {
 	}
 	return &agentMesh{cfg: cfg}, nil
 }
-
-// AdmitsBySignIn implements [SignInNetwork].
-func (a *agentMesh) AdmitsBySignIn() bool { return !a.tokenOnly.Load() }
 
 func (a *agentMesh) Name() string { return ProviderRelay }
 
@@ -152,7 +146,6 @@ func (a *agentMesh) start(ctx context.Context) error {
 		return errors.Join(errors.New("the relay didn't give this agent a public URL: its policy doesn't allow it, or it has no ingress"), ep.Close(), srv.Close())
 	}
 	a.srv, a.epClose, a.peerID = srv, ep.Close, st.PeerID
-	a.tokenOnly.Store(a.cfg.Token != "" && !RelayAdmitsBySignIn(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg.URL))
 	// Agents which joined with a token don't say who owns them.
 	if a.cfg.Token == "" {
 		a.owner = SavedOwner(a.cfg.StateDir)

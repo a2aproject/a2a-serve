@@ -151,25 +151,25 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	}
 }
 
-func TestRelaySignInClosesPrivateNetworkUntilEmailAllowed(t *testing.T) {
+func TestRelaySignInAdmitsEveryoneOnTheRelay(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	fabric := newTestRelayFabric(t, "Ben@example.com")
 	fabric.setAccountForAgent("anna", "anna@example.com")
 
-	closedReviewer := startServer(t, serverOpts{
-		name:     "closed-reviewer",
+	startServer(t, serverOpts{
+		name:     "open-reviewer",
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
 		},
 	})
-	openReviewer := startServer(t, serverOpts{
-		name:     "open-reviewer",
+	startServer(t, serverOpts{
+		name:     "closed-reviewer",
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
-			c.Policy.AllowEmails = []string{"anna@example.com"}
+			c.Policy.PrivateAccess = agentdir.AccessPaired
 		},
 	})
 	anna := startServer(t, serverOpts{
@@ -179,8 +179,6 @@ func TestRelaySignInClosesPrivateNetworkUntilEmailAllowed(t *testing.T) {
 			c.Network.Private = fabric.url()
 		},
 	})
-	_ = closedReviewer
-	_ = openReviewer
 
 	annaCtl := controlapi.NewClient(anna.dir)
 	for _, target := range []string{"closed-reviewer", "open-reviewer"} {
@@ -190,11 +188,11 @@ func TestRelaySignInClosesPrivateNetworkUntilEmailAllowed(t *testing.T) {
 	}
 
 	annaClient := anna.client(anna.pair("anna-local", auth.RoleOwner))
-	denied := send(t, annaClient, userText("call closed-reviewer hello", "", ""))
-	wantResult(t, denied, a2a.TaskStateCompleted, "403")
-
 	allowed := send(t, annaClient, userText("call open-reviewer hello", "", ""))
 	wantResult(t, allowed, a2a.TaskStateCompleted, "Hello from fakeacp.")
+
+	denied := send(t, annaClient, userText("call closed-reviewer hello", "", ""))
+	wantResult(t, denied, a2a.TaskStateCompleted, "403")
 }
 
 func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
@@ -421,7 +419,6 @@ type testRelayNode struct {
 	peerID    string
 	principal string
 	owner     string
-	signIn    bool
 
 	startOnce sync.Once
 	startErr  error
@@ -431,8 +428,6 @@ type testRelayNode struct {
 }
 
 func (n *testRelayNode) Name() string { return network.ProviderRelay }
-
-func (n *testRelayNode) AdmitsBySignIn() bool { return n.signIn }
 
 func (n *testRelayNode) start(ctx context.Context) error {
 	n.startOnce.Do(func() {
@@ -472,7 +467,6 @@ func (n *testRelayNode) start(ctx context.Context) error {
 		} else {
 			n.principal = "node:" + n.peerID
 		}
-		n.signIn = n.cfg.Token == "" || network.RelayAdmitsBySignIn(ctx, n.fabric.srv.Client(), n.cfg.URL)
 		if n.cfg.Private {
 			n.privLn = newRelayPipeListener("mesh-private:" + n.peerID)
 		}

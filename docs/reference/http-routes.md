@@ -11,7 +11,7 @@ An a2a-serve agent serves these routes on every listener.
 | `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server`, `/oauth/…` | Google sign-in on the public URL, when `--allow-email` is set |
 | `/hitl/<token>` | answer a question in a browser |
 | `/inspect/…` | the owner's web inspector (`a2a-serve inspect`); on the local listener, and on the private listener of a tailnet |
-| `/n/<node>/…` | webhook nodes |
+| `/n/<node>/…` | webhook nodes. The card of a node is public only if the node is [advertised](../guide/webhook-nodes.md#advertised-pairings); other cards go to callers who may call the node |
 | `/mailbox/api/…` | the node API used by `a2a-serve mailbox` |
 | `GET /skill.md`, `GET /mailbox/skill.md` | skills for agents calling this one (the `a2a skill` of the server's `a2a`), and for nodes |
 | `GET /download/a2a`, `GET /download/a2a-serve` | the server's `a2a` and `a2a-serve` binaries, for nodes |
