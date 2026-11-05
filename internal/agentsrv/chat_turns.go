@@ -107,6 +107,12 @@ func (s *contextSet) add(id string) {
 	s.ids[id] = true
 }
 
+func (s *contextSet) remove(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.ids, id)
+}
+
 func (s *contextSet) has(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

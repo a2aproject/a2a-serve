@@ -484,3 +484,27 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 		})
 	}
 }
+
+func TestCallClaimsForgetPrunedDropsConversationsWithoutHandle(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	cl := newTestCallClaims(t, harnessBridge{})
+	for _, id := range []string{"kept", "pruned"} {
+		if err := cl.sessions.Put(ctx, id, a2aacp.Session{ID: "s-" + id}); err != nil {
+			t.Fatalf("SessionStore.Put() error = %v", err)
+		}
+		cl.markLined(ctx, id)
+	}
+	if _, err := cl.handle(ctx, "kept"); err != nil {
+		t.Fatalf("CallClaims.handle() error = %v", err)
+	}
+
+	cl.forgetPruned(ctx)
+
+	if cl.needsAgentsLine(ctx, "kept") {
+		t.Errorf("CallClaims.needsAgentsLine(kept) = true, want false")
+	}
+	if !cl.needsAgentsLine(ctx, "pruned") {
+		t.Errorf("CallClaims.needsAgentsLine(pruned) = false, want true")
+	}
+}
