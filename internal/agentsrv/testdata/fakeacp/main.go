@@ -29,6 +29,7 @@
 //	                 reaches it
 //	ls <dir>         replies with the entries of dir
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
+//	markdown         replies with Markdown that uses most of the syntax
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
 //	acall <agent> <t> the same, without waiting for the result
 //	parallel <dir> <agent> <t>
@@ -57,6 +58,15 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 )
+
+// markdownSample is a reply with the Markdown that agents write, and the
+// characters MarkdownV2 needs escaped.
+const markdownSample = "# Release v1.2.3\n\n" +
+	"**Bold**, *italic*, ~~struck~~ and `inline_code()`.\n\n" +
+	"- one. two! (three)\n" +
+	"- [a link](https://example.com/a_b?c=d) and 1 + 1 = 2 > 1 #tag {x} |pipe|\n\n" +
+	"```go\nfmt.Println(\"a_b*c\")\n```\n\n" +
+	"> quoted text\n\nDone."
 
 // agentsLinePrefix starts the line the agent server adds to the first
 // prompt of a session.
@@ -398,6 +408,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		end("end_turn")
 	case "scheduled":
 		a.chunk(sid, "ran "+text)
+		end("end_turn")
+	case "markdown":
+		a.chunk(sid, markdownSample)
 		end("end_turn")
 	case "line":
 		if lined {

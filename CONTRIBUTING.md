@@ -99,6 +99,20 @@ The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in D
 
 Add a test there when a change affects a journey across commands or processes.
 
+The e2e build of `a2a-serve` (`-tags e2e`) reads `A2A_SERVE_E2E_TELEGRAM_URL` and sends Telegram calls there. `TestTelegram` points it at the fake Bot API in `internal/channel/telegram/telegramtest`, which plays a user who links as owner, chats, presses approval buttons and gets scheduled runs.
+
+`TestTelegramLive` runs the same journey, but the fake forwards the bot's messages to the real Bot API. Telegram then checks their MarkdownV2 and buttons, and the messages appear in your chat with the bot. The fake still plays the user and never polls Telegram for updates, since a bot can't receive messages from another bot. To run it:
+
+1. Create a bot with [@BotFather](https://t.me/BotFather) and send it `/start` from your account.
+2. Find your chat ID: it is `message.chat.id` in the output of `curl "https://api.telegram.org/bot$TOKEN/getUpdates"`.
+3. Run the test:
+
+   ```sh
+   E2E_TELEGRAM_BOT_TOKEN=$TOKEN E2E_TELEGRAM_CHAT_ID=<chat id> go test -tags e2e -run '^TestTelegramLive$' -v ./e2e/...
+   ```
+
+The nightly workflow runs it with the repository secrets `E2E_TELEGRAM_BOT_TOKEN` and `E2E_TELEGRAM_CHAT_ID`.
+
 ### Documentation
 
 The site at <https://a2aproject.github.io/a2a-serve/> is built from `docs/` and `examples/`; links between them are written the way GitHub resolves them. The command reference in `docs/reference/commands` is generated from the command definitions, and a test fails when it is out of date. Diagrams are Graphviz sources in `docs/graphs`.

@@ -25,3 +25,29 @@ jobs:
     # runs need more than the default 10m timeout.
     - name: Test Loop
       run: go test -mod=readonly -count=200 -shuffle=on -timeout=60m ./...
+
+  # The bot's messages go to the real Bot API, while a fake plays the user
+  # (see CONTRIBUTING.md).
+  telegram:
+    if: github.repository == 'a2aproject/a2a-serve'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: telegram-live
+    env:
+      E2E_TELEGRAM_BOT_TOKEN: ${{ secrets.E2E_TELEGRAM_BOT_TOKEN }}
+      E2E_TELEGRAM_CHAT_ID: ${{ secrets.E2E_TELEGRAM_CHAT_ID }}
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Check secrets
+      run: |
+        if [ -z "$E2E_TELEGRAM_BOT_TOKEN" ] || [ -z "$E2E_TELEGRAM_CHAT_ID" ]; then
+          echo "::error::set the E2E_TELEGRAM_BOT_TOKEN and E2E_TELEGRAM_CHAT_ID secrets"
+          exit 1
+        fi
+
+    - name: Telegram E2E
+      run: go test -tags e2e -mod=readonly -v -count=1 -run '^TestTelegramLive$' ./e2e/...
