@@ -230,10 +230,20 @@ func (e *splitExecutor) close(ctx context.Context) error {
 	pools := e.pools
 	e.pools = nil
 	e.mu.Unlock()
-	var errs []error
+	var (
+		wg   sync.WaitGroup
+		errs = make([]error, 0, len(pools))
+		mu   sync.Mutex
+	)
 	for _, p := range pools {
-		errs = append(errs, p.stop(ctx))
+		wg.Go(func() {
+			err := p.stop(ctx)
+			mu.Lock()
+			defer mu.Unlock()
+			errs = append(errs, err)
+		})
 	}
+	wg.Wait()
 	return errors.Join(errs...)
 }
 

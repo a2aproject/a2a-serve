@@ -76,24 +76,16 @@ func readFrom(path string, offset int64) ([]string, int64, error) {
 // FollowLog prints the last n lines of the log, then new lines until ctx
 // ends if follow is set.
 func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out io.Writer) error {
-	data, err := os.ReadFile(dir.LogPath())
+	offset, err := printTail(dir.LogPath(), n, out)
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("no log yet at %s", dir.LogPath())
 	}
 	if err != nil {
 		return err
 	}
-	lines := strings.Split(strings.TrimRight(string(data), "\n"), "\n")
-	if n > 0 && len(lines) > n {
-		lines = lines[len(lines)-n:]
-	}
-	if err := printLines(out, lines); err != nil {
-		return err
-	}
 	if !follow {
 		return nil
 	}
-	offset := int64(len(data))
 	for {
 		select {
 		case <-ctx.Done():
@@ -109,6 +101,90 @@ func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out io
 			return err
 		}
 	}
+}
+
+// printTail prints the last n lines of the file at path, or all of them if n
+// is not positive, and returns the size of the file it read. Trailing blank
+// lines are dropped.
+func printTail(path string, n int, out io.Writer) (int64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() {
+		if err := f.Close(); err != nil {
+			slog.Debug("closing log", "error", err)
+		}
+	}()
+	fi, err := f.Stat()
+	if err != nil {
+		return 0, err
+	}
+	size := fi.Size()
+	var start int64
+	if n > 0 {
+		if start, err = tailStart(f, size, n); err != nil {
+			return 0, err
+		}
+	}
+	return size, printTrimmed(out, io.NewSectionReader(f, start, size-start))
+}
+
+// tailStart returns the offset at which the last n lines of the first size
+// bytes of r start, reading from the end. Trailing newlines don't count.
+func tailStart(r io.ReaderAt, size int64, n int) (int64, error) {
+	buf := make([]byte, 32<<10)
+	trailing, newlines := true, 0
+	for pos := size; pos > 0; {
+		chunk := buf[:min(int64(len(buf)), pos)]
+		pos -= int64(len(chunk))
+		if _, err := r.ReadAt(chunk, pos); err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		for i := len(chunk) - 1; i >= 0; i-- {
+			if trailing && chunk[i] == '\n' {
+				continue
+			}
+			trailing = false
+			if chunk[i] != '\n' {
+				continue
+			}
+			if newlines++; newlines == n {
+				return pos + int64(i) + 1, nil
+			}
+		}
+	}
+	return 0, nil
+}
+
+// printTrimmed prints the lines of r without the blank lines at its end. It
+// prints one blank line if r has no other.
+func printTrimmed(out io.Writer, r io.Reader) error {
+	br := bufio.NewReader(r)
+	blank, printed := 0, false
+	for {
+		line, err := br.ReadString('\n')
+		if err != nil && !errors.Is(err, io.EOF) {
+			return err
+		}
+		if text := strings.TrimSuffix(line, "\n"); text == "" {
+			if line != "" {
+				blank++
+			}
+		} else {
+			if err := printLines(out, append(make([]string, blank), text)); err != nil {
+				return err
+			}
+			blank, printed = 0, true
+		}
+		if err != nil {
+			break
+		}
+	}
+	if printed {
+		return nil
+	}
+	return printLines(out, []string{""})
 }
 
 func printLines(out io.Writer, lines []string) error {

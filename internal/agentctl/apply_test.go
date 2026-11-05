@@ -17,6 +17,7 @@ package agentctl
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -352,6 +353,35 @@ func TestHarnessesMatchProfiles(t *testing.T) {
 	t.Parallel()
 	if diff := cmp.Diff(harness.ProfileNames(), agentdir.Harnesses); diff != "" {
 		t.Fatalf("agentdir.Harnesses wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSetConcurrentlyKeepsEveryUpdate(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := range n {
+		wg.Go(func() {
+			_, errs[i] = Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Env: []string{fmt.Sprintf("VAR%d=1", i)}}, false)
+		})
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("Set(%d) error = %v", i, err)
+		}
+	}
+	var want []string
+	for i := range n {
+		want = append(want, fmt.Sprintf("VAR%d=1", i))
+	}
+	got := slices.Clone(loadConfig(t, d).Env)
+	slices.Sort(got)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("saved env wrong result (-want +got) diff = %s", diff)
 	}
 }
 

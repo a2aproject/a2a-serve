@@ -280,6 +280,12 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 		return nil, fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
+	// Written before the slow startup steps, so that a stop can signal a
+	// server whose control socket doesn't exist yet.
+	if err := fsutil.WriteAtomic(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
+		return nil, fmt.Errorf("writing the pid file: %w", err)
+	}
+	closers.push(func(context.Context) error { return removeIfExists(s.dir.PIDPath()) })
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
 		return nil, err
@@ -552,7 +558,8 @@ func (s *Server) reloadConfig(saved *agentdir.Config) {
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})
 }
 
-// updateConfig applies fn to the config and saves it.
+// updateConfig applies fn to the config and saves it. A config.yaml that
+// fails to parse is left alone and returned as the error.
 func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	s.cfgMu.Lock()
 	defer s.cfgMu.Unlock()
@@ -561,15 +568,22 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	// config.yaml may hold changes waiting for a restart; keep them.
-	saved, err := s.dir.ReadConfig()
+	err := fsutil.WithLock(s.dir.ConfigPath(), func() error {
+		// config.yaml may hold changes waiting for a restart; keep them.
+		saved, err := s.dir.ReadConfig()
+		switch {
+		case errors.Is(err, agentdir.ErrNotFound):
+			saved = &next
+		case err != nil:
+			return err
+		default:
+			if err := fn(saved); err != nil {
+				return err
+			}
+		}
+		return s.dir.SaveConfig(saved)
+	})
 	if err != nil {
-		slog.Debug("saving the running config", "error", err)
-		saved = &next
-	} else if err := fn(saved); err != nil {
-		return err
-	}
-	if err := s.dir.SaveConfig(saved); err != nil {
 		return err
 	}
 	s.rt.Store(&runtimeConfig{cfg: &next, secrets: cur.secrets})

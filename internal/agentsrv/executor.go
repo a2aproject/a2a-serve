@@ -51,6 +51,7 @@ const harnessSocketName = "a2a.sock"
 // newExecutor starts the harness as an ACP agent in its sandbox. close stops
 // the harness and cleans up its sandbox.
 func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.Writer) (exec a2asrv.AgentExecutor, close func(context.Context) error, err error) {
+	s.pruneContainers(ctx)
 	h, err := s.prepareHarness(ctx, imageProgress, "")
 	if err != nil {
 		return nil, nil, err
@@ -73,6 +74,23 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ %s is running (ACP)", h.profile.Name())
 	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.prepared.Stop(ctx)) }, nil
+}
+
+// pruneContainers removes the containers of this agent directory that an
+// earlier server left running, such as those of a crash or a stop that ran
+// out of time.
+func (s *Server) pruneContainers(ctx context.Context) {
+	if sb := s.config().Sandbox; sb != "" && sb != harness.SandboxDocker {
+		return
+	}
+	n, err := harness.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
+	if err != nil {
+		slog.Warn("removing containers left by an earlier run", "error", err)
+		return
+	}
+	if n > 0 {
+		slog.Info("removed containers left by an earlier run", "count", n)
+	}
 }
 
 // newAnonymousExecutor prepares the separate harness of anonymous

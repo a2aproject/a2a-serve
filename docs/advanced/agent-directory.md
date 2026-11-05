@@ -17,7 +17,8 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── homes/         # a home for the agent process of each authenticated user
         ├── home-anonymous/ # the home of the agent process for anonymous callers
         ├── mcp-mask.json  # the .mcp.json with no servers that the sandbox shows the agent
-        ├── server.log
+        ├── server.log     # rotated at 10 MB; the previous log is server.log.1
+        ├── server.pid     # PID of the running server, so that stop works while it starts
         └── server.sock    # control socket for a2a-serve commands
 ```
 

@@ -282,17 +282,24 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 	}
 }
 
-func TestFailedOneTimeScheduleIsKept(t *testing.T) {
+func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
+	var skew atomic.Int64
+	// The server's own scheduler must not run the schedule before the channel is removed.
+	skew.Store(int64(-time.Hour))
+	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake"), now: now})
+	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	due := time.Now().Add(-time.Minute)
 	if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
 		Name: "once", At: due, Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
-		DeliverChannel: "gone", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
+		DeliverChannel: "fake", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
 	}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
+	ts.srv.supervisor.remove("fake")
+	skew.Store(0)
 
 	ts.srv.schedules.runDue(ctx)
 
@@ -300,8 +307,17 @@ func TestFailedOneTimeScheduleIsKept(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Schedule() after a failed run error = %v, want the schedule kept", err)
 	}
-	if !strings.Contains(got.LastError, "channel gone is not running") || !got.NextRun.IsZero() || got.LastRun.IsZero() {
-		t.Fatalf("Schedule() = %+v, want the error recorded and no next run", got)
+	if !strings.Contains(got.LastError, "channel fake is not running") || got.NextRun.IsZero() || got.LastRun.IsZero() {
+		t.Fatalf("Schedule() = %+v, want the error recorded and the run still due", got)
+	}
+
+	restarted := newFakeChannel("fake")
+	ts.srv.supervisor.add(restarted)
+	restarted.waitReady(t)
+	ts.srv.schedules.runDue(ctx)
+
+	if _, err := ts.srv.store.Schedule(ctx, "once"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Schedule() after the retry error = %v, want %v", err, store.ErrNotFound)
 	}
 }
 

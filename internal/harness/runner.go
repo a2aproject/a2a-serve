@@ -26,6 +26,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
@@ -220,9 +221,15 @@ func resolvePath(p string) string {
 	return filepath.Clean(p)
 }
 
+// containerStopTimeout bounds removing a container, which gets its own
+// budget so that a slow shutdown of other components doesn't leave it running.
+const containerStopTimeout = 30 * time.Second
+
 // Stop removes the container if it is still running, and the env files.
 func (r *DockerRunner) Stop(ctx context.Context) error {
 	var errs []error
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), containerStopTimeout)
+	defer cancel()
 	out, err := exec.CommandContext(ctx, "docker", "rm", "-f", r.Name).CombinedOutput()
 	if err != nil && !bytes.Contains(out, []byte("No such container")) {
 		errs = append(errs, fmt.Errorf("docker rm -f %s: %w: %s", r.Name, err, bytes.TrimSpace(out)))
@@ -234,6 +241,29 @@ func (r *DockerRunner) Stop(ctx context.Context) error {
 	}
 	r.envFiles = nil
 	return errors.Join(errs...)
+}
+
+// PruneContainers removes the containers, running or not, that carry all
+// of labels, and returns how many it found. It cleans up after a server
+// that crashed before it could remove its containers.
+func PruneContainers(ctx context.Context, labels map[string]string) (int, error) {
+	args := []string{"ps", "-aq"}
+	for _, k := range slices.Sorted(maps.Keys(labels)) {
+		args = append(args, "--filter", "label="+k+"="+labels[k])
+	}
+	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	if err != nil {
+		return 0, fmt.Errorf("docker ps: %w", exitErr(err))
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) == 0 {
+		return 0, nil
+	}
+	rm, err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f"}, ids...)...).CombinedOutput()
+	if err != nil {
+		return 0, fmt.Errorf("docker rm -f: %w: %s", err, bytes.TrimSpace(rm))
+	}
+	return len(ids), nil
 }
 
 // CheckDocker reports whether the docker daemon is reachable and whether it
