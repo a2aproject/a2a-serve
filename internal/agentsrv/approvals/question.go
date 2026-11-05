@@ -135,12 +135,42 @@ func (q *Question) Labels() []string {
 	return out
 }
 
+// hiddenWarning heads the text of a question in which Display escaped
+// hidden characters.
+const hiddenWarning = "⚠ This request has hidden formatting characters, shown as [U+XXXX].\n"
+
 // Display is the text shown for the question: its message, or its title.
+// Characters that can make a command look like other text are escaped, and
+// a warning line is added.
 func (q *Question) Display() string {
-	if q.Text != "" {
-		return q.Text
+	text := q.Text
+	if text == "" {
+		text = q.Title
 	}
-	return q.Title
+	if !strings.ContainsFunc(text, hidden) {
+		return text
+	}
+	var b strings.Builder
+	b.WriteString(hiddenWarning)
+	for _, r := range text {
+		if hidden(r) {
+			fmt.Fprintf(&b, "[U+%04X]", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// hidden reports whether r is a bidi embedding, override or isolate
+// control, or a zero-width space. Joiners, which emoji sequences use, and
+// directional marks are shown as they are.
+func hidden(r rune) bool {
+	switch {
+	case r >= '\u202A' && r <= '\u202E', r >= '\u2066' && r <= '\u2069':
+		return true
+	}
+	return r == '\u200B' || r == '\u2060' || r == '\uFEFF'
 }
 
 // Match maps a typed reply to an option, accepting option IDs and labels

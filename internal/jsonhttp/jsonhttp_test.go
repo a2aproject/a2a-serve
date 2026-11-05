@@ -15,11 +15,16 @@
 package jsonhttp
 
 import (
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestErrorMessage(t *testing.T) {
@@ -122,4 +127,112 @@ type zeros struct{}
 func (zeros) Read(p []byte) (int, error) {
 	clear(p)
 	return len(p), nil
+}
+
+func TestLimitDeadline(t *testing.T) {
+	t.Parallel()
+	const timeout = 300 * time.Millisecond
+	tests := []struct {
+		name  string
+		limit Limit
+		// pauses are the waits before each byte of a 4-byte body.
+		pauses  []time.Duration
+		wantErr bool
+	}{
+		{name: "fast body under a total timeout", limit: Limit{Max: 4, Total: timeout}, pauses: []time.Duration{0, 0, 0, 0}},
+		{name: "slow body over a total timeout", limit: Limit{Max: 4, Total: timeout}, pauses: []time.Duration{0, timeout / 2, timeout / 2, timeout / 2}, wantErr: true},
+		{name: "stalled body over a total timeout", limit: Limit{Max: 4, Total: timeout}, pauses: []time.Duration{0, 10 * timeout}, wantErr: true},
+		{name: "slow body making progress under an idle timeout", limit: Limit{Max: 4, Idle: timeout}, pauses: []time.Duration{0, timeout / 2, timeout / 2, timeout / 2}},
+		{name: "stalled body over an idle timeout", limit: Limit{Max: 4, Idle: timeout}, pauses: []time.Duration{0, 10 * timeout}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			readErr := make(chan error, 1)
+			srv := httptest.NewServer(tc.limit.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, err := io.Copy(io.Discard, r.Body)
+				readErr <- err
+			})))
+			t.Cleanup(srv.Close)
+			conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := conn.Close(); err != nil {
+					t.Errorf("closing the connection: %v", err)
+				}
+			})
+			if _, err := io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 4\r\n\r\n"); err != nil {
+				t.Fatal(err)
+			}
+			go func() {
+				for _, p := range tc.pauses {
+					time.Sleep(p)
+					if _, err := conn.Write([]byte{'x'}); err != nil {
+						return
+					}
+				}
+			}()
+
+			select {
+			case err := <-readErr:
+				if gotErr := err != nil; gotErr != tc.wantErr {
+					t.Fatalf("Limit.Handler() body read error = %v, want error %t", err, tc.wantErr)
+				}
+				if tc.wantErr && !errors.Is(err, os.ErrDeadlineExceeded) {
+					t.Fatalf("Limit.Handler() body read error = %v, want %v", err, os.ErrDeadlineExceeded)
+				}
+			case <-time.After(20 * timeout):
+				t.Fatalf("Limit.Handler() body read didn't end in %v", 20*timeout)
+			}
+		})
+	}
+}
+
+func TestLimitKeepsStreamAfterBody(t *testing.T) {
+	t.Parallel()
+	const timeout = 100 * time.Millisecond
+	for _, limit := range []Limit{{Max: 1 << 10, Total: timeout}, {Max: 1 << 10, Idle: timeout}} {
+		t.Run(fmt.Sprintf("total %v idle %v", limit.Total, limit.Idle), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(limit.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if _, err := io.Copy(io.Discard, r.Body); err != nil {
+					Error(w, http.StatusBadRequest, err.Error())
+					return
+				}
+				rc := http.NewResponseController(w)
+				for i := range 5 {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-time.After(timeout):
+					}
+					if _, err := fmt.Fprintf(w, "data: %d\n\n", i); err != nil {
+						return
+					}
+					if err := rc.Flush(); err != nil {
+						return
+					}
+				}
+			})))
+			t.Cleanup(srv.Close)
+
+			resp, err := srv.Client().Post(srv.URL, "application/json", strings.NewReader(`{"stream":true}`))
+			if err != nil {
+				t.Fatalf("POST error = %v", err)
+			}
+			body, err := io.ReadAll(resp.Body)
+			if err != nil {
+				t.Fatalf("reading the stream error = %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			if got := strings.Count(string(body), "data: "); got != 5 {
+				t.Fatalf("Limit.Handler() stream events = %d, want 5: %q", got, body)
+			}
+		})
+	}
 }

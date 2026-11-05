@@ -16,20 +16,26 @@ package agentsrv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -546,5 +552,56 @@ func TestContactClientsSlowContactDoesNotStallOthers(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatalf("ContactClients.contactClient() was blocked by the card fetch of another contact")
+	}
+}
+
+func TestContactClientsLimitResponseSize(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		pad     int
+		wantErr error
+	}{
+		{name: "small response", pad: 1 << 10},
+		{name: "response over the limit", pad: maxContactResponse, wantErr: egress.ErrResponseTooLarge},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			mux := http.NewServeMux()
+			srv := httptest.NewServer(mux)
+			t.Cleanup(srv.Close)
+			card := &a2a.AgentCard{Name: "big", Version: "1.0.0",
+				SupportedInterfaces: []*a2a.AgentInterface{a2a.NewAgentInterface(srv.URL, a2a.TransportProtocolJSONRPC)}}
+			mux.Handle("/.well-known/agent-card.json", a2asrv.NewStaticAgentCardHandler(card))
+			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				var req struct {
+					ID json.RawMessage `json:"id"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decoding the JSON-RPC request: %v", err)
+				}
+				body := `{"jsonrpc":"2.0","id":` + string(req.ID) + `,"result":{"id":"t1","contextId":"c1","status":{"state":"TASK_STATE_COMPLETED"},"metadata":{"pad":"` +
+					strings.Repeat("x", tc.pad) + `"}}}`
+				w.Header().Set("Content-Type", "application/json")
+				w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+				if _, err := io.WriteString(w, body); err != nil {
+					t.Logf("writing the response: %v", err)
+				}
+			})
+			st := openTestStore(t)
+			putContact(t, st, store.Contact{Name: "big", URL: srv.URL})
+			cc := newTestContactClients(t, st, nil)
+			tgt, err := cc.target(context.Background(), "big", auth.Owner(), 0)
+			if err != nil {
+				t.Fatalf("ContactClients.target() error = %v", err)
+			}
+
+			_, err = tgt.get(context.Background(), "t1")
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("target.get() error = %v, want %v", err, tc.wantErr)
+			}
+		})
 	}
 }

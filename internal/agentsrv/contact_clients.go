@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -96,6 +97,10 @@ type contactClient struct {
 	contact store.Contact
 	client  *a2aclient.Client
 }
+
+// maxContactResponse limits the size of a response from a contact, except
+// event streams.
+const maxContactResponse = 32 << 20
 
 // discover lists agents on the private network, cached briefly.
 func (cc *ContactClients) discover(ctx context.Context) ([]network.PeerInfo, error) {
@@ -200,15 +205,21 @@ func (cc *ContactClients) onPrivateNetwork(ctx context.Context, u string) bool {
 }
 
 // httpClient returns the HTTP client for a contact, which sends its token
-// to the contact's host only. It has no overall timeout, because streams to
-// the contact last as long as its task; callers bound requests with their
-// context.
+// to the contact's host only, limits its responses, and keeps a contact on
+// a public URL out of private networks. It has no overall timeout, because
+// streams to the contact last as long as its task; callers bound requests
+// with their context.
 func (cc *ContactClients) httpClient(c store.Contact) *http.Client {
-	base := http.DefaultClient
+	base := &http.Client{Transport: egress.Transport(c.URL), CheckRedirect: egress.CheckRedirect}
 	if c.Via == ViaPrivate && cc.private != nil {
 		base = cc.private.HTTPClient()
 	}
-	return manage.TokenClient(base, c)
+	rt := base.Transport
+	if rt == nil {
+		rt = http.DefaultTransport
+	}
+	limited := &http.Client{Transport: egress.LimitResponses(rt, maxContactResponse), CheckRedirect: base.CheckRedirect}
+	return manage.TokenClient(limited, c)
 }
 
 // viaAgent returns ctx for calling another agent from a conversation hops

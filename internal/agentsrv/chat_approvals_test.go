@@ -100,8 +100,8 @@ func TestChatApprovalsAsk(t *testing.T) {
 				if len(got) != 0 {
 					t.Fatalf("chat.Ask() sent %+v, want nothing", got)
 				}
-				if id, err := fx.store.PendingQuestion(fx.ctx, tc.to.Channel, string(tc.to.Conv)); !errors.Is(err, store.ErrNotFound) {
-					t.Fatalf("PendingQuestion() = %q, %v, want error %v", id, err, store.ErrNotFound)
+				if ids, err := fx.store.PendingQuestions(fx.ctx, tc.to.Channel, string(tc.to.Conv)); err != nil || len(ids) != 0 {
+					t.Fatalf("PendingQuestions() = %q, %v, want none", ids, err)
 				}
 				return
 			}
@@ -115,9 +115,12 @@ func TestChatApprovalsAsk(t *testing.T) {
 			if diff := cmp.Diff([]channel.Outbound{want}, got); diff != "" {
 				t.Fatalf("chat.Ask() sent wrong result (-want +got) diff = %s", diff)
 			}
-			pending, err := fx.store.PendingQuestion(fx.ctx, "fake", "dm1")
-			if err != nil || pending != rec.ID {
-				t.Fatalf("PendingQuestion() = %q, %v, want %q, nil", pending, err, rec.ID)
+			pending, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1")
+			if err != nil {
+				t.Fatalf("PendingQuestions() error = %v", err)
+			}
+			if diff := cmp.Diff([]string{rec.ID}, pending); diff != "" {
+				t.Fatalf("PendingQuestions() wrong result (-want +got) diff = %s", diff)
 			}
 			msgs, err := fx.store.TakeQuestionMessages(fx.ctx, rec.ID)
 			if err != nil {
@@ -139,8 +142,8 @@ func TestChatApprovalsAskForgetsQuestionWhenSendFails(t *testing.T) {
 
 	fx.chat.Ask(fx.ctx, approvals.Chat{Channel: "fake", Conv: "dm1"}, "coder asks", rec)
 
-	if id, err := fx.store.PendingQuestion(fx.ctx, "fake", "dm1"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("PendingQuestion() = %q, %v, want error %v", id, err, store.ErrNotFound)
+	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1"); err != nil || len(ids) != 0 {
+		t.Fatalf("PendingQuestions() = %q, %v, want none", ids, err)
 	}
 	msgs, err := fx.store.TakeQuestionMessages(fx.ctx, rec.ID)
 	if err != nil {
