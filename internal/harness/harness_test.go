@@ -251,12 +251,16 @@ func TestLookup(t *testing.T) {
 func TestBootstrap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		harness string
-		file    string
-		want    string
+		harness  string
+		file     string
+		want     string
+		wantKept string
 	}{
-		{harness: "opencode", file: ".config/opencode/opencode.json", want: `"bash": "ask"`},
-		{harness: "claude", file: ".claude/settings.json", want: `"defaultMode": "default"`},
+		{harness: "opencode", file: ".config/opencode/opencode.json", want: `"bash": "ask"`, wantKept: `{"theme": "dark"}`},
+		{
+			harness: "claude", file: ".claude/settings.json", want: `"defaultMode": "default"`,
+			wantKept: "{\n  \"enableAllProjectMcpServers\": false,\n  \"theme\": \"dark\"\n}\n",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.harness, func(t *testing.T) {
@@ -277,14 +281,18 @@ func TestBootstrap(t *testing.T) {
 				t.Fatalf("Bootstrap() wrote %s, want it to contain %s", data, tc.want)
 			}
 
-			if err := os.WriteFile(filepath.Join(home, tc.file), []byte("{}"), 0o600); err != nil {
+			if err := os.WriteFile(filepath.Join(home, tc.file), []byte(`{"theme": "dark"}`), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			if err := p.Bootstrap(Workspace{Home: home}); err != nil {
 				t.Fatalf("Bootstrap() error = %v", err)
 			}
-			if data, _ := os.ReadFile(filepath.Join(home, tc.file)); string(data) != "{}" {
-				t.Fatalf("Bootstrap() overwrote user config: %s", data)
+			data, err = os.ReadFile(filepath.Join(home, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.wantKept, string(data)); diff != "" {
+				t.Fatalf("Bootstrap() wrong user config (-want +got) diff = %s", diff)
 			}
 		})
 	}

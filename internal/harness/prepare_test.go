@@ -22,8 +22,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 func TestPrepareLocal(t *testing.T) {
@@ -167,6 +169,69 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 			tc.spec.Home = t.TempDir()
 			if _, err := Prepare(context.Background(), tc.spec); err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Prepare() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerMasksMCP(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	tests := []struct {
+		name     string
+		existing string
+		want     string
+	}{
+		{name: "existing .mcp.json", existing: `{"mcpServers": {"github": {"command": "gh-mcp"}}}`, want: `{"mcpServers": {"github": {"command": "gh-mcp"}}}`},
+		{name: "no .mcp.json", want: emptyMCP},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home, state := t.TempDir(), t.TempDir(), t.TempDir()
+			mcpFile := filepath.Join(ws, project.MCPFile)
+			if tc.existing != "" {
+				if err := os.WriteFile(mcpFile, []byte(tc.existing), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
+			mask := filepath.Join(state, "mcp-mask.json")
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}, {Src: ws, Dst: "/copy", ReadOnly: true}},
+				Home:    home,
+				Name:    "a2a-test",
+				MCPMask: mask,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+			var mounts []string
+			for i := 0; i+1 < len(p.Args); i++ {
+				if p.Args[i] == "-v" {
+					mounts = append(mounts, p.Args[i+1])
+				}
+			}
+			wantMounts := []string{ws + ":" + ws, ws + ":/copy:ro", mask + ":" + mcpFile + ":ro", mask + ":/copy/" + project.MCPFile + ":ro", home + ":" + ContainerHome}
+			if diff := cmp.Diff(wantMounts, mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			got, err := os.ReadFile(mcpFile)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, string(got)); diff != "" {
+				t.Fatalf("Prepare() changed %s (-want +got) diff = %s", project.MCPFile, diff)
+			}
+			gotMask, err := os.ReadFile(mask)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(emptyMCP, string(gotMask)); diff != "" {
+				t.Fatalf("Prepare() wrong mask (-want +got) diff = %s", diff)
 			}
 		})
 	}

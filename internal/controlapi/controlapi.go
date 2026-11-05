@@ -102,6 +102,8 @@ type MCPServerStatus struct {
 	// Missing are the variables it references which have no value, so the
 	// harness doesn't get it.
 	Missing []string `json:"missing,omitempty"`
+	// Disabled is set when the config turns the server off.
+	Disabled bool `json:"disabled,omitempty"`
 }
 
 // BackupStatus describes the agent's backup snapshots.

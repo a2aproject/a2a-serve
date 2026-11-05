@@ -181,6 +181,9 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) err
 	}
 	for _, m := range st.MCPServers {
 		line := m.Name + ": " + m.Summary
+		if m.Disabled {
+			line += fmt.Sprintf(" (off; turn it on with `a2a-serve config unset disable-mcp %s`)", m.Name)
+		}
 		if len(m.Missing) > 0 {
 			line += fmt.Sprintf(" ! not passed to the agent, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
 		}

@@ -209,6 +209,7 @@ var fields = []field{
 	emailField("email-trusted-authserv", func(e *EmailConfig) *string { return &e.TrustedAuthServ }),
 	agentScope(list("allow-tools", true, func(c *Config) *[]string { return &c.Approvals.Allow }, identity)),
 	agentScope(list("deny-tools", true, func(c *Config) *[]string { return &c.Approvals.Deny }, identity)),
+	ownerScope(list("disable-mcp", true, func(c *Config) *[]string { return &c.MCP.Disabled }, identity)),
 	ownerScope(scalar("owner-chat", true, func(c *Config) *string { return &c.Approvals.OwnerChat })),
 	agentScope(operational(scalar("memory", false, func(c *Config) *string { return &c.Limits.Memory }))),
 	agentScope(operational(scalar("cpus", false, func(c *Config) *string { return &c.Limits.CPUs }))),
@@ -476,6 +477,7 @@ func CopyLive(dst, src *Config) {
 	dst.Approvals.Allow = slices.Clone(src.Approvals.Allow)
 	dst.Approvals.Deny = slices.Clone(src.Approvals.Deny)
 	dst.Policy = src.Policy.clone()
+	dst.MCP.Disabled = slices.Clone(src.MCP.Disabled)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an
