@@ -329,7 +329,7 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, a2a.NewContextID(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: a2a.NewContextID(), User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
@@ -351,7 +351,7 @@ func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 		t.Fatalf("contextOf() error = %v", err)
 	}
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, contextID, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, "ask"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: contextID, User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
@@ -450,10 +450,9 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, contextID, auth.Owner(), "hello"); err != nil {
+	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: contextID, User: auth.Owner(), Text: "hello"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
-	time.Sleep(3 * testTimings.InjectRetry)
 	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 
 	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))

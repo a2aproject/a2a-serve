@@ -170,12 +170,16 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule) error {
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.injectTurn(sc.ctx, contextID, user, text); err != nil {
+	if err := sc.turns.injectTurn(sc.ctx, postedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name)}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
 	return nil
 }
+
+// scheduleTurnKey merges the runs of a schedule that wait in a context
+// into one.
+func scheduleTurnKey(name string) string { return "schedule:" + name }
 
 // contextFor returns the context a run of s happens in. A run delivered to
 // a chat becomes the chat's conversation, so replying there continues it.
@@ -198,6 +202,26 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 	}
 	id := a2a.NewContextID()
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
+}
+
+// announce posts text into the chat conversation of a context, if it has
+// one.
+func (sc *schedules) announce(ctx context.Context, contextID, text string) {
+	chName, conv, err := sc.store.ConvOf(ctx, contextID)
+	if errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		slog.Warn("finding the conversation of a schedule", "context", contextID, "error", err)
+		return
+	}
+	ch := sc.supervisor.channel(chName)
+	if ch == nil {
+		return
+	}
+	if _, err := ch.Send(ctx, channel.Outbound{Conv: channel.ConvKey(conv), Text: text}); err != nil {
+		slog.Warn("announcing a schedule", "channel", chName, "error", err)
+	}
 }
 
 // storedPrincipal is a principal stored to act later, such as the user a
@@ -246,9 +270,14 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 	return s, runErr
 }
 
-// remove removes a schedule which by may manage.
+// remove removes a schedule which by may manage, and its runs that wait
+// to be posted.
 func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	return sc.manage().Remove(ctx, name, by)
+	if err := sc.manage().Remove(ctx, name, by); err != nil {
+		return err
+	}
+	sc.turns.dropPosted(scheduleTurnKey(name))
+	return nil
 }
 
 // visible lists the schedules by can see.

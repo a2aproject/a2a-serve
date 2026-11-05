@@ -69,7 +69,7 @@ type questionChat interface {
 
 // turnInjector is where watches post late results.
 type turnInjector interface {
-	injectTurn(ctx context.Context, contextID string, p auth.Principal, text string) error
+	injectTurn(ctx context.Context, t postedTurn) error
 }
 
 func newWatches(ctx context.Context, deps WatchesDeps) *Watches {
@@ -171,10 +171,13 @@ func (ws *Watches) watch(w store.Watch) {
 	ws.watching[key] = true
 	ws.mu.Unlock()
 	go func() {
+		// A result waiting to be posted keeps the watch, so that watching
+		// the task again doesn't post it twice.
+		posting := false
 		defer func() {
-			ws.mu.Lock()
-			delete(ws.watching, key)
-			ws.mu.Unlock()
+			if !posting {
+				ws.done(key)
+			}
 		}()
 		claims := callerClaims{ContextID: w.OriginContextID, User: ws.watchPrincipal(ctx, w)}
 		interval := ws.timings.WatchInterval
@@ -191,9 +194,7 @@ func (ws *Watches) watch(w store.Watch) {
 			task, err := ws.poll(ctx, w, claims.User)
 			if errors.Is(err, store.ErrNotFound) {
 				slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
-				if err := ws.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
-					slog.Error("deleting watch", "error", err)
-				}
+				ws.deleteWatch(ctx, w)
 				return
 			}
 			if err != nil {
@@ -204,7 +205,7 @@ func (ws *Watches) watch(w store.Watch) {
 				if time.Since(failingSince) < watchGiveUp {
 					continue
 				}
-				ws.finishWatch(ctx, w, fmt.Sprintf("%s has been unreachable for a day; giving up on task %s: %v", w.Contact, w.TaskID, err))
+				posting = ws.finishWatch(ctx, w, key, fmt.Sprintf("%s has been unreachable for a day; giving up on task %s: %v", w.Contact, w.TaskID, err))
 				return
 			}
 			if !failingSince.IsZero() {
@@ -225,10 +226,16 @@ func (ws *Watches) watch(w store.Watch) {
 				text = fmt.Sprintf("[%s asks, on task %s]\n%s\nAnswer with: a2a send -a <agents URL>/%s --task-id %s \"...\"",
 					w.Contact, w.TaskID, a2atext.Message(task.Status.Message), w.Contact, w.TaskID)
 			}
-			ws.finishWatch(ctx, w, text)
+			posting = ws.finishWatch(ctx, w, key, text)
 			return
 		}
 	}()
+}
+
+func (ws *Watches) done(key string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	delete(ws.watching, key)
 }
 
 // watchGiveUp is how long a watched task's agent may be unreachable.
@@ -255,18 +262,34 @@ func (ws *Watches) poll(ctx context.Context, w store.Watch, user auth.Principal)
 }
 
 // finishWatch posts the result of a watched task as its user, if they may
-// still call this agent.
-func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, text string) {
-	if err := ws.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
-		slog.Error("deleting watch", "error", err)
-	}
+// still call this agent. The watch is deleted once the agent accepted the
+// result, so that a restart before then posts it again. It reports whether
+// the result waits to be posted; the watch of key is done once it is.
+func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key, text string) bool {
 	user := ws.watchPrincipal(ctx, w)
 	if user.Role == "" {
 		slog.Warn("dropped a watched result: its user can no longer call this agent", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf)
-		return
+		ws.deleteWatch(ctx, w)
+		return false
 	}
-	if err := ws.turns.injectTurn(ctx, w.OriginContextID, user, text); err != nil {
+	accepted := func(err error) {
+		defer ws.done(key)
+		if err != nil {
+			slog.Error("posting watched result; it is posted again on the next start", "contact", w.Contact, "task", w.TaskID, "error", err)
+			return
+		}
+		ws.deleteWatch(context.WithoutCancel(ctx), w)
+	}
+	if err := ws.turns.injectTurn(ctx, postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Accepted: accepted}); err != nil {
 		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
+		return false
+	}
+	return true
+}
+
+func (ws *Watches) deleteWatch(ctx context.Context, w store.Watch) {
+	if err := ws.store.DeleteWatch(ctx, w.Contact, w.TaskID); err != nil {
+		slog.Error("deleting watch", "error", err)
 	}
 }
 
