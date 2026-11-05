@@ -1,7 +1,7 @@
 # Agent Mesh
 
 > [!NOTE]
-> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`. Egress through the relay and the directory of advertised nodes are planned, and marked as such below.
+> Experimental. Joining a relay with `--private <relay-url>` and `--public <relay-url>` works today in builds with `-tags agentmesh`, and `a2a-serve relay run` runs a relay. Sign-in to the relay, egress through it and the directory of advertised nodes are planned, and marked as such below.
 
 [Agent Mesh](https://google.github.io/agentmesh/) is a zero-trust network for agents: nodes enroll with a control plane, get short-lived credentials bound to their own keys, reach each other through routers from behind NAT, and can be reached from the internet through ingress. a2a-serve runs on top of it.
 
@@ -25,7 +25,7 @@ a2a-serve decides who may do what with an agent. Agent Mesh decides who is on th
 [Agent Mesh relays](../guide/networks.md#agent-mesh-relays-experimental) shows the commands. How it works:
 
 - a2a-serve runs a `meshnet` node inside its own process, with no sidecar. The node's key and peer ID are kept in `.a2a/state/agentmesh`, so it keeps its URLs across restarts and backups.
-- It enrolls by signing in to the relay's identity provider, or with a join token (`--relay-token`).
+- It enrolls by signing in to the relay's identity provider, or with a join token (`--relay-token`), such as an invite from `a2a-serve relay invite`.
 - It publishes the A2A service `a2a://<name>`. Other agents on the relay find it in the directory and dial it with their own node identity.
 - With `--public <relay-url>`, the relay also gives `a2a://<name>` a public URL. Ingress runs in `passthrough` mode and forwards the `Authorization` header unchanged, so pairing tokens and Google sign-in work there.
 
@@ -52,7 +52,7 @@ Every request passes three steps:
 2. **a2a-serve resolves.** It builds the caller's identity from `WhoIs`, or from a pairing token or sign-in on the public URL, and gives it a role: `owner`, `authenticated` or `anonymous`.
 3. **a2a-serve acts.** The role decides what the caller may do with tasks and approvals.
 
-`--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, by revoking their enrollment.
+`--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, with `a2a-serve relay remove`, which bans their nodes.
 
 A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-access` defaults to `everyone` on every relay. The relay decides who it admits. Agent Mesh v0.2.0 admits anyone its identity provider accepts, so on a relay that admits people by sign-in, set `--private-access paired` until the relay checks an email allowlist itself (planned).
 
@@ -68,6 +68,13 @@ The sandbox reaches the network only through the server (planned). On a relay, t
 
 ## Running a relay
 
-The relay is `agentmesh-one` at the version this a2a-serve joins with (v0.2.0): one binary that serves the control plane, routers and ingress on one HTTPS port, with SQLite in a data directory. On a VM with a disk it needs nothing else. On Cloud Run it runs as a single instance with Postgres, since the filesystem is wiped on every new revision. `--tunnel cloudflare` runs it on a laptop for demos, but the URL changes on every restart.
+`a2a-serve relay run` runs a relay as one a2a-serve process, the front. It serves the relay's port and runs `agentmesh-one`, at the version this a2a-serve pins, as a child process on loopback. The front:
 
-Source builds need `-tags agentmesh`. It adds about 36 MB to the binary, so release binaries leave it out until `meshnet` is its own Go module. `doctor` checks that the build supports relays and, with `--online`, that the relay answers.
+- reports the relay's versions at `/.well-known/a2a-serve-relay`;
+- serves the relay's control API to callers with the admin token;
+- blocks Agent Mesh's admin API, console and metrics, which a2a-serve manages or doesn't use;
+- proxies everything else to `agentmesh-one`, WebSockets included.
+
+a2a-serve sets every `agentmesh-one` flag and applies the mesh policy through the admin API at every start. The policy lets every node call, publish and expose A2A services, with public URLs in `passthrough` mode. `agentmesh-one` runs with no standing join token, so agents join with an invite, a single-use bootstrap token with autonomous recovery. [HTTP Routes](../reference/http-routes.md#relay-routes) lists the front's routes, and [Relays](../guide/relays.md) shows how to run one.
+
+Source builds need `-tags agentmesh` to join a relay. It adds about 36 MB to the binary, so release binaries leave it out until `meshnet` is its own Go module. The relay commands don't need it. `doctor` checks that the build supports relays and, with `--online`, that the relay answers with the pinned Agent Mesh version.

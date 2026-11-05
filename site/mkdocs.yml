@@ -78,6 +78,7 @@ nav:
       - Identities: guide/identities.md
       - Email Sign-In: guide/email-sign-in.md
       - Networks: guide/networks.md
+      - Relays: guide/relays.md
       - Messengers: guide/messengers.md
       - Agent2Agent: guide/agent2agent.md
       - Schedules: guide/schedules.md
@@ -111,6 +112,7 @@ nav:
           - contact: reference/commands/contact.md
           - peers: reference/commands/peers.md
           - mailbox: reference/commands/mailbox.md
+          - relay: reference/commands/relay.md
           - doctor: reference/commands/doctor.md
           - completion: reference/commands/completion.md
           - version: reference/commands/version.md

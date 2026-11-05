@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lifecycle
+// Package logfile appends to log files and rotates them, so that a
+// process's continuous output can't fill the disk.
+package logfile
 
 import (
 	"errors"
@@ -22,9 +24,11 @@ import (
 	"sync"
 )
 
-// rotatingLog appends to the server log and rotates it when it grows past
-// its limit, so that the continuous stderr of the agent can't fill the disk.
-type rotatingLog struct {
+// DefaultLimit is the size at which logs are rotated.
+const DefaultLimit = 10 << 20
+
+// Rotating appends to a log and rotates it when it grows past its limit.
+type Rotating struct {
 	path   string
 	limit  int64
 	shared []*os.File
@@ -33,13 +37,13 @@ type rotatingLog struct {
 	f  *os.File
 }
 
-var _ io.WriteCloser = (*rotatingLog)(nil)
+var _ io.WriteCloser = (*Rotating)(nil)
 
-// openRotatingLog opens the log at path for appending. Files in shared that
-// other writers of this process have open on the log keep working after a
+// Open opens the log at path for appending. Files in shared that other
+// writers of this process have open on the log keep working after a
 // rotation.
-func openRotatingLog(path string, limit int64, shared ...*os.File) (*rotatingLog, error) {
-	l := &rotatingLog{path: path, limit: limit, shared: shared}
+func Open(path string, limit int64, shared ...*os.File) (*Rotating, error) {
+	l := &Rotating{path: path, limit: limit, shared: shared}
 	f, err := l.open()
 	if err != nil {
 		return nil, err
@@ -48,12 +52,12 @@ func openRotatingLog(path string, limit int64, shared ...*os.File) (*rotatingLog
 	return l, nil
 }
 
-func (l *rotatingLog) open() (*os.File, error) {
+func (l *Rotating) open() (*os.File, error) {
 	return os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 // Write implements [io.Writer].
-func (l *rotatingLog) Write(p []byte) (int, error) {
+func (l *Rotating) Write(p []byte) (int, error) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	if err := l.rotateIfFull(); err != nil {
@@ -62,7 +66,7 @@ func (l *rotatingLog) Write(p []byte) (int, error) {
 	return l.f.Write(p)
 }
 
-func (l *rotatingLog) rotateIfFull() error {
+func (l *Rotating) rotateIfFull() error {
 	info, err := l.f.Stat()
 	if err != nil {
 		return err
@@ -70,7 +74,7 @@ func (l *rotatingLog) rotateIfFull() error {
 	if info.Size() <= l.limit {
 		return nil
 	}
-	if err := rotateLog(l.path, l.limit, l.shared...); err != nil {
+	if err := Rotate(l.path, l.limit, l.shared...); err != nil {
 		return err
 	}
 	// A rename leaves l.f on the rotated file.
@@ -84,17 +88,17 @@ func (l *rotatingLog) rotateIfFull() error {
 }
 
 // Close implements [io.Closer].
-func (l *rotatingLog) Close() error {
+func (l *Rotating) Close() error {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	return l.f.Close()
 }
 
-// rotateLog moves the log at path to path.1 once it is larger than limit. A
+// Rotate moves the log at path to path.1 once it is larger than limit. A
 // log this process already writes to through one of writers, as the stdout
 // a detached start or the service manager opened, is copied and truncated
 // instead, since a rename would leave those writes in path.1.
-func rotateLog(path string, limit int64, writers ...*os.File) error {
+func Rotate(path string, limit int64, writers ...*os.File) error {
 	info, err := os.Stat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

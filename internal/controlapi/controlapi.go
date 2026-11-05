@@ -24,20 +24,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"log/slog"
 	"math"
 	"net"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 )
@@ -437,54 +433,9 @@ func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning
 // NotRunning marks the error for the CLI's exit code.
 func (e *notRunningError) NotRunning() bool { return true }
 
-// errorBody is the body of a failed control call. Kind and Name are set
-// for an [agenterr.NotFoundError].
-type errorBody struct {
-	Error string `json:"error"`
-	Kind  string `json:"kind,omitempty"`
-	Name  string `json:"name,omitempty"`
-}
-
 // WriteError writes err as the response of a failed control call, with the
 // status of its [agenterr] type; [Client] turns it back into that type.
-func WriteError(w http.ResponseWriter, err error) {
-	body := errorBody{Error: err.Error()}
-	status := http.StatusInternalServerError
-	var (
-		nf *agenterr.NotFoundError
-		in *agenterr.InvalidError
-		co *agenterr.ConflictError
-	)
-	switch {
-	case errors.As(err, &nf):
-		status, body.Kind, body.Name = http.StatusNotFound, nf.Kind, nf.Name
-	case errors.As(err, &in):
-		status = http.StatusBadRequest
-	case errors.As(err, &co):
-		status = http.StatusConflict
-	}
-	jsonhttp.Write(w, status, body)
-}
-
-// responseError returns the error of a failed control call, as the server
-// wrote it with [WriteError].
-func responseError(status string, code int, data []byte) error {
-	var body errorBody
-	if err := json.Unmarshal(data, &body); err != nil || body.Error == "" {
-		return errors.New(jsonhttp.ErrorMessage(status, data))
-	}
-	switch code {
-	case http.StatusNotFound:
-		if body.Kind != "" {
-			return &agenterr.NotFoundError{Kind: body.Kind, Name: body.Name}
-		}
-	case http.StatusBadRequest:
-		return agenterr.Invalid(errors.New(body.Error))
-	case http.StatusConflict:
-		return &agenterr.ConflictError{Err: errors.New(body.Error)}
-	}
-	return errors.New(body.Error)
-}
+func WriteError(w http.ResponseWriter, err error) { ctlhttp.WriteError(w, err) }
 
 // ErrUnsupported is returned when the running server is older than the
 // client and doesn't know the call.
@@ -519,19 +470,7 @@ func WithTimeout(d time.Duration) Option {
 // NewClient returns a client for the agent in dir.
 func NewClient(dir agentdir.Dir, opts ...Option) *Client {
 	path := dir.SocketPath()
-	c := &Client{dir: dir, hc: &http.Client{
-		Timeout: DefaultTimeout,
-		Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			if err := fsutil.CheckPrivate(filepath.Dir(path)); err != nil {
-				if errors.Is(err, fs.ErrNotExist) {
-					return nil, &net.OpError{Op: "dial", Net: "unix", Err: err}
-				}
-				return nil, fmt.Errorf("not trusting the control socket %s: %w", path, err)
-			}
-			var d net.Dialer
-			return d.DialContext(ctx, "unix", path)
-		}},
-	}}
+	c := &Client{dir: dir, hc: &http.Client{Timeout: DefaultTimeout, Transport: ctlhttp.SocketTransport(path)}}
 	for _, o := range opts {
 		o(c)
 	}
@@ -556,9 +495,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
-		// Errors after the dial come from a server that runs.
-		var opErr *net.OpError
-		if errors.As(err, &opErr) && opErr.Op == "dial" {
+		if ctlhttp.IsDialError(err) {
 			return ErrNotRunning
 		}
 		return err
@@ -576,7 +513,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		return ErrUnsupported
 	}
 	if resp.StatusCode/100 != 2 {
-		return responseError(resp.Status, resp.StatusCode, data)
+		return ctlhttp.ResponseError(resp.Status, resp.StatusCode, data)
 	}
 	if out == nil {
 		return nil

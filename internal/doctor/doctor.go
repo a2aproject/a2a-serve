@@ -35,6 +35,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -108,6 +110,9 @@ type Env struct {
 	ServiceUnit func(agentdir.Dir) (string, error)
 	// ValidateChannel checks the credentials of a channel. Optional.
 	ValidateChannel func(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error
+	// RelayStatus returns the status of the running relay, or
+	// [control.ErrNotRunning]. Optional.
+	RelayStatus func(context.Context, relaydir.Dir) (*control.Status, error)
 }
 
 // System returns the environment of this process.
@@ -130,6 +135,9 @@ func System() (Env, error) {
 		PortFree:        portFree,
 		ServiceUnit:     serviceUnit,
 		ValidateChannel: configured.Validate,
+		RelayStatus: func(ctx context.Context, d relaydir.Dir) (*control.Status, error) {
+			return control.NewSocketClient(d.SocketPath(), 5*time.Second).Status(ctx)
+		},
 	}, nil
 }
 

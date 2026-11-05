@@ -30,8 +30,10 @@ a2a-serve start opencode --private https://relay.example.com --public https://re
 a2a-serve config set --relay-token env:RELAY_TOKEN    # on servers: join with a token
 ```
 
+[Relays](relays.md) shows how to run a relay with `a2a-serve relay run` and invite agents to it.
+
 - A relay works like a tailnet: everyone the relay admits can call your agent. With `--private-access paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 
-The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs two agents on a relay, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.
+The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on it, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.

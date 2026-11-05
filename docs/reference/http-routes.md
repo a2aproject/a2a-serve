@@ -1,6 +1,6 @@
 # HTTP Routes
 
-An a2a-serve agent serves these routes on every listener.
+An a2a-serve agent serves these routes on every listener, and a relay serves the [relay routes](#relay-routes).
 
 | Route | |
 | --- | --- |
@@ -41,3 +41,14 @@ On every route, the server refuses state-changing requests that a browser marks 
 ## Signatures and headers
 
 The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of agent servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.
+
+## Relay routes
+
+A relay that `a2a-serve relay run` runs serves these routes on its port.
+
+| Route | |
+| --- | --- |
+| `GET /.well-known/a2a-serve-relay` | the relay's versions: `{"a2a_serve": "<version>", "agentmesh": "<version>", "signin": false}` |
+| `/a2a-serve/control/…` | the relay's control API: `GET status`, `POST invites`, `GET members`, `POST members/remove`. It needs the admin token as a bearer token. After a wrong token, the next wrong tokens get 429 with `Retry-After` for 1 to 10 seconds |
+| `/admin/…`, `POST` and `PUT /policies`, `/console/…`, `/metrics` | 404 |
+| other paths | Agent Mesh's control plane, routers and ingress, such as `/info`, `/register`, `/refresh`, `/readyz` and `/ingress/…`, with the path cleaned of dot segments. They answer 503 while the relay starts. `CONNECT`, `TRACE` and other methods that Agent Mesh doesn't serve get 405 |

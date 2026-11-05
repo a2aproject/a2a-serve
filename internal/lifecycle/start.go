@@ -33,11 +33,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/doctor"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
+	"github.com/a2aproject/a2a-serve/internal/logfile"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 // maxLogSize is the size at which the server log is rotated.
-const maxLogSize = 10 << 20
+const maxLogSize = logfile.DefaultLimit
 
 // Mode is how [Start] runs the agent.
 type Mode int
@@ -99,10 +100,10 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if err := checkNotRunning(dir); err != nil {
 		return err
 	}
-	if err := rotateLog(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
+	if err := logfile.Rotate(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr); err != nil {
 		return err
 	}
-	logFile, err := openRotatingLog(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr)
+	logFile, err := logfile.Open(dir.LogPath(), maxLogSize, os.Stdout, os.Stderr)
 	if err != nil {
 		return err
 	}
@@ -177,7 +178,7 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		return err
 	}
 	// The child's stdout is the log, so it is rotated before the child opens it.
-	if err := rotateLog(dir.LogPath(), maxLogSize); err != nil {
+	if err := logfile.Rotate(dir.LogPath(), maxLogSize); err != nil {
 		return err
 	}
 	var offset int64

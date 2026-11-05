@@ -4,12 +4,16 @@
 
 Check the a2a CLI and its config, the sandbox, and, inside an agent
 directory or with --dir, the agent's config, secrets, server and service.
-Every failure names the command which fixes it. Exits 1 if a check failed.
+In a relay directory, check the relay's settings, state, agentmesh-one and
+data instead. Every failure names the command which fixes it. Exits 1 if a
+check failed.
 
 --fix enables command plugins and the credential helper in
 ~/.config/a2a-cli/config.yaml and makes credentials.json and .a2a/state
 private. It never installs software and never touches a running agent.
---online also checks bot tokens and whether the agent image can be pulled.
+--online also checks bot tokens, whether the agent image can be pulled, and
+that the relay answers at its URL with the Agent Mesh version this
+a2a-serve pins.
 
 ```
 a2a-serve doctor [flags]

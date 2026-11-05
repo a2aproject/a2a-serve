@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package lifecycle
+package logfile
 
 import (
-	"bytes"
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -25,17 +23,15 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
-
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 func TestRotatingLogRotatesWhileWriting(t *testing.T) {
 	t.Parallel()
 	const limit = 200
 	path := filepath.Join(t.TempDir(), "server.log")
-	w, err := openRotatingLog(path, limit)
+	w, err := Open(path, limit)
 	if err != nil {
-		t.Fatalf("openRotatingLog() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	var wg sync.WaitGroup
 	for g := range 4 {
@@ -91,9 +87,9 @@ func TestRotatingLogKeepsSharedFileWritable(t *testing.T) {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	w, err := openRotatingLog(path, 8, stdout)
+	w, err := Open(path, 8, stdout)
 	if err != nil {
-		t.Fatalf("openRotatingLog() error = %v", err)
+		t.Fatalf("Open() error = %v", err)
 	}
 	t.Cleanup(func() {
 		if err := w.Close(); err != nil {
@@ -127,44 +123,69 @@ func TestRotatingLogKeepsSharedFileWritable(t *testing.T) {
 	}
 }
 
-func TestFollowLogPrintsLastLines(t *testing.T) {
+func TestRotateLog(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		content string
-		n       int
-		want    string
+		name      string
+		content   string
+		stdoutLog bool
+		wantLog   string
+		wantOld   string
 	}{
-		{name: "fewer lines than asked", content: "a\nb\n", n: 5, want: "a\nb\n"},
-		{name: "last two", content: "a\nb\nc\nd\n", n: 2, want: "c\nd\n"},
-		{name: "all", content: "a\nb\nc\n", n: 0, want: "a\nb\nc\n"},
-		{name: "partial last line", content: "a\nb\nc", n: 2, want: "b\nc\n"},
-		{name: "trailing blank lines", content: "a\nb\n\n\n", n: 5, want: "a\nb\n"},
-		{name: "inner blank line", content: "a\n\nb\n", n: 5, want: "a\n\nb\n"},
-		{name: "empty", content: "", n: 5, want: "\n"},
-		{name: "long log", content: strings.Repeat("filler line\n", 20000) + "x\ny\n", n: 3, want: "filler line\nx\ny\n"},
+		{name: "small", content: "abc\n", wantLog: "abc\nnew\n"},
+		{name: "oversized", content: "0123456789\n", wantLog: "new\n", wantOld: "0123456789\n"},
+		{name: "oversized while it is stdout", content: "0123456789\n", stdoutLog: true, wantLog: "new\n", wantOld: "0123456789\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			dir, err := agentdir.Open(t.TempDir())
-			if err != nil {
-				t.Fatalf("agentdir.Open() error = %v", err)
-			}
-			if err := dir.Init(); err != nil {
-				t.Fatalf("Init() error = %v", err)
-			}
-			if err := os.WriteFile(dir.LogPath(), []byte(tc.content), 0o600); err != nil {
+			path := filepath.Join(t.TempDir(), "server.log")
+			if err := os.WriteFile(path, []byte(tc.content), 0o600); err != nil {
 				t.Fatalf("WriteFile() error = %v", err)
 			}
-			var out bytes.Buffer
-
-			if err := FollowLog(context.Background(), dir, tc.n, false, &out); err != nil {
-				t.Fatalf("FollowLog() error = %v", err)
+			stdout, err := os.OpenFile(filepath.Join(t.TempDir(), "other"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+			if tc.stdoutLog {
+				stdout, err = os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
 			}
+			if err != nil {
+				t.Fatalf("OpenFile() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := stdout.Close(); err != nil {
+					t.Errorf("Close() error = %v", err)
+				}
+			})
 
-			if diff := cmp.Diff(tc.want, out.String()); diff != "" {
-				t.Fatalf("FollowLog() wrong output (-want +got) diff = %s", diff)
+			if err := Rotate(path, 8, stdout); err != nil {
+				t.Fatalf("Rotate() error = %v", err)
+			}
+			w := stdout
+			if !tc.stdoutLog {
+				if w, err = os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600); err != nil {
+					t.Fatalf("OpenFile() error = %v", err)
+				}
+				defer func() {
+					if err := w.Close(); err != nil {
+						t.Errorf("Close() error = %v", err)
+					}
+				}()
+			}
+			if _, err := w.WriteString("new\n"); err != nil {
+				t.Fatalf("WriteString() error = %v", err)
+			}
+			got, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.wantLog, string(got)); diff != "" {
+				t.Fatalf("Rotate() wrong log (-want +got) diff = %s", diff)
+			}
+			old, err := os.ReadFile(path + ".1")
+			if err != nil && !os.IsNotExist(err) {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.wantOld, string(old)); diff != "" {
+				t.Fatalf("Rotate() wrong rotated log (-want +got) diff = %s", diff)
 			}
 		})
 	}
