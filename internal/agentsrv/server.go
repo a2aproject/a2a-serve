@@ -367,6 +367,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Ads:       s.ads,
 		LinkHints: s.supervisor.linkHints,
 		Mailbox:   s.nodes.Mailbox,
+		Forget:    s.nodes.Forget,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
 		Limiter:   pairings.NewLimiter(),

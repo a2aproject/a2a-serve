@@ -32,3 +32,5 @@ a2a-serve contact add grok@ben                                # no code needed
 ```
 
 Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.
+
+Each caller other than you and your agent can have at most 20 tasks waiting for the node at a time, and these callers together at most 100. A call past the limit fails until one of the caller's tasks finishes or asks a question.

@@ -16,16 +16,81 @@ package nodes
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
+
+func viewer(ctx context.Context) (string, bool, error) {
+	if p, ok := auth.Caller(ctx); ok {
+		return p.ID, p.IsOwner(), nil
+	}
+	return "", true, nil
+}
+
+func newHost(t *testing.T) *Host {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return New(t.Context(), Config{
+		Store:          st,
+		Viewer:         viewer,
+		AgentName:      func() string { return "assistant" },
+		BaseURL:        func() string { return "https://assistant.example.com" },
+		WebhookRetries: []time.Duration{0},
+		Advertised:     func(string) bool { return true },
+	})
+}
+
+func openTask(t *testing.T, h *Host, id a2a.TaskID) *nodeWaiter {
+	t.Helper()
+	w, err := h.openTask(id, "grok", "", false)
+	if err != nil {
+		t.Fatalf("openTask() error = %v", err)
+	}
+	return w
+}
+
+func postEvent(t *testing.T, h *Host, node string, taskID a2a.TaskID, ev mailboxapi.Event) (int, mailboxapi.EventResult) {
+	t.Helper()
+	body, err := json.Marshal(ev)
+	if err != nil {
+		t.Errorf("json.Marshal() error = %v", err)
+		return 0, mailboxapi.EventResult{}
+	}
+	r := httptest.NewRequest(http.MethodPost, "/mailbox/api/tasks/"+string(taskID)+"/events", bytes.NewReader(body))
+	r.SetPathValue("id", string(taskID))
+	w := httptest.NewRecorder()
+	h.handleEvent(w, r, "", store.Node{ID: node})
+	var res mailboxapi.EventResult
+	if w.Code == http.StatusOK {
+		if err := json.Unmarshal(w.Body.Bytes(), &res); err != nil {
+			t.Errorf("json.Unmarshal() error = %v", err)
+		}
+	}
+	return w.Code, res
+}
 
 func TestInstructionsKeepTheNodeToken(t *testing.T) {
 	t.Parallel()
@@ -67,7 +132,7 @@ func TestRepeatedEventInLaterTurn(t *testing.T) {
 	}
 	turn := func(wantDuplicate bool) {
 		t.Helper()
-		w := h.openTask("t1", node.ID)
+		w := openTask(t, h, "t1")
 		defer h.closeTask("t1", w)
 		go func() {
 			select {
@@ -85,6 +150,181 @@ func TestRepeatedEventInLaterTurn(t *testing.T) {
 	}
 	turn(true)
 	turn(true)
+}
+
+func TestTasksFailsInterruptedTasksOfCanceledRequest(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	owner := auth.WithPrincipal(t.Context(), auth.Owner())
+	task := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}
+	if _, err := h.cfg.Store.Tasks(nodeScope("grok"), viewer).Create(owner, task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	cancel()
+
+	h.tasks(ctx, "grok")
+
+	got, err := h.tasks(t.Context(), "grok").Get(owner, "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.Task.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("Get() state = %v, want %v", got.Task.Status.State, a2a.TaskStateFailed)
+	}
+}
+
+func TestRetryWaitsForFirstEvent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		firstErr      error
+		wantFirst     int
+		wantDuplicate bool
+		wantApplied   int
+	}{
+		{name: "first applied", wantFirst: http.StatusOK, wantDuplicate: true, wantApplied: 1},
+		{name: "first failed", firstErr: errors.New("boom"), wantFirst: http.StatusConflict, wantApplied: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := New(t.Context(), Config{})
+			w := openTask(t, h, "t1")
+			defer h.closeTask("t1", w)
+			ev := mailboxapi.Event{IdempotencyKey: "k1", State: "working", Text: "on it"}
+
+			first := make(chan int, 1)
+			go func() {
+				code, _ := postEvent(t, h, "grok", "t1", ev)
+				first <- code
+			}()
+			d := <-w.events
+			type result struct {
+				code int
+				res  mailboxapi.EventResult
+			}
+			retry := make(chan result, 1)
+			go func() {
+				code, res := postEvent(t, h, "grok", "t1", ev)
+				retry <- result{code, res}
+			}()
+			select {
+			case r := <-retry:
+				t.Fatalf("handleEvent() retry = %d, %+v before the first event was applied, want it to wait", r.code, r.res)
+			case <-time.After(100 * time.Millisecond):
+			}
+			d.result <- tc.firstErr
+			if got := <-first; got != tc.wantFirst {
+				t.Fatalf("handleEvent() first status = %d, want %d", got, tc.wantFirst)
+			}
+			applied := 1
+			select {
+			case d := <-w.events:
+				applied++
+				d.result <- nil
+			case r := <-retry:
+				retry <- r
+			}
+			r := <-retry
+			if r.code != http.StatusOK || r.res.Duplicate != tc.wantDuplicate {
+				t.Fatalf("handleEvent() retry = %d, Duplicate %v, want %d, Duplicate %v", r.code, r.res.Duplicate, http.StatusOK, tc.wantDuplicate)
+			}
+			if applied != tc.wantApplied {
+				t.Fatalf("events applied = %d, want %d", applied, tc.wantApplied)
+			}
+		})
+	}
+}
+
+func TestForgetDropsNode(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	handler := h.Handler("grok")
+	h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing})
+	w := openTask(t, h, "t1")
+	defer h.closeTask("t1", w)
+
+	h.Forget("grok")
+
+	select {
+	case <-w.done:
+	default:
+		t.Fatalf("Forget() kept the open task waiting")
+	}
+	if waiting, open := h.Mailbox("grok"); waiting != 0 || open != 0 {
+		t.Fatalf("Mailbox() after Forget() = %d, %d, want 0, 0", waiting, open)
+	}
+	r := httptest.NewRequest(http.MethodGet, "/mailbox/api/inbox?all=1", nil)
+	rec := httptest.NewRecorder()
+	h.handleInbox(rec, r, "", store.Node{ID: "grok"})
+	var inbox mailboxapi.Inbox
+	if err := json.Unmarshal(rec.Body.Bytes(), &inbox); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if len(inbox.Entries) != 0 {
+		t.Fatalf("handleInbox() after Forget() = %+v, want no entries", inbox.Entries)
+	}
+	if h.Handler("grok") == handler {
+		t.Fatalf("Handler() after Forget() returned the handler of the removed node")
+	}
+}
+
+func TestOpenTaskCaps(t *testing.T) {
+	t.Parallel()
+	h := newHost(t)
+	send := func(p auth.Principal) error {
+		ctx := auth.WithPrincipal(t.Context(), p)
+		msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))
+		_, err := h.Handler("grok").SendMessage(ctx, &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+		return err
+	}
+	caller := func(i int) auth.Principal {
+		return auth.Principal{ID: fmt.Sprintf("pair:caller%d", i), Role: auth.RoleAuthenticated}
+	}
+	for i := range maxNodeOpenTasks / maxCallerOpenTasks {
+		for range maxCallerOpenTasks {
+			if err := send(caller(i)); err != nil {
+				t.Fatalf("SendMessage() as %s error = %v", caller(i).ID, err)
+			}
+		}
+		if err := send(caller(i)); err == nil {
+			t.Fatalf("SendMessage() as %s past its cap error = nil, want an error", caller(i).ID)
+		}
+	}
+	if err := send(caller(maxNodeOpenTasks)); err == nil {
+		t.Fatalf("SendMessage() past the node cap error = nil, want an error")
+	}
+	if err := send(auth.Owner()); err != nil {
+		t.Fatalf("SendMessage() as owner error = %v", err)
+	}
+
+	var finished a2a.TaskID
+	h.mu.Lock()
+	for id, w := range h.open {
+		if w.caller == caller(0).ID {
+			finished = id
+			break
+		}
+	}
+	h.mu.Unlock()
+	if code, _ := postEvent(t, h, "grok", finished, mailboxapi.Event{State: "completed", Text: "done"}); code != http.StatusOK {
+		t.Fatalf("handleEvent() status = %d, want %d", code, http.StatusOK)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		err := send(caller(0))
+		if err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("SendMessage() after a task finished error = %v, want nil", err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if _, open := h.Mailbox("grok"); open != maxNodeOpenTasks+1 {
+		t.Fatalf("Mailbox() open = %d, want %d", open, maxNodeOpenTasks+1)
+	}
 }
 
 func TestPostWebhookErrorHidesSecrets(t *testing.T) {
