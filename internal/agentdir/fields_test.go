@@ -182,3 +182,72 @@ func TestLiveSettings(t *testing.T) {
 		}
 	}
 }
+
+func TestFieldsHaveScope(t *testing.T) {
+	t.Parallel()
+	for _, f := range fields {
+		if f.scope == scopeUnset {
+			t.Fatalf("setting %s has no scope", f.flag)
+		}
+	}
+}
+
+func TestAgentSettings(t *testing.T) {
+	t.Parallel()
+	cfg := fullConfig()
+	cfg.Command = []string{"gemini", "--experimental-acp", "--model", "a b"}
+	cfg.Approvals.Deny = []string{"execute"}
+	got := cfg.AgentSettings()
+	want := &Config{
+		Description: "writes code",
+		Harness:     "opencode",
+		Command:     []string{"gemini", "--experimental-acp", "--model", "a b"},
+		Mounts:      []string{"/docs:ro", "/data:/data"},
+		Secrets:     []string{"KEY", "OTHER"},
+		Env:         []string{"DEBUG=1", "MODE=fast"},
+		Approvals:   ApprovalsConfig{Allow: []string{"read", "search"}, Deny: []string{"execute"}},
+		Limits:      LimitsConfig{Memory: "8g"},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Config.AgentSettings() wrong result (-want +got) diff = %s", diff)
+	}
+	got.Mounts[0] = "/changed"
+	if cfg.Mounts[0] == "/changed" {
+		t.Fatalf("Config.AgentSettings() shares mounts with the original")
+	}
+}
+
+func TestOwnerSettings(t *testing.T) {
+	t.Parallel()
+	got := fullConfig().OwnerSettings()
+	want := []string{"name", "workspace", "port", "private", "private-access", "allow-email", "telegram", "email-address", "email-imap", "email-smtp", "email-password", "email-trusted-authserv", "owner-chat"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Config.OwnerSettings() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestIsAgentSetting(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		setting string
+		want    bool
+	}{
+		{setting: "agent", want: true},
+		{setting: "command", want: true},
+		{setting: "deny-tools", want: true},
+		{setting: "pids", want: true},
+		{setting: "name", want: false},
+		{setting: "public-access", want: false},
+		{setting: "backup", want: false},
+		{setting: "telegram", want: false},
+		{setting: "nope", want: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.setting, func(t *testing.T) {
+			t.Parallel()
+			if got := IsAgentSetting(tc.setting); got != tc.want {
+				t.Fatalf("IsAgentSetting(%q) = %v, want %v", tc.setting, got, tc.want)
+			}
+		})
+	}
+}
