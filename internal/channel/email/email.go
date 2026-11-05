@@ -411,6 +411,10 @@ func (c *Channel) process(ctx context.Context, client *imapclient.Client, uid im
 		return nil
 	}
 	env, err := c.envelope(header)
+	if errors.Is(err, ErrTemporary) {
+		slog.Warn("email: dropped mail because the mail server couldn't check its sender; ask the sender to send it again", "uid", uid, "reason", err)
+		return nil
+	}
 	if err != nil {
 		slog.Info("email: dropped mail", "uid", uid, "reason", err)
 		return nil

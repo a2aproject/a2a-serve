@@ -31,9 +31,10 @@ import (
 func TestAuthenticate(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name    string
-		results []string
-		want    bool
+		name          string
+		results       []string
+		want          bool
+		wantTemporary bool
 	}{
 		{name: "dmarc pass", results: []string{"mx.example.com; dkim=pass header.d=other.org; dmarc=pass header.from=alice.org"}, want: true},
 		{name: "dmarc pass with uppercase domain", results: []string{"mx.example.com; dmarc=pass header.from=Alice.ORG"}, want: true},
@@ -64,6 +65,15 @@ func TestAuthenticate(t *testing.T) {
 		}, want: false},
 		{name: "comment spoofing a property", results: []string{"mx.example.com; dmarc=fail (header.from=alice.org dmarc=pass) header.from=evil.com"}, want: false},
 		{name: "unterminated quote", results: []string{`mx.example.com; dmarc=pass header.from=alice.org reason="x`}, want: false},
+		{name: "Gmail bestguesspass", results: []string{"mx.example.com; dkim=pass header.i=@alice.org; spf=pass smtp.mailfrom=alice.org; dmarc=bestguesspass header.from=alice.org"}, want: true},
+		{name: "Microsoft bestguesspass", results: []string{"mx.example.com; spf=pass smtp.mailfrom=alice.org; dkim=pass header.d=alice.org; dmarc=bestguesspass action=none header.from=alice.org; compauth=pass reason=109"}, want: true},
+		{name: "Microsoft pass with action", results: []string{"mx.example.com; dmarc=pass action=none header.from=alice.org; compauth=pass reason=100"}, want: true},
+		{name: "bestguesspass for another domain", results: []string{"mx.example.com; dmarc=bestguesspass header.from=evil.com"}, want: false},
+		{name: "dmarc temperror", results: []string{"mx.example.com; dmarc=temperror header.from=alice.org; dkim=pass header.d=alice.org"}, want: false, wantTemporary: true},
+		{name: "dmarc permerror", results: []string{"mx.example.com; dmarc=permerror header.from=alice.org; dkim=pass header.d=alice.org"}, want: false},
+		{name: "dkim temperror without dmarc", results: []string{"mx.example.com; dkim=temperror header.d=alice.org"}, want: false, wantTemporary: true},
+		{name: "dkim permerror without dmarc", results: []string{"mx.example.com; dkim=permerror header.d=alice.org"}, want: false},
+		{name: "Microsoft fail with action", results: []string{"mx.example.com; dmarc=fail action=oreject header.from=alice.org; dkim=pass header.d=alice.org"}, want: false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -71,6 +81,9 @@ func TestAuthenticate(t *testing.T) {
 			err := Authenticate(tc.results, "mx.example.com", "alice.org")
 			if got := err == nil; got != tc.want {
 				t.Fatalf("Authenticate(%q) error = %v, want accepted %v", tc.results, err, tc.want)
+			}
+			if got := errors.Is(err, ErrTemporary); got != tc.wantTemporary {
+				t.Fatalf("Authenticate(%q) error = %v, want temporary %v", tc.results, err, tc.wantTemporary)
 			}
 		})
 	}
