@@ -19,7 +19,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/localsrv"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newProxyCmd(cfg *globalConfig) *cobra.Command {
@@ -38,7 +37,7 @@ func newProxyCmd(cfg *globalConfig) *cobra.Command {
 			p.URL = args[0]
 			r := cfg.secretReader(cfg.stderr())
 			if err := p.SvcParams.ResolveAuth(func(v string) (string, error) {
-				_, v, err := secretref.ResolveHeader("auth", "Authorization: "+v, r)
+				_, v, err := flagparse.ResolveSecretHeader("auth", "Authorization: "+v, r)
 				return v, err
 			}); err != nil {
 				return err

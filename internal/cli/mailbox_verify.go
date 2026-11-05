@@ -24,8 +24,8 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 // maxWakeSize bounds the wake body read from stdin.
@@ -44,7 +44,7 @@ within ` + mailboxapi.MaxSkew.String() + ` of now. Pass the value of the ` + mai
 header with --signature. The key comes from the node token, so the command
 makes no request. It fails for a wake that anyone else sent; don't act on one.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  printf '%s' "$WAKE_BODY" | a2a-serve mailbox verify --signature "$WAKE_SIGNATURE"`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {

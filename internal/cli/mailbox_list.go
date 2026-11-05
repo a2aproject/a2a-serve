@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"strconv"
 
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/output"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +31,7 @@ func newMailboxListCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "Show the node, and wakes not delivered yet or tasks still waiting for a reply",
-		Long:  "Show the node, and wakes not delivered yet or tasks still waiting for a reply.\n\n" + secretref.Help,
+		Long:  "Show the node, and wakes not delivered yet or tasks still waiting for a reply.\n\n" + flagparse.SecretHelp,
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx, cancel := nodeContext(cmd, cfg)

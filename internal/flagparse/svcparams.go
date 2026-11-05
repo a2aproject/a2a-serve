@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package flagparse parses flag values shared by several commands.
+// Package flagparse parses flag values shared by several commands, including
+// secret values: a reference to an environment variable, a prompt or stdin, a
+// secret already stored with the agent, or the value itself.
 package flagparse
 
 import (

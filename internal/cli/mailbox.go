@@ -27,8 +27,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
 
 func newMailboxCmd(cfg *globalConfig) *cobra.Command {
@@ -44,7 +44,7 @@ with reply.
 The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the token
 "a2a-serve pair join" saved. It includes the agent's URL.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()
@@ -79,7 +79,7 @@ func (r *nodeClientFlags) nodeClient(cfg *globalConfig) (*mailboxapi.Client, err
 
 func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	if r.token != "" {
-		return secretref.Resolve("token", r.token, cfg.secretReader(cfg.stderr()))
+		return flagparse.ResolveSecret("token", r.token, cfg.secretReader(cfg.stderr()))
 	}
 	if v := mailboxapi.EnvToken(); v != "" {
 		return v, nil

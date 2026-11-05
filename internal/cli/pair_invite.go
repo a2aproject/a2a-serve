@@ -24,7 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -53,7 +53,7 @@ webhook. The node pairs with the code the same way, answers with
 value may end in a secret value, env:VAR or -, as in
 "Authorization: Bearer env:TOKEN".
 
-` + secretref.Help + `
+` + flagparse.SecretHelp + `
 
 --advertised tells every agent on the private network about the node: they
 list it in ` + "`a2a-serve peers`" + ` as <name>@<this agent> and can add it with
@@ -114,10 +114,10 @@ them like any other caller from the private network.`,
 
 // parseWebhookHeaders parses "Name: value" headers, whose values may end in
 // a secret value.
-func parseWebhookHeaders(headers []string, r *secretref.Reader) (map[string]string, error) {
+func parseWebhookHeaders(headers []string, r *flagparse.SecretReader) (map[string]string, error) {
 	out := map[string]string{}
 	for _, h := range headers {
-		k, v, err := secretref.ResolveHeader("webhook-header", h, r)
+		k, v, err := flagparse.ResolveSecretHeader("webhook-header", h, r)
 		if err != nil {
 			return nil, err
 		}

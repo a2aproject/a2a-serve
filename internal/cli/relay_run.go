@@ -34,12 +34,12 @@ import (
 	"golang.org/x/term"
 
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/logfile"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -69,7 +69,7 @@ The flags are saved in .a2a/relay.yaml, so later runs need none. A newer
 a2a-serve that pins a newer Agent Mesh backs up the relay's database first,
 and an older one refuses to run on it.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: `  a2a-serve relay run --url https://relay.example.com
   a2a-serve relay run --url https://relay.example.com --allow-email '*@example.com' \
     --google-client-id <id> --google-client-secret env:GOOGLE_CLIENT_SECRET
@@ -107,11 +107,11 @@ and an older one refuses to run on it.
 	fs.StringVar(&s.URL, "url", "", "The relay's address, which agents join: https://..., or http:// on loopback")
 	fs.StringVar(&s.Listen, "listen", "", "Address to serve HTTP on (default "+relaydir.DefaultListen+")")
 	fs.StringVar(&s.Tunnel, "tunnel", "", "Publish the relay through a Cloudflare quick tunnel (cloudflare, or none); needs cloudflared on PATH")
-	fs.StringVar(&s.AdminToken, "admin-token", "", "The relay's admin token, at least 32 characters, as a "+secretref.Syntax+" (default: generated on the first run)")
-	fs.StringVar(&s.Database, "database", "", "A PostgreSQL DSN, as a "+secretref.Syntax+" (default: SQLite in the relay directory; none goes back to it)")
+	fs.StringVar(&s.AdminToken, "admin-token", "", "The relay's admin token, at least 32 characters, as a "+flagparse.SecretSyntax+" (default: generated on the first run)")
+	fs.StringVar(&s.Database, "database", "", "A PostgreSQL DSN, as a "+flagparse.SecretSyntax+" (default: SQLite in the relay directory; none goes back to it)")
 	fs.StringSliceVar(&s.AllowEmails, "allow-email", nil, "People who may sign in to the relay with Google: an `email`, or *@domain for the accounts of a Google Workspace domain; replaces the saved list, and none turns sign-in off and forgets the Google app (repeatable; commas also separate values)")
 	fs.StringVar(&s.GoogleClientID, "google-client-id", "", "Client ID of the relay's Google app, which people sign in with (none removes the app)")
-	fs.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of the relay's Google app, as a "+secretref.Syntax)
+	fs.StringVar(&s.GoogleClientSecret, "google-client-secret", "", "Client secret of the relay's Google app, as a "+flagparse.SecretSyntax)
 	fs.BoolVar(&runService, "service", false, "Install and start the relay as a launchd or systemd user service")
 	must(cmd.RegisterFlagCompletionFunc("tunnel", fixedCompletions(relaydir.TunnelCloudflare, "none")))
 	return cmd
@@ -182,7 +182,7 @@ func saveRelaySettings(cmd *cobra.Command, cfg *globalConfig, d relaydir.Dir, s 
 		{"database", &s.Database},
 		{"google-client-secret", &s.GoogleClientSecret},
 	} {
-		if *v.dst != secretref.Stdin {
+		if *v.dst != flagparse.SecretStdin {
 			continue
 		}
 		secret, err := cfg.secretReader(cfg.stderr()).Read("--" + v.flag)

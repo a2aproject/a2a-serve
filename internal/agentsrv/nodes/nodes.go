@@ -42,7 +42,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
-	"github.com/a2aproject/a2a-serve/internal/webhook"
 )
 
 // nodeTaskTimeout fails a node task which posts no event for this long.
@@ -355,7 +354,7 @@ func (n *Host) Mailbox(id string) (waiting, open int) {
 func (n *Host) wireInfo(baseURL string, node store.Node) mailboxapi.NodeInfo {
 	return mailboxapi.NodeInfo{
 		ID: node.ID, Name: node.Name, Description: node.Description, URL: mailboxapi.NodeURL(baseURL, node.ID),
-		Webhook: webhook.RedactURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
+		Webhook: mailboxapi.RedactWebhookURL(node.Webhook), Paired: node.TokenHash != "", CreatedAt: node.Created,
 	}
 }
 
@@ -782,7 +781,7 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 			slog.Info("woke node", "node", node.ID, "kind", env.Kind, "task", env.TaskID)
 			return
 		}
-		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", webhook.Origin(node.Webhook), "attempt", i+1, "error", err)
+		slog.Warn("webhook delivery failed", "node", node.ID, "webhook", mailboxapi.WebhookOrigin(node.Webhook), "attempt", i+1, "error", err)
 	}
 }
 

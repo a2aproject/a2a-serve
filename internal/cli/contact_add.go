@@ -20,7 +20,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/secretref"
+	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
 
 func newContactAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -35,7 +35,7 @@ agent's owner, or pass a token. A pairing another agent of the private
 network advertises, such as grok@ben from ` + "`a2a-serve peers`" + `, needs neither:
 calls to it go through that agent.
 
-` + secretref.Help,
+` + flagparse.SecretHelp,
 		Example: "  a2a-serve contact add coder\n  a2a-serve contact add grok@ben\n  a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
@@ -46,7 +46,7 @@ calls to it go through that agent.
 			defer joinClose(&err, closer)
 			req.Name = args[0]
 			if req.Token != "" {
-				if req.Token, err = secretref.Resolve("token", req.Token, cfg.secretReader(cfg.stderr())); err != nil {
+				if req.Token, err = flagparse.ResolveSecret("token", req.Token, cfg.secretReader(cfg.stderr())); err != nil {
 					return err
 				}
 			}
