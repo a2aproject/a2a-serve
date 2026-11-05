@@ -42,7 +42,6 @@ func TestDockerSandboxMounts(t *testing.T) {
 		want string
 	}{
 		{name: "extra mount", dir: "/docs", want: "ls: notes.md"},
-		{name: "hidden agent directory", dir: filepath.Join(coder.dir, ".a2a"), want: "ls: "},
 		{name: "host path of the extra mount", dir: docs, want: "ls error: open " + docs + ": no such file or directory"},
 	}
 	for _, tc := range tests {
@@ -52,5 +51,11 @@ func TestDockerSandboxMounts(t *testing.T) {
 	}
 	if got := resultOf(owner.mustSend(coder.url, "ls "+coder.dir)).Text; !strings.Contains(got, ".a2a") {
 		t.Fatalf("a2a send ls of the workspace = %q, want it mounted at its host path", got)
+	}
+	// The hidden .a2a is an empty tmpfs, which rootful Docker also makes
+	// unreadable for the container user.
+	hidden := filepath.Join(coder.dir, ".a2a")
+	if got := resultOf(owner.mustSend(coder.url, "ls "+hidden)).Text; got != "ls: " && got != "ls error: open "+hidden+": permission denied" {
+		t.Fatalf("a2a send ls %s = %q, want it empty or unreadable", hidden, got)
 	}
 }
