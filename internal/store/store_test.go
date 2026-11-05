@@ -181,24 +181,32 @@ func TestFailUnfinished(t *testing.T) {
 	owner := asUser("owner")
 	done := newTask("done", "c")
 	done.Status.State = a2a.TaskStateCompleted
-	for _, task := range []*a2a.Task{newTask("running", "c"), done} {
+	kept := newTask("kept", "c")
+	kept.Status.State = a2a.TaskStateInputRequired
+	for _, task := range []*a2a.Task{newTask("running", "c"), done, kept} {
 		if _, err := ts.Create(owner, task); err != nil {
 			t.Fatal(err)
 		}
 	}
-	n, err := ts.FailUnfinished(context.Background(), "restarted")
+	keep := func(task *a2a.Task) bool { return task.ID == "kept" }
+	n, err := ts.FailUnfinished(context.Background(), "restarted", keep)
 	if err != nil {
 		t.Fatalf("FailUnfinished() error = %v", err)
 	}
 	if n != 1 {
 		t.Fatalf("FailUnfinished() = %d, want 1", n)
 	}
-	got, err := ts.Get(owner, "running")
-	if err != nil {
-		t.Fatal(err)
+	got := map[a2a.TaskID]a2a.TaskState{}
+	for _, id := range []a2a.TaskID{"running", "done", "kept"} {
+		stored, err := ts.Get(owner, id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got[id] = stored.Task.Status.State
 	}
-	if got.Task.Status.State != a2a.TaskStateFailed {
-		t.Fatalf("Get() state = %v, want %v", got.Task.Status.State, a2a.TaskStateFailed)
+	want := map[a2a.TaskID]a2a.TaskState{"running": a2a.TaskStateFailed, "done": a2a.TaskStateCompleted, "kept": a2a.TaskStateInputRequired}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("TaskStore.FailUnfinished() wrong result (-want +got) diff = %s", diff)
 	}
 }
 

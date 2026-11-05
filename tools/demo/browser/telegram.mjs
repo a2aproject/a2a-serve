@@ -21,18 +21,32 @@
 //   message  a message to send
 //   approve  "1" to press the first "Allow" button of an approval request
 //   wait     a regular expression for the reply to wait for (default: any new message)
+//   settle   seconds without new messages to wait for, for replies that arrive later
 export default async function ({ page, params, pause, type }) {
+  // Hides the chat list, which shows the signed-in account's other chats.
+  await page.addInitScript(() => {
+    document.addEventListener('DOMContentLoaded', () => {
+      const style = document.createElement('style');
+      style.textContent = '#column-left { display: none !important; }';
+      document.head.append(style);
+    });
+  });
   if (params.link) {
     const url = new URL(params.link);
     const domain = url.pathname.replace(/^\//, '');
     const start = url.searchParams.get('start');
     const tg = `tg://resolve?domain=${domain}${start ? `&start=${start}` : ''}`;
     await page.goto(`https://web.telegram.org/k/#?tgaddr=${encodeURIComponent(tg)}`);
-    const startButton = page.getByText(/^start$/i).last();
-    await startButton.waitFor({ timeout: 60_000 });
-    await pause(2);
-    await startButton.click();
-    await page.getByText(/Linked as owner/).last().waitFor({ timeout: 60_000 });
+    // Telegram Web sends /start by itself when the chat already exists, and
+    // shows a Start button only for a new chat.
+    const startButton = page.getByText(/^start$/i).filter({ visible: true }).last();
+    const linked = page.getByText(/Linked as owner/).last();
+    await startButton.or(linked).first().waitFor({ timeout: 60_000 });
+    if (await startButton.isVisible()) {
+      await pause(2);
+      await startButton.click();
+    }
+    await linked.waitFor({ timeout: 60_000 });
     await pause(3);
   } else if (params.bot) {
     await page.goto(`https://web.telegram.org/k/#@${params.bot.replace(/^@/, '')}`);
@@ -56,7 +70,20 @@ export default async function ({ page, params, pause, type }) {
     await allow.click();
   }
 
-  if (params.wait) {
+  if (params.settle) {
+    const quiet = Number(params.settle) * 1000;
+    const deadline = Date.now() + 900_000;
+    let count = await bubbles.count();
+    let changed = Date.now();
+    while (Date.now() - changed < quiet && Date.now() < deadline) {
+      await page.waitForTimeout(2000);
+      const n = await bubbles.count();
+      if (n !== count) {
+        count = n;
+        changed = Date.now();
+      }
+    }
+  } else if (params.wait) {
     await page.getByText(new RegExp(params.wait)).last().waitFor({ timeout: 600_000 });
   } else {
     await page.waitForFunction((n) => document.querySelectorAll('.bubble').length > n + 1, before, {

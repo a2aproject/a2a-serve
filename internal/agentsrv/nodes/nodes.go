@@ -157,7 +157,7 @@ func (n *Host) tasks(ctx context.Context, id string) *store.TaskStore {
 	if n.failed[id] {
 		return ts
 	}
-	if _, err := ts.FailUnfinished(context.WithoutCancel(ctx), "The server restarted before the node answered."); err != nil {
+	if _, err := ts.FailUnfinished(context.WithoutCancel(ctx), "The server restarted before the node answered.", nil); err != nil {
 		slog.Error("failing interrupted node tasks", "node", id, "error", err)
 		return ts
 	}

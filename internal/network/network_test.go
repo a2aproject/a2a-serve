@@ -198,6 +198,53 @@ func TestLoginPromptShow(t *testing.T) {
 	}
 }
 
+func TestAssignedName(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		hostname    string
+		domain      string
+		wantName    string
+		wantRenamed bool
+	}{
+		{
+			name:     "same name",
+			hostname: "coder",
+			domain:   "coder.tail1234.ts.net",
+			wantName: "coder",
+		},
+		{
+			name:        "name taken",
+			hostname:    "coder",
+			domain:      "coder-1.tail1234.ts.net",
+			wantName:    "coder-1",
+			wantRenamed: true,
+		},
+		{
+			name:     "sanitized name",
+			hostname: "My_Coder",
+			domain:   "my-coder.tail1234.ts.net",
+			wantName: "my-coder",
+		},
+		{
+			name:        "sanitized name taken",
+			hostname:    "My Coder",
+			domain:      "my-coder-2.tail1234.ts.net",
+			wantName:    "my-coder-2",
+			wantRenamed: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			gotName, gotRenamed := assignedName(tc.hostname, tc.domain)
+			if gotName != tc.wantName || gotRenamed != tc.wantRenamed {
+				t.Fatalf("assignedName(%q, %q) = %q, %v, want %q, %v", tc.hostname, tc.domain, gotName, gotRenamed, tc.wantName, tc.wantRenamed)
+			}
+		})
+	}
+}
+
 func TestFunnelSource(t *testing.T) {
 	t.Parallel()
 	funnel := func(src string) net.Conn {

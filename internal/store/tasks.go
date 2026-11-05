@@ -548,9 +548,9 @@ func decodePageToken(tok string) (int64, string, error) {
 }
 
 // FailUnfinished marks every task of the scope which isn't in a terminal
-// state as failed with reason. Executions don't survive a restart, so such
-// tasks would otherwise never finish.
-func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string) (int, error) {
+// state as failed with reason, except the ones keep keeps. Executions don't
+// survive a restart, so such tasks would otherwise never finish.
+func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string, keep func(*a2a.Task) bool) (int, error) {
 	rows, err := ts.s.reads.QueryContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND state NOT IN (?, ?, ?, ?)`,
 		ts.scope, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
 	if err != nil {
@@ -561,6 +561,9 @@ func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string) (int, er
 		h, err := scanHeader(rows)
 		if err != nil {
 			return 0, errors.Join(err, rows.Close())
+		}
+		if keep != nil && keep(h.task) {
+			continue
 		}
 		pending = append(pending, h)
 	}

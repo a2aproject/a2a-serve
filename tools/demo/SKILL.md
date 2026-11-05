@@ -25,7 +25,10 @@ brew install asciinema tmux agg ffmpeg node go
 - The `a2a` CLI v0.4.0 or later on PATH. `a2a-serve` on PATH, or pass
   `--build` to build it from this checkout.
 - The model key exported, `OPENROUTER_API_KEY` by default. `DEMO_AGENT` and
-  `DEMO_SECRET` change the agent and the key variable.
+  `DEMO_SECRET` change the agent and the key variable. Without a model in its
+  config, opencode uses its own free model and ignores the key; scenarios
+  call `set_model`, which sets `DEMO_MODEL` (default
+  `openrouter/~google/gemini-flash-latest`).
 - For browser steps:
 
   ```bash
@@ -56,8 +59,9 @@ tools/demo/record.sh 01-agent-server --build --gif # real agents, local build, p
 | Scenario | Needs |
 | --- | --- |
 | `01-agent-server` | Docker and a model key. `--fake` works. |
-| `02-tailscale-telegram-grok` | Tailscale with HTTPS and Funnel (example step 1), `CODER_BOT_TOKEN`, Telegram Web sign-in. Grok steps run when `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_TOKEN` are set. No `--fake`. |
+| `02-tailscale-telegram-grok` | Tailscale with HTTPS and Funnel (example step 1), `CODER_BOT_TOKEN`, Telegram Web sign-in. Grok steps run when `GROK_WEBHOOK_URL` and `GROK_WEBHOOK_TOKEN` are set. No `--fake`. The first run asks you to approve the `coder` machine; later runs reuse it from `~/.cache/a2a-demo/tsnet-coder`. |
 | `03-agentmesh-relay` | `--build` (Agent Mesh support), free port 8443. Installs `agentmesh-one` if missing. `--fake` works. |
+| `04-observability-agent` | Docker, a model key, `jq`, and free ports 3000, 4317 and 4318. Runs `grafana/otel-lgtm` with generated telemetry off camera, and fetches the recipe from GitHub with your git credentials. No `--fake`. |
 | `inspector` | Docker and a model key, plus the browser setup. `--fake` works. |
 
 Output goes to `tools/demo/out/`: `<scenario>.cast`, and
@@ -65,6 +69,15 @@ Output goes to `tools/demo/out/`: `<scenario>.cast`, and
 `--speed 2` types and pauses twice as fast, `--size 100x30` sets the terminal,
 `--keep` keeps `/tmp/a2a-demo` for debugging. `asciinema rec -i 2` caps idle
 time, so long model turns shrink to two seconds.
+
+`--gif` renders `<scenario>.gif` with `compose.sh`. Each browser video is
+spliced in where the terminal handed over to it, as noted in
+`<scenario>.markers`, and the GIF plays at `--gif-speed` (default 1.5). Run
+`tools/demo/compose.sh <scenario>.cast <out.gif>` again after you edit a cast
+or trim a video.
+
+The examples embed their demo as `demo.gif` next to the README, such as
+`examples/01-agent-server/demo.gif`. Copy the reviewed GIF there.
 
 When you run it as an agent:
 
@@ -85,8 +98,9 @@ When you run it as an agent:
   or webhook variable. It can't see tailnet names, email addresses, chat
   names or one-time links. Check for them, and re-record or edit the cast if
   they shouldn't be public.
-- Convert a video with `ffmpeg -i in.webm -vf fps=12,scale=960:-1 out.gif`, or
-  to MP4 with `ffmpeg -i in.webm out.mp4`.
+- Trim the start of a video, such as a frame of old chat history, with
+  `ffmpeg -ss 1 -i in.webm -c:v libvpx-vp9 -b:v 0 -crf 32 -an out.webm`, and
+  compose again.
 
 ## Write or fix a scenario
 
@@ -96,6 +110,8 @@ the macOS default. It defines:
 - `layout`: creates the panes with `panes`, `split_pane` and `title`.
 - `scene`: the recorded steps.
 - `prepare` (optional): off-camera setup before the recording starts.
+- `teardown` (optional): runs after the agents stop and before the work
+  directory is removed, to keep state for the next run.
 
 Type the commands of the example README as written, in its order, so the
 demo matches the docs. When a README changes, update its scenario. Use
@@ -111,6 +127,8 @@ Helpers from `lib.sh`, where `<pane>` is a pane name:
 | `title <pane> <text>` | Sets the label on the pane border. |
 | `run <pane> <cmd> [timeout]` | Types the command, runs it and waits for the prompt. |
 | `start <pane> <cmd>` | Types and runs a command that keeps running, such as `a2a-serve start`. |
+| `answer <pane> <ERE> <reply>` | Waits for a command's question and types the reply; an empty reply takes the default. |
+| `reply_pending <pane> <reply> [flags]`, `approve_pending <pane> [flags]` | Answers the approvals the last `a2a send` left open, such as with `reject`. Flags such as `-a <url>` are repeated on each send. |
 | `say <pane> <text>` | Types a `# text` comment as narration. |
 | `wait_text <pane> <ERE> [timeout]` | Waits until the pane shows a match. |
 | `last_match <pane> <ERE>` | Prints the last match on the pane, to reuse a task ID or code. |
@@ -134,5 +152,5 @@ when Telegram changes its page.
 | `a demo is already running` | A run is still going, or one crashed. `tmux -L a2a-demo kill-server`. |
 | `/tmp/a2a-demo exists` | Stop agents left in it with `a2a-serve stop --dir <dir>`, then remove it. |
 | `no prompt after 600s` | The command hung or asked for input. The pane contents print on failure. |
-| The tailnet machine is `coder-1` | A machine named `coder` is left from an earlier run. Remove it in the Tailscale admin console. Remove each run's machine when you are done. |
+| The tailnet machine is `coder-1` | A machine named `coder` is left from a run whose identity was not saved. Remove it in the Tailscale admin console, and delete `~/.cache/a2a-demo/tsnet-coder`. |
 | `asciinema: ... not a tty` | asciinema 2 needs a terminal. Install asciinema 3, or run `record.sh` in a terminal. |

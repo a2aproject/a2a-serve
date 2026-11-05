@@ -2,6 +2,8 @@
 
 This example creates an agent from a recipe that answers questions about production and investigates incidents with your metrics, logs, traces and profiles.
 
+![Creating the observability agent from its recipe, and asking it which services fail most](./demo.gif)
+
 ## What you'll learn
 
 - How to create an agent from a recipe, and leave out the connectors you don't have
@@ -83,22 +85,16 @@ The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENV
 ```bash
 cd ~/o11y
 a2a-serve start --detach
-a2a send -a "$(a2a-serve status --url)" "Learn the environment."
+a2a send --history 0 -a "$(a2a-serve status --url)" "Learn the environment."
 ```
 
 It answers with a proposed `ENVIRONMENT.md`. Review it, then save it to the file. The agent can't edit its workspace.
 
 ## 4. Approvals
 
-The agent asks before each MCP call, such as a Prometheus query. Answer in the chat or the [inspector](../../docs/guide/inspector.md).
+The agent runs its MCP tools, such as a Prometheus query, without asking. Each MCP server here is read-only on its own side: mcp-grafana runs with `--disable-write`, GitHub's endpoint is read-only, and the Kubernetes identity has the `view` role.
 
-Each MCP server here is read-only on its own side: mcp-grafana runs with `--disable-write`, GitHub's endpoint is read-only, and the Kubernetes identity has the `view` role. To stop the questions, approve the tool kind `other` without asking:
-
-```bash
-a2a-serve config set --allow-tools other
-```
-
-`other` also covers the agent's own tools that it doesn't classify. Approving single MCP tools is planned.
+The recipe's approval rules cover the agent's own tools. It reads and searches its workspace without asking. It can't edit files, run commands or fetch URLs: such a call is denied, and the agent answers another way. Approving single MCP tools is planned.
 
 ## 5. Share it with your team
 
@@ -119,9 +115,9 @@ a2a-serve schedule add morning-digest --cron "0 9 * * 1-5" \
 ## 6. Ask it
 
 ```bash
-a2a send -a "$(a2a-serve status --url)" "Why is checkout slow since 14:00?"
-a2a send -a "$(a2a-serve status --url)" "Which services return the most errors this hour?"
-a2a send -a "$(a2a-serve status --url)" "Did yesterday's deploy change the memory use of api?"
+a2a send --history 0 -a "$(a2a-serve status --url)" "Why is checkout slow since 14:00?"
+a2a send --history 0 -a "$(a2a-serve status --url)" "Which services return the most errors this hour?"
+a2a send --history 0 -a "$(a2a-serve status --url)" "Did yesterday's deploy change the memory use of api?"
 ```
 
 Each answer starts with the conclusion, followed by the queries, time ranges and Grafana links behind it.
