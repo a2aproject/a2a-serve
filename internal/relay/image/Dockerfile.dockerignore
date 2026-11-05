@@ -1,0 +1,7 @@
+.git
+.worktrees
+docs
+examples
+site
+e2e
+**/*_test.go

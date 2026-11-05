@@ -35,8 +35,11 @@ const SecretPrefix = "secret:"
 type Secrets map[string]string
 
 // LoadSecrets reads the secrets file. A missing file is empty.
-func (d Dir) LoadSecrets() (Secrets, error) {
-	data, err := os.ReadFile(d.SecretsPath())
+func (d Dir) LoadSecrets() (Secrets, error) { return LoadSecretsFile(d.SecretsPath()) }
+
+// LoadSecretsFile reads the secrets file at path. A missing file is empty.
+func LoadSecretsFile(path string) (Secrets, error) {
+	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return Secrets{}, nil
 	}
@@ -45,7 +48,7 @@ func (d Dir) LoadSecrets() (Secrets, error) {
 	}
 	s := Secrets{}
 	if err := yaml.Unmarshal(data, &s); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", d.SecretsPath(), err)
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	return s, nil
 }
@@ -58,8 +61,17 @@ func (d Dir) SaveSecrets(s Secrets) error {
 	if err := d.Init(); err != nil {
 		return err
 	}
-	return fsutil.WithLock(d.SecretsPath(), func() error {
-		cur, err := d.LoadSecrets()
+	return SaveSecretsFile(d.SecretsPath(), s)
+}
+
+// SaveSecretsFile merges s into the secrets file at path, whose directory
+// exists.
+func SaveSecretsFile(path string, s Secrets) error {
+	if len(s) == 0 {
+		return nil
+	}
+	return fsutil.WithLock(path, func() error {
+		cur, err := LoadSecretsFile(path)
 		if err != nil {
 			return err
 		}
@@ -68,7 +80,7 @@ func (d Dir) SaveSecrets(s Secrets) error {
 		if err != nil {
 			return err
 		}
-		return fsutil.WriteAtomic(d.SecretsPath(), data, 0o600)
+		return fsutil.WriteAtomic(path, data, 0o600)
 	})
 }
 

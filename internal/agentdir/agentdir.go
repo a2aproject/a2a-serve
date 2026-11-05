@@ -26,6 +26,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -89,6 +90,14 @@ func Find(start string) (Dir, error) {
 }
 
 const configFile = "config.yaml"
+
+// RelayConfigFile is the file in .a2a which marks a relay directory. A
+// directory holds an agent or a relay, so relay secrets stay out of agent
+// backups.
+const RelayConfigFile = "relay.yaml"
+
+// ErrRelayDir is returned when an agent would be created in a relay directory.
+var ErrRelayDir = agenterr.Invalid(errors.New("this directory has a relay (.a2a/relay.yaml); start the agent in another directory"))
 
 // Path returns the .a2a directory.
 func (d Dir) Path() string { return filepath.Join(d.Root, Name) }
@@ -166,15 +175,23 @@ const maxSocketPath = 100
 // unless that path is too long for a Unix socket, in which case it is a path
 // in the runtime directory derived from the agent directory.
 func (d Dir) SocketPath() string {
-	p := filepath.Join(d.StateDir(), "server.sock")
+	return SocketPath(filepath.Join(d.StateDir(), "server.sock"), "a2a-"+d.ID()+".sock")
+}
+
+// SocketPath returns the socket path p, or the file name in the runtime
+// directory when p is too long for a Unix socket.
+func SocketPath(p, name string) string {
 	if len(p) <= maxSocketPath {
 		return p
 	}
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
+	return filepath.Join(runtimeDir(), name)
+}
+
+func runtimeDir() string {
+	if base := os.Getenv("XDG_RUNTIME_DIR"); base != "" {
+		return base
 	}
-	return filepath.Join(base, "a2a-"+d.ID()+".sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
 }
 
 // HarnessSocketIDLen is the length of the names of the directories in
@@ -190,11 +207,7 @@ func (d Dir) HarnessSocketDir() string {
 	if len(p)+1+HarnessSocketIDLen+len("/a2a.sock") <= maxSocketPath {
 		return p
 	}
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
-	}
-	return filepath.Join(base, "a2a-"+d.ID()+"-harness")
+	return filepath.Join(runtimeDir(), "a2a-"+d.ID()+"-harness")
 }
 
 // ID is a short stable identifier of the agent directory, used in container
@@ -212,6 +225,9 @@ func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 // must be real directories, since a cloned repository could ship them as
 // symlinks.
 func (d Dir) Init() error {
+	if _, err := os.Stat(filepath.Join(d.Path(), RelayConfigFile)); err == nil {
+		return ErrRelayDir
+	}
 	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
 		return err
 	}

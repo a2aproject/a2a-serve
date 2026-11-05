@@ -32,6 +32,7 @@ Visit [Getting Started](getting-started.md) to see how a single command turns th
 | [Identities](guide/identities.md) | Callers, roles and pairing codes |
 | [Email Sign-In](guide/email-sign-in.md) | Let people on an email allowlist call the agent |
 | [Networks](guide/networks.md) | Tailscale, Agent Mesh relays and public URLs |
+| [Relays](guide/relays.md) | Run an Agent Mesh relay that agents join from anywhere |
 | [Messengers](guide/messengers.md) | Telegram, Discord and email |
 | [Agent2Agent](guide/agent2agent.md) | Contacts, peers and calls between agents |
 | [Schedules](guide/schedules.md) | Run prompts at set times |

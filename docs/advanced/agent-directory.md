@@ -23,3 +23,22 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
 ```
 
 `a2a-serve` commands talk to the running agent over `server.sock`.
+
+## Relay directory
+
+A [relay](../guide/relays.md) keeps its settings and state in `.a2a` too. A directory holds either an agent or a relay, so relay secrets stay out of agent backups.
+
+```
+~/relay/
+└── .a2a/
+    ├── relay.yaml               # relay settings, no secrets; can be committed
+    ├── .gitignore               # "state/"
+    └── state/relay/             # never committed, mode 0700
+        ├── secrets              # the admin token and the PostgreSQL DSN, mode 0600
+        ├── agentmesh/           # agentmesh-one's data: SQLite database, router key
+        ├── agentmesh-version    # the Agent Mesh version that last ran on the data
+        ├── backups/             # SQLite backups taken before upgrades; the last 3 are kept
+        ├── relay.log            # agentmesh-one's output, and the log of a relay service
+        ├── relay.lock           # held by the running relay
+        └── relay.sock           # control socket for a2a-serve relay commands
+```

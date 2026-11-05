@@ -1,0 +1,336 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package control_test
+
+import (
+	"errors"
+	"net"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"slices"
+	"testing"
+	"time"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/backoff"
+	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
+)
+
+const (
+	adminToken = "admin-secret"
+	relayURL   = "https://relay.example.com"
+)
+
+var (
+	joined = time.Date(2026, 11, 4, 10, 0, 0, 0, time.UTC)
+	seen   = time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)
+)
+
+func newMesh(t *testing.T) *meshtest.Mesh {
+	t.Helper()
+	m := meshtest.New(t, adminToken)
+	m.AddNode(meshadmin.Node{PeerID: "12D3router", Role: meshadmin.RoleRouter, Enrolled: joined}, seen)
+	m.AddNode(meshadmin.Node{PeerID: "12D3coder", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"Anna@example.com","email_verified":true}`, Enrolled: joined}, seen, "coder")
+	m.AddNode(meshadmin.Node{PeerID: "12D3reviewer", Role: meshadmin.RoleNode, EnrollmentType: "oidc", ClaimsJSON: `{"email":"anna@example.com"}`, Enrolled: joined.Add(time.Minute)}, seen, "reviewer")
+	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: joined.Add(time.Hour)}, seen, "ci-bot")
+	m.AddNode(meshadmin.Node{PeerID: "12D3gone", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: joined.Add(-time.Hour), Banned: true}, seen, "old")
+	return m
+}
+
+func newService(m *meshtest.Mesh) *control.Service {
+	return control.NewService(meshadmin.New(m.URL, adminToken, http.DefaultClient), func() control.Status {
+		return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
+	})
+}
+
+// privateDir returns a directory closed to others, which a control socket
+// needs. Its path is short enough for a Unix socket.
+func privateDir(t *testing.T) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "relay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(dir); err != nil {
+			t.Error(err)
+		}
+	})
+	return dir
+}
+
+// socketClient serves svc on a control socket and returns its client.
+func socketClient(t *testing.T, svc *control.Service, restart func()) *control.Client {
+	t.Helper()
+	path := filepath.Join(privateDir(t), "relay.sock")
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: control.Handler(svc, restart), ReadHeaderTimeout: time.Second}
+	go func() {
+		if err := srv.Serve(ln); !errors.Is(err, http.ErrServerClosed) {
+			t.Errorf("Serve() error = %v", err)
+		}
+	}()
+	t.Cleanup(func() {
+		if err := srv.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	return control.NewSocketClient(path, 10*time.Second)
+}
+
+// remoteClient serves svc behind the admin token and returns a client
+// with token.
+func remoteClient(t *testing.T, svc *control.Service, token string) *control.Client {
+	t.Helper()
+	failures := backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now)
+	srv := httptest.NewServer(http.StripPrefix(control.RemotePath, control.RequireToken(adminToken, failures, control.Handler(svc, nil))))
+	t.Cleanup(srv.Close)
+	return control.NewRemoteClient(srv.URL, token, 10*time.Second, nil)
+}
+
+func TestOperationsOverEachTransport(t *testing.T) {
+	t.Parallel()
+	transports := map[string]func(*testing.T, *control.Service) *control.Client{
+		"socket": func(t *testing.T, svc *control.Service) *control.Client { return socketClient(t, svc, nil) },
+		"remote": func(t *testing.T, svc *control.Service) *control.Client { return remoteClient(t, svc, adminToken) },
+	}
+	for name, newClient := range transports {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+			c := newClient(t, newService(m))
+			ctx := t.Context()
+
+			inv, err := c.Invite(ctx, control.InviteRequest{Name: "ci-bot", Hours: 48})
+			if err != nil {
+				t.Fatalf("Client.Invite() error = %v", err)
+			}
+			wantInvite := &control.Invite{Name: "ci-bot", Token: "mesh-bt-1", Expires: meshtest.Issued.Add(48 * time.Hour), URL: relayURL}
+			if diff := cmp.Diff(wantInvite, inv); diff != "" {
+				t.Fatalf("Client.Invite() wrong result (-want +got) diff = %s", diff)
+			}
+
+			members, err := c.Members(ctx, false)
+			if err != nil {
+				t.Fatalf("Client.Members() error = %v", err)
+			}
+			wantMembers := []control.Member{
+				{Agent: "coder", Email: "anna@example.com", Joined: joined, Seen: seen, Peer: "12D3coder"},
+				{Agent: "reviewer", Email: "anna@example.com", Joined: joined.Add(time.Minute), Seen: seen, Peer: "12D3reviewer"},
+				{Agent: "ci-bot", Invite: true, Joined: joined.Add(time.Hour), Seen: seen, Peer: "12D3bot"},
+			}
+			if diff := cmp.Diff(wantMembers, members); diff != "" {
+				t.Fatalf("Client.Members() wrong result (-want +got) diff = %s", diff)
+			}
+
+			st, err := c.Status(ctx)
+			if err != nil {
+				t.Fatalf("Client.Status() error = %v", err)
+			}
+			wantStatus := &control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites", Members: 3}
+			if diff := cmp.Diff(wantStatus, st); diff != "" {
+				t.Fatalf("Client.Status() wrong result (-want +got) diff = %s", diff)
+			}
+
+			res, err := c.Remove(ctx, control.RemoveRequest{Target: "ci-bot"})
+			if err != nil {
+				t.Fatalf("Client.Remove() error = %v", err)
+			}
+			if diff := cmp.Diff([]string{"12D3bot", "12D3gone"}, m.Banned()); diff != "" || len(res.Removed) != 1 {
+				t.Fatalf("Client.Remove() banned wrong nodes (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestInvite(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		req     control.InviteRequest
+		want    []meshadmin.BootstrapTokenRequest
+		wantErr bool
+	}{
+		{
+			name: "default lifetime",
+			req:  control.InviteRequest{Name: "ci-bot"},
+			want: []meshadmin.BootstrapTokenRequest{{Role: meshadmin.RoleNode, TTLHours: 24, MaxUsages: 1, Description: "a2a-serve invite: ci-bot", AutonomousRecovery: true}},
+		},
+		{
+			name: "a week",
+			req:  control.InviteRequest{Name: "ci-bot", Hours: 168},
+			want: []meshadmin.BootstrapTokenRequest{{Role: meshadmin.RoleNode, TTLHours: 168, MaxUsages: 1, Description: "a2a-serve invite: ci-bot", AutonomousRecovery: true}},
+		},
+		{name: "longer than a week", req: control.InviteRequest{Name: "ci-bot", Hours: 169}, wantErr: true},
+		{name: "no name", req: control.InviteRequest{Name: " "}, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+
+			_, err := newService(m).Invite(t.Context(), tt.req)
+
+			if tt.wantErr {
+				if !agenterr.IsRequest(err) {
+					t.Fatalf("Service.Invite() error = %v, want an invalid request", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Service.Invite() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.want, m.Tokens()); diff != "" {
+				t.Fatalf("Service.Invite() wrong token request (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestRemove(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		target     string
+		wantBanned []string
+		wantErr    error
+	}{
+		{name: "by agent", target: "reviewer", wantBanned: []string{"12D3reviewer", "12D3gone"}},
+		{name: "by peer ID", target: "12D3bot", wantBanned: []string{"12D3bot", "12D3gone"}},
+		{name: "every agent of an email", target: "ANNA@example.com", wantBanned: []string{"12D3coder", "12D3reviewer", "12D3gone"}},
+		{name: "unknown", target: "nobody", wantBanned: []string{"12D3gone"}, wantErr: &agenterr.NotFoundError{Kind: "member", Name: "nobody"}},
+		{name: "already removed", target: "old", wantBanned: []string{"12D3gone"}, wantErr: &agenterr.NotFoundError{Kind: "member", Name: "old"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+
+			_, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: tt.target})
+
+			if diff := cmp.Diff(tt.wantErr, err, cmp.Comparer(func(a, b error) bool { return a.Error() == b.Error() })); diff != "" {
+				t.Fatalf("Service.Remove() wrong error (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantBanned, m.Banned(), cmp.Transformer("sort", sorted)); diff != "" {
+				t.Fatalf("Service.Remove() banned wrong nodes (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func sorted(s []string) []string { return slices.Sorted(slices.Values(s)) }
+
+func TestRemoveRefusesAnAmbiguousAgent(t *testing.T) {
+	t.Parallel()
+	m := newMesh(t)
+	m.AddNode(meshadmin.Node{PeerID: "12D3coder2", Role: meshadmin.RoleNode, Enrolled: joined}, seen, "coder")
+
+	_, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: "coder"})
+
+	var conflict *agenterr.ConflictError
+	if !errors.As(err, &conflict) {
+		t.Fatalf("Service.Remove() error = %v, want a conflict", err)
+	}
+	if got := m.Banned(); len(got) != 1 {
+		t.Fatalf("Service.Remove() banned %v, want nothing new", got)
+	}
+}
+
+func TestRemoteNeedsTheAdminToken(t *testing.T) {
+	t.Parallel()
+	svc := newService(newMesh(t))
+
+	_, err := remoteClient(t, svc, "wrong").Status(t.Context())
+
+	if err == nil {
+		t.Fatal("Client.Status() with a wrong token error = nil, want an error")
+	}
+	if _, err := remoteClient(t, svc, adminToken).Status(t.Context()); err != nil {
+		t.Fatalf("Client.Status() with the admin token error = %v", err)
+	}
+}
+
+func TestRequireTokenBacksOffWrongTokensOnly(t *testing.T) {
+	t.Parallel()
+	failures := backoff.NewFailures(time.Minute, time.Minute, time.Now)
+	h := control.RequireToken(adminToken, failures, http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	call := func(token string) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/status", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		h.ServeHTTP(rec, req)
+		return rec.Code
+	}
+
+	if got := call("wrong"); got != http.StatusUnauthorized {
+		t.Fatalf("a wrong token got status %d, want %d", got, http.StatusUnauthorized)
+	}
+	if got := call("wrong again"); got != http.StatusTooManyRequests {
+		t.Fatalf("a wrong token during the backoff got status %d, want %d", got, http.StatusTooManyRequests)
+	}
+	if got := call(adminToken); got != http.StatusOK {
+		t.Fatalf("the admin token during the backoff got status %d, want %d", got, http.StatusOK)
+	}
+}
+
+func TestSocketClient(t *testing.T) {
+	t.Parallel()
+	t.Run("not running", func(t *testing.T) {
+		t.Parallel()
+		c := control.NewSocketClient(filepath.Join(privateDir(t), "relay.sock"), time.Second)
+		if _, err := c.Status(t.Context()); !errors.Is(err, control.ErrNotRunning) {
+			t.Fatalf("Client.Status() error = %v, want %v", err, control.ErrNotRunning)
+		}
+	})
+	t.Run("socket that others can reach", func(t *testing.T) {
+		t.Parallel()
+		dir := privateDir(t)
+		if err := os.Chmod(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		c := control.NewSocketClient(filepath.Join(dir, "relay.sock"), time.Second)
+		if _, err := c.Status(t.Context()); err == nil || errors.Is(err, control.ErrNotRunning) {
+			t.Fatalf("Client.Status() error = %v, want a refusal of the socket", err)
+		}
+	})
+	t.Run("restart", func(t *testing.T) {
+		t.Parallel()
+		restarted := make(chan struct{})
+		c := socketClient(t, newService(newMesh(t)), func() { close(restarted) })
+		if err := c.Restart(t.Context()); err != nil {
+			t.Fatalf("Client.Restart() error = %v", err)
+		}
+		select {
+		case <-restarted:
+		case <-time.After(5 * time.Second):
+			t.Fatal("Client.Restart() didn't reach the relay")
+		}
+	})
+	t.Run("restart is local only", func(t *testing.T) {
+		t.Parallel()
+		if err := remoteClient(t, newService(newMesh(t)), adminToken).Restart(t.Context()); err == nil {
+			t.Fatal("Client.Restart() over the relay's URL error = nil, want an error")
+		}
+	})
+}
