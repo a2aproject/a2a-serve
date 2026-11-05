@@ -41,8 +41,7 @@ func TestFailureLimiter(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			now := time.Unix(1000, 0)
-			l := newFailureLimiter(3, time.Minute)
-			l.now = func() time.Time { return now }
+			l := newFailureLimiter(3, time.Minute, func() time.Time { return now })
 			for i := range tc.failures {
 				_, refund := l.reserve("a")
 				if i < tc.refunds {
@@ -60,8 +59,7 @@ func TestFailureLimiter(t *testing.T) {
 func TestFailureLimiterKeepsAtMostMaxKeys(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1000, 0)
-	l := newFailureLimiter(1, time.Minute)
-	l.now = func() time.Time { return now }
+	l := newFailureLimiter(1, time.Minute, func() time.Time { return now })
 	for i := range maxFailureKeys + 10 {
 		l.reserve(strconv.Itoa(i))
 		now = now.Add(time.Millisecond)
@@ -95,8 +93,7 @@ func TestBackoff(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			now := time.Unix(1000, 0)
-			b := newFailureBackoff(time.Second, 10*time.Second)
-			b.now = func() time.Time { return now }
+			b := newFailureBackoff(time.Second, 10*time.Second, func() time.Time { return now })
 			failAfterWaiting(b, &now, tc.failures)
 			if tc.success {
 				b.reset()
@@ -124,8 +121,7 @@ func failAfterWaiting(b *failureBackoff, now *time.Time, n int) {
 func TestBackoffForgetsFailuresAfterQuietPeriod(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1000, 0)
-	b := newFailureBackoff(time.Second, 10*time.Second)
-	b.now = func() time.Time { return now }
+	b := newFailureBackoff(time.Second, 10*time.Second, func() time.Time { return now })
 	failAfterWaiting(b, &now, 5)
 	now = now.Add(time.Hour)
 	b.reserve()

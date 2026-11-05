@@ -232,3 +232,89 @@ func TestPrompterSecretValue(t *testing.T) {
 		})
 	}
 }
+
+func TestPrompterVarValue(t *testing.T) {
+	t.Parallel()
+	env := map[string]string{"TOKEN": "from-shell", "URL": "https://shell.example.com"}
+	tests := []struct {
+		name    string
+		v       Var
+		input   string
+		want    agentdir.Settings
+		wantErr bool
+	}{
+		{
+			name:  "secret from the shell",
+			v:     Var{Name: "TOKEN", Secret: true},
+			input: "\n",
+			want:  agentdir.Settings{Secrets: []string{"TOKEN"}, SecretValues: agentdir.Secrets{"TOKEN": "from-shell"}},
+		},
+		{
+			name:  "secret typed instead of the shell's",
+			v:     Var{Name: "TOKEN", Secret: true},
+			input: "n\ntyped\n",
+			want:  agentdir.Settings{Secrets: []string{"TOKEN"}, SecretValues: agentdir.Secrets{"TOKEN": "typed"}},
+		},
+		{
+			name:  "value from the shell",
+			v:     Var{Name: "URL"},
+			input: "y\n",
+			want:  agentdir.Settings{Env: []string{"URL=https://shell.example.com"}},
+		},
+		{
+			name:  "value asked again until given",
+			v:     Var{Name: "HOST", Description: "the host"},
+			input: "\nexample.com\n",
+			want:  agentdir.Settings{Env: []string{"HOST=example.com"}},
+		},
+		{
+			name:    "no value",
+			v:       Var{Name: "HOST", Secret: true},
+			input:   "\n\n\n",
+			wantErr: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			p := NewPrompter(strings.NewReader(tc.input), &out, nil)
+			var got agentdir.Settings
+
+			err := p.VarValue(&got, func(k string) string { return env[k] }, tc.v)
+
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("Prompter.VarValue() error = %v, want error %v", err, tc.wantErr)
+			}
+			if tc.wantErr {
+				return
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Prompter.VarValue() wrong settings (-want +got) diff = %s", diff)
+			}
+			if tc.v.Description != "" && !strings.Contains(out.String(), tc.v.Name+" ("+tc.v.Description+")") {
+				t.Fatalf("Prompter.VarValue() asked %q, want the description", out.String())
+			}
+		})
+	}
+}
+
+func TestNeedsAPIKey(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		harness string
+		secrets []string
+		want    bool
+	}{
+		{harness: "opencode", want: true},
+		{harness: "opencode", secrets: []string{"GRAFANA_TOKEN"}, want: true},
+		{harness: "opencode", secrets: []string{"OPENROUTER_API_KEY"}},
+		{harness: "claude", secrets: []string{"CLAUDE_CODE_OAUTH_TOKEN"}},
+		{harness: "acp"},
+	}
+	for _, tc := range tests {
+		if got := NeedsAPIKey(tc.harness, tc.secrets); got != tc.want {
+			t.Fatalf("NeedsAPIKey(%q, %v) = %v, want %v", tc.harness, tc.secrets, got, tc.want)
+		}
+	}
+}

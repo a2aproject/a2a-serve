@@ -105,7 +105,7 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 	}
 	deadline := time.Now().Add(lockWait)
 	for {
-		release, err = fsutil.TryLock(d.LockPath())
+		release, err = d.Lock()
 		if !errors.Is(err, fsutil.ErrLocked) {
 			return release, err
 		}

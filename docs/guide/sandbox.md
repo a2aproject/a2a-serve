@@ -4,7 +4,8 @@ By default the agent runs in Docker:
 
 - The workspace, the directory that holds `.a2a`, is mounted at the same path. `--workspace` picks another directory, and `--mount src[:dst][:ro]` adds more.
 - `.a2a` appears empty, so the agent can't read its own secrets, tokens or config.
-- The server resolves the mount sources and `.a2a` once, when it starts. When one of them lies inside another writable mount, the agent could replace a directory on its path with a symlink. The server then refuses to start a container until you check the path and restart the server.
+- The server checks the mount sources, `.a2a` and the agent home directory before it starts each container. It refuses a path that goes through a symlink inside a writable mount, because the agent can repoint that symlink. The error names the resolved path to configure.
+- The server also remembers the agent directory, `.a2a`, `state` and each agent home directory when it first uses them. When the agent renames one of them through a writable mount and creates another in its place, the server refuses to start a container until you check the directory and restart the server.
 - `state/home` is the agent's home directory. Each authenticated user gets a container with a home of their own, and [anonymous callers](identities.md#anonymous-callers) share one more.
 - The container runs as your user, with all capabilities dropped and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 

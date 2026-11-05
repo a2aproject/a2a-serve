@@ -196,6 +196,28 @@ func TestWatchesWatchPostsResultAndEnds(t *testing.T) {
 	}
 }
 
+func TestWatchesWatchPostsLongResultAsFile(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptLong)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+
+	got := f.nextTurn(t)
+
+	full := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactLongResult())
+	if diff := cmp.Diff([]channel.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(full)}}, got.Files); diff != "" {
+		t.Fatalf("injected turn files wrong result (-want +got) diff = %s", diff)
+	}
+	lines := strings.SplitAfter(full, "\n")
+	if wantStart := strings.Join(lines[:20], ""); !strings.HasPrefix(got.Text, wantStart) || strings.Contains(got.Text, lines[20]) {
+		t.Fatalf("injected text = %q, want the first 20 lines of the result", got.Text)
+	}
+	if !strings.Contains(got.Text, "result.txt") {
+		t.Fatalf("injected text = %q, want it to point to the attached result.txt", got.Text)
+	}
+	f.wantNoWatches(t)
+}
+
 func TestWatchesWatchWaitsForTaskToFinish(t *testing.T) {
 	t.Parallel()
 	f := newWatchesFixture(t)
@@ -819,6 +841,40 @@ func TestResultText(t *testing.T) {
 			t.Parallel()
 			if got := resultText(tc.task); got != tc.want {
 				t.Fatalf("resultText() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResultTurn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		text        string
+		wantText    string
+		wantPreview string
+		wantFile    bool
+	}{
+		{name: "short", text: "done", wantText: "done"},
+		{name: "at the limit", text: strings.Repeat("x", maxInlineResult), wantText: strings.Repeat("x", maxInlineResult)},
+		{name: "one long line", text: strings.Repeat("x", maxInlineResult+1), wantPreview: strings.Repeat("x", previewBytes), wantFile: true},
+		{name: "cut inside a character", text: "x" + strings.Repeat("é", maxInlineResult), wantPreview: "x" + strings.Repeat("é", previewBytes/2-1), wantFile: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			text, files := resultTurn(tc.text)
+			if !tc.wantFile {
+				if text != tc.wantText || files != nil {
+					t.Fatalf("resultTurn() = %q, %v, want %q and no files", text, files, tc.wantText)
+				}
+				return
+			}
+			if !strings.HasPrefix(text, tc.wantPreview+"\n") {
+				t.Fatalf("resultTurn() text = %q, want it to start with %d bytes of the result", text, len(tc.wantPreview))
+			}
+			if diff := cmp.Diff([]channel.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(tc.text)}}, files); diff != "" {
+				t.Fatalf("resultTurn() files wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

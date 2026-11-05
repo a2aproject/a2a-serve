@@ -388,6 +388,9 @@ func (c *Channel) handleMessage(s threadStarter, m *discordgo.Message, direct bo
 		Text:      text,
 		Authentic: true,
 	}
+	if ref := m.MessageReference; ref != nil && ref.Type == discordgo.MessageReferenceTypeDefault {
+		in.ReplyTo = channel.Ref{Conv: in.Conv, ID: ref.MessageID}
+	}
 	if newThread || len(m.Attachments) > 0 {
 		in.Prepare = func(ctx context.Context, in *channel.Inbound) error {
 			var errs []error

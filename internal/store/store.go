@@ -225,11 +225,18 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV13)
 		return err
 	},
-	// 14: watches count the calls that watched their task again, so that
+	// 14: a conversation keeps every question pending in it, and a typed
+	// answer finds its question by the message it replies to. Questions
+	// whose tasks stopped waiting for them are marked closed.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV14)
+		return err
+	},
+	// 15: watches count the calls that watched their task again, so that
 	// posting a result deletes only the watch it was read from, and record
 	// the task's last state, so that a watch of a stuck task ends.
 	func(ctx context.Context, tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, schemaV14)
+		_, err := tx.ExecContext(ctx, schemaV15)
 		return err
 	},
 }
@@ -401,6 +408,18 @@ UPDATE schedules SET deliver_user = 'user:owner' WHERE deliver_user = 'pair:loca
 `
 
 const schemaV14 = `
+CREATE TABLE pending_questions_v14 (
+	channel TEXT NOT NULL, conv TEXT NOT NULL, question_id TEXT NOT NULL,
+	PRIMARY KEY (channel, conv, question_id));
+INSERT INTO pending_questions_v14 SELECT channel, conv, question_id FROM pending_questions;
+DROP TABLE pending_questions;
+ALTER TABLE pending_questions_v14 RENAME TO pending_questions;
+CREATE INDEX pending_questions_question ON pending_questions (question_id);
+CREATE INDEX question_messages_message ON question_messages (channel, conv, message_id);
+ALTER TABLE questions ADD COLUMN closed INTEGER NOT NULL DEFAULT 0;
+`
+
+const schemaV15 = `
 ALTER TABLE watches ADD COLUMN generation INTEGER NOT NULL DEFAULT 0;
 ALTER TABLE watches ADD COLUMN state TEXT NOT NULL DEFAULT '';
 ALTER TABLE watches ADD COLUMN state_changed INTEGER NOT NULL DEFAULT 0;
