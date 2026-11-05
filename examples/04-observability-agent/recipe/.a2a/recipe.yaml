@@ -1,0 +1,19 @@
+# Read by `a2a-serve recipe`.
+mcp:
+  grafana:
+    description: metrics, logs, traces and profiles through Grafana
+  github:
+    description: recent changes, from commits, pull requests and workflow runs
+    optional: true
+  kubernetes:
+    description: read-only state of a Kubernetes cluster
+    optional: true
+    mounts: [/kube]
+vars:
+  GRAFANA_URL:
+    description: base URL of your Grafana, such as https://grafana.example.com
+    secret: false
+  GRAFANA_SERVICE_ACCOUNT_TOKEN:
+    description: token of a Grafana service account with the Viewer role
+  GITHUB_TOKEN:
+    description: fine-grained token with read access to your service repositories
