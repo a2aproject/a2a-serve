@@ -33,6 +33,26 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
+// hookWriter calls onHeader with the entry name of every tar header block
+// written to it, so that a test can change files between entries.
+type hookWriter struct {
+	buf      bytes.Buffer
+	names    []string
+	onHeader func(name string)
+}
+
+func (w *hookWriter) Write(p []byte) (int, error) {
+	if len(p) == 512 {
+		name, _, _ := bytes.Cut(p[:100], []byte{0})
+		for _, n := range w.names {
+			if string(name) == n {
+				w.onHeader(n)
+			}
+		}
+	}
+	return w.buf.Write(p)
+}
+
 func readTar(t *testing.T, data []byte) map[string]string {
 	t.Helper()
 	out := map[string]string{}
@@ -282,6 +302,39 @@ func TestSnapshotterAddFileBoundsCopyOfGrowingFile(t *testing.T) {
 	}
 }
 
+func TestSnapshotterAddFileRefusesSymlinkSwappedIn(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "f")
+	writeFileAt(t, path, "abc", epoch)
+	writeFileAt(t, filepath.Join(dir, "other"), "other file", epoch)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	s := newTestSnapshotter(t, tw, nil, func(_ string, attempt int) {
+		if attempt != 1 {
+			return
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Symlink("other", path); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	err := s.addFile(path, "home/f")
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if !errors.Is(err, errNotRegular) {
+		t.Fatalf("snapshotter.addFile() error = %v, want %v", err, errNotRegular)
+	}
+	if diff := cmp.Diff(map[string]string{}, readTar(t, buf.Bytes())); diff != "" {
+		t.Fatalf("snapshotter.addFile() wrong entries (-want +got) diff = %s", diff)
+	}
+}
+
 // archiveFiles returns the entries of the gzipped tar archive in data.
 func archiveFiles(t *testing.T, data []byte) map[string]string {
 	t.Helper()
@@ -378,5 +431,35 @@ func TestTakeJoinsArchiveWriterOnFailure(t *testing.T) {
 	buf := make([]byte, 1<<20)
 	if stacks := string(buf[:runtime.Stack(buf, true)]); strings.Contains(stacks, "backup.writeArchive") {
 		t.Fatalf("Take() returned while the archive writer still ran:\n%s", stacks)
+	}
+}
+
+func TestAddTreeDoesNotFollowSymlinksSwappedInDuringWalk(t *testing.T) {
+	t.Parallel()
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, filepath.Join(root, "sub"), map[string]string{"a": "1", "b": "2"})
+	writeFiles(t, outside, map[string]string{"b": "host secret"})
+	w := &hookWriter{names: []string{"home/sub/a"}}
+	w.onHeader = func(string) {
+		if err := os.Rename(filepath.Join(root, "sub"), filepath.Join(root, "old")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+	}
+	tw := tar.NewWriter(w)
+	s := newTestSnapshotter(t, tw, nil, nil)
+	err := s.addTree(context.Background(), root, "home")
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range readTar(t, w.buf.Bytes()) {
+		if content == "host secret" {
+			t.Fatalf("snapshotter.addTree() archived %s with the content of a file out of the tree (error = %v)", name, err)
+		}
 	}
 }

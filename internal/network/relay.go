@@ -30,11 +30,13 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/encoding/protowire"
+
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 )
 
 // AgentMeshVersion is the Agent Mesh version this a2a-serve joins relays
 // with. Relays should run the same version.
-const AgentMeshVersion = "v0.2.0"
+const AgentMeshVersion = agentmesh.Version
 
 // AgentMeshHost is the virtual host of private URLs on a relay, which only
 // agents on the relay reach, through their in-process mesh node.

@@ -42,6 +42,10 @@ const maxText = 3500
 // maxFile is the largest file a bot can download.
 const maxFile = 20 << 20
 
+// defaultServerURL is the Bot API URL of new channels; empty for Telegram's.
+// Only e2e builds set it.
+var defaultServerURL string
+
 // Channel is a Telegram bot.
 type Channel struct {
 	token string
@@ -64,7 +68,9 @@ var (
 )
 
 // New returns a channel for the bot with token.
-func New(token string) *Channel { return &Channel{token: token, downloadTimeout: 2 * time.Minute} }
+func New(token string) *Channel {
+	return &Channel{token: token, ServerURL: defaultServerURL, downloadTimeout: 2 * time.Minute}
+}
 
 // Name implements [channel.Channel].
 func (c *Channel) Name() string { return "telegram" }

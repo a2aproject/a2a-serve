@@ -23,6 +23,7 @@ const (
 	groupConfigure = "configure"
 	groupPairing   = "pairing"
 	groupNode      = "node"
+	groupRelay     = "relay"
 	groupSetup     = "setup"
 )
 
@@ -42,6 +43,7 @@ var commandGroups = map[string]string{
 	"contact":    groupPairing,
 	"peers":      groupPairing,
 	"mailbox":    groupNode,
+	"relay":      groupRelay,
 	"doctor":     groupSetup,
 	"completion": groupSetup,
 	"version":    groupSetup,
@@ -55,6 +57,7 @@ func addGroups(serve *cobra.Command) {
 		&cobra.Group{ID: groupConfigure, Title: "Configure the agent:"},
 		&cobra.Group{ID: groupPairing, Title: "Pairing and contacts:"},
 		&cobra.Group{ID: groupNode, Title: "Webhook node:"},
+		&cobra.Group{ID: groupRelay, Title: "Relay:"},
 		&cobra.Group{ID: groupSetup, Title: "Setup:"},
 	)
 	for _, c := range serve.Commands() {

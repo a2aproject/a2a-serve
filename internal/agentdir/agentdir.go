@@ -25,6 +25,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Name is the name of the directory which marks an agent.
@@ -88,6 +91,14 @@ func Find(start string) (Dir, error) {
 
 const configFile = "config.yaml"
 
+// RelayConfigFile is the file in .a2a which marks a relay directory. A
+// directory holds an agent or a relay, so relay secrets stay out of agent
+// backups.
+const RelayConfigFile = "relay.yaml"
+
+// ErrRelayDir is returned when an agent would be created in a relay directory.
+var ErrRelayDir = agenterr.Invalid(errors.New("this directory has a relay (.a2a/relay.yaml); start the agent in another directory"))
+
 // Path returns the .a2a directory.
 func (d Dir) Path() string { return filepath.Join(d.Root, Name) }
 
@@ -147,6 +158,10 @@ func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log")
 // the workspace's .mcp.json.
 func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask.json") }
 
+// RecipeLockPath returns the path of the record of the recipe the agent
+// was created from.
+func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), "recipe.lock") }
+
 // LockPath returns the path of the file the running server holds locked.
 func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock") }
 
@@ -160,30 +175,39 @@ const maxSocketPath = 100
 // unless that path is too long for a Unix socket, in which case it is a path
 // in the runtime directory derived from the agent directory.
 func (d Dir) SocketPath() string {
-	p := filepath.Join(d.StateDir(), "server.sock")
+	return SocketPath(filepath.Join(d.StateDir(), "server.sock"), "a2a-"+d.ID()+".sock")
+}
+
+// SocketPath returns the socket path p, or the file name in the runtime
+// directory when p is too long for a Unix socket.
+func SocketPath(p, name string) string {
 	if len(p) <= maxSocketPath {
 		return p
 	}
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
-	}
-	return filepath.Join(base, "a2a-"+d.ID()+".sock")
+	return filepath.Join(runtimeDir(), name)
 }
 
-// HarnessSocketDir returns the directory of the socket through which a
-// sandboxed harness reaches the server. Like the control socket, it moves to
-// the runtime directory when the path is too long for a Unix socket.
+func runtimeDir() string {
+	if base := os.Getenv("XDG_RUNTIME_DIR"); base != "" {
+		return base
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
+}
+
+// HarnessSocketIDLen is the length of the names of the directories in
+// [Dir.HarnessSocketDir].
+const HarnessSocketIDLen = 12
+
+// HarnessSocketDir returns the directory that holds a directory per agent
+// process, of [HarnessSocketIDLen] characters, with the a2a.sock through
+// which the process reaches the server. Like the control socket, it moves
+// to the runtime directory when the path is too long for a Unix socket.
 func (d Dir) HarnessSocketDir() string {
 	p := filepath.Join(d.StateDir(), "harness")
-	if len(p)+len("/a2a.sock") <= maxSocketPath {
+	if len(p)+1+HarnessSocketIDLen+len("/a2a.sock") <= maxSocketPath {
 		return p
 	}
-	base := os.Getenv("XDG_RUNTIME_DIR")
-	if base == "" {
-		base = filepath.Join(os.TempDir(), fmt.Sprintf("a2a-%d", os.Getuid()))
-	}
-	return filepath.Join(base, "a2a-"+d.ID()+"-harness")
+	return filepath.Join(runtimeDir(), "a2a-"+d.ID()+"-harness")
 }
 
 // ID is a short stable identifier of the agent directory, used in container
@@ -197,10 +221,18 @@ func (d Dir) ID() string {
 func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 
 // Init creates the .a2a and state directories and the .gitignore which keeps
-// state out of version control.
+// state out of version control. The state directory and the harness home
+// must be real directories, since a cloned repository could ship them as
+// symlinks.
 func (d Dir) Init() error {
-	for _, p := range []string{d.Path(), d.StateDir(), d.HomeDir()} {
-		if err := os.MkdirAll(p, 0o700); err != nil {
+	if _, err := os.Stat(filepath.Join(d.Path(), RelayConfigFile)); err == nil {
+		return ErrRelayDir
+	}
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		return err
+	}
+	for _, p := range []string{d.StateDir(), d.HomeDir()} {
+		if err := fsutil.MkdirReal(p); err != nil {
 			return err
 		}
 	}

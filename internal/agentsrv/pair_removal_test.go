@@ -94,6 +94,19 @@ func processRuns(pid int) bool {
 	return !errors.Is(syscall.Kill(pid, 0), syscall.ESRCH)
 }
 
+func harnessSocketDirs(t *testing.T, ts *testServer) []string {
+	t.Helper()
+	entries, err := os.ReadDir(ts.srv.harness.dir)
+	if err != nil {
+		t.Fatalf("ReadDir() error = %v", err)
+	}
+	names := make([]string, len(entries))
+	for i, e := range entries {
+		names[i] = e.Name()
+	}
+	return names
+}
+
 func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
@@ -106,6 +119,7 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	ended := streamSlow(t, anna)
+	sockets := harnessSocketDirs(t, ts)
 
 	if _, err := controlapi.NewClient(ts.dir).Revoke(ctx, "anna"); err != nil {
 		t.Fatalf("Revoke() error = %v", err)
@@ -113,6 +127,9 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 
 	wantEnded(t, ended, a2a.TaskStateCanceled)
 	waitFor(t, "anna's agent process to stop", func() bool { return !processRuns(pid) })
+	if got := harnessSocketDirs(t, ts); len(got) != len(sockets)-1 {
+		t.Fatalf("harness socket directories after removing anna = %v, want one fewer than %v", got, sockets)
+	}
 	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of anna's agent home error = %v, want %v", err, os.ErrNotExist)
 	}

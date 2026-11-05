@@ -131,15 +131,25 @@ var (
 )
 
 // claimsOf returns the claims of the running turn of a handle's
-// conversation: [errUnknownHandle] for an unknown handle, and [errNoTurn]
-// when no turn runs.
-func (cl *CallClaims) claimsOf(ctx context.Context, handle string) (callerClaims, error) {
+// conversation, for a call from the agent process of process:
+// [errUnknownHandle] for an unknown handle or one of a conversation of
+// another process, and [errNoTurn] when no turn runs.
+func (cl *CallClaims) claimsOf(ctx context.Context, handle, process string) (callerClaims, error) {
 	h, err := cl.store.HandleByName(ctx, handle)
 	if errors.Is(err, store.ErrNotFound) {
 		return callerClaims{}, errUnknownHandle
 	}
 	if err != nil {
 		return callerClaims{}, fmt.Errorf("loading agents URL handle: %w", err)
+	}
+	key := ""
+	if cl.agentKey != nil {
+		if key, err = cl.agentKey(ctx, h.ContextID); err != nil {
+			return callerClaims{}, fmt.Errorf("finding the agent process of an agents URL: %w", err)
+		}
+	}
+	if key != process {
+		return callerClaims{}, errUnknownHandle
 	}
 	cl.turnsMu.Lock()
 	defer cl.turnsMu.Unlock()

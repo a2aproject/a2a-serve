@@ -73,7 +73,9 @@ func New(cfg *agentdir.Config, secrets agentdir.Secrets, kind string, opts Optio
 			return nil, fmt.Errorf("telegram: %w", err)
 		}
 		ch := telegram.New(tok)
-		ch.ServerURL = opts.TelegramURL
+		if opts.TelegramURL != "" {
+			ch.ServerURL = opts.TelegramURL
+		}
 		return ch, nil
 	case agentdir.ChannelDiscord:
 		if cfg.Channels.Discord == nil {

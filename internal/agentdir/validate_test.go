@@ -296,6 +296,45 @@ func TestParseConfigWorkspace(t *testing.T) {
 	}
 }
 
+func TestUnknownKeys(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		data string
+		want []string
+	}{
+		{
+			name: "known keys",
+			data: "name: coder\nagent: opencode\nnetwork:\n  private: tailscale\nchannels:\n  telegram:\n    token: secret:T\napprovals:\n  allow: [read]\n",
+		},
+		{
+			name: "unknown keys at any depth",
+			data: "name: coder\ncard: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    token: secret:T\n    chat: x\n",
+			want: []string{"card", "channels.telegram.chat", "network.allowlist"},
+		},
+		{
+			name: "legacy keys",
+			data: "harness: opencode\napprovals:\n  approvers: [owner]\n",
+		},
+		{
+			name: "empty",
+			data: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := UnknownKeys([]byte(tc.data))
+			if err != nil {
+				t.Fatalf("UnknownKeys() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("UnknownKeys() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestParseConfigAgent(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

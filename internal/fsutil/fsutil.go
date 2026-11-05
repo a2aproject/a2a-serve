@@ -114,6 +114,27 @@ func TryLock(path string) (release func() error, err error) {
 	return func() error { return errors.Join(unlock(f), f.Close()) }, nil
 }
 
+// MkdirReal creates dir with mode 0700 if it is missing, in a parent that
+// exists, and refuses a symlink or another file in its place. A cloned
+// repository can ship such a symlink to have the server write elsewhere.
+func MkdirReal(dir string) error {
+	err := os.Mkdir(dir, 0o700)
+	if err == nil || !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	fi, err := os.Lstat(dir)
+	if err != nil {
+		return err
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return fmt.Errorf("%s is a symlink; remove it so the agent server can create the directory", dir)
+	}
+	if !fi.IsDir() {
+		return fmt.Errorf("%s is not a directory", dir)
+	}
+	return nil
+}
+
 func removeIfExists(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

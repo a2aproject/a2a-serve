@@ -24,7 +24,6 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
-	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
@@ -62,7 +61,7 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 			results = append(results, r)
 		}
 	}
-	state, stateOpen := checkState(d)
+	state, stateOpen := checkState(d.StateDir(), d.SecretsPath())
 	if stateOpen {
 		results = append(results, state)
 	}
@@ -242,28 +241,11 @@ func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		return []Result{{ID: "relay", Status: StatusFail, Message: "this a2a-serve was built without Agent Mesh, so it can't join " + relay,
 			Fix: "go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"}}
 	}
-	version := Result{ID: "relay", Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", relay, network.AgentMeshVersion),
-		Detail: "relays don't report their Agent Mesh version yet; run " + network.AgentMeshVersion + " there"}
+	version := Result{ID: "relay", Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", relay, network.AgentMeshVersion)}
 	if !online || env.HTTP == nil {
 		return []Result{version}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimSuffix(relay, "/")+"/healthz", nil)
-	if err != nil {
-		return []Result{{ID: "relay", Status: StatusFail, Message: err.Error()}}
-	}
-	resp, err := env.HTTP.Do(req)
-	if err != nil {
-		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s is unreachable: %v", relay, err)}}
-	}
-	if err := resp.Body.Close(); err != nil {
-		slog.Debug("closing the relay's health response", "error", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return []Result{{ID: "relay", Status: StatusFail, Message: fmt.Sprintf("relay %s answers %s", relay, resp.Status)}}
-	}
-	return []Result{version}
+	return relayOnline(ctx, env.HTTP, relay)
 }
 
 // checkBackupCLI checks that the CLI the backup destination needs is
@@ -302,13 +284,13 @@ func checkMounts(d agentdir.Dir, cfg *agentdir.Config) []Result {
 }
 
 // checkState reports a state directory or secrets file others can read.
-func checkState(d agentdir.Dir) (Result, bool) {
+func checkState(stateDir, secrets string) (Result, bool) {
 	type target struct {
 		path string
 		mode os.FileMode
 	}
 	var open []target
-	for _, t := range []target{{d.StateDir(), 0o700}, {d.SecretsPath(), 0o600}} {
+	for _, t := range []target{{stateDir, 0o700}, {secrets, 0o600}} {
 		info, err := os.Stat(t.path)
 		if err != nil || info.Mode().Perm()&0o077 == 0 {
 			continue

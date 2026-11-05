@@ -9,7 +9,7 @@ By default the agent runs in Docker with:
 - the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config. `.mcp.json` appears as a read-only file with no servers, so the agent gets only the MCP servers the server passes it;
 - `state/home` as its home directory, where it keeps its sessions and config;
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
-- a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. On Docker Desktop the socket is a TCP port on the host's loopback, and the agent sends a key.
+- a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is a TCP port on the host's loopback, and each container sends a key of its own.
 
 Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server. All containers share the workspace, the `--mount` directories and the `--secret` values.
 
@@ -27,7 +27,9 @@ What the sandbox doesn't protect yet:
 
 ## Who can call the agent
 
-Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes and limits failed attempts), `/skill.md`, `/download/…` and `/hitl/<token>`.
+Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
+
+The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 
@@ -69,9 +71,11 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve pair rm --email <address>`, or `a2a-serve config unset allow-email <entry>`, which deletes them within an hour |
 | Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
-| Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |
+| Agent key (Docker Desktop) | The agent's socket, for the conversations of one container | Generated when the container starts, in its home | Restart |
 | Inspector link and session | The inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
 | Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
+| Relay invite (`mesh-bt-…`) | Joins one agent to the relay, which then keeps renewing its membership | With the agent, until it joins once; it expires after a day, or after `--expires` | Unused: let it expire. Used: `a2a-serve relay remove <agent>` on the relay |
+| Relay admin token | The relay's control API: invite, list and remove agents | The relay's `state/relay/secrets` (mode 0600), or the container's environment | Stop the relay, then start it with a new one: `a2a-serve relay run --admin-token <value>` |
 | `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve channel rm <kind>`, then rotate at the service |
 
 `state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. Backups contain `state/secrets` and are always encrypted with the backup key.

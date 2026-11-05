@@ -20,6 +20,8 @@ The agent gets the MCP servers and skills of its project.
   The server passes these servers to the agent when a conversation starts. The Docker sandbox shows the agent a `.mcp.json` with no servers, so the agent can't start servers from the file on its own. On the first start, a workspace without `.mcp.json` gets one with no servers.
 - **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. When two skills share a name, the one in `.claude/skills` wins. With `--sandbox local`, only the folders your agent reads on its own work.
 
+The server reads both inside the workspace only. It refuses a `.mcp.json` that is a symlink to a file outside the workspace, and leaves out skills behind such symlinks, because the agent can create them.
+
 `a2a-serve status` lists the MCP servers and skills the agent found.
 
 Not in this version: MCP servers and skills from your home directory, and limiting a server to some roles.

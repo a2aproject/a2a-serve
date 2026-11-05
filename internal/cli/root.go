@@ -152,6 +152,7 @@ var listCommands = map[string]string{
 	"contact":  "contact list",
 	"schedule": "schedule list",
 	"channel":  "channel list",
+	"member":   "relay members",
 }
 
 // classify classifies err of cmd, pointing the hint of a usage error at the

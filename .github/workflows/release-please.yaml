@@ -50,3 +50,32 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           A2A_BOT_PAT: ${{ secrets.A2A_BOT_PAT }}
+
+  # Publishes ghcr.io/a2aproject/a2a-serve-relay, which runs a relay on
+  # Cloud Run or any container platform.
+  relay-image:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ needs.release-please.outputs.tag_name }}
+
+      - name: Build and push
+        env:
+          IMAGE: ghcr.io/${{ github.repository_owner }}/a2a-serve-relay
+          TAG: ${{ needs.release-please.outputs.tag_name }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+          docker run --privileged --rm tonistiigi/binfmt --install arm64
+          docker buildx create --use
+          docker buildx build --push --platform linux/amd64,linux/arm64 \
+            --build-arg "VERSION=${TAG#v}" \
+            -t "$IMAGE:$TAG" -t "$IMAGE:latest" \
+            -f internal/relay/image/Dockerfile .

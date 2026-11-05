@@ -51,15 +51,16 @@ type MCPServer struct {
 }
 
 // LoadMCP reads the MCP servers of the .mcp.json in dir, sorted by name. A
-// missing file has none.
+// missing file has none. The agent can write the workspace, so a symlink
+// that leads out of dir is refused.
 func LoadMCP(dir string) ([]MCPServer, error) {
 	path := filepath.Join(dir, MCPFile)
-	data, err := os.ReadFile(path)
+	data, err := readIn(dir, MCPFile)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
 	var file struct {
 		MCPServers map[string]MCPServer `json:"mcpServers"`
@@ -86,6 +87,16 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 		out = append(out, s)
 	}
 	return out, nil
+}
+
+// readIn reads the file name in dir without leaving dir.
+func readIn(dir, name string) (data []byte, err error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	return root.ReadFile(name)
 }
 
 func (s MCPServer) validate() error {
@@ -142,6 +153,29 @@ func (s MCPServer) Resolve(lookup func(name string) (string, bool)) (MCPServer, 
 	}
 	out.Env, out.Headers = expandMap(s.Env), expandMap(s.Headers)
 	return out, slices.Sorted(maps.Keys(missing))
+}
+
+// Vars returns the names of the variables the server refers to, with or
+// without a default, sorted.
+func (s MCPServer) Vars() []string {
+	names := map[string]bool{}
+	add := func(v string) {
+		for _, m := range varRef.FindAllStringSubmatch(v, -1) {
+			names[m[1]] = true
+		}
+	}
+	add(s.Command)
+	add(s.URL)
+	for _, a := range s.Args {
+		add(a)
+	}
+	for _, v := range s.Env {
+		add(v)
+	}
+	for _, v := range s.Headers {
+		add(v)
+	}
+	return slices.Sorted(maps.Keys(names))
 }
 
 type acpPair struct {

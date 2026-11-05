@@ -120,7 +120,14 @@ type Server struct {
 	private  network.Provider
 	public   network.Provider
 	newRelay func(network.RelayConfig) (network.Provider, error)
-	bridge   harnessBridge
+	// harness has the endpoints through which agent processes reach the
+	// server, and mainHarness is the one of the owner's process.
+	harness     *harnessListeners
+	mainHarness *harnessEndpoint
+	bridge      harnessBridge
+	// pins are the mount sources and hidden paths as they resolved at the
+	// start, which containers of later agent processes are checked against.
+	pins harness.Pins
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -159,7 +166,6 @@ type Server struct {
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
-	pairLimit      *pairLimiter
 	timings        Timings
 }
 
@@ -223,8 +229,7 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		pairLimit: newPairLimiter(),
-		timings:   opts.Timings.withDefaults(),
+		timings: opts.Timings.withDefaults(),
 	}
 	s.rt.Store(&runtimeConfig{cfg: opts.Config, secrets: opts.Secrets})
 	var closers stack
@@ -233,8 +238,7 @@ func Run(ctx context.Context, opts Options) error {
 		closers.close()
 	}()
 
-	harnessLn, err := s.open(ctx, &closers, opts.Executor == nil)
-	if err != nil {
+	if err := s.open(ctx, &closers, opts.Executor == nil); err != nil {
 		return err
 	}
 	if err := s.build(ctx, &closers, opts); err != nil {
@@ -242,11 +246,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	chans := opts.Channels
 	if chans == nil {
+		var err error
 		if chans, err = s.buildChannels(); err != nil {
 			return err
 		}
 	}
-	errc, err := s.serve(ctx, &closers, harnessLn, chans)
+	errc, err := s.serve(ctx, &closers, chans)
 	if err != nil {
 		// The control socket already serves, so a stop may come before
 		// startup finishes.
@@ -267,28 +272,33 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 // open locks the agent directory and opens its database, the network
-// providers and the listener the harness reaches the server through.
-func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.Listener, error) {
+// providers and the listeners agent processes reach the server through.
+func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error {
 	if err := s.dir.Init(); err != nil {
-		return nil, err
+		return err
 	}
 	release, err := fsutil.TryLock(s.dir.LockPath())
 	if errors.Is(err, fsutil.ErrLocked) {
-		return nil, fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
+		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("locking the agent directory: %w", err)
+		return fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
 	// Written before the slow startup steps, so that a stop can signal a
 	// server whose control socket doesn't exist yet.
 	if err := fsutil.WriteAtomic(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
-		return nil, fmt.Errorf("writing the pid file: %w", err)
+		return fmt.Errorf("writing the pid file: %w", err)
 	}
 	closers.push(func(context.Context) error { return removeIfExists(s.dir.PIDPath()) })
+	mounts, err := s.dir.Mounts(s.config())
+	if err != nil {
+		return err
+	}
+	s.pins = harness.Pin(mounts, s.hidden())
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	closers.push(func(context.Context) error { return st.Close() })
 	s.store = st
@@ -296,21 +306,26 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	s.tasks = st.Tasks("", s.viewer)
 	n, err := s.tasks.FailUnfinished(ctx, "The agent server restarted before this task finished. Send the message again.")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if n > 0 {
 		slog.Info("failed tasks interrupted by the previous run", "count", n)
 	}
 	if err := s.setupNetwork(closers); err != nil {
-		return nil, err
+		return err
 	}
-	ln, bridge, err := s.listenHarness(sandboxed)
+	hl, err := s.listenHarness(sandboxed)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	closers.push(func(context.Context) error { return closeListener(ln) })
-	s.bridge = bridge
-	return ln, nil
+	closers.push(hl.close)
+	main, err := hl.open("")
+	if err != nil {
+		return err
+	}
+	closers.push(func(context.Context) error { return main.close() })
+	s.harness, s.mainHarness, s.bridge = hl, main, hl.bridge(main)
+	return nil
 }
 
 // build creates the components and starts the harness. Nothing serves yet.
@@ -354,6 +369,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
+		Limiter:   pairings.NewLimiter(),
 		Users:     stopUsers{s},
 		Homes:     s.dir,
 	}
@@ -401,6 +417,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Chain:      s.chain,
+		Pairings:   s.pairings,
 		Approvals:  s.approvals,
 		Chat:       s.chatApprovals,
 		Supervisor: s.supervisor,
@@ -485,11 +502,11 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 // serve starts the chat turns, serves every listener and the control socket,
 // starts the channels and resumes watches. Errors of listeners after the
 // start arrive on the returned channel.
-func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listener, chans []channel.Channel) (<-chan error, error) {
+func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Channel) (<-chan error, error) {
 	errc := make(chan error, 1)
 	s.chatTurns.start(ctx)
 	closers.push(s.supervisor.stopAll)
-	closers.push(s.serveHTTP(ctx, harnessLn, listener{kind: network.ListenerHarness}, errc))
+	closers.push(s.harness.serve(ctx, s.proxy.routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}
@@ -621,7 +638,7 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 // serveHTTP serves the routes of a listener in the background and returns
 // the function which shuts the listener down.
 func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
-	srv := httpserver.New(ctx, s.routes(l))
+	srv := httpserver.New(ctx, s.routes(l), httpserver.WithConnContext(connContext))
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))

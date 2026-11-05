@@ -4,6 +4,7 @@ By default the agent runs in Docker:
 
 - The workspace, the directory that holds `.a2a`, is mounted at the same path. `--workspace` picks another directory, and `--mount src[:dst][:ro]` adds more.
 - `.a2a` appears empty, so the agent can't read its own secrets, tokens or config.
+- The server resolves the mount sources and `.a2a` once, when it starts. When one of them lies inside another writable mount, the agent could replace a directory on its path with a symlink. The server then refuses to start a container until you check the path and restart the server.
 - `state/home` is the agent's home directory. Each authenticated user gets a container with a home of their own, and [anonymous callers](identities.md#anonymous-callers) share one more.
 - The container runs as your user, with all capabilities dropped and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 

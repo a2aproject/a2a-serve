@@ -62,9 +62,21 @@ func newProxyFixture(t *testing.T) *proxyFixture {
 
 func (f *proxyFixture) serve(t *testing.T, key string) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(f.proxy.routes(key))
+	srv := httptest.NewServer(f.proxy.routes(harnessKeyCaller(key)))
 	t.Cleanup(srv.Close)
 	return srv
+}
+
+// harnessKeyCaller takes requests with key, or every request for no key,
+// as calls from the owner's agent process.
+func harnessKeyCaller(key string) harnessCaller {
+	return func(r *http.Request) (string, bool) {
+		if key == "" {
+			return "", true
+		}
+		tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
+		return "", ok && tok == key
+	}
 }
 
 func (f *proxyFixture) handle(t *testing.T, contextID string) string {

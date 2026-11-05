@@ -8,7 +8,8 @@ no sidecar to run.
 
 ## What you'll learn
 
-- How to run a relay (`agentmesh-one`) on your machine
+- How to run a relay on your machine with `a2a-serve relay run`
+- How to invite agents with `a2a-serve relay invite`
 - How an agent joins it with `--private <relay-url> --public <relay-url>`
 - How agents on the relay find each other and call each other
 - How a caller outside the relay pairs with an agent at its public URL
@@ -23,61 +24,40 @@ no sidecar to run.
   ```
 
 - Docker, and an API key for the agent, as in the [prerequisites of Serve a coding agent](../01-agent-server/README.md#prerequisites)
-- The relay, at the Agent Mesh version this a2a-serve joins with:
-
-  ```bash
-  go install github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0
-  ```
+- `jq`, to read the invites
 
 ## 1. Run the relay
 
-The relay's policy decides what agents may do. This one lets agents publish
-A2A services and get public URLs that forward requests unchanged
-(`PASSTHROUGH`), so a2a-serve's own pairing codes work there:
-
 ```bash
-mkdir -p ~/a2a-example3/relay
-cat > ~/a2a-example3/relay/policy.json <<'JSON'
-{
-  "roles": [
-    {"name": "mesh-admin", "allowed_services": ["*"], "allowed_targets": ["*"], "allowed_ingress": [{"services": ["*"]}]},
-    {"name": "mesh:role:router", "allowed_services": ["*"], "allowed_targets": ["*"]},
-    {
-      "name": "mesh:role:node",
-      "allowed_services": ["*"], "allowed_targets": ["*"], "allowed_publish": ["*"], "allowed_labels": ["*"],
-      "allowed_ingress": [{"services": ["a2a://*"], "allowed_auth_modes": ["INGRESS_AUTH_MODE_PASSTHROUGH"]}]
-    }
-  ]
-}
-JSON
-agentmesh-one --bind-address 127.0.0.1 --port 8443 \
-  --data-dir ~/a2a-example3/relay --policy-file ~/a2a-example3/relay/policy.json
+mkdir -p ~/a2a-example3/relay && cd ~/a2a-example3/relay
+a2a-serve relay run --url http://127.0.0.1:8443 --listen 127.0.0.1:8443
 ```
 
-The relay serves its control plane, the connections between agents and the
-public URLs on one port, and writes a join token to
-`~/a2a-example3/relay/join-token`. In another terminal:
+The first run downloads `agentmesh-one`, the Agent Mesh relay at the
+version this a2a-serve pins, and runs it behind a2a-serve on loopback. The
+relay serves its control plane, the connections between agents and the
+public URLs on one port. A relay on another machine needs an `https://`
+address; [Relays](../../docs/guide/relays.md) covers that.
+
+## 2. Invite and join two agents
+
+The relay admits the agents you invite. Each invite joins one agent. In
+another terminal:
 
 ```bash
 export RELAY=http://127.0.0.1:8443
-export RELAY_TOKEN="$(cat ~/a2a-example3/relay/join-token)"
-```
+cd ~/a2a-example3/relay
+CODER_TOKEN="$(a2a-serve relay invite coder -o json | jq -r .token)"
+REVIEWER_TOKEN="$(a2a-serve relay invite reviewer -o json | jq -r .token)"
 
-A relay that people sign in to with their accounts prints a sign-in link on
-an agent's first run, as Tailscale does. This local relay has no identity
-provider, so the agents join with the token.
-
-## 2. Join two agents
-
-```bash
 mkdir -p ~/a2a-example3/coder && cd ~/a2a-example3/coder
-a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
+printf '%s' "$CODER_TOKEN" | a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
+  --private "$RELAY" --public "$RELAY" --relay-token -
 a2a-serve start --detach
 
 mkdir -p ~/a2a-example3/reviewer && cd ~/a2a-example3/reviewer
-a2a-serve config set --agent opencode --name reviewer --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token env:RELAY_TOKEN
+printf '%s' "$REVIEWER_TOKEN" | a2a-serve config set --agent opencode --name reviewer --secret OPENROUTER_API_KEY \
+  --private "$RELAY" --public "$RELAY" --relay-token -
 a2a-serve start --detach
 ```
 
@@ -97,6 +77,12 @@ coder (opencode) running for 4s, pid 51200
   public   http://127.0.0.1:8443/ingress/12D3KooW…/a2a/coder
 ```
 
+The relay lists both:
+
+```bash
+a2a-serve relay members --dir ~/a2a-example3/relay
+```
+
 ## 3. Let coder call reviewer
 
 Agents on the relay find each other by name:
@@ -105,8 +91,8 @@ Agents on the relay find each other by name:
 a2a-serve peers --dir ~/a2a-example3/coder     # lists reviewer
 ```
 
-Only agents with the join token are on this relay, so everyone on it can
-call reviewer, and coder needs no code:
+Only the agents you invited are on this relay, so everyone on it can call
+reviewer, and coder needs no code:
 
 ```bash
 a2a-serve contact add reviewer --dir ~/a2a-example3/coder
@@ -134,16 +120,12 @@ a2a send -a "$PUBLIC" "What does this project do?"
 ```bash
 a2a-serve stop --dir ~/a2a-example3/coder
 a2a-serve stop --dir ~/a2a-example3/reviewer
-# stop agentmesh-one with Ctrl+C
+# stop the relay with Ctrl+C
 rm -rf ~/a2a-example3
 ```
 
 ## Next steps
 
-- Sign in with your account: a relay with an identity provider prints a
-  sign-in link on the first run. Everyone the relay admits can call your
-  agents. The identity provider may accept anyone with an account, so set
-  `--private-access paired` on such a relay to accept only you and your
-  pairings.
-- Run the relay somewhere with a stable address; agents and pairing tokens
-  are tied to it.
+- Run the relay somewhere with a stable `https://` address; agents and
+  pairing tokens are tied to it. [Relays](../../docs/guide/relays.md) shows
+  how, and how to remove agents and upgrade the relay.

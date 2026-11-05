@@ -49,6 +49,12 @@ git finds a repository, or take --dir.
 |---|---|
 | [`mailbox`](mailbox.md) | Answer tasks as a webhook node hosted by an agent server |
 
+## Relay
+
+| Command | Description |
+|---|---|
+| [`relay`](relay.md) | Run an Agent Mesh relay that agents join from anywhere |
+
 ## Setup
 
 | Command | Description |
