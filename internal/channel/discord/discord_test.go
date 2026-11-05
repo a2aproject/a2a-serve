@@ -17,9 +17,14 @@ package discord
 import (
 	"errors"
 	"maps"
+	"net/http"
+	"net/http/httptest"
 	"slices"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/google/go-cmp/cmp"
@@ -90,6 +95,12 @@ func TestCatchUp(t *testing.T) {
 		many = append(many, message(i, false))
 		manyWant = append(manyWant, delivered{MessageID: strconv.Itoa(i), Direct: true, Text: "hi " + strconv.Itoa(i)})
 	}
+	var outage []*discordgo.Message
+	var outageWant []delivered
+	for i := 1001; i <= 3500; i++ {
+		outage = append(outage, message(i, false))
+		outageWant = append(outageWant, delivered{MessageID: strconv.Itoa(i), Direct: true, Text: "hi " + strconv.Itoa(i)})
+	}
 	dm := &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM}
 	guild := &discordgo.Channel{ID: "c1", GuildID: "g1", Type: discordgo.ChannelTypeGuildText}
 	tests := []struct {
@@ -123,6 +134,18 @@ func TestCatchUp(t *testing.T) {
 			kv:       map[string]string{threadKey("c1"): "1"},
 			want:     []delivered{{MessageID: "1001", Direct: false, Text: "hi 1001"}},
 			wantLast: "1001",
+		},
+		{
+			name:     "cursor passes messages the bot ignored",
+			api:      &fakeAPI{channel: guild, msgs: []*discordgo.Message{message(1001, true), message(1002, false)}},
+			want:     []delivered{{MessageID: "1001", Direct: false, Text: "hi 1001"}},
+			wantLast: "1002",
+		},
+		{
+			name:     "outage with more messages than one round reads",
+			api:      &fakeAPI{channel: dm, msgs: outage},
+			want:     outageWant,
+			wantLast: "3500",
 		},
 		{
 			name:     "nothing missed",
@@ -189,5 +212,222 @@ func TestComponents(t *testing.T) {
 	}}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("components() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCursorOnlyAdvancesOnInboundMessages(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		init map[string]string
+		do   func(c *Channel)
+		want string
+	}{
+		{name: "message sent by the bot keeps the cursor", init: map[string]string{lastKey("c1"): "1000"}, do: func(c *Channel) { c.trackSent("c1", "1500") }, want: "1000"},
+		{name: "message sent to a new conversation starts the cursor", do: func(c *Channel) { c.trackSent("c1", "1500") }, want: "1500"},
+		{name: "inbound message moves the cursor", init: map[string]string{lastKey("c1"): "1000"}, do: func(c *Channel) { c.trackInbound("c1", "1100") }, want: "1100"},
+		{name: "older inbound message keeps the cursor", init: map[string]string{lastKey("c1"): "1000"}, do: func(c *Channel) { c.trackInbound("c1", "999") }, want: "1000"},
+		{name: "longer ID is newer", init: map[string]string{lastKey("c1"): "999"}, do: func(c *Channel) { c.trackInbound("c1", "1000") }, want: "1000"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			kv := channeltest.NewKV(tc.init)
+			c := New("token", kv)
+
+			tc.do(c)
+
+			if got := kv.All()[lastKey("c1")]; got != tc.want {
+				t.Fatalf("cursor = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestOnMessageKeepsArrivalOrderWithoutWaitingForTheRouter(t *testing.T) {
+	t.Parallel()
+	const n = 30
+	c := New("token", channeltest.NewKV(nil))
+	c.me = &discordgo.User{ID: botID}
+	in := make(chan channel.Inbound)
+	c.in, c.ctx = in, t.Context()
+
+	returned := make(chan struct{})
+	go func() {
+		defer close(returned)
+		for i := 1; i <= n; i++ {
+			c.onMessage(nil, &discordgo.MessageCreate{Message: message(i, false)})
+		}
+	}()
+
+	select {
+	case <-returned:
+	case <-time.After(10 * time.Second):
+		t.Fatal("onMessage() blocked until the router read the message")
+	}
+	var got []string
+	for range n {
+		select {
+		case m := <-in:
+			got = append(got, m.MessageID)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("delivered %d messages, want %d", len(got), n)
+		}
+	}
+	var want []string
+	for i := 1; i <= n; i++ {
+		want = append(want, strconv.Itoa(i))
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("onMessage() delivered wrong order (-want +got) diff = %s", diff)
+	}
+}
+
+func TestOrderedQueueRunsConversationsIndependently(t *testing.T) {
+	t.Parallel()
+	q := newOrderedQueue()
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	q.do("a", func() { <-release })
+	done := make(chan struct{})
+
+	q.do("b", func() { close(done) })
+
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("a stalled conversation held up another one")
+	}
+}
+
+// failingStarter fails to start threads the first failures times.
+type failingStarter struct {
+	failures int32
+	calls    atomic.Int32
+}
+
+func (f *failingStarter) MessageThreadStartComplex(string, string, *discordgo.ThreadStart, ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	if f.calls.Add(1) <= f.failures {
+		return nil, errors.New("missing access")
+	}
+	return &discordgo.Channel{ID: "th1"}, nil
+}
+
+func TestPrepareThreadStart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		failures int32
+		wantConv channel.ConvKey
+		wantDrop bool
+	}{
+		{name: "thread starts", wantConv: "th1"},
+		{name: "thread starts on the second try", failures: 1, wantConv: "th1"},
+		{name: "thread fails to start", failures: 100, wantConv: "c1", wantDrop: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c := New("token", channeltest.NewKV(nil))
+			c.me = &discordgo.User{ID: botID}
+			c.threadRetry = time.Millisecond
+			in := make(chan channel.Inbound, 1)
+			c.in, c.ctx = in, t.Context()
+			c.handleMessage(&failingStarter{failures: tc.failures}, message(1001, true), false)
+			m := <-in
+
+			err := m.Prepare(t.Context(), &m)
+
+			var dropped *channel.DroppedError
+			if got := errors.As(err, &dropped); got != tc.wantDrop {
+				t.Fatalf("Inbound.Prepare() error = %v, want a *channel.DroppedError: %v", err, tc.wantDrop)
+			}
+			if !tc.wantDrop && err != nil {
+				t.Fatalf("Inbound.Prepare() error = %v, want nil", err)
+			}
+			if m.Conv != tc.wantConv {
+				t.Fatalf("Inbound.Prepare() conversation = %q, want %q", m.Conv, tc.wantConv)
+			}
+		})
+	}
+}
+
+func TestPrepareReportsFailedAttachments(t *testing.T) {
+	t.Parallel()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ok.txt" {
+			if _, err := w.Write([]byte("hello")); err != nil {
+				t.Errorf("writing the attachment: %v", err)
+			}
+			return
+		}
+		http.Error(w, "gone", http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := New("token", channeltest.NewKV(nil))
+	c.me = &discordgo.User{ID: botID}
+	in := make(chan channel.Inbound, 1)
+	c.in, c.ctx = in, t.Context()
+	msg := message(1001, false)
+	msg.Attachments = []*discordgo.MessageAttachment{
+		{Filename: "ok.txt", URL: srv.URL + "/ok.txt"},
+		{Filename: "gone.txt", URL: srv.URL + "/gone.txt?hm=secret"},
+	}
+	c.handleMessage(nil, msg, true)
+	m := <-in
+
+	err := m.Prepare(t.Context(), &m)
+
+	failed := channel.FailedAttachments(err)
+	if len(failed) != 1 || failed[0].Name != "gone.txt" {
+		t.Fatalf("Inbound.Prepare() error = %v, want one failed attachment, gone.txt", err)
+	}
+	if strings.Contains(err.Error(), "secret") {
+		t.Fatalf("Inbound.Prepare() error = %v, want it without the URL query", err)
+	}
+	if len(m.Files) != 1 || m.Files[0].Name != "ok.txt" {
+		t.Fatalf("Inbound.Prepare() files = %+v, want ok.txt", m.Files)
+	}
+}
+
+func TestEscapeMarkdown(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{name: "masked link", text: "Run [rm -rf /](https://example.com/ok)", want: `Run \[rm -rf /\]\(https://example.com/ok\)`},
+		{name: "spoiler", text: "||hidden||", want: `\|\|hidden\|\|`},
+		{name: "code and emphasis", text: "`a` *b* _c_ ~d~", want: "\\`a\\` \\*b\\* \\_c\\_ \\~d\\~"},
+		{name: "plain words", text: "Run git push 42", want: "Run git push 42"},
+		{name: "non-ASCII text", text: "Запуск ✓", want: "Запуск ✓"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			want := strings.ReplaceAll(tc.want, `\`, `\`)
+			if got := escapeMarkdown(tc.text); got != want {
+				t.Fatalf("escapeMarkdown(%q) = %q, want %q", tc.text, got, want)
+			}
+		})
+	}
+}
+
+func TestLiteralPiecesFitTheLimitAndKeepTheText(t *testing.T) {
+	t.Parallel()
+	text := strings.Repeat("[x](y) ", 600)
+
+	pieces := messagePieces(channel.Outbound{Text: text, Literal: true})
+
+	var unescaped strings.Builder
+	for _, p := range pieces {
+		if len(p) > maxText {
+			t.Fatalf("messagePieces() made a piece of %d bytes, want at most %d", len(p), maxText)
+		}
+		unescaped.WriteString(strings.NewReplacer(`\[`, "[", `\]`, "]", `\(`, "(", `\)`, ")").Replace(p))
+	}
+	if got := strings.Join(strings.Fields(unescaped.String()), " "); got != strings.Join(strings.Fields(text), " ") {
+		t.Fatalf("messagePieces() pieces don't add up to the text")
 	}
 }
