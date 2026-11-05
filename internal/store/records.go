@@ -281,6 +281,8 @@ type Question struct {
 	Created    time.Time
 	AnsweredBy string
 	Answer     string
+	// Closed is set once the task no longer waits for an answer.
+	Closed bool
 }
 
 // PutQuestion stores a question. It returns [ErrExists] if the remote
@@ -316,7 +318,7 @@ func (s *Store) QuestionByToken(ctx context.Context, token string) (Question, er
 	return s.question(ctx, `token = ?`, token)
 }
 
-const questionColumns = `id, token, task_id, context_id, contact, hitl_id, user_id, data, created, answered_by, answer`
+const questionColumns = `id, token, task_id, context_id, contact, hitl_id, user_id, data, created, answered_by, answer, closed`
 
 func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 	var (
@@ -324,7 +326,7 @@ func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {
 		data    string
 		created int64
 	)
-	err := row.Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &q.User, &data, &created, &q.AnsweredBy, &q.Answer)
+	err := row.Scan(&q.ID, &q.Token, &q.TaskID, &q.ContextID, &q.Contact, &q.HitlID, &q.User, &data, &created, &q.AnsweredBy, &q.Answer, &q.Closed)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Question{}, ErrNotFound
 	}
@@ -340,9 +342,10 @@ func (s *Store) question(ctx context.Context, where string, arg string) (Questio
 }
 
 // UnansweredQuestions lists the questions nobody answered yet, newest
-// first. Questions of tasks which ended without an answer are among them.
+// first. Questions of tasks which ended without an answer are among them
+// until [Store.CloseQuestion] marks them closed.
 func (s *Store) UnansweredQuestions(ctx context.Context) ([]Question, error) {
-	rows, err := s.reads.QueryContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE answered_by = '' ORDER BY created DESC`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT `+questionColumns+` FROM questions WHERE answered_by = '' AND NOT closed ORDER BY created DESC`)
 	if err != nil {
 		return nil, err
 	}
@@ -380,6 +383,13 @@ func (s *Store) AnswerQuestion(ctx context.Context, id, by, answer string) error
 	return ErrAnswered
 }
 
+// CloseQuestion marks a question nobody answered closed: its task no longer
+// waits for an answer.
+func (s *Store) CloseQuestion(ctx context.Context, id string) error {
+	_, err := s.exec(ctx, `UPDATE questions SET closed = 1 WHERE id = ? AND answered_by = ''`, id)
+	return err
+}
+
 // UnanswerQuestion clears an answer by, so that a question whose answer
 // couldn't be delivered can be answered again.
 func (s *Store) UnanswerQuestion(ctx context.Context, id, by string) error {
@@ -402,6 +412,18 @@ func (s *Store) AddQuestionMessage(ctx context.Context, m QuestionMessage) error
 	_, err := s.exec(ctx, `INSERT INTO question_messages (question_id, channel, conv, message_id, text) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT DO UPDATE SET text = excluded.text`, m.QuestionID, m.Channel, m.Conv, m.MessageID, m.Text)
 	return err
+}
+
+// QuestionOfMessage returns the ID of the question a message in a
+// conversation shows.
+func (s *Store) QuestionOfMessage(ctx context.Context, channel, conv, messageID string) (string, error) {
+	var id string
+	err := s.reads.QueryRowContext(ctx, `SELECT question_id FROM question_messages WHERE channel = ? AND conv = ? AND message_id = ?`,
+		channel, conv, messageID).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return id, err
 }
 
 // TakeQuestionMessages returns and forgets the messages which show a question.
@@ -428,29 +450,18 @@ func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]
 	return out, rows.Err()
 }
 
-// SetPendingQuestion makes a question the one a typed reply in a
-// conversation answers.
-func (s *Store) SetPendingQuestion(ctx context.Context, channel, conv, questionID string) error {
+// AddPendingQuestion makes a question one that typed replies in a
+// conversation may answer.
+func (s *Store) AddPendingQuestion(ctx context.Context, channel, conv, questionID string) error {
 	_, err := s.exec(ctx, `INSERT INTO pending_questions (channel, conv, question_id) VALUES (?, ?, ?)
-		ON CONFLICT (channel, conv) DO UPDATE SET question_id = excluded.question_id`, channel, conv, questionID)
+		ON CONFLICT DO NOTHING`, channel, conv, questionID)
 	return err
 }
 
-// PendingQuestion returns the ID of the question a typed reply in a
-// conversation answers.
-func (s *Store) PendingQuestion(ctx context.Context, channel, conv string) (string, error) {
-	var id string
-	err := s.reads.QueryRowContext(ctx, `SELECT question_id FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", ErrNotFound
-	}
-	return id, err
-}
-
-// ClearPendingQuestion forgets the pending question of a conversation.
-func (s *Store) ClearPendingQuestion(ctx context.Context, channel, conv string) error {
-	_, err := s.exec(ctx, `DELETE FROM pending_questions WHERE channel = ? AND conv = ?`, channel, conv)
-	return err
+// PendingQuestions returns the IDs of the questions pending in a
+// conversation, oldest first.
+func (s *Store) PendingQuestions(ctx context.Context, channel, conv string) ([]string, error) {
+	return s.questionIDs(ctx, `SELECT question_id FROM pending_questions WHERE channel = ? AND conv = ? ORDER BY rowid`, channel, conv)
 }
 
 // ForgetPendingQuestion stops a question from being pending in any
@@ -460,10 +471,10 @@ func (s *Store) ForgetPendingQuestion(ctx context.Context, questionID string) er
 	return err
 }
 
-// UnansweredQuestionsOf returns the IDs of the unanswered questions of a
-// task of this agent.
+// UnansweredQuestionsOf returns the IDs of the open, unanswered questions
+// of a task of this agent.
 func (s *Store) UnansweredQuestionsOf(ctx context.Context, taskID string) ([]string, error) {
-	return s.questionIDs(ctx, `SELECT id FROM questions WHERE task_id = ? AND contact = '' AND answered_by = ''`, taskID)
+	return s.questionIDs(ctx, `SELECT id FROM questions WHERE task_id = ? AND contact = '' AND answered_by = '' AND NOT closed`, taskID)
 }
 
 // StaleQuestions returns the IDs of the unanswered questions of this
