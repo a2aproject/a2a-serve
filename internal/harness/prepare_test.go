@@ -98,7 +98,7 @@ func TestPrepareDocker(t *testing.T) {
 			envFile = p.Args[i+1]
 		}
 	}
-	wantMounts := []string{ws + ":" + ws, sockDir + ":" + SandboxDir, home + ":" + ContainerHome}
+	wantMounts := []string{ws + ":" + ws, sockDir + ":" + SandboxDir + ":ro", home + ":" + ContainerHome}
 	if diff := cmp.Diff(wantMounts, mounts); diff != "" {
 		t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
 	}

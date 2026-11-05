@@ -72,8 +72,9 @@ type Spec struct {
 	Labels map[string]string
 
 	// Socket is the host path of the Unix socket through which the harness
-	// reaches the agent server. Empty when the harness reaches the server
-	// over TCP.
+	// reaches the agent server, alone in its directory, which a container
+	// mounts read-only so the harness can't replace it. Empty when the
+	// harness reaches the server over TCP.
 	Socket string
 	// CLI is the host path of the a2a binary put first on the PATH of a
 	// local harness. A harness in Docker uses the a2a of its image.
@@ -144,7 +145,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		Rootless: rootless,
 	}
 	if spec.Socket != "" {
-		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir})
+		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
 	cmd, err := dr.Command(ctx, spec.Profile.Command(ws))

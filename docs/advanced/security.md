@@ -9,7 +9,7 @@ By default the agent runs in Docker with:
 - the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config;
 - `state/home` as its home directory, where it keeps its sessions and config;
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
-- a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. On Docker Desktop the socket is a TCP port on the host's loopback, and the agent sends a key.
+- a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is a TCP port on the host's loopback, and each container sends a key of its own.
 
 Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server. All containers share the workspace, the `--mount` directories and the `--secret` values.
 
@@ -69,7 +69,7 @@ Minting pairing codes, changing settings, adding contacts or messengers, and ope
 | Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | `a2a-serve config unset allow-email <entry>` |
 | Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
-| Agent key (Docker Desktop) | The agent's socket | Generated on start, in the agent's home | Restart |
+| Agent key (Docker Desktop) | The agent's socket, for the conversations of one container | Generated when the container starts, in its home | Restart |
 | Inspector link and session | The inspector, as the owner | In memory; the link works once for 5 minutes, the session for 12 hours | Restart |
 | Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
 | `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve channel rm <kind>`, then rotate at the service |

@@ -119,7 +119,11 @@ type Server struct {
 	private  network.Provider
 	public   network.Provider
 	newRelay func(network.RelayConfig) (network.Provider, error)
-	bridge   harnessBridge
+	// harness has the endpoints through which agent processes reach the
+	// server, and mainHarness is the one of the owner's process.
+	harness     *harnessListeners
+	mainHarness *harnessEndpoint
+	bridge      harnessBridge
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -230,8 +234,7 @@ func Run(ctx context.Context, opts Options) error {
 		closers.close()
 	}()
 
-	harnessLn, err := s.open(ctx, &closers, opts.Executor == nil)
-	if err != nil {
+	if err := s.open(ctx, &closers, opts.Executor == nil); err != nil {
 		return err
 	}
 	if err := s.build(ctx, &closers, opts); err != nil {
@@ -239,11 +242,12 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	chans := opts.Channels
 	if chans == nil {
+		var err error
 		if chans, err = s.buildChannels(); err != nil {
 			return err
 		}
 	}
-	errc, err := s.serve(ctx, &closers, harnessLn, chans)
+	errc, err := s.serve(ctx, &closers, chans)
 	if err != nil {
 		// The control socket already serves, so a stop may come before
 		// startup finishes.
@@ -264,22 +268,22 @@ func Run(ctx context.Context, opts Options) error {
 }
 
 // open locks the agent directory and opens its database, the network
-// providers and the listener the harness reaches the server through.
-func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.Listener, error) {
+// providers and the listeners agent processes reach the server through.
+func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error {
 	if err := s.dir.Init(); err != nil {
-		return nil, err
+		return err
 	}
 	release, err := fsutil.TryLock(s.dir.LockPath())
 	if errors.Is(err, fsutil.ErrLocked) {
-		return nil, fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
+		return fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root)
 	}
 	if err != nil {
-		return nil, fmt.Errorf("locking the agent directory: %w", err)
+		return fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
 	st, err := store.Open(s.dir.DBPath())
 	if err != nil {
-		return nil, err
+		return err
 	}
 	closers.push(func(context.Context) error { return st.Close() })
 	s.store = st
@@ -287,21 +291,26 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) (net.
 	s.tasks = st.Tasks("", s.viewer)
 	n, err := s.tasks.FailUnfinished(ctx, "The agent server restarted before this task finished. Send the message again.")
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if n > 0 {
 		slog.Info("failed tasks interrupted by the previous run", "count", n)
 	}
 	if err := s.setupNetwork(closers); err != nil {
-		return nil, err
+		return err
 	}
-	ln, bridge, err := s.listenHarness(sandboxed)
+	hl, err := s.listenHarness(sandboxed)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	closers.push(func(context.Context) error { return closeListener(ln) })
-	s.bridge = bridge
-	return ln, nil
+	closers.push(hl.close)
+	main, err := hl.open("")
+	if err != nil {
+		return err
+	}
+	closers.push(func(context.Context) error { return main.close() })
+	s.harness, s.mainHarness, s.bridge = hl, main, hl.bridge(main)
+	return nil
 }
 
 // build creates the components and starts the harness. Nothing serves yet.
@@ -474,11 +483,11 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 // serve starts the chat turns, serves every listener and the control socket,
 // starts the channels and resumes watches. Errors of listeners after the
 // start arrive on the returned channel.
-func (s *Server) serve(ctx context.Context, closers *stack, harnessLn net.Listener, chans []channel.Channel) (<-chan error, error) {
+func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Channel) (<-chan error, error) {
 	errc := make(chan error, 1)
 	s.chatTurns.start(ctx)
 	closers.push(s.supervisor.stopAll)
-	closers.push(s.serveHTTP(ctx, harnessLn, listener{kind: network.ListenerHarness}, errc))
+	closers.push(s.harness.serve(ctx, s.proxy.routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}

@@ -311,13 +311,13 @@ func TestAgentsURLHandles(t *testing.T) {
 	if len(h) != handleLen {
 		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
 	}
-	if _, err := p.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := p.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, errNoTurn)
 	}
 
 	turn := callerClaims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
 	end := p.beginTurn(turn)
-	got, err := p.claimsOf(ctx, h)
+	got, err := p.claimsOf(ctx, h, "")
 	if err != nil {
 		t.Fatalf("claimsOf() during a turn error = %v", err)
 	}
@@ -326,10 +326,10 @@ func TestAgentsURLHandles(t *testing.T) {
 	}
 	end()
 
-	if _, err := p.claimsOf(ctx, h); !errors.Is(err, errNoTurn) {
+	if _, err := p.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
 		t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
 	}
-	if _, err := p.claimsOf(ctx, "unknown"); !errors.Is(err, errUnknownHandle) {
+	if _, err := p.claimsOf(ctx, "unknown", ""); !errors.Is(err, errUnknownHandle) {
 		t.Fatalf("claimsOf(unknown) error = %v, want %v", err, errUnknownHandle)
 	}
 }
@@ -353,11 +353,18 @@ func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Princip
 	return u
 }
 
-// harnessClient returns a client which reaches ts the way its harness does.
+// harnessClient returns a client which reaches ts the way the owner's
+// agent process does.
 func harnessClient(ts *testServer) *http.Client {
+	return socketClient(ts.srv.bridge.socket)
+}
+
+// socketClient returns a client which sends every request through the Unix
+// socket at path.
+func socketClient(path string) *http.Client {
 	var d net.Dialer
 	return &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return d.DialContext(ctx, "unix", ts.srv.bridge.socket)
+		return d.DialContext(ctx, "unix", path)
 	}}}
 }
 
@@ -440,6 +447,102 @@ func TestAgentsProxy(t *testing.T) {
 	}
 }
 
+func TestAgentsProxyServesOnlyTheConversationsOfItsProcess(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, ts, "grok", 0)
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	annaContext := send(t, anna, userText("hello", "", "")).ContextID
+	annaURL := turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
+	ownerURL := turnURL(t, ts, "c1")
+	annaSocket, err := ts.srv.harness.open(userAgentKeyPrefix + "pair:anna")
+	if err != nil {
+		t.Fatalf("harnessListeners.open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := annaSocket.close(); err != nil {
+			t.Errorf("harnessEndpoint.close() error = %v", err)
+		}
+	})
+	tests := []struct {
+		name    string
+		socket  string
+		url     string
+		wantErr bool
+	}{
+		{name: "owner's socket and conversation", socket: ts.srv.bridge.socket, url: ownerURL},
+		{name: "anna's socket and conversation", socket: annaSocket.socket, url: annaURL},
+		{name: "owner's socket and anna's conversation", socket: ts.srv.bridge.socket, url: annaURL, wantErr: true},
+		{name: "anna's socket and owner's conversation", socket: annaSocket.socket, url: ownerURL, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			task, err := callAgent(t, socketClient(tc.socket), tc.url+"/grok", "hi")
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("callAgent() error = %v, want error %v", err, tc.wantErr)
+			}
+			if err == nil && resultText(task) != "grok says: hi" {
+				t.Fatalf("task result = %q, want %q", resultText(task), "grok says: hi")
+			}
+		})
+	}
+}
+
+func TestHarnessEndpointsOverTCP(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{name: "assistant"})
+	addNode(t, ts, "grok", 0)
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	annaContext := send(t, anna, userText("hello", "", "")).ContextID
+	annaHandle := strings.TrimPrefix(turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}), socketHost+"/")
+	ownerHandle := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
+	hl, err := listenHarnessTCP("127.0.0.1", "127.0.0.1")
+	if err != nil {
+		t.Fatalf("listenHarnessTCP() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := hl.close(context.Background()); err != nil {
+			t.Errorf("harnessListeners.close() error = %v", err)
+		}
+	})
+	shutdown := hl.serve(context.Background(), ts.srv.proxy.routes(hl.processOf), make(chan error, 1))
+	t.Cleanup(func() {
+		if err := shutdown(context.Background()); err != nil {
+			t.Errorf("shutting down the harness listener: %v", err)
+		}
+	})
+	owner, annaKey := hl.openKey(""), hl.openKey(userAgentKeyPrefix+"pair:anna")
+	closed := hl.openKey("")
+	if err := closed.close(); err != nil {
+		t.Fatalf("harnessEndpoint.close() error = %v", err)
+	}
+	tests := []struct {
+		name   string
+		key    string
+		handle string
+		want   int
+	}{
+		{name: "owner's key and conversation", key: owner.key, handle: ownerHandle, want: http.StatusOK},
+		{name: "anna's key and conversation", key: annaKey.key, handle: annaHandle, want: http.StatusOK},
+		{name: "owner's key and anna's conversation", key: owner.key, handle: annaHandle, want: http.StatusNotFound},
+		{name: "anna's key and owner's conversation", key: annaKey.key, handle: ownerHandle, want: http.StatusNotFound},
+		{name: "closed key", key: closed.key, handle: ownerHandle, want: http.StatusUnauthorized},
+		{name: "no key", handle: ownerHandle, want: http.StatusUnauthorized},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			header := ""
+			if tc.key != "" {
+				header = "Bearer " + tc.key
+			}
+			got := getURL(t, hl.url+"/"+tc.handle+"/grok/.well-known/agent-card.json", header)
+			if got.Status != tc.want {
+				t.Fatalf("GET agent card status = %d (%s), want %d", got.Status, got.Error, tc.want)
+			}
+		})
+	}
+}
+
 func TestAgentsProxyChecksTheTurnsRole(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
@@ -475,7 +578,7 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	hs := httptest.NewServer(ts.srv.proxy.routes("harness-key"))
+	hs := httptest.NewServer(ts.srv.proxy.routes(harnessKeyCaller("harness-key")))
 	t.Cleanup(hs.Close)
 	h := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
 	tests := []struct {
@@ -798,7 +901,7 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			end := p.turn(tc.ctx, tc.execCtx)
-			got, err := p.claimsOf(context.Background(), h)
+			got, err := p.claimsOf(context.Background(), h, "")
 			end()
 			if err != nil {
 				t.Fatalf("claimsOf() during the turn error = %v", err)
@@ -806,7 +909,7 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 			if diff := cmp.Diff(callerClaims{ContextID: "c1", User: tc.want}, got); diff != "" {
 				t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
 			}
-			if _, err := p.claimsOf(context.Background(), h); !errors.Is(err, errNoTurn) {
+			if _, err := p.claimsOf(context.Background(), h, ""); !errors.Is(err, errNoTurn) {
 				t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
 			}
 		})
