@@ -138,3 +138,32 @@ func TestAddTreeFilesChangingSize(t *testing.T) {
 		t.Fatalf("addTree() wrong entries (-want +got) diff = %s", diff)
 	}
 }
+
+func TestAddTreeDoesNotFollowSymlinksSwappedInDuringWalk(t *testing.T) {
+	t.Parallel()
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, "sub"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, filepath.Join(root, "sub"), map[string]string{"a": "1", "b": "2"})
+	writeFiles(t, outside, map[string]string{"b": "host secret"})
+	w := &hookWriter{names: []string{"home/sub/a"}}
+	w.onHeader = func(string) {
+		if err := os.Rename(filepath.Join(root, "sub"), filepath.Join(root, "old")); err != nil {
+			t.Error(err)
+		}
+		if err := os.Symlink(outside, filepath.Join(root, "sub")); err != nil {
+			t.Error(err)
+		}
+	}
+	tw := tar.NewWriter(w)
+	err := addTree(context.Background(), tw, root, "home")
+	if err := tw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range readTar(t, w.buf.Bytes()) {
+		if content == "host secret" {
+			t.Fatalf("addTree() archived %s with the content of a file out of the tree (error = %v)", name, err)
+		}
+	}
+}

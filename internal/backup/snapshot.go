@@ -115,9 +115,17 @@ func addFile(tw *tar.Writer, src, name string) error {
 		return err
 	}
 	defer closeLogged(f)
+	return addOpenFile(tw, f, name)
+}
+
+func addOpenFile(tw *tar.Writer, f *os.File, name string) error {
 	info, err := f.Stat()
 	if err != nil {
 		return err
+	}
+	if !info.Mode().IsRegular() {
+		// The file was replaced after the walk listed it.
+		return nil
 	}
 	hdr, err := tar.FileInfoHeader(info, "")
 	if err != nil {
@@ -142,11 +150,32 @@ func (zeroReader) Read(p []byte) (int, error) {
 	return len(p), nil
 }
 
-func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
-	return filepath.WalkDir(root, func(p string, e fs.DirEntry, err error) error {
+// addTree adds the tree at root as name. The harness can change its homes
+// while the walk runs, so files are opened through root, which refuses
+// symlinks that lead out of it.
+func addTree(ctx context.Context, tw *tar.Writer, root, name string) (err error) {
+	info, err := os.Lstat(root)
+	if errors.Is(err, fs.ErrNotExist) {
+		// A missing root is an absent optional tree.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	switch {
+	case info.Mode().IsRegular():
+		return addFile(tw, root, name)
+	case !info.IsDir():
+		return addEntry(tw, info, func() (string, error) { return os.Readlink(root) }, name)
+	}
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, r.Close()) }()
+	return fs.WalkDir(r.FS(), ".", func(rel string, e fs.DirEntry, err error) error {
 		if errors.Is(err, fs.ErrNotExist) {
-			// A missing root is an absent optional tree, a vanished
-			// entry was deleted during the backup.
+			// A vanished entry was deleted during the backup.
 			return nil
 		}
 		if err != nil {
@@ -155,14 +184,10 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, p)
-		if err != nil {
-			return err
-		}
-		if e.IsDir() && isHomeCache(name, filepath.ToSlash(rel)) {
+		if e.IsDir() && isHomeCache(name, rel) {
 			return filepath.SkipDir
 		}
-		entry := path.Join(name, filepath.ToSlash(rel))
+		entry := path.Join(name, rel)
 		info, err := e.Info()
 		if errors.Is(err, fs.ErrNotExist) {
 			return nil
@@ -170,32 +195,43 @@ func addTree(ctx context.Context, tw *tar.Writer, root, name string) error {
 		if err != nil {
 			return err
 		}
-		switch {
-		case info.Mode().IsRegular():
-			if err := addFile(tw, p, entry); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				return err
-			}
-			return nil
-		case info.IsDir(), info.Mode()&fs.ModeSymlink != 0:
-			link := ""
-			if info.Mode()&fs.ModeSymlink != 0 {
-				if link, err = os.Readlink(p); err != nil {
-					return err
-				}
-			}
-			hdr, err := tar.FileInfoHeader(info, link)
-			if err != nil {
-				return err
-			}
-			hdr.Name = entry
-			if info.IsDir() {
-				hdr.Name += "/"
-			}
-			return tw.WriteHeader(hdr)
+		if !info.Mode().IsRegular() {
+			return addEntry(tw, info, func() (string, error) { return r.Readlink(filepath.FromSlash(rel)) }, entry)
 		}
+		f, err := r.Open(filepath.FromSlash(rel))
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		defer closeLogged(f)
+		return addOpenFile(tw, f, entry)
+	})
+}
+
+// addEntry adds a directory or a symlink, whose target readlink returns.
+func addEntry(tw *tar.Writer, info fs.FileInfo, readlink func() (string, error), entry string) error {
+	link := ""
+	switch {
+	case info.Mode()&fs.ModeSymlink != 0:
+		var err error
+		if link, err = readlink(); err != nil {
+			return err
+		}
+	case !info.IsDir():
 		// Sockets and other special files don't survive a move.
 		return nil
-	})
+	}
+	hdr, err := tar.FileInfoHeader(info, link)
+	if err != nil {
+		return err
+	}
+	hdr.Name = entry
+	if info.IsDir() {
+		hdr.Name += "/"
+	}
+	return tw.WriteHeader(hdr)
 }
 
 // extractArchive extracts a snapshot into dst, the .a2a directory of the
