@@ -34,7 +34,29 @@ func openTable(t *testing.T, self string, c *clock) *Table {
 		t.Fatalf("Open() error = %v", err)
 	}
 	tb.SetClock(c.now)
+	t.Cleanup(func() {
+		if err := tb.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
 	return tb
+}
+
+// entriesOf returns n entries of host, which expire in an hour.
+func entriesOf(c *clock, host string, n int) []Entry {
+	out := make([]Entry, n)
+	for i := range out {
+		out[i] = Entry{Name: fmt.Sprintf("p%d", i), Host: host, Version: 1, Expires: c.t.Add(time.Hour)}
+	}
+	return out
+}
+
+func hostsOf(entries []Entry) map[string]int {
+	out := map[string]int{}
+	for _, e := range entries {
+		out[e.Host]++
+	}
+	return out
 }
 
 // round swaps the tables of a and b the way the agents do over HTTP.
@@ -218,6 +240,9 @@ func TestTableKeepsEntriesFromTheirHostAfterReopening(t *testing.T) {
 	if err := tb.Merge("ben", []Entry{{Name: "grok", Host: "ben", Description: "Grok", Version: 1, Expires: expires}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := tb.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	again, err := Open(path, "anna")
 	if err != nil {
@@ -249,5 +274,145 @@ func TestTablePersists(t *testing.T) {
 	}
 	if _, ok := again.Own()["grok"]; !ok {
 		t.Fatalf("Own() after reopening = %v, want grok", again.Own())
+	}
+}
+
+func TestMergeSavesWhenClosed(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	path := filepath.Join(t.TempDir(), "ads.json")
+	tb, err := Open(path, "anna")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb.SetClock(c.now)
+	reopen := func() []Entry {
+		t.Helper()
+		again, err := Open(path, "anna")
+		if err != nil {
+			t.Fatalf("Open() error = %v", err)
+		}
+		again.SetClock(c.now)
+		return again.Live()
+	}
+	if err := tb.Merge("ben", []Entry{{Name: "grok", Host: "ben", Version: 1, Expires: c.t.Add(time.Hour)}}); err != nil {
+		t.Fatalf("Merge() error = %v", err)
+	}
+	if got := reopen(); len(got) != 0 {
+		t.Fatalf("Live() after reopening before Close() = %v, want none saved yet", keys(got))
+	}
+
+	if err := tb.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"grok@ben"}, keys(reopen())); diff != "" {
+		t.Fatalf("Live() after Close() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestMergeCapsEntriesPerHost(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	tests := []struct {
+		name string
+		peer string
+	}{
+		{name: "from their host", peer: "mallory"},
+		{name: "relayed", peer: "carl"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			anna := openTable(t, "anna", c)
+
+			if err := anna.Merge(tc.peer, entriesOf(c, "mallory", MaxPerHost+50)); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+
+			if diff := cmp.Diff(map[string]int{"mallory": MaxPerHost}, hostsOf(anna.Live())); diff != "" {
+				t.Fatalf("Live() entries by host wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestEntriesFromTheirHostEvictRelayedOnes(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	full := func(anna *Table) {
+		t.Helper()
+		for i := range MaxEntries / MaxPerHost {
+			if err := anna.Merge("mallory", entriesOf(c, fmt.Sprintf("h%d", i), MaxPerHost)); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+		}
+	}
+	tests := []struct {
+		name  string
+		setup func(anna *Table)
+	}{
+		{name: "table full", setup: full},
+		{name: "host full", setup: func(anna *Table) {
+			if err := anna.Merge("mallory", entriesOf(c, "ben", MaxPerHost)); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			anna := openTable(t, "anna", c)
+			tc.setup(anna)
+			grok := Entry{Name: "grok", Host: "ben", Version: 1, Expires: c.t.Add(time.Hour)}
+
+			if err := anna.Merge("mallory", []Entry{{Name: "relayed", Host: "dora", Version: 1, Expires: grok.Expires}, {Name: "relayed", Host: "ben", Version: 1, Expires: grok.Expires}}); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+			if err := anna.Merge("ben", []Entry{grok}); err != nil {
+				t.Fatalf("Merge() error = %v", err)
+			}
+
+			if _, ok := anna.Lookup("relayed@ben"); ok {
+				t.Fatalf("Lookup(relayed@ben) = found, want a relayed entry refused when there is no room")
+			}
+			if _, ok := anna.Lookup("grok@ben"); !ok {
+				t.Fatalf("Lookup(grok@ben) = not found, want the entry from its host")
+			}
+		})
+	}
+}
+
+func TestAdvertiseCapsEntries(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	ben, anna := openTable(t, "ben", c), openTable(t, "anna", c)
+	for i := range MaxPerHost {
+		if err := ben.Advertise(fmt.Sprintf("p%d", i), ""); err != nil {
+			t.Fatalf("Advertise() error = %v", err)
+		}
+	}
+	round(t, anna, ben)
+	if err := ben.Advertise("more", ""); err == nil {
+		t.Fatalf("Advertise() of one pairing too many error = nil, want error")
+	}
+	if err := ben.Advertise("p0", "renewed"); err != nil {
+		t.Fatalf("Advertise() of an advertised pairing error = %v", err)
+	}
+
+	c.t = c.t.Add(time.Minute)
+	if err := ben.Withdraw("p1"); err != nil {
+		t.Fatalf("Withdraw() error = %v", err)
+	}
+	if err := ben.Advertise("more", ""); err != nil {
+		t.Fatalf("Advertise() after a withdrawal error = %v", err)
+	}
+	round(t, anna, ben)
+
+	if _, ok := anna.Lookup("more@ben"); !ok {
+		t.Fatalf("Lookup(more@ben) on anna = not found, want the pairing advertised after a withdrawal")
+	}
+	if diff := cmp.Diff(map[string]int{"ben": MaxPerHost}, hostsOf(anna.Live())); diff != "" {
+		t.Fatalf("Live() on anna entries by host wrong result (-want +got) diff = %s", diff)
 	}
 }
