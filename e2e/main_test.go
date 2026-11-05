@@ -80,7 +80,8 @@ func buildBinaries(dir string) error {
 	if err != nil {
 		return err
 	}
-	if err := goCmd(root, nil, "build", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
+	// The e2e tag lets the tests point the channels at fake services.
+	if err := goCmd(root, nil, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
 		return err
 	}
 	// fakeacp is static, so that it also runs in an empty image.

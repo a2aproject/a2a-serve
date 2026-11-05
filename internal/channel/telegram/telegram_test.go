@@ -16,14 +16,10 @@ package telegram
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 
@@ -31,113 +27,16 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/telegram/telegramtest"
 )
-
-// fakeBotAPI serves the Bot API methods the channel uses and records calls.
-type fakeBotAPI struct {
-	t       *testing.T
-	mu      sync.Mutex
-	updates []string
-	calls   map[string][]string
-	// files are served for download by path; a nil value never answers.
-	files map[string][]byte
-	// getMeError, if set, is the Bot API error answered to getMe.
-	getMeError string
-	// failures are the Bot API errors answered to a method.
-	failures map[string]apiFailure
-}
-
-type apiFailure struct {
-	status int
-	body   string
-	// onlyWith, if set, limits the failure to requests whose body contains it.
-	onlyWith string
-}
-
-func (f *fakeBotAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if path, ok := strings.CutPrefix(r.URL.Path, "/file/bot123:abc/"); ok {
-		f.serveFile(w, r, path)
-		return
-	}
-	method := r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]
-	body, err := io.ReadAll(r.Body)
-	if err != nil {
-		f.t.Errorf("reading %s: %v", method, err)
-	}
-	f.mu.Lock()
-	f.calls[method] = append(f.calls[method], string(body))
-	var result string
-	if fail, ok := f.failures[method]; ok && strings.Contains(string(body), fail.onlyWith) {
-		f.mu.Unlock()
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(fail.status)
-		if _, err := io.WriteString(w, fail.body); err != nil {
-			f.t.Errorf("writing %s: %v", method, err)
-		}
-		return
-	}
-	switch method {
-	case "getMe":
-		if f.getMeError != "" {
-			f.mu.Unlock()
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			if _, err := io.WriteString(w, f.getMeError); err != nil {
-				f.t.Errorf("writing %s: %v", method, err)
-			}
-			return
-		}
-		result = `{"id":99,"is_bot":true,"first_name":"Coder","username":"my_coder_bot"}`
-	case "getFile":
-		for path := range f.files {
-			if strings.Contains(string(body), path) {
-				result = `{"file_id":"` + path + `","file_unique_id":"u","file_path":"` + path + `"}`
-			}
-		}
-	case "getUpdates":
-		result = "[" + strings.Join(f.updates, ",") + "]"
-		f.updates = nil
-	case "sendMessage", "editMessageText":
-		result = `{"message_id":7,"date":0,"chat":{"id":42,"type":"private"}}`
-	default:
-		result = "true"
-	}
-	f.mu.Unlock()
-	w.Header().Set("Content-Type", "application/json")
-	if _, err := io.WriteString(w, `{"ok":true,"result":`+result+`}`); err != nil {
-		f.t.Errorf("writing %s: %v", method, err)
-	}
-}
-
-func (f *fakeBotAPI) serveFile(w http.ResponseWriter, r *http.Request, path string) {
-	f.mu.Lock()
-	data := f.files[path]
-	f.mu.Unlock()
-	if data == nil {
-		<-r.Context().Done()
-		return
-	}
-	if _, err := w.Write(data); err != nil {
-		f.t.Errorf("writing %s: %v", path, err)
-	}
-}
-
-func (f *fakeBotAPI) called(method string) []string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([]string(nil), f.calls[method]...)
-}
 
 func TestChannel(t *testing.T) {
 	t.Parallel()
-	api := &fakeBotAPI{t: t, calls: map[string][]string{}, updates: []string{
-		`{"update_id":1,"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna","username":"anna"},"text":"/start K7Q2-9XF4"}}`,
-		`{"update_id":2,"callback_query":{"id":"cb1","from":{"id":42,"is_bot":false,"first_name":"Anna"},"data":"h:abcd1234:1","message":{"message_id":7,"date":1700000000,"chat":{"id":42,"type":"private"}}}}`,
-	}}
-	srv := httptest.NewServer(api)
-	defer srv.Close()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.Push(`{"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna","username":"anna"},"text":"/start K7Q2-9XF4"}}`)
+	api.Push(`{"callback_query":{"id":"cb1","from":{"id":42,"is_bot":false,"first_name":"Anna"},"data":"h:abcd1234:1","message":{"message_id":7,"date":1700000000,"chat":{"id":42,"type":"private"}}}}`)
 	c := New("123:abc")
-	c.ServerURL = srv.URL
+	c.ServerURL = api.URL
 
 	if got := c.Describe(); got != "@my_coder_bot" {
 		t.Fatalf("Describe() = %q, want @my_coder_bot", got)
@@ -175,33 +74,24 @@ func TestChannel(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send() error = %v", err)
 	}
-	if ref.ID != "7" {
-		t.Fatalf("Send() ref = %+v, want message 7", ref)
+	wantMsgs := []telegramtest.Message{{ID: 1, ChatID: 42, Text: "Run *git push*?", ParseMode: "MarkdownV2",
+		Buttons: []telegramtest.Button{{Text: "Allow", Data: "h:abcd1234:0"}, {Text: "Deny", Data: "h:abcd1234:1"}}}}
+	if diff := cmp.Diff(wantMsgs, api.Messages()); diff != "" {
+		t.Fatalf("Send() wrong messages (-want +got) diff = %s", diff)
 	}
-	sent := api.called("sendMessage")
-	if len(sent) != 1 {
-		t.Fatalf("sendMessage calls = %d, want 1", len(sent))
-	}
-	for _, want := range []string{`Run *git push*?`, "MarkdownV2", `h:abcd1234:0`, `h:abcd1234:1`} {
-		if !strings.Contains(unescapeJSON(sent[0]), want) {
-			t.Fatalf("sendMessage = %s, want it to contain %q", sent[0], want)
-		}
+	if ref != (channel.Ref{Conv: "42", ID: "1"}) {
+		t.Fatalf("Send() ref = %+v, want message 1", ref)
 	}
 	if err := c.Edit(ctx, ref, channel.Outbound{Conv: "42", Text: "✓ Allow by Anna"}); err != nil {
 		t.Fatalf("Edit() error = %v", err)
 	}
-	if len(api.called("answerCallbackQuery")) != 1 {
-		t.Fatalf("answerCallbackQuery was not called for the button click")
+	wantMsgs[0].Text, wantMsgs[0].Buttons, wantMsgs[0].Edits = "✓ Allow by Anna", nil, 1
+	if diff := cmp.Diff(wantMsgs, api.Messages()); diff != "" {
+		t.Fatalf("Edit() wrong messages (-want +got) diff = %s", diff)
 	}
-}
-
-// unescapeJSON undoes JSON string escaping in multipart field values.
-func unescapeJSON(s string) string {
-	var out string
-	if err := json.Unmarshal([]byte(`"`+strings.ReplaceAll(s, `"`, `\"`)+`"`), &out); err != nil {
-		return s
+	if n := len(api.Calls("answerCallbackQuery")); n != 1 {
+		t.Fatalf("answerCallbackQuery calls = %d, want 1", n)
 	}
-	return out
 }
 
 func TestRunKeepsUpdateOrder(t *testing.T) {
@@ -209,13 +99,15 @@ func TestRunKeepsUpdateOrder(t *testing.T) {
 	const n = 50
 	var updates, want []string
 	for i := range n {
-		updates = append(updates, fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"m%d"}}`, i+1, i+1, i))
+		updates = append(updates, fmt.Sprintf(`{"message":{"message_id":%d,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"m%d"}}`, i+1, i))
 		want = append(want, fmt.Sprintf("m%d", i))
 	}
-	srv := httptest.NewServer(&fakeBotAPI{t: t, calls: map[string][]string{}, updates: updates})
-	defer srv.Close()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	for _, u := range updates {
+		api.Push(u)
+	}
 	c := New("123:abc")
-	c.ServerURL = srv.URL
+	c.ServerURL = api.URL
 
 	ctx := t.Context()
 	in := make(chan channel.Inbound, n)
@@ -241,9 +133,10 @@ func TestRunKeepsUpdateOrder(t *testing.T) {
 func TestGroupMessages(t *testing.T) {
 	t.Parallel()
 	group := func(id int, text string) string {
-		return fmt.Sprintf(`{"update_id":%d,"message":{"message_id":%d,"date":0,"chat":{"id":-100,"type":"supergroup"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":%q}}`, id, id, text)
+		return fmt.Sprintf(`{"message":{"message_id":%d,"date":0,"chat":{"id":-100,"type":"supergroup"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":%q}}`, id, text)
 	}
-	api := &fakeBotAPI{t: t, calls: map[string][]string{}, updates: []string{
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	for _, u := range []string{
 		group(1, "/stop@otherbot"),
 		group(2, "/stop@my_coder_bot"),
 		group(3, "/stop"),
@@ -251,14 +144,14 @@ func TestGroupMessages(t *testing.T) {
 		group(5, "hello"),
 		group(6, "@my_coder_bot hello"),
 		group(7, "/new@MY_CODER_BOT please"),
-		`{"update_id":8,"message":{"message_id":8,"date":0,"chat":{"id":-100,"type":"supergroup"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"/stop@otherbot",` +
+		`{"message":{"message_id":8,"date":0,"chat":{"id":-100,"type":"supergroup"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"/stop@otherbot",` +
 			`"reply_to_message":{"message_id":3,"date":0,"chat":{"id":-100,"type":"supergroup"},"from":{"id":99,"is_bot":true,"first_name":"Coder"}}}}`,
-		`{"update_id":9,"message":{"message_id":9,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"done"}}`,
-	}}
-	srv := httptest.NewServer(api)
-	defer srv.Close()
+		`{"message":{"message_id":9,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"text":"done"}}`,
+	} {
+		api.Push(u)
+	}
 	c := New("123:abc")
-	c.ServerURL = srv.URL
+	c.ServerURL = api.URL
 
 	in := make(chan channel.Inbound, 10)
 	go func() {
@@ -300,18 +193,15 @@ func TestDownload(t *testing.T) {
 		{name: "file larger than the limit", path: "big.bin", wantErr: "too large"},
 		{name: "stalled download", path: "slow.bin", timeout: 200 * time.Millisecond, wantErr: "deadline exceeded"},
 	}
-	api := &fakeBotAPI{t: t, calls: map[string][]string{}, files: map[string][]byte{
-		"small.txt": []byte("hello"),
-		"big.bin":   bytes.Repeat([]byte("x"), maxFile+1),
-		"slow.bin":  nil,
-	}}
-	srv := httptest.NewServer(api)
-	t.Cleanup(srv.Close)
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.SetFile("small.txt", []byte("hello"))
+	api.SetFile("big.bin", bytes.Repeat([]byte("x"), maxFile+1))
+	api.SetFile("slow.bin", nil)
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c := New("123:abc")
-			c.ServerURL = srv.URL
+			c.ServerURL = api.URL
 			if tc.timeout != 0 {
 				c.downloadTimeout = tc.timeout
 			}
@@ -347,10 +237,10 @@ func TestValidateInvalidToken(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			srv := httptest.NewServer(&fakeBotAPI{t: t, calls: map[string][]string{}, getMeError: tc.response})
-			defer srv.Close()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
+			api.Fail("getMe", telegramtest.Failure{Status: http.StatusNotFound, Body: tc.response})
 			c := New("123:abc")
-			c.ServerURL = srv.URL
+			c.ServerURL = api.URL
 			err := c.Validate(t.Context())
 			if err == nil || err.Error() != "invalid Telegram bot token" {
 				t.Fatalf("Validate() error = %v, want invalid Telegram bot token", err)
@@ -361,7 +251,7 @@ func TestValidateInvalidToken(t *testing.T) {
 
 func TestSendAndEditRateLimit(t *testing.T) {
 	t.Parallel()
-	limited := apiFailure{status: http.StatusTooManyRequests, body: `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 3","parameters":{"retry_after":3}}`}
+	limited := telegramtest.Failure{Status: http.StatusTooManyRequests, Body: `{"ok":false,"error_code":429,"description":"Too Many Requests: retry after 3","parameters":{"retry_after":3}}`}
 	tests := []struct {
 		name string
 		call func(c *Channel) error
@@ -377,11 +267,11 @@ func TestSendAndEditRateLimit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			api := &fakeBotAPI{t: t, calls: map[string][]string{}, failures: map[string]apiFailure{"sendMessage": limited, "editMessageText": limited}}
-			srv := httptest.NewServer(api)
-			defer srv.Close()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
+			api.Fail("sendMessage", limited)
+			api.Fail("editMessageText", limited)
 			c := New("123:abc")
-			c.ServerURL = srv.URL
+			c.ServerURL = api.URL
 			var limit *channel.RateLimitError
 			err := tc.call(c)
 			if !errors.As(err, &limit) {
@@ -396,7 +286,7 @@ func TestSendAndEditRateLimit(t *testing.T) {
 
 func TestSendAndEditFallBackToPlainTextWhenTooLong(t *testing.T) {
 	t.Parallel()
-	tooLong := apiFailure{status: http.StatusBadRequest, body: `{"ok":false,"error_code":400,"description":"Bad Request: message is too long"}`, onlyWith: "MarkdownV2"}
+	tooLong := telegramtest.Failure{Status: http.StatusBadRequest, Body: `{"ok":false,"error_code":400,"description":"Bad Request: message is too long"}`, OnlyWith: "MarkdownV2"}
 	tests := []struct {
 		name   string
 		method string
@@ -407,26 +297,29 @@ func TestSendAndEditFallBackToPlainTextWhenTooLong(t *testing.T) {
 			return err
 		}},
 		{name: "edit", method: "editMessageText", call: func(c *Channel) error {
-			return c.Edit(t.Context(), channel.Ref{Conv: "42", ID: "7"}, channel.Outbound{Conv: "42", Text: "a.b-c"})
+			ref, err := c.Send(t.Context(), channel.Outbound{Conv: "42", Text: "a.b-c"})
+			if err != nil {
+				return err
+			}
+			return c.Edit(t.Context(), ref, channel.Outbound{Conv: "42", Text: "a.b-c"})
 		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			api := &fakeBotAPI{t: t, calls: map[string][]string{}, failures: map[string]apiFailure{tc.method: tooLong}}
-			srv := httptest.NewServer(api)
-			defer srv.Close()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
+			api.Fail(tc.method, tooLong)
 			c := New("123:abc")
-			c.ServerURL = srv.URL
+			c.ServerURL = api.URL
 			if err := tc.call(c); err != nil {
 				t.Fatalf("Channel error = %v, want nil", err)
 			}
-			calls := api.called(tc.method)
+			calls := api.Calls(tc.method)
 			if len(calls) != 2 {
 				t.Fatalf("%s calls = %d, want 2", tc.method, len(calls))
 			}
-			if last := unescapeJSON(calls[1]); strings.Contains(last, "MarkdownV2") || !strings.Contains(last, "a.b-c") {
-				t.Fatalf("%s retry = %s, want plain text a.b-c", tc.method, calls[1])
+			if got := calls[1]; got.Get("parse_mode") != "" || got.Get("text") != "a.b-c" {
+				t.Fatalf("%s retry = %v, want plain text a.b-c", tc.method, got)
 			}
 		})
 	}
@@ -445,29 +338,30 @@ func TestSendAndEditShowLiteralTextWithoutMarkup(t *testing.T) {
 			return err
 		}},
 		{name: "edit", method: "editMessageText", call: func(c *Channel) error {
-			return c.Edit(t.Context(), channel.Ref{Conv: "42", ID: "7"}, channel.Outbound{Conv: "42", Text: text, Literal: true})
+			ref, err := c.Send(t.Context(), channel.Outbound{Conv: "42", Text: "Waiting"})
+			if err != nil {
+				return err
+			}
+			return c.Edit(t.Context(), ref, channel.Outbound{Conv: "42", Text: text, Literal: true})
 		}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			api := &fakeBotAPI{t: t, calls: map[string][]string{}}
-			srv := httptest.NewServer(api)
-			defer srv.Close()
+			api := telegramtest.NewServer(t, telegramtest.Options{})
 			c := New("123:abc")
-			c.ServerURL = srv.URL
+			c.ServerURL = api.URL
 
 			if err := tc.call(c); err != nil {
 				t.Fatalf("Channel error = %v, want nil", err)
 			}
 
-			calls := api.called(tc.method)
+			calls := api.Calls(tc.method)
 			if len(calls) != 1 {
 				t.Fatalf("%s calls = %d, want 1", tc.method, len(calls))
 			}
-			body := unescapeJSON(calls[0])
-			if !strings.Contains(body, text) || strings.Contains(body, "parse_mode") {
-				t.Fatalf("%s = %s, want the text as written and no parse mode", tc.method, calls[0])
+			if got := calls[len(calls)-1]; got.Get("text") != text || got.Has("parse_mode") {
+				t.Fatalf("%s = %v, want the text as written and no parse mode", tc.method, got)
 			}
 		})
 	}
@@ -475,11 +369,10 @@ func TestSendAndEditShowLiteralTextWithoutMarkup(t *testing.T) {
 
 func TestDownloadErrorHidesBotToken(t *testing.T) {
 	t.Parallel()
-	api := &fakeBotAPI{t: t, calls: map[string][]string{}, files: map[string][]byte{"slow.bin": nil}}
-	srv := httptest.NewServer(api)
-	t.Cleanup(srv.Close)
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.SetFile("slow.bin", nil)
 	c := New("123:abc")
-	c.ServerURL = srv.URL
+	c.ServerURL = api.URL
 	c.downloadTimeout = 100 * time.Millisecond
 	if err := c.Validate(t.Context()); err != nil {
 		t.Fatalf("Validate() error = %v, want nil", err)
@@ -494,12 +387,11 @@ func TestDownloadErrorHidesBotToken(t *testing.T) {
 
 func TestHandleMessageReportsFailedAttachments(t *testing.T) {
 	t.Parallel()
-	api := &fakeBotAPI{t: t, calls: map[string][]string{}, files: map[string][]byte{"big.bin": bytes.Repeat([]byte("x"), maxFile+1)},
-		updates: []string{`{"update_id":1,"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"caption":"look","document":{"file_id":"big.bin","file_name":"big.bin"}}}`}}
-	srv := httptest.NewServer(api)
-	defer srv.Close()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	api.SetFile("big.bin", bytes.Repeat([]byte("x"), maxFile+1))
+	api.Push(`{"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"caption":"look","document":{"file_id":"big.bin","file_name":"big.bin"}}}`)
 	c := New("123:abc")
-	c.ServerURL = srv.URL
+	c.ServerURL = api.URL
 	in := make(chan channel.Inbound, 1)
 	go func() {
 		if err := c.Run(t.Context(), in); err != nil {
