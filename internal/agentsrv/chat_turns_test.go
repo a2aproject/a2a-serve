@@ -610,6 +610,27 @@ func TestChatTurnsDropPostedRemovesWaitingTurns(t *testing.T) {
 	fx.sender.wantIdle(t)
 }
 
+func TestChatTurnsDropPostedOfRemovesWaitingTurnsOfPrincipals(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	accepted := make(chan error, 1)
+	user := auth.Principal{ID: "pair:bob"}
+	turn := postedTurn{ContextID: "c1", User: user, Text: "run", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.injectTurn() error = %v", err)
+	}
+
+	fx.turns.dropPostedOf("pair:bob")
+
+	if err := <-accepted; !errors.Is(err, errTurnDropped) {
+		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
+	}
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+	fx.sender.wantIdle(t)
+}
+
 func TestChatTurnsTypedAnswer(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

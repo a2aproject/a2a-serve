@@ -88,6 +88,10 @@ func TestClientRequests(t *testing.T) {
 			return err
 		}, wantMethod: http.MethodPost, wantPath: "/pair", wantBody: `{"name":"anna","owner":true}`},
 		{name: "revoke", call: func(ctx context.Context, c *Client) error { _, err := c.Revoke(ctx, "a/b"); return err }, wantMethod: http.MethodDelete, wantPath: "/pair/a%2Fb"},
+		{name: "sign out", call: func(ctx context.Context, c *Client) error {
+			_, err := c.SignOut(ctx, "anna@example.com")
+			return err
+		}, wantMethod: http.MethodDelete, wantPath: "/signins/anna@example.com"},
 		{name: "delete contact", call: func(ctx context.Context, c *Client) error { return c.DeleteContact(ctx, "coder") }, wantMethod: http.MethodDelete, wantPath: "/contacts/coder"},
 		{name: "delete channel", call: func(ctx context.Context, c *Client) error { return c.DeleteChannel(ctx, "telegram") }, wantMethod: http.MethodDelete, wantPath: "/channels/telegram"},
 	}

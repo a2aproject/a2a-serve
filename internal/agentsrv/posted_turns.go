@@ -143,12 +143,21 @@ func (p *postedTurns) empty(contextID string) bool {
 
 // drop removes the waiting turns with key from every line.
 func (p *postedTurns) drop(key string) {
+	p.dropWhere(func(h *heldTurn) bool { return h.Key == key })
+}
+
+// dropUsers removes the waiting turns posted as one of the principals.
+func (p *postedTurns) dropUsers(principals []string) {
+	p.dropWhere(func(h *heldTurn) bool { return slices.Contains(principals, h.User.ID) })
+}
+
+func (p *postedTurns) dropWhere(match func(*heldTurn) bool) {
 	var dropped []*heldTurn
 	p.mu.Lock()
 	for _, line := range p.lines {
 		n := len(line.turns)
 		line.turns = slices.DeleteFunc(line.turns, func(h *heldTurn) bool {
-			if h.Key != key {
+			if !match(h) {
 				return false
 			}
 			dropped = append(dropped, h)
@@ -192,6 +201,10 @@ func (c *ChatTurns) injectTurn(ctx context.Context, t postedTurn) error {
 // dropPosted removes the turns with key that wait to be posted, such as
 // the runs of a removed schedule.
 func (c *ChatTurns) dropPosted(key string) { c.posted.drop(key) }
+
+// dropPostedOf removes the turns that wait to be posted as one of the
+// principals, such as the runs of a removed pairing.
+func (c *ChatTurns) dropPostedOf(principals ...string) { c.posted.dropUsers(principals) }
 
 // post sends the turns of a context's line until it is empty or ctx ends.
 func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) {

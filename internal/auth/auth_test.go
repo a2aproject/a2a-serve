@@ -49,12 +49,25 @@ type fakeNet struct {
 	network.Provider
 	name  string
 	peers map[string]*network.Peer
+	// members are the machines on the network by node; nil for a network
+	// that can't look them up.
+	members map[string]*network.Peer
 }
 
 func (f fakeNet) Name() string { return f.name }
 
 func (f fakeNet) WhoIs(_ context.Context, addr string) (*network.Peer, error) {
 	if p, ok := f.peers[addr]; ok {
+		return p, nil
+	}
+	return nil, network.ErrNoIdentity
+}
+
+func (f fakeNet) Member(_ context.Context, node string) (*network.Peer, error) {
+	if f.members == nil {
+		return nil, network.ErrUnsupported
+	}
+	if p, ok := f.members[node]; ok {
 		return p, nil
 	}
 	return nil, network.ErrNoIdentity
@@ -437,11 +450,16 @@ func TestChainRefresh(t *testing.T) {
 	if err := s.PutNode(ctx, store.Node{ID: "grok", Name: "grok", Webhook: "https://example.com/hook", Secret: "s"}); err != nil {
 		t.Fatalf("PutNode() error = %v", err)
 	}
-	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork}
+	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "n1"}
+	ownerDevice := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "n2", Self: true}
+	relay := Identity{Network: network.ListenerPrivate, Provider: network.ProviderRelay, Email: "anna@example.com", EmailSource: EmailFromNetwork, Node: "p1"}
+	onTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{"n1": {Email: "anna@example.com", Node: "n1"}}}
+	leftTailnet := fakeNet{name: network.ProviderTailscale, members: map[string]*network.Peer{}}
 
 	tests := []struct {
 		name        string
 		policy      Policy
+		net         network.Provider
 		id          string
 		identity    Identity
 		want        Principal
@@ -481,6 +499,7 @@ func TestChainRefresh(t *testing.T) {
 		{
 			name:     "tailnet user while the private network is open",
 			policy:   testPolicy(true, nil),
+			net:      onTailnet,
 			id:       "email:anna@example.com",
 			identity: tailnet,
 			want:     Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: tailnet},
@@ -488,14 +507,72 @@ func TestChainRefresh(t *testing.T) {
 		{
 			name:        "tailnet user once the private network is closed",
 			policy:      testPolicy(false, nil),
+			net:         onTailnet,
 			id:          "email:anna@example.com",
 			identity:    tailnet,
 			wantRefused: true,
 		},
+		{
+			name:     "tailnet user who left the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      leftTailnet,
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "tailnet user once the agent left the tailnet",
+			policy:   testPolicy(true, nil),
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "tailnet user allowed by email who left the tailnet",
+			policy:   testPolicy(false, []string{"anna@example.com"}),
+			net:      leftTailnet,
+			id:       "email:anna@example.com",
+			identity: tailnet,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:     "your device that left the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      leftTailnet,
+			id:       OwnerID,
+			identity: ownerDevice,
+			want:     Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Self: true}},
+		},
+		{
+			name:     "relay user on a relay that can't look up its members",
+			policy:   testPolicy(true, nil),
+			net:      fakeNet{name: network.ProviderRelay},
+			id:       "email:anna@example.com",
+			identity: relay,
+			want:     Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: relay},
+		},
+		{
+			name:     "relay user once the agent moved to the tailnet",
+			policy:   testPolicy(true, nil),
+			net:      onTailnet,
+			id:       "email:anna@example.com",
+			identity: relay,
+			wantErr:  ErrNoCredential,
+		},
+		{
+			name:   "machine that left the tailnet",
+			policy: testPolicy(true, nil),
+			net:    leftTailnet,
+			id:     "node:tailscale:n3",
+			identity: Identity{
+				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Node: "n3",
+			},
+			wantErr: ErrNoCredential,
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			chain := &Chain{Store: s, Policy: func() Policy { return tc.policy }}
+			chain := &Chain{Store: s, Net: tc.net, Policy: func() Policy { return tc.policy }}
 			got, err := chain.Refresh(ctx, tc.id, tc.identity)
 			if tc.wantRefused {
 				var refused *RefusedError

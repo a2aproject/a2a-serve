@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -156,7 +157,8 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 }
 
 // checkMCP reports the MCP servers of the project's .mcp.json which reference
-// variables without a value, since the harness doesn't get them.
+// variables without a value, since the harness doesn't get them, and
+// servers the config turns off which .mcp.json doesn't have.
 func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 	ws, err := d.WorkspaceMount(cfg)
 	if err != nil {
@@ -166,12 +168,27 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 	if err != nil {
 		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the agent gets none of the project's MCP servers"}}
 	}
+	var results []Result
+	for _, name := range cfg.MCP.Disabled {
+		if !slices.ContainsFunc(servers, func(s project.MCPServer) bool { return s.Name == name }) {
+			results = append(results, Result{
+				ID:      "mcp",
+				Status:  StatusWarn,
+				Message: fmt.Sprintf("--disable-mcp %s names no server of %s", name, project.MCPFile),
+				Fix:     "a2a-serve config unset disable-mcp " + name,
+			})
+		}
+	}
 	if len(servers) == 0 {
-		return nil
+		return results
 	}
 	vars := project.Vars(cfg, secrets)
-	var results []Result
+	var off int
 	for _, srv := range servers {
+		if cfg.MCPDisabled(srv.Name) {
+			off++
+			continue
+		}
 		_, missing := srv.Resolve(vars)
 		if len(missing) == 0 {
 			continue
@@ -188,10 +205,23 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 			Fix:     "a2a-serve config set " + strings.Join(fix, " "),
 		})
 	}
-	if len(results) == 0 {
-		return []Result{{ID: "mcp", Status: StatusOK, Message: fmt.Sprintf("%d MCP servers in %s", len(servers), project.MCPFile)}}
+	if off > 0 && cfg.Sandbox == agentdir.SandboxLocal && cfg.Harness == "claude" {
+		results = append(results, Result{
+			ID:      "mcp",
+			Status:  StatusWarn,
+			Message: fmt.Sprintf("Claude Code without a sandbox may start the servers of %s that are off", project.MCPFile),
+			Detail:  "the docker sandbox hides " + project.MCPFile + " from the agent",
+			Fix:     "a2a-serve config unset sandbox",
+		})
 	}
-	return results
+	if len(results) > 0 {
+		return results
+	}
+	msg := fmt.Sprintf("%d MCP servers in %s", len(servers), project.MCPFile)
+	if off > 0 {
+		msg += fmt.Sprintf(", %d off", off)
+	}
+	return []Result{{ID: "mcp", Status: StatusOK, Message: msg}}
 }
 
 // checkRelay checks an Agent Mesh relay the agent joins: that this

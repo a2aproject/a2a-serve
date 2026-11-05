@@ -77,6 +77,17 @@ func (p Policy) Resolve(id Identity) string {
 	return role
 }
 
+// AllowsSignIn reports whether one of the policy's email members matches
+// a Google sign-in of email, with domain its Workspace domain or empty.
+func (p Policy) AllowsSignIn(email, domain string) bool {
+	for _, m := range slices.Concat(p.Authenticated, p.Anonymous) {
+		if pattern, ok := strings.CutPrefix(m, MemberEmailPrefix); ok && EmailMatches(pattern, email, domain) {
+			return true
+		}
+	}
+	return false
+}
+
 func matchesAny(members []string, id Identity) bool {
 	for _, m := range members {
 		if matches(m, id) {
