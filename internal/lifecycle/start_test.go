@@ -15,13 +15,17 @@
 package lifecycle
 
 import (
+	"bytes"
 	"context"
+	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -103,6 +107,28 @@ func TestStartForegroundWhileRunningLeavesTheLogAlone(t *testing.T) {
 	}
 	if _, err := os.Stat(dir.LogPath() + ".1"); !os.IsNotExist(err) {
 		t.Fatalf("Start() rotated the running agent's log: os.Stat() error = %v", err)
+	}
+}
+
+func TestWaitReadyFailsWhenServerStops(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	var log bytes.Buffer
+	log.WriteString("pulling the harness image\n")
+	slog.New(slog.NewTextHandler(&log, nil)).Error(stopMsg, "error", errors.New("pulling the image: exit status 1"))
+	if err := os.WriteFile(dir.LogPath(), log.Bytes(), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+
+	err := waitReady(ctx, dir, 0, func() bool { return true }, io.Discard)
+
+	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
+		t.Fatalf("waitReady() error = %v, want the error the server stopped with", err)
 	}
 }
 

@@ -64,10 +64,9 @@ type Spec struct {
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
 	Hidden []string
-	// Pins are Mounts and Hidden as the server resolved them at its start.
-	// A container doesn't start when a path the harness could replace
-	// resolves elsewhere now. Nil skips the check.
-	Pins Pins
+	// Pins are the directories the server pinned. A container doesn't
+	// start when one of them was replaced. Nil skips the check.
+	Pins *Pins
 	// MCPMask is the host path of a file with no MCP servers, which a
 	// sandbox mounts over the workspace's .mcp.json, so that the harness
 	// gets MCP servers only from the server. Empty keeps .mcp.json visible.
@@ -105,6 +104,9 @@ type Prepared struct {
 	Summary string
 	// Stop cleans up after the harness exited, such as removing its container.
 	Stop func(context.Context) error
+	// Check refuses to start the harness again when the agent could have
+	// redirected its sandbox since Prepare.
+	Check func() error
 }
 
 // Prepare bootstraps the harness home and returns the command which runs
@@ -117,6 +119,9 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	// agent there, so the workspace must have the same path on both sides.
 	if ws := spec.Mounts[0]; ws.Dst != ws.Src {
 		return nil, fmt.Errorf("the first --mount is the workspace and must keep its path (%s), got %s", ws.Src, ws.Dst)
+	}
+	if err := PrepareHome(spec); err != nil {
+		return nil, err
 	}
 	ws := Workspace{Dir: spec.Mounts[0].Src, Home: spec.Home}
 	if err := spec.Profile.Bootstrap(ws); err != nil {
@@ -132,9 +137,6 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 }
 
 func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
-	if err := spec.Pins.check(spec.Mounts, spec.Hidden); err != nil {
-		return nil, err
-	}
 	rootless, err := CheckDocker(ctx)
 	if err != nil {
 		return nil, err
@@ -173,7 +175,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop, Check: func() error { return checkPaths(spec) }}, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.
@@ -233,7 +235,7 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return nil }}, nil
 }
 
 // TCPBridge reports whether a harness in sandbox must reach the agent

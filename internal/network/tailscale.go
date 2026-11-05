@@ -343,16 +343,33 @@ func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	var candidates []PeerInfo
+	var (
+		candidates []PeerInfo
+		taken      []string
+	)
+	if st.Self != nil && st.Self.DNSName != "" {
+		_, name := machineName(st.Self.DNSName)
+		taken = append(taken, name)
+	}
 	for _, p := range st.Peer {
-		if !p.Online || p.DNSName == "" {
+		if p.DNSName == "" {
 			continue
 		}
-		host := strings.TrimSuffix(p.DNSName, ".")
-		name, _, _ := strings.Cut(host, ".")
+		host, name := machineName(p.DNSName)
+		if !p.Online {
+			taken = append(taken, name)
+			continue
+		}
 		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true, Node: string(p.ID)})
 	}
-	return ProbeAgents(ctx, t.HTTPClient(), candidates), nil
+	return ProbeAgents(ctx, t.HTTPClient(), candidates, taken), nil
+}
+
+// machineName returns the host of a MagicDNS name and the machine name in it.
+func machineName(dnsName string) (host, name string) {
+	host = strings.TrimSuffix(dnsName, ".")
+	name, _, _ = strings.Cut(host, ".")
+	return host, name
 }
 
 // HTTPClient implements [Provider]. tsnet runs in userspace, so calls to

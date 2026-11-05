@@ -20,6 +20,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -31,6 +32,11 @@ const (
 	// MaxConcurrent is how many requests one server handles at once,
 	// including open streams.
 	MaxConcurrent = 1024
+	// MaxUnauthenticated is how many of a server's requests may be on
+	// routes that serve callers before they authenticate.
+	MaxUnauthenticated = 256
+	// MaxUnauthenticatedPerClient is how many of those one client may make.
+	MaxUnauthenticatedPerClient = 32
 
 	readHeaderTimeout = 30 * time.Second
 	idleTimeout       = 2 * time.Minute
@@ -75,4 +81,69 @@ func LimitConcurrency(n int, next http.Handler) http.Handler {
 		defer func() { <-slots }()
 		next.ServeHTTP(w, r)
 	})
+}
+
+// KeyedLimiter limits the requests of the handlers it wraps, in total and
+// for each key of a request.
+type KeyedLimiter struct {
+	total, perKey int
+	key           func(*http.Request) string
+
+	mu    sync.Mutex
+	inUse int
+	// keys counts the requests of each key; a key leaves it when its last
+	// request ends.
+	keys map[string]int
+}
+
+// NewKeyedLimiter returns a limiter of total requests at once, and of
+// perKey requests at once with the same key.
+func NewKeyedLimiter(total, perKey int, key func(*http.Request) string) *KeyedLimiter {
+	return &KeyedLimiter{total: total, perKey: perKey, key: key, keys: map[string]int{}}
+}
+
+// Handler serves next within the limits, and answers requests over the
+// limit of their key with 429 and others over the total with 503.
+func (l *KeyedLimiter) Handler(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		key := l.key(r)
+		if code := l.acquire(key); code != 0 {
+			msg := "the server is busy; try again later"
+			if code == http.StatusTooManyRequests {
+				msg = "too many requests at once from this client; try again later"
+			}
+			w.Header().Set("Retry-After", "1")
+			// Closing spares the server from draining a body the caller
+			// may never finish, which no deadline bounds yet.
+			w.Header().Set("Connection", "close")
+			jsonhttp.Error(w, code, msg)
+			return
+		}
+		defer l.release(key)
+		next.ServeHTTP(w, r)
+	})
+}
+
+// acquire takes a slot for key, or returns the status of a refusal.
+func (l *KeyedLimiter) acquire(key string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	switch {
+	case l.keys[key] >= l.perKey:
+		return http.StatusTooManyRequests
+	case l.inUse >= l.total:
+		return http.StatusServiceUnavailable
+	}
+	l.inUse++
+	l.keys[key]++
+	return 0
+}
+
+func (l *KeyedLimiter) release(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.inUse--
+	if l.keys[key]--; l.keys[key] == 0 {
+		delete(l.keys, key)
+	}
 }

@@ -180,6 +180,19 @@ func TestRunStops(t *testing.T) {
 	}
 }
 
+func TestRunStopsWhileStarting(t *testing.T) {
+	d, _, cancel, done := runFake(t, "")
+
+	cancel()
+
+	if err := wait(t, done); err != nil {
+		t.Fatalf("Relay.Run() error = %v", err)
+	}
+	if _, err := os.Stat(d.SocketPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Stat() of the control socket after the relay stopped error = %v, want %v", err, os.ErrNotExist)
+	}
+}
+
 func TestRunRestartsWhenAsked(t *testing.T) {
 	_, c, _, done := runFake(t, "")
 	waitRunning(t, c, done)

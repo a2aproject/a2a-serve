@@ -16,9 +16,11 @@ package agentsrv
 
 import (
 	"context"
+	"fmt"
 	"iter"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -32,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -44,12 +47,22 @@ const (
 	promptHold     = "hold"
 	promptAsk      = "ask"
 	promptQuestion = "question"
+	promptLong     = "long"
 )
 
 const (
 	fakeContactResult = "fake result"
 	fakeContactAnswer = "fake answer"
 )
+
+// fakeContactLongResult is the result of promptLong: 1,000 numbered lines.
+func fakeContactLongResult() string {
+	var sb strings.Builder
+	for i := range 1000 {
+		fmt.Fprintf(&sb, "line %d of the long result\n", i+1)
+	}
+	return sb.String()
+}
 
 // contactRequest is an HTTP request a fakeContact received.
 type contactRequest struct {
@@ -205,6 +218,8 @@ func (fc *fakeContact) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 			yield(ev, err)
 		case promptQuestion:
 			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart("Which branch?"))), nil)
+		case promptLong:
+			finish(execCtx, yield, fakeContactLongResult())
 		}
 	}
 }
@@ -316,6 +331,7 @@ type injectedTurn struct {
 	ContextID string
 	User      auth.Principal
 	Text      string
+	Files     []channel.File
 }
 
 // fakeTurnInjector records the turns injected. The agent accepts them at
@@ -343,7 +359,7 @@ func (f *fakeTurnInjector) injectTurn(_ context.Context, t postedTurn) error {
 	default:
 		accept(nil)
 	}
-	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text}
+	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text, Files: t.Files}
 	return f.err
 }
 

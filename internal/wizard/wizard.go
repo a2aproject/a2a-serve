@@ -153,6 +153,78 @@ func (p *Prompter) APIKeys(harness string, getenv func(string) string) ([]string
 	}
 }
 
+// NeedsAPIKey reports whether the agent harness has known model API keys
+// and secrets names none of them.
+func NeedsAPIKey(harness string, secrets []string) bool {
+	keys := apiKeys[harness]
+	return len(keys) > 0 && !slices.ContainsFunc(secrets, func(s string) bool { return slices.Contains(keys, s) })
+}
+
+// Var is a variable an agent needs a value for.
+type Var struct {
+	Name        string
+	Description string
+	// Secret values are hidden as they are typed and stored as secrets;
+	// others are saved with --env.
+	Secret bool
+}
+
+// varTries is how many times VarValue asks before it gives up, such as
+// when its input ends.
+const varTries = 3
+
+// VarValue asks for the value of v until it gets one: from this shell if
+// it is set there, or typed in. It adds the value to s.
+func (p *Prompter) VarValue(s *agentdir.Settings, getenv func(string) string, v Var) error {
+	label := v.Name
+	if v.Description != "" {
+		label += " (" + v.Description + ")"
+	}
+	if val := getenv(v.Name); val != "" {
+		ok, err := p.Confirm(fmt.Sprintf("  %s is set in this shell. Pass it to the agent?", v.Name), true)
+		if err != nil {
+			return err
+		}
+		if ok {
+			AddVar(s, v, val)
+			return nil
+		}
+	}
+	for range varTries {
+		var val string
+		var err error
+		if v.Secret {
+			val, err = p.Secret("  " + label)
+		} else {
+			val, err = p.Ask("  "+label, "")
+		}
+		if err != nil {
+			return err
+		}
+		if val != "" {
+			AddVar(s, v, val)
+			return nil
+		}
+		if _, err := fmt.Fprintf(p.out, "  %s is required\n", v.Name); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("no value for %s", v.Name)
+}
+
+// AddVar adds the value of v to s: as a secret, or as an --env entry.
+func AddVar(s *agentdir.Settings, v Var, value string) {
+	if !v.Secret {
+		s.Env = append(s.Env, v.Name+"="+value)
+		return
+	}
+	if s.SecretValues == nil {
+		s.SecretValues = agentdir.Secrets{}
+	}
+	s.SecretValues[v.Name] = value
+	s.Secrets = append(s.Secrets, v.Name)
+}
+
 // SecretValue asks for the value of the variable name, which purpose
 // needs, from this shell if it is set there, or typed in, and adds it to
 // s. It reports whether the variable got a value.

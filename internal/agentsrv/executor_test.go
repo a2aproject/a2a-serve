@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"iter"
 	"log/slog"
 	"os"
@@ -36,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -369,6 +371,64 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			}
 			if !unattended.has("c2") {
 				t.Fatalf("unattended.has(c2) = false, want true for another context")
+			}
+		})
+	}
+}
+
+func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		key  string
+	}{
+		{name: "owner", key: ""},
+		{name: "anonymous", key: anonymousAgentKey},
+		{name: "user", key: userAgentKeyPrefix + "pair:anna"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.Init(); err != nil {
+				t.Fatal(err)
+			}
+			pins, err := harness.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			if err != nil {
+				t.Fatalf("harness.NewPins() error = %v", err)
+			}
+			s := &Server{dir: dir, pins: pins}
+			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
+			s.rt.Store(&runtimeConfig{cfg: cfg, secrets: agentdir.Secrets{}})
+			if err := os.Rename(dir.Root, dir.Root+".old"); err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.Init(); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err = s.prepareHarness(context.Background(), io.Discard, tc.key)
+
+			if err == nil || !strings.Contains(err.Error(), "was replaced") {
+				t.Fatalf("Server.prepareHarness() error = %v, want the agent directory replaced", err)
+			}
+			entries, err := os.ReadDir(dir.StateDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var names []string
+			for _, e := range entries {
+				names = append(names, e.Name())
+			}
+			if diff := cmp.Diff([]string{"home"}, names); diff != "" {
+				t.Fatalf("Server.prepareHarness() wrote into the state directory (-want +got) diff = %s", diff)
+			}
+			home, err := os.ReadDir(dir.HomeDir())
+			if err != nil || len(home) > 0 {
+				t.Fatalf("Server.prepareHarness() wrote %v into the home, error = %v", home, err)
 			}
 		})
 	}

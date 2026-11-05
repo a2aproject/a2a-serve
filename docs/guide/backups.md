@@ -15,5 +15,6 @@ a2a-serve backup restore gs://my-bucket/agents/coder --dir ~/src/app --backup-ke
 - Snapshots don't include the workspace, which is usually in git.
 - The agent keeps running during a snapshot. A file that changes while it is copied is copied again, up to three times. If it still changes, the snapshot keeps the last copy and the server log names the file.
 - `backup restore` restores the latest snapshot, or the one named with `--snapshot`. Add `--take-over` to keep the agent's network identity and URLs; stop the agent on the old machine first.
+- `backup restore` needs a directory without a `.a2a` directory, or with an empty one. It extracts the snapshot next to `.a2a` and moves it into place at the end. A damaged snapshot or Ctrl-C leaves the directory as it was, so you can run the restore again. The next restore removes what a killed restore left next to `.a2a`.
 
 Not in this version: continuous replication. Changes since the last snapshot are lost with the machine.

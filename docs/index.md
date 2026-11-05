@@ -42,6 +42,7 @@ Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 | [Secrets](guide/secrets.md) | API keys for the agent and tokens for the server |
 | [Sandbox](guide/sandbox.md) | What the Docker sandbox mounts and limits |
 | [MCP and Skills](guide/mcp-and-skills.md) | Give the agent the MCP servers and skills of its project |
+| [Recipes](guide/recipes.md) | Create an agent from a ready-made recipe, and write one |
 | [Approvals](guide/approvals.md) | Answer tool calls, and who answers them |
 | [Inspector](guide/inspector.md) | A web page with conversations, tasks and approvals |
 | [Identities](guide/identities.md) | Callers, roles and pairing codes |

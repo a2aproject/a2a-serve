@@ -145,6 +145,17 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	return u.s.users.stop(keys...)
 }
 
+// userHomes deletes the homes of users' agent processes and forgets their
+// pins. It implements [pairings.Homes].
+type userHomes struct{ s *Server }
+
+func (h userHomes) RemoveUserHome(id string) error {
+	h.s.pins.Unpin(h.s.dir.UserHomeDir(id))
+	return h.s.dir.RemoveUserHome(id)
+}
+
+func (h userHomes) UserHomeDir(id string) string { return h.s.dir.UserHomeDir(id) }
+
 // errRemovedUser is returned when the agent process of a user whose
 // pairing or webhook node was removed would start.
 var errRemovedUser = errors.New("this user's pairing was removed")

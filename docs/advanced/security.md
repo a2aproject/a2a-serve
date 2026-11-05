@@ -31,6 +31,8 @@ Every A2A request needs a known caller. These routes are public: the agent card,
 
 The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
+The public routes also limit the open requests of each caller and the size and send time of their bodies. This keeps capacity free for callers who authenticate ([request limits](../reference/http-routes.md#request-limits)).
+
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 
 | Network | Who gets in |
@@ -58,6 +60,12 @@ What a role allows:
 | Continue another user's waiting task in a shared chat | yes | no | no |
 
 Minting pairing codes, changing settings, adding contacts or messengers, and opening the inspector need access to the control socket in `state/`. No network role grants them.
+
+## Calls to other agents and webhooks
+
+The server calls contacts and wakes webhook nodes at the URLs you configure. A contact's card and a webhook's redirects can point the server elsewhere. When the URL you configured leads to a public address, the server connects only to public addresses for it. It refuses loopback, private, link-local and tailnet addresses, and it checks the address of each connection it opens. Contacts and webhooks that you configure on the tailnet or the LAN can reach those networks. A connection through a proxy set in the environment goes wherever the proxy sends it.
+
+The server refuses redirects from https to http. A node sees only the HTTP status of a failed wake, and the server log has the details.
 
 ## Tokens and secrets
 
@@ -94,3 +102,5 @@ Starting an agent runs what its files say. Read the ones you didn't write before
   - webhook nodes: the URLs the server POSTs to.
 - **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the agent's `--secret` and `--env` values, which the sandbox sees anyway. In the Docker sandbox, the agent can't read or edit the file. With `sandbox: local`, the agent can edit it, and Claude Code may start its servers on its own, including the ones `--disable-mcp` turns off.
 - **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills`, and instruction files such as `AGENTS.md` and `CLAUDE.md`, are instructions for the agent. Commands they suggest still wait for approval.
+
+`a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`: the local sandbox, read-write mounts, approvals of tool kinds that change things, and agent configuration files such as `.claude/settings.json`, which can change what the agent runs and approves. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups. It can't bring files into `.a2a`, or symlinks that lead out of the recipe.

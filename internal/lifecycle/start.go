@@ -131,7 +131,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	}
 	err = agentsrv.Run(ctx, srvOpts)
 	if err != nil {
-		slog.Error("the server stopped", "error", err)
+		slog.Error(stopMsg, "error", err)
 	}
 	return err
 }
@@ -139,7 +139,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 // checkNotRunning fails if a server holds the lock of dir. The lock
 // is released at once: the server takes it again when it starts.
 func checkNotRunning(dir agentdir.Dir) error {
-	release, err := fsutil.TryLock(dir.LockPath())
+	release, err := dir.Lock()
 	if errors.Is(err, fsutil.ErrLocked) {
 		return fmt.Errorf("the server is already running in %s (a2a-serve status)", dir.Root)
 	}
@@ -219,6 +219,9 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		}
 	}
 	if err := waitReady(ctx, dir, offset, alive, out); err != nil {
+		if asService {
+			return fmt.Errorf("%w\n  the service stays installed; remove it with `a2a-serve stop --uninstall`", err)
+		}
 		return err
 	}
 	msg := "✓ running in the background (a2a-serve logs, a2a-serve stop)\n"
@@ -238,6 +241,7 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 	deadline := time.Now().Add(15 * time.Minute)
 	client := controlapi.NewClient(dir)
 	var tail []string
+	stopped := false
 	for {
 		lines, next, err := readFrom(dir.LogPath(), offset)
 		if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -254,6 +258,7 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 			if len(tail) > 20 {
 				tail = tail[1:]
 			}
+			stopped = stopped || isStop(l)
 		}
 		sctx, cancel := context.WithTimeout(ctx, 2*time.Second)
 		_, statusErr := client.Status(sctx)
@@ -275,7 +280,9 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 			}
 			return nil
 		}
-		if !alive() {
+		// A service manager restarts a server that failed, so the process
+		// may still be alive.
+		if stopped || !alive() {
 			return fmt.Errorf("the server exited:\n%s", strings.Join(tail, "\n"))
 		}
 		if time.Now().After(deadline) {

@@ -22,7 +22,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -97,7 +96,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 func waitStopped(ctx context.Context, d agentdir.Dir) error {
 	deadline := time.Now().Add(stopTimeout)
 	for {
-		release, err := fsutil.TryLock(d.LockPath())
+		release, err := d.Lock()
 		if err == nil {
 			return release()
 		}

@@ -168,6 +168,21 @@ func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock
 // PIDPath returns the path of the file holding the PID of the running server.
 func (d Dir) PIDPath() string { return filepath.Join(d.StateDir(), "server.pid") }
 
+// Lock takes the lock the running server holds, and returns the function
+// that releases it. It returns [fsutil.ErrLocked] while another process
+// holds it. It removes the PID file a crashed server left behind, so that a
+// holder other than the server isn't taken for a starting server.
+func (d Dir) Lock() (release func() error, err error) {
+	release, err = fsutil.TryLock(d.LockPath())
+	if err != nil {
+		return nil, err
+	}
+	if err := os.Remove(d.PIDPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return nil, errors.Join(fmt.Errorf("removing a stale PID file: %w", err), release())
+	}
+	return release, nil
+}
+
 // maxSocketPath stays under the sun_path limit of Linux (108) and macOS (104).
 const maxSocketPath = 100
 
