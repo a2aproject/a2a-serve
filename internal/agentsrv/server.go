@@ -345,6 +345,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if err != nil {
 		return err
 	}
+	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
 	google := googleauth.Google
