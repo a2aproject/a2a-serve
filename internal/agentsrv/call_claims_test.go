@@ -28,7 +28,9 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -131,25 +133,25 @@ func TestCallClaimsClaimsOf(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
 	}
-	turn := callerClaims{ContextID: "ctx1", User: anna}
+	turn := agentproxy.Claims{ContextID: "ctx1", User: anna}
 
-	if _, err := cl.claimsOf(ctx, "unknown", ""); !errors.Is(err, errUnknownHandle) {
-		t.Fatalf("CallClaims.claimsOf(unknown) error = %v, want %v", err, errUnknownHandle)
+	if _, err := cl.ClaimsOf(ctx, "unknown", ""); !errors.Is(err, agentproxy.ErrUnknownHandle) {
+		t.Fatalf("CallClaims.ClaimsOf(unknown) error = %v, want %v", err, agentproxy.ErrUnknownHandle)
 	}
-	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() before a turn error = %v, want %v", err, errNoTurn)
+	if _, err := cl.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("CallClaims.ClaimsOf() before a turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 	end := cl.beginTurn(turn)
-	got, err := cl.claimsOf(ctx, h, "")
+	got, err := cl.ClaimsOf(ctx, h, "")
 	if err != nil {
-		t.Fatalf("CallClaims.claimsOf() during a turn error = %v", err)
+		t.Fatalf("CallClaims.ClaimsOf() during a turn error = %v", err)
 	}
 	if diff := cmp.Diff(turn, got); diff != "" {
-		t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 	}
 	end()
-	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	if _, err := cl.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("CallClaims.ClaimsOf() after the turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 }
 
@@ -165,9 +167,9 @@ func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
 	}{
 		{name: "owner's conversation from the owner's process", contextID: "owner"},
 		{name: "anna's conversation from anna's process", contextID: "anna", process: annaKey},
-		{name: "owner's conversation from anna's process", contextID: "owner", process: annaKey, wantErr: errUnknownHandle},
-		{name: "anna's conversation from the owner's process", contextID: "anna", wantErr: errUnknownHandle},
-		{name: "anna's conversation from another user's process", contextID: "anna", process: agentkey.User(bob.ID), wantErr: errUnknownHandle},
+		{name: "owner's conversation from anna's process", contextID: "owner", process: annaKey, wantErr: agentproxy.ErrUnknownHandle},
+		{name: "anna's conversation from the owner's process", contextID: "anna", wantErr: agentproxy.ErrUnknownHandle},
+		{name: "anna's conversation from another user's process", contextID: "anna", process: agentkey.User(bob.ID), wantErr: agentproxy.ErrUnknownHandle},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -181,12 +183,12 @@ func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallClaims.handle() error = %v", err)
 			}
-			t.Cleanup(cl.beginTurn(callerClaims{ContextID: tc.contextID, User: anna}))
+			t.Cleanup(cl.beginTurn(agentproxy.Claims{ContextID: tc.contextID, User: anna}))
 
-			_, err = cl.claimsOf(ctx, h, tc.process)
+			_, err = cl.ClaimsOf(ctx, h, tc.process)
 
 			if !errors.Is(err, tc.wantErr) {
-				t.Fatalf("CallClaims.claimsOf() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("CallClaims.ClaimsOf() error = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}
@@ -204,25 +206,25 @@ func TestCallClaimsClaimsOfIsPerConversation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
 	}
-	t.Cleanup(cl.beginTurn(callerClaims{ContextID: "ctx1", User: anna}))
+	t.Cleanup(cl.beginTurn(agentproxy.Claims{ContextID: "ctx1", User: anna}))
 
-	if _, err := cl.claimsOf(ctx, h2, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() of a conversation without a turn error = %v, want %v", err, errNoTurn)
+	if _, err := cl.ClaimsOf(ctx, h2, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("CallClaims.ClaimsOf() of a conversation without a turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
-	t.Cleanup(cl.beginTurn(callerClaims{ContextID: "ctx2", User: bob}))
+	t.Cleanup(cl.beginTurn(agentproxy.Claims{ContextID: "ctx2", User: bob}))
 	for _, tc := range []struct {
 		handle string
-		want   callerClaims
+		want   agentproxy.Claims
 	}{
-		{handle: h1, want: callerClaims{ContextID: "ctx1", User: anna}},
-		{handle: h2, want: callerClaims{ContextID: "ctx2", User: bob}},
+		{handle: h1, want: agentproxy.Claims{ContextID: "ctx1", User: anna}},
+		{handle: h2, want: agentproxy.Claims{ContextID: "ctx2", User: bob}},
 	} {
-		got, err := cl.claimsOf(ctx, tc.handle, "")
+		got, err := cl.ClaimsOf(ctx, tc.handle, "")
 		if err != nil {
-			t.Fatalf("CallClaims.claimsOf() error = %v", err)
+			t.Fatalf("CallClaims.ClaimsOf() error = %v", err)
 		}
 		if diff := cmp.Diff(tc.want, got); diff != "" {
-			t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
+			t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 		}
 	}
 }
@@ -235,22 +237,22 @@ func TestCallClaimsEndOnlyClearsItsOwnTurn(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallClaims.handle() error = %v", err)
 	}
-	older := callerClaims{ContextID: "ctx1", User: anna}
-	newer := callerClaims{ContextID: "ctx1", User: bob}
+	older := agentproxy.Claims{ContextID: "ctx1", User: anna}
+	newer := agentproxy.Claims{ContextID: "ctx1", User: bob}
 	endOlder := cl.beginTurn(older)
 	endNewer := cl.beginTurn(newer)
 
 	endOlder()
-	got, err := cl.claimsOf(ctx, h, "")
+	got, err := cl.ClaimsOf(ctx, h, "")
 	if err != nil {
-		t.Fatalf("CallClaims.claimsOf() after the older turn ended error = %v", err)
+		t.Fatalf("CallClaims.ClaimsOf() after the older turn ended error = %v", err)
 	}
 	if diff := cmp.Diff(newer, got); diff != "" {
-		t.Fatalf("CallClaims.claimsOf() after the older turn ended wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("CallClaims.ClaimsOf() after the older turn ended wrong result (-want +got) diff = %s", diff)
 	}
 	endNewer()
-	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() after both turns ended error = %v, want %v", err, errNoTurn)
+	if _, err := cl.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("CallClaims.ClaimsOf() after both turns ended error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 }
 
@@ -265,17 +267,17 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"}
 
 	end := cl.turn(auth.InProcess(ctx, anna), execCtx)
-	got, err := cl.claimsOf(ctx, h, "")
+	got, err := cl.ClaimsOf(ctx, h, "")
 	end()
 
 	if err != nil {
-		t.Fatalf("CallClaims.claimsOf() during the turn error = %v", err)
+		t.Fatalf("CallClaims.ClaimsOf() during the turn error = %v", err)
 	}
-	if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: anna}, got); diff != "" {
-		t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: anna}, got); diff != "" {
+		t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := cl.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("CallClaims.claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	if _, err := cl.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("CallClaims.ClaimsOf() after the turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 }
 
@@ -323,17 +325,17 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 			}
 
 			end := cl.turn(auth.InProcess(ctx, anna), &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1"})
-			got, err := cl.claimsOf(ctx, h, tc.process)
+			got, err := cl.ClaimsOf(ctx, h, tc.process)
 			end()
 
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("CallClaims.claimsOf() error = %v, want error %v", err, tc.wantErr)
+				t.Fatalf("CallClaims.ClaimsOf() error = %v, want error %v", err, tc.wantErr)
 			}
 			if err != nil {
 				return
 			}
-			if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
-				t.Fatalf("CallClaims.claimsOf() wrong result (-want +got) diff = %s", diff)
+			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
+				t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -378,7 +380,7 @@ func TestTurnClaims(t *testing.T) {
 
 			got := turnClaims(tc.ctx, tc.execCtx)
 
-			if diff := cmp.Diff(callerClaims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
+			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
 				t.Fatalf("turnClaims() wrong result (-want +got) diff = %s", diff)
 			}
 		})
@@ -494,7 +496,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cl := newTestCallClaims(t, tc.bridge)
-			if err := cl.store.PutContact(context.Background(), store.Contact{Name: "coder", URL: "http://coder.test", Via: ViaHTTPS}); err != nil {
+			if err := cl.store.PutContact(context.Background(), store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaHTTPS}); err != nil {
 				t.Fatalf("store.PutContact() error = %v", err)
 			}
 			var origParts a2a.ContentParts

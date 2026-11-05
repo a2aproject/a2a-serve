@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
@@ -67,11 +68,11 @@ func TestAnonymousConversationsRunInTheirOwnProcess(t *testing.T) {
 	owner := ts.client(ts.pair("phone", auth.RoleOwner))
 
 	task := send(t, anon, userText("pid", "", ""))
-	anonPID, ownerPID := resultText(task), resultText(send(t, owner, userText("pid", "", "")))
+	anonPID, ownerPID := a2atext.Result(task), a2atext.Result(send(t, owner, userText("pid", "", "")))
 	if anonPID == ownerPID {
 		t.Fatalf("anonymous and owner conversations both ran in %q, want separate processes", anonPID)
 	}
-	if got := resultText(send(t, owner, userText("pid", "", task.ContextID))); got != anonPID {
+	if got := a2atext.Result(send(t, owner, userText("pid", "", task.ContextID))); got != anonPID {
 		t.Fatalf("owner message in an anonymous conversation ran in %q, want %q", got, anonPID)
 	}
 }

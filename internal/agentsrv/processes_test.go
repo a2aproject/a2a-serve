@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -39,14 +40,14 @@ func TestAuthenticatedUsersRunInTheirOwnProcesses(t *testing.T) {
 	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
 
 	annaTask := send(t, anna, userText("pid", "", ""))
-	ownerPID, annaPID, benPID := resultText(send(t, owner, userText("pid", "", ""))), resultText(annaTask), resultText(send(t, ben, userText("pid", "", "")))
+	ownerPID, annaPID, benPID := a2atext.Result(send(t, owner, userText("pid", "", ""))), a2atext.Result(annaTask), a2atext.Result(send(t, ben, userText("pid", "", "")))
 	if ownerPID == annaPID || ownerPID == benPID || annaPID == benPID {
 		t.Fatalf("owner, anna and ben ran in %q, %q and %q, want separate processes", ownerPID, annaPID, benPID)
 	}
-	if got := resultText(send(t, anna, userText("pid", "", ""))); got != annaPID {
+	if got := a2atext.Result(send(t, anna, userText("pid", "", ""))); got != annaPID {
 		t.Fatalf("anna's second conversation ran in %q, want %q", got, annaPID)
 	}
-	if got := resultText(send(t, owner, userText("pid", "", annaTask.ContextID))); got != annaPID {
+	if got := a2atext.Result(send(t, owner, userText("pid", "", annaTask.ContextID))); got != annaPID {
 		t.Fatalf("owner message in anna's conversation ran in %q, want %q", got, annaPID)
 	}
 }

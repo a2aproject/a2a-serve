@@ -66,7 +66,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Stop:           s.Stop,
 		Config:         s.rt.Config,
 		ReloadConfig:   s.rt.Reload,
-		Peers:          s.clients.discover,
+		Peers:          s.clients.Discover,
 		AddChannel:     s.addChannel,
 		RemoveChannel:  s.deleteChannel,
 		Ads:            s.ads,

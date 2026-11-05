@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 )
 
@@ -55,6 +56,10 @@ type Timings struct {
 
 func (t Timings) messenger() messenger.Timings {
 	return messenger.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, AnonymousQuestionTimeout: t.AnonymousQuestionTimeout}
+}
+
+func (t Timings) agentproxy() agentproxy.Timings {
+	return agentproxy.Timings{WatchInterval: t.WatchInterval, WatchMaxInterval: t.WatchMaxInterval, WatchStale: t.WatchStale, WatchMaxAge: t.WatchMaxAge}
 }
 
 func (t Timings) withDefaults() Timings {

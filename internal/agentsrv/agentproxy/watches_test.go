@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"context"
@@ -29,7 +29,6 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
-	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -39,6 +38,18 @@ import (
 )
 
 var watchTimings = Timings{WatchInterval: time.Millisecond, WatchMaxInterval: 4 * time.Millisecond}
+
+// withWatchLimits sets the limits of the age of watches that t leaves
+// unset to the server's defaults.
+func withWatchLimits(t Timings) Timings {
+	if t.WatchStale == 0 {
+		t.WatchStale = 24 * time.Hour
+	}
+	if t.WatchMaxAge == 0 {
+		t.WatchMaxAge = 7 * 24 * time.Hour
+	}
+	return t
+}
 
 type watchesFixture struct {
 	ws      *Watches
@@ -70,14 +81,14 @@ func newWatchesFixtureNet(t *testing.T, timings Timings, net network.Provider) *
 	chain := &auth.Chain{Store: st, Net: net, Policy: func() auth.Policy { return auth.Policy{} }}
 	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), remote: remote}
 	ctx, cancel := context.WithCancel(context.Background())
-	f.ws = newWatches(ctx, WatchesDeps{
+	f.ws = NewWatches(ctx, WatchesDeps{
 		Store:   st,
 		Clients: clients,
 		Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Chain: chain, BaseURL: func() string { return "http://assistant.test" }}),
 		Chat:    f.chat,
 		Turns:   f.turns,
 		Chain:   chain,
-		Timings: timings.withDefaults(),
+		Timings: withWatchLimits(timings),
 	})
 	t.Cleanup(func() {
 		cancel()
@@ -644,7 +655,7 @@ func TestWatchesResume(t *testing.T) {
 	task := f.remote.startTask(t, promptDone)
 	f.addWatch(t, task, auth.OwnerID)
 
-	f.ws.resume(context.Background())
+	f.ws.Resume(context.Background())
 
 	got := f.nextTurn(t)
 	if want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactResult); got.Text != want {
@@ -745,8 +756,8 @@ func TestWatchesRelay(t *testing.T) {
 			}
 			ctx := context.Background()
 
-			f.ws.relay(ctx, callerClaims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
-			f.ws.relay(ctx, callerClaims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
+			f.ws.relay(ctx, Claims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
+			f.ws.relay(ctx, Claims{ContextID: "origin", User: tc.user}, "coder", task, permissionQuestion(t, tc.title))
 
 			got := f.chat.questions()
 			if diff := cmp.Diff(tc.wantAsked, got, cmpopts.IgnoreFields(askedQuestion{}, "Rec")); diff != "" {
@@ -816,33 +827,6 @@ func linkChat(t *testing.T, st *store.Store, pairing, channelName, identity, con
 	}
 	if err := st.PutLink(ctx, store.Link{Channel: channelName, Identity: identity, Pairing: pairing, Conv: conv}, pairapi.PairingPerson); err != nil {
 		t.Fatalf("store.PutLink() error = %v", err)
-	}
-}
-
-func TestResultText(t *testing.T) {
-	t.Parallel()
-	status := func(text string) a2a.TaskStatus {
-		return a2a.TaskStatus{Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(text))}
-	}
-	tests := []struct {
-		name string
-		task *a2a.Task
-		want string
-	}{
-		{name: "one artifact", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a"), a2a.NewTextPart("b")}}}}, want: "ab"},
-		{name: "artifacts", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}, {Parts: a2a.ContentParts{a2a.NewTextPart("b")}}}}, want: "a\n\nb"},
-		{name: "artifact without text", task: &a2a.Task{Artifacts: []*a2a.Artifact{{}}, Status: status("fallback")}, want: "fallback"},
-		{name: "artifacts win over the status", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}}, Status: status("fallback")}, want: "a"},
-		{name: "status message", task: &a2a.Task{Status: status("boom")}, want: "boom"},
-		{name: "nothing", task: &a2a.Task{}, want: a2atext.Message(nil)},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := resultText(tc.task); got != tc.want {
-				t.Fatalf("resultText() = %q, want %q", got, tc.want)
-			}
-		})
 	}
 }
 

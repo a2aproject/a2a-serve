@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -366,7 +367,9 @@ type observedExecutor struct {
 	unattended *messenger.ContextSet
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
-	watches *Watches
+	watches *agentproxy.Watches
+	// store has the records of those questions.
+	store *store.Store
 }
 
 var (

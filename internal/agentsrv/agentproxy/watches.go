@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"context"
@@ -82,7 +82,8 @@ type TurnInjector interface {
 	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
 }
 
-func newWatches(ctx context.Context, deps WatchesDeps) *Watches {
+// NewWatches returns the watches of deps, which poll until ctx ends.
+func NewWatches(ctx context.Context, deps WatchesDeps) *Watches {
 	return &Watches{
 		store:    deps.Store,
 		clients:  deps.Clients,
@@ -102,7 +103,7 @@ func newWatches(ctx context.Context, deps WatchesDeps) *Watches {
 // conversation the call came from, or else on the task of the A2A caller
 // who waits for the turn that called the agent, or else in the user's
 // direct chat, or else in the owner chat.
-func (ws *Watches) relay(ctx context.Context, claims callerClaims, agent string, task *a2a.Task, q *approvals.Question) {
+func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task *a2a.Task, q *approvals.Question) {
 	user := claims.User.ID
 	if user == "" {
 		user = auth.OwnerID
@@ -127,7 +128,7 @@ func (ws *Watches) relay(ctx context.Context, claims callerClaims, agent string,
 		ws.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
 		return
 	}
-	if ws.toCaller(claims.ContextID, &callerQuestion{rec: rec, header: header, msg: task.Status.Message}) {
+	if ws.toCaller(claims.ContextID, &CallerQuestion{Rec: rec, Header: header, Msg: task.Status.Message}) {
 		return
 	}
 	ws.askInChat(ctx, user, agent, rec, header)
@@ -167,8 +168,8 @@ func (ws *Watches) directChat(ctx context.Context, user string) (approvals.Chat,
 	return approvals.Chat{}, false
 }
 
-// resume restarts watches persisted by a previous run.
-func (ws *Watches) resume(ctx context.Context) {
+// Resume restarts watches persisted by a previous run.
+func (ws *Watches) Resume(ctx context.Context) {
 	all, err := ws.store.Watches(ctx)
 	if err != nil {
 		slog.Error("loading watches", "error", err)
@@ -207,7 +208,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 	if err != nil {
 		user = auth.Principal{ID: w.OnBehalfOf}
 	}
-	claims := callerClaims{ContextID: w.OriginContextID, User: user}
+	claims := Claims{ContextID: w.OriginContextID, User: user}
 	interval := ws.timings.WatchInterval
 	for {
 		select {
@@ -265,7 +266,7 @@ const (
 
 // check polls a watched task once and reports whether the watch ends, and
 // the text to post if it does.
-func (ws *Watches) check(ctx context.Context, w *store.Watch, claims callerClaims) (string, watchEnd) {
+func (ws *Watches) check(ctx context.Context, w *store.Watch, claims Claims) (string, watchEnd) {
 	task, err := ws.poll(ctx, *w, claims.User)
 	if errors.Is(err, store.ErrNotFound) {
 		slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
@@ -303,7 +304,7 @@ func (ws *Watches) check(ctx context.Context, w *store.Watch, claims callerClaim
 		}
 		return ws.checkAge(*w)
 	}
-	text := fmt.Sprintf("[%s finished task %s: %s]\n%s", w.Contact, w.TaskID, a2atext.StateName(state), resultText(task))
+	text := fmt.Sprintf("[%s finished task %s: %s]\n%s", w.Contact, w.TaskID, a2atext.StateName(state), a2atext.Result(task))
 	if state == a2a.TaskStateInputRequired {
 		text = fmt.Sprintf("[%s asks, on task %s]\n%s\nAnswer with: a2a send -a <agents URL>/%s --task-id %s \"...\"",
 			w.Contact, w.TaskID, a2atext.Message(task.Status.Message), w.Contact, w.TaskID)
@@ -531,22 +532,4 @@ func resultTurn(text string) (string, []channel.File) {
 	}
 	note := fmt.Sprintf("[The full result, %d bytes, is attached as %s.]", len(text), resultFile)
 	return strings.TrimRight(preview, "\n") + "\n…\n" + note, []channel.File{{Name: resultFile, MediaType: "text/plain", Data: []byte(text)}}
-}
-
-// resultText is the text of a finished task: its artifacts, or its status message.
-func resultText(t *a2a.Task) string {
-	var parts []string
-	for _, a := range t.Artifacts {
-		var sb strings.Builder
-		for _, p := range a.Parts {
-			sb.WriteString(p.Text())
-		}
-		if sb.Len() > 0 {
-			parts = append(parts, sb.String())
-		}
-	}
-	if len(parts) == 0 {
-		return a2atext.Message(t.Status.Message)
-	}
-	return strings.Join(parts, "\n\n")
 }

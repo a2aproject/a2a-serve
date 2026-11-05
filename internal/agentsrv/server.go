@@ -38,6 +38,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
@@ -142,9 +143,9 @@ type Server struct {
 	chatApprovals *messenger.ChatApprovals
 	chatTurns     *messenger.ChatTurns
 	claims        *CallClaims
-	clients       *ContactClients
-	watches       *Watches
-	proxy         *HarnessProxy
+	clients       *agentproxy.ContactClients
+	watches       *agentproxy.Watches
+	proxy         *agentproxy.HarnessProxy
 	schedules     *schedules.Runner
 	nodes         *nodes.Host
 	pairings      *pairings.Service
@@ -363,8 +364,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Advertised:     s.ads.Advertised,
 	})
 	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
-	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
-	closers.push(s.clients.close)
+	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
+	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
@@ -429,16 +430,16 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Posted:     posted,
 			Runtime:    s.rt,
 		})
-		s.watches = newWatches(ctx, WatchesDeps{
+		s.watches = agentproxy.NewWatches(ctx, agentproxy.WatchesDeps{
 			Store:   s.store,
 			Clients: s.clients,
 			Records: records,
 			Chat:    s.chatApprovals,
 			Turns:   s.chatTurns,
 			Chain:   s.chain,
-			Timings: s.timings,
+			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches},
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -458,13 +459,13 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.ops = agentops.New(agentops.Deps{
 		Store:       s.store,
 		Pairings:    s.pairings,
-		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.locate, HTTPClient: s.clients.httpClient, Changed: s.refreshInstructions},
+		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions},
 		Schedules:   s.schedules.Service(),
 		Runtime:     s.rt,
 		Network:     s.networks,
 		RunSchedule: s.schedules.RunNow,
 	})
-	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
+	s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.inspector = inspector.New(inspector.Deps{
 		Store:        s.store,
 		Tasks:        s.tasks,
@@ -523,7 +524,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	errc := make(chan error, 1)
 	s.chatTurns.Start(ctx)
 	closers.push(s.supervisor.StopAll)
-	closers.push(s.harness.serve(ctx, s.proxy.routes(s.harness.processOf), errc))
+	closers.push(s.harness.serve(ctx, s.proxy.Routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}
@@ -549,7 +550,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 		return nil
 	})
 	s.background.Go(func() { s.approvals.CloseStale(ctx) })
-	s.watches.resume(ctx)
+	s.watches.Resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })

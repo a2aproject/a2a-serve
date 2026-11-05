@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"slices"
 	"sync"
@@ -30,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 )
 
@@ -232,4 +234,42 @@ func (l *keyedListener) Accept() (net.Conn, error) {
 type keyedConn struct {
 	net.Conn
 	agentKey string
+}
+
+// harnessHost is the host of agents URLs when the harness reaches the server
+// through a Unix socket; the CLI sends every request through the socket.
+const (
+	harnessHost = "a2a"
+	socketHost  = "http://" + harnessHost
+)
+
+// harnessHelperPath is where the harness's credential helper is written,
+// relative to its home.
+const harnessHelperPath = ".local/share/a2a-serve/credential-helper"
+
+// writeHarnessHelper writes a credential helper into the harness home that
+// gives the harness's a2a CLI the key for the TCP bridge, and returns the
+// environment variable that has the CLI use it for requests to host only.
+func writeHarnessHelper(home, host, key string) (env string, err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	p := filepath.FromSlash(harnessHelperPath)
+	if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+		return "", err
+	}
+	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"headers\":{\"Authorization\":[\"Bearer " + key + "\"]}}'\n"
+	if err := fsutil.WriteAtomicIn(root, p, []byte(script), 0o700); err != nil {
+		return "", err
+	}
+	return harness.EnvCredentialHelper + "=" + host + "=" + path.Join(harness.ContainerHome, harnessHelperPath), nil
+}
+
+// harnessBridge is how agents URLs reach the server: through the Unix
+// socket of the owner's agent process, or over TCP at url.
+type harnessBridge struct {
+	socket string
+	url    string
 }

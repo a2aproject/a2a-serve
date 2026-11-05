@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
@@ -47,6 +49,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -367,7 +370,7 @@ func wantResult(t *testing.T, task *a2a.Task, state a2a.TaskState, text string) 
 	if task.Status.State != state {
 		t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), state)
 	}
-	if got := resultText(task); !strings.Contains(got, text) {
+	if got := a2atext.Result(task); !strings.Contains(got, text) {
 		t.Fatalf("task result = %q, want it to contain %q", got, text)
 	}
 }
@@ -562,3 +565,63 @@ func hasText(s string) func(channel.Outbound) bool {
 }
 
 func hasQuestion(m channel.Outbound) bool { return m.Question != nil }
+
+// waitTimeout bounds how long tests wait for something to happen.
+const waitTimeout = 10 * time.Second
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
+
+// harnessKeyCaller takes requests with key, or every request for no key,
+// as calls from the owner's agent process.
+func harnessKeyCaller(key string) agentproxy.Caller {
+	return func(r *http.Request) (string, bool) {
+		if key == "" {
+			return "", true
+		}
+		tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
+		return "", ok && tok == key
+	}
+}
+
+type proxyResponse struct {
+	Status int
+	Error  string
+	Body   []byte
+}
+
+func getURL(t *testing.T, u, authorization string) proxyResponse {
+	t.Helper()
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, u, nil)
+	if err != nil {
+		t.Fatalf("http.NewRequestWithContext() error = %v", err)
+	}
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s error = %v", u, err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading the response body error = %v", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatalf("closing the response body error = %v", err)
+	}
+	out := proxyResponse{Status: resp.StatusCode, Body: body}
+	var apiErr jsonhttp.APIError
+	if json.Unmarshal(body, &apiErr) == nil {
+		out.Error = apiErr.Error
+	}
+	return out
+}

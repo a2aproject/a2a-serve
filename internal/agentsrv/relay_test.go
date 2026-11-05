@@ -111,7 +111,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	wantContact := &controlapi.ContactInfo{
 		Name:     "reviewer",
 		URL:      "http://agentmesh.local/mesh/peer-reviewer/a2a/reviewer",
-		Via:      ViaPrivate,
+		Via:      contacts.ViaPrivate,
 		HasToken: false,
 	}
 	if diff := cmp.Diff(wantContact, contact); diff != "" {

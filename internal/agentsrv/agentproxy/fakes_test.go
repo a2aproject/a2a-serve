@@ -12,14 +12,19 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
+	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"iter"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -36,12 +41,66 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Prompts a fakeContact runs. A message to a task that waits for input is
 // the answer, which completes the task.
+var (
+	anna = auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: "anna", Hops: 1}}
+	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleAuthenticated}
+)
+
+// postOversized declares a body over jsonhttp.MaxBody to u without sending
+// it and returns the status of the response.
+func postOversized(t *testing.T, u, authorization string) int {
+	t.Helper()
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	}()
+	if err := conn.SetDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	req := fmt.Sprintf("POST %s HTTP/1.1\r\nHost: %s\r\nAuthorization: %s\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n", parsed.RequestURI(), parsed.Host, authorization, jsonhttp.MaxBody+1)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("POST %s error = %v, want a response", u, err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return resp.StatusCode
+}
+
+func openTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return st
+}
+
 // waitTimeout bounds how long tests wait for something to happen.
 const waitTimeout = 10 * time.Second
 

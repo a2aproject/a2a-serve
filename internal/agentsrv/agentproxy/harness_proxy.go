@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"cmp"
@@ -23,9 +23,6 @@ import (
 	"iter"
 	"log/slog"
 	"net/http"
-	"os"
-	"path"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"time"
@@ -34,8 +31,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -46,10 +41,19 @@ import (
 // turn of the conversation.
 type HarnessProxy struct {
 	store     *store.Store
-	claims    *CallClaims
+	claims    ClaimsSource
 	clients   *ContactClients
 	watches   *Watches
 	schedules SchedulesAgent
+}
+
+// ClaimsSource tells who calls through an agents URL.
+type ClaimsSource interface {
+	// ClaimsOf returns the claims of the running turn of a handle's
+	// conversation, for a call from the agent process of process:
+	// [ErrUnknownHandle] for an unknown handle or one of a conversation of
+	// another process, and [ErrNoTurn] when no turn runs.
+	ClaimsOf(ctx context.Context, handle, process string) (Claims, error)
 }
 
 // SchedulesAgent is the built-in agent that manages schedules.
@@ -62,60 +66,36 @@ type SchedulesAgent interface {
 // HarnessProxyDeps are the dependencies of [HarnessProxy].
 type HarnessProxyDeps struct {
 	Store     *store.Store
-	Claims    *CallClaims
+	Claims    ClaimsSource
 	Clients   *ContactClients
 	Watches   *Watches
 	Schedules SchedulesAgent
 }
 
-func newHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
+// NewHarnessProxy returns the proxy of deps.
+func NewHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
 	return &HarnessProxy{store: deps.Store, claims: deps.Claims, clients: deps.Clients, watches: deps.Watches, schedules: deps.Schedules}
 }
 
-// harnessHost is the host of agents URLs when the harness reaches the server
-// through a Unix socket; the CLI sends every request through the socket.
-const (
-	harnessHost = "a2a"
-	socketHost  = "http://" + harnessHost
+// Claims are who calls through the agents URL of a conversation: the
+// harness in the conversation's running turn, for the user who started it.
+type Claims struct {
+	ContextID string
+	User      auth.Principal
+}
+
+// Errors of [ClaimsSource.ClaimsOf].
+var (
+	ErrUnknownHandle = errors.New("unknown agents URL: use the one from the [a2a agents] line of this conversation")
+	ErrNoTurn        = errors.New("this conversation has no running turn, and its agents URL works only while one runs")
 )
 
-// harnessHelperPath is where the harness's credential helper is written,
-// relative to its home.
-const harnessHelperPath = ".local/share/a2a-serve/credential-helper"
+// Caller returns the agent key of the process a request on the harness
+// listener came from, or false when the request proves none.
+type Caller func(r *http.Request) (agentKey string, ok bool)
 
-// writeHarnessHelper writes a credential helper into the harness home that
-// gives the harness's a2a CLI the key for the TCP bridge, and returns the
-// environment variable that has the CLI use it for requests to host only.
-func writeHarnessHelper(home, host, key string) (env string, err error) {
-	root, err := os.OpenRoot(home)
-	if err != nil {
-		return "", err
-	}
-	defer func() { err = errors.Join(err, root.Close()) }()
-	p := filepath.FromSlash(harnessHelperPath)
-	if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
-		return "", err
-	}
-	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"headers\":{\"Authorization\":[\"Bearer " + key + "\"]}}'\n"
-	if err := fsutil.WriteAtomicIn(root, p, []byte(script), 0o700); err != nil {
-		return "", err
-	}
-	return harness.EnvCredentialHelper + "=" + host + "=" + path.Join(harness.ContainerHome, harnessHelperPath), nil
-}
-
-// harnessBridge is how agents URLs reach the server: through the Unix
-// socket of the owner's agent process, or over TCP at url.
-type harnessBridge struct {
-	socket string
-	url    string
-}
-
-// harnessCaller returns the agent key of the process a request on the
-// harness listener came from, or false when the request proves none.
-type harnessCaller func(r *http.Request) (agentKey string, ok bool)
-
-// routes serves the agents URLs on the harness listener.
-func (hp *HarnessProxy) routes(caller harnessCaller) http.Handler {
+// Routes serves the agents URLs on the harness listener.
+func (hp *HarnessProxy) Routes(caller Caller) http.Handler {
 	mux := http.NewServeMux()
 	agents := hp.agentsHandler(caller)
 	mux.Handle("/{handle}/{agent}", agents)
@@ -128,7 +108,7 @@ func (hp *HarnessProxy) routes(caller harnessCaller) http.Handler {
 // called with this agent's identity, nodes in-process. caller tells the
 // agent process a request comes from, which reaches only the handles of
 // its own conversations.
-func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
+func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		process, ok := caller(r)
 		if !ok {
@@ -136,12 +116,12 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 			return
 		}
 		handle, name := r.PathValue("handle"), r.PathValue("agent")
-		claims, err := hp.claims.claimsOf(r.Context(), handle, process)
+		claims, err := hp.claims.ClaimsOf(r.Context(), handle, process)
 		switch {
-		case errors.Is(err, errUnknownHandle):
+		case errors.Is(err, ErrUnknownHandle):
 			jsonhttp.Error(w, http.StatusNotFound, err.Error())
 			return
-		case errors.Is(err, errNoTurn):
+		case errors.Is(err, ErrNoTurn):
 			jsonhttp.Error(w, http.StatusForbidden, err.Error())
 			return
 		case err != nil:
@@ -198,7 +178,7 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 
 // serveSchedules serves the built-in schedules agent for the conversation
 // of claims.
-func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, claims callerClaims, base, rest string) {
+func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, claims Claims, base, rest string) {
 	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
 		card := proxyCard(pairings.SchedulesAgent, base)
 		card.Description = "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."
@@ -238,7 +218,7 @@ func proxyCard(name, base string) *a2a.AgentCard {
 type guardedHandler struct {
 	a2asrv.RequestHandler
 	proxy  *HarnessProxy
-	claims callerClaims
+	claims Claims
 	agent  string
 }
 

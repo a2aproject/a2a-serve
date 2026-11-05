@@ -20,7 +20,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"iter"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -29,8 +28,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -44,12 +43,13 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // addContact pairs caller with callee as a contact named name.
@@ -64,7 +64,7 @@ func addContact(t *testing.T, caller, callee *testServer, name, role string) {
 	if err != nil {
 		t.Fatalf("AddContact() error = %v", err)
 	}
-	if !c.HasToken || c.Via != ViaHTTPS {
+	if !c.HasToken || c.Via != contacts.ViaHTTPS {
 		t.Fatalf("AddContact() = %+v, want an https contact with a token", c)
 	}
 }
@@ -78,8 +78,8 @@ func TestAgentCallsContact(t *testing.T) {
 	c := assistant.client(assistant.pair("me", auth.RoleOwner))
 	task := send(t, c, userText("call coder hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
-	if !strings.Contains(resultText(task), "tool result") {
-		t.Fatalf("task result = %q, want the called agent's result", resultText(task))
+	if !strings.Contains(a2atext.Result(task), "tool result") {
+		t.Fatalf("task result = %q, want the called agent's result", a2atext.Result(task))
 	}
 	if strings.Contains(a2atext.Message(task.History[0]), agentsLinePrefix) {
 		t.Fatalf("task history = %q, want the caller's message without the agents line", a2atext.Message(task.History[0]))
@@ -314,82 +314,27 @@ func waitQuestionMessage(t *testing.T, ts *testServer, questionID string) {
 	}
 }
 
-func TestContactClientIsShared(t *testing.T) {
+func TestCallerAtHopLimitIsRefused(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p, ctx := assistant.srv.clients, context.Background()
-
-	first, err := p.contactClient(ctx, "coder")
-	if err != nil {
-		t.Fatalf("contactClient() error = %v", err)
-	}
-	for _, user := range []auth.Principal{auth.Owner(), {ID: "pair:anna", Role: auth.RoleAuthenticated}} {
-		tg, err := p.target(ctx, "coder", user, 1)
-		if err != nil {
-			t.Fatalf("target() error = %v", err)
-		}
-		if got := tg.(remoteTarget).c; got != first {
-			t.Fatalf("target() for %s built a new client, want the contact's client", user.ID)
-		}
-	}
-
-	c, err := p.store.Contact(ctx, "coder")
-	if err != nil {
-		t.Fatal(err)
-	}
-	c.Token = coder.pair("assistant-again", auth.RoleOwner)
-	if err := p.store.PutContact(ctx, c); err != nil {
-		t.Fatal(err)
-	}
-	second, err := p.contactClient(ctx, "coder")
-	if err != nil {
-		t.Fatalf("contactClient() after a token change error = %v", err)
-	}
-	if second == first {
-		t.Fatalf("contactClient() after a token change = the old client, want a new one")
-	}
-
-	if err := p.store.DeleteContact(ctx, "coder"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.contactClient(ctx, "coder"); !errors.Is(err, store.ErrNotFound) {
-		t.Fatalf("contactClient() of a removed contact error = %v, want %v", err, store.ErrNotFound)
-	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if len(p.clients) != 0 {
-		t.Fatalf("clients after removing the contact = %d, want 0", len(p.clients))
-	}
-}
-
-func TestContactCountsHops(t *testing.T) {
-	t.Parallel()
-	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p, ctx := assistant.srv.clients, context.Background()
+	c := coder.client(coder.pair("assistant", auth.RoleOwner))
 	tests := []struct {
 		name    string
 		hops    int
 		wantErr bool
 	}{
-		{name: "first hop", hops: 0},
-		{name: "past the limit", hops: auth.MaxHops, wantErr: true},
+		{name: "first hop", hops: 1},
+		{name: "past the limit", hops: auth.MaxHops + 1, wantErr: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			tg, err := p.target(ctx, "coder", auth.Owner(), tc.hops)
-			if err != nil {
-				t.Fatalf("target() error = %v", err)
-			}
-			_, err = tg.send(ctx, userText("hello", "", ""))
+			ctx := a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(tc.hops)}})
+			_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")})
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("send() at %d hops error = %v, want error %v", tc.hops, err, tc.wantErr)
+				t.Fatalf("SendMessage() at %d hops error = %v, want error %v", tc.hops, err, tc.wantErr)
 			}
 			if err != nil && !strings.Contains(err.Error(), "too many agents") {
-				t.Fatalf("send() error = %v, want the hop limit", err)
+				t.Fatalf("SendMessage() error = %v, want the hop limit", err)
 			}
 		})
 	}
@@ -413,13 +358,13 @@ func TestAgentsURLHandles(t *testing.T) {
 	if len(h) != handleLen {
 		t.Fatalf("handle() = %q, want %d characters", h, handleLen)
 	}
-	if _, err := p.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, errNoTurn)
+	if _, err := p.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 
-	turn := callerClaims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
+	turn := agentproxy.Claims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
 	end := p.beginTurn(turn)
-	got, err := p.claimsOf(ctx, h, "")
+	got, err := p.ClaimsOf(ctx, h, "")
 	if err != nil {
 		t.Fatalf("claimsOf() during a turn error = %v", err)
 	}
@@ -428,11 +373,11 @@ func TestAgentsURLHandles(t *testing.T) {
 	}
 	end()
 
-	if _, err := p.claimsOf(ctx, h, ""); !errors.Is(err, errNoTurn) {
-		t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+	if _, err := p.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+		t.Fatalf("claimsOf() after the turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
-	if _, err := p.claimsOf(ctx, "unknown", ""); !errors.Is(err, errUnknownHandle) {
-		t.Fatalf("claimsOf(unknown) error = %v, want %v", err, errUnknownHandle)
+	if _, err := p.ClaimsOf(ctx, "unknown", ""); !errors.Is(err, agentproxy.ErrUnknownHandle) {
+		t.Fatalf("claimsOf(unknown) error = %v, want %v", err, agentproxy.ErrUnknownHandle)
 	}
 }
 
@@ -451,7 +396,7 @@ func turnURLOf(t *testing.T, ts *testServer, contextID string, user auth.Princip
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(ts.srv.claims.beginTurn(callerClaims{ContextID: contextID, User: user}))
+	t.Cleanup(ts.srv.claims.beginTurn(agentproxy.Claims{ContextID: contextID, User: user}))
 	return u
 }
 
@@ -542,8 +487,8 @@ func TestAgentsProxy(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("callAgent() error = %v, want error %v", err, tc.wantErr)
 			}
-			if err == nil && resultText(task) != tc.want {
-				t.Fatalf("task result = %q, want %q", resultText(task), tc.want)
+			if err == nil && a2atext.Result(task) != tc.want {
+				t.Fatalf("task result = %q, want %q", a2atext.Result(task), tc.want)
 			}
 		})
 	}
@@ -583,8 +528,8 @@ func TestAgentsProxyServesOnlyTheConversationsOfItsProcess(t *testing.T) {
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("callAgent() error = %v, want error %v", err, tc.wantErr)
 			}
-			if err == nil && resultText(task) != "grok says: hi" {
-				t.Fatalf("task result = %q, want %q", resultText(task), "grok says: hi")
+			if err == nil && a2atext.Result(task) != "grok says: hi" {
+				t.Fatalf("task result = %q, want %q", a2atext.Result(task), "grok says: hi")
 			}
 		})
 	}
@@ -607,7 +552,7 @@ func TestHarnessEndpointsOverTCP(t *testing.T) {
 			t.Errorf("harnessListeners.close() error = %v", err)
 		}
 	})
-	shutdown := hl.serve(context.Background(), ts.srv.proxy.routes(hl.processOf), make(chan error, 1))
+	shutdown := hl.serve(context.Background(), ts.srv.proxy.Routes(hl.processOf), make(chan error, 1))
 	t.Cleanup(func() {
 		if err := shutdown(context.Background()); err != nil {
 			t.Errorf("shutting down the harness listener: %v", err)
@@ -680,7 +625,7 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	hs := httptest.NewServer(ts.srv.proxy.routes(harnessKeyCaller("harness-key")))
+	hs := httptest.NewServer(ts.srv.proxy.Routes(harnessKeyCaller("harness-key")))
 	t.Cleanup(hs.Close)
 	h := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
 	tests := []struct {
@@ -806,73 +751,6 @@ func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	assistant.ch.waitEdited(t, ref, "✓ Allow by")
 }
 
-// streamingHandler streams one working status update of a task.
-type streamingHandler struct {
-	a2asrv.RequestHandler
-}
-
-func (streamingHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		ev := a2a.NewStatusUpdateEvent(&a2a.Task{ID: "t1", ContextID: "remote"}, a2a.TaskStateWorking, nil)
-		if !yield(ev, nil) {
-			return
-		}
-		<-ctx.Done()
-	}
-}
-
-func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant"})
-	addNode(t, ts, "grok", 0)
-	g := &guardedHandler{RequestHandler: streamingHandler{}, proxy: ts.srv.proxy, claims: callerClaims{ContextID: "c1", User: auth.Owner()}, agent: "grok"}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	for _, err := range g.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: userText("hi", "", "")}) {
-		if err != nil {
-			t.Fatalf("SendStreamingMessage() error = %v", err)
-		}
-		cancel()
-		break
-	}
-
-	ws, err := ts.srv.store.Watches(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ws) != 1 || ws[0].TaskID != "t1" {
-		t.Fatalf("store.Watches() = %+v, want a watch of task t1", ws)
-	}
-}
-
-func TestWatchOfRemovedContactEnds(t *testing.T) {
-	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant"})
-	p, ctx := ts.srv.watches, context.Background()
-	w := store.Watch{Contact: "gone", TaskID: "t1", OriginContextID: "c1", OnBehalfOf: auth.OwnerID}
-	if err := p.store.PutWatch(ctx, w); err != nil {
-		t.Fatal(err)
-	}
-
-	p.watch(w)
-
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		ws, err := p.store.Watches(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if len(ws) == 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("store.Watches() = %+v, want none", ws)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
 func TestContactNameTakenByNode(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
@@ -894,33 +772,6 @@ func TestContactUnreachableURL(t *testing.T) {
 	got := clierr.Classify(err)
 	if got == nil || got.Code != clierr.CodeIO || got.Exit != 3 || got.Hint != clierr.IOHint {
 		t.Fatalf("AddContact() error = %+v, want %s (exit 3) with a hint, as while the agent is stopped", got, clierr.CodeIO)
-	}
-}
-
-func TestConcurrentContactClientsAreOne(t *testing.T) {
-	t.Parallel()
-	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleOwner)
-	p := assistant.srv.clients
-
-	clients := make([]*a2aclient.Client, 8)
-	var wg sync.WaitGroup
-	for i := range clients {
-		wg.Go(func() {
-			c, err := p.contactClient(context.Background(), "coder")
-			if err != nil {
-				t.Errorf("contactClient() error = %v", err)
-			}
-			clients[i] = c
-		})
-	}
-	wg.Wait()
-
-	for _, c := range clients {
-		if c != clients[0] {
-			t.Fatalf("contactClient() built %d different clients concurrently, want one", len(slices.Compact(slices.Clone(clients))))
-		}
 	}
 }
 
@@ -1015,16 +866,16 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			end := p.turn(tc.ctx, tc.execCtx)
-			got, err := p.claimsOf(context.Background(), h, "")
+			got, err := p.ClaimsOf(context.Background(), h, "")
 			end()
 			if err != nil {
 				t.Fatalf("claimsOf() during the turn error = %v", err)
 			}
-			if diff := cmp.Diff(callerClaims{ContextID: "c1", User: tc.want}, got); diff != "" {
+			if diff := cmp.Diff(agentproxy.Claims{ContextID: "c1", User: tc.want}, got); diff != "" {
 				t.Fatalf("claimsOf() wrong result (-want +got) diff = %s", diff)
 			}
-			if _, err := p.claimsOf(context.Background(), h, ""); !errors.Is(err, errNoTurn) {
-				t.Fatalf("claimsOf() after the turn error = %v, want %v", err, errNoTurn)
+			if _, err := p.ClaimsOf(context.Background(), h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
+				t.Fatalf("claimsOf() after the turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 			}
 		})
 	}

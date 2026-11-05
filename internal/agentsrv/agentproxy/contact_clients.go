@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"context"
@@ -76,7 +76,8 @@ type ContactClientsDeps struct {
 
 var _ approvals.RemoteAnswerer = (*ContactClients)(nil)
 
-func newContactClients(deps ContactClientsDeps) *ContactClients {
+// NewContactClients returns the contact clients of deps.
+func NewContactClients(deps ContactClientsDeps) *ContactClients {
 	return &ContactClients{
 		store:   deps.Store,
 		private: deps.Private,
@@ -104,18 +105,18 @@ type contactClient struct {
 // event streams.
 const maxContactResponse = 32 << 20
 
-// discover lists agents on the private network, cached briefly.
-func (cc *ContactClients) discover(ctx context.Context) ([]network.PeerInfo, error) {
+// Discover lists agents on the private network, cached briefly.
+func (cc *ContactClients) Discover(ctx context.Context) ([]network.PeerInfo, error) {
 	return cc.discoverWithin(ctx, 30*time.Second)
 }
 
-// rediscover lists agents on the private network bypassing the cache,
+// Rediscover lists agents on the private network bypassing the cache,
 // unless it did so within minInterval.
-func (cc *ContactClients) rediscover(ctx context.Context, minInterval time.Duration) ([]network.PeerInfo, error) {
+func (cc *ContactClients) Rediscover(ctx context.Context, minInterval time.Duration) ([]network.PeerInfo, error) {
 	cc.mu.Lock()
 	if time.Since(cc.rediscovered) < minInterval {
 		cc.mu.Unlock()
-		return cc.discover(ctx)
+		return cc.Discover(ctx)
 	}
 	cc.rediscovered = time.Now()
 	cc.mu.Unlock()
@@ -143,10 +144,10 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 	return peers, nil
 }
 
-// locate returns the URL of the contact name, an advertised pairing or an
+// Locate returns the URL of the contact name, an advertised pairing or an
 // agent found by name on the private network, when u is empty, and the
 // route to it.
-func (cc *ContactClients) locate(ctx context.Context, name, u string) (string, string, error) {
+func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, string, error) {
 	if u != "" {
 		if cc.private != nil && cc.onPrivateNetwork(ctx, u) {
 			return u, ViaPrivate, nil
@@ -157,7 +158,7 @@ func (cc *ContactClients) locate(ctx context.Context, name, u string) (string, s
 		u, err := cc.advertisedURL(ctx, name, node, host)
 		return u, ViaPrivate, err
 	}
-	peers, err := cc.discover(ctx)
+	peers, err := cc.Discover(ctx)
 	if err != nil {
 		return "", "", err
 	}
@@ -176,7 +177,7 @@ func (cc *ContactClients) advertisedURL(ctx context.Context, key, name, host str
 	if _, ok := cc.ads.Lookup(key); !ok {
 		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a-serve peers` lists the advertised pairings", key)
 	}
-	peers, err := cc.discover(ctx)
+	peers, err := cc.Discover(ctx)
 	if err != nil {
 		return "", err
 	}
@@ -189,24 +190,24 @@ func (cc *ContactClients) advertisedURL(ctx context.Context, key, name, host str
 }
 
 func (cc *ContactClients) onPrivateNetwork(ctx context.Context, u string) bool {
-	peers, err := cc.discover(ctx)
+	peers, err := cc.Discover(ctx)
 	if err != nil {
 		return false
 	}
 	for _, pi := range peers {
-		if trimSlash(pi.URL) == trimSlash(u) {
+		if strings.TrimSuffix(pi.URL, "/") == strings.TrimSuffix(u, "/") {
 			return true
 		}
 	}
 	return false
 }
 
-// httpClient returns the HTTP client for a contact, which sends its token
+// HTTPClient returns the HTTP client for a contact, which sends its token
 // to the contact's host only, limits its responses, and keeps a contact on
 // a public URL out of private networks. It has no overall timeout, because
 // streams to the contact last as long as its task; callers bound requests
 // with their context.
-func (cc *ContactClients) httpClient(c store.Contact) *http.Client {
+func (cc *ContactClients) HTTPClient(c store.Contact) *http.Client {
 	base := &http.Client{Transport: egress.Transport(c.URL), CheckRedirect: egress.CheckRedirect}
 	if c.Via == ViaPrivate && cc.private != nil {
 		base = cc.private.HTTPClient()
@@ -312,7 +313,7 @@ func (cc *ContactClients) callable(ctx context.Context, name string) (bool, erro
 
 // agentHandler returns the A2A handler of a node or a contact. A node is
 // served in-process, as principal.
-func (cc *ContactClients) agentHandler(ctx context.Context, c callerClaims, name string) (a2asrv.RequestHandler, *auth.Principal, error) {
+func (cc *ContactClients) agentHandler(ctx context.Context, c Claims, name string) (a2asrv.RequestHandler, *auth.Principal, error) {
 	node, err := cc.isNode(ctx, name)
 	if err != nil {
 		return nil, nil, err
@@ -370,7 +371,7 @@ func (cc *ContactClients) buildClient(ctx context.Context, name string, c store.
 	if client := cc.cachedClient(name, c); client != nil {
 		return client, nil
 	}
-	hc := cc.httpClient(c)
+	hc := cc.HTTPClient(c)
 	cctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	card, err := agentcard.NewResolver(hc).Resolve(cctx, c.URL)
@@ -416,8 +417,8 @@ func (cc *ContactClients) forgetClient(name string) {
 	}
 }
 
-// close drops the clients of all contacts.
-func (cc *ContactClients) close(context.Context) error {
+// Close drops the clients of all contacts.
+func (cc *ContactClients) Close(context.Context) error {
 	cc.mu.Lock()
 	clients := cc.clients
 	cc.clients = map[string]*contactClient{}

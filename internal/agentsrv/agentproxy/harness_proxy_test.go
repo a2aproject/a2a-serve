@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"context"
@@ -46,31 +46,67 @@ var idleTimings = Timings{WatchInterval: time.Hour, WatchMaxInterval: time.Hour}
 
 type proxyFixture struct {
 	*watchesFixture
-	claims *CallClaims
+	claims *fakeClaims
 	proxy  *HarnessProxy
+}
+
+// fakeClaims gives each conversation a handle, whose claims are the ones of
+// the conversation's running turn.
+type fakeClaims struct {
+	mu    sync.Mutex
+	turns map[string]Claims
+}
+
+func (c *fakeClaims) handle(_ context.Context, contextID string) (string, error) {
+	return "h-" + contextID, nil
+}
+
+func (c *fakeClaims) beginTurn(cl Claims) (end func()) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.turns[cl.ContextID] = cl
+	return func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		delete(c.turns, cl.ContextID)
+	}
+}
+
+func (c *fakeClaims) ClaimsOf(_ context.Context, handle, _ string) (Claims, error) {
+	contextID, ok := strings.CutPrefix(handle, "h-")
+	if !ok {
+		return Claims{}, ErrUnknownHandle
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cl, ok := c.turns[contextID]
+	if !ok {
+		return Claims{}, ErrNoTurn
+	}
+	return cl, nil
 }
 
 func newProxyFixture(t *testing.T) *proxyFixture {
 	t.Helper()
 	wf := newWatchesFixtureWith(t, idleTimings)
-	claims := newCallClaims(CallClaimsDeps{Store: wf.store})
+	claims := &fakeClaims{turns: map[string]Claims{}}
 	return &proxyFixture{
 		watchesFixture: wf,
 		claims:         claims,
-		proxy:          newHarnessProxy(HarnessProxyDeps{Store: wf.store, Claims: claims, Clients: wf.clients, Watches: wf.ws}),
+		proxy:          NewHarnessProxy(HarnessProxyDeps{Store: wf.store, Claims: claims, Clients: wf.clients, Watches: wf.ws}),
 	}
 }
 
 func (f *proxyFixture) serve(t *testing.T, key string) *httptest.Server {
 	t.Helper()
-	srv := httptest.NewServer(f.proxy.routes(harnessKeyCaller(key)))
+	srv := httptest.NewServer(f.proxy.Routes(harnessKeyCaller(key)))
 	t.Cleanup(srv.Close)
 	return srv
 }
 
 // harnessKeyCaller takes requests with key, or every request for no key,
 // as calls from the owner's agent process.
-func harnessKeyCaller(key string) harnessCaller {
+func harnessKeyCaller(key string) Caller {
 	return func(r *http.Request) (string, bool) {
 		if key == "" {
 			return "", true
@@ -84,7 +120,7 @@ func (f *proxyFixture) handle(t *testing.T, contextID string) string {
 	t.Helper()
 	h, err := f.claims.handle(context.Background(), contextID)
 	if err != nil {
-		t.Fatalf("CallClaims.handle() error = %v", err)
+		t.Fatalf("fakeClaims.handle() error = %v", err)
 	}
 	return h
 }
@@ -92,7 +128,7 @@ func (f *proxyFixture) handle(t *testing.T, contextID string) string {
 func (f *proxyFixture) runTurn(t *testing.T, contextID string, user auth.Principal) string {
 	t.Helper()
 	h := f.handle(t, contextID)
-	t.Cleanup(f.claims.beginTurn(callerClaims{ContextID: contextID, User: user}))
+	t.Cleanup(f.claims.beginTurn(Claims{ContextID: contextID, User: user}))
 	return h
 }
 
@@ -147,8 +183,8 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 		{name: "authenticated calls a contact", user: bob, agent: "coder", wantCode: http.StatusOK},
 		{name: "owner calls a node", user: auth.Owner(), agent: "grok", wantCode: http.StatusOK},
 		{name: "owner calls the schedules agent", user: auth.Owner(), agent: pairings.SchedulesAgent, wantCode: http.StatusOK},
-		{name: "unknown handle", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusNotFound, wantError: errUnknownHandle.Error()},
-		{name: "conversation without a running turn", user: auth.Owner(), noTurn: true, agent: "coder", wantCode: http.StatusForbidden, wantError: errNoTurn.Error()},
+		{name: "unknown handle", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusNotFound, wantError: ErrUnknownHandle.Error()},
+		{name: "conversation without a running turn", user: auth.Owner(), noTurn: true, agent: "coder", wantCode: http.StatusForbidden, wantError: ErrNoTurn.Error()},
 		{name: "anonymous user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
 		{name: "anonymous user and the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: pairings.SchedulesAgent, wantCode: http.StatusForbidden, wantError: "can't call other agents"},
 		{name: "user without a role", user: auth.Principal{ID: "pair:gone"}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
@@ -444,7 +480,7 @@ func completedTask(id a2a.TaskID, contextID string) *a2a.Task {
 }
 
 func (f *proxyFixture) guarded(agent *recordingAgent, contextID string, user auth.Principal) *guardedHandler {
-	return &guardedHandler{RequestHandler: agent, proxy: f.proxy, claims: callerClaims{ContextID: contextID, User: user}, agent: "coder"}
+	return &guardedHandler{RequestHandler: agent, proxy: f.proxy, claims: Claims{ContextID: contextID, User: user}, agent: "coder"}
 }
 
 func (f *proxyFixture) recordStarted(t *testing.T, contextID, taskID, remoteContextID string) {
@@ -995,5 +1031,44 @@ func TestGuardedHandlerListTasksRejectsBadPaging(t *testing.T) {
 				t.Fatalf("guardedHandler.ListTasks() error = %v, want %v", err, a2a.ErrInvalidRequest)
 			}
 		})
+	}
+}
+
+// streamingHandler streams one working status update of a task.
+type streamingHandler struct {
+	a2asrv.RequestHandler
+}
+
+func (streamingHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		ev := a2a.NewStatusUpdateEvent(&a2a.Task{ID: "t1", ContextID: "remote"}, a2a.TaskStateWorking, nil)
+		if !yield(ev, nil) {
+			return
+		}
+		<-ctx.Done()
+	}
+}
+
+func TestGuardedHandlerWatchesDroppedStream(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	g := &guardedHandler{RequestHandler: streamingHandler{}, proxy: f.proxy, claims: Claims{ContextID: "c1", User: auth.Owner()}, agent: "coder"}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	for _, err := range g.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hi"))}) {
+		if err != nil {
+			t.Fatalf("SendStreamingMessage() error = %v", err)
+		}
+		cancel()
+		break
+	}
+
+	ws, err := f.store.Watches(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ws) != 1 || ws[0].TaskID != "t1" {
+		t.Fatalf("store.Watches() = %+v, want a watch of task t1", ws)
 	}
 }

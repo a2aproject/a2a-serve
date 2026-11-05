@@ -84,3 +84,22 @@ func sameChunk(a, b *a2a.Part) bool {
 	_, bText := b.Content.(a2a.Text)
 	return aText && bText && a.Filename == b.Filename && a.MediaType == b.MediaType && len(a.Metadata) == 0 && len(b.Metadata) == 0
 }
+
+// Result is the text of a finished task: its artifacts, or its status
+// message.
+func Result(t *a2a.Task) string {
+	var parts []string
+	for _, a := range t.Artifacts {
+		var sb strings.Builder
+		for _, p := range a.Parts {
+			sb.WriteString(p.Text())
+		}
+		if sb.Len() > 0 {
+			parts = append(parts, sb.String())
+		}
+	}
+	if len(parts) == 0 {
+		return Message(t.Status.Message)
+	}
+	return strings.Join(parts, "\n\n")
+}

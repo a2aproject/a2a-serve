@@ -24,6 +24,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -72,8 +73,8 @@ func TestSessionGetsProjectMCPServers(t *testing.T) {
 	task := send(t, c, userText("mcp", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "")
 	var got []map[string]any
-	if err := json.Unmarshal([]byte(resultText(task)), &got); err != nil {
-		t.Fatalf("json.Unmarshal(%q) error = %v", resultText(task), err)
+	if err := json.Unmarshal([]byte(a2atext.Result(task)), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", a2atext.Result(task), err)
 	}
 	want := []map[string]any{{
 		"name": "github", "command": "npx", "args": []any{"-y", "server-github"},
@@ -126,8 +127,8 @@ func TestDisabledMCPServersApplyLive(t *testing.T) {
 
 	wantResult(t, task, a2a.TaskStateCompleted, "")
 	var got []map[string]any
-	if err := json.Unmarshal([]byte(resultText(task)), &got); err != nil {
-		t.Fatalf("json.Unmarshal(%q) error = %v", resultText(task), err)
+	if err := json.Unmarshal([]byte(a2atext.Result(task)), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", a2atext.Result(task), err)
 	}
 	if len(got) != 0 {
 		t.Fatalf("session MCP servers = %v, want none", got)

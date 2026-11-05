@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package agentproxy
 
 import (
 	"context"
@@ -33,6 +33,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -43,9 +44,9 @@ import (
 
 func newTestContactClients(t *testing.T, st *store.Store, private network.Provider) *ContactClients {
 	t.Helper()
-	cc := newContactClients(ContactClientsDeps{Store: st, Private: private, Runtime: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil)})
+	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Runtime: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil)})
 	t.Cleanup(func() {
-		if err := cc.close(context.Background()); err != nil {
+		if err := cc.Close(context.Background()); err != nil {
 			t.Errorf("ContactClients.close() error = %v", err)
 		}
 	})
@@ -359,6 +360,29 @@ func TestContactClientsTarget(t *testing.T) {
 	}
 }
 
+func TestContactClientsTargetSharesTheContactClient(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	remote := newFakeContact(t)
+	st := openTestStore(t)
+	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	cc := newTestContactClients(t, st, nil)
+	want, err := cc.contactClient(ctx, "coder")
+	if err != nil {
+		t.Fatalf("ContactClients.contactClient() error = %v", err)
+	}
+
+	for _, user := range []auth.Principal{auth.Owner(), {ID: "pair:anna", Role: auth.RoleAuthenticated}} {
+		tg, err := cc.target(ctx, "coder", user, 1)
+		if err != nil {
+			t.Fatalf("ContactClients.target() error = %v", err)
+		}
+		if got := tg.(remoteTarget).c; got != want {
+			t.Fatalf("ContactClients.target() for %s built a new client, want the contact's client", user.ID)
+		}
+	}
+}
+
 func TestContactClientsTargetCountsHops(t *testing.T) {
 	t.Parallel()
 	remote := newFakeContact(t)
@@ -417,7 +441,7 @@ func TestContactClientsAnswerRemote(t *testing.T) {
 	}
 
 	got := remote.waitState(t, task.ID, a2a.TaskStateCompleted)
-	if text := resultText(got); text != fakeContactAnswer {
+	if text := a2atext.Result(got); text != fakeContactAnswer {
 		t.Fatalf("remote task result = %q, want %q", text, fakeContactAnswer)
 	}
 	want, err := approvals.AnswerMessage(task.ID, task.ContextID, "tool1", "once")
@@ -498,7 +522,7 @@ func TestContactClientsLocate(t *testing.T) {
 			t.Parallel()
 			cc := newTestContactClients(t, openTestStore(t), tc.private)
 
-			gotURL, gotVia, err := cc.locate(context.Background(), tc.agent, tc.url)
+			gotURL, gotVia, err := cc.Locate(context.Background(), tc.agent, tc.url)
 
 			if tc.wantError != "" {
 				if err == nil || err.Error() != tc.wantError {
