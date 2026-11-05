@@ -54,12 +54,12 @@ REVIEWER_TOKEN="$(a2a-serve relay invite reviewer -o json | jq -r .token)"
 
 mkdir -p ~/a2a-example3/coder && cd ~/a2a-example3/coder
 printf '%s' "$CODER_TOKEN" | a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token -
+  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --relay-token -
 a2a-serve start --detach
 
 mkdir -p ~/a2a-example3/reviewer && cd ~/a2a-example3/reviewer
 printf '%s' "$REVIEWER_TOKEN" | a2a-serve config set --agent opencode --name reviewer --secret OPENROUTER_API_KEY \
-  --private "$RELAY" --public "$RELAY" --relay-token -
+  --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --relay-token -
 a2a-serve start --detach
 ```
 

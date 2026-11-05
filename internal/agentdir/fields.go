@@ -278,6 +278,11 @@ var fields = []field{
 		usage: "Command line of the agent, as shell `words`, such as \"cloudcode acp\"; replaces its default command",
 	},
 	{
+		access: str(func(c *Config) *string { return &c.Model }, func(s *Settings) *string { return &s.Model }),
+		flag:   "model", path: "model", scope: scopeAgent, section: SectionGeneral,
+		usage: "Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's)",
+	},
+	{
 		access: str(func(c *Config) *string { return &c.Image }, func(s *Settings) *string { return &s.Image }),
 		flag:   "image", path: "image", scope: scopeAgent, section: SectionSandbox,
 		usage: "Container image of the agent; only applies to --sandbox docker",

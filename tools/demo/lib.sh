@@ -146,19 +146,6 @@ answer() {
   t send-keys -t "$(pane_id "$1")" Enter
 }
 
-# set_model <dir> makes the opencode agent in <dir> use $DEMO_MODEL, off
-# camera. Without a model, opencode uses its own free model and ignores the
-# API key. The server writes the agent's opencode config on its first start,
-# so the agent is started and stopped once first.
-set_model() {
-  local cfg="$1/.a2a/state/home/.config/opencode/opencode.json"
-  if [[ ! -f "$cfg" ]]; then
-    a2a-serve start --detach --dir "$1" >/dev/null 2>&1 || die "starting the agent in $1 to configure its model"
-    a2a-serve stop --dir "$1" >/dev/null 2>&1 || die "stopping the agent in $1"
-  fi
-  jq --arg m "$DEMO_MODEL" '.model = $m' "$cfg" >"$cfg.tmp" && mv "$cfg.tmp" "$cfg" || die "setting the model in $cfg"
-}
-
 # say <pane> <text> types a comment line, as narration.
 say() {
   run "$1" "# $2"

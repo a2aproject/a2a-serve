@@ -24,6 +24,8 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 // Workspace is what a harness works on.
@@ -57,6 +59,9 @@ type Profile interface {
 	// Bootstrap writes harness config into ws.Home before the first start,
 	// so that every tool permission is asked and the server's rules decide.
 	Bootstrap(ws Workspace) error
+	// ModelEnv returns the NAME=value pairs which select model, or nil for
+	// a harness without a known way to select one.
+	ModelEnv(model string) []string
 }
 
 // ProfileNames lists the known harness profiles.
@@ -84,6 +89,16 @@ func Lookup(name string, command []string) (Profile, error) {
 	return mk(), nil
 }
 
+// Warnings returns the problems of cfg that leave the agent working, but not
+// as the user likely meant.
+func Warnings(cfg *agentdir.Config) []string {
+	var out []string
+	if cfg.Harness == "opencode" && cfg.Model == "" && slices.Contains(cfg.Secrets, "OPENROUTER_API_KEY") {
+		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/~google/gemini-flash-latest")
+	}
+	return out
+}
+
 // ImageRepo is where harness images are published.
 const ImageRepo = "ghcr.io/a2aproject/harness-"
 
@@ -94,18 +109,28 @@ const ImageTag = "latest"
 // instead of its default of approving them.
 const opencodePermission = `{"bash":"ask","edit":"ask","webfetch":"ask"}`
 
-// opencodeConfig keeps opencode working after a tool call is denied, by a
-// rule or by the user, so that it can answer another way. By default it
-// ends the turn without an answer.
-const opencodeConfig = `{"experimental":{"continue_loop_on_deny":true}}`
+// opencodeConfigEnv is opencode's inline config, which it reads on every
+// start, also in agent homes bootstrapped before a setting existed. It keeps
+// opencode working after a tool call is denied, by a rule or by the user, so
+// that it can answer another way; by default it ends the turn without an
+// answer. A non-empty model overrides the model of opencode.json.
+func opencodeConfigEnv(model string) []string {
+	cfg := map[string]any{"experimental": map[string]any{"continue_loop_on_deny": true}}
+	if model != "" {
+		cfg["model"] = model
+	}
+	data, err := json.Marshal(cfg)
+	if err != nil {
+		panic(err)
+	}
+	return []string{"OPENCODE_CONFIG_CONTENT=" + string(data), "CLOUDCODE_CONFIG_CONTENT=" + string(data)}
+}
 
-// opencodeEnv configures opencode on every start, also in agent homes
-// bootstrapped before a setting existed.
-var opencodeEnv = []string{
+// opencodeEnv configures opencode on every start.
+var opencodeEnv = append([]string{
 	"OPENCODE_PERMISSION=" + opencodePermission,
 	"CLOUDCODE_PERMISSION=" + opencodePermission,
-	"OPENCODE_CONFIG_CONTENT=" + opencodeConfig,
-}
+}, opencodeConfigEnv("")...)
 
 type opencode struct{}
 
@@ -120,6 +145,10 @@ func (opencode) Command(ws Workspace) Command {
 		Env:  slices.Clone(opencodeEnv),
 	}
 }
+
+// ModelEnv sets the model in opencode's inline config, which overrides the
+// model of opencode.json in the harness home.
+func (opencode) ModelEnv(model string) []string { return opencodeConfigEnv(model) }
 
 func (opencode) Bootstrap(ws Workspace) error {
 	var permission map[string]any
@@ -141,6 +170,8 @@ func (claude) Image() string { return ImageRepo + "claude:" + ImageTag }
 func (claude) Command(ws Workspace) Command {
 	return Command{Path: "claude-agent-acp", Dir: ws.Dir}
 }
+
+func (claude) ModelEnv(model string) []string { return []string{"ANTHROPIC_MODEL=" + model} }
 
 func (claude) Bootstrap(ws Workspace) error {
 	settings := filepath.Join(".claude", "settings.json")
@@ -178,6 +209,13 @@ func (c custom) Command(ws Workspace) Command {
 		cmd.Env = c.base.Command(ws).Env
 	}
 	return cmd
+}
+
+func (c custom) ModelEnv(model string) []string {
+	if c.base != nil {
+		return c.base.ModelEnv(model)
+	}
+	return nil
 }
 
 func (c custom) Bootstrap(ws Workspace) error {

@@ -77,6 +77,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--backup-key string` |  | Passphrase the snapshots are encrypted with; keep a copy away from the backups (secret value: env:VAR, -, or the value) |
 | `--backup-retention duration` |  | How long snapshots are kept, a duration in hours or days such as 48h or 7d; the latest is always kept (default 7d) |
 | `--description string` |  | Agent description for its card |
+| `--model string` |  | Model of the agent, in its own format: provider/model for opencode, such as openrouter/~google/gemini-flash-latest, or a Claude model for claude, such as sonnet (default: the agent's) |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
 | `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 
@@ -168,7 +169,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
 
-Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, mount, name, owner-chat, pids, port, private, private-access, public, public-access, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, command, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, model, mount, name, owner-chat, pids, port, private, private-access, public, public-access, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

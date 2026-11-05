@@ -25,9 +25,8 @@ brew install asciinema tmux agg ffmpeg node go
 - The `a2a` CLI v0.4.0 or later on PATH. `a2a-serve` on PATH, or pass
   `--build` to build it from this checkout.
 - The model key exported, `OPENROUTER_API_KEY` by default. `DEMO_AGENT` and
-  `DEMO_SECRET` change the agent and the key variable. Without a model in its
-  config, opencode uses its own free model and ignores the key; scenarios
-  call `set_model`, which sets `DEMO_MODEL` (default
+  `DEMO_SECRET` change the agent and the key variable, and `DEMO_MODEL` the
+  `--model` the agents start with (default
   `openrouter/~google/gemini-flash-latest`).
 - For browser steps:
 

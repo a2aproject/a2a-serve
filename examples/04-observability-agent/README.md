@@ -66,7 +66,8 @@ export GITHUB_TOKEN=github_pat_...
 
 ```bash
 cd ~
-a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-observability-agent/recipe --name o11y
+a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-observability-agent/recipe \
+  --name o11y --model openrouter/~google/gemini-flash-latest
 ```
 
 The command shows what the agent will run and asks before it creates it in `~/o11y`. It then offers the variables you exported, and asks whether to use github and kubernetes. Answer `n` for a connector you don't have. Kubernetes stays off without `~/.kube/a2a-o11y`.
@@ -75,7 +76,7 @@ To create the agent without questions, such as in a script, export the variables
 
 ```bash
 a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-observability-agent/recipe \
-  --name o11y --yes --secret OPENROUTER_API_KEY
+  --name o11y --yes --secret OPENROUTER_API_KEY --model openrouter/~google/gemini-flash-latest
 ```
 
 ## 3. Describe your environment

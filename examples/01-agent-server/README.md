@@ -36,7 +36,7 @@ EOF
 In **terminal A**, from the workspace:
 
 ```bash
-a2a-serve start opencode --name coder --secret OPENROUTER_API_KEY
+a2a-serve start opencode --name coder --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY
 ```
 
 For Claude Code, use `a2a-serve start claude` instead.
@@ -124,7 +124,7 @@ coder's side.
 
 ```bash
 mkdir -p ~/a2a-example1/reviewer && cd ~/a2a-example1/reviewer
-a2a-serve start opencode --name reviewer --secret OPENROUTER_API_KEY --detach
+a2a-serve start opencode --name reviewer --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach
 a2a-serve status                  # note reviewer's local URL
 a2a-serve pair invite coder       # prints a code
 

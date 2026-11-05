@@ -67,6 +67,9 @@ func (c *Config) Validate() error {
 	case len(c.Command) == 0 && !slices.Contains(Harnesses, c.Harness):
 		add("unknown agent %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
+	if c.Model != "" && !slices.Contains(Harnesses, c.Harness) {
+		add("--model needs the agent %s; set the model of agent %s in its --command", strings.Join(Harnesses, " or "), c.Harness)
+	}
 	if c.Name == "" {
 		add("no name: set one with --name")
 	}

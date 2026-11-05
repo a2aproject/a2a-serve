@@ -44,6 +44,8 @@ type Config struct {
 	LegacyHarness string `yaml:"harness,omitempty" json:"-"`
 	// Command replaces the harness profile's command line, for any ACP agent.
 	Command []string `yaml:"command,omitempty" json:"command,omitempty"`
+	// Model is the model of the harness profile, in the agent's own format.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 	// Image overrides the container image of the harness profile.
 	Image string `yaml:"image,omitempty" json:"image,omitempty"`
 	// Sandbox is where the harness runs: docker (default) or local.

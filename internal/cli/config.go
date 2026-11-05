@@ -114,8 +114,26 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
 	writeAccess(&sb, res.Access)
+	writeWarnings(&sb, res.Warnings)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
+}
+
+// printWarnings prints the warnings about the saved settings.
+func printWarnings(cfg *globalConfig, warnings []string) error {
+	if cfg.IsJSON() {
+		return nil
+	}
+	var sb strings.Builder
+	writeWarnings(&sb, warnings)
+	_, err := fmt.Fprint(cfg.Out, sb.String())
+	return err
+}
+
+func writeWarnings(sb *strings.Builder, warnings []string) {
+	for _, w := range warnings {
+		fmt.Fprintf(sb, "! %s\n", w)
+	}
 }
 
 // printAccess prints who may call the agent after a change, if known.

@@ -8,12 +8,14 @@ The server keeps API keys and tokens in `.a2a/state/secrets`, so an agent runnin
 
 ```sh
 export OPENROUTER_API_KEY=sk-or-…
-a2a-serve start opencode --secret OPENROUTER_API_KEY
+a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY
 ```
 
 1. The command reads `OPENROUTER_API_KEY` from your environment. When the variable isn't set, it asks for the value with a hidden prompt on a terminal and fails otherwise.
 2. It stores the value in `state/secrets` (mode 0600) and adds the name to `secrets:` in `config.yaml`.
 3. On every start, the server sets `OPENROUTER_API_KEY` in the agent's environment, inside the sandbox.
+
+opencode uses `OPENROUTER_API_KEY` only with an OpenRouter model, so pass `--model` too. Without one, `start` and `config set` print a warning.
 
 Your shell needs the variable only when you run the command. Later starts, restarts and services use the stored value.
 
