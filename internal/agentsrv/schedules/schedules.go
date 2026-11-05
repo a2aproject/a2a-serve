@@ -12,7 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+// Package schedules runs the agent's schedules as turns in their
+// conversations, and serves the built-in agent the harness manages them with.
+package schedules
 
 import (
 	"cmp"
@@ -53,9 +55,9 @@ type ChannelLookup interface {
 // maxScheduleWait is the longest the scheduler sleeps between checks.
 const maxScheduleWait = time.Minute
 
-// schedules runs the agent's schedules, and adds and removes them for the
+// Runner runs the agent's schedules, and adds and removes them for the
 // owner and for the harness.
-type schedules struct {
+type Runner struct {
 	// ctx ends when the server stops; runs happen in it.
 	ctx        context.Context
 	store      *store.Store
@@ -75,8 +77,8 @@ type schedules struct {
 	pending map[string]bool
 }
 
-// schedulesDeps are the dependencies of [schedules].
-type schedulesDeps struct {
+// Deps are the dependencies of [Runner].
+type Deps struct {
 	Store      *store.Store
 	Turns      Turns
 	Supervisor ChannelLookup
@@ -85,8 +87,9 @@ type schedulesDeps struct {
 	MinWait    time.Duration
 }
 
-func newSchedules(ctx context.Context, deps schedulesDeps) *schedules {
-	return &schedules{
+// New returns the runner of deps, whose runs happen in ctx.
+func New(ctx context.Context, deps Deps) *Runner {
+	return &Runner{
 		ctx:        ctx,
 		store:      deps.Store,
 		turns:      deps.Turns,
@@ -99,11 +102,11 @@ func newSchedules(ctx context.Context, deps schedulesDeps) *schedules {
 	}
 }
 
-// run runs due schedules until ctx ends. A run missed while the agent was
+// Run runs due schedules until ctx ends. A run missed while the agent was
 // stopped runs once when it starts.
-func (sc *schedules) run(ctx context.Context) {
+func (sc *Runner) Run(ctx context.Context) {
 	for {
-		wait := sc.runDue(ctx)
+		wait := sc.RunDue(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -113,16 +116,17 @@ func (sc *schedules) run(ctx context.Context) {
 	}
 }
 
-func (sc *schedules) changed() {
+// Wake makes the runner check the schedules again, after a change.
+func (sc *Runner) Wake() {
 	select {
 	case sc.wake <- struct{}{}:
 	default:
 	}
 }
 
-// runDue runs the schedules which are due and returns how long until the
+// RunDue runs the schedules which are due and returns how long until the
 // next one.
-func (sc *schedules) runDue(ctx context.Context) time.Duration {
+func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 	wait := maxScheduleWait
 	all, err := sc.store.Schedules(ctx)
 	if err != nil {
@@ -160,7 +164,7 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 // runOnce starts the run of a one-time schedule, which stays due until the
 // agent accepts its turn. A run that fails stays due, so that the next
 // check retries it.
-func (sc *schedules) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
+func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
 	sc.setPending(s.Name, true)
 	err := sc.start(ctx, s, func(err error) {
 		sc.setPending(s.Name, false)
@@ -177,7 +181,7 @@ func (sc *schedules) runOnce(ctx context.Context, s store.Schedule, now time.Tim
 }
 
 // recordFailure returns what records a run's turn that the agent refused.
-func (sc *schedules) recordFailure(name string) func(error) {
+func (sc *Runner) recordFailure(name string) func(error) {
 	return func(err error) {
 		if err != nil {
 			sc.record(context.WithoutCancel(sc.ctx), name, sc.now(), err)
@@ -185,19 +189,19 @@ func (sc *schedules) recordFailure(name string) func(error) {
 	}
 }
 
-func (sc *schedules) record(ctx context.Context, name string, ran time.Time, runErr error) {
+func (sc *Runner) record(ctx context.Context, name string, ran time.Time, runErr error) {
 	if err := sc.store.RecordScheduleResult(ctx, name, ran, errText(runErr)); err != nil {
 		slog.Error("recording a schedule run", "schedule", name, "error", err)
 	}
 }
 
-func (sc *schedules) isPending(name string) bool {
+func (sc *Runner) isPending(name string) bool {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.pending[name]
 }
 
-func (sc *schedules) setPending(name string, pending bool) {
+func (sc *Runner) setPending(name string, pending bool) {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	if pending {
@@ -209,7 +213,7 @@ func (sc *schedules) setPending(name string, pending bool) {
 
 // finish removes the schedule of a one-time run that the agent accepted.
 // If that fails, it clears the run so that it doesn't repeat.
-func (sc *schedules) finish(ctx context.Context, name string) {
+func (sc *Runner) finish(ctx context.Context, name string) {
 	err := sc.store.DeleteSchedule(ctx, name)
 	if err == nil || errors.Is(err, store.ErrNotFound) {
 		return
@@ -235,7 +239,7 @@ func whenOf(s store.Schedule) schedule.When {
 // in the background, as an ordinary task of the schedule's user, with the
 // role the user has now. accepted is called once the agent accepted the
 // turn or refused it, unless start fails.
-func (sc *schedules) start(ctx context.Context, s store.Schedule, accepted func(error)) error {
+func (sc *Runner) start(ctx context.Context, s store.Schedule, accepted func(error)) error {
 	user, err := sc.chain.Stored(ctx, s.UserID, s.UserIdentity)
 	if err == nil && user.Role == "" {
 		err = fmt.Errorf("%s can no longer call this agent", auth.DisplayPrincipal(s.UserID))
@@ -263,7 +267,7 @@ func scheduleTurnKey(name string) string { return "schedule:" + name }
 
 // contextFor returns the context a run of s happens in. A run delivered to
 // a chat becomes the chat's conversation, so replying there continues it.
-func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, error) {
+func (sc *Runner) contextFor(ctx context.Context, s store.Schedule) (string, error) {
 	if s.DeliverChannel == "" {
 		if s.Conversation == schedule.ThreadSame && s.ContextID != "" {
 			return s.ContextID, nil
@@ -286,7 +290,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 
 // announce posts text into the chat conversation of a context, if it has
 // one.
-func (sc *schedules) announce(ctx context.Context, contextID, text string) {
+func (sc *Runner) announce(ctx context.Context, contextID, text string) {
 	chName, conv, err := sc.store.ConvOf(ctx, contextID)
 	if errors.Is(err, store.ErrNotFound) {
 		return
@@ -306,26 +310,26 @@ func (sc *schedules) announce(ctx context.Context, contextID, text string) {
 
 // addByAgent creates a schedule the agent made for by in the conversation
 // contextID, within [schedulesvc.AgentLimits].
-func (sc *schedules) addByAgent(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
+func (sc *Runner) addByAgent(ctx context.Context, req schedule.Request, by auth.Principal, contextID string) (store.Schedule, error) {
 	return sc.manage(schedulesvc.AgentLimits).Add(ctx, req, by, contextID)
 }
 
-// service adds, lists and removes the schedules the owner makes, which
+// Service adds, lists and removes the schedules the owner makes, which
 // have no limits.
-func (sc *schedules) service() schedulesvc.Service { return sc.manage(schedulesvc.Limits{}) }
+func (sc *Runner) Service() schedulesvc.Service { return sc.manage(schedulesvc.Limits{}) }
 
 // manage adds, lists and removes the schedules this runner runs, within
 // limits. Changes wake it, and a removal drops the schedule's runs that wait
 // to be posted.
-func (sc *schedules) manage(limits schedulesvc.Limits) schedulesvc.Service {
-	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits, Removed: func(name string) {
+func (sc *Runner) manage(limits schedulesvc.Limits) schedulesvc.Service {
+	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.Wake, Limits: limits, Removed: func(name string) {
 		sc.turns.DropPosted(scheduleTurnKey(name))
 	}}
 }
 
-// runNow starts a run of a schedule at once, without changing when it runs
+// RunNow starts a run of a schedule at once, without changing when it runs
 // next.
-func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, error) {
+func (sc *Runner) RunNow(ctx context.Context, name string) (store.Schedule, error) {
 	s, err := sc.store.Schedule(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Schedule{}, &agenterr.NotFoundError{Kind: "schedule", Name: name}
@@ -343,11 +347,11 @@ func (sc *schedules) runNow(ctx context.Context, name string) (store.Schedule, e
 
 // remove removes a schedule which by may manage, and its runs that wait
 // to be posted.
-func (sc *schedules) remove(ctx context.Context, name string, by auth.Principal) error {
-	return sc.service().Remove(ctx, name, by)
+func (sc *Runner) remove(ctx context.Context, name string, by auth.Principal) error {
+	return sc.Service().Remove(ctx, name, by)
 }
 
 // visible lists the schedules by can see.
-func (sc *schedules) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
-	return sc.service().Visible(ctx, by)
+func (sc *Runner) visible(ctx context.Context, by auth.Principal) ([]store.Schedule, error) {
+	return sc.Service().Visible(ctx, by)
 }

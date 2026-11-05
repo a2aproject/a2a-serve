@@ -38,6 +38,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -145,11 +146,11 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 		{name: "owner calls a contact", user: auth.Owner(), agent: "coder", wantCode: http.StatusOK},
 		{name: "authenticated calls a contact", user: bob, agent: "coder", wantCode: http.StatusOK},
 		{name: "owner calls a node", user: auth.Owner(), agent: "grok", wantCode: http.StatusOK},
-		{name: "owner calls the schedules agent", user: auth.Owner(), agent: schedulesAgent, wantCode: http.StatusOK},
+		{name: "owner calls the schedules agent", user: auth.Owner(), agent: pairings.SchedulesAgent, wantCode: http.StatusOK},
 		{name: "unknown handle", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusNotFound, wantError: errUnknownHandle.Error()},
 		{name: "conversation without a running turn", user: auth.Owner(), noTurn: true, agent: "coder", wantCode: http.StatusForbidden, wantError: errNoTurn.Error()},
 		{name: "anonymous user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
-		{name: "anonymous user and the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: schedulesAgent, wantCode: http.StatusForbidden, wantError: "can't call other agents"},
+		{name: "anonymous user and the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: pairings.SchedulesAgent, wantCode: http.StatusForbidden, wantError: "can't call other agents"},
 		{name: "user without a role", user: auth.Principal{ID: "pair:gone"}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
 		{name: "user at the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}, agent: "coder", wantCode: http.StatusForbidden, wantError: "too many agents"},
 		{name: "user below the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops - 1}}, agent: "coder", wantCode: http.StatusOK},

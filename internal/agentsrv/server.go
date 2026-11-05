@@ -43,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/schedules"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
@@ -144,7 +145,7 @@ type Server struct {
 	clients       *ContactClients
 	watches       *Watches
 	proxy         *HarnessProxy
-	schedules     *schedules
+	schedules     *schedules.Runner
 	nodes         *nodes.Host
 	pairings      *pairings.Service
 	ops           *agentops.Service
@@ -446,7 +447,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			a2asrv.WithLogger(slog.Default()),
 		)))
 	})
-	s.schedules = newSchedules(ctx, schedulesDeps{
+	s.schedules = schedules.New(ctx, schedules.Deps{
 		Store:      s.store,
 		Turns:      s.chatTurns,
 		Supervisor: s.supervisor,
@@ -458,10 +459,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Store:       s.store,
 		Pairings:    s.pairings,
 		Contacts:    contacts.Service{Store: s.store, Locate: s.clients.locate, HTTPClient: s.clients.httpClient, Changed: s.refreshInstructions},
-		Schedules:   s.schedules.service(),
+		Schedules:   s.schedules.Service(),
 		Runtime:     s.rt,
 		Network:     s.networks,
-		RunSchedule: s.schedules.runNow,
+		RunSchedule: s.schedules.RunNow,
 	})
 	s.proxy = newHarnessProxy(HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
 	s.inspector = inspector.New(inspector.Deps{
@@ -550,7 +551,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	s.background.Go(func() { s.approvals.CloseStale(ctx) })
 	s.watches.resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
-	s.background.Go(func() { s.schedules.run(ctx) })
+	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.startBackups(ctx)
 	return errc, s.printSummary(ctx, ownerErr)

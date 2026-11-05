@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/skills"
 )
@@ -64,7 +65,7 @@ func callableAgents(ctx context.Context, st *store.Store) ([]AgentRef, error) {
 		return nil, err
 	}
 	out := make([]AgentRef, 0, len(contacts)+len(nodes)+1)
-	out = append(out, AgentRef{Name: schedulesAgent, Kind: "built-in", Description: "schedule prompts for later in this conversation, such as reminders; send it help"})
+	out = append(out, AgentRef{Name: pairings.SchedulesAgent, Kind: "built-in", Description: "schedule prompts for later in this conversation, such as reminders; send it help"})
 	for _, c := range contacts {
 		out = append(out, AgentRef{Name: c.Name, Kind: "contact"})
 	}

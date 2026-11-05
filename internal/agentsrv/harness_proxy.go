@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -48,7 +49,14 @@ type HarnessProxy struct {
 	claims    *CallClaims
 	clients   *ContactClients
 	watches   *Watches
-	schedules *schedules
+	schedules SchedulesAgent
+}
+
+// SchedulesAgent is the built-in agent that manages schedules.
+type SchedulesAgent interface {
+	// Agent returns the schedules agent of the conversation contextID,
+	// whose turn user runs.
+	Agent(user auth.Principal, contextID string) a2asrv.AgentExecutor
 }
 
 // HarnessProxyDeps are the dependencies of [HarnessProxy].
@@ -57,7 +65,7 @@ type HarnessProxyDeps struct {
 	Claims    *CallClaims
 	Clients   *ContactClients
 	Watches   *Watches
-	Schedules *schedules
+	Schedules SchedulesAgent
 }
 
 func newHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
@@ -151,7 +159,7 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 		}
 		rest := "/" + r.PathValue("rest")
 		base := "http://" + r.Host + "/" + handle + "/" + name
-		if name == schedulesAgent {
+		if name == pairings.SchedulesAgent {
 			hp.serveSchedules(w, r, claims, base, rest)
 			return
 		}
@@ -192,12 +200,12 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 // of claims.
 func (hp *HarnessProxy) serveSchedules(w http.ResponseWriter, r *http.Request, claims callerClaims, base, rest string) {
 	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
-		card := proxyCard(schedulesAgent, base)
+		card := proxyCard(pairings.SchedulesAgent, base)
 		card.Description = "Creates, lists and removes schedules which run a prompt in this conversation. Send help for the commands."
 		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
 		return
 	}
-	h := a2asrv.NewHandler(&schedulesExecutor{sc: hp.schedules, claims: claims})
+	h := a2asrv.NewHandler(hp.schedules.Agent(claims.User, claims.ContextID))
 	r2 := r.Clone(r.Context())
 	r2.URL.Path, r2.URL.RawPath = rest, ""
 	inner := a2asrv.NewRESTHandler(h)

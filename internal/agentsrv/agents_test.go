@@ -48,6 +48,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -660,7 +661,7 @@ func TestAgentsProxyChecksTheTurnsRole(t *testing.T) {
 		{name: "authenticated calls a node", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, agent: "grok"},
 		{name: "anonymous calls a node", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "grok", wantErr: true},
 		{name: "anonymous calls a contact", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantErr: true},
-		{name: "anonymous calls the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: schedulesAgent, wantErr: true},
+		{name: "anonymous calls the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: pairings.SchedulesAgent, wantErr: true},
 		{name: "user without a role calls a node", user: auth.Principal{ID: "pair:gone"}, agent: "grok", wantErr: true},
 	}
 	for i, tc := range tests {

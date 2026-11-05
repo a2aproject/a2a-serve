@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package schedules
 
 import (
 	"context"
@@ -30,17 +30,10 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
-
-// schedulesAgent is the built-in agent the harness creates, lists and
-// removes schedules with, through the agents URL of a conversation. A
-// schedule made there runs as the conversation's user and reports back in
-// the same conversation.
-const schedulesAgent = pairings.SchedulesAgent
 
 var schedulesUsage = fmt.Sprintf(`Commands (one per message):
   add <name> (--cron "<expr>" | --at "<YYYY-MM-DD HH:MM>") [--tz <zone>] --prompt "<prompt>"
@@ -50,14 +43,23 @@ A run sends the prompt to you in this conversation, as the user who asked.
 A user can have at most %d schedules, and runs must be at least %d minutes apart.`,
 	schedulesvc.AgentLimits.PerUser, int(schedulesvc.AgentLimits.MinInterval.Minutes()))
 
-// schedulesExecutor runs the commands the harness sends to the schedules
-// agent for the conversation and user of claims.
-type schedulesExecutor struct {
-	sc     *schedules
-	claims callerClaims
+// Agent returns the built-in agent the harness creates, lists and removes
+// schedules with, through the agents URL of the conversation contextID,
+// whose turn user runs. A schedule made there runs as user and reports back
+// in the same conversation.
+func (sc *Runner) Agent(user auth.Principal, contextID string) a2asrv.AgentExecutor {
+	return &agentExecutor{sc: sc, turnUser: user, contextID: contextID}
 }
 
-func (e *schedulesExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+// agentExecutor runs the commands the harness sends to the schedules agent
+// for a conversation and the user of its turn.
+type agentExecutor struct {
+	sc        *Runner
+	turnUser  auth.Principal
+	contextID string
+}
+
+func (e *agentExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
 			return
@@ -71,7 +73,7 @@ func (e *schedulesExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executo
 	}
 }
 
-func (e *schedulesExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+func (e *agentExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
 	}
@@ -80,15 +82,15 @@ func (e *schedulesExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorCo
 // user is who the commands act for: the user of the conversation's turn.
 // Conversations started through another agent and anonymous callers can't
 // manage schedules.
-func (e *schedulesExecutor) user() (auth.Principal, error) {
-	u := e.claims.User
+func (e *agentExecutor) user() (auth.Principal, error) {
+	u := e.turnUser
 	if u.Hops > 0 || !u.MayCallAgents() {
 		return auth.Principal{}, errors.New("schedules can only be managed in a conversation with a user of this agent")
 	}
 	return u, nil
 }
 
-func (e *schedulesExecutor) run(ctx context.Context, text string) (string, error) {
+func (e *agentExecutor) run(ctx context.Context, text string) (string, error) {
 	args, err := shlex.Split(text)
 	if err != nil {
 		return "", fmt.Errorf("parsing the command: %w\n\n%s", err, schedulesUsage)
@@ -117,7 +119,7 @@ func (e *schedulesExecutor) run(ctx context.Context, text string) (string, error
 	return "", fmt.Errorf("unknown command %q\n\n%s", args[0], schedulesUsage)
 }
 
-func (e *schedulesExecutor) add(ctx context.Context, who auth.Principal, args []string) (string, error) {
+func (e *agentExecutor) add(ctx context.Context, who auth.Principal, args []string) (string, error) {
 	var req schedule.Request
 	fs := pflag.NewFlagSet("add", pflag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -129,16 +131,16 @@ func (e *schedulesExecutor) add(ctx context.Context, who auth.Principal, args []
 		return "", fmt.Errorf("add takes one name\n\n%s", schedulesUsage)
 	}
 	req.Name = fs.Arg(0)
-	s, err := e.sc.addByAgent(ctx, req, who, e.claims.ContextID)
+	s, err := e.sc.addByAgent(ctx, req, who, e.contextID)
 	if err != nil {
 		return "", err
 	}
-	e.sc.announce(ctx, e.claims.ContextID, fmt.Sprintf("🗓 The agent added the schedule %s (%s): %q. The next run is %s. To stop it, ask the agent to remove it.",
+	e.sc.announce(ctx, e.contextID, fmt.Sprintf("🗓 The agent added the schedule %s (%s): %q. The next run is %s. To stop it, ask the agent to remove it.",
 		s.Name, describeWhen(s), s.Prompt, describeTime(s.NextRun, s.TZ)))
 	return fmt.Sprintf("Scheduled %s; the next run is %s.", s.Name, describeTime(s.NextRun, s.TZ)), nil
 }
 
-func (e *schedulesExecutor) list(ctx context.Context, who auth.Principal) (string, error) {
+func (e *agentExecutor) list(ctx context.Context, who auth.Principal) (string, error) {
 	all, err := e.sc.visible(ctx, who)
 	if err != nil {
 		return "", err

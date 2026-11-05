@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -516,7 +517,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallClaims.agentsURL() error = %v", err)
 			}
-			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s, coder; call one with a2a send -a %s/<name>)", agentsLinePrefix, u, schedulesAgent, u)
+			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s, coder; call one with a2a send -a %s/<name>)", agentsLinePrefix, u, pairings.SchedulesAgent, u)
 			if len(got.Message.Parts) != 2 || got.Message.Parts[0].Text() != wantLine || got.Message.Parts[1].Text() != "hello" {
 				t.Fatalf("CallClaims.withAgentsLine() parts = %v, want the line %q before the message", got.Message.Parts, wantLine)
 			}
