@@ -179,7 +179,8 @@ func TestParse(t *testing.T) {
 	want := channel.Inbound{
 		Channel: "email", MessageID: "alice@alice.org|m2@alice.org", Identity: "alice@alice.org", Name: "Alice",
 		Conv: ConvKey("alice@alice.org", "root@alice.org"), Direct: true, Authentic: true,
-		Text: "Please push it.",
+		Text:    "Please push it.",
+		ReplyTo: channel.Ref{Conv: ConvKey("alice@alice.org", "root@alice.org"), ID: "m1@example.com"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("parse() wrong result (-want +got) diff = %s", diff)

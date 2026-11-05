@@ -22,6 +22,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,6 +33,16 @@ import (
 // rather than a structured log record.
 func isProgress(line string) bool {
 	return line != "" && !strings.HasPrefix(line, "time=")
+}
+
+// stopMsg is the message of the record the server logs when it stops with
+// an error.
+const stopMsg = "agent server stopped"
+
+// isStop reports whether a log line is the record of a server that stopped
+// with an error.
+func isStop(line string) bool {
+	return !isProgress(line) && strings.Contains(line, " msg="+strconv.Quote(stopMsg))
 }
 
 // readFrom returns the complete lines of the file at path after offset, and

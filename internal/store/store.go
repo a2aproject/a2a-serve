@@ -225,6 +225,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV13)
 		return err
 	},
+	// 14: a conversation keeps every question pending in it, and a typed
+	// answer finds its question by the message it replies to. Questions
+	// whose tasks stopped waiting for them are marked closed.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV14)
+		return err
+	},
 }
 
 const schemaV1 = `
@@ -391,6 +398,18 @@ CREATE INDEX codes_pairing ON codes (pairing);
 const schemaV13 = `
 UPDATE schedules SET user_id = 'user:owner', user_identity = '' WHERE user_id = 'pair:local';
 UPDATE schedules SET deliver_user = 'user:owner' WHERE deliver_user = 'pair:local';
+`
+
+const schemaV14 = `
+CREATE TABLE pending_questions_v14 (
+	channel TEXT NOT NULL, conv TEXT NOT NULL, question_id TEXT NOT NULL,
+	PRIMARY KEY (channel, conv, question_id));
+INSERT INTO pending_questions_v14 SELECT channel, conv, question_id FROM pending_questions;
+DROP TABLE pending_questions;
+ALTER TABLE pending_questions_v14 RENAME TO pending_questions;
+CREATE INDEX pending_questions_question ON pending_questions (question_id);
+CREATE INDEX question_messages_message ON question_messages (channel, conv, message_id);
+ALTER TABLE questions ADD COLUMN closed INTEGER NOT NULL DEFAULT 0;
 `
 
 func (s *Store) migrate(ctx context.Context) error {

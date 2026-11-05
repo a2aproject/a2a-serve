@@ -256,7 +256,7 @@ func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {
 			Node:        p.GetPeerId(),
 		})
 	}
-	return ProbeAgents(ctx, a.HTTPClient(), candidates), nil
+	return ProbeAgents(ctx, a.HTTPClient(), candidates, []string{a.cfg.AgentName}), nil
 }
 
 // HTTPClient sends requests to http://agentmesh.local/... over the relay's

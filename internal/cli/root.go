@@ -52,7 +52,13 @@ type globalConfig struct {
 
 	errOut io.Writer
 	// stdin overrides os.Stdin for secret values read with -, for tests.
-	stdin         *os.File
+	stdin *os.File
+	// terminal overrides whether stdin is a terminal, for tests. Answers
+	// are then read from stdin like any other line.
+	terminal *bool
+	// getenv overrides os.Getenv for the values recipe takes from the
+	// environment, for tests.
+	getenv        func(string) string
 	httpTransport http.RoundTripper
 	// credentials overrides the store of `a2a-serve pair join` tokens, for tests.
 	credentials *credstore.Store
@@ -83,6 +89,39 @@ func (g *globalConfig) secretReader(prompt io.Writer) *secretref.Reader {
 		in = g.stdin
 	}
 	return secretref.NewReader(in, prompt)
+}
+
+// input is where answers to questions are read from.
+func (g *globalConfig) input() *os.File {
+	if g.stdin != nil {
+		return g.stdin
+	}
+	return os.Stdin
+}
+
+// env returns the value of an environment variable.
+func (g *globalConfig) env(name string) string {
+	if g.getenv != nil {
+		return g.getenv(name)
+	}
+	return os.Getenv(name)
+}
+
+// isTerminal reports whether questions can be asked on stdin.
+func (g *globalConfig) isTerminal() bool {
+	if g.terminal != nil {
+		return *g.terminal
+	}
+	return term.IsTerminal(int(g.input().Fd()))
+}
+
+// readSecret reads an answer without echoing it, or returns nil to read it
+// like any other answer when stdin isn't a real terminal.
+func (g *globalConfig) readSecret() func(string) (string, error) {
+	if g.terminal != nil || !term.IsTerminal(int(g.input().Fd())) {
+		return nil
+	}
+	return g.secretReader(g.Out).Read
 }
 
 // setupLogging makes -v write debug logs to stderr.

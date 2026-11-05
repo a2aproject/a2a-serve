@@ -222,24 +222,25 @@ func Copy(src, dst string, files Files, paths []string) (err error) {
 		if !ok {
 			return fmt.Errorf("%s is not a file of the recipe", name)
 		}
-		if err := copyFile(from, to, name, f); err != nil {
+		if err := copyFile(from, to, name, name, f); err != nil {
 			return fmt.Errorf("copying %s: %w", name, err)
 		}
 	}
 	return nil
 }
 
-func copyFile(from, to *os.Root, name string, f File) error {
-	if dir := path.Dir(name); dir != "." {
+// copyFile copies the file name of from to dst in to.
+func copyFile(from, to *os.Root, name, dst string, f File) error {
+	if dir := path.Dir(dst); dir != "." {
 		if err := to.MkdirAll(dir, 0o755); err != nil {
 			return err
 		}
 	}
 	if f.Link != "" {
-		if err := to.Remove(name); err != nil && !errors.Is(err, os.ErrNotExist) {
+		if err := to.Remove(dst); err != nil && !errors.Is(err, os.ErrNotExist) {
 			return err
 		}
-		return to.Symlink(f.Link, name)
+		return to.Symlink(f.Link, dst)
 	}
 	data, err := from.ReadFile(name)
 	if err != nil {
@@ -253,5 +254,5 @@ func copyFile(from, to *os.Root, name string, f File) error {
 	if f.Exec {
 		perm = 0o755
 	}
-	return fsutil.WriteAtomicIn(to, name, data, perm)
+	return fsutil.WriteAtomicIn(to, dst, data, perm)
 }

@@ -27,6 +27,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"regexp"
 	"slices"
@@ -34,6 +35,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -46,6 +48,12 @@ const (
 	TTL = 24 * time.Hour
 	// MaxEntries bounds the table against a peer sending junk.
 	MaxEntries = 1000
+	// MaxPerHost bounds the entries of one host, so that one agent can't
+	// fill the table.
+	MaxPerHost = 100
+	// saveDelay is how long the table waits to save merged entries, so
+	// that the merges of a gossip round write it once.
+	saveDelay = 10 * time.Second
 	// maxSkew is how far ahead of this agent's clock another host's clock
 	// may run. Versions and expiry times beyond it are refused, so that
 	// an entry from the future can't block the host's real updates.
@@ -101,6 +109,10 @@ type Table struct {
 	entries map[string]Entry
 	// direct are the keys of the entries which came from their host.
 	direct map[string]bool
+	// dirty is set while merged entries wait for saveTimer to save them.
+	dirty     bool
+	saveTimer *time.Timer
+	closed    bool
 }
 
 // stored is an entry as the table file keeps it.
@@ -146,7 +158,52 @@ func (t *Table) save() error {
 	if err != nil {
 		return err
 	}
-	return fsutil.WriteAtomic(t.path, data, 0o600)
+	if err := fsutil.WriteAtomic(t.path, data, 0o600); err != nil {
+		return err
+	}
+	t.dirty = false
+	return nil
+}
+
+// saveLater saves the table within saveDelay, or now once it is closed.
+// t.mu is held.
+func (t *Table) saveLater() error {
+	if t.closed {
+		return t.save()
+	}
+	t.dirty = true
+	if t.saveTimer == nil {
+		t.saveTimer = time.AfterFunc(saveDelay, t.flush)
+	}
+	return nil
+}
+
+func (t *Table) flush() {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.saveTimer = nil
+	if !t.dirty || t.closed {
+		return
+	}
+	if err := t.save(); err != nil {
+		slog.Warn("saving advertised pairings", "error", err)
+	}
+}
+
+// Close saves the merged entries waiting to be saved. The table saves every
+// change right away after it.
+func (t *Table) Close() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.closed = true
+	if t.saveTimer != nil {
+		t.saveTimer.Stop()
+		t.saveTimer = nil
+	}
+	if !t.dirty {
+		return nil
+	}
+	return t.save()
 }
 
 func sortedKeys(m map[string]Entry) []string {
@@ -167,13 +224,18 @@ func (t *Table) version(key string) int64 {
 	return v
 }
 
-// Advertise adds or renews an entry of this agent.
+// Advertise adds or renews an entry of this agent. An agent advertises at
+// most MaxPerHost entries.
 func (t *Table) Advertise(name, description string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	e := Entry{Name: name, Host: t.self, Description: description, Expires: t.now().Add(TTL)}
 	if err := e.validate(); err != nil {
 		return err
+	}
+	own := func(_ string, cur Entry) bool { return cur.Host == t.self && !cur.Removed }
+	if cur, ok := t.entries[e.Key()]; (!ok || cur.Removed) && t.count(own) >= MaxPerHost {
+		return agenterr.Conflictf("this agent already advertises %d pairings, the most it can; stop advertising one with `a2a-serve pair set <name> --advertised=false`", MaxPerHost)
 	}
 	e.Version = t.version(e.Key())
 	t.entries[e.Key()] = e
@@ -332,10 +394,24 @@ func (t *Table) Get(keys []string) []Entry {
 // peer sent; peer is empty when the sender is unknown. Entries of this agent
 // only come from this agent, and invalid, expired or future ones are
 // dropped. Entries of peer itself replace the ones relayed by others. A
-// relayed entry never replaces one that came from its host.
+// relayed entry never replaces one that came from its host. When the table
+// or the host has no room left, see [Table.makeRoom], new entries are
+// dropped. Merged entries are saved within saveDelay.
 func (t *Table) Merge(peer string, entries []Entry) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	// Removals go first, so that the room they free takes the host's new
+	// entries.
+	entries = slices.Clone(entries)
+	slices.SortStableFunc(entries, func(a, b Entry) int {
+		switch {
+		case a.Removed == b.Removed:
+			return 0
+		case a.Removed:
+			return -1
+		}
+		return 1
+	})
 	changed := false
 	for _, e := range entries {
 		now := t.now()
@@ -346,7 +422,7 @@ func (t *Table) Merge(peer string, entries []Entry) error {
 		direct := peer != "" && strings.EqualFold(e.Host, peer)
 		cur, ok := t.entries[key]
 		switch {
-		case !ok && len(t.entries) >= MaxEntries:
+		case !ok && !t.makeRoom(e, direct):
 			continue
 		case !ok:
 		case t.direct[key] && (!direct || cur.Version >= e.Version):
@@ -363,5 +439,56 @@ func (t *Table) Merge(peer string, entries []Entry) error {
 	if !changed {
 		return nil
 	}
-	return t.save()
+	return t.saveLater()
+}
+
+// makeRoom reports whether the table has room for the new entry e. A host
+// has room for MaxPerHost entries and the table for MaxEntries; an entry
+// from its host makes room by evicting a relayed one, or a removal of the
+// host. t.mu is held.
+func (t *Table) makeRoom(e Entry, direct bool) bool {
+	evicts := direct && !e.Removed
+	ofHost := func(_ string, cur Entry) bool { return strings.EqualFold(cur.Host, e.Host) }
+	if t.count(ofHost) >= MaxPerHost {
+		relayed := func(k string, cur Entry) bool { return ofHost(k, cur) && !t.direct[k] }
+		removed := func(k string, cur Entry) bool { return ofHost(k, cur) && cur.Removed }
+		return evicts && (t.evict(relayed) || t.evict(removed))
+	}
+	if len(t.entries) < MaxEntries {
+		return true
+	}
+	return evicts && t.evict(func(k string, cur Entry) bool { return !t.direct[k] && !strings.EqualFold(cur.Host, t.self) })
+}
+
+// count returns the number of entries that match. t.mu is held.
+func (t *Table) count(match func(key string, e Entry) bool) int {
+	n := 0
+	for k, e := range t.entries {
+		if match(k, e) {
+			n++
+		}
+	}
+	return n
+}
+
+// evict drops an entry that matches, of the host with the most entries, and
+// reports whether there was one. t.mu is held.
+func (t *Table) evict(match func(key string, e Entry) bool) bool {
+	perHost := map[string]int{}
+	for _, e := range t.entries {
+		perHost[strings.ToLower(e.Host)]++
+	}
+	victim, most := "", 0
+	for _, k := range sortedKeys(t.entries) {
+		e := t.entries[k]
+		if n := perHost[strings.ToLower(e.Host)]; n > most && match(k, e) {
+			victim, most = k, n
+		}
+	}
+	if victim == "" {
+		return false
+	}
+	delete(t.entries, victim)
+	delete(t.direct, victim)
+	return true
 }

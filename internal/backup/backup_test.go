@@ -16,6 +16,7 @@ package backup
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
 	"io/fs"
 	"net/url"
@@ -144,10 +145,11 @@ func TestTakeAndRestore(t *testing.T) {
 		{
 			name: "without the network identity",
 			want: map[string]string{
-				"config.yaml":     "present",
-				"state/secrets":   "present",
-				"state/server.db": "present",
-				"state/ads.json":  "{}",
+				"config.yaml":       "present",
+				"state/secrets":     "present",
+				"state/server.db":   "present",
+				"state/server.lock": "",
+				"state/ads.json":    "{}",
 				"state/home/.config/opencode/opencode.json": "{}",
 				"state/home/deploy":                         "-> /src/app/.agents/skills/deploy",
 				"state/homes/u1/.claude/settings.json":      "{}",
@@ -157,10 +159,11 @@ func TestTakeAndRestore(t *testing.T) {
 			name:     "taking over",
 			takeOver: true,
 			want: map[string]string{
-				"config.yaml":     "present",
-				"state/secrets":   "present",
-				"state/server.db": "present",
-				"state/ads.json":  "{}",
+				"config.yaml":       "present",
+				"state/secrets":     "present",
+				"state/server.db":   "present",
+				"state/server.lock": "",
+				"state/ads.json":    "{}",
 				"state/home/.config/opencode/opencode.json": "{}",
 				"state/home/deploy":                         "-> /src/app/.agents/skills/deploy",
 				"state/homes/u1/.claude/settings.json":      "{}",
@@ -230,6 +233,141 @@ func TestRestoreErrors(t *testing.T) {
 	existing := newAgent(t)
 	if err := Restore(ctx, dest, snap.Name, "k", existing.Root, false); err == nil {
 		t.Fatalf("Restore() into an existing agent error = nil, want error")
+	}
+	other := filepath.Join(t.TempDir(), agentdir.Name)
+	if err := os.Mkdir(other, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, other, map[string]string{"relay.yaml": "name: mesh"})
+	if err := Restore(ctx, dest, snap.Name, "k", filepath.Dir(other), false); err == nil {
+		t.Fatalf("Restore() into a non-empty %s error = nil, want error", agentdir.Name)
+	}
+	if diff := cmp.Diff(map[string]string{"relay.yaml": "name: mesh"}, files(t, other)); diff != "" {
+		t.Fatalf("Restore() into a non-empty %s changed it (-want +got) diff = %s", agentdir.Name, diff)
+	}
+}
+
+func TestRestoreRemovesLeftoverRestores(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dest, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+	root := t.TempDir()
+	d, err := agentdir.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(root, agentdir.Name+".restore-1")
+	if err := os.MkdirAll(filepath.Join(leftover, "state"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	writeFiles(t, leftover, map[string]string{"state/secrets": "plaintext"})
+	running := filepath.Join(root, agentdir.Name+".restore-2")
+	release, err := lockRestored(d, running)
+	if err != nil {
+		t.Fatalf("lockRestored() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := release(); err != nil {
+			t.Errorf("release() error = %v", err)
+		}
+	})
+
+	if err := Restore(ctx, dest, snap.Name, "k", root, false); err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+
+	got, err := filepath.Glob(filepath.Join(root, agentdir.Name+".restore-*"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff([]string{running}, got); diff != "" {
+		t.Fatalf("Restore() wrong leftovers (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRestoreLeavesNoPartialAgent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	src := newAgent(t)
+	blob := make([]byte, 256<<10)
+	if _, err := rand.Read(blob); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src.HomeDir(), "blob"), blob, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	destDir := t.TempDir()
+	dest, err := Open(destDir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(destDir, snap.Name))
+	if err != nil {
+		t.Fatal(err)
+	}
+	damaged := "damaged" + Ext
+	if err := os.WriteFile(filepath.Join(destDir, damaged), data[:len(data)-100], 0o600); err != nil {
+		t.Fatal(err)
+	}
+	canceled, cancel := context.WithCancel(ctx)
+	cancel()
+
+	tests := []struct {
+		name     string
+		ctx      context.Context
+		snapshot string
+		emptyDir bool
+	}{
+		{name: "damaged snapshot", ctx: ctx, snapshot: damaged},
+		{name: "damaged snapshot into an empty directory", ctx: ctx, snapshot: damaged, emptyDir: true},
+		{name: "canceled", ctx: canceled, snapshot: snap.Name},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			d, err := agentdir.Open(root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var want []string
+			if tc.emptyDir {
+				if err := os.Mkdir(d.Path(), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				want = []string{d.Path()}
+			}
+
+			if err := Restore(tc.ctx, dest, tc.snapshot, "k", root, false); err == nil {
+				t.Fatalf("Restore() error = nil, want error")
+			}
+			got, err := filepath.Glob(filepath.Join(root, agentdir.Name+"*"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("Restore() wrong leftovers (-want +got) diff = %s", diff)
+			}
+			if tc.emptyDir {
+				if diff := cmp.Diff(map[string]string{}, files(t, d.Path())); diff != "" {
+					t.Fatalf("Restore() wrote into %s (-want +got) diff = %s", agentdir.Name, diff)
+				}
+			}
+			if err := Restore(ctx, dest, snap.Name, "k", root, false); err != nil {
+				t.Fatalf("Restore() after a failed restore error = %v", err)
+			}
+		})
 	}
 }
 

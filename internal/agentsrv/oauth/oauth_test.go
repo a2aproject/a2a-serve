@@ -41,6 +41,8 @@ const (
 	verifier       = "verifier-0123456789-0123456789-0123456789"
 )
 
+func noLimit(h http.Handler) http.Handler { return h }
+
 type fakeTokens struct {
 	mu     sync.Mutex
 	tokens map[string]store.Token
@@ -81,7 +83,7 @@ func startOAuth(t *testing.T, g *googletest.Google, cfg *agentdir.Config, shared
 	})
 	mux := http.NewServeMux()
 	var ts *httptest.Server
-	o.Register(mux, func(*http.Request) string { return ts.URL })
+	o.Register(mux, func(*http.Request) string { return ts.URL }, noLimit)
 	ts = httptest.NewServer(mux)
 	t.Cleanup(ts.Close)
 	hc := &http.Client{CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -238,14 +240,18 @@ func TestServerAuthorizeRefusesLongFields(t *testing.T) {
 	}
 }
 
-func TestServerAuthorizeDropsOldestPendingSignIn(t *testing.T) {
+func TestServerAuthorizeState(t *testing.T) {
 	t.Parallel()
 	g := googletest.New(t, googletest.Account{})
 	cfg := ownerAppConfig("mom@example.org")
-	o := oauth.New(oauth.Deps{Google: g.Endpoints(), Config: func() *agentdir.Config { return cfg }})
-	mux := http.NewServeMux()
-	o.Register(mux, func(*http.Request) string { return "https://coder.example.com" })
-	authorize := func() string {
+	newMux := func() *http.ServeMux {
+		o := oauth.New(oauth.Deps{Google: g.Endpoints(), Config: func() *agentdir.Config { return cfg }})
+		mux := http.NewServeMux()
+		o.Register(mux, func(*http.Request) string { return "https://coder.example.com" }, noLimit)
+		return mux
+	}
+	mux, other := newMux(), newMux()
+	authorize := func(mux *http.ServeMux) string {
 		t.Helper()
 		w := httptest.NewRecorder()
 		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, oauth.AuthorizePath+"?"+authorizeQuery().Encode(), nil))
@@ -255,24 +261,62 @@ func TestServerAuthorizeDropsOldestPendingSignIn(t *testing.T) {
 		}
 		return loc.Query().Get("state")
 	}
-	callback := func(state string) int {
-		t.Helper()
-		w := httptest.NewRecorder()
-		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, oauth.CallbackPath+"?"+url.Values{"state": {state}, "error": {"access_denied"}}.Encode(), nil))
-		return w.Code
+	first := authorize(mux)
+	for range 1000 {
+		authorize(mux)
 	}
+	tampered := []byte(first)
+	tampered[len(tampered)/3] ^= 1
+	tests := []struct {
+		name  string
+		state string
+		want  int
+	}{
+		{name: "first of many sign-ins", state: first, want: http.StatusFound},
+		{name: "tampered state", state: string(tampered), want: http.StatusBadRequest},
+		{name: "state of another server", state: authorize(other), want: http.StatusBadRequest},
+		{name: "random state", state: "0123456789abcdef", want: http.StatusBadRequest},
+		{name: "no state", want: http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			w := httptest.NewRecorder()
+			mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, oauth.CallbackPath+"?"+url.Values{"state": {tc.state}, "error": {"access_denied"}}.Encode(), nil))
+			if w.Code != tc.want {
+				t.Fatalf("GET %s status = %d, want %d", oauth.CallbackPath, w.Code, tc.want)
+			}
+		})
+	}
+}
 
-	oldest := authorize()
-	var newest string
-	for range oauth.MaxPendingSignIns {
-		newest = authorize()
+func TestServerTokenBodyLimit(t *testing.T) {
+	t.Parallel()
+	g := googletest.New(t, googletest.Account{})
+	o := startOAuth(t, g, ownerAppConfig("mom@example.org"), "")
+	tests := []struct {
+		name    string
+		padding int
+		want    int
+	}{
+		{name: "small body", padding: 1 << 10, want: http.StatusBadRequest},
+		{name: "body over the limit", padding: oauth.MaxTokenBody, want: http.StatusRequestEntityTooLarge},
 	}
-
-	if got := callback(oldest); got != http.StatusBadRequest {
-		t.Fatalf("GET %s of the oldest sign-in status = %d, want %d", oauth.CallbackPath, got, http.StatusBadRequest)
-	}
-	if got := callback(newest); got != http.StatusFound {
-		t.Fatalf("GET %s of the newest sign-in status = %d, want %d", oauth.CallbackPath, got, http.StatusFound)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			form := url.Values{"grant_type": {"authorization_code"}, "code": {"unknown"}, "padding": {strings.Repeat("a", tc.padding)}}
+			resp, err := o.hc.PostForm(o.url+oauth.TokenPath, form)
+			if err != nil {
+				t.Fatalf("POST %s error = %v", oauth.TokenPath, err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != tc.want {
+				t.Fatalf("POST %s status = %d, want %d", oauth.TokenPath, resp.StatusCode, tc.want)
+			}
+		})
 	}
 }
 
