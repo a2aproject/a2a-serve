@@ -685,3 +685,22 @@ func TestChatTurnsShowsStreamError(t *testing.T) {
 
 	fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == "⚠ agent unreachable" })
 }
+
+func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
+	rec.ID = "missing1"
+	if err := fx.store.SetPendingQuestion(fx.ctx, "fake", "dm1", rec.ID); err != nil {
+		t.Fatalf("SetPendingQuestion() error = %v", err)
+	}
+	q := approvals.FromRecord(rec)
+	in := channel.Inbound{Channel: "fake", Conv: "dm1", Text: "approve"}
+
+	fx.turns.answerIn(fx.ctx, fx.ch, in, auth.Owner(), rec, q, q.Options[0])
+
+	fx.ch.waitFor(t, "dm1", hasText("Couldn't record the answer. Try again."))
+	if id, err := fx.store.PendingQuestion(fx.ctx, "fake", "dm1"); err != nil || id != rec.ID {
+		t.Fatalf("PendingQuestion() = %q, %v, want %q, nil", id, err, rec.ID)
+	}
+}
