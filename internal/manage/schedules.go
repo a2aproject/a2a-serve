@@ -179,8 +179,9 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 	return "", agenterr.Invalidf("%s has no chat on %s: link it with a code from `a2a-serve pair invite`", auth.DisplayPrincipal(user), ch)
 }
 
-// ResolveUser turns owner or a pairing name into the principal ID of a
-// pairing. Principal IDs of pairings pass through.
+// ResolveUser turns owner or a pairing name into the principal its tokens
+// and chat links act as, which is the owner for the local pairing.
+// Principal IDs of pairings resolve the same way.
 func ResolveUser(ctx context.Context, st *store.Store, who string) (string, error) {
 	switch {
 	case who == "" || who == auth.OwnerName || who == auth.OwnerID:
@@ -198,5 +199,5 @@ func ResolveUser(ctx context.Context, st *store.Store, who string) (string, erro
 		}
 		return "", err
 	}
-	return who, nil
+	return auth.PairingPrincipal(name), nil
 }

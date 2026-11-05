@@ -265,13 +265,14 @@ func (a *ChatApprovals) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
 }
 
 // directChat returns the direct chat on a running channel of an owner: the
-// owner pairing who, or else yours, or else any owner pairing's if who is
-// empty or "owner". Only owners can answer the questions sent there.
+// owner pairing who, which is yours for the local pairing; or, if who is
+// empty or "owner", yours or else any owner pairing's. Only owners can
+// answer the questions sent there.
 func (a *ChatApprovals) directChat(ctx context.Context, chName, who string) (approvals.Chat, error) {
 	if a.supervisor.channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
-	anyOwner := who == "" || who == auth.OwnerName || who == auth.OwnerID || who == auth.LocalPairing
+	anyOwner := who == "" || who == auth.OwnerName || who == auth.OwnerID
 	if anyOwner {
 		conv, err := manage.DirectConv(ctx, a.store, chName, auth.OwnerID)
 		if err == nil {
