@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,32 +25,36 @@ import (
 
 func TestExitCodes(t *testing.T) {
 	t.Parallel()
-	stopped := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root
-	empty := t.TempDir()
 	tests := []struct {
 		name     string
 		args     []string
+		noAgent  bool
 		wantCode string
 		wantExit int
 	}{
-		{name: "peers of a stopped agent", args: []string{"peers", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "schedule run on a stopped agent", args: []string{"schedule", "run", "brief", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "restart of a stopped agent", args: []string{"restart", "--dir", stopped}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "channel rm of an unconfigured channel", args: []string{"channel", "rm", "telegram", "--dir", stopped}, wantCode: clierr.CodeUsage, wantExit: 2},
-		{name: "status without an agent", args: []string{"status", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
-		{name: "start without an agent", args: []string{"start", "--dir", empty}, wantCode: clierr.CodeNoAgent, wantExit: 7},
+		{name: "peers of a stopped agent", args: []string{"peers"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "schedule run on a stopped agent", args: []string{"schedule", "run", "brief"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "restart of a stopped agent", args: []string{"restart"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
+		{name: "channel rm of an unconfigured channel", args: []string{"channel", "rm", "telegram"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "status without an agent", args: []string{"status"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
+		{name: "start without an agent", args: []string{"start"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			_, err := runCMD(t, tc.args...)
+			dir := t.TempDir()
+			if !tc.noAgent {
+				dir = newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root
+			}
+			args := append(slices.Clone(tc.args), "--dir", dir)
+			_, err := runCMD(t, args...)
 			got := clierr.Classify(err)
 			if got == nil {
-				t.Fatalf("a2a-serve %s error = nil, want %s", strings.Join(tc.args, " "), tc.wantCode)
+				t.Fatalf("a2a-serve %s error = nil, want %s", strings.Join(args, " "), tc.wantCode)
 			}
 			if got.Code != tc.wantCode || got.Exit != tc.wantExit {
-				t.Fatalf("a2a-serve %s error = %s (exit %d), want %s (exit %d)", strings.Join(tc.args, " "), got.Code, got.Exit, tc.wantCode, tc.wantExit)
+				t.Fatalf("a2a-serve %s error = %s (exit %d), want %s (exit %d)", strings.Join(args, " "), got.Code, got.Exit, tc.wantCode, tc.wantExit)
 			}
 		})
 	}
