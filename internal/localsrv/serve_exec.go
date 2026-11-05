@@ -67,6 +67,10 @@ func ServeScript(ctx context.Context, cfg Config, s ScriptOptions) error {
 	return serve(ctx, cfg, handler, card)
 }
 
+// waitDelay is how long a stopped command may keep its output open, through
+// processes that left its group.
+const waitDelay = 2 * time.Second
+
 type execExecutor struct {
 	command string
 	chunk   string
@@ -96,6 +100,8 @@ func (e *execExecutor) newCommand(ctx context.Context, execCtx *a2asrv.ExecutorC
 	cmd := exec.CommandContext(ctx, "sh", "-c", e.command)
 	cmd.Stdin = strings.NewReader(input)
 	cmd.Env = append(os.Environ(), EnvTaskID+"="+string(execCtx.TaskID), EnvContextID+"="+execCtx.ContextID)
+	inOwnGroup(cmd)
+	cmd.WaitDelay = waitDelay
 	return cmd
 }
 
@@ -116,7 +122,7 @@ func (e *execExecutor) killProcess(id a2a.TaskID) error {
 	p := e.processes[id]
 	e.mu.Unlock()
 	if p != nil {
-		return p.Kill()
+		return killGroup(p)
 	}
 	return nil
 }

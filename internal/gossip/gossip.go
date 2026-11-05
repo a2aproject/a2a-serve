@@ -44,6 +44,10 @@ const (
 	TTL = 24 * time.Hour
 	// MaxEntries bounds the table against a peer sending junk.
 	MaxEntries = 1000
+	// maxSkew is how far ahead of this agent's clock another host's clock
+	// may run. Versions and expiry times beyond it are refused, so that
+	// an entry from the future can't block the host's real updates.
+	maxSkew = time.Hour
 )
 
 // Entry advertises a pairing of a host agent to the private network.
@@ -305,13 +309,15 @@ func (t *Table) Get(keys []string) []Entry {
 }
 
 // Merge keeps the entries newer than the ones here. Entries of this agent
-// only come from this agent, and invalid or expired ones are dropped.
+// only come from this agent, and invalid, expired or future ones are
+// dropped.
 func (t *Table) Merge(entries []Entry) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	changed := false
 	for _, e := range entries {
-		if e.Host == t.self || e.validate() != nil || t.now().After(e.Expires) || e.Expires.After(t.now().Add(TTL+time.Hour)) {
+		now := t.now()
+		if e.Host == t.self || e.validate() != nil || now.After(e.Expires) || e.Expires.After(now.Add(TTL+maxSkew)) || e.Version > now.Add(maxSkew).UnixNano() {
 			continue
 		}
 		cur, ok := t.entries[e.Key()]

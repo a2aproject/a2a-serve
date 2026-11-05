@@ -434,6 +434,9 @@ func TestChainRefresh(t *testing.T) {
 	if err := s.UpdatePairing(ctx, store.Pairing{Name: "phone", Kind: "device", Role: RoleOwner}); err != nil {
 		t.Fatalf("UpdatePairing() error = %v", err)
 	}
+	if err := s.PutNode(ctx, store.Node{ID: "grok", Name: "grok", Webhook: "https://example.com/hook", Secret: "s"}); err != nil {
+		t.Fatalf("PutNode() error = %v", err)
+	}
 	tailnet := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "anna@example.com", EmailSource: EmailFromNetwork}
 
 	tests := []struct {
@@ -461,6 +464,18 @@ func TestChainRefresh(t *testing.T) {
 			name:    "removed pairing",
 			policy:  testPolicy(true, nil),
 			id:      "pair:gone",
+			wantErr: ErrNoCredential,
+		},
+		{
+			name:   "webhook node",
+			policy: testPolicy(true, nil),
+			id:     "node:grok",
+			want:   Principal{ID: "node:grok", Role: RoleAuthenticated, Identity: Identity{WebhookNode: "grok"}},
+		},
+		{
+			name:    "removed webhook node",
+			policy:  testPolicy(true, nil),
+			id:      "node:gone",
 			wantErr: ErrNoCredential,
 		},
 		{

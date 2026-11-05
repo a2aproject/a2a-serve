@@ -277,6 +277,11 @@ func TestRemove(t *testing.T) {
 	if _, _, err := auth.IssueToken(ctx, s.Store, LocalOwner, "http://127.0.0.1:4000", ""); err != nil {
 		t.Fatalf("IssueToken(local) error = %v", err)
 	}
+	for _, user := range []string{auth.PairPrincipal("anna"), auth.NodePrincipal("grok"), auth.PairPrincipal(LocalOwner)} {
+		if err := s.Store.AddSchedule(ctx, store.Schedule{Name: user, Cron: "@daily", Prompt: "p", UserID: user}); err != nil {
+			t.Fatalf("AddSchedule(%s) error = %v", user, err)
+		}
+	}
 
 	tests := []struct {
 		name string
@@ -301,6 +306,13 @@ func TestRemove(t *testing.T) {
 	all, err := s.List(ctx)
 	if err != nil || len(all) != 1 || all[0].Name != LocalOwner || len(all[0].Tokens) != 0 {
 		t.Fatalf("List() after Remove() = %+v, %v, want only the local pairing, without tokens", all, err)
+	}
+	schedules, err := s.Store.Schedules(ctx)
+	if err != nil {
+		t.Fatalf("Schedules() error = %v", err)
+	}
+	if len(schedules) != 1 || schedules[0].UserID != auth.PairPrincipal(LocalOwner) {
+		t.Fatalf("Schedules() after Remove() = %+v, want only the local pairing's", schedules)
 	}
 	if _, err := s.Remove(ctx, "anna"); kindOf(err) != NotFound {
 		t.Fatalf("Remove(anna) again error = %v, want not found", err)

@@ -122,6 +122,7 @@ func TestMergeRefuses(t *testing.T) {
 		{Name: "bad name", Host: "ben", Version: 1, Expires: future},
 		{Name: "old", Host: "ben", Version: 1, Expires: c.t.Add(-time.Minute)},
 		{Name: "forever", Host: "ben", Version: 1, Expires: c.t.Add(10 * TTL)},
+		{Name: "from-the-future", Host: "ben", Version: c.t.Add(2 * time.Hour).UnixNano(), Expires: future},
 		{Name: "grok", Host: "ben", Version: 5, Expires: future},
 		{Name: "grok", Host: "ben", Version: 3, Description: "older", Expires: future},
 	})

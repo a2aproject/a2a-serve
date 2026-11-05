@@ -17,6 +17,7 @@
 package fsutil
 
 import (
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"os"
@@ -35,6 +36,38 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) (err error) {
 			err = errors.Join(err, removeIfExists(f.Name()))
 		}
 	}()
+	if err := writeAndClose(f, data, perm); err != nil {
+		return err
+	}
+	if err := os.Rename(f.Name(), path); err != nil {
+		return err
+	}
+	return syncDir(filepath.Dir(path))
+}
+
+// WriteAtomicIn is [WriteAtomic] for the file name inside root, which it
+// refuses to leave through symlinks or "..".
+func WriteAtomicIn(root *os.Root, name string, data []byte, perm os.FileMode) (err error) {
+	tmp := filepath.Join(filepath.Dir(name), "."+filepath.Base(name)+"."+rand.Text()+".tmp")
+	f, err := root.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if err == nil {
+			return
+		}
+		if rmErr := root.Remove(tmp); rmErr != nil && !errors.Is(rmErr, os.ErrNotExist) {
+			err = errors.Join(err, rmErr)
+		}
+	}()
+	if err := writeAndClose(f, data, perm); err != nil {
+		return err
+	}
+	return root.Rename(tmp, name)
+}
+
+func writeAndClose(f *os.File, data []byte, perm os.FileMode) error {
 	if _, err := f.Write(data); err != nil {
 		return errors.Join(err, f.Close())
 	}
@@ -44,13 +77,7 @@ func WriteAtomic(path string, data []byte, perm os.FileMode) (err error) {
 	if err := f.Sync(); err != nil {
 		return errors.Join(err, f.Close())
 	}
-	if err := f.Close(); err != nil {
-		return err
-	}
-	if err := os.Rename(f.Name(), path); err != nil {
-		return err
-	}
-	return syncDir(filepath.Dir(path))
+	return f.Close()
 }
 
 // WithLock runs fn while holding an exclusive advisory lock on path+".lock",

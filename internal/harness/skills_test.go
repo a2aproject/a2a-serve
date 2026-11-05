@@ -150,6 +150,29 @@ func TestLinkSkillsRemovesGoneSkills(t *testing.T) {
 	}
 }
 
+func TestLinkSkillsRefusesSymlinksOutOfHome(t *testing.T) {
+	t.Parallel()
+	root, home, outside := t.TempDir(), t.TempDir(), t.TempDir()
+	addSkill(t, root, ".agents/skills", "deploy")
+	if err := os.Symlink(outside, filepath.Join(home, ".claude")); err != nil {
+		t.Fatal(err)
+	}
+	p, err := Lookup("claude", nil)
+	if err != nil {
+		t.Fatalf("Lookup() error = %v", err)
+	}
+	if err := LinkSkills(p, Workspace{Dir: root, Home: home}); err == nil {
+		t.Fatal("LinkSkills() through a linked .claude error = nil, want an error")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("LinkSkills() through a linked .claude wrote %v outside the home, want nothing", entries)
+	}
+}
+
 func TestLinkSkillsCustomHarness(t *testing.T) {
 	t.Parallel()
 	root, home := t.TempDir(), t.TempDir()

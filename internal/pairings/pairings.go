@@ -356,8 +356,8 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 }
 
 // Remove deletes a pairing with its tokens, chat links and pending codes,
-// and a webhook node with it. The local pairing stays; only its credentials
-// are revoked.
+// a webhook node with it, and the schedules and watches it runs as. The
+// local pairing stays; only its credentials are revoked.
 func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
 	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
@@ -371,7 +371,7 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 		resp.Kept = true
 		return resp, s.Store.RevokeCredentials(ctx, name)
 	}
-	if err := s.Store.DeletePairing(ctx, name); err != nil {
+	if err := s.Store.DeletePairing(ctx, name, auth.PairPrincipal(name), auth.NodePrincipal(name)); err != nil {
 		return nil, err
 	}
 	if p.Kind == pairapi.PairingWebhook {

@@ -76,13 +76,18 @@ const harnessHelperPath = ".local/share/a2a-serve/credential-helper"
 // writeHarnessHelper writes a credential helper into the harness home that
 // gives the harness's a2a CLI the key for the TCP bridge, and returns the
 // environment variable that has the CLI use it for requests to host only.
-func writeHarnessHelper(home, host, key string) (string, error) {
-	p := filepath.Join(home, filepath.FromSlash(harnessHelperPath))
-	if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+func writeHarnessHelper(home, host, key string) (env string, err error) {
+	root, err := os.OpenRoot(home)
+	if err != nil {
+		return "", err
+	}
+	defer func() { err = errors.Join(err, root.Close()) }()
+	p := filepath.FromSlash(harnessHelperPath)
+	if err := root.MkdirAll(filepath.Dir(p), 0o700); err != nil {
 		return "", err
 	}
 	script := "#!/bin/sh\ncat >/dev/null\nprintf '%s\\n' '{\"headers\":{\"Authorization\":[\"Bearer " + key + "\"]}}'\n"
-	if err := fsutil.WriteAtomic(p, []byte(script), 0o700); err != nil {
+	if err := fsutil.WriteAtomicIn(root, p, []byte(script), 0o700); err != nil {
 		return "", err
 	}
 	return harness.EnvCredentialHelper + "=" + host + "=" + path.Join(harness.ContainerHome, harnessHelperPath), nil

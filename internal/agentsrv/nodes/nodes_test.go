@@ -26,6 +26,19 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
+func TestInstructionsKeepTheNodeToken(t *testing.T) {
+	t.Parallel()
+	for _, kind := range []string{mailboxapi.KindTask, mailboxapi.KindMessage} {
+		got := instructions(mailboxapi.Envelope{Kind: kind, TaskID: "t1", ReplyURL: "https://agent.example.com/mailbox/api/tasks/t1/events"})
+		if strings.Contains(got, "token") || strings.Contains(got, "replyUrl") {
+			t.Fatalf("instructions(%s) = %q, want no mention of the node token or replyUrl", kind, got)
+		}
+		if !strings.Contains(got, "mailbox reply t1") {
+			t.Fatalf("instructions(%s) = %q, want the reply command", kind, got)
+		}
+	}
+}
+
 func TestRepeatedEventInLaterTurn(t *testing.T) {
 	t.Parallel()
 	h := New(t.Context(), Config{})

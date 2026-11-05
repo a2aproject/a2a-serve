@@ -237,8 +237,25 @@ func TestDeletePairing(t *testing.T) {
 	if err := s.PutCode(ctx, "CODE", Code{Pairing: "grok", Expires: time.Now().Add(time.Minute)}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
+	for _, sc := range []Schedule{
+		{Name: "as-pairing", Cron: "@daily", Prompt: "p", UserID: "pair:grok"},
+		{Name: "as-node", Cron: "@daily", Prompt: "p", UserID: "node:grok"},
+		{Name: "as-owner", Cron: "@daily", Prompt: "p", UserID: "owner"},
+	} {
+		if err := s.AddSchedule(ctx, sc); err != nil {
+			t.Fatalf("AddSchedule(%s) error = %v", sc.Name, err)
+		}
+	}
+	for _, w := range []Watch{
+		{Contact: "ben", TaskID: "t1", OnBehalfOf: "pair:grok"},
+		{Contact: "ben", TaskID: "t2", OnBehalfOf: "owner"},
+	} {
+		if err := s.PutWatch(ctx, w); err != nil {
+			t.Fatalf("PutWatch(%s) error = %v", w.TaskID, err)
+		}
+	}
 
-	if err := s.DeletePairing(ctx, "grok"); err != nil {
+	if err := s.DeletePairing(ctx, "grok", "pair:grok", "node:grok"); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 
@@ -250,6 +267,20 @@ func TestDeletePairing(t *testing.T) {
 	}
 	if _, err := s.TakeCode(ctx, "CODE", AnyCode); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("TakeCode() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	schedules, err := s.Schedules(ctx)
+	if err != nil {
+		t.Fatalf("Schedules() error = %v", err)
+	}
+	if len(schedules) != 1 || schedules[0].Name != "as-owner" {
+		t.Fatalf("Schedules() after DeletePairing() = %+v, want only as-owner", schedules)
+	}
+	watches, err := s.Watches(ctx)
+	if err != nil {
+		t.Fatalf("Watches() error = %v", err)
+	}
+	if len(watches) != 1 || watches[0].TaskID != "t2" {
+		t.Fatalf("Watches() after DeletePairing() = %+v, want only t2", watches)
 	}
 	if err := s.DeletePairing(ctx, "grok"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("DeletePairing() of a missing pairing error = %v, want %v", err, ErrNotFound)

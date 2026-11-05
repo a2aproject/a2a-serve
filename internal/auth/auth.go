@@ -162,8 +162,9 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 }
 
 // Refresh gives a principal stored to act later, such as the user a
-// schedule runs as, its role now: the pairing's current role, and the
-// policy in force. A zero identity is rebuilt from the ID.
+// schedule runs as, its role now: the pairing's current role, whether its
+// webhook node still exists, and the policy in force. A zero identity is
+// rebuilt from the ID.
 func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Principal, error) {
 	if identity == (Identity{}) {
 		identity = IdentityOf(id)
@@ -178,6 +179,15 @@ func (a *Chain) Refresh(ctx context.Context, id string, identity Identity) (Prin
 			return Principal{}, err
 		default:
 			identity.PairingRole = pairingRole(p.Role)
+		}
+	}
+	if identity.WebhookNode != "" {
+		_, err := a.Store.Node(ctx, identity.WebhookNode)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			identity.WebhookNode = ""
+		case err != nil:
+			return Principal{}, err
 		}
 	}
 	p, err := a.Resolve(identity)
