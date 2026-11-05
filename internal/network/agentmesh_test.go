@@ -130,7 +130,7 @@ func TestAgentMeshPeersAndHTTPClient(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Peers() error = %v", err)
 	}
-	want := []PeerInfo{{Name: "anna", URL: "http://agentmesh.local/mesh/p2/a2a/anna", Description: "Anna's coder", Online: true}}
+	want := []PeerInfo{{Name: "anna", URL: "http://agentmesh.local/mesh/p2/a2a/anna", Description: "Anna's coder", Online: true, Node: "p2"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Peers() wrong result (-want +got) diff = %s", diff)
 	}

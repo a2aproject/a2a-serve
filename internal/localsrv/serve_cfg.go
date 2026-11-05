@@ -32,6 +32,8 @@ import (
 	a2agrpcv0 "github.com/a2aproject/a2a-go/v2/a2agrpc/v0"
 	a2agrpc "github.com/a2aproject/a2a-go/v2/a2agrpc/v1"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 )
 
 // LoggerFunc logs a formatted diagnostic message from the local server.
@@ -60,7 +62,7 @@ func serve(ctx context.Context, cfg Config, handler a2asrv.RequestHandler, card 
 
 func startHTTPServer(ctx context.Context, cfg Config, handler http.Handler) error {
 	addr := cfg.Listener.Addr().String()
-	srv := &http.Server{Handler: protect(handler, cfg.Listener.Addr())}
+	srv := httpserver.New(context.Background(), protect(handler, cfg.Listener.Addr()))
 
 	go func() {
 		<-ctx.Done()
@@ -149,7 +151,7 @@ func startGRPCServer(ctx context.Context, cfg Config, handler a2asrv.RequestHand
 	}()
 
 	go func() {
-		if err := http.Serve(cardListener, cardMux); err != nil && !errors.Is(err, net.ErrClosed) {
+		if err := httpserver.New(context.Background(), cardMux).Serve(cardListener); err != nil && !errors.Is(err, net.ErrClosed) {
 			_, _ = fmt.Fprintf(os.Stderr, "Agent card server: %v\n", err)
 		}
 	}()

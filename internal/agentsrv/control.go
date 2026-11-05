@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -80,7 +81,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
-	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
+	srv := httpserver.New(ctx, mux)
 	closers.push(func(ctx context.Context) error {
 		err := srv.Shutdown(ctx)
 		return errors.Join(err, removeIfExists(path))
