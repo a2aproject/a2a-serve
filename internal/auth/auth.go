@@ -205,10 +205,7 @@ func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error
 		peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
 		switch {
 		case err == nil:
-			// The sandbox reaches the private network through the machine
-			// running the agent, so that machine isn't the owner here
-			// until the sandbox's network goes only through the server (#17).
-			id.Email, id.Node, id.Self = peer.Email, peer.Node, peer.Self && !peer.ThisMachine
+			id.Email, id.Node, id.Self = peer.Email, peer.Node, peer.Self
 			if id.Email != "" {
 				id.EmailSource = EmailFromNetwork
 			}

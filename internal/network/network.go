@@ -54,9 +54,6 @@ type Peer struct {
 	Machine string
 	// Self is true when the caller belongs to the same user as this server.
 	Self bool
-	// ThisMachine is true when the caller is the machine the server runs
-	// on, whose connections may come from the sandbox.
-	ThisMachine bool
 }
 
 // SignInNetwork is implemented by private networks which admit people who

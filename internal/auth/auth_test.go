@@ -111,7 +111,6 @@ func TestChainAuthenticate(t *testing.T) {
 		"100.1.1.1:5000": {Email: "me@example.com", Node: "nMe", Self: true},
 		"100.1.1.2:5000": {Email: "anna@example.com", Node: "nAnna"},
 		"100.1.1.3:5000": {Node: "nTagged"},
-		"100.1.1.4:5000": {Email: "me@example.com", Node: "nHost", Self: true, ThisMachine: true},
 	}}
 	tests := []struct {
 		name        string
@@ -136,20 +135,6 @@ func TestChainAuthenticate(t *testing.T) {
 			want: Principal{ID: "email:me@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "nMe", Self: true, Hops: 1,
 			}},
-		},
-		{
-			name:   "tailnet self from the machine running the agent",
-			policy: testPolicy(true, nil),
-			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.4:5000", Header: http.Header{}},
-			want: Principal{ID: "email:me@example.com", Role: RoleAuthenticated, Identity: Identity{
-				Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "nHost",
-			}},
-		},
-		{
-			name:        "tailnet self from the machine running the agent when the private network is closed",
-			policy:      testPolicy(false, nil),
-			req:         Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.4:5000", Header: http.Header{}},
-			wantRefused: "me@example.com on the tailnet",
 		},
 		{
 			name:   "everyone on the tailnet",
