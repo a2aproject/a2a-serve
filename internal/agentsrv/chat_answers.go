@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -55,37 +56,55 @@ func (c *ChatTurns) handleAction(ctx context.Context, ch channel.Channel, in cha
 	c.answerIn(ctx, ch, in, p, rec, q, q.Options[in.Action.Option])
 }
 
+// typedReply is what a typed message is to the question pending in its
+// conversation.
+type typedReply int
+
+const (
+	// notAnAnswer goes to the agent.
+	notAnAnswer typedReply = iota
+	answer
+	// ambiguousAnswer starts with an answer on its own line, but goes on.
+	// Channels without buttons ask for a plain answer instead of guessing.
+	ambiguousAnswer
+)
+
 // typedAnswer returns the answer a message types to the question pending
 // in its conversation, for channels without buttons and for people who
 // type instead of clicking. A question whose task no longer waits for it
 // is closed, and the message goes to the agent.
-func (c *ChatTurns) typedAnswer(ctx context.Context, in channel.Inbound) (store.Question, *approvals.Question, approvals.Option, bool) {
+func (c *ChatTurns) typedAnswer(ctx context.Context, in channel.Inbound, buttons bool) (store.Question, *approvals.Question, approvals.Option, typedReply) {
 	id, err := c.store.PendingQuestion(ctx, in.Channel, string(in.Conv))
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
 			slog.Warn("loading the pending question", "error", err)
 		}
-		return store.Question{}, nil, approvals.Option{}, false
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
 	}
 	rec, err := c.store.QuestionByID(ctx, id)
 	if err != nil || rec.AnsweredBy != "" {
-		return store.Question{}, nil, approvals.Option{}, false
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
 	}
 	q := approvals.FromRecord(rec)
+	kind := answer
 	opt, ok := q.Match(in.Text)
 	if !ok {
-		return store.Question{}, nil, approvals.Option{}, false
+		first, rest, _ := strings.Cut(strings.TrimSpace(in.Text), "\n")
+		if _, ok := q.Match(first); !ok || buttons || strings.TrimSpace(rest) == "" {
+			return store.Question{}, nil, approvals.Option{}, notAnAnswer
+		}
+		kind = ambiguousAnswer
 	}
 	waiting, err := c.approvals.Waiting(ctx, rec)
 	if err != nil {
 		slog.Warn("checking whether the pending question is still open", "question", rec.ID, "error", err)
-		return store.Question{}, nil, approvals.Option{}, false
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
 	}
 	if !waiting {
 		c.approvals.Close(ctx, rec.ID)
-		return store.Question{}, nil, approvals.Option{}, false
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
 	}
-	return rec, q, opt, true
+	return rec, q, opt, kind
 }
 
 // answerIn answers a question from a conversation. If the question belongs

@@ -210,9 +210,14 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		c.stop(ctx, ch, in, p)
 		return
 	}
-	if rec, q, opt, ok := c.typedAnswer(ctx, in); ok {
+	switch rec, q, opt, kind := c.typedAnswer(ctx, in, ch.Caps().Buttons); kind {
+	case answer:
 		c.queue.release(t)
 		c.answerIn(ctx, ch, in, p, rec, q, opt)
+		return
+	case ambiguousAnswer:
+		c.queue.release(t)
+		c.reply(ctx, ch, in, "Your reply has more text than an answer, so I didn't take it as one. Reply with only one of: "+q.Words()+".")
 		return
 	}
 

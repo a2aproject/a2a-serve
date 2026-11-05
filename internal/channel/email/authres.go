@@ -184,3 +184,59 @@ func parsePairs(toks []token) ([][2]string, error) {
 	}
 	return pairs, nil
 }
+
+// Authenticate checks the topmost Authentication-Results header added by
+// the trusted server, because headers further down may have been forged by
+// the sender. It accepts dmarc=pass for the sender's domain. Without a DMARC
+// verdict, or with dmarc=none, it accepts a DKIM signature of exactly that
+// domain. The error tells why the mail is rejected.
+func Authenticate(results []string, trusted, fromDomain string) error {
+	for _, r := range results {
+		id, _, ok := strings.Cut(r, ";")
+		if !ok || !strings.EqualFold(strings.Fields(id + " x")[0], trusted) {
+			continue
+		}
+		_, parsed, err := parseAuthResults(r)
+		if err != nil {
+			return fmt.Errorf("malformed Authentication-Results of %s: %w", trusted, err)
+		}
+		return verdict(parsed, fromDomain)
+	}
+	return fmt.Errorf("no Authentication-Results of %s", trusted)
+}
+
+func verdict(results []authResult, fromDomain string) error {
+	dmarcPass := false
+	for _, r := range results {
+		if r.method != "dmarc" {
+			continue
+		}
+		switch r.result {
+		case "none":
+		case "pass":
+			if from := r.props["header.from"]; !strings.EqualFold(from, fromDomain) {
+				return fmt.Errorf("dmarc=pass for %q, want %s", from, fromDomain)
+			}
+			dmarcPass = true
+		default:
+			return fmt.Errorf("dmarc=%s", r.result)
+		}
+	}
+	if dmarcPass {
+		return nil
+	}
+	headerI := false
+	for _, r := range results {
+		if r.method != "dkim" || r.result != "pass" {
+			continue
+		}
+		if strings.EqualFold(r.props["header.d"], fromDomain) {
+			return nil
+		}
+		headerI = headerI || r.props["header.d"] == "" && r.props["header.i"] != ""
+	}
+	if headerI {
+		return fmt.Errorf("no dmarc=pass, and dkim=pass names only header.i, want header.d=%s", fromDomain)
+	}
+	return fmt.Errorf("no dmarc=pass and no dkim=pass with header.d=%s", fromDomain)
+}
