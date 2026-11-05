@@ -253,23 +253,43 @@ func TestRendererConsumesEventsWhileMessengerCallIsPending(t *testing.T) {
 
 func TestRendererShowsApprovalTextLiterally(t *testing.T) {
 	t.Parallel()
-	const text = "Permission required: Run [rm -rf /](https://example.com/ok)."
-	ch := newFakeChannel("fake")
-	fx := newChatFixture(t, "", ch)
-	fx.putTask(t, "t1", "c1", a2a.TaskStateWorking)
-	rd := newRenderer(fx.chat, ch, "dm1", channel.Ref{}, auth.Owner())
-	rd.setTask("t1", "c1")
-	msg := permissionMessage(t)
-	msg.Parts[0] = a2a.NewTextPart(text)
-
-	rd.onStatus(fx.ctx, a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg})
-
-	got := ch.transcript()
-	if len(got) != 1 {
-		t.Fatalf("renderer.onStatus() sent %d messages, want 1", len(got))
+	tests := []struct {
+		name string
+		text string
+		want string
+	}{
+		{
+			name: "markup",
+			text: "Permission required: Run [rm -rf /](https://example.com/ok).",
+			want: "Permission required: Run [rm -rf /](https://example.com/ok).",
+		},
+		{
+			name: "bidi override",
+			text: "Run rm -rf ~ #\u202Ehs.tset",
+			want: "⚠ This request has hidden formatting characters, shown as [U+XXXX].\nRun rm -rf ~ #[U+202E]hs.tset",
+		},
 	}
-	if got[0].Text != text || !got[0].Literal {
-		t.Fatalf("renderer.onStatus() sent text %q, literal = %v, want %q, true", got[0].Text, got[0].Literal, text)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ch := newFakeChannel("fake")
+			fx := newChatFixture(t, "", ch)
+			fx.putTask(t, "t1", "c1", a2a.TaskStateWorking)
+			rd := newRenderer(fx.chat, ch, "dm1", channel.Ref{}, auth.Owner())
+			rd.setTask("t1", "c1")
+			msg := permissionMessage(t)
+			msg.Parts[0] = a2a.NewTextPart(tc.text)
+
+			rd.onStatus(fx.ctx, a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg})
+
+			got := ch.transcript()
+			if len(got) != 1 {
+				t.Fatalf("renderer.onStatus() sent %d messages, want 1", len(got))
+			}
+			if got[0].Text != tc.want || !got[0].Literal {
+				t.Fatalf("renderer.onStatus() sent text %q, literal = %v, want %q, true", got[0].Text, got[0].Literal, tc.want)
+			}
+		})
 	}
 }
 

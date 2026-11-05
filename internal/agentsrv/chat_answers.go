@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -56,7 +57,7 @@ func (c *ChatTurns) handleAction(ctx context.Context, ch channel.Channel, in cha
 	c.answerIn(ctx, ch, in, p, rec, q, q.Options[in.Action.Option])
 }
 
-// typedReply is what a typed message is to the question pending in its
+// typedReply is what a typed message is to the questions pending in its
 // conversation.
 type typedReply int
 
@@ -67,44 +68,109 @@ const (
 	// ambiguousAnswer starts with an answer on its own line, but goes on.
 	// Channels without buttons ask for a plain answer instead of guessing.
 	ambiguousAnswer
+	// unaddressedAnswer is an answer that replies to no question while
+	// several are open in the conversation. Its sender is asked to reply
+	// to the question they answer.
+	unaddressedAnswer
 )
 
-// typedAnswer returns the answer a message types to the question pending
-// in its conversation, for channels without buttons and for people who
-// type instead of clicking. A question whose task no longer waits for it
-// is closed, and the message goes to the agent.
+// typedAnswer returns the answer a message types to a question, for
+// channels without buttons and for people who type instead of clicking.
+// The question is the one whose message it replies to, or else the only
+// one open in its conversation. Questions whose tasks no longer wait for
+// them are closed, and the message goes to the agent.
 func (c *ChatTurns) typedAnswer(ctx context.Context, in channel.Inbound, buttons bool) (store.Question, *approvals.Question, approvals.Option, typedReply) {
-	id, err := c.store.PendingQuestion(ctx, in.Channel, string(in.Conv))
-	if err != nil {
+	recs := c.unanswered(ctx, c.addressedQuestions(ctx, in))
+	if !slices.ContainsFunc(recs, func(rec store.Question) bool {
+		_, kind := matchTyped(approvals.FromRecord(rec), in.Text, buttons)
+		return kind != notAnAnswer
+	}) {
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+	}
+	recs = c.waiting(ctx, recs)
+	switch len(recs) {
+	case 0:
+		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+	case 1:
+	default:
+		return store.Question{}, nil, approvals.Option{}, unaddressedAnswer
+	}
+	q := approvals.FromRecord(recs[0])
+	opt, kind := matchTyped(q, in.Text, buttons)
+	return recs[0], q, opt, kind
+}
+
+// matchTyped returns the option a typed message selects, and whether it is
+// an answer.
+func matchTyped(q *approvals.Question, text string, buttons bool) (approvals.Option, typedReply) {
+	if opt, ok := q.Match(text); ok {
+		return opt, answer
+	}
+	first, rest, _ := strings.Cut(strings.TrimSpace(text), "\n")
+	if _, ok := q.Match(first); !ok || buttons || strings.TrimSpace(rest) == "" {
+		return approvals.Option{}, notAnAnswer
+	}
+	return approvals.Option{}, ambiguousAnswer
+}
+
+// addressedQuestions returns the IDs of the questions a message may answer:
+// the one shown by the message it replies to, or else those pending in its
+// conversation.
+func (c *ChatTurns) addressedQuestions(ctx context.Context, in channel.Inbound) []string {
+	if in.ReplyTo.ID != "" {
+		id, err := c.store.QuestionOfMessage(ctx, in.Channel, string(in.Conv), in.ReplyTo.ID)
+		if err == nil {
+			return []string{id}
+		}
 		if !errors.Is(err, store.ErrNotFound) {
-			slog.Warn("loading the pending question", "error", err)
+			slog.Warn("loading the question of a replied-to message", "error", err)
+			return nil
 		}
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
 	}
-	rec, err := c.store.QuestionByID(ctx, id)
-	if err != nil || rec.AnsweredBy != "" {
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
-	}
-	q := approvals.FromRecord(rec)
-	kind := answer
-	opt, ok := q.Match(in.Text)
-	if !ok {
-		first, rest, _ := strings.Cut(strings.TrimSpace(in.Text), "\n")
-		if _, ok := q.Match(first); !ok || buttons || strings.TrimSpace(rest) == "" {
-			return store.Question{}, nil, approvals.Option{}, notAnAnswer
-		}
-		kind = ambiguousAnswer
-	}
-	waiting, err := c.approvals.Waiting(ctx, rec)
+	ids, err := c.store.PendingQuestions(ctx, in.Channel, string(in.Conv))
 	if err != nil {
-		slog.Warn("checking whether the pending question is still open", "question", rec.ID, "error", err)
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+		slog.Warn("loading the pending questions", "error", err)
 	}
-	if !waiting {
-		c.approvals.Close(ctx, rec.ID)
-		return store.Question{}, nil, approvals.Option{}, notAnAnswer
+	return ids
+}
+
+// unanswered loads the questions of ids that nobody answered yet.
+func (c *ChatTurns) unanswered(ctx context.Context, ids []string) []store.Question {
+	var out []store.Question
+	for _, id := range ids {
+		rec, err := c.store.QuestionByID(ctx, id)
+		if err != nil {
+			if !errors.Is(err, store.ErrNotFound) {
+				slog.Warn("loading a pending question", "question", id, "error", err)
+			}
+			continue
+		}
+		if rec.AnsweredBy == "" {
+			out = append(out, rec)
+		}
 	}
-	return rec, q, opt, kind
+	return out
+}
+
+// waiting returns the questions whose tasks still wait for them, and
+// closes the others. A question that can't be checked counts as waiting,
+// so that it can't make another one look like the only one open.
+func (c *ChatTurns) waiting(ctx context.Context, recs []store.Question) []store.Question {
+	var out []store.Question
+	for _, rec := range recs {
+		waiting, err := c.approvals.Waiting(ctx, rec)
+		if err != nil {
+			slog.Warn("checking whether a pending question is still open", "question", rec.ID, "error", err)
+			out = append(out, rec)
+			continue
+		}
+		if !waiting {
+			c.approvals.Close(ctx, rec.ID)
+			continue
+		}
+		out = append(out, rec)
+	}
+	return out
 }
 
 // answerIn answers a question from a conversation. If the question belongs
@@ -114,7 +180,7 @@ func (c *ChatTurns) answerIn(ctx context.Context, ch channel.Channel, in channel
 		c.reply(ctx, ch, in, "Only the person who started the task or an owner can answer this.")
 		return
 	}
-	if err := c.store.ClearPendingQuestion(ctx, in.Channel, string(in.Conv)); err != nil {
+	if err := c.store.ForgetPendingQuestion(ctx, rec.ID); err != nil {
 		slog.Warn("clearing pending question", "error", err)
 	}
 	who := in.Name
@@ -208,7 +274,7 @@ func (c *ChatTurns) restorePending(ctx context.Context, in channel.Inbound, rec 
 		c.approvals.Close(ctx, rec.ID)
 		return
 	}
-	if err := c.store.SetPendingQuestion(ctx, in.Channel, string(in.Conv), rec.ID); err != nil {
+	if err := c.store.AddPendingQuestion(ctx, in.Channel, string(in.Conv), rec.ID); err != nil {
 		slog.Warn("restoring the pending question", "error", err)
 	}
 }
