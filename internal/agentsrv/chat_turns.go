@@ -22,7 +22,6 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -46,11 +45,12 @@ type ChatTurns struct {
 	supervisor *ChannelSupervisor
 	queue      *ConversationQueue
 	sender     turnSender
+	bus        *eventBus
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
 	unattended *contextSet
+	posted     postedTurns
 	agentName  func() string
-	timings    Timings
 }
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
@@ -64,9 +64,9 @@ type ChatTurnsDeps struct {
 	Supervisor *ChannelSupervisor
 	Queue      *ConversationQueue
 	Sender     turnSender
+	Bus        *eventBus
 	Unattended *contextSet
 	AgentName  func() string
-	Timings    Timings
 }
 
 // turnSender sends turns to the agent.
@@ -87,9 +87,9 @@ func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		supervisor: deps.Supervisor,
 		queue:      deps.Queue,
 		sender:     deps.Sender,
+		bus:        deps.Bus,
 		unattended: deps.Unattended,
 		agentName:  deps.AgentName,
-		timings:    deps.Timings,
 	}
 }
 
@@ -223,9 +223,14 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		c.stop(ctx, ch, in, p)
 		return
 	}
-	if rec, q, opt, ok := c.typedAnswer(ctx, in); ok {
+	switch rec, q, opt, kind := c.typedAnswer(ctx, in, ch.Caps().Buttons); kind {
+	case answer:
 		c.queue.release(t)
 		c.answerIn(ctx, ch, in, p, rec, q, opt)
+		return
+	case ambiguousAnswer:
+		c.queue.release(t)
+		c.reply(ctx, ch, in, "Your reply has more text than an answer, so I didn't take it as one. Reply with only one of: "+q.Words()+".")
 		return
 	}
 
@@ -252,9 +257,9 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	msg.ID = in.Channel + ":" + in.MessageID
 	msg.ContextID = contextID
 	msg.Metadata = map[string]any{"channel": in.Channel, "identity": in.Identity, "sender": in.Name}
-	if last, err := c.tasks.LatestInContext(ctx, contextID); err == nil && last.Status.State == a2a.TaskStateInputRequired {
-		if c.canContinue(ctx, p, last.ID) {
-			msg.TaskID = last.ID
+	if lastID, state, err := c.tasks.LatestStateInContext(ctx, contextID); err == nil && state == a2a.TaskStateInputRequired {
+		if c.canContinue(ctx, p, lastID) {
+			msg.TaskID = lastID
 		} else {
 			c.reply(ctx, ch, in, "⏳ Another task in this conversation is waiting for an answer; yours starts after it.")
 		}
@@ -360,12 +365,12 @@ func (c *ChatTurns) stop(ctx context.Context, ch channel.Channel, in channel.Inb
 		c.reply(ctx, ch, in, "Nothing is running.")
 		return
 	}
-	last, err := c.tasks.LatestInContext(ctx, contextID)
-	if err != nil || last.Status.State.Terminal() {
+	lastID, state, err := c.tasks.LatestStateInContext(ctx, contextID)
+	if err != nil || state.Terminal() {
 		c.reply(ctx, ch, in, "Nothing is running.")
 		return
 	}
-	if _, err := c.sender.CancelTask(auth.InProcess(ctx, p), &a2a.CancelTaskRequest{ID: last.ID}); err != nil {
+	if _, err := c.sender.CancelTask(auth.InProcess(ctx, p), &a2a.CancelTaskRequest{ID: lastID}); err != nil {
 		c.reply(ctx, ch, in, "Couldn't stop the task: "+err.Error())
 		return
 	}
@@ -400,63 +405,4 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch channel.Channel, conv cha
 		accepted(errors.New("the agent ended the stream without a reply"))
 	}
 	rd.finish(ctx)
-}
-
-// injectTurn posts text into a context as a new turn, rendered in the
-// context's conversation if it has one. While the context's latest task
-// waits for input, the turn is held back: text sent to that task would
-// interrupt it as if it were the answer.
-func (c *ChatTurns) injectTurn(ctx context.Context, contextID string, p auth.Principal, text string) error {
-	chName, conv, err := c.store.ConvOf(ctx, contextID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		return err
-	}
-	ch := c.supervisor.channel(chName)
-	go func() {
-		for {
-			msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(text))
-			msg.ContextID = contextID
-			if ch == nil {
-				if c.waitingForInput(ctx, contextID) {
-					if !c.waitInput(ctx) {
-						return
-					}
-					continue
-				}
-				c.unattended.add(contextID)
-				if _, err := c.sender.SendMessage(auth.InProcess(ctx, p), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}}); err != nil {
-					slog.Error("posting a turn", "context", contextID, "error", err)
-				}
-				return
-			}
-			unlock := c.queue.lock(chName, channel.ConvKey(conv))
-			if c.waitingForInput(ctx, contextID) {
-				unlock()
-				if !c.waitInput(ctx) {
-					return
-				}
-				continue
-			}
-			c.stream(ctx, ch, channel.ConvKey(conv), channel.Ref{}, p, &a2a.SendMessageRequest{Message: msg})
-			unlock()
-			return
-		}
-	}()
-	return nil
-}
-
-func (c *ChatTurns) waitingForInput(ctx context.Context, contextID string) bool {
-	last, err := c.tasks.LatestInContext(ctx, contextID)
-	return err == nil && last.Status.State == a2a.TaskStateInputRequired
-}
-
-// waitInput waits before checking a held-back turn again, and reports false
-// when ctx ended.
-func (c *ChatTurns) waitInput(ctx context.Context) bool {
-	select {
-	case <-ctx.Done():
-		return false
-	case <-time.After(c.timings.InjectRetry):
-		return true
-	}
 }

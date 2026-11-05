@@ -494,6 +494,21 @@ func (ts *TaskStore) LatestInContext(ctx context.Context, contextID string) (*a2
 	return task, nil
 }
 
+// LatestStateInContext returns the ID and state of the most recently
+// updated task of a context, without loading the task.
+func (ts *TaskStore) LatestStateInContext(ctx context.Context, contextID string) (a2a.TaskID, a2a.TaskState, error) {
+	var id, state string
+	err := ts.s.reads.QueryRowContext(ctx, `SELECT id, state FROM tasks WHERE scope = ? AND context_id = ? ORDER BY updated DESC LIMIT 1`,
+		ts.scope, contextID).Scan(&id, &state)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", "", ErrNotFound
+	}
+	if err != nil {
+		return "", "", err
+	}
+	return a2a.TaskID(id), a2a.TaskState(state), nil
+}
+
 // HasOthersTasks reports whether a context has tasks of another owner than user.
 func (ts *TaskStore) HasOthersTasks(ctx context.Context, contextID, user string) (bool, error) {
 	return ts.s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE scope = ? AND context_id = ? AND owner != ?)`, ts.scope, contextID, user)

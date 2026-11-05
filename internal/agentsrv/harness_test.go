@@ -55,7 +55,6 @@ var fakeACP string
 var testTimings = Timings{
 	WatchInterval:            50 * time.Millisecond,
 	WatchMaxInterval:         200 * time.Millisecond,
-	InjectRetry:              50 * time.Millisecond,
 	EditInterval:             50 * time.Millisecond,
 	ScheduleMinWait:          10 * time.Millisecond,
 	WebhookRetries:           []time.Duration{0, 100 * time.Millisecond},

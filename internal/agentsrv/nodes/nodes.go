@@ -228,7 +228,7 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 		}
 		n.cfg.Authenticate(kind, inner).ServeHTTP(w, r2)
 	}
-	node := jsonhttp.RequireJSON(http.HandlerFunc(serveNode))
+	node := jsonhttp.RequireJSON(jsonhttp.LimitBody(http.HandlerFunc(serveNode)))
 	mux.Handle("/n/{node}", node)
 	mux.Handle("/n/{node}/{rest...}", node)
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/node", n.nodeAPI(base, n.handleGetNode))

@@ -122,7 +122,6 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 	st := openTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	fx := &chatFixture{ctx: ctx, store: st, bus: newEventBus(), queue: newConversationQueue(), timings: testTimings}
-	fx.timings.InjectRetry = 5 * time.Millisecond
 	fx.tasks = st.Tasks("", func(context.Context) (string, bool, error) { return "", true, nil })
 	fx.chain = &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
 	fx.records = approvals.NewRecords(approvals.RecordsDeps{
@@ -222,6 +221,14 @@ func (fx *chatFixture) setTaskState(t *testing.T, id a2a.TaskID, contextID strin
 	if _, err := fx.tasks.Update(fx.ctx, &taskstore.UpdateRequest{Task: task, PrevVersion: taskstore.TaskVersionMissing}); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
+}
+
+// endExecution stores the state an execution of a task ended in, and tells
+// the followers of its context, as the executor does.
+func (fx *chatFixture) endExecution(t *testing.T, id a2a.TaskID, contextID string, state a2a.TaskState) {
+	t.Helper()
+	fx.setTaskState(t, id, contextID, state)
+	fx.bus.executionEnded(contextID)
 }
 
 // newQuestion stores the question of permissionMessage that user may answer.

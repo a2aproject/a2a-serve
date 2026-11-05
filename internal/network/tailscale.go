@@ -350,7 +350,7 @@ func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 		}
 		host := strings.TrimSuffix(p.DNSName, ".")
 		name, _, _ := strings.Cut(host, ".")
-		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true})
+		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true, Node: string(p.ID)})
 	}
 	return ProbeAgents(ctx, t.HTTPClient(), candidates), nil
 }

@@ -199,6 +199,83 @@ func TestServerAuthorizationCode(t *testing.T) {
 	}
 }
 
+// authorizeQuery is a valid authorization request of a native client.
+func authorizeQuery() url.Values {
+	return url.Values{
+		"response_type": {"code"}, "client_id": {"a2a-cli"}, "redirect_uri": {"http://127.0.0.1:9999/callback"}, "state": {"s1"},
+		"code_challenge": {googleauth.Challenge(verifier)}, "code_challenge_method": {"S256"},
+	}
+}
+
+func TestServerAuthorizeRefusesLongFields(t *testing.T) {
+	t.Parallel()
+	g := googletest.New(t, googletest.Account{})
+	o := startOAuth(t, g, ownerAppConfig("mom@example.org"), "")
+	long := strings.Repeat("a", oauth.MaxParamLen+1)
+	tests := []struct {
+		name  string
+		field string
+		value string
+		want  int
+	}{
+		{name: "valid request", want: http.StatusFound},
+		{name: "long client_id", field: "client_id", value: long, want: http.StatusBadRequest},
+		{name: "long state", field: "state", value: long, want: http.StatusBadRequest},
+		{name: "long code_challenge", field: "code_challenge", value: long, want: http.StatusBadRequest},
+		{name: "long redirect_uri", field: "redirect_uri", value: "http://127.0.0.1:9999/" + long, want: http.StatusBadRequest},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			q := authorizeQuery()
+			if tc.field != "" {
+				q.Set(tc.field, tc.value)
+			}
+			if got := o.get(t, o.url+oauth.AuthorizePath+"?"+q.Encode()).StatusCode; got != tc.want {
+				t.Fatalf("GET %s with %s status = %d, want %d", oauth.AuthorizePath, tc.name, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestServerAuthorizeDropsOldestPendingSignIn(t *testing.T) {
+	t.Parallel()
+	g := googletest.New(t, googletest.Account{})
+	cfg := ownerAppConfig("mom@example.org")
+	o := oauth.New(oauth.Deps{Google: g.Endpoints(), Config: func() *agentdir.Config { return cfg }})
+	mux := http.NewServeMux()
+	o.Register(mux, func(*http.Request) string { return "https://coder.example.com" })
+	authorize := func() string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, oauth.AuthorizePath+"?"+authorizeQuery().Encode(), nil))
+		loc, err := url.Parse(w.Header().Get("Location"))
+		if w.Code != http.StatusFound || err != nil {
+			t.Fatalf("GET %s = %d, %v, want a redirect to Google", oauth.AuthorizePath, w.Code, err)
+		}
+		return loc.Query().Get("state")
+	}
+	callback := func(state string) int {
+		t.Helper()
+		w := httptest.NewRecorder()
+		mux.ServeHTTP(w, httptest.NewRequest(http.MethodGet, oauth.CallbackPath+"?"+url.Values{"state": {state}, "error": {"access_denied"}}.Encode(), nil))
+		return w.Code
+	}
+
+	oldest := authorize()
+	var newest string
+	for range oauth.MaxPendingSignIns {
+		newest = authorize()
+	}
+
+	if got := callback(oldest); got != http.StatusBadRequest {
+		t.Fatalf("GET %s of the oldest sign-in status = %d, want %d", oauth.CallbackPath, got, http.StatusBadRequest)
+	}
+	if got := callback(newest); got != http.StatusFound {
+		t.Fatalf("GET %s of the newest sign-in status = %d, want %d", oauth.CallbackPath, got, http.StatusFound)
+	}
+}
+
 func TestServerTokenExchange(t *testing.T) {
 	t.Parallel()
 	g := googletest.New(t, googletest.Account{Email: "ben@example.com", Verified: true, HostedDomain: "example.com"})

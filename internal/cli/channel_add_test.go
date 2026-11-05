@@ -65,6 +65,7 @@ func TestSecretFlagsReadStdin(t *testing.T) {
 		{name: "backup restore", args: []string{"backup", "restore", "/nonexistent-a2a-backup", "--backup-key", "-"}, wantErr: "--backup-key: empty secret"},
 		{name: "pair invite webhook header", args: []string{"pair", "invite", "grok", "--webhook", "https://example.com/hook", "--webhook-header", "Authorization: Bearer -"}, wantErr: "--webhook-header Authorization: empty secret"},
 		{name: "channel add email", args: []string{"channel", "add", "email", "--email-password", "-"}, wantErr: "--email-password: empty secret"},
+		{name: "channel add email OAuth", args: []string{"channel", "add", "email", "--email-oauth-refresh-token", "-"}, wantErr: "--email-oauth-refresh-token: empty secret"},
 		{name: "config set", args: []string{"config", "set", "--relay-token", "-"}, wantErr: "--relay-token: empty secret"},
 		{name: "proxy auth", args: []string{"start", "proxy", "https://agent.example.com", "--auth", "Bearer -"}, wantErr: "--auth Authorization: empty secret"},
 	}

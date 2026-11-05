@@ -19,27 +19,36 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
-// fakeNet is a private network of agents on loopback, where every caller is
-// the machine "peer".
+// fakeNet is a private network of agents on loopback. A caller is the agent
+// whose HTTP client opened the connection, and any other one the machine
+// "peer".
 type fakeNet struct {
 	mu     sync.Mutex
 	agents map[string]string
+	// callers are the agents by the local address of their connections.
+	callers map[string]string
 }
 
 type fakeProvider struct {
 	net  *fakeNet
 	name string
+	// client is made on first use, see HTTPClient.
+	client     *http.Client
+	clientOnce sync.Once
 	// kind is the provider name it reports; empty is "fake".
 	kind string
 	// unidentified makes WhoIs identify nobody.
@@ -81,6 +90,12 @@ func (p *fakeProvider) WhoIs(_ context.Context, remoteAddr string) (*network.Pee
 	if p.unidentified {
 		return nil, network.ErrNoIdentity
 	}
+	p.net.mu.Lock()
+	name, ok := p.net.callers[remoteAddr]
+	p.net.mu.Unlock()
+	if ok {
+		return &network.Peer{Node: name}, nil
+	}
 	if p.peerPerConn {
 		return &network.Peer{Node: remoteAddr}, nil
 	}
@@ -100,13 +115,32 @@ func (p *fakeProvider) Peers(context.Context) ([]network.PeerInfo, error) {
 	var out []network.PeerInfo
 	for name, u := range p.net.agents {
 		if name != p.name {
-			out = append(out, network.PeerInfo{Name: name, URL: u, Online: true})
+			out = append(out, network.PeerInfo{Name: name, URL: u, Node: name, Online: true})
 		}
 	}
 	return out, nil
 }
 
-func (p *fakeProvider) HTTPClient() *http.Client { return http.DefaultClient }
+// HTTPClient returns a client whose connections WhoIs identifies as p.
+func (p *fakeProvider) HTTPClient() *http.Client {
+	p.clientOnce.Do(func() {
+		var d net.Dialer
+		p.client = &http.Client{Transport: &http.Transport{DialContext: func(ctx context.Context, network, addr string) (net.Conn, error) {
+			c, err := d.DialContext(ctx, network, addr)
+			if err != nil {
+				return nil, err
+			}
+			p.net.mu.Lock()
+			if p.net.callers == nil {
+				p.net.callers = map[string]string{}
+			}
+			p.net.callers[c.LocalAddr().String()] = p.name
+			p.net.mu.Unlock()
+			return c, nil
+		}}}
+	})
+	return p.client
+}
 
 func (p *fakeProvider) Close() error { return nil }
 
@@ -166,5 +200,65 @@ func TestAdvertisedNeedsWebhookNode(t *testing.T) {
 	on := true
 	if _, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna", Advertised: &on}); err == nil {
 		t.Fatalf("Pair() of a caller with advertised error = nil, want error")
+	}
+}
+
+func TestGossipRelayCantHideEntriesOfTheirHost(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{"carl": "http://127.0.0.1:1"}}
+	ben := startServer(t, serverOpts{name: "ben", private: fnet.provider("ben")})
+	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
+	ctx := context.Background()
+	addNode(t, ben, "grok", 0)
+	on := true
+	if _, err := controlapi.NewClient(ben.dir).UpdatePairing(ctx, "grok", controlapi.PairingUpdate{Advertised: &on}); err != nil {
+		t.Fatalf("UpdatePairing(advertised) error = %v", err)
+	}
+	anna.srv.gossipRound(ctx)
+	expires := time.Now().Add(time.Hour)
+	forged := time.Now().Add(30 * time.Minute).UnixNano()
+	relayed := gossipEntries{Entries: []gossip.Entry{
+		{Name: "grok", Host: "ben", Version: forged, Expires: expires, Removed: true},
+		{Name: "helper", Host: "dora", Version: 1, Expires: expires},
+	}}
+
+	for _, hc := range []*http.Client{fnet.provider("carl").HTTPClient(), http.DefaultClient} {
+		if err := postJSON(ctx, hc, anna.srv.privateURL+gossipEntriesPath, relayed, nil); err != nil {
+			t.Fatalf("POST %s error = %v", gossipEntriesPath, err)
+		}
+	}
+
+	ads, err := controlapi.NewClient(anna.dir).Advertisements(ctx)
+	if err != nil {
+		t.Fatalf("Advertisements() error = %v", err)
+	}
+	var keys []string
+	for _, a := range ads {
+		keys = append(keys, a.Key)
+	}
+	if diff := cmp.Diff([]string{"grok@ben", "helper@dora"}, keys); diff != "" {
+		t.Fatalf("Advertisements() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestGossipRefusesOversizedBody(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{}}
+	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
+	body := `{"entries":[],"padding":"` + strings.Repeat("a", maxGossipBody) + `"}`
+	for _, path := range []string{gossipPath, gossipEntriesPath} {
+		t.Run(path, func(t *testing.T) {
+			t.Parallel()
+			resp, err := http.Post(anna.srv.privateURL+path, "application/json", strings.NewReader(body))
+			if err != nil {
+				t.Fatalf("POST %s error = %v", path, err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusRequestEntityTooLarge {
+				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
+			}
+		})
 	}
 }

@@ -123,6 +123,9 @@ type stopUsers struct{ s *Server }
 func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
 	// Tasks are canceled before the starts are held: a task that waits for
 	// its agent process to start would keep its cancellation waiting.
+	if u.s.chatTurns != nil {
+		u.s.chatTurns.dropPostedOf(principals...)
+	}
 	as := auth.InProcess(ctx, auth.Owner())
 	for _, p := range principals {
 		ids, err := u.s.tasks.UnfinishedOf(ctx, p)

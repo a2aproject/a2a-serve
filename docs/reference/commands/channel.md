@@ -36,6 +36,10 @@ a2a-serve channel add email --email-address coder@example.com --email-imap imap.
 | `--email-address string` |  | Email channel: the agent's address |
 | `--email-imap string` |  | Email channel: IMAP host:port, such as imap.example.com:993 |
 | `--email-mailbox string` |  | Email channel: mailbox to watch (default INBOX) |
+| `--email-oauth-client-id string` |  | Email channel: OAuth client ID |
+| `--email-oauth-client-secret string` |  | Email channel: OAuth client secret, if the client has one (secret value: env:VAR, -, or the value) |
+| `--email-oauth-refresh-token string` |  | Email channel: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused (secret value: env:VAR, -, or the value) |
+| `--email-oauth-token-url string` |  | Email channel: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token |
 | `--email-password string` |  | Email channel: password (secret value: env:VAR, -, or the value) |
 | `--email-smtp string` |  | Email channel: SMTP host:port, such as smtp.example.com:465 |
 | `--email-trusted-authserv string` |  | Email channel: authserv-id of your mail server's Authentication-Results |

@@ -220,6 +220,13 @@ type EmailConfig struct {
 	// TrustedAuthServ is the authserv-id of the Authentication-Results header
 	// added by the receiving mail server. Only its verdicts are trusted.
 	TrustedAuthServ string `yaml:"trusted_authserv" json:"trustedAuthServ"`
+	// OAuthRefreshToken, if set, signs in with OAuth (XOAUTH2), and Password
+	// is unused. The access tokens come from OAuthTokenURL. The refresh token
+	// and the client secret are secret references.
+	OAuthTokenURL     string `yaml:"oauth_token_url,omitempty" json:"oauthTokenURL,omitempty"`
+	OAuthClientID     string `yaml:"oauth_client_id,omitempty" json:"oauthClientID,omitempty"`
+	OAuthClientSecret string `yaml:"oauth_client_secret,omitempty" json:"oauthClientSecret,omitempty"`
+	OAuthRefreshToken string `yaml:"oauth_refresh_token,omitempty" json:"oauthRefreshToken,omitempty"`
 }
 
 // Channel kinds.

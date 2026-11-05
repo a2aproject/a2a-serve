@@ -32,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // schedulesAgent is the built-in agent the harness creates, lists and
@@ -129,6 +130,8 @@ func (e *schedulesExecutor) add(ctx context.Context, who auth.Principal, args []
 	if err != nil {
 		return "", err
 	}
+	e.sc.announce(ctx, e.claims.ContextID, fmt.Sprintf("🗓 The agent added the schedule %s (%s): %q. The next run is %s. To stop it, ask the agent to remove it.",
+		s.Name, describeWhen(s), s.Prompt, describeTime(s.NextRun, s.TZ)))
 	return fmt.Sprintf("Scheduled %s; the next run is %s.", s.Name, describeTime(s.NextRun, s.TZ)), nil
 }
 
@@ -142,13 +145,17 @@ func (e *schedulesExecutor) list(ctx context.Context, who auth.Principal) (strin
 	}
 	var sb strings.Builder
 	for _, s := range all {
-		when := s.Cron
-		if when == "" {
-			when = "once"
-		}
-		fmt.Fprintf(&sb, "- %s (%s, next %s): %s\n", s.Name, when, describeTime(s.NextRun, s.TZ), s.Prompt)
+		fmt.Fprintf(&sb, "- %s (%s, next %s): %s\n", s.Name, describeWhen(s), describeTime(s.NextRun, s.TZ), s.Prompt)
 	}
 	return strings.TrimRight(sb.String(), "\n"), nil
+}
+
+// describeWhen is the cron expression of s, or "once".
+func describeWhen(s store.Schedule) string {
+	if s.Cron == "" {
+		return "once"
+	}
+	return s.Cron
 }
 
 // describeTime formats t in the time zone tz, or the server's.
