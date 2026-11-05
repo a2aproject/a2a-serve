@@ -151,6 +151,8 @@ type Server struct {
 	// the tasks of anonymous callers.
 	split  *splitExecutor
 	budget *anonymousBudget
+	// users are the agent processes of users that run now.
+	users userAgents
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 
@@ -345,6 +347,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Mailbox:   s.nodes.Mailbox,
 		Changed:   s.refreshInstructions,
 		Access:    s.access,
+		Users:     stopUsers{s},
+		Homes:     s.dir,
 	}
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, AgentName: agentName})
 	closers.push(s.clients.close)

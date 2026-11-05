@@ -55,7 +55,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 - The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
 - A change of role applies to the next request of every token and messenger account of the pairing.
-- `pair rm` also deletes the pairing's tasks, approvals and conversations, so a new pairing with the same name starts with none of them.
+- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations and agent home directory. A new pairing with the same name starts with none of them.
 - `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
 - The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
 

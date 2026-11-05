@@ -127,11 +127,18 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	return acp, func(context.Context) error { return acp.Close() }, nil
 }
 
-// startUserAgent starts the agent process of a user's agent key.
+// startUserAgent starts the agent process of a user's agent key, unless
+// the user's pairing was removed.
 func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
 	id, ok := userOfKey(key)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent key %q", key)
+	}
+	ua := s.users.get(key)
+	ua.startMu.Lock()
+	defer ua.startMu.Unlock()
+	if err := s.checkUser(ctx, id); err != nil {
+		return nil, err
 	}
 	h, err := s.prepareHarness(ctx, harnessLog, key)
 	if err != nil {
@@ -142,7 +149,13 @@ func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.W
 		return nil, errors.Join(err, h.prepared.Stop(context.WithoutCancel(ctx)))
 	}
 	slog.Info("started the agent process of a user", "user", id, "sandbox", h.prepared.Summary)
-	return a2aacp.WithCleanup(rwc, func() error { return h.prepared.Stop(context.Background()) }), nil
+	var proc io.ReadWriteCloser
+	proc = a2aacp.WithCleanup(rwc, func() error {
+		s.users.exited(ua, proc)
+		return h.prepared.Stop(context.Background())
+	})
+	s.users.started(ua, proc)
+	return proc, nil
 }
 
 // preparedHarness is a harness ready to start as an ACP agent.

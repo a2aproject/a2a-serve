@@ -127,6 +127,12 @@ func (d Dir) UserHomeDir(id string) string {
 	return filepath.Join(d.UserHomesDir(), UserKey(id))
 }
 
+// RemoveUserHome deletes the home of the agent process of the user with
+// the principal ID id, if there is one.
+func (d Dir) RemoveUserHome(id string) error {
+	return os.RemoveAll(d.UserHomeDir(id))
+}
+
 // UserKey is a short stable name of the principal ID id, for paths and
 // container names.
 func UserKey(id string) string {

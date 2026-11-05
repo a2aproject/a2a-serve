@@ -83,7 +83,7 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 				return nil, err
 			}
 			return access.Describe(cfg.Policy, networkOf(ctx, d, cfg), access.CountPairings(all)), nil
-		}},
+		}, Homes: d},
 		contacts:  manage.Contacts{Store: st},
 		schedules: manage.Schedules{Store: st},
 	}, nil
