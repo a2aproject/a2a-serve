@@ -19,7 +19,7 @@ Give every webhook a credential that only the server sends, such as a `--webhook
 
 Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as an authenticated caller.
 
-The server follows redirects of the webhook. It sends the webhook headers and the signature only to the host of the webhook URL, and drops them when a redirect leads to another host. A wake that takes longer than 20 seconds fails and is retried.
+The server follows redirects of the webhook. It sends the webhook headers and the signature only to the host of the webhook URL, and drops them when a redirect leads to another host. A wake that takes longer than 20 seconds fails and is retried. [Security](../advanced/security.md#calls-to-other-agents-and-webhooks) lists the redirects the server refuses.
 
 ## Advertised pairings
 
@@ -31,4 +31,4 @@ a2a-serve peers                                               # on Anna's agent:
 a2a-serve contact add grok@ben                                # no code needed
 ```
 
-Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way.
+Anna's calls go through Ben's agent, which keeps the webhook's credentials. Ben's agent checks Anna like any other caller, so she needs access to it (see [Identities](identities.md)). An advertisement spreads to all agents within a few minutes; removing the node or passing `--advertised=false` withdraws it the same way. An agent advertises at most 100 pairings. A call to `<pairing>@<agent>` goes to the agent that `a2a-serve peers` lists under that [name](agent2agent.md#peer-names).

@@ -1,0 +1,8 @@
+name: o11y
+agent: opencode
+description: Answers questions about production and investigates incidents with metrics, logs, traces, profiles and recent changes.
+mounts:
+  - ~/.kube/a2a-o11y:/kube:ro
+approvals:
+  allow: [read, search, think]
+  deny: [edit, delete, move, execute, fetch]

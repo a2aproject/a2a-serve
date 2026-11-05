@@ -17,7 +17,9 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
@@ -28,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/recipe"
 )
 
 // urlFurthest is the value of a bare --url: the URL which reaches furthest.
@@ -75,7 +78,7 @@ picked its port.`,
 					return cerr
 				}
 				if cfg.IsJSON() {
-					return cfg.PrintJSON(statusJSON{Name: conf.Name, Harness: conf.Harness, Dir: d.Root})
+					return cfg.PrintJSON(statusJSON{Name: conf.Name, Harness: conf.Harness, Dir: d.Root, Recipe: recipeOf(d)})
 				}
 				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a-serve start --detach`\n", conf.Name, conf.Harness, d.Root)
 				return err
@@ -88,9 +91,9 @@ picked its port.`,
 				return err
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st, Pending: pending})
+				return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st, Pending: pending, Recipe: recipeOf(d)})
 			}
-			return printStatus(cfg, st, pending)
+			return printStatus(cfg, st, pending, recipeOf(d))
 		},
 	}
 	f := cmd.Flags()
@@ -146,12 +149,35 @@ type statusJSON struct {
 	*controlapi.Status
 	// Pending are the settings saved since the agent started.
 	Pending []string `json:"pending,omitempty"`
+	// Recipe is the recipe the agent came from, if any.
+	Recipe string `json:"recipe,omitempty"`
 }
 
-func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string) error {
+// recipeOf describes the recipe the agent d came from and its commit, or
+// returns "" for an agent created without one.
+func recipeOf(d agentdir.Dir) string {
+	rec, err := recipe.ReadRecord(d)
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("reading the record of the agent's recipe", "error", err)
+		}
+		return ""
+	}
+	src := rec.Source()
+	if src.Local() {
+		return src.Dir
+	}
+	return src.Describe() + " (" + shortCommit(rec.Commit) + ")"
+}
+
+func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fromRecipe string) error {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s (%s) running for %s, pid %d\n", st.Name, st.Harness, time.Since(st.Started).Round(time.Second), st.PID)
-	fmt.Fprintf(&sb, "  dir      %s\n  local    %s\n", st.Dir, st.Local)
+	fmt.Fprintf(&sb, "  dir      %s\n", st.Dir)
+	if fromRecipe != "" {
+		fmt.Fprintf(&sb, "  recipe   %s\n", fromRecipe)
+	}
+	fmt.Fprintf(&sb, "  local    %s\n", st.Local)
 	if st.Private != "" {
 		fmt.Fprintf(&sb, "  private  %s\n", st.Private)
 		if st.PrivateNote != "" {

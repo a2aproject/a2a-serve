@@ -21,6 +21,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -31,6 +32,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
+
+// frozenClock keeps the limiter's backoffs and windows from expiring
+// however slowly a test runs.
+func frozenClock() time.Time { return time.Unix(1000, 0) }
 
 type fakeAds map[string]string
 
@@ -52,7 +57,7 @@ func newService(t *testing.T) *Service {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter()}
+	return &Service{Store: st, BaseURL: func() string { return "https://coder.example.com" }, Ads: fakeAds{}, Limiter: NewLimiter(frozenClock)}
 }
 
 // redeem exchanges code for a token as a redeemer of kind, as POST /pair

@@ -80,11 +80,15 @@ func TestMigrateFromPrototype(t *testing.T) {
 	if _, err := s.HandleByName(ctx, "k3"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("HandleByName() of a handle with a user error = %v, want %v", err, ErrNotFound)
 	}
-	if id, err := s.PendingQuestion(ctx, "telegram", "42:7"); err != nil || id != "q1" {
-		t.Fatalf("PendingQuestion() = %q, %v, want q1", id, err)
+	pending, err := s.PendingQuestions(ctx, "telegram", "42:7")
+	if err != nil {
+		t.Fatalf("PendingQuestions() error = %v", err)
 	}
-	if _, err := s.PendingQuestion(ctx, "email", "a@b"); !errors.Is(err, ErrNotFound) {
-		t.Fatalf("PendingQuestion() of a cleared question error = %v, want %v", err, ErrNotFound)
+	if diff := cmp.Diff([]string{"q1"}, pending); diff != "" {
+		t.Fatalf("PendingQuestions() wrong result (-want +got) diff = %s", diff)
+	}
+	if ids, err := s.PendingQuestions(ctx, "email", "a@b"); err != nil || len(ids) != 0 {
+		t.Fatalf("PendingQuestions() of a cleared question = %q, %v, want none", ids, err)
 	}
 	q, err := s.QuestionByID(ctx, "q1")
 	if err != nil || q.HitlID != "tool1" {
