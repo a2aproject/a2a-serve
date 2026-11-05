@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -153,7 +154,7 @@ func TestCallClaimsClaimsOf(t *testing.T) {
 
 func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
 	t.Parallel()
-	annaKey := userAgentKeyPrefix + anna.ID
+	annaKey := agentkey.User(anna.ID)
 	keys := map[string]string{"owner": "", "anna": annaKey}
 	tests := []struct {
 		name      string
@@ -165,7 +166,7 @@ func TestCallClaimsClaimsOfIsPerProcess(t *testing.T) {
 		{name: "anna's conversation from anna's process", contextID: "anna", process: annaKey},
 		{name: "owner's conversation from anna's process", contextID: "owner", process: annaKey, wantErr: errUnknownHandle},
 		{name: "anna's conversation from the owner's process", contextID: "anna", wantErr: errUnknownHandle},
-		{name: "anna's conversation from another user's process", contextID: "anna", process: userAgentKeyPrefix + bob.ID, wantErr: errUnknownHandle},
+		{name: "anna's conversation from another user's process", contextID: "anna", process: agentkey.User(bob.ID), wantErr: errUnknownHandle},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -306,7 +307,7 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 	}{
 		{name: "no processes", want: anna},
 		{name: "main process", agentKey: func(context.Context, string) (string, error) { return "", nil }, want: anna},
-		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return anonymousAgentKey, nil }, process: anonymousAgentKey, want: anonymous},
+		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil }, process: agentkey.Anonymous, want: anonymous},
 		{name: "unknown process", agentKey: func(context.Context, string) (string, error) { return "", errors.New("boom") }, wantErr: true},
 	}
 	for _, tc := range tests {

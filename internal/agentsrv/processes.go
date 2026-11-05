@@ -20,24 +20,14 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-)
-
-// Agent keys, which a2aacp stores with the session of each conversation:
-// the owner's conversations run in the main agent process, which has no
-// key, all anonymous conversations in one process, and the conversations of
-// each authenticated user in a process of their own. Processes don't share
-// a home, so a conversation can't read what another user's left there.
-const (
-	anonymousAgentKey  = "anonymous"
-	userAgentKeyPrefix = "user:"
 )
 
 // Pools of agent processes besides the main one.
@@ -46,28 +36,8 @@ const (
 	usersPool     = "users"
 )
 
-// agentKeyOf returns the agent key of a new conversation that p starts.
-// Calls without a principal come from the server itself.
-func agentKeyOf(p auth.Principal, ok bool) string {
-	if !ok {
-		return ""
-	}
-	switch p.Role {
-	case auth.RoleAnonymous:
-		return anonymousAgentKey
-	case auth.RoleAuthenticated:
-		return userAgentKeyPrefix + p.ID
-	}
-	return ""
-}
-
-// userOfKey returns the principal ID of a user's agent key.
-func userOfKey(key string) (string, bool) {
-	return strings.CutPrefix(key, userAgentKeyPrefix)
-}
-
 func poolOf(key string) string {
-	if key == anonymousAgentKey {
+	if key == agentkey.Anonymous {
 		return anonymousPool
 	}
 	return usersPool
@@ -104,7 +74,7 @@ func (k *agentKeys) of(ctx context.Context, contextID string) (string, error) {
 	if key, ok := k.pending[contextID]; ok {
 		return key, nil
 	}
-	return agentKeyOf(auth.Caller(ctx)), nil
+	return agentkey.Of(auth.Caller(ctx)), nil
 }
 
 // remember keeps the agent key of a conversation until forget, in case its
@@ -131,7 +101,7 @@ func (k *agentKeys) anonymous(ctx context.Context, contextID string) bool {
 	if err != nil {
 		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
 	}
-	return key == anonymousAgentKey
+	return key == agentkey.Anonymous
 }
 
 // startPool starts the executor of a pool of agent processes.

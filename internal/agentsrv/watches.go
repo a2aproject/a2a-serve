@@ -496,7 +496,7 @@ func (ws *Watches) deleteWatch(ctx context.Context, w store.Watch) {
 // An error, such as a failed lookup on the private network, says nothing
 // about whether they still may.
 func (ws *Watches) watchPrincipal(ctx context.Context, w store.Watch) (auth.Principal, error) {
-	user, err := storedPrincipal(ctx, ws.chain, w.OnBehalfOf, w.Identity)
+	user, err := ws.chain.Stored(ctx, w.OnBehalfOf, w.Identity)
 	if err != nil {
 		slog.Warn("resolving the user of a watch", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf, "error", err)
 		return auth.Principal{}, err

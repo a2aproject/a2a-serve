@@ -20,7 +20,9 @@ package auth
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -74,6 +76,11 @@ type Principal struct {
 // IsOwner reports whether the principal has the owner role.
 func (p Principal) IsOwner() bool { return p.Role == RoleOwner }
 
+// MayCallAgents reports whether the conversations of the principal may
+// call other agents. Anonymous callers can't use the agent's contacts and
+// nodes.
+func (p Principal) MayCallAgents() bool { return p.Role == RoleOwner || p.Role == RoleAuthenticated }
+
 // Owner is the principal of the user running the agent.
 func Owner() Principal {
 	return Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{Self: true}}
@@ -113,6 +120,13 @@ type RefusedError struct {
 
 func (e *RefusedError) Error() string {
 	return "this agent doesn't accept " + e.Identity.Describe()
+}
+
+// Refused reports whether err refuses a caller: a [RefusedError] or
+// [ErrNoCredential].
+func Refused(err error) bool {
+	var re *RefusedError
+	return errors.As(err, &re) || errors.Is(err, ErrNoCredential)
 }
 
 // Chain turns requests into identities, from channel links, the private
@@ -157,6 +171,23 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 		return Principal{}, ErrNoCredential
 	}
 	return Principal{ID: pid, Role: role, Identity: id}, nil
+}
+
+// Stored is [Chain.Refresh] of a principal stored with its identity as
+// JSON, or empty when the ID says it all. A principal the policy refuses
+// now has no role.
+func (a *Chain) Stored(ctx context.Context, id, identity string) (Principal, error) {
+	var ident Identity
+	if identity != "" {
+		if err := json.Unmarshal([]byte(identity), &ident); err != nil {
+			return Principal{}, fmt.Errorf("reading the identity of %s: %w", id, err)
+		}
+	}
+	p, err := a.Refresh(ctx, id, ident)
+	if Refused(err) {
+		return Principal{ID: id, Identity: ident}, nil
+	}
+	return p, err
 }
 
 // Refresh gives a principal stored to act later, such as the user a

@@ -141,7 +141,7 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
-		if !mayCallAgents(claims.User) {
+		if !claims.User.MayCallAgents() {
 			jsonhttp.Error(w, http.StatusForbidden, "the user of this conversation can't call other agents; answer without calling one")
 			return
 		}
@@ -186,12 +186,6 @@ func (hp *HarnessProxy) agentsHandler(caller harnessCaller) http.Handler {
 		}
 		inner.ServeHTTP(w, r2)
 	})
-}
-
-// mayCallAgents reports whether the conversations of user may call other
-// agents. Anonymous callers can't use this agent's contacts and nodes.
-func mayCallAgents(user auth.Principal) bool {
-	return user.Role == auth.RoleOwner || user.Role == auth.RoleAuthenticated
 }
 
 // serveSchedules serves the built-in schedules agent for the conversation

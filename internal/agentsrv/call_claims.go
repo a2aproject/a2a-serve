@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -208,7 +209,7 @@ func (cl *CallClaims) callerIn(ctx context.Context, contextID string, user auth.
 		return user, err
 	}
 	process := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
-	if id, ok := userOfKey(key); ok {
+	if id, ok := agentkey.UserOf(key); ok {
 		if process, err = cl.chain.Refresh(ctx, id, auth.Identity{}); err != nil {
 			slog.Warn("resolving the user of an agent process", "user", id, "error", err)
 			process = auth.Principal{ID: id}
@@ -378,7 +379,7 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 		slog.Warn("finding the agent process of a conversation", "context", execCtx.ContextID, "error", err)
 		return ctx, execCtx
 	}
-	if !mayCallAgents(user) || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
+	if !user.MayCallAgents() || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
 		return ctx, execCtx
 	}
 	agents, err := callableAgents(ctx, cl.store)

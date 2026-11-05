@@ -35,6 +35,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -385,8 +386,8 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 		key  string
 	}{
 		{name: "owner", key: ""},
-		{name: "anonymous", key: anonymousAgentKey},
-		{name: "user", key: userAgentKeyPrefix + "pair:anna"},
+		{name: "anonymous", key: agentkey.Anonymous},
+		{name: "user", key: agentkey.User("pair:anna")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

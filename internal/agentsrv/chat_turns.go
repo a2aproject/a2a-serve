@@ -212,7 +212,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		return
 	}
 	p, err := c.chain.Authenticate(ctx, auth.Request{Channel: &in})
-	if refused(err) {
+	if auth.Refused(err) {
 		if in.Direct && in.Authentic {
 			c.reply(ctx, ch, in, "I don't know you yet. Ask my owner for a code (`a2a-serve pair invite <you>`), then send: join <code>")
 		}
@@ -370,13 +370,6 @@ func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2
 	}
 	q := approvals.FromStatus(stored.Task.Status)
 	return q == nil || q.Type != approvals.TypePermission || approvals.MayAnswer(p, stored.User)
-}
-
-// refused reports whether err refuses a channel sender: one the policy
-// doesn't allow, or one whose message proves nothing.
-func refused(err error) bool {
-	var re *auth.RefusedError
-	return errors.As(err, &re) || errors.Is(err, auth.ErrNoCredential)
 }
 
 // isCommand reports whether text is the bot command /name, optionally

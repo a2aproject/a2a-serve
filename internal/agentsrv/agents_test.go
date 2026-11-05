@@ -43,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
@@ -555,7 +556,7 @@ func TestAgentsProxyServesOnlyTheConversationsOfItsProcess(t *testing.T) {
 	annaContext := send(t, anna, userText("hello", "", "")).ContextID
 	annaURL := turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
 	ownerURL := turnURL(t, ts, "c1")
-	annaSocket, err := ts.srv.harness.open(userAgentKeyPrefix + "pair:anna")
+	annaSocket, err := ts.srv.harness.open(agentkey.User("pair:anna"))
 	if err != nil {
 		t.Fatalf("harnessListeners.open() error = %v", err)
 	}
@@ -611,7 +612,7 @@ func TestHarnessEndpointsOverTCP(t *testing.T) {
 			t.Errorf("shutting down the harness listener: %v", err)
 		}
 	})
-	owner, annaKey := hl.openKey(""), hl.openKey(userAgentKeyPrefix+"pair:anna")
+	owner, annaKey := hl.openKey(""), hl.openKey(agentkey.User("pair:anna"))
 	closed := hl.openKey("")
 	if err := closed.close(); err != nil {
 		t.Fatalf("harnessEndpoint.close() error = %v", err)

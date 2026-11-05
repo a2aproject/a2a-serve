@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -143,7 +144,7 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	}
 	keys := make([]string, len(principals))
 	for i, p := range principals {
-		keys[i] = userAgentKeyPrefix + p
+		keys[i] = agentkey.User(p)
 	}
 	return u.users.stop(keys...)
 }

@@ -43,7 +43,7 @@ func (c *ChatTurns) handleAction(ctx context.Context, ch channel.Channel, in cha
 		return
 	}
 	p, err := c.chain.Authenticate(ctx, auth.Request{Channel: &in})
-	if refused(err) {
+	if auth.Refused(err) {
 		return
 	}
 	if err != nil {

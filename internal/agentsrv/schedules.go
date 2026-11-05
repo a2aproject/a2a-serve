@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"cmp"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -220,7 +219,7 @@ func whenOf(s store.Schedule) schedule.When {
 // role the user has now. accepted is called once the agent accepted the
 // turn or refused it, unless start fails.
 func (sc *schedules) start(ctx context.Context, s store.Schedule, accepted func(error)) error {
-	user, err := storedPrincipal(ctx, sc.chain, s.UserID, s.UserIdentity)
+	user, err := sc.chain.Stored(ctx, s.UserID, s.UserIdentity)
 	if err == nil && user.Role == "" {
 		err = fmt.Errorf("%s can no longer call this agent", auth.DisplayPrincipal(s.UserID))
 	}
@@ -286,25 +285,6 @@ func (sc *schedules) announce(ctx context.Context, contextID, text string) {
 	if _, err := ch.Send(ctx, channel.Outbound{Conv: channel.ConvKey(conv), Text: text}); err != nil {
 		slog.Warn("announcing a schedule", "channel", chName, "error", err)
 	}
-}
-
-// storedPrincipal is a principal stored to act later, such as the user a
-// schedule runs as, with the role it has now. identity is its stored
-// identity as JSON, or empty when the ID says it all. A principal the
-// policy refuses now has no role.
-func storedPrincipal(ctx context.Context, chain *auth.Chain, id, identity string) (auth.Principal, error) {
-	var ident auth.Identity
-	if identity != "" {
-		if err := json.Unmarshal([]byte(identity), &ident); err != nil {
-			return auth.Principal{}, fmt.Errorf("reading the identity of %s: %w", id, err)
-		}
-	}
-	p, err := chain.Refresh(ctx, id, ident)
-	var refused *auth.RefusedError
-	if errors.As(err, &refused) || errors.Is(err, auth.ErrNoCredential) {
-		return auth.Principal{ID: id, Identity: ident}, nil
-	}
-	return p, err
 }
 
 // addByAgent creates a schedule the agent made for by in the conversation

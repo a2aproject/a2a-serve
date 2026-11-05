@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
@@ -95,13 +96,13 @@ func (s *Server) pruneContainers(ctx context.Context) {
 // It gets no way to call other agents: no socket, credential helper or CLI.
 // With Docker it runs in its own container with its own home.
 func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-	h, err := s.prepareHarness(ctx, harnessLog, anonymousAgentKey)
+	h, err := s.prepareHarness(ctx, harnessLog, agentkey.Anonymous)
 	if err != nil {
 		return nil, nil, err
 	}
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
 		Pool: &a2aacp.PoolConfig{
-			Key: func(context.Context, string) (string, error) { return anonymousAgentKey, nil },
+			Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
 		},
 		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
@@ -145,7 +146,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 // startUserAgent starts the agent process of a user's agent key, unless
 // the user's pairing was removed.
 func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
-	id, ok := userOfKey(key)
+	id, ok := agentkey.UserOf(key)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
@@ -240,9 +241,9 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress: imageProgress,
 	}
-	id, isUser := userOfKey(key)
+	id, isUser := agentkey.UserOf(key)
 	switch {
-	case key == anonymousAgentKey:
+	case key == agentkey.Anonymous:
 		spec.Home = s.dir.AnonymousHomeDir()
 	case isUser:
 		spec.Home = s.dir.UserHomeDir(id)
@@ -251,7 +252,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, err
 	}
 	closeEndpoint := func() error { return nil }
-	if key == anonymousAgentKey {
+	if key == agentkey.Anonymous {
 		spec.Name += "-anonymous"
 		spec.Labels["a2a.role"] = auth.RoleAnonymous
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {

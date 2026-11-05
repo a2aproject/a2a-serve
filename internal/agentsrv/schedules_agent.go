@@ -82,7 +82,7 @@ func (e *schedulesExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorCo
 // manage schedules.
 func (e *schedulesExecutor) user() (auth.Principal, error) {
 	u := e.claims.User
-	if u.Hops > 0 || !mayCallAgents(u) {
+	if u.Hops > 0 || !u.MayCallAgents() {
 		return auth.Principal{}, errors.New("schedules can only be managed in a conversation with a user of this agent")
 	}
 	return u, nil
