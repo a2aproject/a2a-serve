@@ -206,17 +206,17 @@ func (rd *renderer) flush(ctx context.Context, force bool) {
 		return
 	}
 	defer rd.showMu.Unlock()
-	rd.mu.Lock()
-	done, text, progress := rd.done, rd.text(), rd.progress
-	rd.mu.Unlock()
-	if done {
-		return
-	}
 	if !force {
 		if wait := max(rd.a.timings.EditInterval-time.Since(rd.lastEdit), rd.lim.remaining()); wait > 0 {
 			rd.schedule(ctx, wait)
 			return
 		}
+	}
+	rd.mu.Lock()
+	done, text, progress := rd.done, rd.text(), rd.progress
+	rd.mu.Unlock()
+	if done {
+		return
 	}
 	rd.showLocked(ctx, text, progress, force)
 }

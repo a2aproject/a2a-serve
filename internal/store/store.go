@@ -489,6 +489,12 @@ func (cs ChannelState) Set(ctx context.Context, key, value string) error {
 	return err
 }
 
+// Delete removes key.
+func (cs ChannelState) Delete(ctx context.Context, key string) error {
+	_, err := cs.s.exec(ctx, `DELETE FROM channel_state WHERE key = ?`, key)
+	return err
+}
+
 // seenRetention is how long dedup keys are kept.
 const seenRetention = 7 * 24 * time.Hour
 

@@ -820,6 +820,26 @@ func TestOpenPathWithURLCharacters(t *testing.T) {
 	}
 }
 
+func TestChannelStateDelete(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	cs := s.ChannelState()
+	if err := cs.Set(ctx, "k", "v"); err != nil {
+		t.Fatalf("ChannelState().Set() error = %v", err)
+	}
+
+	for range 2 {
+		if err := cs.Delete(ctx, "k"); err != nil {
+			t.Fatalf("ChannelState().Delete() error = %v", err)
+		}
+	}
+
+	if v, ok, err := cs.Get(ctx, "k"); err != nil || ok {
+		t.Fatalf("ChannelState().Get() after Delete() = %q, %v, %v, want not set", v, ok, err)
+	}
+}
+
 func TestCloseWaitsForWrites(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

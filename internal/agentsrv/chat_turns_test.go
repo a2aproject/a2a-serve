@@ -19,6 +19,8 @@ import (
 	"encoding/json"
 	"errors"
 	"iter"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -178,6 +180,13 @@ type turnsFixture struct {
 
 func newTurnsFixture(t *testing.T) *turnsFixture {
 	t.Helper()
+	return newTurnsFixtureWith(t, auth.Policy{}, newAnonymousBudget())
+}
+
+// newTurnsFixtureWith is newTurnsFixture with an access policy and a budget
+// of anonymous callers.
+func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudget) *turnsFixture {
+	t.Helper()
 	ch := newFakeChannel("fake")
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
@@ -195,7 +204,7 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 	turns := newChatTurns(ChatTurnsDeps{
 		Store:      fx.store,
 		Tasks:      fx.tasks,
-		Chain:      fx.chain,
+		Chain:      &auth.Chain{Store: fx.store, Policy: func() auth.Policy { return policy }},
 		Pairings:   &pairings.Service{Store: fx.store, Limiter: pairings.NewLimiter()},
 		Approvals:  svc,
 		Chat:       fx.chat,
@@ -204,6 +213,7 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 		Sender:     sender,
 		Bus:        fx.bus,
 		Unattended: unattended,
+		Budget:     budget,
 		AgentName:  agentName,
 	})
 	turns.start(fx.ctx)
@@ -764,14 +774,16 @@ func TestChatTurnsDropsRedeliveredMessages(t *testing.T) {
 	first := fx.ch.message("telegram:1", "dm1", "hello")
 	second := fx.ch.message("telegram:1", "dm1", "again")
 
+	fx.sender.hold = make(chan struct{})
+
 	fx.ch.deliver(first)
+	ids := []string{fx.sender.nextStream(t).req.Message.ID}
 	fx.ch.deliver(first)
 	fx.ch.deliver(second)
+	waitFor(t, "the second message to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 1 })
+	close(fx.sender.hold)
 
-	var ids []string
-	for range 2 {
-		ids = append(ids, fx.sender.nextStream(t).req.Message.ID)
-	}
+	ids = append(ids, fx.sender.nextStream(t).req.Message.ID)
 	want := []string{"fake:" + first.MessageID, "fake:" + second.MessageID}
 	if diff := cmp.Diff(want, ids); diff != "" {
 		t.Fatalf("SendStreamingMessage() message IDs wrong result (-want +got) diff = %s", diff)
@@ -791,16 +803,111 @@ func TestChatTurnsHandlesConversationInArrivalOrder(t *testing.T) {
 
 	fx.ch.deliver(slow)
 	fx.ch.write("telegram:1", "dm1", "second")
+	waitFor(t, "the second message to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 1 })
 	fx.sender.wantIdle(t)
 	close(gate)
 
-	var texts []string
-	for range 2 {
-		texts = append(texts, sentMessageOf(fx.sender.nextStream(t).req.Message).Text)
+	if got := sentMessageOf(fx.sender.nextStream(t).req.Message).Text; got != "first\nsecond" {
+		t.Fatalf("SendStreamingMessage() text = %q, want %q", got, "first\nsecond")
 	}
-	if diff := cmp.Diff([]string{"first", "second"}, texts); diff != "" {
-		t.Fatalf("SendStreamingMessage() texts wrong result (-want +got) diff = %s", diff)
+	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsSendsMessagesThatWaitedForATurnTogether(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.ch.write("telegram:1", "dm1", "first")
+	fx.sender.nextStream(t)
+	second := fx.ch.message("telegram:1", "dm1", "second")
+	second.Name = "Anna"
+	third := fx.ch.message("telegram:1", "dm1", "third")
+	third.Name = "Anna"
+
+	fx.ch.deliver(second)
+	fx.ch.deliver(third)
+	waitFor(t, "the messages to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 2 })
+	close(fx.sender.hold)
+
+	call := fx.sender.nextStream(t)
+	want := sentMessage{
+		ID:        "fake:" + second.MessageID,
+		ContextID: fx.contextOf(t, "dm1"),
+		Text:      "second\nthird",
+		Metadata:  map[string]any{"channel": "fake", "identity": "telegram:1", "sender": "Anna"},
 	}
+	if diff := cmp.Diff(want, sentMessageOf(call.req.Message)); diff != "" {
+		t.Fatalf("SendStreamingMessage() message wrong result (-want +got) diff = %s", diff)
+	}
+	fx.sender.wantIdle(t)
+}
+
+func TestChatTurnsLimitsConcurrentDownloads(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	gate := make(chan struct{})
+	var mu sync.Mutex
+	running, most := 0, 0
+	for i := range maxDownloads + 2 {
+		in := fx.ch.message("telegram:1", "dm"+strconv.Itoa(i), "look")
+		in.Prepare = func(context.Context, *channel.Inbound) error {
+			mu.Lock()
+			running++
+			most = max(most, running)
+			mu.Unlock()
+			<-gate
+			mu.Lock()
+			running--
+			mu.Unlock()
+			return nil
+		}
+		fx.ch.deliver(in)
+	}
+	current := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return running
+	}
+	waitFor(t, "the downloads to start", func() bool { return current() == maxDownloads })
+	time.Sleep(50 * time.Millisecond)
+
+	close(gate)
+
+	for range maxDownloads + 2 {
+		fx.sender.nextStream(t)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if most != maxDownloads {
+		t.Fatalf("downloads at once = %d, want %d", most, maxDownloads)
+	}
+}
+
+func TestChatTurnsChecksAnonymousBudgetBeforeDownloading(t *testing.T) {
+	t.Parallel()
+	budget := newAnonymousBudget()
+	for range budget.perHour {
+		if err := budget.admit(auth.NetworkChat + ":fake"); err != nil {
+			t.Fatalf("budget.admit() error = %v", err)
+		}
+	}
+	fx := newTurnsFixtureWith(t, auth.Policy{Anonymous: []string{auth.MemberAnyone}}, budget)
+	in := fx.ch.message("telegram:9", "dm9", "look")
+	prepared := make(chan struct{}, 1)
+	in.Prepare = func(context.Context, *channel.Inbound) error {
+		prepared <- struct{}{}
+		return nil
+	}
+
+	fx.ch.deliver(in)
+
+	fx.ch.waitFor(t, "dm9", hasText(errAnonymousRate.Error()))
+	select {
+	case <-prepared:
+		t.Fatal("Inbound.Prepare() called, want the message refused before downloading")
+	default:
+	}
+	fx.sender.wantIdle(t)
 }
 
 func TestChatTurnsTellsSenderWhenPreparingTheMessageFails(t *testing.T) {
