@@ -30,7 +30,7 @@ The command then:
 
 Without a terminal, pass `--yes` and give the values with `--secret`, `--env` or the environment. An optional MCP server without its values stays off. To create an agent without a server it requires, add `--disable-mcp <server>`.
 
-The flags of `a2a-serve config set` apply on top of the recipe, such as `--memory 8g` or `--sandbox local`. See the [command reference](../reference/commands/recipe.md) for every flag.
+The flags of `a2a-serve config set` apply on top of the recipe, such as `--memory 8g` or `--sandbox local`. See the [command reference](../reference/commands/recipe.md) for every flag. The [observability agent example](../../examples/04-observability-agent/README.md) walks through a whole setup.
 
 ## Update an agent
 
