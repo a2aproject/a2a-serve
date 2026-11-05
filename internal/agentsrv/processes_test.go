@@ -16,10 +16,12 @@ package agentsrv
 
 import (
 	"context"
+	"iter"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -139,5 +141,35 @@ func TestLocalSandboxWarning(t *testing.T) {
 				t.Fatalf("localSandboxWarning() = %q, want a warning %v", got, tc.wantWarn)
 			}
 		})
+	}
+}
+
+// emptyExecutor ends every turn without events, as a turn that fails before
+// the agent stores a session.
+type emptyExecutor struct{ a2asrv.AgentExecutor }
+
+func (emptyExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {}
+}
+
+func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
+	t.Parallel()
+	e := &splitExecutor{
+		main:     emptyExecutor{},
+		sessions: openTestStore(t).Sessions(),
+		budget:   newAnonymousBudget(),
+		start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			return emptyExecutor{}, func(context.Context) error { return nil }, nil
+		},
+	}
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
+
+	for range e.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
+	}
+
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if got := len(e.pending); got != 0 {
+		t.Fatalf("splitExecutor.pending has %d entries after the turn, want 0", got)
 	}
 }

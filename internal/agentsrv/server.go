@@ -429,7 +429,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals},
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -662,6 +662,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		if err := s.store.Prune(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("pruning the database", "error", err)
 		}
+		s.claims.forgetPruned(ctx)
 		select {
 		case <-ctx.Done():
 			return
