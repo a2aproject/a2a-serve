@@ -36,14 +36,15 @@ func openTable(t *testing.T, self string, c *clock) *Table {
 	return tb
 }
 
-// round swaps the tables of a and b the way the agents do over HTTP.
+// round swaps the tables of a and b the way the agents do over HTTP, when
+// a calls b.
 func round(t *testing.T, a, b *Table) {
 	t.Helper()
-	newer, want := b.Compare(a.Digest())
-	if err := a.Merge(newer); err != nil {
+	newer, want := b.Compare(a.self, a.Digest())
+	if err := a.Merge(b.self, newer); err != nil {
 		t.Fatalf("Merge() error = %v", err)
 	}
-	if err := b.Merge(a.Get(want)); err != nil {
+	if err := b.Merge(a.self, a.Get(want)); err != nil {
 		t.Fatalf("Merge() error = %v", err)
 	}
 }
@@ -56,7 +57,7 @@ func keys(entries []Entry) []string {
 	return out
 }
 
-func TestSpreadThroughAnotherAgent(t *testing.T) {
+func TestEntriesSpreadOnlyFromTheirHost(t *testing.T) {
 	t.Parallel()
 	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
 	ben, mid, anna := openTable(t, "ben", c), openTable(t, "mid", c), openTable(t, "anna", c)
@@ -65,6 +66,11 @@ func TestSpreadThroughAnotherAgent(t *testing.T) {
 	}
 	round(t, mid, ben)
 	round(t, anna, mid)
+	if got := anna.Live(); len(got) != 0 {
+		t.Fatalf("Live() on anna after a round with mid = %v, want none", keys(got))
+	}
+
+	round(t, ben, anna)
 	if diff := cmp.Diff([]string{"grok@ben"}, keys(anna.Live())); diff != "" {
 		t.Fatalf("Live() on anna wrong result (-want +got) diff = %s", diff)
 	}
@@ -76,10 +82,34 @@ func TestSpreadThroughAnotherAgent(t *testing.T) {
 	if err := ben.Withdraw("grok"); err != nil {
 		t.Fatalf("Withdraw() error = %v", err)
 	}
-	round(t, mid, ben)
-	round(t, anna, mid)
+	round(t, anna, ben)
 	if got := anna.Live(); len(got) != 0 {
 		t.Fatalf("Live() on anna after the withdrawal = %v, want none", keys(got))
+	}
+}
+
+func TestCompareOffersOwnEntriesAndWantsThePeers(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	ben, anna := openTable(t, "ben", c), openTable(t, "anna", c)
+	if err := ben.Advertise("grok", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := anna.Advertise("coder", ""); err != nil {
+		t.Fatal(err)
+	}
+	expires := c.t.Add(time.Hour)
+	if err := anna.Merge("carl", []Entry{{Name: "helper", Host: "carl", Version: 1, Expires: expires}}); err != nil {
+		t.Fatal(err)
+	}
+
+	newer, want := anna.Compare("ben", Digest{"grok@ben": 7, "other@carl": 7})
+
+	if diff := cmp.Diff([]string{"coder@anna"}, keys(newer)); diff != "" {
+		t.Fatalf("Compare() newer wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff([]string{"grok@ben"}, want); diff != "" {
+		t.Fatalf("Compare() want wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -117,8 +147,9 @@ func TestMergeRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := c.t.Add(time.Hour)
-	err := anna.Merge([]Entry{
+	err := anna.Merge("ben", []Entry{
 		{Name: "helper", Host: "anna", Description: "forged", Version: future.UnixNano(), Expires: future},
+		{Name: "helper", Host: "carl", Description: "of another host", Version: 1, Expires: future},
 		{Name: "bad name", Host: "ben", Version: 1, Expires: future},
 		{Name: "old", Host: "ben", Version: 1, Expires: c.t.Add(-time.Minute)},
 		{Name: "forever", Host: "ben", Version: 1, Expires: c.t.Add(10 * TTL)},

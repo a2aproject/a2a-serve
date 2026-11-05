@@ -254,6 +254,7 @@ func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {
 			URL:         fmt.Sprintf("http://%s/mesh/%s/a2a/%s", AgentMeshHost, p.GetPeerId(), p.GetSrvName()),
 			Description: p.GetSrvDescription(),
 			Online:      true,
+			Node:        p.GetPeerId(),
 		})
 	}
 	return ProbeAgents(ctx, a.HTTPClient(), candidates), nil

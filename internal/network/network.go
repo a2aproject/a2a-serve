@@ -70,6 +70,8 @@ type PeerInfo struct {
 	URL         string `json:"url"`
 	Description string `json:"description,omitempty"`
 	Online      bool   `json:"online"`
+	// Node identifies the machine of the agent, as [Peer.Node] does.
+	Node string `json:"-"`
 }
 
 // Provider is one way of reaching the agent server. It implements what it

@@ -533,6 +533,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 			Name:   other.cfg.AgentName,
 			URL:    fmt.Sprintf("http://%s/mesh/%s/a2a/%s", network.AgentMeshHost, other.peerID, other.cfg.AgentName),
 			Online: true,
+			Node:   other.peerID,
 		})
 	}
 	n.fabric.mu.RUnlock()

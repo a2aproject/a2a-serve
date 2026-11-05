@@ -56,7 +56,9 @@ type ContactClients struct {
 	mu       sync.Mutex
 	cache    []network.PeerInfo
 	cachedAt time.Time
-	clients  map[string]*contactClient
+	// rediscovered is when rediscover last bypassed the cache.
+	rediscovered time.Time
+	clients      map[string]*contactClient
 }
 
 // ContactClientsDeps are the dependencies of [ContactClients].
@@ -96,11 +98,28 @@ type contactClient struct {
 
 // discover lists agents on the private network, cached briefly.
 func (cc *ContactClients) discover(ctx context.Context) ([]network.PeerInfo, error) {
+	return cc.discoverWithin(ctx, 30*time.Second)
+}
+
+// rediscover lists agents on the private network bypassing the cache,
+// unless it did so within minInterval.
+func (cc *ContactClients) rediscover(ctx context.Context, minInterval time.Duration) ([]network.PeerInfo, error) {
+	cc.mu.Lock()
+	if time.Since(cc.rediscovered) < minInterval {
+		cc.mu.Unlock()
+		return cc.discover(ctx)
+	}
+	cc.rediscovered = time.Now()
+	cc.mu.Unlock()
+	return cc.discoverWithin(ctx, 0)
+}
+
+func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Duration) ([]network.PeerInfo, error) {
 	if cc.private == nil {
 		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
 	}
 	cc.mu.Lock()
-	if time.Since(cc.cachedAt) < 30*time.Second {
+	if time.Since(cc.cachedAt) < maxAge {
 		out := cc.cache
 		cc.mu.Unlock()
 		return out, nil

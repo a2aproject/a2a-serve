@@ -15,9 +15,10 @@
 // Package gossip spreads the advertised pairings of agents across a private
 // network. Each agent keeps a table of advertisements, its own and the ones
 // it heard of; agents swap the names and versions they know with a few
-// random peers, and download the entries the other has newer. After a few
-// rounds every agent has every entry, including agents which were offline
-// or can't reach the host directly.
+// random peers, and download the entries the other has newer. An agent
+// takes the entries of a host only from that host, so a peer can't change
+// or remove the advertisements of others. Every agent gets the entries of
+// a host once one of them picks the other for a round.
 package gossip
 
 import (
@@ -276,17 +277,20 @@ func (t *Table) Digest() Digest {
 	return d
 }
 
-// Compare returns the entries newer here than in a peer's digest, and the
-// keys the peer has newer.
-func (t *Table) Compare(peer Digest) (newer []Entry, want []string) {
+// Compare returns the entries of this agent newer here than in the digest
+// of peer, and the keys of peer's entries it has newer.
+func (t *Table) Compare(peer string, d Digest) (newer []Entry, want []string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	for _, k := range sortedKeys(t.entries) {
-		if e := t.entries[k]; e.Version > peer[k] {
+		if e := t.entries[k]; e.Host == t.self && e.Version > d[k] {
 			newer = append(newer, e)
 		}
 	}
-	for k, v := range peer {
+	for k, v := range d {
+		if _, host, ok := ParseKey(k); !ok || !strings.EqualFold(host, peer) {
+			continue
+		}
 		if e, ok := t.entries[k]; !ok || v > e.Version {
 			want = append(want, k)
 		}
@@ -295,29 +299,28 @@ func (t *Table) Compare(peer Digest) (newer []Entry, want []string) {
 	return newer, want
 }
 
-// Get returns the entries of keys.
+// Get returns the entries of this agent of keys.
 func (t *Table) Get(keys []string) []Entry {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	var out []Entry
 	for _, k := range keys {
-		if e, ok := t.entries[k]; ok {
+		if e, ok := t.entries[k]; ok && e.Host == t.self {
 			out = append(out, e)
 		}
 	}
 	return out
 }
 
-// Merge keeps the entries newer than the ones here. Entries of this agent
-// only come from this agent, and invalid, expired or future ones are
-// dropped.
-func (t *Table) Merge(entries []Entry) error {
+// Merge keeps the entries of peer newer than the ones here. Entries of
+// other hosts, invalid, expired or future ones are dropped.
+func (t *Table) Merge(peer string, entries []Entry) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	changed := false
 	for _, e := range entries {
 		now := t.now()
-		if e.Host == t.self || e.validate() != nil || now.After(e.Expires) || e.Expires.After(now.Add(TTL+maxSkew)) || e.Version > now.Add(maxSkew).UnixNano() {
+		if !strings.EqualFold(e.Host, peer) || strings.EqualFold(e.Host, t.self) || e.validate() != nil || now.After(e.Expires) || e.Expires.After(now.Add(TTL+maxSkew)) || e.Version > now.Add(maxSkew).UnixNano() {
 			continue
 		}
 		cur, ok := t.entries[e.Key()]
