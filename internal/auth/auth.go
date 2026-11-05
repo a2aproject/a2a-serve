@@ -21,7 +21,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"errors"
-	"fmt"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -402,6 +401,10 @@ func MintSoleCode(ctx context.Context, s *store.Store, pairing string) (string, 
 // ErrInvalidCode is returned for unknown, used or expired codes.
 var ErrInvalidCode = errors.New("invalid or expired code")
 
+// ErrUnverifiedSender is returned by [Link] for a message whose sender the
+// channel couldn't verify.
+var ErrUnverifiedSender = errors.New("the sender of this message could not be verified")
+
 // IssueToken issues a bearer token of a pairing at agentURL, and gives the
 // pairing kind if it has none yet. It returns the token and the principal
 // it acts as.
@@ -430,7 +433,7 @@ func LinkCode(text string) (string, bool) {
 // kind yet. Codes of webhook pairings stay pending.
 func Link(ctx context.Context, s *store.Store, in *channel.Inbound, code string) (Principal, error) {
 	if !in.Authentic {
-		return Principal{}, fmt.Errorf("the sender of this message could not be verified")
+		return Principal{}, ErrUnverifiedSender
 	}
 	c, err := s.TakeCode(ctx, NormalizeCode(code), func(pending store.Code) bool { return pending.Kind != pairapi.PairingWebhook })
 	if errors.Is(err, store.ErrNotFound) || errors.Is(err, store.ErrCodeExpired) {
