@@ -143,7 +143,14 @@ a2a send "Ask the reviewer agent what files it sees in its workspace, and tell m
 
 Coder runs `a2a send -a http://a2a/<handle>/reviewer ...` in its sandbox. Its
 server makes the call with the token it just stored, so no credential enters
-the sandbox. If reviewer needs an approval, the request comes to you.
+the sandbox. If reviewer needs an approval, your task waits for it and shows
+reviewer's request. Answer it like coder's own:
+
+```bash
+a2a send --task-id <task-id> approve
+```
+
+The task then continues with reviewer's result.
 
 ## 8. Clean up
 

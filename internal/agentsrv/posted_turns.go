@@ -48,6 +48,13 @@ type postedTurn struct {
 	Accepted func(error)
 }
 
+// accept tells the poster of t that the agent accepted it, or err.
+func (t *postedTurn) accept(err error) {
+	if t.Accepted != nil {
+		t.Accepted(err)
+	}
+}
+
 // errTurnDropped is what a posted turn removed before it was sent is
 // accepted with.
 var errTurnDropped = errors.New("the turn was dropped before it was sent")

@@ -16,7 +16,7 @@ The person who started a task answers its approvals, in the place the task start
 | --- | --- | --- |
 | An A2A caller | that caller | in the task |
 | A messenger user | that user | the same chat |
-| Another agent | the person who asked that agent | their chat, relayed by their agent |
+| Another agent | the person who asked that agent | relayed by their agent: in their task, or in their chat |
 | A webhook node | the node | in the task |
 | A schedule with `--chat` | the schedule's `--as` user | that chat |
 | A schedule without `--chat` | an owner | the owner chat |

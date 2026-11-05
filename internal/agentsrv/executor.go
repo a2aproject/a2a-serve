@@ -362,6 +362,9 @@ type observedExecutor struct {
 	approvals *approvals.Service
 	// unattended is told when the task of a context ends.
 	unattended *contextSet
+	// watches ask the A2A caller of a turn the questions of the agents it
+	// calls, on the caller's task.
+	watches *Watches
 }
 
 var (
@@ -389,15 +392,24 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	if id, ok := callerQuestionOf(execCtx.StoredTask); ok {
+		return e.observe(ctx, execCtx, e.answerCallerQuestion(ctx, execCtx, id))
+	}
+	return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
+}
+
+// turn runs a turn of the agent, with the line of the agents it may call
+// added to the prompt and kept out of the task store.
+func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	ctx, withLine := e.claims.withAgentsLine(ctx, execCtx)
 	if execCtx.Message != nil {
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
 	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine))))
 	if withLine == execCtx {
-		return e.observe(ctx, execCtx, events)
+		return events
 	}
-	return e.observe(ctx, execCtx, func(yield func(a2a.Event, error) bool) {
+	return func(yield func(a2a.Event, error) bool) {
 		for ev, err := range events {
 			if t, ok := ev.(*a2a.Task); ok {
 				ev = withOriginalMessage(t, withLine.Message, execCtx.Message)
@@ -406,7 +418,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 				return
 			}
 		}
-	})
+	}
 }
 
 // withAnswerOrder starts the events of a turn which answers the task's

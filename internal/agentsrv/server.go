@@ -308,7 +308,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	s.store = st
 	st.SetTaskTTL(s.config().TaskTTLDuration())
 	s.tasks = st.Tasks("", s.viewer)
-	n, err := s.tasks.FailUnfinished(ctx, "The server restarted before this task finished. Send the message again.")
+	n, err := s.tasks.FailUnfinished(ctx, "The server restarted before this task finished. Send the message again.", asksCallerQuestion)
 	if err != nil {
 		return err
 	}
@@ -464,7 +464,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
+	s.handler = withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended, watches: s.watches},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),

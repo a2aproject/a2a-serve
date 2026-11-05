@@ -43,6 +43,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -184,6 +185,104 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	}
 	restarted.ch.click("telegram:1", "dm1", ref, q.Question, 0)
 	restarted.ch.waitEdited(t, ref, "✓ Allow by owner")
+}
+
+func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name          string
+		prompt        string
+		wantQuestions int
+		wantResult    string
+	}{
+		{
+			name:          "one question",
+			prompt:        "call coder ask",
+			wantQuestions: 1,
+			wantResult:    "Pushed (allow).",
+		},
+		{
+			name:          "a question after the answer",
+			prompt:        "call coder ask twice",
+			wantQuestions: 2,
+			wantResult:    "Pushed twice (allow, allow).",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			coder := startServer(t, serverOpts{name: "coder"})
+			assistant := startServer(t, serverOpts{name: "assistant"})
+			addContact(t, assistant, coder, "coder", auth.RoleOwner)
+			c := assistant.client(assistant.pair("me", auth.RoleOwner))
+
+			task := send(t, c, userText(tc.prompt, "", ""))
+			for range tc.wantQuestions {
+				q := approvals.FromStatus(task.Status)
+				if q == nil || q.Type != approvals.TypePermission || !strings.Contains(q.Text, "coder wants to run git push") {
+					t.Fatalf("task status = %s (%s), want coder's permission question", task.Status.State, a2atext.Message(task.Status.Message))
+				}
+				task = send(t, c, userText("approve", string(task.ID), task.ContextID))
+			}
+
+			if task.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("task state = %s (%s), want completed", task.Status.State, a2atext.Message(task.Status.Message))
+			}
+			if !slices.ContainsFunc(task.History, func(m *a2a.Message) bool { return strings.Contains(a2atext.Message(m), tc.wantResult) }) {
+				t.Fatalf("task history = %v, want coder's result %q", historyTexts(task), tc.wantResult)
+			}
+		})
+	}
+}
+
+func TestRemoteApprovalOnTheCallersTaskKeepsUnclearReply(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("call coder ask", "", ""))
+	again := send(t, c, userText("maybe later", string(task.ID), task.ContextID))
+	if q := approvals.FromStatus(again.Status); q == nil || !strings.Contains(q.Text, "coder wants to run git push") {
+		t.Fatalf("task status = %s (%s), want coder's question asked again", again.Status.State, a2atext.Message(again.Status.Message))
+	}
+
+	done := send(t, c, userText("deny", string(task.ID), task.ContextID))
+	if done.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("task state = %s (%s), want completed", done.Status.State, a2atext.Message(done.Status.Message))
+	}
+}
+
+func TestRemoteApprovalOnTheCallersTaskSurvivesRestart(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	token := assistant.pair("me", auth.RoleOwner)
+	task := send(t, assistant.client(token), userText("call coder ask", "", ""))
+	if q := approvals.FromStatus(task.Status); q == nil {
+		t.Fatalf("task status = %s (%s), want coder's question", task.Status.State, a2atext.Message(task.Status.Message))
+	}
+	root := assistant.dir.Root
+	assistant.stop()
+
+	restarted := startServer(t, serverOpts{name: "assistant", dir: root})
+	done := send(t, restarted.client(token), userText("approve", string(task.ID), task.ContextID))
+	if done.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("task state = %s (%s), want completed", done.Status.State, a2atext.Message(done.Status.Message))
+	}
+	if !slices.ContainsFunc(done.History, func(m *a2a.Message) bool { return strings.Contains(a2atext.Message(m), "Pushed (allow).") }) {
+		t.Fatalf("task history = %v, want coder's result", historyTexts(done))
+	}
+}
+
+func historyTexts(task *a2a.Task) []string {
+	var out []string
+	for _, m := range task.History {
+		out = append(out, a2atext.Message(m))
+	}
+	return out
 }
 
 // waitQuestionMessage waits until the server recorded the message it sent
