@@ -41,8 +41,11 @@ type ChannelSupervisor struct {
 	ctx context.Context
 	in  chan channel.Inbound
 
-	mu    sync.Mutex
-	chans map[string]*runningChannel
+	// change serializes add and remove, which stop a channel before they
+	// start its replacement.
+	change sync.Mutex
+	mu     sync.Mutex
+	chans  map[string]*runningChannel
 }
 
 // SupervisorDeps are the dependencies of [ChannelSupervisor].
@@ -86,7 +89,9 @@ const (
 // stopped. A failing channel is restarted with backoff rather than stopping
 // the server, so that a messenger outage doesn't take the agent down.
 func (sv *ChannelSupervisor) add(ch channel.Channel) {
-	sv.remove(ch.Name())
+	sv.change.Lock()
+	defer sv.change.Unlock()
+	sv.stop(ch.Name())
 	cctx, cancel := context.WithCancel(sv.ctx)
 	rc := &runningChannel{ch: ch, cancel: cancel, done: make(chan struct{})}
 	sv.mu.Lock()
@@ -126,6 +131,13 @@ func (sv *ChannelSupervisor) run(ctx context.Context, rc *runningChannel) {
 // remove stops a channel and waits until it stopped, so that a replacement
 // never polls the same account at the same time.
 func (sv *ChannelSupervisor) remove(name string) {
+	sv.change.Lock()
+	defer sv.change.Unlock()
+	sv.stop(name)
+}
+
+// stop is remove for callers that hold sv.change.
+func (sv *ChannelSupervisor) stop(name string) {
 	sv.mu.Lock()
 	rc := sv.chans[name]
 	delete(sv.chans, name)

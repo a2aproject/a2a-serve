@@ -119,16 +119,18 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 		if nextErr != nil || !ok {
 			next = time.Time{}
 		}
-		// A run whose next time isn't saved would repeat on every check.
-		if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
-			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
-			continue
+		oneShot := nextErr == nil && !ok
+		// A run whose next time isn't saved would repeat on every check. A
+		// one-time run that fails stays due, so that the next check retries it.
+		if !oneShot {
+			if err := sc.store.SetScheduleNextRun(ctx, s.Name, next); err != nil {
+				slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
+				continue
+			}
 		}
 		runErr := sc.start(ctx, s)
-		if runErr == nil && nextErr == nil && !ok {
-			if err := sc.store.DeleteSchedule(ctx, s.Name); err != nil && !errors.Is(err, store.ErrNotFound) {
-				slog.Error("removing a finished schedule", "schedule", s.Name, "error", err)
-			}
+		if oneShot && runErr == nil {
+			sc.finish(ctx, s.Name)
 			continue
 		}
 		if err := sc.store.RecordScheduleResult(ctx, s.Name, now, errText(cmp.Or(runErr, nextErr))); err != nil {
@@ -139,6 +141,19 @@ func (sc *schedules) runDue(ctx context.Context) time.Duration {
 		}
 	}
 	return max(wait, sc.minWait)
+}
+
+// finish removes the schedule of a one-time run that succeeded. If that
+// fails, it clears the run so that it doesn't repeat.
+func (sc *schedules) finish(ctx context.Context, name string) {
+	err := sc.store.DeleteSchedule(ctx, name)
+	if err == nil || errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	slog.Error("removing a finished schedule", "schedule", name, "error", err)
+	if err := sc.store.SetScheduleNextRun(ctx, name, time.Time{}); err != nil {
+		slog.Error("clearing the run of a finished schedule", "schedule", name, "error", err)
+	}
 }
 
 func errText(err error) string {
