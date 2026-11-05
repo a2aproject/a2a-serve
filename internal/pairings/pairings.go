@@ -22,7 +22,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -43,7 +45,7 @@ import (
 // at start.
 const LocalOwner = auth.LocalPairing
 
-// SchedulesAgent is the agent the harness manages schedules with, which no
+// SchedulesAgent is the built-in agent that manages schedules, which no
 // webhook node or contact can be called.
 const SchedulesAgent = "schedules"
 
@@ -101,6 +103,8 @@ type Users interface {
 type Homes interface {
 	// RemoveUserHome deletes the agent home of the user id, if it exists.
 	RemoveUserHome(id string) error
+	// UserHomeDir is the path of the agent home of the user id.
+	UserHomeDir(id string) string
 }
 
 func invalid(format string, args ...any) error {
@@ -195,7 +199,7 @@ func (s *Service) callerCode(ctx context.Context, name string, mint func(context
 
 func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
 	if req.Name == SchedulesAgent {
-		return nil, invalid("%q is the agent the harness manages schedules with; pick another name", SchedulesAgent)
+		return nil, invalid("%q is the built-in agent that manages schedules; pick another name", SchedulesAgent)
 	}
 	if err := webhook.Validate(req.Webhook); err != nil {
 		return nil, invalid("%v", err)
@@ -456,6 +460,58 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 	}
 	if resp.Access != nil {
 		resp.StillAllowed = resp.Access.Others
+	}
+	return resp, nil
+}
+
+// PreviewRemove describes what [Service.Remove] would delete for the
+// pairing called name, and changes nothing.
+func (s *Service) PreviewRemove(ctx context.Context, name string) (*controlapi.RemovalPreview, error) {
+	p, exists, err := s.pairing(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if !exists {
+		return nil, notFound(name)
+	}
+	resp := &controlapi.RemovalPreview{Kind: p.Kind, Accounts: []controlapi.LinkedAccount{}, AgentHomes: []string{}}
+	links, err := s.Store.LinksOf(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	for _, l := range links {
+		resp.Accounts = append(resp.Accounts, controlapi.LinkedAccount{Channel: l.Channel, Account: l.Identity})
+	}
+	if name == LocalOwner {
+		resp.Kept = true
+		counts, err := s.Store.PairingRemoval(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		resp.Tokens, resp.Codes = counts.Tokens, counts.Codes
+		return resp, nil
+	}
+	principals := []string{auth.PairPrincipal(name), auth.NodePrincipal(name)}
+	counts, err := s.Store.PairingRemoval(ctx, name, principals...)
+	if err != nil {
+		return nil, err
+	}
+	resp.Tokens, resp.Codes, resp.Node = counts.Tokens, counts.Codes, p.Kind == pairapi.PairingWebhook
+	resp.Schedules, resp.Watches, resp.Approvals = counts.Schedules, counts.Watches, counts.Questions
+	resp.Tasks, resp.RunningTasks, resp.Conversations = counts.Tasks, counts.Unfinished, counts.Conversations
+	if s.Homes == nil {
+		return resp, nil
+	}
+	for _, id := range principals {
+		dir := s.Homes.UserHomeDir(id)
+		_, err := os.Stat(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			return nil, fmt.Errorf("checking the agent home of %s: %w", name, err)
+		}
+		resp.AgentHomes = append(resp.AgentHomes, dir)
 	}
 	return resp, nil
 }

@@ -65,7 +65,7 @@ func (c *Config) Validate() error {
 	case c.Harness == HarnessACP && len(c.Command) == 0:
 		add(`agent acp needs a command, such as --command "gemini --experimental-acp"`)
 	case len(c.Command) == 0 && !slices.Contains(Harnesses, c.Harness):
-		add("unknown harness %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
+		add("unknown agent %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
 	if c.Name == "" {
 		add("no name: set one with --name")

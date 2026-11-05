@@ -48,7 +48,7 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 		image = profile.Image()
 	}
 	if image == "" {
-		return "", "", fmt.Errorf("harness %q has no container image; pass --image or --sandbox local", harness)
+		return "", "", fmt.Errorf("agent %q has no container image; pass --image or --sandbox local", harness)
 	}
 	if imageExists(ctx, image) {
 		return image, "using " + image, nil

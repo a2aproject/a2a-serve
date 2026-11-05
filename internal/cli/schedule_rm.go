@@ -23,7 +23,7 @@ func newScheduleRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:               "rm <name>",
 		Aliases:           []string{"delete"},
 		Short:             "Remove a schedule",
-		Args:              cobra.ExactArgs(1),
+		Args:              namedArgs,
 		ValidArgsFunction: scheduleNames(sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			c, closer, err := sf.manager(cmd.Context())

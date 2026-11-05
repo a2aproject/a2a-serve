@@ -37,7 +37,7 @@ calls to it go through that agent.
 
 ` + secretref.Help,
 		Example: "  a2a-serve contact add coder\n  a2a-serve contact add grok@ben\n  a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
-		Args:    cobra.ExactArgs(1),
+		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {

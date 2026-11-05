@@ -38,7 +38,7 @@ func TestValidate(t *testing.T) {
 		{name: "unknown harness with a command", modify: func(c *Config) { c.Harness, c.Command = "gemini", []string{"gemini"} }},
 		{name: "no agent", modify: func(c *Config) { c.Harness = "" }, wantErr: "no agent"},
 		{name: "acp without a command", modify: func(c *Config) { c.Harness = "acp" }, wantErr: "agent acp needs a command"},
-		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown harness "gemini"`},
+		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown agent "gemini"`},
 		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
 		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale or none`},

@@ -50,7 +50,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		return err
 	}
 	if c, err := net.DialTimeout("unix", path, time.Second); err == nil {
-		return errors.Join(fmt.Errorf("an agent server is already running in %s (a2a-serve status)", s.dir.Root), c.Close())
+		return errors.Join(fmt.Errorf("the server is already running in %s (a2a-serve status)", s.dir.Root), c.Close())
 	}
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

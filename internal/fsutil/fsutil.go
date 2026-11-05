@@ -142,7 +142,7 @@ func MkdirReal(dir string) error {
 		return err
 	}
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("%s is a symlink; remove it so the agent server can create the directory", dir)
+		return fmt.Errorf("%s is a symlink; remove it so the server can create the directory", dir)
 	}
 	if !fi.IsDir() {
 		return fmt.Errorf("%s is not a directory", dir)

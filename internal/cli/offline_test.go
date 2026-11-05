@@ -26,6 +26,24 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
+func TestPairInviteStoppedAgentHintsLocalURL(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})
+
+	out, err := runCMD(t, "pair", "invite", "anna", "--dir", d.Root)
+	if err != nil {
+		t.Fatalf("a2a-serve pair invite of a stopped agent error = %v", err)
+	}
+	for _, want := range []string{"`a2a-serve status --url=local`", "private and public URLs appear after the agent starts"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("a2a-serve pair invite of a stopped agent = %q, want it to contain %q", out, want)
+		}
+	}
+	if strings.Contains(out, "`a2a-serve status --url`") {
+		t.Errorf("a2a-serve pair invite of a stopped agent = %q, want no hint to run status --url, which fails while it is stopped", out)
+	}
+}
+
 func TestManageStoppedAgent(t *testing.T) {
 	t.Parallel()
 	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Port: 4100})

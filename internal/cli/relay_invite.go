@@ -42,7 +42,7 @@ longer than 30 days needs a new invite.
 		Example: `  a2a-serve relay invite ci-bot
   a2a-serve relay invite ci-bot --expires 72h
   a2a-serve relay invite ci-bot --url https://relay.example.com --admin-token env:RELAY_ADMIN_TOKEN`,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			hours := int(expires / time.Hour)
 			if expires%time.Hour != 0 || hours < 1 || hours > control.MaxInviteHours {

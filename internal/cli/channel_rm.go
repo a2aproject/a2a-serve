@@ -25,7 +25,7 @@ func newChannelRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:       "rm <telegram|discord|email>",
 		Aliases:   []string{"delete"},
 		Short:     "Remove a messenger",
-		Args:      cobra.ExactArgs(1),
+		Args:      namedArgs,
 		ValidArgs: agentdir.ChannelKinds,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			m, closer, err := sf.manager(cmd.Context())

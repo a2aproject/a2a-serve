@@ -40,7 +40,7 @@ removed people it admits. To keep someone out, also drop them from
 --allow-email. Invite a removed invited agent again to let it back.
 
 ` + secretref.Help,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := f.client(cfg)
 			if err != nil {

@@ -65,7 +65,7 @@ func (m Contacts) Add(ctx context.Context, req controlapi.ContactRequest) (store
 		return store.Contact{}, agenterr.Invalidf("contact name must be non-empty, without spaces or slashes")
 	}
 	if req.Name == pairings.SchedulesAgent {
-		return store.Contact{}, agenterr.Invalidf("%q is the agent the harness manages schedules with; pick another name", pairings.SchedulesAgent)
+		return store.Contact{}, agenterr.Invalidf("%q is the built-in agent that manages schedules; pick another name", pairings.SchedulesAgent)
 	}
 	if _, err := m.Store.Node(ctx, req.Name); err == nil {
 		return store.Contact{}, agenterr.Conflictf("%q is the name of a webhook node; pick another name", req.Name)

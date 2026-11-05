@@ -23,7 +23,7 @@ import _ "embed"
 //go:embed a2a-mailbox/SKILL.md
 var A2AMailbox string
 
-// A2AAgents is the contents of the a2a-agents SKILL.md, teaching a harness
+// A2AAgents is the contents of the a2a-agents SKILL.md, teaching an agent
 // run by `a2a-serve` how to call other agents through the server.
 //
 //go:embed a2a-agents/SKILL.md

@@ -40,7 +40,7 @@ func newExecCmd(cfg *globalConfig) *cobra.Command {
 		Example: `  a2a-serve start exec 'tr a-z A-Z'
   a2a-serve start exec --stream 'for i in 1 2 3; do echo "step $i"; sleep 1; done'
   a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTEXT_ID/log"'`,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if s.Stream && s.Chunk != "" {
 				return clierr.Usage("--stream and --chunk are mutually exclusive")

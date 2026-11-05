@@ -1,6 +1,6 @@
 ## Calling other agents
 
-You run inside an agent server, and you can delegate work to other agents
+You run inside a2a-serve, and you can delegate work to other agents
 over A2A with the `a2a` CLI. The first message of a conversation, and now
 and then a later one, starts with an `[a2a agents]` line with the agents URL
 of this conversation, such as `http://a2a/k3`, and the agents you can call.

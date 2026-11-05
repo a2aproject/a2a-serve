@@ -32,7 +32,7 @@ func newScheduleAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
     --prompt "Summarize today's meetings." --chat telegram:owner
   a2a-serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
   a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram`,
-		Args: cobra.ExactArgs(1),
+		Args: namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			req.Name = args[0]
 			if err := req.Validate(); err != nil {

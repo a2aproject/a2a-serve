@@ -73,7 +73,7 @@ func listenHarnessSockets(dir string) (*harnessListeners, error) {
 		return nil, err
 	}
 	if err := os.RemoveAll(dir); err != nil {
-		return nil, fmt.Errorf("removing old harness sockets: %w", err)
+		return nil, fmt.Errorf("removing old agent sockets: %w", err)
 	}
 	if err := fsutil.MkdirPrivate(dir); err != nil {
 		return nil, err
@@ -86,7 +86,7 @@ func listenHarnessSockets(dir string) (*harnessListeners, error) {
 func listenHarnessTCP(bind, dial string) (*harnessListeners, error) {
 	ln, err := net.Listen("tcp", net.JoinHostPort(bind, "0"))
 	if err != nil {
-		return nil, fmt.Errorf("listening for the harness on %s: %w", bind, err)
+		return nil, fmt.Errorf("listening for the agent on %s: %w", bind, err)
 	}
 	_, port, err := net.SplitHostPort(ln.Addr().String())
 	if err != nil {
@@ -125,7 +125,7 @@ func (hl *harnessListeners) openSocket(agentKey string) (*harnessEndpoint, error
 	sock := filepath.Join(dir, harnessSocketName)
 	ln, err := net.Listen("unix", sock)
 	if err != nil {
-		return nil, errors.Join(fmt.Errorf("listening for the harness on %s: %w", sock, err), os.RemoveAll(dir))
+		return nil, errors.Join(fmt.Errorf("listening for the agent on %s: %w", sock, err), os.RemoveAll(dir))
 	}
 	kl := &keyedListener{Listener: ln, agentKey: agentKey}
 	hl.mu.Lock()
@@ -175,7 +175,7 @@ func (hl *harnessListeners) serve(ctx context.Context, handler http.Handler, err
 // serveHarness serves ln until it or srv closes.
 func serveHarness(srv *http.Server, ln net.Listener, errc chan<- error) {
 	if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
-		reportFatal(errc, fmt.Errorf("harness listener: %w", err))
+		reportFatal(errc, fmt.Errorf("agent listener: %w", err))
 	}
 }
 

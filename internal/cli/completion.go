@@ -43,7 +43,7 @@ names, channel kinds, enum flags, and the contacts and pairings of a running age
   source <(a2a-serve completion bash)
   a2a-serve completion zsh > "${fpath[1]}/_` + scriptProgram + `"
   a2a-serve completion fish > ~/.config/fish/completions/` + scriptProgram + `.fish`,
-		Args:      cobra.ExactArgs(1),
+		Args:      namedArgs,
 		ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := cmd.Root()

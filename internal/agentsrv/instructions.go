@@ -139,7 +139,7 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 // harness can call changed.
 func (s *Server) refreshInstructions(ctx context.Context) {
 	if err := s.writeInstructions(ctx); err != nil {
-		s.logf("! updating the harness instructions: %v", err)
+		s.logf("! updating the agent instructions: %v", err)
 	}
 }
 

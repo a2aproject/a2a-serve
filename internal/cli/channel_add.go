@@ -40,7 +40,7 @@ func newChannelAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Example: `  a2a-serve channel add telegram --token env:CODER_BOT_TOKEN
   a2a-serve channel add email --email-address coder@example.com --email-imap imap.example.com:993 \
     --email-smtp smtp.example.com:465 --email-password env:MAIL_PASSWORD --email-trusted-authserv mx.example.com`,
-		Args:      cobra.ExactArgs(1),
+		Args:      namedArgs,
 		ValidArgs: agentdir.ChannelKinds,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			d, err := sf.agentDir()

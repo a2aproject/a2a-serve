@@ -316,7 +316,7 @@ type Options struct {
 func Run(in io.Reader, out io.Writer, opts Options) (Result, error) {
 	harnesses, getenv := opts.Harnesses, opts.Getenv
 	if len(harnesses) == 0 {
-		return Result{}, errors.New("no harnesses to choose from")
+		return Result{}, errors.New("no agents to choose from")
 	}
 	p := NewPrompter(in, out, opts.ReadSecret)
 	if _, err := fmt.Fprintln(out, "No agent here yet. A few questions to set one up (Enter keeps the default):"); err != nil {

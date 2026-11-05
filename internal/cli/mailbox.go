@@ -34,10 +34,10 @@ import (
 func newMailboxCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mailbox",
-		Short: "Answer tasks as a webhook node hosted by an agent server",
+		Short: "Answer tasks as a webhook node hosted by a server",
 		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
-Grok Bot routine, hosted by an agent server ("a2a-serve pair invite --webhook" on its side).
-The agent server holds the node's tasks in a mailbox until the node wakes. The node
+Grok Bot routine, hosted by a server ("a2a-serve pair invite --webhook" on its side).
+The server holds the node's tasks in a mailbox until the node wakes. The node
 pairs once with "a2a-serve pair join <agent-url> <code>", then answers each wake
 with reply.
 
@@ -50,7 +50,7 @@ The node token comes from --token, $` + mailboxapi.EnvNodeToken + `, or the toke
 			return cmd.Help()
 		},
 	}
-	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Timeout of each request to the agent server, a `duration` such as 30s or 2m")
+	cmd.PersistentFlags().DurationVar(&cfg.timeout, "timeout", 30*time.Second, "Timeout of each request to the server, a `duration` such as 30s or 2m")
 	cmd.AddCommand(
 		newMailboxListCmd(cfg),
 		newMailboxGetCmd(cfg),

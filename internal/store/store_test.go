@@ -298,6 +298,76 @@ func TestDeletePairing(t *testing.T) {
 	}
 }
 
+func TestPairingRemoval(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	finished := newTask("anna-done", "c-anna")
+	finished.Status.State = a2a.TaskStateCompleted
+	for user, tasks := range map[string][]*a2a.Task{
+		"pair:anna": {newTask("anna-1", "c-anna"), newTask("anna-shared", "c-shared"), finished},
+		"pair:bob":  {newTask("bob-1", "c-bob"), newTask("bob-shared", "c-shared")},
+	} {
+		for _, task := range tasks {
+			if _, err := ts.Create(asUser(user), task); err != nil {
+				t.Fatalf("Create(%s) error = %v", task.ID, err)
+			}
+		}
+	}
+	if err := s.PutToken(ctx, "a2p_anna", Token{Pairing: "anna", URL: "http://x"}, "person"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
+	}
+	if err := s.PutCode(ctx, "CODE", Code{Pairing: "anna", Expires: time.Now().Add(time.Minute)}); err != nil {
+		t.Fatalf("PutCode() error = %v", err)
+	}
+	for _, sc := range []Schedule{
+		{Name: "anna-daily", Cron: "@daily", Prompt: "p", UserID: "pair:anna"},
+		{Name: "bob-daily", Cron: "@daily", Prompt: "p", UserID: "pair:bob"},
+	} {
+		if err := s.AddSchedule(ctx, sc); err != nil {
+			t.Fatalf("AddSchedule(%s) error = %v", sc.Name, err)
+		}
+	}
+	if err := s.PutWatch(ctx, Watch{Contact: "ben", TaskID: "t1", OnBehalfOf: "pair:anna"}); err != nil {
+		t.Fatalf("PutWatch() error = %v", err)
+	}
+	for _, q := range []Question{
+		{ID: "q-anna", Token: "t-anna", TaskID: "anna-1", ContextID: "c-anna", User: "pair:anna"},
+		{ID: "q-bob", Token: "t-bob", TaskID: "bob-1", ContextID: "c-bob", User: "pair:bob"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	for conv, contextID := range map[string]string{"anna-dm": "c-anna", "bob-dm": "c-bob", "group": "c-shared"} {
+		if err := s.SetContext(ctx, "telegram", conv, contextID); err != nil {
+			t.Fatalf("SetContext(%s) error = %v", conv, err)
+		}
+	}
+
+	got, err := s.PairingRemoval(ctx, "anna", "pair:anna", "node:anna")
+	if err != nil {
+		t.Fatalf("Store.PairingRemoval() error = %v", err)
+	}
+
+	want := PairingRemoval{Tokens: 1, Links: 1, Codes: 1, Schedules: 1, Watches: 1, Questions: 1, Tasks: 3, Unfinished: 2, Conversations: 1}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Store.PairingRemoval() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := ts.Get(asUser("owner"), "anna-1"); err != nil {
+		t.Fatalf("Get() after PairingRemoval() error = %v, want the task kept", err)
+	}
+	if _, err := s.Pairing(ctx, "anna"); err != nil {
+		t.Fatalf("Pairing() after PairingRemoval() error = %v, want it kept", err)
+	}
+}
+
 func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
