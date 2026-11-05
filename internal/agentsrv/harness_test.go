@@ -547,6 +547,16 @@ func (f *fakeChannel) questions() int {
 	return n
 }
 
+func (f *fakeChannel) transcript() []channel.Outbound {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]channel.Outbound, len(f.order))
+	for i, id := range f.order {
+		out[i] = f.msgs[id]
+	}
+	return out
+}
+
 func hasText(s string) func(channel.Outbound) bool {
 	return func(m channel.Outbound) bool { return strings.Contains(m.Text, s) }
 }

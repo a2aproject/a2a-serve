@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -176,34 +176,39 @@ type turnsFixture struct {
 	*chatFixture
 	ch         *fakeChannel
 	sender     *fakeTurnSender
-	unattended *contextSet
+	unattended *ContextSet
 	turns      *ChatTurns
 }
 
 func newTurnsFixture(t *testing.T) *turnsFixture {
 	t.Helper()
-	return newTurnsFixtureWith(t, auth.Policy{}, newAnonymousBudget())
+	return newTurnsFixtureWith(t, auth.Policy{}, fakeBudget{})
 }
+
+// fakeBudget refuses every message of an anonymous caller with err.
+type fakeBudget struct{ err error }
+
+func (b fakeBudget) CheckRate(auth.Principal) error { return b.err }
 
 // newTurnsFixtureWith is newTurnsFixture with an access policy and a budget
 // of anonymous callers.
-func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudget) *turnsFixture {
+func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turnsFixture {
 	t.Helper()
 	ch := newFakeChannel("fake")
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
-	unattended := &contextSet{}
+	unattended := &ContextSet{}
 	rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil)
 	svc := approvals.New(approvals.Deps{
 		Records:          fx.records,
 		Sender:           sender,
 		Notifier:         fx.chat,
-		Unattended:       unattended.has,
+		Unattended:       unattended.Has,
 		Anonymous:        func(context.Context, string) bool { return false },
 		AnonymousTimeout: fx.timings.AnonymousQuestionTimeout,
 		Runtime:          rt,
 	})
-	turns := newChatTurns(ChatTurnsDeps{
+	turns := NewChatTurns(ChatTurnsDeps{
 		Store:      fx.store,
 		Tasks:      fx.tasks,
 		Chain:      &auth.Chain{Store: fx.store, Policy: func() auth.Policy { return policy }},
@@ -216,10 +221,10 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget *anonymousBudg
 		Bus:        fx.bus,
 		Unattended: unattended,
 		Budget:     budget,
-		Posted:     &postedTurns{},
+		Posted:     &PostedTurns{},
 		Runtime:    rt,
 	})
-	turns.start(fx.ctx)
+	turns.Start(fx.ctx)
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, channel: "fake", identity: "telegram:1", conv: "dm1"})
 	return &turnsFixture{chatFixture: fx, ch: ch, sender: sender, unattended: unattended, turns: turns}
 }
@@ -491,8 +496,8 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 	t.Parallel()
 	fx := newTurnsFixture(t)
 
-	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it"}); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
 	call := fx.sender.nextSend(t)
@@ -506,8 +511,8 @@ func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing
 	if !call.caller.IsOwner() || !call.inProcess {
 		t.Errorf("SendMessage() caller = %+v, in process = %v, want the owner in process", call.caller, call.inProcess)
 	}
-	if !fx.unattended.has("c-schedule") {
-		t.Error("unattended.has(c-schedule) = false, want true")
+	if !fx.unattended.Has("c-schedule") {
+		t.Error("unattended.Has(c-schedule) = false, want true")
 	}
 	fx.sender.wantIdle(t)
 }
@@ -517,8 +522,8 @@ func TestChatTurnsInjectTurnAttachesFiles(t *testing.T) {
 	fx := newTurnsFixture(t)
 	file := channel.File{Name: "result.txt", MediaType: "text/plain", Data: []byte("the full result")}
 
-	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "the result", Files: []channel.File{file}}); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "the result", Files: []channel.File{file}}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
 	call := fx.sender.nextSend(t)
@@ -541,8 +546,8 @@ func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	fx := newTurnsFixture(t)
 	fx.setContext(t, "dm1", "c1")
 
-	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
 	call := fx.sender.nextStream(t)
@@ -551,8 +556,8 @@ func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 		t.Fatalf("SendStreamingMessage() message wrong result (-want +got) diff = %s", diff)
 	}
 	fx.ch.waitFor(t, "dm1", hasText(agentReply))
-	if fx.unattended.has("c1") {
-		t.Error("unattended.has(c1) = true, want false for a conversation in a chat")
+	if fx.unattended.Has("c1") {
+		t.Error("unattended.Has(c1) = true, want false for a conversation in a chat")
 	}
 }
 
@@ -562,8 +567,8 @@ func TestChatTurnsInjectTurnWaitsForPendingQuestion(t *testing.T) {
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
 
-	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 	fx.sender.wantIdle(t)
 	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
@@ -579,8 +584,8 @@ func TestChatTurnsInjectTurnWaitsForExecutionToEnd(t *testing.T) {
 	fx := newTurnsFixture(t)
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
-	if err := fx.turns.injectTurn(fx.ctx, postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
 	fx.endExecution(t, "t1", "c1", a2a.TaskStateInputRequired)
@@ -597,7 +602,7 @@ func TestChatTurnsInjectTurnMergesRunsOfAScheduleWhileHeld(t *testing.T) {
 	fx := newTurnsFixture(t)
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
-	for _, turn := range []postedTurn{
+	for _, turn := range []PostedTurn{
 		{Text: "run", Key: "schedule:brief"},
 		{Text: "result a"},
 		{Text: "run", Key: "schedule:brief"},
@@ -605,8 +610,8 @@ func TestChatTurnsInjectTurnMergesRunsOfAScheduleWhileHeld(t *testing.T) {
 		{Text: "run", Key: "schedule:brief"},
 	} {
 		turn.ContextID, turn.User = "c1", auth.Owner()
-		if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
-			t.Fatalf("turns.injectTurn() error = %v", err)
+		if err := fx.turns.InjectTurn(fx.ctx, turn); err != nil {
+			t.Fatalf("turns.InjectTurn() error = %v", err)
 		}
 	}
 	fx.sender.wantIdle(t)
@@ -633,9 +638,9 @@ func TestChatTurnsInjectTurnWithoutConversationWaitsForPendingQuestion(t *testin
 	fx := newTurnsFixture(t)
 	fx.putTask(t, "t1", "c-schedule", a2a.TaskStateInputRequired)
 	accepted := make(chan error, 1)
-	turn := postedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it", Accepted: func(err error) { accepted <- err }}
-	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	turn := PostedTurn{ContextID: "c-schedule", User: auth.Owner(), Text: "run it", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.InjectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 	fx.sender.wantIdle(t)
 
@@ -645,7 +650,7 @@ func TestChatTurnsInjectTurnWithoutConversationWaitsForPendingQuestion(t *testin
 		t.Fatalf("SendMessage() text = %q, want %q", got, "run it")
 	}
 	if err := <-accepted; err != nil {
-		t.Fatalf("postedTurn.Accepted() error = %v, want nil", err)
+		t.Fatalf("PostedTurn.Accepted() error = %v, want nil", err)
 	}
 }
 
@@ -655,15 +660,15 @@ func TestChatTurnsDropPostedRemovesWaitingTurns(t *testing.T) {
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
 	accepted := make(chan error, 1)
-	turn := postedTurn{ContextID: "c1", User: auth.Owner(), Text: "run", Key: "schedule:brief", Accepted: func(err error) { accepted <- err }}
-	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	turn := PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run", Key: "schedule:brief", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.InjectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
-	fx.turns.dropPosted("schedule:brief")
+	fx.turns.DropPosted("schedule:brief")
 
 	if err := <-accepted; !errors.Is(err, errTurnDropped) {
-		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
+		t.Fatalf("PostedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
 	}
 	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
 	fx.sender.wantIdle(t)
@@ -676,15 +681,15 @@ func TestChatTurnsDropPostedOfRemovesWaitingTurnsOfPrincipals(t *testing.T) {
 	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
 	accepted := make(chan error, 1)
 	user := auth.Principal{ID: "pair:bob"}
-	turn := postedTurn{ContextID: "c1", User: user, Text: "run", Accepted: func(err error) { accepted <- err }}
-	if err := fx.turns.injectTurn(fx.ctx, turn); err != nil {
-		t.Fatalf("turns.injectTurn() error = %v", err)
+	turn := PostedTurn{ContextID: "c1", User: user, Text: "run", Accepted: func(err error) { accepted <- err }}
+	if err := fx.turns.InjectTurn(fx.ctx, turn); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
 	}
 
-	fx.turns.posted.dropUsers([]string{"pair:bob"})
+	fx.turns.posted.DropUsers([]string{"pair:bob"})
 
 	if err := <-accepted; !errors.Is(err, errTurnDropped) {
-		t.Fatalf("postedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
+		t.Fatalf("PostedTurn.Accepted() error = %v, want %v", err, errTurnDropped)
 	}
 	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
 	fx.sender.wantIdle(t)
@@ -994,13 +999,8 @@ func TestChatTurnsLimitsConcurrentDownloads(t *testing.T) {
 
 func TestChatTurnsChecksAnonymousBudgetBeforeDownloading(t *testing.T) {
 	t.Parallel()
-	budget := newAnonymousBudget()
-	for range budget.perHour {
-		if err := budget.admit(auth.NetworkChat + ":fake"); err != nil {
-			t.Fatalf("budget.admit() error = %v", err)
-		}
-	}
-	fx := newTurnsFixtureWith(t, auth.Policy{Anonymous: []string{auth.MemberAnyone}}, budget)
+	used := errors.New("this agent took all the anonymous tasks it takes in an hour")
+	fx := newTurnsFixtureWith(t, auth.Policy{Anonymous: []string{auth.MemberAnyone}}, fakeBudget{err: used})
 	in := fx.ch.message("telegram:9", "dm9", "look")
 	prepared := make(chan struct{}, 1)
 	in.Prepare = func(context.Context, *channel.Inbound) error {
@@ -1010,7 +1010,7 @@ func TestChatTurnsChecksAnonymousBudgetBeforeDownloading(t *testing.T) {
 
 	fx.ch.deliver(in)
 
-	fx.ch.waitFor(t, "dm9", hasText(errAnonymousRate.Error()))
+	fx.ch.waitFor(t, "dm9", hasText(used.Error()))
 	select {
 	case <-prepared:
 		t.Fatal("Inbound.Prepare() called, want the message refused before downloading")

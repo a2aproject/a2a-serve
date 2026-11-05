@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -113,7 +114,7 @@ type Server struct {
 	handler a2asrv.RequestHandler
 	sender  *handlerSender
 	chain   *auth.Chain
-	bus     *eventBus
+	bus     *messenger.Bus
 
 	private  network.Provider
 	public   network.Provider
@@ -136,9 +137,9 @@ type Server struct {
 	privateURL string
 	publicURL  string
 
-	supervisor    *ChannelSupervisor
-	chatApprovals *ChatApprovals
-	chatTurns     *ChatTurns
+	supervisor    *messenger.ChannelSupervisor
+	chatApprovals *messenger.ChatApprovals
+	chatTurns     *messenger.ChatTurns
 	claims        *CallClaims
 	clients       *ContactClients
 	watches       *Watches
@@ -159,6 +160,9 @@ type Server struct {
 	split  *splitExecutor
 	keys   *agentKeys
 	budget *anonymousBudget
+	// unattended are the contexts of turns posted with no conversation,
+	// whose tasks nobody watches.
+	unattended *messenger.ContextSet
 	// users are the agent processes of users that run now.
 	users userAgents
 	// background runs the server's loops, which Run waits for.
@@ -214,7 +218,7 @@ func Run(ctx context.Context, opts Options) error {
 		out:     opts.Out,
 		started: time.Now(),
 		cancel:  cancel,
-		bus:     newEventBus(),
+		bus:     messenger.NewBus(),
 
 		credentials:       opts.Credentials,
 		telegramServerURL: opts.TelegramServerURL,
@@ -357,7 +361,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		WebhookRetries: s.timings.WebhookRetries,
 		Advertised:     s.ads.Advertised,
 	})
-	s.supervisor = newChannelSupervisor(ctx, SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
+	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
 	s.clients = newContactClients(ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
 	closers.push(s.clients.close)
 	s.keys = newAgentKeys(s.store.Sessions())
@@ -374,7 +378,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	}
 
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
-	s.chatApprovals = newChatApprovals(ctx, ChatApprovalsDeps{
+	s.chatApprovals = messenger.NewChatApprovals(ctx, messenger.ChatApprovalsDeps{
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Records:    records,
@@ -382,17 +386,17 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Bus:        s.bus,
 		Runtime:    s.rt,
 		Anonymous:  s.keys.anonymous,
-		Timings:    s.timings,
+		Timings:    s.timings.messenger(),
 	})
-	unattended := &contextSet{}
-	posted := &postedTurns{}
+	s.unattended = &messenger.ContextSet{}
+	posted := &messenger.PostedTurns{}
 	s.sender, s.handler = bindHandler(func(sender *handlerSender) a2asrv.RequestHandler {
 		s.approvals = approvals.New(approvals.Deps{
 			Records:          records,
 			Sender:           sender,
 			Notifier:         s.chatApprovals,
 			Remote:           s.clients,
-			Unattended:       unattended.has,
+			Unattended:       s.unattended.Has,
 			Anonymous:        s.keys.anonymous,
 			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
 			Runtime:          s.rt,
@@ -401,14 +405,14 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Store:     s.store,
 			BaseURL:   s.bestURL,
 			Ads:       s.ads,
-			LinkHints: s.supervisor.linkHints,
+			LinkHints: s.supervisor.LinkHints,
 			Mailbox:   s.nodes.Mailbox,
 			Forget:    s.nodes.Forget,
 			Changed:   s.refreshInstructions,
 			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
 			Homes:     userHomes{s},
 		})
-		s.chatTurns = newChatTurns(ChatTurnsDeps{
+		s.chatTurns = messenger.NewChatTurns(messenger.ChatTurnsDeps{
 			Store:      s.store,
 			Tasks:      s.tasks,
 			Chain:      s.chain,
@@ -416,10 +420,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Approvals:  s.approvals,
 			Chat:       s.chatApprovals,
 			Supervisor: s.supervisor,
-			Queue:      newConversationQueue(),
+			Queue:      messenger.NewConversationQueue(),
 			Sender:     sender,
 			Bus:        s.bus,
-			Unattended: unattended,
+			Unattended: s.unattended,
 			Budget:     s.budget,
 			Posted:     posted,
 			Runtime:    s.rt,
@@ -433,7 +437,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings,
 		})
-		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended, watches: s.watches},
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -516,8 +520,8 @@ func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 // start arrive on the returned channel.
 func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Channel) (<-chan error, error) {
 	errc := make(chan error, 1)
-	s.chatTurns.start(ctx)
-	closers.push(s.supervisor.stopAll)
+	s.chatTurns.Start(ctx)
+	closers.push(s.supervisor.StopAll)
 	closers.push(s.harness.serve(ctx, s.proxy.routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
@@ -535,7 +539,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 		return nil, err
 	}
 	for _, ch := range chans {
-		s.supervisor.add(ch)
+		s.supervisor.Add(ch)
 	}
 	// Background work stops before the store closes: a query that starts
 	// during shutdown could otherwise reopen the database after it closed.
@@ -690,7 +694,7 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if w := localSandboxWarning(s.rt.Config().Sandbox, a); w != "" {
 		s.logf("! %s", w)
 	}
-	return s.supervisor.announce(ctx)
+	return s.supervisor.Announce(ctx)
 }
 
 // localSandboxWarning warns when an agent without a sandbox may be called

@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -44,7 +45,7 @@ type Watches struct {
 	clients *ContactClients
 	records *approvals.Records
 	chat    questionChat
-	turns   turnInjector
+	turns   TurnInjector
 	// chain gives principals stored to act later their role.
 	chain   *auth.Chain
 	timings Timings
@@ -64,7 +65,7 @@ type WatchesDeps struct {
 	Clients *ContactClients
 	Records *approvals.Records
 	Chat    questionChat
-	Turns   turnInjector
+	Turns   TurnInjector
 	Chain   *auth.Chain
 	Timings Timings
 }
@@ -75,9 +76,10 @@ type questionChat interface {
 	OwnerChat(ctx context.Context) (approvals.Chat, bool)
 }
 
-// turnInjector is where watches post late results.
-type turnInjector interface {
-	injectTurn(ctx context.Context, t postedTurn) error
+// TurnInjector is where watches post late results.
+type TurnInjector interface {
+	// InjectTurn posts a turn into its context.
+	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
 }
 
 func newWatches(ctx context.Context, deps WatchesDeps) *Watches {
@@ -456,11 +458,11 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	text, files := resultTurn(text)
-	t := postedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
+	t := messenger.PostedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
 	if ws.resultToCaller(t) {
 		return true
 	}
-	if err := ws.turns.injectTurn(ctx, t); err != nil {
+	if err := ws.turns.InjectTurn(ctx, t); err != nil {
 		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
 		return false
 	}

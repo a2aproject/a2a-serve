@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -36,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -359,11 +359,11 @@ func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
-	bus       *eventBus
+	bus       *messenger.Bus
 	claims    *CallClaims
 	approvals *approvals.Service
 	// unattended is told when the task of a context ends.
-	unattended *contextSet
+	unattended *messenger.ContextSet
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
 	watches *Watches
@@ -380,10 +380,10 @@ var (
 // execution is done with its last event and stored it, so an answer to the
 // question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
-	e.bus.executionEnded(execCtx.ContextID)
+	e.bus.ExecutionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
 	if err != nil || (ok && task.Status.State.Terminal()) {
-		e.unattended.remove(execCtx.ContextID)
+		e.unattended.Remove(execCtx.ContextID)
 	}
 	if err != nil || !ok {
 		return
@@ -526,7 +526,7 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 					closed = true
 					e.approvals.CloseQuestions(ctx, execCtx.TaskID)
 				}
-				e.bus.publish(execCtx.TaskID, ev)
+				e.bus.Publish(execCtx.TaskID, ev)
 			}
 			if !yield(ev, err) {
 				return
@@ -557,116 +557,6 @@ func eventState(ev a2a.Event) (a2a.TaskState, bool) {
 		return e.Status.State, true
 	}
 	return "", false
-}
-
-// eventBus fans out task events to in-process followers, such as a channel
-// conversation waiting for a task someone else answered. Followers never
-// miss events: a slow follower's events queue up. Followers of a context
-// learn when an execution in it ended.
-type eventBus struct {
-	mu       sync.Mutex
-	subs     map[a2a.TaskID]map[*subscription]struct{}
-	contexts map[string]map[chan struct{}]struct{}
-}
-
-// subscription is the queue of events of one follower. ready has a value
-// when events are queued.
-type subscription struct {
-	mu     sync.Mutex
-	events []a2a.Event
-	ready  chan struct{}
-}
-
-// next returns the next event, or false when ctx ends or done is closed.
-func (s *subscription) next(ctx context.Context, done <-chan time.Time) (a2a.Event, bool) {
-	for {
-		s.mu.Lock()
-		if len(s.events) > 0 {
-			ev := s.events[0]
-			s.events = s.events[1:]
-			s.mu.Unlock()
-			return ev, true
-		}
-		s.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, false
-		case <-done:
-			return nil, false
-		case <-s.ready:
-		}
-	}
-}
-
-func (s *subscription) push(ev a2a.Event) {
-	s.mu.Lock()
-	s.events = append(s.events, ev)
-	s.mu.Unlock()
-	select {
-	case s.ready <- struct{}{}:
-	default:
-	}
-}
-
-func newEventBus() *eventBus {
-	return &eventBus{subs: map[a2a.TaskID]map[*subscription]struct{}{}, contexts: map[string]map[chan struct{}]struct{}{}}
-}
-
-func (b *eventBus) subscribe(id a2a.TaskID) (*subscription, func()) {
-	sub := &subscription{ready: make(chan struct{}, 1)}
-	b.mu.Lock()
-	if b.subs[id] == nil {
-		b.subs[id] = map[*subscription]struct{}{}
-	}
-	b.subs[id][sub] = struct{}{}
-	b.mu.Unlock()
-	return sub, func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		delete(b.subs[id], sub)
-		if len(b.subs[id]) == 0 {
-			delete(b.subs, id)
-		}
-	}
-}
-
-func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for sub := range b.subs[id] {
-		sub.push(ev)
-	}
-}
-
-// subscribeContext returns a channel that has a value once an execution in
-// the context ended after the call.
-func (b *eventBus) subscribeContext(contextID string) (<-chan struct{}, func()) {
-	ch := make(chan struct{}, 1)
-	b.mu.Lock()
-	if b.contexts[contextID] == nil {
-		b.contexts[contextID] = map[chan struct{}]struct{}{}
-	}
-	b.contexts[contextID][ch] = struct{}{}
-	b.mu.Unlock()
-	return ch, func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		delete(b.contexts[contextID], ch)
-		if len(b.contexts[contextID]) == 0 {
-			delete(b.contexts, contextID)
-		}
-	}
-}
-
-func (b *eventBus) executionEnded(contextID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for ch := range b.contexts[contextID] {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
 }
 
 // callerInterceptor makes the authenticated principal the A2A user and

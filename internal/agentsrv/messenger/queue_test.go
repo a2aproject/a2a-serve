@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"testing"
@@ -52,7 +52,7 @@ func TestConversationQueueReleaseHandsTurnOver(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			q := newConversationQueue()
+			q := NewConversationQueue()
 			tickets := make([]*convTicket, tc.tickets)
 			for i := range tickets {
 				tickets[i] = q.enqueue("fake", "dm1")
@@ -80,7 +80,7 @@ func TestConversationQueueReleaseHandsTurnOver(t *testing.T) {
 
 func TestConversationQueueKeepsConversationsApart(t *testing.T) {
 	t.Parallel()
-	q := newConversationQueue()
+	q := NewConversationQueue()
 	first := q.enqueue("fake", "dm1")
 	otherConv := q.enqueue("fake", "dm2")
 	otherChannel := q.enqueue("other", "dm1")
@@ -107,7 +107,7 @@ func TestConversationQueueKeepsConversationsApart(t *testing.T) {
 
 func TestConversationQueueLock(t *testing.T) {
 	t.Parallel()
-	q := newConversationQueue()
+	q := NewConversationQueue()
 	unlock := q.lock("fake", "dm1")
 
 	acquired := make(chan func())
@@ -138,7 +138,7 @@ func TestConversationQueueLock(t *testing.T) {
 
 func TestConversationQueueLockDoesNotBlockOtherConversations(t *testing.T) {
 	t.Parallel()
-	q := newConversationQueue()
+	q := NewConversationQueue()
 	unlock := q.lock("fake", "dm1")
 	defer unlock()
 
@@ -189,7 +189,7 @@ func TestConversationQueueWaitTurnTakesMessagesOfTheSameSenderWaitingBehind(t *t
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			q := newConversationQueue()
+			q := NewConversationQueue()
 			running := q.enqueue("fake", "dm1")
 			turns := make(chan []string, len(tc.line))
 			waiting := 0

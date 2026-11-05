@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -41,7 +41,7 @@ type ChatApprovals struct {
 	tasks      *store.TaskStore
 	records    *approvals.Records
 	supervisor *ChannelSupervisor
-	bus        *eventBus
+	bus        *Bus
 	rt         *agentdir.Runtime
 	anonymous  func(ctx context.Context, contextID string) bool
 	timings    Timings
@@ -56,7 +56,7 @@ type ChatApprovalsDeps struct {
 	Tasks      *store.TaskStore
 	Records    *approvals.Records
 	Supervisor *ChannelSupervisor
-	Bus        *eventBus
+	Bus        *Bus
 	// Runtime has the config of the agent.
 	Runtime *agentdir.Runtime
 	// Anonymous reports whether a conversation is anonymous, so that an
@@ -67,7 +67,9 @@ type ChatApprovalsDeps struct {
 
 var _ approvals.Notifier = (*ChatApprovals)(nil)
 
-func newChatApprovals(ctx context.Context, deps ChatApprovalsDeps) *ChatApprovals {
+// NewChatApprovals returns the chat approvals of deps. Tasks followed
+// after an answer render until ctx ends.
+func NewChatApprovals(ctx context.Context, deps ChatApprovalsDeps) *ChatApprovals {
 	return &ChatApprovals{
 		store:      deps.Store,
 		tasks:      deps.Tasks,
@@ -85,7 +87,7 @@ func newChatApprovals(ctx context.Context, deps ChatApprovalsDeps) *ChatApproval
 // an owner answered its question in the owner chat, or the question was
 // rejected after the timeout.
 func (a *ChatApprovals) followOwnerAnswer(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, taskID a2a.TaskID) {
-	events, unsubscribe := a.bus.subscribe(taskID)
+	events, unsubscribe := a.bus.Subscribe(taskID)
 	go func() {
 		defer unsubscribe()
 		for {
@@ -102,11 +104,11 @@ func (a *ChatApprovals) followOwnerAnswer(ctx context.Context, ch channel.Channe
 
 // renderUntilStop renders events until the task stops, and reports false
 // if it didn't within timeout.
-func renderUntilStop(ctx context.Context, rd *renderer, events *subscription, timeout time.Duration) bool {
+func renderUntilStop(ctx context.Context, rd *renderer, events *Subscription, timeout time.Duration) bool {
 	t := time.NewTimer(timeout)
 	defer t.Stop()
 	for {
-		ev, ok := events.next(ctx, t.C)
+		ev, ok := events.Next(ctx, t.C)
 		if !ok {
 			return false
 		}
@@ -127,11 +129,11 @@ func (a *ChatApprovals) Follow(ctx context.Context, rec store.Question, p auth.P
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		slog.Warn("resolving the conversation of a question", "question", rec.ID, "error", err)
 	}
-	ch := a.supervisor.channel(chName)
+	ch := a.supervisor.Channel(chName)
 	if ch == nil {
 		return deliver()
 	}
-	events, unsubscribe := a.bus.subscribe(a2a.TaskID(rec.TaskID))
+	events, unsubscribe := a.bus.Subscribe(a2a.TaskID(rec.TaskID))
 	if err := deliver(); err != nil {
 		unsubscribe()
 		return err
@@ -142,13 +144,13 @@ func (a *ChatApprovals) Follow(ctx context.Context, rec store.Question, p auth.P
 
 // render renders the events of a task in a conversation until the task
 // stops, and then unsubscribes.
-func (a *ChatApprovals) render(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, events *subscription, unsubscribe func()) {
+func (a *ChatApprovals) render(ctx context.Context, ch channel.Channel, conv channel.ConvKey, p auth.Principal, events *Subscription, unsubscribe func()) {
 	defer unsubscribe()
 	rd := newRenderer(a, ch, conv, channel.Ref{}, p)
 	timeout := time.NewTimer(25 * time.Hour)
 	defer timeout.Stop()
 	for {
-		ev, ok := events.next(ctx, timeout.C)
+		ev, ok := events.Next(ctx, timeout.C)
 		if !ok || rd.onEvent(ctx, ev) {
 			return
 		}
@@ -179,7 +181,7 @@ func (a *ChatApprovals) endQuestion(ctx context.Context, questionID, note string
 		return
 	}
 	for _, m := range msgs {
-		ch := a.supervisor.channel(m.Channel)
+		ch := a.supervisor.Channel(m.Channel)
 		if ch == nil || !ch.Caps().Edit {
 			continue
 		}
@@ -192,7 +194,7 @@ func (a *ChatApprovals) endQuestion(ctx context.Context, questionID, note string
 
 // Ask sends a question to a chat.
 func (a *ChatApprovals) Ask(ctx context.Context, to approvals.Chat, header string, rec store.Question) {
-	ch := a.supervisor.channel(to.Channel)
+	ch := a.supervisor.Channel(to.Channel)
 	if ch == nil || to.Conv == "" {
 		slog.Warn("sending question: no such chat", "channel", to.Channel, "question", rec.ID)
 		return
@@ -279,7 +281,7 @@ func (a *ChatApprovals) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
 // empty or "owner", yours or else any owner pairing's. Only owners can
 // answer the questions sent there.
 func (a *ChatApprovals) directChat(ctx context.Context, chName, who string) (approvals.Chat, error) {
-	if a.supervisor.channel(chName) == nil {
+	if a.supervisor.Channel(chName) == nil {
 		return approvals.Chat{}, fmt.Errorf("channel %s is not running", chName)
 	}
 	anyOwner := who == "" || who == auth.OwnerName || who == auth.OwnerID

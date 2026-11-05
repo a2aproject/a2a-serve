@@ -26,12 +26,29 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
+
+// Turns are the turns schedules post into conversations.
+type Turns interface {
+	// InjectTurn posts a turn into its context.
+	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
+	// DropPosted drops the posted turns with key that wait to be sent.
+	DropPosted(key string)
+	// ContextOf returns the context of a chat.
+	ContextOf(ctx context.Context, ch string, conv channel.ConvKey) (string, error)
+}
+
+// ChannelLookup finds a running channel by name.
+type ChannelLookup interface {
+	// Channel returns the running channel name, or nil.
+	Channel(name string) channel.Channel
+}
 
 // maxScheduleWait is the longest the scheduler sleeps between checks.
 const maxScheduleWait = time.Minute
@@ -42,8 +59,8 @@ type schedules struct {
 	// ctx ends when the server stops; runs happen in it.
 	ctx        context.Context
 	store      *store.Store
-	turns      *ChatTurns
-	supervisor *ChannelSupervisor
+	turns      Turns
+	supervisor ChannelLookup
 	// chain gives the user a schedule runs as its role at each run.
 	chain *auth.Chain
 	now   func() time.Time
@@ -61,8 +78,8 @@ type schedules struct {
 // schedulesDeps are the dependencies of [schedules].
 type schedulesDeps struct {
 	Store      *store.Store
-	Turns      *ChatTurns
-	Supervisor *ChannelSupervisor
+	Turns      Turns
+	Supervisor ChannelLookup
 	Chain      *auth.Chain
 	Now        func() time.Time
 	MinWait    time.Duration
@@ -233,7 +250,7 @@ func (sc *schedules) start(ctx context.Context, s store.Schedule, accepted func(
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.injectTurn(sc.ctx, postedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
+	if err := sc.turns.InjectTurn(sc.ctx, messenger.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
@@ -253,7 +270,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 		}
 		return a2a.NewContextID(), nil
 	}
-	if sc.supervisor.channel(s.DeliverChannel) == nil {
+	if sc.supervisor.Channel(s.DeliverChannel) == nil {
 		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
 	}
 	conv, err := schedulesvc.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
@@ -261,7 +278,7 @@ func (sc *schedules) contextFor(ctx context.Context, s store.Schedule) (string, 
 		return "", err
 	}
 	if s.Conversation == schedule.ThreadSame {
-		return sc.turns.contextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
+		return sc.turns.ContextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
 	}
 	id := a2a.NewContextID()
 	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
@@ -278,7 +295,7 @@ func (sc *schedules) announce(ctx context.Context, contextID, text string) {
 		slog.Warn("finding the conversation of a schedule", "context", contextID, "error", err)
 		return
 	}
-	ch := sc.supervisor.channel(chName)
+	ch := sc.supervisor.Channel(chName)
 	if ch == nil {
 		return
 	}
@@ -302,7 +319,7 @@ func (sc *schedules) service() schedulesvc.Service { return sc.manage(schedulesv
 // to be posted.
 func (sc *schedules) manage(limits schedulesvc.Limits) schedulesvc.Service {
 	return schedulesvc.Service{Store: sc.store, Now: sc.now, Changed: sc.changed, Limits: limits, Removed: func(name string) {
-		sc.turns.dropPosted(scheduleTurnKey(name))
+		sc.turns.DropPosted(scheduleTurnKey(name))
 	}}
 }
 

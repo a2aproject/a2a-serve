@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -39,12 +39,12 @@ func newTestSupervisor(t *testing.T, retryMin time.Duration, logf func(string, .
 		logf = func(string, ...any) {}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	sv := newChannelSupervisor(ctx, SupervisorDeps{Store: openTestStore(t), Logf: logf, RetryMin: retryMin})
+	sv := NewChannelSupervisor(ctx, SupervisorDeps{Store: openTestStore(t), Logf: logf, RetryMin: retryMin})
 	t.Cleanup(func() {
 		cancel()
 		stopCtx, stop := context.WithTimeout(context.Background(), waitTimeout)
 		defer stop()
-		if err := sv.stopAll(stopCtx); err != nil {
+		if err := sv.StopAll(stopCtx); err != nil {
 			t.Errorf("stopAll() error = %v", err)
 		}
 	})
@@ -69,7 +69,7 @@ func TestChannelSupervisorDeliversInbound(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	ch := newFakeChannel("fake")
-	sv.add(ch)
+	sv.Add(ch)
 	ch.waitReady(t)
 	want := ch.message("telegram:1", "dm1", "hello")
 
@@ -88,18 +88,18 @@ func TestChannelSupervisorDeliversInbound(t *testing.T) {
 func TestChannelSupervisorChannels(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
-	sv.add(plain("telegram"))
-	sv.add(plain("discord"))
-	sv.add(plain("email"))
+	sv.Add(plain("telegram"))
+	sv.Add(plain("discord"))
+	sv.Add(plain("email"))
 
 	if diff := cmp.Diff([]string{"discord", "email", "telegram"}, channelNames(sv.channels())); diff != "" {
 		t.Fatalf("sv.channels() names wrong result (-want +got) diff = %s", diff)
 	}
-	if got := sv.channel("email"); got == nil || got.Name() != "email" {
-		t.Fatalf("sv.channel(email) = %v, want the email channel", got)
+	if got := sv.Channel("email"); got == nil || got.Name() != "email" {
+		t.Fatalf("sv.Channel(email) = %v, want the email channel", got)
 	}
-	if got := sv.channel("sms"); got != nil {
-		t.Fatalf("sv.channel(sms) = %v, want nil", got)
+	if got := sv.Channel("sms"); got != nil {
+		t.Fatalf("sv.Channel(sms) = %v, want nil", got)
 	}
 }
 
@@ -107,7 +107,7 @@ func TestChannelSupervisorRemoveStopsChannelBeforeReturning(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	started, stopped := make(chan struct{}), make(chan struct{})
-	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
+	sv.Add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		close(started)
 		<-ctx.Done()
 		close(stopped)
@@ -115,17 +115,17 @@ func TestChannelSupervisorRemoveStopsChannelBeforeReturning(t *testing.T) {
 	}})
 	<-started
 
-	sv.remove("fake")
+	sv.Remove("fake")
 
 	select {
 	case <-stopped:
 	default:
-		t.Fatal("sv.remove() returned before Run ended")
+		t.Fatal("sv.Remove() returned before Run ended")
 	}
-	if got := sv.channel("fake"); got != nil {
-		t.Fatalf("sv.channel(fake) after remove = %v, want nil", got)
+	if got := sv.Channel("fake"); got != nil {
+		t.Fatalf("sv.Channel(fake) after remove = %v, want nil", got)
 	}
-	sv.remove("fake")
+	sv.Remove("fake")
 }
 
 func TestChannelSupervisorAddReplacesChannelAfterItStopped(t *testing.T) {
@@ -151,15 +151,15 @@ func TestChannelSupervisorAddReplacesChannelAfterItStopped(t *testing.T) {
 			return nil
 		}}
 	}
-	sv.add(newChannel("first"))
+	sv.Add(newChannel("first"))
 	waitFor(t, "the first channel to start", func() bool { return len(snapshot()) == 1 })
 
-	sv.add(newChannel("second"))
+	sv.Add(newChannel("second"))
 
 	waitFor(t, "the second channel to start", func() bool { return len(snapshot()) == 3 })
 	want := []string{"first started", "first stopped", "second started"}
 	if diff := cmp.Diff(want, snapshot()); diff != "" {
-		t.Fatalf("sv.add() order of events wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("sv.Add() order of events wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -176,19 +176,19 @@ func TestChannelSupervisorStopAll(t *testing.T) {
 		}}
 	}
 	for _, name := range []string{"a", "b", "c"} {
-		sv.add(newChannel(name))
+		sv.Add(newChannel(name))
 	}
 	waitFor(t, "the channels to start", func() bool { return running.Load() == 3 })
 
-	if err := sv.stopAll(context.Background()); err != nil {
-		t.Fatalf("sv.stopAll() error = %v", err)
+	if err := sv.StopAll(context.Background()); err != nil {
+		t.Fatalf("sv.StopAll() error = %v", err)
 	}
 
 	if got := running.Load(); got != 0 {
-		t.Errorf("running channels after sv.stopAll() = %d, want 0", got)
+		t.Errorf("running channels after sv.StopAll() = %d, want 0", got)
 	}
 	if got := sv.channels(); len(got) != 0 {
-		t.Errorf("sv.channels() after sv.stopAll() = %v, want none", channelNames(got))
+		t.Errorf("sv.channels() after sv.StopAll() = %v, want none", channelNames(got))
 	}
 }
 
@@ -197,7 +197,7 @@ func TestChannelSupervisorStopAllGivesUpWhenContextEnds(t *testing.T) {
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	started, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	sv.add(&stubChannel{name: "stuck", run: func(context.Context, chan<- channel.Inbound, func(error)) error {
+	sv.Add(&stubChannel{name: "stuck", run: func(context.Context, chan<- channel.Inbound, func(error)) error {
 		close(started)
 		<-release
 		return nil
@@ -206,13 +206,13 @@ func TestChannelSupervisorStopAllGivesUpWhenContextEnds(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	err := sv.stopAll(ctx)
+	err := sv.StopAll(ctx)
 
 	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("sv.stopAll() error = %v, want %v", err, context.Canceled)
+		t.Fatalf("sv.StopAll() error = %v, want %v", err, context.Canceled)
 	}
 	if want := "waiting for stuck to stop"; !strings.Contains(err.Error(), want) {
-		t.Fatalf("sv.stopAll() error = %q, want it to contain %q", err, want)
+		t.Fatalf("sv.StopAll() error = %q, want it to contain %q", err, want)
 	}
 }
 
@@ -222,7 +222,7 @@ func TestChannelSupervisorRestartsFailingChannel(t *testing.T) {
 	const failures = 3
 	var runs atomic.Int32
 	connected := make(chan struct{})
-	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
+	sv.Add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		if runs.Add(1) <= failures {
 			return errors.New("messenger unreachable")
 		}
@@ -258,13 +258,13 @@ func TestChannelSupervisorStatusReportsFailure(t *testing.T) {
 			sv := newTestSupervisor(t, time.Hour, nil)
 			ch := described("fake")
 			ch.run = func(context.Context, chan<- channel.Inbound, func(error)) error { return tc.runErr }
-			sv.add(ch)
+			sv.Add(ch)
 
-			waitFor(t, "the failure to be reported", func() bool { return sv.status()[0].Error != "" })
+			waitFor(t, "the failure to be reported", func() bool { return sv.Status()[0].Error != "" })
 
 			want := []controlapi.ChannelStatus{{Name: "fake", Account: "@fake", Error: tc.wantErr}}
-			if diff := cmp.Diff(want, sv.status()); diff != "" {
-				t.Fatalf("sv.status() wrong result (-want +got) diff = %s", diff)
+			if diff := cmp.Diff(want, sv.Status()); diff != "" {
+				t.Fatalf("sv.Status() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -285,17 +285,17 @@ func TestChannelSupervisorStatusShowsConnectionStateReportedByRunningChannel(t *
 			}
 		}
 	}
-	sv.add(ch)
+	sv.Add(ch)
 
 	reports <- errors.New("invalid bot token")
-	waitFor(t, "the reported error", func() bool { return sv.status()[0].Error != "" })
+	waitFor(t, "the reported error", func() bool { return sv.Status()[0].Error != "" })
 	want := []controlapi.ChannelStatus{{Name: "fake", Account: "@fake", Error: "invalid bot token"}}
-	if diff := cmp.Diff(want, sv.status()); diff != "" {
-		t.Fatalf("sv.status() wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(want, sv.Status()); diff != "" {
+		t.Fatalf("sv.Status() wrong result (-want +got) diff = %s", diff)
 	}
 
 	reports <- nil
-	waitFor(t, "the reported connection", func() bool { return sv.status()[0].Error == "" })
+	waitFor(t, "the reported connection", func() bool { return sv.Status()[0].Error == "" })
 }
 
 func TestChannelSupervisorStatusClearsErrorWhenChannelRestarts(t *testing.T) {
@@ -312,24 +312,24 @@ func TestChannelSupervisorStatusClearsErrorWhenChannelRestarts(t *testing.T) {
 		<-ctx.Done()
 		return nil
 	}
-	sv.add(ch)
+	sv.Add(ch)
 	<-restarted
 
 	want := []controlapi.ChannelStatus{{Name: "fake", Account: "@fake"}}
-	if diff := cmp.Diff(want, sv.status()); diff != "" {
-		t.Fatalf("sv.status() wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(want, sv.Status()); diff != "" {
+		t.Fatalf("sv.Status() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
 func TestChannelSupervisorStatusListsChannelsByName(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
-	sv.add(plain("telegram"))
-	sv.add(described("discord"))
+	sv.Add(plain("telegram"))
+	sv.Add(described("discord"))
 
 	want := []controlapi.ChannelStatus{{Name: "discord", Account: "@discord"}, {Name: "telegram"}}
-	if diff := cmp.Diff(want, sv.status()); diff != "" {
-		t.Fatalf("sv.status() wrong result (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(want, sv.Status()); diff != "" {
+		t.Fatalf("sv.Status() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -338,26 +338,26 @@ func TestChannelSupervisorChannelStatusCarriesOwnerLink(t *testing.T) {
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	link := &controlapi.OwnerLink{Hint: "/start ABCD2345", Code: "ABCD2345"}
 
-	got := sv.channelStatus(described("fake"), link)
+	got := sv.ChannelStatus(described("fake"), link)
 
 	want := &controlapi.ChannelStatus{Name: "fake", Account: "@fake", OwnerLink: link}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("sv.channelStatus() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("sv.ChannelStatus() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
 func TestChannelSupervisorLinkHints(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
-	sv.add(described("telegram"))
-	sv.add(plain("webhook"))
-	sv.add(described("discord"))
+	sv.Add(described("telegram"))
+	sv.Add(plain("webhook"))
+	sv.Add(described("discord"))
 
-	got := sv.linkHints("ABCD2345")
+	got := sv.LinkHints("ABCD2345")
 
 	want := []string{"discord: /start ABCD2345", "telegram: /start ABCD2345"}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("sv.linkHints() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("sv.LinkHints() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -383,22 +383,22 @@ func TestChannelSupervisorOwnerLink(t *testing.T) {
 				putLink(t, sv.store, l)
 			}
 
-			got := sv.ownerLink(context.Background(), tc.channel)
+			got := sv.OwnerLink(context.Background(), tc.channel)
 
 			if !tc.wantLink {
 				if got != nil {
-					t.Fatalf("sv.ownerLink() = %+v, want nil", got)
+					t.Fatalf("sv.OwnerLink() = %+v, want nil", got)
 				}
 				return
 			}
 			if got == nil {
-				t.Fatal("sv.ownerLink() = nil, want a link")
+				t.Fatal("sv.OwnerLink() = nil, want a link")
 			}
 			if want := "/start " + got.Code; got.Hint != want {
-				t.Errorf("sv.ownerLink().Hint = %q, want %q", got.Hint, want)
+				t.Errorf("sv.OwnerLink().Hint = %q, want %q", got.Hint, want)
 			}
 			if !got.Expires.After(time.Now()) {
-				t.Errorf("sv.ownerLink().Expires = %v, want a time in the future", got.Expires)
+				t.Errorf("sv.OwnerLink().Expires = %v, want a time in the future", got.Expires)
 			}
 			code, err := sv.store.TakeCode(context.Background(), auth.NormalizeCode(got.Code), store.AnyCode)
 			if err != nil {
@@ -431,14 +431,14 @@ func TestChannelSupervisorOwnerLinkReplacesPendingCode(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	ctx := context.Background()
-	first := sv.ownerLink(ctx, described("fake"))
-	second := sv.ownerLink(ctx, described("fake"))
+	first := sv.OwnerLink(ctx, described("fake"))
+	second := sv.OwnerLink(ctx, described("fake"))
 
 	if first == nil || second == nil {
-		t.Fatalf("sv.ownerLink() = %+v, %+v, want links", first, second)
+		t.Fatalf("sv.OwnerLink() = %+v, %+v, want links", first, second)
 	}
 	if first.Code == second.Code {
-		t.Fatalf("sv.ownerLink() codes = %q, %q, want a new code", first.Code, second.Code)
+		t.Fatalf("sv.OwnerLink() codes = %q, %q, want a new code", first.Code, second.Code)
 	}
 	if _, err := sv.store.TakeCode(ctx, auth.NormalizeCode(first.Code), store.AnyCode); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("store.TakeCode(first) error = %v, want %v", err, store.ErrNotFound)
@@ -460,22 +460,22 @@ func TestChannelSupervisorAnnounce(t *testing.T) {
 	sv := newTestSupervisor(t, time.Millisecond, logf)
 	putLink(t, sv.store, linkSpec{pairing: auth.LocalPairing, channel: "b", identity: "telegram:1", conv: "dm1"})
 	for _, ch := range []channel.Channel{described("a"), described("b"), plain("c"), described("d")} {
-		sv.add(ch)
+		sv.Add(ch)
 	}
 
-	if err := sv.announce(context.Background()); err != nil {
-		t.Fatalf("sv.announce() error = %v", err)
+	if err := sv.Announce(context.Background()); err != nil {
+		t.Fatalf("sv.Announce() error = %v", err)
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	const linkPrefix = "→ link yourself as owner: /start "
 	if len(lines) != 6 || !strings.HasPrefix(lines[1], linkPrefix) {
-		t.Fatalf("sv.announce() lines = %q, want a channel line and a link line for a and d, and a channel line for b and c", lines)
+		t.Fatalf("sv.Announce() lines = %q, want a channel line and a link line for a and d, and a channel line for b and c", lines)
 	}
 	want := []string{"✓ a @a", lines[1], "✓ b @b", "✓ c", "✓ d @d", lines[1]}
 	if diff := cmp.Diff(want, lines); diff != "" {
-		t.Fatalf("sv.announce() lines wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("sv.Announce() lines wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -497,7 +497,7 @@ func TestChannelSupervisorConcurrentAddsRunOneChannel(t *testing.T) {
 	const adds = 8
 	var wg sync.WaitGroup
 	for range adds {
-		wg.Go(func() { sv.add(&stubChannel{name: "fake", run: run}) })
+		wg.Go(func() { sv.Add(&stubChannel{name: "fake", run: run}) })
 	}
 	wg.Wait()
 

@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -312,7 +312,7 @@ func TestChatApprovalsFollowRendersTaskInConversation(t *testing.T) {
 
 	err := fx.chat.Follow(fx.ctx, rec, auth.Owner(), func() error {
 		done := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Pushed."))
-		fx.bus.publish("t1", a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, done))
+		fx.bus.Publish("t1", a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, done))
 		return nil
 	})
 	if err != nil {

@@ -30,8 +30,8 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -52,7 +52,7 @@ type callerQuestion struct {
 // agent's next question, or its result.
 type callerOutcome struct {
 	question *callerQuestion
-	result   *postedTurn
+	result   *messenger.PostedTurn
 }
 
 // callerWait is a context whose A2A caller waits for its task: the question
@@ -125,9 +125,9 @@ func (ws *Watches) redirect(o callerOutcome) {
 		ws.askInChat(ws.ctx, o.question.rec.User, o.question.rec.Contact, o.question.rec, o.question.header)
 		return
 	}
-	if err := ws.turns.injectTurn(ws.ctx, *o.result); err != nil {
+	if err := ws.turns.InjectTurn(ws.ctx, *o.result); err != nil {
 		slog.Error("posting a watched result", "context", o.result.ContextID, "error", err)
-		o.result.accept(err)
+		o.result.Accept(err)
 	}
 }
 
@@ -156,7 +156,7 @@ func (ws *Watches) toCaller(contextID string, q *callerQuestion) bool {
 
 // resultToCaller hands a watched result to a task in its context which
 // waits for it, and reports whether one took it.
-func (ws *Watches) resultToCaller(t postedTurn) bool {
+func (ws *Watches) resultToCaller(t messenger.PostedTurn) bool {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	cw := ws.callers[t.ContextID]
@@ -207,7 +207,7 @@ func asksCallerQuestion(task *a2a.Task) bool {
 // withCallerQuestion ends a completed turn on the question of another
 // agent, relayed during the turn, which the turn's A2A caller answers.
 func (e *observedExecutor) withCallerQuestion(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
-	if e.watches == nil || e.unattended.has(execCtx.ContextID) {
+	if e.watches == nil || e.unattended.Has(execCtx.ContextID) {
 		return events
 	}
 	end := e.watches.attend(execCtx.ContextID)
@@ -287,16 +287,16 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 
 // continueWithResult runs the next turn of a task with the result of
 // another agent it waited for.
-func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2asrv.ExecutorContext, t *postedTurn, yield func(a2a.Event, error) bool) {
-	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts([]*waitingMessage{{in: channel.Inbound{Text: t.Text, Files: t.Files}}})...)
+func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2asrv.ExecutorContext, t *messenger.PostedTurn, yield func(a2a.Event, error) bool) {
+	msg := a2a.NewMessage(a2a.MessageRoleUser, t.Parts()...)
 	msg.TaskID, msg.ContextID = execCtx.TaskID, execCtx.ContextID
 	shown := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(t.Text))
 	shown.TaskID, shown.ContextID = execCtx.TaskID, execCtx.ContextID
 	if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, shown), nil) {
-		t.accept(errCallerGone)
+		t.Accept(errCallerGone)
 		return
 	}
-	t.accept(nil)
+	t.Accept(nil)
 	next := *execCtx
 	next.Message = msg
 	// a2aacp fails a message to a task that waits for input it didn't ask

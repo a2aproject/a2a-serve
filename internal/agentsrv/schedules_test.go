@@ -20,16 +20,18 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
-
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
@@ -325,7 +327,7 @@ func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
-	ts.srv.supervisor.remove("fake")
+	ts.srv.supervisor.Remove("fake")
 	skew.Store(0)
 
 	ts.srv.schedules.runDue(ctx)
@@ -339,7 +341,7 @@ func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	}
 
 	restarted := newFakeChannel("fake")
-	ts.srv.supervisor.add(restarted)
+	ts.srv.supervisor.Add(restarted)
 	restarted.waitReady(t)
 	ts.srv.schedules.runDue(ctx)
 
@@ -349,16 +351,51 @@ func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	})
 }
 
+// fakeTurns records the turns schedules post, which tests accept or refuse.
+type fakeTurns struct {
+	mu     sync.Mutex
+	posted []messenger.PostedTurn
+}
+
+func (f *fakeTurns) InjectTurn(_ context.Context, t messenger.PostedTurn) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.posted = append(f.posted, t)
+	return nil
+}
+
+func (f *fakeTurns) DropPosted(string) {}
+
+func (f *fakeTurns) ContextOf(context.Context, string, channel.ConvKey) (string, error) {
+	return "", errors.New("no chats")
+}
+
+// turns returns the turns posted so far.
+func (f *fakeTurns) turns() []messenger.PostedTurn {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.posted)
+}
+
+// noChannels is a server without running channels.
+type noChannels struct{}
+
+func (noChannels) Channel(string) channel.Channel { return nil }
+
 type schedulesFixture struct {
-	*turnsFixture
-	sc *schedules
+	ctx   context.Context
+	store *store.Store
+	turns *fakeTurns
+	sc    *schedules
 }
 
 func newSchedulesFixture(t *testing.T) *schedulesFixture {
 	t.Helper()
-	fx := newTurnsFixture(t)
-	sc := newSchedules(fx.ctx, schedulesDeps{Store: fx.store, Turns: fx.turns, Supervisor: fx.supervisor, Chain: fx.chain, Now: time.Now})
-	return &schedulesFixture{turnsFixture: fx, sc: sc}
+	st := openTestStore(t)
+	chain := &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
+	turns := &fakeTurns{}
+	sc := newSchedules(t.Context(), schedulesDeps{Store: st, Turns: turns, Supervisor: noChannels{}, Chain: chain, Now: time.Now})
+	return &schedulesFixture{ctx: t.Context(), store: st, turns: turns, sc: sc}
 }
 
 func (fx *schedulesFixture) addSchedule(t *testing.T, s store.Schedule) {
@@ -384,22 +421,21 @@ func TestSchedulesOneTimeRunEndsWhenItsTurnIsAccepted(t *testing.T) {
 	fx := newSchedulesFixture(t)
 	due := time.Now().Add(-time.Minute).Truncate(time.Second)
 	fx.addSchedule(t, store.Schedule{Name: "once", At: due, NextRun: due})
-	fx.putTask(t, "t1", "c-schedule", a2a.TaskStateInputRequired)
 
 	fx.sc.runDue(fx.ctx)
 	fx.sc.runDue(fx.ctx)
 
-	fx.sender.wantIdle(t)
+	posted := fx.turns.turns()
+	if len(posted) != 1 {
+		t.Fatalf("turns posted while the first waits = %d, want 1", len(posted))
+	}
 	if got := fx.schedule(t, "once"); !got.NextRun.Equal(due) {
 		t.Fatalf("Schedule() while its turn is held = %+v, want it still due at %v", got, due)
 	}
-	fx.endExecution(t, "t1", "c-schedule", a2a.TaskStateCompleted)
-	fx.sender.nextSend(t)
-	waitFor(t, "the schedule to be removed", func() bool {
-		_, err := fx.store.Schedule(fx.ctx, "once")
-		return errors.Is(err, store.ErrNotFound)
-	})
-	fx.sender.wantIdle(t)
+	posted[0].Accept(nil)
+	if _, err := fx.store.Schedule(fx.ctx, "once"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("Schedule() after its turn was accepted error = %v, want %v", err, store.ErrNotFound)
+	}
 }
 
 func TestSchedulesRecordFailedSends(t *testing.T) {
@@ -417,24 +453,25 @@ func TestSchedulesRecordFailedSends(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newSchedulesFixture(t)
-			fx.sender.sendErr = errors.New("the agent is not running")
 			fx.addSchedule(t, tc.sched)
 
 			fx.sc.runDue(fx.ctx)
+			fx.turns.turns()[0].Accept(errors.New("the agent is not running"))
 
-			fx.sender.nextSend(t)
-			waitFor(t, "the failure to be recorded", func() bool {
-				return strings.Contains(fx.schedule(t, tc.sched.Name).LastError, "the agent is not running")
-			})
+			if got := fx.schedule(t, tc.sched.Name).LastError; !strings.Contains(got, "the agent is not running") {
+				t.Fatalf("Schedule().LastError after a failed send = %q, want the failure", got)
+			}
 			if due := !fx.schedule(t, tc.sched.Name).NextRun.After(time.Now()); due != tc.wantRetry {
 				t.Fatalf("Schedule() after a failed send is due = %v, want %v", due, tc.wantRetry)
 			}
 			fx.sc.runDue(fx.ctx)
-			if !tc.wantRetry {
-				fx.sender.wantIdle(t)
-				return
+			want := 1
+			if tc.wantRetry {
+				want = 2
 			}
-			fx.sender.nextSend(t)
+			if got := len(fx.turns.turns()); got != want {
+				t.Fatalf("turns posted after the next check = %d, want %d", got, want)
+			}
 		})
 	}
 }

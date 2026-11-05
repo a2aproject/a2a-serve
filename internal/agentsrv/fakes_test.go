@@ -33,6 +33,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -41,6 +42,9 @@ import (
 
 // Prompts a fakeContact runs. A message to a task that waits for input is
 // the answer, which completes the task.
+// waitTimeout bounds how long tests wait for something to happen.
+const waitTimeout = 10 * time.Second
+
 const (
 	promptDone     = "done"
 	promptFail     = "fail"
@@ -347,7 +351,7 @@ func newFakeTurnInjector() *fakeTurnInjector {
 	return &fakeTurnInjector{turns: make(chan injectedTurn, 16), accepted: make(chan func(error), 16)}
 }
 
-func (f *fakeTurnInjector) injectTurn(_ context.Context, t postedTurn) error {
+func (f *fakeTurnInjector) InjectTurn(_ context.Context, t messenger.PostedTurn) error {
 	accept := t.Accepted
 	if accept == nil {
 		accept = func(error) {}

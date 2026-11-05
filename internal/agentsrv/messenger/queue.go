@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"slices"
@@ -28,7 +28,8 @@ type ConversationQueue struct {
 	convs map[string][]*convTicket
 }
 
-func newConversationQueue() *ConversationQueue {
+// NewConversationQueue returns an empty queue.
+func NewConversationQueue() *ConversationQueue {
 	return &ConversationQueue{convs: map[string][]*convTicket{}}
 }
 

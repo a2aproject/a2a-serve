@@ -25,6 +25,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -123,13 +124,13 @@ type stopUsers struct {
 	tasks  *store.TaskStore
 	sender *handlerSender
 	users  *userAgents
-	posted *postedTurns
+	posted *messenger.PostedTurns
 }
 
 func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
 	// Tasks are canceled before the starts are held: a task that waits for
 	// its agent process to start would keep its cancellation waiting.
-	u.posted.dropUsers(principals)
+	u.posted.DropUsers(principals)
 	as := auth.InProcess(ctx, auth.Owner())
 	for _, p := range principals {
 		ids, err := u.tasks.UnfinishedOf(ctx, p)

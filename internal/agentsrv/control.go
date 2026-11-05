@@ -103,7 +103,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
-	st.Channels = s.supervisor.status()
+	st.Channels = s.supervisor.Status()
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -166,8 +166,8 @@ func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) 
 	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
 		return nil, err
 	}
-	s.supervisor.add(ch)
-	return s.supervisor.channelStatus(ch, s.supervisor.ownerLink(ctx, ch)), nil
+	s.supervisor.Add(ch)
+	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch)), nil
 }
 
 func (s *Server) deleteChannel(kind string) error {
@@ -180,6 +180,6 @@ func (s *Server) deleteChannel(kind string) error {
 	if err := s.rt.Update(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
 		return err
 	}
-	s.supervisor.remove(kind)
+	s.supervisor.Remove(kind)
 	return nil
 }

@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -345,7 +346,7 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: a2a.NewContextID(), User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
+	if err := ts.srv.chatTurns.InjectTurn(ctx, messenger.PostedTurn{ContextID: a2a.NewContextID(), User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
@@ -362,12 +363,12 @@ func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {
 	linkOwner(t, ts, "telegram:1", "dm1")
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
-	contextID, err := ts.srv.chatTurns.contextOf(ctx, "telegram", "dm2")
+	contextID, err := ts.srv.chatTurns.ContextOf(ctx, "telegram", "dm2")
 	if err != nil {
 		t.Fatalf("contextOf() error = %v", err)
 	}
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: contextID, User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
+	if err := ts.srv.chatTurns.InjectTurn(ctx, messenger.PostedTurn{ContextID: contextID, User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, Text: "ask"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ref, q := ts.ch.waitFor(t, "dm2", hasQuestion)
@@ -388,7 +389,7 @@ func TestRouterOwnerChatOrder(t *testing.T) {
 	}
 
 	tg := newFakeChannel("telegram")
-	ts.srv.supervisor.add(tg)
+	ts.srv.supervisor.Add(tg)
 	tg.waitReady(t)
 	tg.write("telegram:1", "tgdm1", "join "+ownerCode(t, ts))
 	tg.waitFor(t, "tgdm1", hasText("Linked as owner"))
@@ -475,7 +476,7 @@ func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := ts.srv.chatTurns.injectTurn(ctx, postedTurn{ContextID: contextID, User: auth.Owner(), Text: "hello"}); err != nil {
+	if err := ts.srv.chatTurns.InjectTurn(ctx, messenger.PostedTurn{ContextID: contextID, User: auth.Owner(), Text: "hello"}); err != nil {
 		t.Fatalf("injectTurn() error = %v", err)
 	}
 	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)

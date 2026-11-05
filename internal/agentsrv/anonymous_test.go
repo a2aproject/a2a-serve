@@ -187,3 +187,21 @@ func TestAnonymousBudget(t *testing.T) {
 		t.Fatalf("admit() an hour later error = %v, want nil", err)
 	}
 }
+
+func TestAnonymousBudgetCheckRate(t *testing.T) {
+	t.Parallel()
+	b := newAnonymousBudget()
+	p := auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous, Identity: auth.Identity{Network: auth.NetworkChat, Provider: "fake"}}
+	if err := b.CheckRate(p); err != nil {
+		t.Fatalf("anonymousBudget.CheckRate() of a fresh budget error = %v", err)
+	}
+	for range b.perHour {
+		if err := b.admit(budgetListener(p)); err != nil {
+			t.Fatalf("anonymousBudget.admit() error = %v", err)
+		}
+	}
+
+	if err := b.CheckRate(p); !errors.Is(err, errAnonymousRate) {
+		t.Fatalf("anonymousBudget.CheckRate() of a used-up budget error = %v, want %v", err, errAnonymousRate)
+	}
+}

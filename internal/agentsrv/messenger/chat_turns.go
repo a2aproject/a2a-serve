@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -46,12 +46,12 @@ type ChatTurns struct {
 	supervisor *ChannelSupervisor
 	queue      *ConversationQueue
 	sender     turnSender
-	bus        *eventBus
+	bus        *Bus
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
-	unattended *contextSet
-	posted     *postedTurns
-	budget     *anonymousBudget
+	unattended *ContextSet
+	posted     *PostedTurns
+	budget     Budget
 	// downloads holds a place for each message being prepared.
 	downloads chan struct{}
 	rt        *agentdir.Runtime
@@ -68,13 +68,13 @@ type ChatTurnsDeps struct {
 	Supervisor *ChannelSupervisor
 	Queue      *ConversationQueue
 	Sender     turnSender
-	Bus        *eventBus
-	Unattended *contextSet
+	Bus        *Bus
+	Unattended *ContextSet
 	// Budget is the budget of anonymous callers, which is checked before
 	// their attachments are downloaded.
-	Budget *anonymousBudget
+	Budget Budget
 	// Posted are the turns posted into contexts, waiting to be sent.
-	Posted *postedTurns
+	Posted *PostedTurns
 	// Runtime has the config of the agent.
 	Runtime *agentdir.Runtime
 }
@@ -83,6 +83,13 @@ type ChatTurnsDeps struct {
 // across channels.
 const maxDownloads = 4
 
+// Budget limits the tasks of anonymous callers.
+type Budget interface {
+	// CheckRate refuses a message of the anonymous caller p when its
+	// listener started all the tasks it may in an hour.
+	CheckRate(p auth.Principal) error
+}
+
 // turnSender sends turns to the agent.
 type turnSender interface {
 	SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error)
@@ -90,7 +97,8 @@ type turnSender interface {
 	CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error)
 }
 
-func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
+// NewChatTurns returns the chat turns of deps.
+func NewChatTurns(deps ChatTurnsDeps) *ChatTurns {
 	return &ChatTurns{
 		store:      deps.Store,
 		tasks:      deps.Tasks,
@@ -110,16 +118,17 @@ func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
 	}
 }
 
-// start dispatches channel messages until ctx ends.
-func (c *ChatTurns) start(ctx context.Context) { go c.dispatch(ctx) }
+// Start dispatches channel messages until ctx ends.
+func (c *ChatTurns) Start(ctx context.Context) { go c.dispatch(ctx) }
 
-// contextSet is a set of context IDs, safe for concurrent use.
-type contextSet struct {
+// ContextSet is a set of context IDs, safe for concurrent use.
+type ContextSet struct {
 	mu  sync.Mutex
 	ids map[string]bool
 }
 
-func (s *contextSet) add(id string) {
+// Add adds id to the set.
+func (s *ContextSet) Add(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.ids == nil {
@@ -128,13 +137,15 @@ func (s *contextSet) add(id string) {
 	s.ids[id] = true
 }
 
-func (s *contextSet) remove(id string) {
+// Remove removes id from the set.
+func (s *ContextSet) Remove(id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.ids, id)
 }
 
-func (s *contextSet) has(id string) bool {
+// Has reports whether id is in the set.
+func (s *ContextSet) Has(id string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ids[id]
@@ -179,7 +190,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	if t != nil {
 		defer c.queue.release(t)
 	}
-	ch := c.supervisor.channel(in.Channel)
+	ch := c.supervisor.Channel(in.Channel)
 	if ch == nil {
 		return
 	}
@@ -274,7 +285,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	if batch == nil {
 		return
 	}
-	contextID, err := c.contextOf(ctx, in.Channel, in.Conv)
+	contextID, err := c.ContextOf(ctx, in.Channel, in.Conv)
 	if err != nil {
 		slog.Error("resolving conversation context", "error", err)
 		return
@@ -314,7 +325,7 @@ func (m *waitingMessage) joins(next *waitingMessage) bool {
 // callers is used up, so that it costs no download.
 func (c *ChatTurns) prepare(ctx context.Context, ch channel.Channel, in *channel.Inbound, p auth.Principal) bool {
 	if p.Role == auth.RoleAnonymous {
-		if err := c.budget.checkRate(budgetListener(p)); err != nil {
+		if err := c.budget.CheckRate(p); err != nil {
 			c.reply(ctx, ch, *in, "⚠ "+err.Error())
 			return false
 		}
@@ -397,7 +408,9 @@ func messageParts(batch []*waitingMessage) []*a2a.Part {
 	return parts
 }
 
-func (c *ChatTurns) contextOf(ctx context.Context, ch string, conv channel.ConvKey) (string, error) {
+// ContextOf returns the context of the conversation conv of the channel
+// ch, which starts a new one if the conversation has none.
+func (c *ChatTurns) ContextOf(ctx context.Context, ch string, conv channel.ConvKey) (string, error) {
 	id, err := c.store.ContextOf(ctx, ch, string(conv))
 	if err == nil {
 		return id, nil

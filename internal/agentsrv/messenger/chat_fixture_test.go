@@ -12,10 +12,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -33,6 +34,37 @@ import (
 )
 
 const waitTimeout = 10 * time.Second
+
+var testTimings = Timings{
+	EditInterval:             50 * time.Millisecond,
+	AnonymousQuestionTimeout: 5 * time.Second,
+	SendRetry:                time.Millisecond,
+}
+
+func openTestStore(t *testing.T) *store.Store {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return st
+}
+
+func waitFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	deadline := time.Now().Add(waitTimeout)
+	for !cond() {
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for %s", what)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+}
 
 // stubChannel is a channel whose Run is scripted.
 type stubChannel struct {
@@ -111,7 +143,7 @@ type chatFixture struct {
 	records    *approvals.Records
 	supervisor *ChannelSupervisor
 	chat       *ChatApprovals
-	bus        *eventBus
+	bus        *Bus
 	queue      *ConversationQueue
 	timings    Timings
 }
@@ -122,7 +154,7 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 	t.Helper()
 	st := openTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	fx := &chatFixture{ctx: ctx, store: st, bus: newEventBus(), queue: newConversationQueue(), timings: testTimings}
+	fx := &chatFixture{ctx: ctx, store: st, bus: NewBus(), queue: NewConversationQueue(), timings: testTimings}
 	fx.tasks = st.Tasks("", func(context.Context) (string, bool, error) { return "", true, nil })
 	fx.chain = &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
 	fx.records = approvals.NewRecords(approvals.RecordsDeps{
@@ -131,16 +163,16 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 		Chain:   fx.chain,
 		BaseURL: func() string { return "https://agent.example" },
 	})
-	fx.supervisor = newChannelSupervisor(ctx, SupervisorDeps{Store: st, Logf: func(string, ...any) {}, RetryMin: time.Millisecond})
+	fx.supervisor = NewChannelSupervisor(ctx, SupervisorDeps{Store: st, Logf: func(string, ...any) {}, RetryMin: time.Millisecond})
 	t.Cleanup(func() {
 		cancel()
 		stopCtx, stop := context.WithTimeout(context.Background(), waitTimeout)
 		defer stop()
-		if err := fx.supervisor.stopAll(stopCtx); err != nil {
+		if err := fx.supervisor.StopAll(stopCtx); err != nil {
 			t.Errorf("stopAll() error = %v", err)
 		}
 	})
-	fx.chat = newChatApprovals(ctx, ChatApprovalsDeps{
+	fx.chat = NewChatApprovals(ctx, ChatApprovalsDeps{
 		Store:      st,
 		Tasks:      fx.tasks,
 		Records:    fx.records,
@@ -151,7 +183,7 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 		Timings:    fx.timings,
 	})
 	for _, ch := range chs {
-		fx.supervisor.add(ch)
+		fx.supervisor.Add(ch)
 		if w, ok := ch.(readyWaiter); ok {
 			w.waitReady(t)
 		}
@@ -228,7 +260,7 @@ func (fx *chatFixture) setTaskState(t *testing.T, id a2a.TaskID, contextID strin
 func (fx *chatFixture) endExecution(t *testing.T, id a2a.TaskID, contextID string, state a2a.TaskState) {
 	t.Helper()
 	fx.setTaskState(t, id, contextID, state)
-	fx.bus.executionEnded(contextID)
+	fx.bus.ExecutionEnded(contextID)
 }
 
 // newQuestion stores the question of permissionMessage that user may answer.

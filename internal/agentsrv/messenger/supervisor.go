@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -56,7 +56,9 @@ type SupervisorDeps struct {
 	RetryMin time.Duration
 }
 
-func newChannelSupervisor(ctx context.Context, deps SupervisorDeps) *ChannelSupervisor {
+// NewChannelSupervisor returns a supervisor whose channels run until ctx
+// ends.
+func NewChannelSupervisor(ctx context.Context, deps SupervisorDeps) *ChannelSupervisor {
 	return &ChannelSupervisor{
 		store:    deps.Store,
 		logf:     deps.Logf,
@@ -86,10 +88,10 @@ const (
 	channelHealthy  = time.Minute
 )
 
-// add starts a channel, replacing a running one of the same name after it
+// Add starts a channel, replacing a running one of the same name after it
 // stopped. A failing channel is restarted with backoff rather than stopping
 // the server, so that a messenger outage doesn't take the agent down.
-func (sv *ChannelSupervisor) add(ch channel.Channel) {
+func (sv *ChannelSupervisor) Add(ch channel.Channel) {
 	sv.change.Lock()
 	defer sv.change.Unlock()
 	sv.stop(ch.Name())
@@ -131,9 +133,9 @@ func (sv *ChannelSupervisor) setError(rc *runningChannel, err error) {
 	rc.err = err
 }
 
-// remove stops a channel and waits until it stopped, so that a replacement
+// Remove stops a channel and waits until it stopped, so that a replacement
 // never polls the same account at the same time.
-func (sv *ChannelSupervisor) remove(name string) {
+func (sv *ChannelSupervisor) Remove(name string) {
 	sv.change.Lock()
 	defer sv.change.Unlock()
 	sv.stop(name)
@@ -152,8 +154,8 @@ func (sv *ChannelSupervisor) stop(name string) {
 	<-rc.done
 }
 
-// stopAll stops every channel and waits until they stopped or ctx ends.
-func (sv *ChannelSupervisor) stopAll(ctx context.Context) error {
+// StopAll stops every channel and waits until they stopped or ctx ends.
+func (sv *ChannelSupervisor) StopAll(ctx context.Context) error {
 	sv.mu.Lock()
 	running := make([]*runningChannel, 0, len(sv.chans))
 	for name, rc := range sv.chans {
@@ -174,7 +176,8 @@ func (sv *ChannelSupervisor) stopAll(ctx context.Context) error {
 	return nil
 }
 
-func (sv *ChannelSupervisor) channel(name string) channel.Channel {
+// Channel returns the running channel called name, or nil.
+func (sv *ChannelSupervisor) Channel(name string) channel.Channel {
 	sv.mu.Lock()
 	defer sv.mu.Unlock()
 	if rc := sv.chans[name]; rc != nil {
@@ -194,15 +197,17 @@ func (sv *ChannelSupervisor) channels() []channel.Channel {
 	return out
 }
 
-func (sv *ChannelSupervisor) status() []controlapi.ChannelStatus {
+// Status describes the running channels.
+func (sv *ChannelSupervisor) Status() []controlapi.ChannelStatus {
 	var out []controlapi.ChannelStatus
 	for _, ch := range sv.channels() {
-		out = append(out, *sv.channelStatus(ch, nil))
+		out = append(out, *sv.ChannelStatus(ch, nil))
 	}
 	return out
 }
 
-func (sv *ChannelSupervisor) channelStatus(ch channel.Channel, link *controlapi.OwnerLink) *controlapi.ChannelStatus {
+// ChannelStatus describes ch, with link to link the owner on it if set.
+func (sv *ChannelSupervisor) ChannelStatus(ch channel.Channel, link *controlapi.OwnerLink) *controlapi.ChannelStatus {
 	st := &controlapi.ChannelStatus{Name: ch.Name(), OwnerLink: link}
 	if d, ok := ch.(channel.Describer); ok {
 		st.Account = d.Describe()
@@ -215,9 +220,9 @@ func (sv *ChannelSupervisor) channelStatus(ch channel.Channel, link *controlapi.
 	return st
 }
 
-// announce prints the channels, and how to link the owner if nobody is
+// Announce prints the channels, and how to link the owner if nobody is
 // linked as owner yet. One owner code serves every channel.
-func (sv *ChannelSupervisor) announce(ctx context.Context) error {
+func (sv *ChannelSupervisor) Announce(ctx context.Context) error {
 	var code mintedCode
 	for _, ch := range sv.channels() {
 		line := "✓ " + ch.Name()
@@ -238,8 +243,8 @@ type mintedCode struct {
 	expires time.Time
 }
 
-// ownerLink mints an owner code for a channel nobody is linked on as owner.
-func (sv *ChannelSupervisor) ownerLink(ctx context.Context, ch channel.Channel) *controlapi.OwnerLink {
+// OwnerLink mints an owner code for a channel nobody is linked on as owner.
+func (sv *ChannelSupervisor) OwnerLink(ctx context.Context, ch channel.Channel) *controlapi.OwnerLink {
 	var code mintedCode
 	return sv.ownerLinkWith(ctx, ch, &code)
 }
@@ -271,7 +276,8 @@ func (sv *ChannelSupervisor) ownerLinkWith(ctx context.Context, ch channel.Chann
 	return &controlapi.OwnerLink{Hint: d.LinkHint(code.code), Code: code.code, Expires: code.expires}
 }
 
-func (sv *ChannelSupervisor) linkHints(code string) []string {
+// LinkHints tell how to link an account with code on each channel.
+func (sv *ChannelSupervisor) LinkHints(code string) []string {
 	var out []string
 	for _, ch := range sv.channels() {
 		if d, ok := ch.(channel.Describer); ok {

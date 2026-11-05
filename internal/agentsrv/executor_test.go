@@ -37,35 +37,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
-
-func TestEventBusKeepsEventsOfSlowFollower(t *testing.T) {
-	t.Parallel()
-	bus := newEventBus()
-	sub, unsubscribe := bus.subscribe("t1")
-	defer unsubscribe()
-	task := &a2a.Task{ID: "t1"}
-	const n = 200
-	for range n - 1 {
-		bus.publish("t1", a2a.NewStatusUpdateEvent(task, a2a.TaskStateWorking, nil))
-	}
-	bus.publish("t1", a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil))
-
-	var last a2a.Event
-	for i := range n {
-		ev, ok := sub.next(context.Background(), time.After(time.Second))
-		if !ok {
-			t.Fatalf("subscription.next() after %d events ok = false, want %d events", i, n)
-		}
-		last = ev
-	}
-	if got := last.(*a2a.TaskStatusUpdateEvent).Status.State; got != a2a.TaskStateCompleted {
-		t.Fatalf("last event state = %v, want %v", got, a2a.TaskStateCompleted)
-	}
-}
 
 // turnExecutor cancels like a2aacp: it stops the turn, which ends the
 // running Execute, and only then yields the canceled event.
@@ -116,7 +92,7 @@ func openTestStore(t *testing.T) *store.Store {
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -140,7 +116,7 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: newEventBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -187,10 +163,10 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	ctx := auth.WithPrincipal(context.Background(), auth.Owner())
 	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
 	contextID := a2a.NewContextID()
-	ts.srv.chatTurns.unattended.add(contextID)
+	ts.srv.unattended.Add(contextID)
 	exec := &observedExecutor{
 		inner:     statusExecutor{state: a2a.TaskStateInputRequired, msg: asked.Status.Message},
-		bus:       newEventBus(),
+		bus:       messenger.NewBus(),
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
 	}
@@ -216,11 +192,11 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 
 func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	t.Parallel()
-	bus := newEventBus()
-	exec := &observedExecutor{bus: bus, unattended: &contextSet{}}
-	changed, unsubscribe := bus.subscribeContext("c1")
+	bus := messenger.NewBus()
+	exec := &observedExecutor{bus: bus, unattended: &messenger.ContextSet{}}
+	changed, unsubscribe := bus.SubscribeContext("c1")
 	defer unsubscribe()
-	other, unsubscribeOther := bus.subscribeContext("c2")
+	other, unsubscribeOther := bus.SubscribeContext("c2")
 	defer unsubscribeOther()
 
 	exec.Cleanup(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, nil, errors.New("the agent crashed"))
@@ -362,18 +338,18 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			unattended := &contextSet{}
-			unattended.add("c1")
-			unattended.add("c2")
-			e := &observedExecutor{bus: newEventBus(), unattended: unattended}
+			unattended := &messenger.ContextSet{}
+			unattended.Add("c1")
+			unattended.Add("c2")
+			e := &observedExecutor{bus: messenger.NewBus(), unattended: unattended}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
-			if got := unattended.has("c1"); got != tc.wantHas {
-				t.Fatalf("unattended.has(c1) = %v, want %v", got, tc.wantHas)
+			if got := unattended.Has("c1"); got != tc.wantHas {
+				t.Fatalf("unattended.Has(c1) = %v, want %v", got, tc.wantHas)
 			}
-			if !unattended.has("c2") {
-				t.Fatalf("unattended.has(c2) = false, want true for another context")
+			if !unattended.Has("c2") {
+				t.Fatalf("unattended.Has(c2) = false, want true for another context")
 			}
 		})
 	}

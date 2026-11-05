@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package agentsrv
+package messenger
 
 import (
 	"context"
@@ -29,9 +29,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// postedTurn is a turn the server posts into a context: a scheduled run or
+// PostedTurn is a turn the server posts into a context: a scheduled run or
 // the result of a watched task.
-type postedTurn struct {
+type PostedTurn struct {
 	ContextID string
 	User      auth.Principal
 	Text      string
@@ -48,8 +48,13 @@ type postedTurn struct {
 	Accepted func(error)
 }
 
-// accept tells the poster of t that the agent accepted it, or err.
-func (t *postedTurn) accept(err error) {
+// Parts are the message parts of the turn.
+func (t *PostedTurn) Parts() []*a2a.Part {
+	return messageParts([]*waitingMessage{{in: channel.Inbound{Text: t.Text, Files: t.Files}}})
+}
+
+// Accept tells the poster of t that the agent accepted it, or err.
+func (t *PostedTurn) Accept(err error) {
 	if t.Accepted != nil {
 		t.Accepted(err)
 	}
@@ -61,7 +66,7 @@ var errTurnDropped = errors.New("the turn was dropped before it was sent")
 
 // heldTurn is a posted turn waiting in its context's line.
 type heldTurn struct {
-	postedTurn
+	PostedTurn
 	// merged counts the later turns with the same key merged into it.
 	merged   int
 	accepted []func(error)
@@ -89,15 +94,15 @@ type postLine struct {
 	wake chan struct{}
 }
 
-// postedTurns are the lines of the contexts that have posted turns.
-type postedTurns struct {
+// PostedTurns are the lines of the contexts that have posted turns.
+type PostedTurns struct {
 	mu    sync.Mutex
 	lines map[string]*postLine
 }
 
 // add puts t in its context's line, or merges it into a waiting turn with
 // the same key. It returns the line if it is new and needs a goroutine.
-func (p *postedTurns) add(t postedTurn) (*postLine, bool) {
+func (p *PostedTurns) add(t PostedTurn) (*postLine, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	line, ok := p.lines[t.ContextID]
@@ -117,7 +122,7 @@ func (p *postedTurns) add(t postedTurn) (*postLine, bool) {
 		line = &postLine{wake: make(chan struct{}, 1)}
 		p.lines[t.ContextID] = line
 	}
-	h := &heldTurn{postedTurn: t}
+	h := &heldTurn{PostedTurn: t}
 	if t.Accepted != nil {
 		h.accepted = []func(error){t.Accepted}
 	}
@@ -127,7 +132,7 @@ func (p *postedTurns) add(t postedTurn) (*postLine, bool) {
 
 // next takes the first turn out of a context's line. When the line is
 // empty it is removed, and next returns false.
-func (p *postedTurns) next(contextID string) (*heldTurn, bool) {
+func (p *PostedTurns) next(contextID string) (*heldTurn, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	line := p.lines[contextID]
@@ -144,7 +149,7 @@ func (p *postedTurns) next(contextID string) (*heldTurn, bool) {
 }
 
 // empty reports whether a context's line has no turns.
-func (p *postedTurns) empty(contextID string) bool {
+func (p *PostedTurns) empty(contextID string) bool {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	line := p.lines[contextID]
@@ -152,16 +157,16 @@ func (p *postedTurns) empty(contextID string) bool {
 }
 
 // drop removes the waiting turns with key from every line.
-func (p *postedTurns) drop(key string) {
+func (p *PostedTurns) drop(key string) {
 	p.dropWhere(func(h *heldTurn) bool { return h.Key == key })
 }
 
-// dropUsers removes the waiting turns posted as one of the principals.
-func (p *postedTurns) dropUsers(principals []string) {
+// DropUsers removes the waiting turns posted as one of the principals.
+func (p *PostedTurns) DropUsers(principals []string) {
 	p.dropWhere(func(h *heldTurn) bool { return slices.Contains(principals, h.User.ID) })
 }
 
-func (p *postedTurns) dropWhere(match func(*heldTurn) bool) {
+func (p *PostedTurns) dropWhere(match func(*heldTurn) bool) {
 	var dropped []*heldTurn
 	p.mu.Lock()
 	for _, line := range p.lines {
@@ -186,13 +191,13 @@ func (p *postedTurns) dropWhere(match func(*heldTurn) bool) {
 	}
 }
 
-// injectTurn posts a turn into its context, rendered in the context's
+// InjectTurn posts a turn into its context, rendered in the context's
 // conversation if it has one. Turns of a context are sent one at a time,
 // in order. While the context's latest task waits for input, they are held
 // back: text sent to that task would interrupt it as if it were the
 // answer. They are sent once an execution in the context ends with the
 // task in another state.
-func (c *ChatTurns) injectTurn(ctx context.Context, t postedTurn) error {
+func (c *ChatTurns) InjectTurn(ctx context.Context, t PostedTurn) error {
 	chName, conv, err := c.store.ConvOf(ctx, t.ContextID)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return err
@@ -208,9 +213,9 @@ func (c *ChatTurns) injectTurn(ctx context.Context, t postedTurn) error {
 	return nil
 }
 
-// dropPosted removes the turns with key that wait to be posted, such as
+// DropPosted removes the turns with key that wait to be posted, such as
 // the runs of a removed schedule.
-func (c *ChatTurns) dropPosted(key string) { c.posted.drop(key) }
+func (c *ChatTurns) DropPosted(key string) { c.posted.drop(key) }
 
 // post sends the turns of a context's line until it is empty or ctx ends.
 func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) {
@@ -234,7 +239,7 @@ func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, 
 // ctx ends.
 func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) (func(), bool) {
 	for {
-		changed, unsubscribe := c.bus.subscribeContext(contextID)
+		changed, unsubscribe := c.bus.SubscribeContext(contextID)
 		unlock := func() {}
 		if chName != "" {
 			unlock = c.queue.lock(chName, conv)
@@ -258,9 +263,9 @@ func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postL
 func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv channel.ConvKey) {
 	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts([]*waitingMessage{{in: channel.Inbound{Text: t.text(), Files: t.Files}}})...)
 	msg.ContextID = t.ContextID
-	ch := c.supervisor.channel(chName)
+	ch := c.supervisor.Channel(chName)
 	if ch == nil {
-		c.unattended.add(t.ContextID)
+		c.unattended.Add(t.ContextID)
 		_, err := c.sender.SendMessage(auth.InProcess(ctx, t.User), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
 		if err != nil {
 			slog.Error("posting a turn", "context", t.ContextID, "error", err)
