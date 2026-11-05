@@ -22,6 +22,7 @@ import (
 	"database/sql"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -31,26 +32,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 )
-
-// hookWriter calls onHeader with the entry name of every tar header block
-// written to it, so that a test can change files between entries.
-type hookWriter struct {
-	buf      bytes.Buffer
-	names    []string
-	onHeader func(name string)
-}
-
-func (w *hookWriter) Write(p []byte) (int, error) {
-	if len(p) == 512 {
-		name, _, _ := bytes.Cut(p[:100], []byte{0})
-		for _, n := range w.names {
-			if string(name) == n {
-				w.onHeader(n)
-			}
-		}
-	}
-	return w.buf.Write(p)
-}
 
 func readTar(t *testing.T, data []byte) map[string]string {
 	t.Helper()
@@ -81,26 +62,46 @@ func writeFiles(t *testing.T, root string, files map[string]string) {
 	}
 }
 
+func newTestSnapshotter(t *testing.T, tw *tar.Writer, log *slog.Logger, afterCopy func(name string, attempt int)) *snapshotter {
+	t.Helper()
+	stage, err := os.CreateTemp(t.TempDir(), "stage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := stage.Close(); err != nil {
+			t.Errorf("closing the staging file: %v", err)
+		}
+	})
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	return newSnapshotter(tw, stage, log, afterCopy)
+}
+
 func TestAddTreeFilesDeletedDuringWalk(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	writeFiles(t, root, map[string]string{"a": "1", "b": "2", "c": "3"})
-	w := &hookWriter{names: []string{"home/a"}}
-	w.onHeader = func(string) {
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	s := newTestSnapshotter(t, tw, nil, func(name string, _ int) {
+		if name != "home/a" {
+			return
+		}
 		if err := os.Remove(filepath.Join(root, "b")); err != nil {
 			t.Error(err)
 		}
-	}
-	tw := tar.NewWriter(w)
-	if err := addTree(context.Background(), tw, root, "home"); err != nil {
-		t.Fatalf("addTree() error = %v", err)
+	})
+	if err := s.addTree(context.Background(), root, "home"); err != nil {
+		t.Fatalf("snapshotter.addTree() error = %v", err)
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
 	want := map[string]string{"home/": "", "home/a": "1", "home/c": "3"}
-	if diff := cmp.Diff(want, readTar(t, w.buf.Bytes())); diff != "" {
-		t.Fatalf("addTree() wrong entries (-want +got) diff = %s", diff)
+	if diff := cmp.Diff(want, readTar(t, buf.Bytes())); diff != "" {
+		t.Fatalf("snapshotter.addTree() wrong entries (-want +got) diff = %s", diff)
 	}
 }
 
@@ -108,39 +109,176 @@ func TestAddTreeMissingRoot(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	tw := tar.NewWriter(&buf)
-	if err := addTree(context.Background(), tw, filepath.Join(t.TempDir(), "gone"), "home"); err != nil {
-		t.Fatalf("addTree() error = %v, want nil for a missing root", err)
+	s := newTestSnapshotter(t, tw, nil, nil)
+	if err := s.addTree(context.Background(), filepath.Join(t.TempDir(), "gone"), "home"); err != nil {
+		t.Fatalf("snapshotter.addTree() error = %v, want nil for a missing root", err)
 	}
 }
 
-func TestAddTreeFilesChangingSize(t *testing.T) {
-	t.Parallel()
-	root := t.TempDir()
-	writeFiles(t, root, map[string]string{"grow": "abc", "shrink": "defgh"})
-	w := &hookWriter{names: []string{"home/grow", "home/shrink"}}
-	w.onHeader = func(name string) {
-		path := filepath.Join(root, filepath.Base(name))
-		var err error
-		switch name {
-		case "home/grow":
-			err = os.WriteFile(path, []byte("abcdefgh"), 0o600)
-		case "home/shrink":
-			err = os.WriteFile(path, []byte("de"), 0o600)
-		}
-		if err != nil {
-			t.Error(err)
-		}
+var epoch = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+
+func writeFileAt(t *testing.T, path, content string, mtime time.Time) {
+	t.Helper()
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
 	}
-	tw := tar.NewWriter(w)
-	if err := addTree(context.Background(), tw, root, "home"); err != nil {
-		t.Fatalf("addTree() error = %v", err)
+	if err := os.Chtimes(path, mtime, mtime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSnapshotterAddFileCopiesFilesChangingDuringCopy(t *testing.T) {
+	t.Parallel()
+	const secret = "s3cret-content"
+	tests := []struct {
+		name         string
+		mutate       func(t *testing.T, path string, attempt int)
+		want         string
+		wantAttempts int
+		wantWarning  bool
+		wantMissing  bool
+	}{
+		{
+			name:         "unchanged",
+			mutate:       func(*testing.T, string, int) {},
+			want:         "abc",
+			wantAttempts: 1,
+		},
+		{
+			name: "grows once",
+			mutate: func(t *testing.T, path string, attempt int) {
+				if attempt == 1 {
+					writeFileAt(t, path, "abcdefgh", epoch)
+				}
+			},
+			want:         "abcdefgh",
+			wantAttempts: 2,
+		},
+		{
+			name: "shrinks once",
+			mutate: func(t *testing.T, path string, attempt int) {
+				if attempt == 1 {
+					writeFileAt(t, path, "a", epoch)
+				}
+			},
+			want:         "a",
+			wantAttempts: 2,
+		},
+		{
+			name: "same size with a new mtime",
+			mutate: func(t *testing.T, path string, attempt int) {
+				if attempt == 1 {
+					writeFileAt(t, path, "xyz", epoch.Add(time.Hour))
+				}
+			},
+			want:         "xyz",
+			wantAttempts: 2,
+		},
+		{
+			name: "replaced by a file of the same size and mtime",
+			mutate: func(t *testing.T, path string, attempt int) {
+				if attempt != 1 {
+					return
+				}
+				next := path + ".next"
+				writeFileAt(t, next, "xyz", epoch)
+				if err := os.Rename(next, path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			want:         "xyz",
+			wantAttempts: 2,
+		},
+		{
+			name: "removed",
+			mutate: func(t *testing.T, path string, _ int) {
+				if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+					t.Fatal(err)
+				}
+			},
+			wantAttempts: 1,
+			wantMissing:  true,
+		},
+		{
+			name: "changes on every attempt",
+			mutate: func(t *testing.T, path string, attempt int) {
+				writeFileAt(t, path, strings.Repeat(secret[:1], 3+attempt), epoch)
+			},
+			want:         "sssss",
+			wantAttempts: maxCopyAttempts,
+			wantWarning:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(t.TempDir(), "f")
+			writeFileAt(t, path, "abc", epoch)
+			var logs bytes.Buffer
+			var attempts int
+			var buf bytes.Buffer
+			tw := tar.NewWriter(&buf)
+			s := newTestSnapshotter(t, tw, slog.New(slog.NewTextHandler(&logs, nil)), func(_ string, attempt int) {
+				attempts = attempt
+				tt.mutate(t, path, attempt)
+			})
+
+			err := s.addFile(path, "home/f")
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			wantEntries := map[string]string{"home/f": tt.want}
+			if tt.wantMissing {
+				if !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("snapshotter.addFile() error = %v, want %v", err, os.ErrNotExist)
+				}
+				wantEntries = map[string]string{}
+			} else if err != nil {
+				t.Fatalf("snapshotter.addFile() error = %v", err)
+			}
+			if diff := cmp.Diff(wantEntries, readTar(t, buf.Bytes())); diff != "" {
+				t.Fatalf("snapshotter.addFile() wrong entries (-want +got) diff = %s", diff)
+			}
+			if attempts != tt.wantAttempts {
+				t.Fatalf("snapshotter.addFile() copied the file %d times, want %d", attempts, tt.wantAttempts)
+			}
+			warned := strings.Contains(logs.String(), "home/f")
+			if warned != tt.wantWarning {
+				t.Fatalf("snapshotter.addFile() logged %q, want a warning naming the file = %v", logs.String(), tt.wantWarning)
+			}
+			if strings.Contains(logs.String(), "sss") {
+				t.Fatalf("snapshotter.addFile() logged file content: %q", logs.String())
+			}
+		})
+	}
+}
+
+func TestSnapshotterAddFileBoundsCopyOfGrowingFile(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "f")
+	writeFileAt(t, path, "abc", epoch)
+	var buf bytes.Buffer
+	tw := tar.NewWriter(&buf)
+	s := newTestSnapshotter(t, tw, nil, func(_ string, attempt int) {
+		f, err := os.OpenFile(path, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = f.WriteString(strings.Repeat("x", 1<<16))
+		if err := errors.Join(err, f.Close()); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	if err := s.addFile(path, "home/f"); err != nil {
+		t.Fatalf("snapshotter.addFile() error = %v", err)
 	}
 	if err := tw.Close(); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]string{"home/": "", "home/grow": "abc", "home/shrink": "de\x00\x00\x00"}
-	if diff := cmp.Diff(want, readTar(t, w.buf.Bytes())); diff != "" {
-		t.Fatalf("addTree() wrong entries (-want +got) diff = %s", diff)
+	if got := len(readTar(t, buf.Bytes())["home/f"]); got != 3+2<<16 {
+		t.Fatalf("snapshotter.addFile() stored %d bytes, want %d", got, 3+2<<16)
 	}
 }
 
@@ -201,6 +339,19 @@ func TestWriteArchiveStagesDatabaseCopyInStateDir(t *testing.T) {
 
 	if err := writeArchive(context.Background(), d, io.Discard); err != nil {
 		t.Fatalf("writeArchive() error = %v", err)
+	}
+}
+
+func TestWriteArchiveRemovesStagedFiles(t *testing.T) {
+	d := newAgent(t)
+
+	if err := writeArchive(context.Background(), d, io.Discard); err != nil {
+		t.Fatalf("writeArchive() error = %v", err)
+	}
+
+	left, err := filepath.Glob(filepath.Join(d.StateDir(), "backup-*"))
+	if err != nil || len(left) != 0 {
+		t.Fatalf("writeArchive() left %v in the state directory, %v, want nothing", left, err)
 	}
 }
 
