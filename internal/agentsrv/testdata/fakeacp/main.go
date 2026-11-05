@@ -107,8 +107,30 @@ func main() {
 			}
 			continue
 		}
+		// A cancel that follows a prompt finds it, also before the prompt
+		// runs, as with an agent that reads its input in order.
+		if m.Method == "session/prompt" {
+			go a.prompt(m, a.registerPrompt(m))
+			continue
+		}
 		go a.handle(m)
 	}
+}
+
+// registerPrompt returns the channel that session/cancel closes to stop the
+// prompt m.
+func (a *agent) registerPrompt(m message) chan struct{} {
+	var p struct {
+		SessionID string `json:"sessionId"`
+	}
+	canceled := make(chan struct{})
+	if json.Unmarshal(m.Params, &p) != nil {
+		return canceled
+	}
+	a.mu.Lock()
+	a.cancels[p.SessionID] = canceled
+	a.mu.Unlock()
+	return canceled
 }
 
 func (a *agent) write(v any) {
@@ -251,8 +273,6 @@ func (a *agent) handle(m message) {
 			}
 			a.mu.Unlock()
 		}
-	case "session/prompt":
-		a.prompt(m)
 	default:
 		if len(m.ID) > 0 {
 			a.fail(m.ID, "method not found: "+m.Method)
@@ -260,7 +280,7 @@ func (a *agent) handle(m message) {
 	}
 }
 
-func (a *agent) prompt(m message) {
+func (a *agent) prompt(m message, canceled chan struct{}) {
 	var p struct {
 		SessionID string `json:"sessionId"`
 		Prompt    []struct {
@@ -300,10 +320,6 @@ func (a *agent) prompt(m message) {
 		}
 	}
 	agentsURL = s.AgentsURL
-	canceled := make(chan struct{})
-	a.mu.Lock()
-	a.cancels[sid] = canceled
-	a.mu.Unlock()
 	end := func(reason string) { a.respond(m.ID, map[string]any{"stopReason": reason}) }
 
 	cmd, arg, _ := strings.Cut(text, " ")
