@@ -232,3 +232,26 @@ func TestLockWhileRunning(t *testing.T) {
 		t.Fatalf("release() error = %v", err)
 	}
 }
+
+func TestSaveSettingsLocksInState(t *testing.T) {
+	t.Parallel()
+	d := newDir(t)
+	if _, err := d.SaveSettings(Settings{URL: "https://relay.example.com"}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	if _, err := d.Resolve(); err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+
+	entries, err := os.ReadDir(d.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, e := range entries {
+		got = append(got, e.Name())
+	}
+	if diff := cmp.Diff([]string{".gitignore", agentdir.RelayConfigFile, "state"}, got); diff != "" {
+		t.Fatalf("SaveSettings() wrong .a2a entries (-want +got) diff = %s", diff)
+	}
+}

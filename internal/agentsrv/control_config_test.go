@@ -25,7 +25,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
@@ -156,7 +155,7 @@ func TestUpdateConfigWaitsForConfigLock(t *testing.T) {
 	unlock := make(chan struct{})
 	holderDone := make(chan error, 1)
 	go func() {
-		holderDone <- fsutil.WithLock(ts.dir.ConfigPath(), func() error {
+		holderDone <- ts.dir.LockConfig(func() error {
 			close(locked)
 			<-unlock
 			return nil

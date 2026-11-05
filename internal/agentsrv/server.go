@@ -585,7 +585,7 @@ func (s *Server) updateConfig(fn func(*agentdir.Config) error) error {
 	if err := fn(&next); err != nil {
 		return err
 	}
-	err := fsutil.WithLock(s.dir.ConfigPath(), func() error {
+	err := s.dir.LockConfig(func() error {
 		// config.yaml may hold changes waiting for a restart; keep them.
 		saved, err := s.dir.ReadConfig()
 		switch {

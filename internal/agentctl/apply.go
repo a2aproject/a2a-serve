@@ -195,7 +195,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 // applied. The config is read again under its lock, so that changes saved
 // since apply read it, by other commands or the running server, are kept.
 func saveConfig(d agentdir.Dir, mutate Mutation, raw []byte) error {
-	return fsutil.WithLock(d.ConfigPath(), func() error {
+	return d.LockConfig(func() error {
 		if raw != nil {
 			return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644)
 		}
