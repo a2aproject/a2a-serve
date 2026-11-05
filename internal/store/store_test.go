@@ -287,6 +287,106 @@ func TestDeletePairing(t *testing.T) {
 	}
 }
 
+func TestDeletePairingForgetsItsConversations(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	photo := newTask("anna-1", "c-anna")
+	photo.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
+	for user, tasks := range map[string][]*a2a.Task{
+		"pair:anna": {photo, newTask("anna-shared", "c-shared")},
+		"pair:bob":  {newTask("bob-1", "c-bob"), newTask("bob-shared", "c-shared")},
+	} {
+		for _, task := range tasks {
+			if _, err := ts.Create(asUser(user), task); err != nil {
+				t.Fatalf("Create(%s) error = %v", task.ID, err)
+			}
+		}
+	}
+	for _, q := range []Question{
+		{ID: "q-anna", Token: "t-anna", TaskID: "anna-1", ContextID: "c-anna", User: "pair:anna"},
+		{ID: "q-anna-remote", Token: "t-anna-remote", TaskID: "r1", ContextID: "c-anna", Contact: "ben", HitlID: "h", User: "pair:anna"},
+		{ID: "q-bob", Token: "t-bob", TaskID: "bob-1", ContextID: "c-bob", User: "pair:bob"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	if err := s.SetPendingQuestion(ctx, "telegram", "anna-dm", "q-anna"); err != nil {
+		t.Fatalf("SetPendingQuestion() error = %v", err)
+	}
+	for conv, contextID := range map[string]string{"anna-dm": "c-anna", "bob-dm": "c-bob", "group": "c-shared"} {
+		if err := s.SetContext(ctx, "telegram", conv, contextID); err != nil {
+			t.Fatalf("SetContext(%s) error = %v", conv, err)
+		}
+		if err := s.Sessions().Put(ctx, contextID, a2aacp.Session{ID: "s-" + contextID}); err != nil {
+			t.Fatalf("Sessions().Put(%s) error = %v", contextID, err)
+		}
+	}
+	if err := s.PutHandle(ctx, Handle{Handle: "ab", ContextID: "c-anna"}); err != nil {
+		t.Fatalf("PutHandle() error = %v", err)
+	}
+	if err := s.PutCallTask(ctx, CallTask{ContextID: "c-anna", Agent: "ben", TaskID: "r1", RemoteContextID: "rc"}); err != nil {
+		t.Fatalf("PutCallTask() error = %v", err)
+	}
+
+	if err := s.DeletePairing(ctx, "anna", "pair:anna", "node:anna"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+
+	for _, id := range []a2a.TaskID{"anna-1", "anna-shared"} {
+		if _, err := ts.Get(owner, id); !errors.Is(err, a2a.ErrTaskNotFound) {
+			t.Fatalf("Get(%s) after DeletePairing() error = %v, want %v", id, err, a2a.ErrTaskNotFound)
+		}
+	}
+	for _, id := range []a2a.TaskID{"bob-1", "bob-shared"} {
+		if _, err := ts.Get(owner, id); err != nil {
+			t.Fatalf("Get(%s) of another user's task error = %v", id, err)
+		}
+	}
+	for _, id := range []string{"q-anna", "q-anna-remote"} {
+		if _, err := s.QuestionByID(ctx, id); !errors.Is(err, ErrNotFound) {
+			t.Fatalf("QuestionByID(%s) after DeletePairing() error = %v, want %v", id, err, ErrNotFound)
+		}
+	}
+	if _, err := s.QuestionByID(ctx, "q-bob"); err != nil {
+		t.Fatalf("QuestionByID() of another user's question error = %v", err)
+	}
+	if _, err := s.PendingQuestion(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("PendingQuestion() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if _, err := s.ContextOf(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ContextOf() of the removed user's chat error = %v, want %v", err, ErrNotFound)
+	}
+	for _, conv := range []string{"bob-dm", "group"} {
+		if _, err := s.ContextOf(ctx, "telegram", conv); err != nil {
+			t.Fatalf("ContextOf(%s) of a conversation with other tasks error = %v", conv, err)
+		}
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-anna"); err != nil || ok {
+		t.Fatalf("Sessions().Get() of the removed user's conversation = %v, %v, want false, nil", ok, err)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-shared"); err != nil || !ok {
+		t.Fatalf("Sessions().Get() of a conversation with other tasks = %v, %v, want true, nil", ok, err)
+	}
+	if _, err := s.HandleOf(ctx, "c-anna"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("HandleOf() after DeletePairing() error = %v, want %v", err, ErrNotFound)
+	}
+	if ok, err := s.HasCallTask(ctx, "c-anna", "ben", "r1"); err != nil || ok {
+		t.Fatalf("HasCallTask() after DeletePairing() = %v, %v, want false, nil", ok, err)
+	}
+	var blobs int
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {
+		t.Fatalf("counting blobs: %v", err)
+	}
+	if blobs != 0 {
+		t.Fatalf("blobs after DeletePairing() = %d, want 0", blobs)
+	}
+}
+
 func TestCodes(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

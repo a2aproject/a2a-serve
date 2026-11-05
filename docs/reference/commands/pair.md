@@ -131,10 +131,11 @@ Aliases: `ls`
 ## a2a-serve pair rm
 
 Delete a pairing with its tokens, linked messenger accounts, pending
-codes and the schedules that run as it, or remove a webhook node with its
-schedules. The person may still call the agent through
-the private network or an --allow-email rule; the command says so, and
-prints who may call afterwards.
+codes, the schedules that run as it, and its tasks, approvals and
+conversations, or remove a webhook node with its schedules. A new pairing
+with the same name starts with none of them. The person may still call the
+agent through the private network or an --allow-email rule; the command
+says so, and prints who may call afterwards.
 
 `a2a-serve pair rm local` revokes the token of this machine and your linked
 chat accounts, and keeps the pairing; the next start issues a new token.
