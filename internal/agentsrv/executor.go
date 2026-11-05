@@ -304,6 +304,22 @@ func (s *Server) listenHarnessSocket() (net.Listener, harnessBridge, error) {
 	return ln, harnessBridge{socket: sock}, nil
 }
 
+// cancelRetryHandler retries a cancel that a2a-go refuses as not cancelable.
+// a2a-go passes a cancel to the task's running execution and fails it when
+// that execution ends input-required first, as it does right after the
+// agent asks a question. The failed cancel returns once the execution is
+// gone, so the retry cancels the stored task. See the TODO in a2a-go's
+// localManager.handleCancelWithConcurrentRun.
+type cancelRetryHandler struct{ a2asrv.RequestHandler }
+
+func (h cancelRetryHandler) CancelTask(ctx context.Context, req *a2a.CancelTaskRequest) (*a2a.Task, error) {
+	task, err := h.RequestHandler.CancelTask(ctx, req)
+	if !errors.Is(err, a2a.ErrTaskNotCancelable) {
+		return task, err
+	}
+	return h.RequestHandler.CancelTask(ctx, req)
+}
+
 // observedExecutor publishes every event of the agent to the server's event
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {

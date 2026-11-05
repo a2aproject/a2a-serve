@@ -157,6 +157,62 @@ func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	}
 }
 
+// lingeringExecutor asks a question, and returns from Execute only once
+// release is closed. canceling gets a value each time Cancel runs.
+type lingeringExecutor struct {
+	release   chan struct{}
+	canceling chan struct{}
+}
+
+func (e *lingeringExecutor) Execute(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
+			return
+		}
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, nil), nil)
+		<-e.release
+	}
+}
+
+func (e *lingeringExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		e.canceling <- struct{}{}
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCanceled, nil), nil)
+	}
+}
+
+func TestCancelWhileQuestionExecutionEndsCancelsTask(t *testing.T) {
+	t.Parallel()
+	exec := &lingeringExecutor{release: make(chan struct{}), canceling: make(chan struct{}, 2)}
+	h := cancelRetryHandler{a2asrv.NewHandler(exec)}
+	ctx := context.Background()
+	res, err := h.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("ask", "", "")})
+	if err != nil {
+		t.Fatalf("SendMessage() error = %v", err)
+	}
+	asked := res.(*a2a.Task)
+
+	type result struct {
+		task *a2a.Task
+		err  error
+	}
+	done := make(chan result, 1)
+	go func() {
+		task, err := h.CancelTask(ctx, &a2a.CancelTaskRequest{ID: asked.ID})
+		done <- result{task, err}
+	}()
+	<-exec.canceling
+	close(exec.release)
+
+	got := <-done
+	if got.err != nil {
+		t.Fatalf("CancelTask() error = %v", got.err)
+	}
+	if got.task.Status.State != a2a.TaskStateCanceled {
+		t.Fatalf("CancelTask() state = %v, want %v", got.task.Status.State, a2a.TaskStateCanceled)
+	}
+}
+
 // statusExecutor yields one status update.
 type statusExecutor struct {
 	state a2a.TaskState

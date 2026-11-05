@@ -429,14 +429,14 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
+	s.handler = cancelRetryHandler{a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 		a2asrv.WithLogger(slog.Default()),
-	)
+	)}
 	s.sender.Set(s.handler)
 	return nil
 }
