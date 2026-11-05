@@ -25,6 +25,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
@@ -89,7 +90,7 @@ func (r *nodeClientFlags) nodeToken(cfg *globalConfig) (string, error) {
 	}
 	c, err := store.Node()
 	if errors.Is(err, credstore.ErrNoNode) {
-		return "", fmt.Errorf("no node token: run `a2a-serve pair join <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken)
+		return "", clierr.Usage(fmt.Sprintf("no node token: run `a2a-serve pair join <agent-url> <code>`, or set %s", mailboxapi.EnvNodeToken))
 	}
 	if err != nil {
 		return "", err

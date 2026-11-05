@@ -92,18 +92,58 @@ func Exit(code int, msg string) *Error {
 // Silent reports whether the failure was already reported.
 func (e *Error) Silent() bool { return e.silent }
 
-// Timeout classifies err, which the time limit of flag ended, as a timeout.
-func Timeout(err error, flag string) *Error {
-	return &Error{Code: CodeTimeout, Message: err.Error(), Exit: 5, err: err, Hint: "increase --" + flag}
+// exits are the exit statuses of the codes.
+var exits = map[string]int{
+	CodeUsage:      2,
+	CodeProtocol:   1,
+	CodeIO:         3,
+	CodeTimeout:    5,
+	CodeInternal:   1,
+	CodeNotRunning: 6,
+	CodeNoAgent:    7,
+	CodeBusy:       8,
 }
+
+// IOHint is remediation advice attached to every I/O error.
+const IOHint = "check connectivity or whether the agent is running"
 
 // UsageHint is remediation advice attached to every usage error.
 const UsageHint = "run `a2a-serve --help` for the current commands and flags"
 
+// hints are the default hints of the codes.
+var hints = map[string]string{
+	CodeUsage: UsageHint,
+	CodeIO:    IOHint,
+}
+
+// Wrap classifies err with code, such as the code of a failure a server
+// reported. An unknown code exits 1.
+func Wrap(code string, err error) *Error {
+	exit, ok := exits[code]
+	if !ok {
+		exit = 1
+	}
+	return &Error{Code: code, Message: err.Error(), Hint: hints[code], Exit: exit, err: err}
+}
+
+// Timeout classifies err, which the time limit of flag ended, as a timeout.
+func Timeout(err error, flag string) *Error {
+	e := Wrap(CodeTimeout, err)
+	e.Hint = "increase --" + flag
+	return e
+}
+
 // Usage builds a usage error for invalid arguments, flags, or flag combinations.
 func Usage(msg string) *Error {
-	return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: 2}
+	return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: exits[CodeUsage]}
 }
+
+// NotRunning classifies err as the failure of a command which needs the
+// agent server while it doesn't run.
+func NotRunning(err error) *Error { return Wrap(CodeNotRunning, err) }
+
+// NoAgent classifies err as a lookup which found no agent directory.
+func NoAgent(err error) *Error { return Wrap(CodeNoAgent, err) }
 
 // MarshalJSON implements [json.Marshaler].
 func (e *Error) MarshalJSON() ([]byte, error) {
@@ -125,20 +165,14 @@ func (e *Error) MarshalJSON() ([]byte, error) {
 }
 
 // usageError is implemented by errors of other packages which report
-// invalid input, such as an invalid agent config.
+// invalid input and that callers match with errors.As, such as an invalid
+// agent config. Other errors use the constructors of this package.
 type usageError interface{ UsageError() bool }
-
-// notRunningError is implemented by the error of a client which found no
-// agent server to talk to.
-type notRunningError interface{ NotRunning() bool }
-
-// noAgentError is implemented by the error of a lookup which found no
-// agent directory.
-type noAgentError interface{ NoAgent() bool }
 
 // Classify maps an arbitrary error to a classified CLI Error with a stable code
 // and exit status. It returns nil for a nil error and passes an already
-// classified *Error (e.g. from Usage or CardResolution) through unchanged.
+// classified *Error (e.g. from Usage or CardResolution) through unchanged; a
+// wrapped one keeps the message of err.
 func Classify(err error) *Error {
 	if err == nil {
 		return nil
@@ -146,29 +180,22 @@ func Classify(err error) *Error {
 
 	var classified *Error
 	if errors.As(err, &classified) {
-		return classified
+		if classified == err {
+			return classified
+		}
+		wrapped := *classified
+		wrapped.Message, wrapped.err = err.Error(), err
+		return &wrapped
 	}
-
-	msg := err.Error()
 
 	var ue usageError
 	if agenterr.IsRequest(err) || errors.As(err, &ue) && ue.UsageError() {
-		return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: 2, err: err}
-	}
-
-	var nr notRunningError
-	if errors.As(err, &nr) && nr.NotRunning() {
-		return &Error{Code: CodeNotRunning, Message: msg, Exit: 6, err: err}
-	}
-
-	var na noAgentError
-	if errors.As(err, &na) && na.NoAgent() {
-		return &Error{Code: CodeNoAgent, Message: msg, Exit: 7, err: err}
+		return Wrap(CodeUsage, err)
 	}
 
 	var busy *agenterr.BusyError
 	if errors.As(err, &busy) {
-		return &Error{Code: CodeBusy, Message: msg, Exit: 8, err: err}
+		return Wrap(CodeBusy, err)
 	}
 
 	if errors.Is(err, context.DeadlineExceeded) {
@@ -177,26 +204,16 @@ func Classify(err error) *Error {
 
 	var a2aErr *a2a.Error
 	if errors.As(err, &a2aErr) {
-		return &Error{
-			Code:    CodeProtocol,
-			Message: msg,
-			A2ACode: a2a.ErrorReason(a2aErr.Err),
-			Exit:    1,
-			err:     err,
-		}
+		e := Wrap(CodeProtocol, err)
+		e.A2ACode = a2a.ErrorReason(a2aErr.Err)
+		return e
 	}
 
 	if isIOError(err) {
-		return &Error{
-			Code:    CodeIO,
-			Message: msg,
-			Exit:    3,
-			Hint:    "check connectivity or whether the agent is running",
-			err:     err,
-		}
+		return Wrap(CodeIO, err)
 	}
 
-	return &Error{Code: CodeInternal, Message: msg, Exit: 1, err: err}
+	return Wrap(CodeInternal, err)
 }
 
 // isIOError reports whether err is a transport-level failure — a network error,

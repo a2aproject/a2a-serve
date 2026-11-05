@@ -44,6 +44,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -780,6 +781,18 @@ func TestContactNameTakenByNode(t *testing.T) {
 	_, err := controlapi.NewClient(assistant.dir).AddContact(context.Background(), controlapi.ContactRequest{Name: "grok", URL: coder.localURL()})
 	if err == nil || !strings.Contains(err.Error(), "webhook node") {
 		t.Fatalf("AddContact() error = %v, want the name taken by a node", err)
+	}
+}
+
+func TestContactUnreachableURL(t *testing.T) {
+	t.Parallel()
+	assistant := startServer(t, serverOpts{name: "assistant"})
+
+	_, err := controlapi.NewClient(assistant.dir).AddContact(context.Background(), controlapi.ContactRequest{Name: "grok", URL: "http://127.0.0.1:1"})
+
+	got := clierr.Classify(err)
+	if got == nil || got.Code != clierr.CodeIO || got.Exit != 3 || got.Hint != clierr.IOHint {
+		t.Fatalf("AddContact() error = %+v, want %s (exit 3) with a hint, as while the agent is stopped", got, clierr.CodeIO)
 	}
 }
 

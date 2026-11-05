@@ -15,13 +15,16 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/secretref"
 )
@@ -43,7 +46,8 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 		Use:   name,
 		Short: short,
 		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
-existing agent, the flags change them like ` + "`a2a-serve config set`" + `.
+existing agent, the flags change them like ` + "`a2a-serve config set`" + `. In a
+subdirectory of an agent, pass --dir to create a separate agent.
 
 ` + secretref.Help,
 		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY
@@ -97,14 +101,32 @@ existing agent, the flags change them like ` + "`a2a-serve config set`" + `.
 }
 
 // harnessDir is --dir, or the current directory: a first run creates the
-// agent where it is started, not in a parent agent's directory.
+// agent where it is started.
 func harnessDir(dir string) (agentdir.Dir, error) {
-	if dir == "" {
-		wd, err := os.Getwd()
-		if err != nil {
-			return agentdir.Dir{}, err
-		}
-		dir = wd
+	wd, err := os.Getwd()
+	if err != nil {
+		return agentdir.Dir{}, err
 	}
-	return agentdir.Open(dir)
+	return harnessDirFrom(wd, dir)
+}
+
+// harnessDirFrom is harnessDir run in wd. Without --dir it refuses a
+// directory inside another agent, where every other command finds that
+// agent.
+func harnessDirFrom(wd, dir string) (agentdir.Dir, error) {
+	if dir != "" {
+		return agentdir.Open(dir)
+	}
+	d, err := agentdir.Open(wd)
+	if err != nil || d.Exists() {
+		return d, err
+	}
+	parent, err := agentdir.Find(filepath.Dir(d.Root))
+	if errors.Is(err, agentdir.ErrNotFound) {
+		return d, nil
+	}
+	if err != nil {
+		return agentdir.Dir{}, err
+	}
+	return agentdir.Dir{}, clierr.Usage(fmt.Sprintf("%s is inside the agent in %s; start that agent with `a2a-serve start`, or pass --dir . to create a separate agent here", d.Root, parent.Root))
 }

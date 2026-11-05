@@ -304,6 +304,21 @@ func markUsageErrors(cmd *cobra.Command) {
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return clierr.Usage(err.Error())
 	})
+	// Cobra checks required flags and flag groups after PreRunE and returns
+	// its errors as they are, so they are checked here first.
+	preRun := cmd.PreRunE
+	cmd.PreRunE = func(c *cobra.Command, args []string) error {
+		if err := c.ValidateRequiredFlags(); err != nil {
+			return clierr.Usage(err.Error())
+		}
+		if err := c.ValidateFlagGroups(); err != nil {
+			return clierr.Usage(err.Error())
+		}
+		if preRun != nil {
+			return preRun(c, args)
+		}
+		return nil
+	}
 	if validate := cmd.Args; validate != nil {
 		cmd.Args = func(c *cobra.Command, args []string) error {
 			if err := validate(c, args); err != nil {

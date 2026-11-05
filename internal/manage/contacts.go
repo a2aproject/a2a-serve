@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -40,16 +41,7 @@ const (
 
 // ErrNeedsNetwork is returned for a contact found by name, which needs the
 // private network of a running agent.
-var ErrNeedsNetwork error = needsNetworkError{}
-
-type needsNetworkError struct{}
-
-func (needsNetworkError) Error() string {
-	return "finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"
-}
-
-// NotRunning marks the error for the CLI's exit code.
-func (needsNetworkError) NotRunning() bool { return true }
+var ErrNeedsNetwork error = clierr.NotRunning(errors.New("finding an agent by name needs its private network: start it with `a2a-serve start --detach`, or pass the agent's URL with --url"))
 
 // Contacts adds, lists and removes the agents an agent may call.
 type Contacts struct {
