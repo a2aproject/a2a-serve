@@ -191,7 +191,17 @@ func (a *agent) save(id string, s *session) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(a.sessionPath(id), data, 0o600)
+	return writeAtomic(a.sessionPath(id), data)
+}
+
+// writeAtomic writes path so that readers, also the tests, never see it
+// partly written.
+func writeAtomic(path string, data []byte) error {
+	tmp := path + ".tmp"
+	if err := os.WriteFile(tmp, data, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, path)
 }
 
 func (a *agent) handle(m message) {
@@ -444,7 +454,7 @@ func callWhenSignaled(agentsURL, dir, name, text string) {
 	if err != nil {
 		result = "tool error: " + err.Error()
 	}
-	if err := os.WriteFile(filepath.Join(dir, "result"), []byte(result), 0o600); err != nil {
+	if err := writeAtomic(filepath.Join(dir, "result"), []byte(result)); err != nil {
 		fmt.Fprintln(os.Stderr, "fakeacp: writing the result:", err)
 	}
 }

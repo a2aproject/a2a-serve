@@ -266,7 +266,9 @@ func TestScheduleDoesNotRunWhenItsNextRunIsNotSaved(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	db, err := sql.Open("sqlite", "file:"+ts.dir.DBPath()+"?_pragma=busy_timeout(5000)")
+	// An immediate transaction waits for the server's writers; a deferred
+	// one fails with SQLITE_BUSY when one commits before it writes.
+	db, err := sql.Open("sqlite", "file:"+ts.dir.DBPath()+"?_pragma=busy_timeout(5000)&_txlock=immediate")
 	if err != nil {
 		t.Fatalf("sql.Open() error = %v", err)
 	}
@@ -275,8 +277,15 @@ func TestScheduleDoesNotRunWhenItsNextRunIsNotSaved(t *testing.T) {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	if _, err := db.Exec(`CREATE TRIGGER no_updates BEFORE UPDATE ON schedules BEGIN SELECT RAISE(ABORT, 'read only'); END`); err != nil {
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatalf("BeginTx() error = %v", err)
+	}
+	if _, err := tx.Exec(`CREATE TRIGGER no_updates BEFORE UPDATE ON schedules BEGIN SELECT RAISE(ABORT, 'read only'); END`); err != nil {
 		t.Fatalf("creating the trigger: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("Commit() error = %v", err)
 	}
 
 	due := time.Now().Add(-time.Hour)
