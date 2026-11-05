@@ -183,7 +183,7 @@ func (a *ChatApprovals) endQuestion(ctx context.Context, questionID, note string
 			continue
 		}
 		ref := channel.Ref{Conv: channel.ConvKey(m.Conv), ID: m.MessageID}
-		if err := ch.Edit(ctx, ref, channel.Outbound{Conv: ref.Conv, Text: m.Text + "\n\n" + note}); err != nil {
+		if err := ch.Edit(ctx, ref, channel.Outbound{Conv: ref.Conv, Text: m.Text + "\n\n" + note, Literal: true}); err != nil {
 			slog.Debug("updating a question message", "error", err)
 		}
 	}
@@ -204,7 +204,7 @@ func (a *ChatApprovals) Ask(ctx context.Context, to approvals.Chat, header strin
 	} else {
 		out.Text += a.answerHint(ctx, rec, q)
 	}
-	a.sendQuestion(ctx, ch, out, rec.ID, text)
+	a.sendQuestion(ctx, ch, out, rec.ID, text, newRetrier(a.timings.SendRetry))
 }
 
 // answerHint tells how to answer a question in a chat without buttons: by
@@ -221,13 +221,22 @@ func (a *ChatApprovals) answerHint(ctx context.Context, rec store.Question, q *a
 	return hint
 }
 
-// sendQuestion sends a question and records it. It is pending in the chat
-// before it is sent, so that a reply typed right after it arrives answers it.
-func (a *ChatApprovals) sendQuestion(ctx context.Context, ch channel.Channel, out channel.Outbound, questionID, text string) {
+// sendQuestion sends a question, retrying it so that an approval isn't lost
+// to a rate limit or a brief outage, and records it. It is pending in the
+// chat before it is sent, so that a reply typed right after it arrives
+// answers it. The text is shown literally: the owner has to see all of what
+// they approve.
+func (a *ChatApprovals) sendQuestion(ctx context.Context, ch channel.Channel, out channel.Outbound, questionID, text string, r *retrier) {
 	if err := a.store.SetPendingQuestion(ctx, ch.Name(), string(out.Conv), questionID); err != nil {
 		slog.Warn("recording pending question", "error", err)
 	}
-	ref, err := ch.Send(ctx, out)
+	out.Literal = true
+	var ref channel.Ref
+	err := r.do(ctx, retryAll, func() error {
+		var err error
+		ref, err = ch.Send(ctx, out)
+		return err
+	})
 	if err != nil {
 		slog.Warn("sending question", "channel", ch.Name(), "error", err)
 		if err := a.store.ClearPendingQuestion(ctx, ch.Name(), string(out.Conv)); err != nil {

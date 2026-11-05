@@ -111,7 +111,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
-| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone; paired on a relay that admits people by sign-in) |
+| `--private-access string` |  | Who on the private network may call: everyone, or paired for only you and your pairings (default everyone) |
 | `--public-access string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (default paired) |
 
 **Approvals flags**

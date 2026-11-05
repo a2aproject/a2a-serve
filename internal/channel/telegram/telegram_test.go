@@ -431,3 +431,92 @@ func TestSendAndEditFallBackToPlainTextWhenTooLong(t *testing.T) {
 		})
 	}
 }
+
+func TestSendAndEditShowLiteralTextWithoutMarkup(t *testing.T) {
+	t.Parallel()
+	const text = "Permission required: Run [rm -rf /](https://example.com/ok) *now* _please_."
+	tests := []struct {
+		name   string
+		method string
+		call   func(c *Channel) error
+	}{
+		{name: "send", method: "sendMessage", call: func(c *Channel) error {
+			_, err := c.Send(t.Context(), channel.Outbound{Conv: "42", Text: text, Literal: true})
+			return err
+		}},
+		{name: "edit", method: "editMessageText", call: func(c *Channel) error {
+			return c.Edit(t.Context(), channel.Ref{Conv: "42", ID: "7"}, channel.Outbound{Conv: "42", Text: text, Literal: true})
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := &fakeBotAPI{t: t, calls: map[string][]string{}}
+			srv := httptest.NewServer(api)
+			defer srv.Close()
+			c := New("123:abc")
+			c.ServerURL = srv.URL
+
+			if err := tc.call(c); err != nil {
+				t.Fatalf("Channel error = %v, want nil", err)
+			}
+
+			calls := api.called(tc.method)
+			if len(calls) != 1 {
+				t.Fatalf("%s calls = %d, want 1", tc.method, len(calls))
+			}
+			body := unescapeJSON(calls[0])
+			if !strings.Contains(body, text) || strings.Contains(body, "parse_mode") {
+				t.Fatalf("%s = %s, want the text as written and no parse mode", tc.method, calls[0])
+			}
+		})
+	}
+}
+
+func TestDownloadErrorHidesBotToken(t *testing.T) {
+	t.Parallel()
+	api := &fakeBotAPI{t: t, calls: map[string][]string{}, files: map[string][]byte{"slow.bin": nil}}
+	srv := httptest.NewServer(api)
+	t.Cleanup(srv.Close)
+	c := New("123:abc")
+	c.ServerURL = srv.URL
+	c.downloadTimeout = 100 * time.Millisecond
+	if err := c.Validate(t.Context()); err != nil {
+		t.Fatalf("Validate() error = %v, want nil", err)
+	}
+
+	_, err := c.download(t.Context(), c.bot, "slow.bin", "slow.bin", "text/plain")
+
+	if err == nil || strings.Contains(err.Error(), "123:abc") {
+		t.Fatalf("download() error = %v, want an error without the bot token", err)
+	}
+}
+
+func TestHandleMessageReportsFailedAttachments(t *testing.T) {
+	t.Parallel()
+	api := &fakeBotAPI{t: t, calls: map[string][]string{}, files: map[string][]byte{"big.bin": bytes.Repeat([]byte("x"), maxFile+1)},
+		updates: []string{`{"update_id":1,"message":{"message_id":5,"date":0,"chat":{"id":42,"type":"private"},"from":{"id":42,"is_bot":false,"first_name":"Anna"},"caption":"look","document":{"file_id":"big.bin","file_name":"big.bin"}}}`}}
+	srv := httptest.NewServer(api)
+	defer srv.Close()
+	c := New("123:abc")
+	c.ServerURL = srv.URL
+	in := make(chan channel.Inbound, 1)
+	go func() {
+		if err := c.Run(t.Context(), in); err != nil {
+			t.Errorf("Run() error = %v", err)
+		}
+	}()
+	var m channel.Inbound
+	select {
+	case m = <-in:
+	case <-time.After(10 * time.Second):
+		t.Fatal("Run() delivered no message")
+	}
+
+	err := m.Prepare(t.Context(), &m)
+
+	var failed *channel.AttachmentError
+	if !errors.As(err, &failed) || failed.Name != "big.bin" {
+		t.Fatalf("Inbound.Prepare() error = %v, want a *channel.AttachmentError for big.bin", err)
+	}
+}

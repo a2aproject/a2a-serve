@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package main is the entrypoint of a2a-serve, the `a2a serve` command plugin.
+// Package main is the entrypoint of a2a-serve, an a2a CLI command plugin.
 package main
 
 import (

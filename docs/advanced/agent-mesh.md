@@ -54,7 +54,7 @@ Every request passes three steps:
 
 `--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, by revoking their enrollment.
 
-A relay that admits people by sign-in admits anyone its identity provider accepts, so on such a relay `--private-access` defaults to `paired`: only you, your pairings and `--allow-email` matches can call. A relay that agents join only with tokens defaults to `everyone`. `--private-access` set explicitly overrides both.
+A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-access` defaults to `everyone` on every relay. The relay decides who it admits. Agent Mesh v0.2.0 admits anyone its identity provider accepts, so on a relay that admits people by sign-in, set `--private-access paired` until the relay checks an email allowlist itself (planned).
 
 ## Calls between agents
 

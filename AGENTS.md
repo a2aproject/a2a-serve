@@ -1,6 +1,6 @@
 ### General
 
-* This is `a2a-serve`, a command plugin of the [a2a CLI](https://github.com/a2aproject/a2a-cli): the binary `a2a-serve` on PATH runs as `a2a serve`. Agents, callers and nodes still use the `a2a` CLI (`a2a send`, `--unix-socket`, `credential-helper` with the Bazel credential helper protocol), so keep those contracts compatible with it.
+* This is `a2a-serve`, a command plugin of the [a2a CLI](https://github.com/a2aproject/a2a-cli): the binary `a2a-serve` on PATH can also run as `a2a serve`. Agents, callers and nodes still use the `a2a` CLI (`a2a send`, `--unix-socket`, `credential-helper` with the Bazel credential helper protocol), so keep those contracts compatible with it.
 * Keep the CLI package clean, create a file-per-command. Try extracting logic into a different package.
 * Ask clarifying questions from the user if details important for the task are missing.
 * When working on a bug fix, follow the RED-GREEN-BLUE TDD approach.
@@ -38,6 +38,7 @@
 
 * Keep each fact in one place and link to it from others. `README.md` and `docs/index.md` mirror each other: change both together.
 * Give each page one audience. Getting started is the shortest path to a working agent, without internals, config file details or troubleshooting. The user guide pages in `docs/guide/` cover what users do. `docs/advanced/architecture.md` stays high level, with no code paths. Wire formats such as headers and signatures go in `docs/reference/`, and contributor material goes in `CONTRIBUTING.md`.
+* Write commands as `a2a-serve <command>` in docs, examples, skills, CLI help and errors. Only the command plugin section of `docs/reference/a2a-cli.md` shows the `a2a serve` form.
 * Don't repeat flag lists in prose; link to the command reference. It is generated from the command definitions, so fix help text there and run `go run ./internal/tools/gendocs`.
 * Write short, plain sentences with one idea each. Avoid metaphors, slogans and contrastive constructions ("X, not Y", "X rather than Y", "X instead of Y"); state the positive claim. Use "that" for restrictive clauses, and US English.
 * Call the coding agent "the agent" and a2a-serve "the server", and its home "the agent home directory". Don't write "harness" in user-facing text, including CLI help and errors.

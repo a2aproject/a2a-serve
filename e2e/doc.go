@@ -20,5 +20,6 @@
 //
 //	go test -tags e2e ./e2e/...
 //
-// Set E2E_A2A_CLI to the path of an a2a binary to skip installing the CLI.
+// Set E2E_A2A_CLI to the path of an a2a binary to skip installing the CLI,
+// and E2E_SANDBOX=docker to run the agents in Docker.
 package e2e

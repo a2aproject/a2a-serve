@@ -435,7 +435,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 
-	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals},
+	s.handler = a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: unattended},
 		a2asrv.WithTaskStore(s.tasks),
 		a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget}),
@@ -676,6 +676,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 		if err := s.store.Prune(ctx); err != nil && ctx.Err() == nil {
 			slog.Warn("pruning the database", "error", err)
 		}
+		s.claims.forgetPruned(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -737,14 +738,7 @@ func (s *Server) viewer(ctx context.Context) (string, bool, error) {
 
 // policy is the access policy in force.
 func (s *Server) policy() auth.Policy {
-	return access.Policy(s.config().Policy, s.signIn())
-}
-
-// signIn reports whether the private network admits people by sign-in,
-// whose identity provider may accept anyone with an account there.
-func (s *Server) signIn() bool {
-	sn, ok := s.private.(network.SignInNetwork)
-	return ok && sn.AdmitsBySignIn()
+	return access.Policy(s.config().Policy)
 }
 
 // access describes who may call the agent now.
@@ -753,7 +747,7 @@ func (s *Server) access(ctx context.Context) (*controlapi.Access, error) {
 	if err != nil {
 		return nil, err
 	}
-	networks := access.Network{Public: s.public != nil, SignIn: s.signIn()}
+	networks := access.Network{Public: s.public != nil}
 	if s.private != nil {
 		networks.Private = s.private.Name()
 	}

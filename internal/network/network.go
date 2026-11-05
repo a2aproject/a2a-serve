@@ -56,14 +56,6 @@ type Peer struct {
 	Self bool
 }
 
-// SignInNetwork is implemented by private networks which admit people who
-// sign in with an identity provider, which may accept anyone with an
-// account there.
-type SignInNetwork interface {
-	// AdmitsBySignIn reports whether the network admits people by sign-in.
-	AdmitsBySignIn() bool
-}
-
 // PeerInfo is another agent server found on the private network.
 type PeerInfo struct {
 	Name        string `json:"name"`

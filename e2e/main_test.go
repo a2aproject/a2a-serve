@@ -17,15 +17,34 @@
 package e2e
 
 import (
+	"cmp"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/a2aproject/a2a-serve/internal/a2acli"
 )
 
 // binDir holds a2a, a2a-serve and fakeacp; it goes first on every user's PATH.
 var binDir string
+
+// sandbox is where the agents run: local, or docker with E2E_SANDBOX=docker.
+var sandbox = cmp.Or(os.Getenv("E2E_SANDBOX"), "local")
+
+// dockerHost is the daemon the docker CLI of the users talks to, which their
+// own HOME doesn't name.
+var dockerHost string
+
+// fakeacpImage is the image the agents run in with the docker sandbox.
+const fakeacpImage = "a2a-e2e-fakeacp:latest"
+
+// fakeacpDockerfile builds fakeacpImage from a context holding fakeacp.
+const fakeacpDockerfile = `FROM scratch
+COPY fakeacp /usr/local/bin/fakeacp
+`
 
 func TestMain(m *testing.M) {
 	os.Exit(run(m))
@@ -47,6 +66,12 @@ func run(m *testing.M) int {
 		return 1
 	}
 	binDir = dir
+	if sandbox == "docker" {
+		if err := buildImage(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e:", err)
+			return 1
+		}
+	}
 	return m.Run()
 }
 
@@ -55,16 +80,40 @@ func buildBinaries(dir string) error {
 	if err != nil {
 		return err
 	}
-	builds := [][]string{
-		{"build", "-o", filepath.Join(dir, "a2a-serve"), "."},
-		{"build", "-o", filepath.Join(dir, "fakeacp"), "./internal/agentsrv/testdata/fakeacp"},
+	if err := goCmd(root, nil, "build", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
+		return err
 	}
-	for _, args := range builds {
-		if err := goCmd(root, nil, args...); err != nil {
-			return err
-		}
+	// fakeacp is static, so that it also runs in an empty image.
+	if err := goCmd(root, []string{"CGO_ENABLED=0"}, "build", "-o", filepath.Join(dir, "fakeacp"), "./internal/agentsrv/testdata/fakeacp"); err != nil {
+		return err
 	}
 	return installCLI(dir)
+}
+
+// buildImage builds fakeacpImage and finds the docker daemon.
+func buildImage(dir string) error {
+	ctxDir := filepath.Join(dir, "image")
+	if err := os.Mkdir(ctxDir, 0o700); err != nil {
+		return err
+	}
+	if err := os.Link(filepath.Join(dir, "fakeacp"), filepath.Join(ctxDir, "fakeacp")); err != nil {
+		return err
+	}
+	build := exec.Command("docker", "build", "-t", fakeacpImage, "-f", "-", ctxDir)
+	build.Stdin = strings.NewReader(fakeacpDockerfile)
+	if out, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker build: %w\n%s", err, out)
+	}
+	dockerHost = os.Getenv("DOCKER_HOST")
+	if dockerHost != "" {
+		return nil
+	}
+	out, err := exec.Command("docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}").Output()
+	if err != nil {
+		return fmt.Errorf("docker context inspect: %w", err)
+	}
+	dockerHost = strings.TrimSpace(string(out))
+	return nil
 }
 
 func installCLI(dir string) error {
@@ -72,7 +121,7 @@ func installCLI(dir string) error {
 	if src := os.Getenv("E2E_A2A_CLI"); src != "" {
 		return os.Symlink(src, dst)
 	}
-	if err := goCmd(dir, []string{"GOBIN=" + dir}, "install", "github.com/a2aproject/a2a-cli@latest"); err != nil {
+	if err := goCmd(dir, []string{"GOBIN=" + dir}, "install", "github.com/a2aproject/a2a-cli@"+a2acli.MinVersion); err != nil {
 		return err
 	}
 	return os.Rename(filepath.Join(dir, "a2a-cli"), dst)

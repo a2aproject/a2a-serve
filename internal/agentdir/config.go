@@ -73,8 +73,7 @@ type Config struct {
 // PolicyConfig decides who may call the agent besides the user running it,
 // who is always an owner.
 type PolicyConfig struct {
-	// PrivateAccess is everyone or paired. Empty is everyone, or paired on
-	// a private network which admits people by sign-in.
+	// PrivateAccess is everyone or paired. Empty is everyone.
 	PrivateAccess string `yaml:"private_access,omitempty" json:"privateAccess,omitempty"`
 	// PublicAccess is paired or anyone. Empty is paired.
 	PublicAccess string `yaml:"public_access,omitempty" json:"publicAccess,omitempty"`

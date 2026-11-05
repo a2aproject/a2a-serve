@@ -124,18 +124,6 @@ func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
 	return info, nil
 }
 
-// RelayAdmitsBySignIn reports whether the relay at relayURL admits people by
-// signing in with an identity provider: its /info names an issuer. A relay
-// whose /info can't be read is taken to do so.
-func RelayAdmitsBySignIn(ctx context.Context, client *http.Client, relayURL string) bool {
-	info, err := fetchRelayInfo(ctx, client, relayURL)
-	if err != nil {
-		slog.Warn("reading the relay's info; treating it as a sign-in relay", "relay", relayURL, "error", err)
-		return true
-	}
-	return info.issuer != ""
-}
-
 // fetchRelayInfo reads the relay's /info, which Agent Mesh serves as binary
 // protobuf (api.ControlPlaneInfoResponse).
 func fetchRelayInfo(ctx context.Context, client *http.Client, relayURL string) (relayInfo, error) {
