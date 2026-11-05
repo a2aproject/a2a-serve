@@ -182,6 +182,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Mounts:   mounts,
 		Home:     s.dir.HomeDir(),
 		Hidden:   []string{s.dir.Path()},
+		MCPMask:  s.dir.MCPMaskPath(),
 		Env:      env,
 		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
 		Image:    cfg.Image,

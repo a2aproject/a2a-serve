@@ -178,7 +178,8 @@ func (p *Prompter) SecretValue(s *agentdir.Settings, getenv func(string) string,
 }
 
 // MCPServers shows the MCP servers of a project, and asks for the
-// variables they need which s doesn't pass to the agent yet.
+// variables they need which s doesn't pass to the agent yet. A server with
+// a variable left without a value is turned off.
 func (p *Prompter) MCPServers(s *agentdir.Settings, getenv func(string) string, servers []project.MCPServer) error {
 	if len(servers) == 0 {
 		return nil
@@ -194,13 +195,25 @@ func (p *Prompter) MCPServers(s *agentdir.Settings, getenv func(string) string, 
 			return err
 		}
 		_, missing := srv.Resolve(passed)
+		var skipped []string
 		for _, name := range missing {
 			if slices.Contains(s.Secrets, name) {
 				continue
 			}
-			if _, err := p.SecretValue(s, getenv, name, "for "+srv.Name); err != nil {
+			ok, err := p.SecretValue(s, getenv, name, "for "+srv.Name)
+			if err != nil {
 				return err
 			}
+			if !ok {
+				skipped = append(skipped, name)
+			}
+		}
+		if len(skipped) == 0 {
+			continue
+		}
+		s.DisableMCP = append(s.DisableMCP, srv.Name)
+		if _, err := fmt.Fprintf(p.out, "    %s is off without %s; turn it on with `a2a-serve config set --secret %s` and `a2a-serve config unset disable-mcp %s`\n", srv.Name, strings.Join(skipped, ", "), strings.Join(skipped, " --secret "), srv.Name); err != nil {
+			return err
 		}
 	}
 	return nil

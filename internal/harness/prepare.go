@@ -16,6 +16,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,6 +27,8 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Sandboxes a harness can run in.
@@ -61,6 +64,10 @@ type Spec struct {
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
 	Hidden []string
+	// MCPMask is the host path of a file with no MCP servers, which a
+	// sandbox mounts over the workspace's .mcp.json, so that the harness
+	// gets MCP servers only from the server. Empty keeps .mcp.json visible.
+	MCPMask string
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 
@@ -143,6 +150,13 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		Labels:   spec.Labels,
 		Rootless: rootless,
 	}
+	if spec.MCPMask != "" {
+		masks, err := maskMCP(spec.MCPMask, spec.Mounts)
+		if err != nil {
+			return nil, err
+		}
+		dr.Mounts = append(dr.Mounts, masks...)
+	}
 	if spec.Socket != "" {
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
@@ -152,6 +166,42 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		return nil, err
 	}
 	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop}, nil
+}
+
+// emptyMCP is a .mcp.json with no servers.
+const emptyMCP = "{\"mcpServers\": {}}\n"
+
+// maskMCP writes the file mask with no MCP servers and returns the mounts
+// which put it over the workspace's .mcp.json wherever mounts expose it. A
+// workspace without .mcp.json gets one with no servers, since docker
+// would otherwise create an empty file to mount over.
+func maskMCP(mask string, mounts []agentdir.Mount) ([]agentdir.Mount, error) {
+	if err := fsutil.WriteAtomic(mask, []byte(emptyMCP), 0o644); err != nil {
+		return nil, fmt.Errorf("writing %s: %w", mask, err)
+	}
+	file := filepath.Join(mounts[0].Src, project.MCPFile)
+	if err := writeIfMissing(file, []byte(emptyMCP)); err != nil {
+		return nil, fmt.Errorf("creating %s with no servers, which hides the project's MCP servers from the harness: %w", file, err)
+	}
+	var out []agentdir.Mount
+	for _, dst := range hiddenDsts(mounts, []string{file}) {
+		out = append(out, agentdir.Mount{Src: mask, Dst: dst, ReadOnly: true})
+	}
+	return out, nil
+}
+
+func writeIfMissing(path string, data []byte) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := f.Write(data); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 // cliEnv returns env with the a2a CLI timeout added unless env sets it.

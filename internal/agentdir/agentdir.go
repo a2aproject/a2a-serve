@@ -137,6 +137,10 @@ func UserKey(id string) string {
 // LogPath returns the path of the server log.
 func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log") }
 
+// MCPMaskPath is the file with no MCP servers which a sandbox mounts over
+// the workspace's .mcp.json.
+func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask.json") }
+
 // LockPath returns the path of the file the running server holds locked.
 func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock") }
 

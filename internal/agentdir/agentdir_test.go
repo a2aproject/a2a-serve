@@ -91,6 +91,7 @@ func TestConfigRoundTrip(t *testing.T) {
 		Mounts:   []string{"/home/u/docs:/docs:ro"},
 		Network:  NetworkConfig{Private: "tailscale"},
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
+		MCP:      MCPConfig{Disabled: []string{"kubernetes"}},
 	}
 	if err := d.SaveConfig(want); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -270,12 +271,14 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/a:/docs", "/b:/data"},
 		Env:       []string{"DEBUG=1", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read"}, OwnerChat: "telegram"},
+		MCP:       MCPConfig{Disabled: []string{"github"}},
 	}
 	_, err = Settings{
 		Mounts:     []string{"/c:/docs:ro", "/e:/extra"},
 		Env:        []string{"DEBUG=0"},
 		AllowTools: []string{"read", "search"},
 		OwnerChat:  "discord:anna",
+		DisableMCP: []string{"github", "kubernetes"},
 		Workspace:  d.Root,
 	}.Apply(cfg, d)
 	if err != nil {
@@ -287,6 +290,7 @@ func TestSettingsApplyKeyedLists(t *testing.T) {
 		Mounts:    []string{"/c:/docs:ro", "/b:/data", "/e:/extra"},
 		Env:       []string{"DEBUG=0", "MODE=fast"},
 		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "discord:anna"},
+		MCP:       MCPConfig{Disabled: []string{"github", "kubernetes"}},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)
