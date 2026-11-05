@@ -17,8 +17,9 @@ Visit [Getting Started](https://a2aproject.github.io/a2a-serve/getting-started/)
 ## 🚀 Install
 
 ```bash
-brew install a2aproject/a2a-cli/a2a-serve    # macOS and Linux
-a2a-serve doctor --fix                       # set up the a2a CLI and check Docker
+brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli    # macOS and Linux
+brew install a2aproject/a2a-cli/a2a-serve
+a2a-serve doctor --fix    # set up the a2a CLI and check Docker
 ```
 
 Without Homebrew, use the install script:
