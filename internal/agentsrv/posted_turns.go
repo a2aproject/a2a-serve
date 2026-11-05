@@ -253,7 +253,7 @@ func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postL
 }
 
 func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv channel.ConvKey) {
-	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts(channel.Inbound{Text: t.text(), Files: t.Files})...)
+	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts([]*waitingMessage{{in: channel.Inbound{Text: t.text(), Files: t.Files}}})...)
 	msg.ContextID = t.ContextID
 	ch := c.supervisor.channel(chName)
 	if ch == nil {

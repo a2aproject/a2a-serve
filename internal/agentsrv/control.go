@@ -136,11 +136,9 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Contacts, st.Nodes = len(contacts), len(nodes)
-	approvals, err := s.inspector.PendingApprovals(ctx)
-	if err != nil {
+	if st.Approvals, err = s.inspector.ApprovalCount(ctx); err != nil {
 		return nil, err
 	}
-	st.Approvals = len(approvals)
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}

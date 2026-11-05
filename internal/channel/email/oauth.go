@@ -18,8 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/smtp"
+	"sync"
 	"time"
 
 	"github.com/emersion/go-sasl"
@@ -33,6 +35,9 @@ type OAuthConfig struct {
 	ClientID     string
 	ClientSecret string
 	RefreshToken string
+	// SaveRefreshToken, if set, stores a new refresh token the provider
+	// returned, as Microsoft 365 does, so that it is used after a restart.
+	SaveRefreshToken func(token string) error
 }
 
 const tokenTimeout = 30 * time.Second
@@ -47,7 +52,44 @@ func newTokenSource(cfg OAuthConfig) oauth2.TokenSource {
 	}
 	// The token source keeps this context for every refresh.
 	ctx := context.WithValue(context.Background(), oauth2.HTTPClient, &http.Client{Timeout: tokenTimeout})
-	return conf.TokenSource(ctx, &oauth2.Token{RefreshToken: cfg.RefreshToken})
+	return &rotatingTokens{
+		tokens: conf.TokenSource(ctx, &oauth2.Token{RefreshToken: cfg.RefreshToken}),
+		saved:  cfg.RefreshToken,
+		save:   cfg.SaveRefreshToken,
+	}
+}
+
+// rotatingTokens saves the refresh token whenever the provider replaces it.
+// A failed save is tried again with the next token.
+type rotatingTokens struct {
+	tokens oauth2.TokenSource
+	save   func(string) error
+
+	mu    sync.Mutex
+	saved string
+}
+
+func (r *rotatingTokens) Token() (*oauth2.Token, error) {
+	tok, err := r.tokens.Token()
+	if err != nil {
+		return nil, err
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if tok.RefreshToken == "" || tok.RefreshToken == r.saved {
+		return tok, nil
+	}
+	if r.save == nil {
+		slog.Warn("email: the OAuth provider rotated the refresh token; the new one is kept only until the server stops")
+		r.saved = tok.RefreshToken
+		return tok, nil
+	}
+	if err := r.save(tok.RefreshToken); err != nil {
+		slog.Error("email: saving the rotated OAuth refresh token", "error", err)
+		return tok, nil
+	}
+	r.saved = tok.RefreshToken
+	return tok, nil
 }
 
 // accessToken returns a valid access token, or ctx's error if it ends

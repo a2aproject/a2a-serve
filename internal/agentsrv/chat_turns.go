@@ -50,7 +50,10 @@ type ChatTurns struct {
 	// whose tasks nobody watches.
 	unattended *contextSet
 	posted     postedTurns
-	agentName  func() string
+	budget     *anonymousBudget
+	// downloads holds a place for each message being prepared.
+	downloads chan struct{}
+	agentName func() string
 }
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
@@ -66,8 +69,15 @@ type ChatTurnsDeps struct {
 	Sender     turnSender
 	Bus        *eventBus
 	Unattended *contextSet
-	AgentName  func() string
+	// Budget is the budget of anonymous callers, which is checked before
+	// their attachments are downloaded.
+	Budget    *anonymousBudget
+	AgentName func() string
 }
+
+// maxDownloads bounds the messages whose attachments are downloaded at once,
+// across channels.
+const maxDownloads = 4
 
 // turnSender sends turns to the agent.
 type turnSender interface {
@@ -89,6 +99,8 @@ func newChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		sender:     deps.Sender,
 		bus:        deps.Bus,
 		unattended: deps.Unattended,
+		budget:     deps.Budget,
+		downloads:  make(chan struct{}, maxDownloads),
 		agentName:  deps.AgentName,
 	}
 }
@@ -213,7 +225,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	if !c.firstSeen(ctx, in) {
 		return
 	}
-	if in.Prepare != nil && !c.prepare(ctx, ch, &in) {
+	if in.Prepare != nil && !c.prepare(ctx, ch, &in, p) {
 		return
 	}
 	// Stops and answers must not wait for the turn they stop or unblock,
@@ -238,9 +250,9 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		return
 	}
 
-	<-t.turn
 	switch {
 	case isCommand(in.Text, "new"):
+		<-t.turn
 		if err := c.store.SetContext(ctx, in.Channel, string(in.Conv), a2a.NewContextID()); err != nil {
 			slog.Error("starting a new context", "error", err)
 			return
@@ -248,16 +260,22 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		c.reply(ctx, ch, in, "Started a new conversation.")
 		return
 	case isCommand(in.Text, "start"):
+		<-t.turn
 		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.agentName()))
 		return
 	}
 
+	batch := c.queue.waitTurn(t, &waitingMessage{in: in, p: p})
+	if batch == nil {
+		return
+	}
 	contextID, err := c.contextOf(ctx, in.Channel, in.Conv)
 	if err != nil {
 		slog.Error("resolving conversation context", "error", err)
 		return
 	}
-	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts(in)...)
+	last := batch[len(batch)-1].in
+	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts(batch)...)
 	msg.ID = in.Channel + ":" + in.MessageID
 	msg.ContextID = contextID
 	msg.Metadata = map[string]any{"channel": in.Channel, "identity": in.Identity, "sender": in.Name}
@@ -265,16 +283,44 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		if c.canContinue(ctx, p, lastID) {
 			msg.TaskID = lastID
 		} else {
-			c.reply(ctx, ch, in, "⏳ Another task in this conversation is waiting for an answer; yours starts after it.")
+			c.reply(ctx, ch, last, "⏳ Another task in this conversation is waiting for an answer; yours starts after it.")
 		}
 	}
-	c.stream(ctx, ch, in.Conv, channel.Ref{Conv: in.Conv, ID: in.MessageID}, p, &a2a.SendMessageRequest{Message: msg})
+	c.stream(ctx, ch, in.Conv, channel.Ref{Conv: in.Conv, ID: last.MessageID}, p, &a2a.SendMessageRequest{Message: msg})
+}
+
+// waitingMessage is a chat message that waits for the turn of its
+// conversation.
+type waitingMessage struct {
+	in channel.Inbound
+	p  auth.Principal
+}
+
+// joins reports whether next may reach the agent in the same turn as m:
+// the same person sent it to the same conversation, which a message that
+// started a thread of its own is not.
+func (m *waitingMessage) joins(next *waitingMessage) bool {
+	return next.in.Conv == m.in.Conv && next.in.Identity == m.in.Identity && next.p.ID == m.p.ID && next.p.Role == m.p.Role
 }
 
 // prepare finishes an inbound message and tells its sender what couldn't be
-// done. It reports whether the message is still to be handled.
-func (c *ChatTurns) prepare(ctx context.Context, ch channel.Channel, in *channel.Inbound) bool {
+// done. It reports whether the message is still to be handled. An
+// anonymous sender's message is refused first if the budget of anonymous
+// callers is used up, so that it costs no download.
+func (c *ChatTurns) prepare(ctx context.Context, ch channel.Channel, in *channel.Inbound, p auth.Principal) bool {
+	if p.Role == auth.RoleAnonymous {
+		if err := c.budget.checkRate(budgetListener(p)); err != nil {
+			c.reply(ctx, ch, *in, "⚠ "+err.Error())
+			return false
+		}
+	}
+	select {
+	case c.downloads <- struct{}{}:
+	case <-ctx.Done():
+		return false
+	}
 	err := in.Prepare(ctx, in)
+	<-c.downloads
 	if err == nil {
 		return true
 	}
@@ -335,15 +381,17 @@ func isCommand(text, name string) bool {
 	return cmd == "/"+name || strings.HasPrefix(cmd, "/"+name+"@")
 }
 
-func messageParts(in channel.Inbound) []*a2a.Part {
+func messageParts(batch []*waitingMessage) []*a2a.Part {
 	var parts []*a2a.Part
-	if in.Text != "" {
-		parts = append(parts, a2a.NewTextPart(in.Text))
-	}
-	for _, f := range in.Files {
-		p := a2a.NewRawPart(f.Data)
-		p.Filename, p.MediaType = f.Name, f.MediaType
-		parts = append(parts, p)
+	for _, m := range batch {
+		if m.in.Text != "" {
+			parts = append(parts, a2a.NewTextPart(m.in.Text))
+		}
+		for _, f := range m.in.Files {
+			p := a2a.NewRawPart(f.Data)
+			p.Filename, p.MediaType = f.Name, f.MediaType
+			parts = append(parts, p)
+		}
 	}
 	if len(parts) == 0 {
 		parts = append(parts, a2a.NewTextPart("(empty message)"))

@@ -53,7 +53,7 @@ a2a-serve recipe --dry-run
 | `--dir string` |  | Agent directory: a new agent's, or the agent to update (default: the agent here, or ./&lt;name&gt; for a new one) |
 | `--dry-run` |  | Fetch the recipe and print the review without saving |
 | `--name string` |  | Agent name, also its tailnet machine name (default: the directory name) |
-| `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d) |
+| `--task-ttl duration` |  | How long tasks are kept after their last update, a duration in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted |
 | `-y, --yes` |  | Create or update the agent without asking; the review still prints |
 
 **Workspace flags**

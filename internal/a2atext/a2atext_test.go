@@ -18,6 +18,7 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/google/go-cmp/cmp"
 )
 
 func TestMessage(t *testing.T) {
@@ -45,6 +46,44 @@ func TestMessage(t *testing.T) {
 			t.Parallel()
 			if got := Message(tc.msg); got != tc.want {
 				t.Fatalf("Message() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestMergeChunks(t *testing.T) {
+	t.Parallel()
+	text := a2a.NewTextPart
+	typed := func(s, mediaType string) *a2a.Part {
+		p := a2a.NewTextPart(s)
+		p.MediaType = mediaType
+		return p
+	}
+	withMeta := func(s string) *a2a.Part {
+		p := a2a.NewTextPart(s)
+		p.Metadata = map[string]any{"k": "v"}
+		return p
+	}
+	raw := a2a.NewRawPart([]byte("png"))
+	tests := []struct {
+		name  string
+		parts []*a2a.Part
+		from  int
+		want  []*a2a.Part
+	}{
+		{name: "text joined", parts: []*a2a.Part{text("a"), text("b"), text("c")}, want: []*a2a.Part{text("abc")}},
+		{name: "parts before from kept", parts: []*a2a.Part{text("a"), text("b"), text("c")}, from: 1, want: []*a2a.Part{text("a"), text("bc")}},
+		{name: "raw part splits runs", parts: []*a2a.Part{text("a"), raw, text("b"), text("c")}, want: []*a2a.Part{text("a"), raw, text("bc")}},
+		{name: "same media type joined", parts: []*a2a.Part{typed("a", "text/markdown"), typed("b", "text/markdown")}, want: []*a2a.Part{typed("ab", "text/markdown")}},
+		{name: "other media type kept", parts: []*a2a.Part{text("a"), typed("b", "text/markdown")}, want: []*a2a.Part{text("a"), typed("b", "text/markdown")}},
+		{name: "metadata kept", parts: []*a2a.Part{text("a"), withMeta("b"), text("c")}, want: []*a2a.Part{text("a"), withMeta("b"), text("c")}},
+		{name: "empty", parts: []*a2a.Part{}, want: []*a2a.Part{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tc.want, MergeChunks(tc.parts, tc.from)); diff != "" {
+				t.Fatalf("MergeChunks() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

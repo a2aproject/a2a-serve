@@ -70,6 +70,9 @@ type Service struct {
 	LinkHints func(code string) []string
 	// Mailbox counts the waiting wakes and open tasks of a node. Optional.
 	Mailbox func(id string) (waiting, open int)
+	// Forget drops what the server keeps in memory for a removed node.
+	// Optional.
+	Forget func(id string)
 	// Changed is called after a node is added, changed or removed. Optional.
 	Changed func(ctx context.Context)
 	// Access describes who may call the agent, which responses to changes
@@ -442,6 +445,9 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 	}
 	if p.Kind == pairapi.PairingWebhook {
 		defer s.changed(ctx)
+		if s.Forget != nil {
+			s.Forget(name)
+		}
 		if s.Ads != nil {
 			if err := s.Ads.Withdraw(name); err != nil {
 				return nil, fmt.Errorf("withdrawing the advertisement of %s: %w", name, err)

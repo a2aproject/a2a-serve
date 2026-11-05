@@ -359,7 +359,7 @@ func (f *fakeChannel) Describe() string { return "@fake_bot" }
 
 func (f *fakeChannel) LinkHint(code string) string { return "/start " + code }
 
-func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound) error {
+func (f *fakeChannel) Run(ctx context.Context, in chan<- channel.Inbound, _ func(error)) error {
 	f.mu.Lock()
 	if f.failures > 0 {
 		f.failures--

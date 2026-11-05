@@ -199,7 +199,8 @@ func LocalOnly(rawURL string) bool {
 type ChannelStatus struct {
 	Name    string `json:"name"`
 	Account string `json:"account,omitempty"`
-	// Error is set while the channel is failing and waits to restart.
+	// Error is set while the channel can't reach its messenger: it waits
+	// to restart, or it reported a lost connection.
 	Error string `json:"error,omitempty"`
 	// OwnerLink is set when a channel is added and nobody is linked on it
 	// as owner yet.

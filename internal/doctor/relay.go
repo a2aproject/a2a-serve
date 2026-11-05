@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -129,8 +130,31 @@ func relayChecks(ctx context.Context, env Env, opts RelayOptions) []Result {
 	}
 	if opts.Online && env.HTTP != nil && conf.Tunnel == "" && conf.URL != "" {
 		results = append(results, relayOnline(ctx, env.HTTP, conf.URL)...)
+		if conf.SignIn() {
+			results = append(results, relaySignIn(ctx, env.HTTP, conf.URL))
+		}
 	}
 	return results
+}
+
+// relaySignIn checks that the relay serves its identity provider at its URL,
+// where agents and the relay's agentmesh-one read it.
+func relaySignIn(ctx context.Context, hc *http.Client, relayURL string) Result {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	u := signin.DiscoveryURL(relayURL)
+	status, body, err := fetch(ctx, hc, u)
+	if err != nil {
+		return Result{ID: "relay-signin", Status: StatusFail, Message: fmt.Sprintf("the relay's sign-in at %s is unreachable: %v", u, err)}
+	}
+	var disc struct {
+		Issuer string `json:"issuer"`
+	}
+	if status != http.StatusOK || json.Unmarshal(body, &disc) != nil || disc.Issuer != signin.URL(relayURL) {
+		return Result{ID: "relay-signin", Status: StatusFail, Message: fmt.Sprintf("the relay doesn't serve its sign-in at %s (status %d)", u, status),
+			Fix: "a2a-serve relay run, and check that the relay's URL leads to it"}
+	}
+	return Result{ID: "relay-signin", Status: StatusOK, Message: "agents sign in at " + signin.URL(relayURL)}
 }
 
 func checkRelayConfig(d relaydir.Dir, conf *relaydir.Config) Result {
@@ -141,7 +165,7 @@ func checkRelayConfig(d relaydir.Dir, conf *relaydir.Config) Result {
 	if err != nil {
 		return Result{ID: "relay-config", Status: StatusFail, Message: err.Error()}
 	}
-	for flag, ref := range map[string]string{"admin-token": conf.AdminToken, "database": conf.Database} {
+	for flag, ref := range map[string]string{"admin-token": conf.AdminToken, "database": conf.Database, "google-client-secret": conf.GoogleClientSecret} {
 		if _, err := secrets.Resolve(ref); err != nil {
 			return Result{ID: "relay-config", Status: StatusFail, Message: fmt.Sprintf("the relay's %s: %v", flag, err), Fix: "a2a-serve relay run --" + flag + " <value>"}
 		}
@@ -154,7 +178,12 @@ func checkRelayConfig(d relaydir.Dir, conf *relaydir.Config) Result {
 	if conf.Database != "" {
 		db = "PostgreSQL"
 	}
-	return Result{ID: "relay-config", Status: StatusOK, Message: fmt.Sprintf("relay at %s, serving HTTP on %s, data in %s", where, conf.ListenAddr(), db)}
+	r := Result{ID: "relay-config", Status: StatusOK, Message: fmt.Sprintf("relay at %s, serving HTTP on %s, data in %s", where, conf.ListenAddr(), db)}
+	if conf.SignIn() {
+		r.Message += "; " + strings.Join(conf.AllowEmails, ", ") + " sign in with Google"
+		r.Detail = "the Google app's redirect URI is " + signin.CallbackURL(conf.URL)
+	}
+	return r
 }
 
 func checkRelayBinary(ctx context.Context, path string) Result {

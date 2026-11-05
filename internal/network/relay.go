@@ -28,10 +28,12 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"google.golang.org/protobuf/encoding/protowire"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // AgentMeshVersion is the Agent Mesh version this a2a-serve joins relays
@@ -87,6 +89,32 @@ func SavedOwner(stateDir string) string {
 	return o.Email
 }
 
+// refreshFile keeps the refresh token the relay gave the agent at its
+// sign-in, so that renewing the agent's credential doesn't need the person.
+const refreshFile = "refresh-token"
+
+func savedRefreshToken(stateDir string) (string, error) {
+	data, err := os.ReadFile(filepath.Join(stateDir, refreshFile))
+	if errors.Is(err, os.ErrNotExist) {
+		return "", nil
+	}
+	return strings.TrimSpace(string(data)), err
+}
+
+func saveRefreshToken(stateDir, token string) error {
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+	return fsutil.WriteAtomic(filepath.Join(stateDir, refreshFile), []byte(token), 0o600)
+}
+
+func removeRefreshToken(stateDir string) error {
+	if err := os.Remove(filepath.Join(stateDir, refreshFile)); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
+
 func saveOwner(stateDir, email string) error {
 	if err := os.MkdirAll(stateDir, 0o700); err != nil {
 		return err
@@ -100,7 +128,8 @@ func saveOwner(stateDir, email string) error {
 
 // RelayLogin signs the agent in to a relay with the relay's identity
 // provider, printing a sign-in link, as Tailscale does on a first run. It
-// returns the ID token the relay enrolls the agent with.
+// returns the ID token the relay enrolls the agent with, and keeps the
+// refresh token that comes with it for later ID tokens.
 type RelayLogin struct {
 	RelayURL string
 	StateDir string
@@ -228,9 +257,21 @@ func (l *RelayLogin) postForm(ctx context.Context, u string, form url.Values, ou
 	return resp.StatusCode, json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(out)
 }
 
-// Token signs in with the device authorization flow: it prints a link,
-// waits until the person signs in, and returns the ID token. It records the
-// email signed in with.
+// errSignInAgain means the relay refused the saved refresh token, or there
+// is none, so the person has to sign in.
+var errSignInAgain = errors.New("the agent has to sign in to the relay")
+
+type tokenResponse struct {
+	IDToken      string `json:"id_token"`
+	RefreshToken string `json:"refresh_token"`
+	Error        string `json:"error"`
+	Desc         string `json:"error_description"`
+}
+
+// Token returns an ID token for the agent: with the saved refresh token
+// when the relay accepts it, and otherwise with the device authorization
+// flow, which prints a link and waits until the person signs in. It records
+// the email signed in with.
 func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 	info, err := l.info(ctx)
 	if err != nil {
@@ -243,9 +284,73 @@ func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 	if err := l.getJSON(ctx, strings.TrimSuffix(info.issuer, "/")+"/.well-known/openid-configuration", &disc); err != nil {
 		return "", fmt.Errorf("discovering the relay's sign-in: %w", err)
 	}
-	if disc.DeviceEndpoint == "" || disc.TokenEndpoint == "" {
+	if disc.TokenEndpoint == "" {
+		return "", errors.New("the relay's identity provider has no token endpoint; join it with --relay-token")
+	}
+	tok, err := l.refresh(ctx, info, disc.TokenEndpoint)
+	if !errors.Is(err, errSignInAgain) {
+		return tok, err
+	}
+	if disc.DeviceEndpoint == "" {
 		return "", errors.New("the relay's identity provider has no device sign-in; join it with --relay-token")
 	}
+	return l.deviceSignIn(ctx, info, disc.DeviceEndpoint, disc.TokenEndpoint)
+}
+
+// refresh trades the saved refresh token for an ID token. It returns
+// errSignInAgain when there is none or the relay refuses it, and other
+// errors when the relay may accept it later.
+func (l *RelayLogin) refresh(ctx context.Context, info relayInfo, tokenURL string) (string, error) {
+	refresh, err := savedRefreshToken(l.StateDir)
+	if err != nil {
+		return "", fmt.Errorf("reading the relay's refresh token: %w", err)
+	}
+	if refresh == "" {
+		return "", errSignInAgain
+	}
+	var tok tokenResponse
+	status, err := l.postForm(ctx, tokenURL, url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {refresh},
+		"client_id":     {info.clientID},
+	}, &tok)
+	if err != nil {
+		return "", fmt.Errorf("renewing the relay sign-in: %w", err)
+	}
+	switch {
+	case status == http.StatusOK && tok.IDToken != "":
+		return tok.IDToken, l.signedIn(tok, false)
+	case tok.Error == "invalid_grant":
+		l.logf("! relay: %s", relayText(tok.Desc))
+		if err := removeRefreshToken(l.StateDir); err != nil {
+			return "", err
+		}
+		return "", errSignInAgain
+	}
+	return "", fmt.Errorf("renewing the relay sign-in: status %d: %s %s", status, relayText(tok.Error), relayText(tok.Desc))
+}
+
+// signedIn records who the agent signed in as, and the refresh token.
+func (l *RelayLogin) signedIn(tok tokenResponse, announce bool) error {
+	if tok.RefreshToken != "" {
+		if err := saveRefreshToken(l.StateDir, tok.RefreshToken); err != nil {
+			return fmt.Errorf("saving the relay's refresh token: %w", err)
+		}
+	}
+	email := tokenEmail(tok.IDToken)
+	if email == "" {
+		return nil
+	}
+	if err := saveOwner(l.StateDir, email); err != nil {
+		return err
+	}
+	if announce {
+		l.logf("✓ signed in to the relay as %s", email)
+	}
+	return nil
+}
+
+func (l *RelayLogin) deviceSignIn(ctx context.Context, info relayInfo, deviceURL, tokenURL string) (string, error) {
 	form := url.Values{"client_id": {info.clientID}, "scope": {"openid email"}}
 	if info.audience != "" {
 		form.Set("audience", info.audience)
@@ -258,14 +363,14 @@ func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 		Interval        int    `json:"interval"`
 		ExpiresIn       int    `json:"expires_in"`
 	}
-	if status, err := l.postForm(ctx, disc.DeviceEndpoint, form, &dev); err != nil || status != http.StatusOK || dev.DeviceCode == "" {
+	if status, err := l.postForm(ctx, deviceURL, form, &dev); err != nil || status != http.StatusOK || dev.DeviceCode == "" {
 		return "", fmt.Errorf("starting the relay sign-in: status %d: %v", status, err)
 	}
 	link := dev.Complete
 	if link == "" {
-		link = dev.VerificationURI + " (code " + dev.UserCode + ")"
+		link = dev.VerificationURI
 	}
-	l.logf("→ sign in to the relay %s: %s", l.RelayURL, link)
+	l.logf("→ sign in to the relay %s: %s (code %s)", l.RelayURL, relayText(link), relayText(dev.UserCode))
 	interval := max(time.Duration(dev.Interval)*time.Second, l.Poll)
 	deadline := time.Now().Add(time.Duration(dev.ExpiresIn) * time.Second)
 	if dev.ExpiresIn == 0 {
@@ -277,38 +382,56 @@ func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 			return "", ctx.Err()
 		case <-time.After(interval):
 		}
-		var tok struct {
-			IDToken string `json:"id_token"`
-			Error   string `json:"error"`
-		}
-		_, err := l.postForm(ctx, disc.TokenEndpoint, url.Values{
+		var tok tokenResponse
+		_, err := l.postForm(ctx, tokenURL, url.Values{
 			"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
 			"device_code": {dev.DeviceCode},
 			"client_id":   {info.clientID},
 		}, &tok)
 		if err != nil {
-			return "", fmt.Errorf("finishing the relay sign-in: %w", err)
+			// The person may still be signing in; ask again until the link
+			// expires.
+			slog.Debug("polling the relay sign-in", "error", err)
+			continue
 		}
 		switch tok.Error {
 		case "":
 			if tok.IDToken == "" {
 				return "", errors.New("the relay's identity provider returned no ID token")
 			}
-			if email := tokenEmail(tok.IDToken); email != "" {
-				if err := saveOwner(l.StateDir, email); err != nil {
-					return "", err
-				}
-				l.logf("✓ signed in to the relay as %s", email)
-			}
-			return tok.IDToken, nil
+			return tok.IDToken, l.signedIn(tok, true)
 		case "authorization_pending":
 		case "slow_down":
 			interval += 5 * time.Second
+		case "access_denied":
+			return "", fmt.Errorf("the relay refused the sign-in: %s", relayText(tok.Desc))
 		default:
-			return "", fmt.Errorf("the relay sign-in failed: %s", tok.Error)
+			return "", fmt.Errorf("the relay sign-in failed: %s %s", relayText(tok.Error), relayText(tok.Desc))
 		}
 	}
 	return "", errors.New("the relay sign-in link expired; start the agent again for a new one")
+}
+
+// maxRelayText bounds the text from a relay the agent prints.
+const maxRelayText = 300
+
+// relayText returns text from a relay without control characters, so that
+// it can't rewrite the terminal, and at most maxRelayText runes long.
+func relayText(s string) string {
+	var b strings.Builder
+	n := 0
+	for _, r := range s {
+		if unicode.IsControl(r) {
+			continue
+		}
+		if n == maxRelayText {
+			b.WriteString("…")
+			break
+		}
+		b.WriteRune(r)
+		n++
+	}
+	return b.String()
 }
 
 func (l *RelayLogin) logf(format string, args ...any) {

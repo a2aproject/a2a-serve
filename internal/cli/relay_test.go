@@ -47,7 +47,7 @@ func remoteRelay(t *testing.T) (string, *meshtest.Mesh) {
 	var relayURL string
 	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, http.DefaultClient), func() control.Status {
 		return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
-	})
+	}, func(control.Member) bool { return false })
 	h := control.RequireToken(relayAdminToken, backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now), control.Handler(svc, nil))
 	srv := httptest.NewServer(http.StripPrefix(control.RemotePath, h))
 	t.Cleanup(srv.Close)
@@ -204,5 +204,16 @@ func TestNoRelayHere(t *testing.T) {
 
 	if ce := clierr.Classify(err); ce == nil || ce.Code != clierr.CodeNoAgent {
 		t.Fatalf("relay members without a relay error = %v, want no relay", err)
+	}
+}
+
+func TestRelayRunRefusesSignInWithoutTheGoogleApp(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	_, err := runRelayCMD(t, "relay", "run", "--dir", dir, "--url", "https://relay.example.com", "--allow-email", "*@example.com")
+
+	if !isUsage(err) || !strings.Contains(err.Error(), "--google-client-id") {
+		t.Fatalf("relay run --allow-email without the Google app error = %v, want a usage error that names --google-client-id", err)
 	}
 }

@@ -33,8 +33,10 @@ type Channel interface {
 	// Caps reports what the channel supports.
 	Caps() Caps
 	// Run holds an outbound connection to the messenger and delivers
-	// messages to in until ctx ends.
-	Run(ctx context.Context, in chan<- Inbound) error
+	// messages to in until ctx ends. A channel that reconnects by itself
+	// calls report with the error when it loses the connection, and with
+	// nil once it is connected again.
+	Run(ctx context.Context, in chan<- Inbound, report func(error)) error
 	// Send sends a message and returns a reference to it.
 	Send(ctx context.Context, m Outbound) (Ref, error)
 	// Edit replaces a sent message. Only called if Caps().Edit.
@@ -273,4 +275,6 @@ type KV interface {
 	Get(ctx context.Context, key string) (string, bool, error)
 	// Set stores the value of key.
 	Set(ctx context.Context, key, value string) error
+	// Delete removes key. Removing a key that is not set is a no-op.
+	Delete(ctx context.Context, key string) error
 }

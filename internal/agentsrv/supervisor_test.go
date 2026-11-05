@@ -107,7 +107,7 @@ func TestChannelSupervisorRemoveStopsChannelBeforeReturning(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	started, stopped := make(chan struct{}), make(chan struct{})
-	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound) error {
+	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		close(started)
 		<-ctx.Done()
 		close(stopped)
@@ -144,7 +144,7 @@ func TestChannelSupervisorAddReplacesChannelAfterItStopped(t *testing.T) {
 		return slices.Clone(events)
 	}
 	newChannel := func(id string) *stubChannel {
-		return &stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound) error {
+		return &stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 			record(id + " started")
 			<-ctx.Done()
 			record(id + " stopped")
@@ -168,7 +168,7 @@ func TestChannelSupervisorStopAll(t *testing.T) {
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	var running atomic.Int32
 	newChannel := func(name string) *stubChannel {
-		return &stubChannel{name: name, run: func(ctx context.Context, _ chan<- channel.Inbound) error {
+		return &stubChannel{name: name, run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 			running.Add(1)
 			defer running.Add(-1)
 			<-ctx.Done()
@@ -197,7 +197,7 @@ func TestChannelSupervisorStopAllGivesUpWhenContextEnds(t *testing.T) {
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	started, release := make(chan struct{}), make(chan struct{})
 	t.Cleanup(func() { close(release) })
-	sv.add(&stubChannel{name: "stuck", run: func(context.Context, chan<- channel.Inbound) error {
+	sv.add(&stubChannel{name: "stuck", run: func(context.Context, chan<- channel.Inbound, func(error)) error {
 		close(started)
 		<-release
 		return nil
@@ -222,7 +222,7 @@ func TestChannelSupervisorRestartsFailingChannel(t *testing.T) {
 	const failures = 3
 	var runs atomic.Int32
 	connected := make(chan struct{})
-	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound) error {
+	sv.add(&stubChannel{name: "fake", run: func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		if runs.Add(1) <= failures {
 			return errors.New("messenger unreachable")
 		}
@@ -257,7 +257,7 @@ func TestChannelSupervisorStatusReportsFailure(t *testing.T) {
 			t.Parallel()
 			sv := newTestSupervisor(t, time.Hour, nil)
 			ch := described("fake")
-			ch.run = func(context.Context, chan<- channel.Inbound) error { return tc.runErr }
+			ch.run = func(context.Context, chan<- channel.Inbound, func(error)) error { return tc.runErr }
 			sv.add(ch)
 
 			waitFor(t, "the failure to be reported", func() bool { return sv.status()[0].Error != "" })
@@ -270,13 +270,41 @@ func TestChannelSupervisorStatusReportsFailure(t *testing.T) {
 	}
 }
 
+func TestChannelSupervisorStatusShowsConnectionStateReportedByRunningChannel(t *testing.T) {
+	t.Parallel()
+	sv := newTestSupervisor(t, time.Millisecond, nil)
+	reports := make(chan error)
+	ch := described("fake")
+	ch.run = func(ctx context.Context, _ chan<- channel.Inbound, report func(error)) error {
+		for {
+			select {
+			case <-ctx.Done():
+				return nil
+			case err := <-reports:
+				report(err)
+			}
+		}
+	}
+	sv.add(ch)
+
+	reports <- errors.New("invalid bot token")
+	waitFor(t, "the reported error", func() bool { return sv.status()[0].Error != "" })
+	want := []controlapi.ChannelStatus{{Name: "fake", Account: "@fake", Error: "invalid bot token"}}
+	if diff := cmp.Diff(want, sv.status()); diff != "" {
+		t.Fatalf("sv.status() wrong result (-want +got) diff = %s", diff)
+	}
+
+	reports <- nil
+	waitFor(t, "the reported connection", func() bool { return sv.status()[0].Error == "" })
+}
+
 func TestChannelSupervisorStatusClearsErrorWhenChannelRestarts(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	var runs atomic.Int32
 	restarted := make(chan struct{})
 	ch := described("fake")
-	ch.run = func(ctx context.Context, _ chan<- channel.Inbound) error {
+	ch.run = func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		if runs.Add(1) == 1 {
 			return errors.New("boom")
 		}
@@ -455,7 +483,7 @@ func TestChannelSupervisorConcurrentAddsRunOneChannel(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
 	var active, maxActive atomic.Int32
-	run := func(ctx context.Context, _ chan<- channel.Inbound) error {
+	run := func(ctx context.Context, _ chan<- channel.Inbound, _ func(error)) error {
 		n := active.Add(1)
 		defer active.Add(-1)
 		for {

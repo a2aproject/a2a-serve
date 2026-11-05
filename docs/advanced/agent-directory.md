@@ -13,7 +13,7 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── server.db      # tasks, sessions, tokens, contacts, nodes
         ├── secrets        # tokens and API keys, mode 0600
         ├── tsnet/         # Tailscale identity, so the URL survives restarts
-        ├── agentmesh/     # Agent Mesh identity
+        ├── agentmesh/     # Agent Mesh identity, and the relay sign-in's refresh token
         ├── home/          # the agent's home directory
         ├── homes/         # a home for the agent process of each authenticated user
         ├── home-anonymous/ # the home of the agent process for anonymous callers

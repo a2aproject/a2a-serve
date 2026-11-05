@@ -445,16 +445,22 @@ func TestRouterHandlesConversationInOrder(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
+	linkOwner(t, ts, "telegram:2", "dm2")
+	inGroup := func(identity, text string) channel.Inbound {
+		in := ts.ch.message(identity, "grp", text)
+		in.Direct = false
+		return in
+	}
 
-	slow := ts.ch.message("telegram:1", "dm1", "remember red")
+	slow := inGroup("telegram:1", "remember red")
 	slow.Prepare = func(context.Context, *channel.Inbound) error {
 		time.Sleep(200 * time.Millisecond)
 		return nil
 	}
 	ts.ch.deliver(slow)
-	ts.ch.write("telegram:1", "dm1", "recall")
+	ts.ch.deliver(inGroup("telegram:2", "recall"))
 
-	ts.ch.waitFor(t, "dm1", hasText("You said: red"))
+	ts.ch.waitFor(t, "grp", hasText("You said: red"))
 }
 
 func TestRouterInjectedTurnWaitsForPendingApproval(t *testing.T) {

@@ -79,6 +79,17 @@ func (b *anonymousBudget) admit(listener string) error {
 	return nil
 }
 
+// checkRate reports the error admit would return because the listener
+// started all the tasks it may in an hour, without counting a task.
+func (b *anonymousBudget) checkRate(listener string) error {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if len(b.listener(listener).starts) >= b.perHour {
+		return errAnonymousRate
+	}
+	return nil
+}
+
 // run counts a running task on a listener until release is called, or
 // refuses it when the listener runs as many as it may.
 func (b *anonymousBudget) run(listener string) (release func(), err error) {

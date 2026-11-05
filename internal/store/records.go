@@ -361,6 +361,14 @@ func (s *Store) UnansweredQuestions(ctx context.Context) ([]Question, error) {
 	return out, rows.Err()
 }
 
+// UnansweredRemoteQuestions counts the questions of remote agents nobody
+// answered yet.
+func (s *Store) UnansweredRemoteQuestions(ctx context.Context) (int, error) {
+	var n int
+	err := s.reads.QueryRowContext(ctx, `SELECT COUNT(*) FROM questions WHERE answered_by = '' AND contact != ''`).Scan(&n)
+	return n, err
+}
+
 // ErrAnswered is returned when a question was already answered.
 var ErrAnswered = errors.New("the question was already answered")
 

@@ -40,8 +40,9 @@ const DefaultListen = "127.0.0.1:8443"
 
 // Names of the secrets a relay stores when a flag gives a value itself.
 const (
-	AdminTokenSecret = "RELAY_ADMIN_TOKEN"
-	DatabaseSecret   = "RELAY_DATABASE"
+	AdminTokenSecret         = "RELAY_ADMIN_TOKEN"
+	DatabaseSecret           = "RELAY_DATABASE"
+	GoogleClientSecretSecret = "RELAY_GOOGLE_CLIENT_SECRET"
 )
 
 // Config is the content of relay.yaml. Secret fields hold secret:NAME
@@ -56,7 +57,17 @@ type Config struct {
 	AdminToken string `yaml:"admin_token,omitempty"`
 	// Database is a PostgreSQL DSN; without it the relay uses SQLite.
 	Database string `yaml:"database,omitempty"`
+	// AllowEmails are the people who may sign in to the relay with Google:
+	// emails, or *@domain for the accounts of a Google Workspace domain.
+	AllowEmails []string `yaml:"allow_email,omitempty"`
+	// GoogleClientID and GoogleClientSecret are the Google app people sign
+	// in with.
+	GoogleClientID     string `yaml:"google_client_id,omitempty"`
+	GoogleClientSecret string `yaml:"google_client_secret,omitempty"`
 }
+
+// SignIn reports whether people may sign in to the relay.
+func (c *Config) SignIn() bool { return len(c.AllowEmails) > 0 }
 
 // ListenAddr returns the address the relay serves HTTP on.
 func (c *Config) ListenAddr() string {
@@ -67,13 +78,18 @@ func (c *Config) ListenAddr() string {
 }
 
 // Settings are the flags of `relay run` which change relay.yaml. Empty
-// fields keep the saved value; "none" clears Tunnel and Database.
+// fields keep the saved value; "none" clears Tunnel and Database, and
+// AllowEmails of just "none" turns sign-in off and drops the Google app.
+// AllowEmails replaces the saved list.
 type Settings struct {
-	URL        string
-	Listen     string
-	Tunnel     string
-	AdminToken string
-	Database   string
+	URL                string
+	Listen             string
+	Tunnel             string
+	AdminToken         string
+	Database           string
+	AllowEmails        []string
+	GoogleClientID     string
+	GoogleClientSecret string
 }
 
 const none = "none"
@@ -151,6 +167,28 @@ func (d Dir) ApplySettings(s Settings) (*Config, agentdir.Secrets, error) {
 			return nil, nil, err
 		}
 	}
+	switch {
+	case len(s.AllowEmails) == 0:
+	case len(s.AllowEmails) == 1 && s.AllowEmails[0] == none:
+		c.AllowEmails, c.GoogleClientID, c.GoogleClientSecret = nil, "", ""
+	default:
+		c.AllowEmails = nil
+		for _, e := range s.AllowEmails {
+			c.AllowEmails = append(c.AllowEmails, strings.ToLower(strings.TrimSpace(e)))
+		}
+	}
+	switch s.GoogleClientID {
+	case "":
+	case none:
+		c.GoogleClientID, c.GoogleClientSecret = "", ""
+	default:
+		c.GoogleClientID = s.GoogleClientID
+	}
+	if s.GoogleClientSecret != "" {
+		if c.GoogleClientSecret, err = secretInput("google-client-secret", s.GoogleClientSecret, GoogleClientSecretSecret, secrets); err != nil {
+			return nil, nil, err
+		}
+	}
 	if err := c.Validate(); err != nil {
 		return nil, nil, err
 	}
@@ -208,10 +246,30 @@ func (c *Config) Validate() error {
 	if _, _, err := net.SplitHostPort(c.ListenAddr()); err != nil {
 		return agenterr.Invalidf("invalid --listen %q: want host:port", c.Listen)
 	}
-	for flag, v := range map[string]string{"admin-token": c.AdminToken, "database": c.Database} {
+	for flag, v := range map[string]string{"admin-token": c.AdminToken, "database": c.Database, "google-client-secret": c.GoogleClientSecret} {
 		if v != "" && !strings.HasPrefix(v, agentdir.SecretPrefix) {
 			return agenterr.Invalidf("%s in relay.yaml must be a secret:NAME reference; set it with --%s", flag, flag)
 		}
+	}
+	return c.validateSignIn()
+}
+
+func (c *Config) validateSignIn() error {
+	for _, e := range c.AllowEmails {
+		if !agentdir.ValidEmailPattern(e) {
+			return agenterr.Invalidf("invalid --allow-email %q: want an email, or *@domain", e)
+		}
+	}
+	app := c.GoogleClientID != "" || c.GoogleClientSecret != ""
+	switch {
+	case (c.GoogleClientID == "") != (c.GoogleClientSecret == ""):
+		return agenterr.Invalidf("--google-client-id and --google-client-secret go together: they are the relay's Google app")
+	case c.SignIn() && !app:
+		return agenterr.Invalidf("--allow-email needs --google-client-id and --google-client-secret: people sign in to the relay with its Google app")
+	case app && !c.SignIn():
+		return agenterr.Invalidf("--google-client-id needs --allow-email: people sign in to the relay only when it allows their email")
+	case c.SignIn() && c.Tunnel != "":
+		return agenterr.Invalidf("sign-in needs a URL that doesn't change, since the Google app names the relay's sign-in address; give --url, or join agents with invites")
 	}
 	return nil
 }
@@ -257,8 +315,9 @@ func Loopback(raw string) bool {
 // Resolved are the relay's settings with their secrets.
 type Resolved struct {
 	Config
-	AdminToken string
-	Database   string
+	AdminToken         string
+	Database           string
+	GoogleClientSecret string
 }
 
 // Resolve returns the settings of relay.yaml with their secrets, creating
@@ -297,6 +356,9 @@ func (d Dir) Resolve() (*Resolved, error) {
 		}
 		if r.Database, err = secrets.Resolve(c.Database); err != nil {
 			return fmt.Errorf("the relay's database: %w", err)
+		}
+		if r.GoogleClientSecret, err = secrets.Resolve(c.GoogleClientSecret); err != nil {
+			return fmt.Errorf("the relay's Google client secret: %w", err)
 		}
 		return nil
 	})
