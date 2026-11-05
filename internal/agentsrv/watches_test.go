@@ -17,6 +17,8 @@ package agentsrv
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -293,21 +295,114 @@ func TestWatchesWatchOfRemovedContactEnds(t *testing.T) {
 func TestWatchesWatchKeepsPollingWhileContactIsUnreachable(t *testing.T) {
 	t.Parallel()
 	f := newWatchesFixture(t)
-	w := f.addWatch(t, &a2a.Task{ID: "missing", ContextID: "remote"}, auth.OwnerID)
+	down := newStatusContact(t, http.StatusServiceUnavailable)
+	putContact(t, f.store, store.Contact{Name: "coder", URL: down.URL})
+	w := f.addWatch(t, &a2a.Task{ID: "t1", ContextID: "remote"}, auth.OwnerID)
 
 	f.ws.watch(w)
 	waitFor(t, "the failure to be recorded", func() bool {
 		got, err := f.store.Watches(context.Background())
 		return err == nil && len(got) == 1 && !got[0].FailingSince.IsZero()
 	})
-	f.waitPolls(t, 3)
+	waitFor(t, "more polls of the unreachable contact", func() bool { return down.requests.Load() >= 6 })
 
 	got, err := f.store.Watches(context.Background())
 	if err != nil || len(got) != 1 {
 		t.Fatalf("store.Watches() = %+v, %v, want the watch kept", got, err)
 	}
 	if n := len(f.turns.turns); n != 0 {
-		t.Fatalf("turns injected for an unreachable task = %d, want 0", n)
+		t.Fatalf("turns injected for an unreachable contact = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchStopsOnPermanentErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		status      int
+		unknownTask bool
+		wantReason  string
+	}{
+		{name: "task unknown to the agent", unknownTask: true, wantReason: "doesn't know the task"},
+		{name: "card not found", status: http.StatusNotFound, wantReason: "doesn't know the task"},
+		{name: "card unauthorized", status: http.StatusUnauthorized, wantReason: "refused access"},
+		{name: "card forbidden", status: http.StatusForbidden, wantReason: "refused access"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			if !tc.unknownTask {
+				broken := newStatusContact(t, tc.status)
+				putContact(t, f.store, store.Contact{Name: "coder", URL: broken.URL})
+			}
+			w := f.addWatch(t, &a2a.Task{ID: "missing", ContextID: "remote"}, auth.OwnerID)
+
+			f.ws.watch(w)
+
+			got := f.nextTurn(t)
+			if !strings.HasPrefix(got.Text, "[coder: stopped watching task missing: ") || !strings.Contains(got.Text, tc.wantReason) {
+				t.Fatalf("injected text = %q, want a note that the watch stopped: %s", got.Text, tc.wantReason)
+			}
+			f.wantNoWatches(t)
+			f.waitIdle(t)
+		})
+	}
+}
+
+func TestWatchesWatchStopsOnPermanentStatusOfTheTaskCall(t *testing.T) {
+	t.Parallel()
+	for _, status := range []int{http.StatusNotFound, http.StatusUnauthorized, http.StatusForbidden} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			broken := newStatusContact(t, status)
+			putContact(t, f.store, store.Contact{Name: "coder", URL: broken.URL})
+			w := f.addWatch(t, &a2a.Task{ID: "t1", ContextID: "remote"}, auth.OwnerID)
+
+			f.ws.watch(w)
+
+			if got := f.nextTurn(t); !strings.HasPrefix(got.Text, "[coder: stopped watching task t1: ") {
+				t.Fatalf("injected text = %q, want a note that the watch stopped", got.Text)
+			}
+			f.wantNoWatches(t)
+		})
+	}
+}
+
+func TestWatchesWatchAsksForNoHistory(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptHold)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+
+	f.waitPolls(t, 3)
+
+	for _, got := range f.remote.getHistoryLengths() {
+		if got != 0 {
+			t.Fatalf("history length of a poll = %d, want 0", got)
+		}
+	}
+}
+
+func TestWatchesPollKeepsClientOnTransientError(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	down := newStatusContact(t, http.StatusServiceUnavailable)
+	contact := store.Contact{Name: "coder", URL: down.URL, Via: ViaHTTPS}
+	putContact(t, f.store, contact)
+	built, err := f.clients.contactClient(context.Background(), "coder")
+	if err != nil {
+		t.Fatalf("ContactClients.contactClient() error = %v", err)
+	}
+	w := f.addWatch(t, &a2a.Task{ID: "t1", ContextID: "remote"}, auth.OwnerID)
+
+	if _, err := f.ws.poll(context.Background(), w, auth.Owner()); err == nil {
+		t.Fatalf("Watches.poll() of a failing contact error = nil, want an error")
+	}
+
+	if got := f.clients.cachedClient("coder", contact); got != built {
+		t.Fatalf("Watches.poll() left the cached client %p, want the client %p kept", got, built)
 	}
 }
 

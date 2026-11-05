@@ -187,15 +187,21 @@ type nodeCallerInterceptor struct {
 	advertised func(id string) bool
 }
 
+const errNodeCaller = "webhook nodes are reachable by the hosting agent and its owner"
+
+// mayCallNode reports whether p may call node.
+func mayCallNode(p auth.Principal, advertised func(id string) bool, node string) bool {
+	hosting := p.Network == network.ListenerHarness
+	return p.IsOwner() || hosting || (p.Role == auth.RoleAuthenticated && advertised != nil && advertised(node))
+}
+
 func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, _ *a2asrv.Request) (context.Context, any, error) {
 	p, ok := auth.Caller(ctx)
 	if !ok {
 		return ctx, nil, a2a.ErrUnauthenticated
 	}
-	hosting := p.Network == network.ListenerHarness
-	advertised := p.Role == auth.RoleAuthenticated && c.advertised != nil && c.advertised(c.node)
-	if !p.IsOwner() && !hosting && !advertised {
-		return ctx, nil, fmt.Errorf("%w: webhook nodes are reachable by the hosting agent and its owner", a2a.ErrUnauthorized)
+	if !mayCallNode(p, c.advertised, c.node) {
+		return ctx, nil, fmt.Errorf("%w: %s", a2a.ErrUnauthorized, errNodeCaller)
 	}
 	auth.SetCallUser(callCtx, p)
 	return ctx, nil, nil
@@ -205,14 +211,13 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request) string) {
 	serveNode := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("node")
-		node, err := n.cfg.Store.Node(r.Context(), id)
-		if err != nil {
-			jsonhttp.Error(w, http.StatusNotFound, "no such agent")
-			return
-		}
 		rest := "/" + r.PathValue("rest")
 		if r.Method == http.MethodGet && (rest == "/" || rest == a2asrv.WellKnownAgentCardPath || rest == "/.well-known/agent.json") {
-			a2asrv.NewStaticAgentCardHandler(n.card(base(r), node)).ServeHTTP(w, r)
+			n.serveCard(w, r, kind, base, id)
+			return
+		}
+		if _, err := n.cfg.Store.Node(r.Context(), id); err != nil {
+			jsonhttp.Error(w, http.StatusNotFound, "no such agent")
 			return
 		}
 		r2 := r.Clone(r.Context())
@@ -231,6 +236,31 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	mux.Handle("POST "+mailboxapi.Prefix+"/api/tasks/{id}/events", jsonhttp.RequireJSON(n.nodeAPI(base, n.handleEvent)))
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/tasks/{id}", n.nodeAPI(base, n.handleGetTask))
 	mux.HandleFunc("GET "+mailboxapi.Prefix+"/api/inbox", n.nodeAPI(base, n.handleInbox))
+}
+
+// serveCard serves the card of a node. The card of an advertised node is
+// public; any other goes to the callers who may call the node, which also
+// keeps the callers who can't from telling whether a node exists.
+func (n *Host) serveCard(w http.ResponseWriter, r *http.Request, kind string, base func(*http.Request) string, id string) {
+	serve := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		node, err := n.cfg.Store.Node(r.Context(), id)
+		if err != nil {
+			jsonhttp.Error(w, http.StatusNotFound, "no such agent")
+			return
+		}
+		a2asrv.NewStaticAgentCardHandler(n.card(base(r), node)).ServeHTTP(w, r)
+	})
+	if n.cfg.Advertised != nil && n.cfg.Advertised(id) {
+		serve.ServeHTTP(w, r)
+		return
+	}
+	n.cfg.Authenticate(kind, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p, ok := auth.PrincipalFrom(r.Context()); !ok || !mayCallNode(p, n.cfg.Advertised, id) {
+			jsonhttp.Error(w, http.StatusForbidden, errNodeCaller)
+			return
+		}
+		serve.ServeHTTP(w, r)
+	})).ServeHTTP(w, r)
 }
 
 func (n *Host) card(baseURL string, node store.Node) *a2a.AgentCard {
@@ -665,8 +695,6 @@ func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {
 // postWebhook delivers a wake to the node's webhook. Its errors leave out
 // the URL and the response body, which may hold secrets.
 func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byte) error {
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, node.Webhook, bytes.NewReader(body))
 	if err != nil {
 		return withoutURL(err)
@@ -678,7 +706,7 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 	for k, v := range node.Headers {
 		req.Header.Set(k, v)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := wakeClient(node).Do(req)
 	if err != nil {
 		return withoutURL(err)
 	}
@@ -691,6 +719,31 @@ func postWebhook(ctx context.Context, node store.Node, wakeID string, body []byt
 		return fmt.Errorf("webhook returned %s", resp.Status)
 	}
 	return nil
+}
+
+// wakeTimeout bounds one wake delivery, redirects included.
+const wakeTimeout = 20 * time.Second
+
+// wakeClient returns the HTTP client for the wakes of a node. It follows
+// redirects, but doesn't send the node's headers and signature to another
+// host than the webhook.
+func wakeClient(node store.Node) *http.Client {
+	return &http.Client{
+		Timeout: wakeTimeout,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			if len(via) >= 10 {
+				return errors.New("stopped after 10 redirects")
+			}
+			if req.URL.Host == via[0].URL.Host {
+				return nil
+			}
+			for k := range node.Headers {
+				req.Header.Del(k)
+			}
+			req.Header.Del(mailboxapi.SignatureHeader)
+			return nil
+		},
+	}
 }
 
 // withoutURL drops the URL of a *url.Error.
