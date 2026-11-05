@@ -147,3 +147,24 @@ func TestListMaterializesOnlyWhenNeeded(t *testing.T) {
 		})
 	}
 }
+
+func TestLatestStateInContext(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	first := newTask("t1", "c1")
+	applyEvents(t, ts, "alice", first, a2a.NewStatusUpdateEvent(first, a2a.TaskStateCompleted, nil))
+	second := newTask("t2", "c1")
+	applyEvents(t, ts, "alice", second, a2a.NewStatusUpdateEvent(second, a2a.TaskStateInputRequired, nil))
+
+	id, state, err := ts.LatestStateInContext(asUser("alice"), "c1")
+	if err != nil {
+		t.Fatalf("LatestStateInContext() error = %v", err)
+	}
+	if id != "t2" || state != a2a.TaskStateInputRequired {
+		t.Fatalf("LatestStateInContext() = %q, %q, want %q, %q", id, state, "t2", a2a.TaskStateInputRequired)
+	}
+	if _, _, err := ts.LatestStateInContext(asUser("alice"), "c2"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("LatestStateInContext() of an empty context error = %v, want %v", err, ErrNotFound)
+	}
+}

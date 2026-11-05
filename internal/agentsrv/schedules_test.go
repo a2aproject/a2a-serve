@@ -88,6 +88,39 @@ func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	ts.ch.waitFor(t, "dm2", hasText("Pushed (allow)."))
 }
 
+func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	ctx := context.Background()
+	ctl := controlapi.NewClient(ts.dir)
+	if _, err := ctl.AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "brief me", Chat: "fake", Thread: schedule.ThreadSame}); err != nil {
+		t.Fatalf("AddSchedule() error = %v", err)
+	}
+	ts.ch.write("telegram:1", "dm1", "ask")
+	ref, q := ts.ch.waitFor(t, "dm1", hasQuestion)
+
+	for range 3 {
+		if _, err := ctl.RunSchedule(ctx, "brief"); err != nil {
+			t.Fatalf("RunSchedule() error = %v", err)
+		}
+	}
+	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
+
+	ts.ch.waitFor(t, "dm1", hasText("Pushed (allow)."))
+	ts.ch.waitFor(t, "dm1", hasText("Runs skipped while this one waited for an answer in this conversation: 2."))
+	time.Sleep(200 * time.Millisecond)
+	runs := 0
+	for _, m := range ts.ch.transcript() {
+		if strings.Contains(m.Text, `ran Scheduled run of "brief"`) {
+			runs++
+		}
+	}
+	if got := runs; got != 1 {
+		t.Fatalf("scheduled runs shown = %d, want 1; messages:\n%s", got, ts.ch.dump())
+	}
+}
+
 func TestAddScheduleErrors(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
@@ -143,6 +176,16 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
+}
+
+func TestHarnessScheduleIsAnnouncedInChat(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{channel: newFakeChannel("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+
+	ts.ch.write("telegram:1", "dm1", `call schedules add triage --cron "@every 2h" --prompt "triage new issues"`)
+
+	ts.ch.waitFor(t, "dm1", hasText(`The agent added the schedule triage (@every 2h): "triage new issues". The next run is`))
 }
 
 func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {

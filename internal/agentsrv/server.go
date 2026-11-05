@@ -400,9 +400,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Supervisor: s.supervisor,
 		Queue:      newConversationQueue(),
 		Sender:     s.sender,
+		Bus:        s.bus,
 		Unattended: unattended,
 		AgentName:  agentName,
-		Timings:    s.timings,
 	})
 	s.schedules = newSchedules(ctx, schedulesDeps{
 		Store:      s.store,

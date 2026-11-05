@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"bytes"
 	"context"
+	"errors"
 	"iter"
 	"log/slog"
 	"path/filepath"
@@ -207,6 +208,29 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	ts.ch.waitFor(t, "dm1", hasQuestion)
 }
 
+func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
+	t.Parallel()
+	bus := newEventBus()
+	exec := &observedExecutor{bus: bus, unattended: &contextSet{}}
+	changed, unsubscribe := bus.subscribeContext("c1")
+	defer unsubscribe()
+	other, unsubscribeOther := bus.subscribeContext("c2")
+	defer unsubscribeOther()
+
+	exec.Cleanup(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, nil, errors.New("the agent crashed"))
+
+	select {
+	case <-changed:
+	default:
+		t.Fatal("followers of the context were not woken when its execution ended")
+	}
+	select {
+	case <-other:
+		t.Fatal("followers of another context were woken")
+	default:
+	}
+}
+
 func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{}
@@ -311,7 +335,7 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			unattended := &contextSet{}
 			unattended.add("c1")
 			unattended.add("c2")
-			e := &observedExecutor{unattended: unattended}
+			e := &observedExecutor{bus: newEventBus(), unattended: unattended}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
