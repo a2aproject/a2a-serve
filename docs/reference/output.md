@@ -18,7 +18,8 @@ networks. Removals (`stop`, `channel rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
-pairing, which stays. `stop` prints
+pairing, which stays. `pair rm --email` prints the kind `google` and adds
+`tokens`, the number of sign-in tokens it revoked. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`. `restart` prints the
 same object as `status -o json`, and `channel add` prints the channel's `name` and
 `account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
