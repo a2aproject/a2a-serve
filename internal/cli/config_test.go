@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"io"
@@ -33,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
 func newTestAgent(t *testing.T, cfg *agentdir.Config) agentdir.Dir {
@@ -598,6 +600,51 @@ func TestConfigSetSecretValueForms(t *testing.T) {
 			}
 			if diff := cmp.Diff([]string{"OLD", "KEY"}, conf.Secrets); diff != "" {
 				t.Fatalf("a2a-serve config set --secret %s wrong config secrets (-want +got) diff = %s", tc.secret, diff)
+			}
+		})
+	}
+}
+
+func TestPrintConfigResultSecrets(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		res  *agentctl.Result
+		want string
+	}{
+		{
+			name: "stored reference",
+			res: &agentctl.Result{
+				Changes: []agentdir.Change{{Setting: "backup-key", New: "secret:BACKUP_KEY"}},
+				Secrets: []agentctl.SecretChange{{Name: "BACKUP_KEY", Action: agentctl.SecretStored}},
+			},
+			want: "  backup-key   (default) → secret:BACKUP_KEY (stored)\n",
+		},
+		{
+			name: "rotated value",
+			res:  &agentctl.Result{Secrets: []agentctl.SecretChange{{Name: "BACKUP_KEY", Action: agentctl.SecretRotated}}},
+			want: "  secret value BACKUP_KEY rotated\n",
+		},
+		{
+			name: "stored secret",
+			res: &agentctl.Result{
+				Changes: []agentdir.Change{{Setting: "secret", Added: []string{"KEY"}}},
+				Secrets: []agentctl.SecretChange{{Name: "KEY", Action: agentctl.SecretStored}},
+			},
+			want: "  secret       + KEY (stored)\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+			if err := printConfigResult(cfg, tc.res); err != nil {
+				t.Fatalf("printConfigResult() error = %v", err)
+			}
+			got, _, _ := strings.Cut(buf.String(), "✓")
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("printConfigResult() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

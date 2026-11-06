@@ -2,7 +2,7 @@
 
 `config.yaml` holds what the flags set. Change it with `a2a-serve config set`,
 `a2a-serve channel add` or `a2a-serve config edit`. Secret values are
-references such as `secret:TELEGRAM_BOT_TOKEN`.
+references such as `secret:TELEGRAM_BOT_TOKEN`. [Config](../guide/config.md#which-command-to-use) says which command to use.
 
 ```yaml
 name: coder

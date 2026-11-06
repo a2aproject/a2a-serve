@@ -158,7 +158,7 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 // inSecretDiff reports whether the diff of --secret names the secret.
 func inSecretDiff(changes []agentdir.Change, name string) bool {
 	return slices.ContainsFunc(changes, func(c agentdir.Change) bool {
-		return c.Setting == "secret" && (slices.Contains(c.Added, name) || slices.Contains(c.Removed, name))
+		return c.Setting == "secret" && (slices.Contains(c.Added, name) || slices.Contains(c.Removed, name)) || c.New == agentdir.SecretPrefix+name
 	})
 }
 
@@ -168,7 +168,11 @@ func formatChange(c agentdir.Change, secrets map[string]string) string {
 		if kind, _, _ := strings.Cut(c.Setting, "-"); slices.Contains([]string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}, kind) {
 			empty = "(none)"
 		}
-		return or(c.Old, empty) + " → " + or(c.New, empty)
+		out := or(c.Old, empty) + " → " + or(c.New, empty)
+		if name, ok := strings.CutPrefix(c.New, agentdir.SecretPrefix); ok && secrets[name] != "" {
+			out += " (" + secrets[name] + ")"
+		}
+		return out
 	}
 	var parts []string
 	for _, e := range c.Removed {

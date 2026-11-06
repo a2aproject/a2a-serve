@@ -619,17 +619,17 @@ func (d Dir) SaveConfig(cfg *Config) error {
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	data, err := mergeConfig(old, cfg)
+	data, err := MergeConfig(old, cfg)
 	if err != nil {
 		return err
 	}
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
 }
 
-// mergeConfig returns the content of config.yaml for cfg, editing the node
+// MergeConfig returns the content of config.yaml for cfg, editing the node
 // tree of old, the saved content, so that its comments and unknown keys
 // stay. Without a saved mapping, it returns [MarshalConfig].
-func mergeConfig(old []byte, cfg *Config) ([]byte, error) {
+func MergeConfig(old []byte, cfg *Config) ([]byte, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(old, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
 		return MarshalConfig(cfg)

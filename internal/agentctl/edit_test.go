@@ -160,3 +160,92 @@ func TestEditRepairsFileThatDoesNotParse(t *testing.T) {
 		t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestEditStoresSecretValues(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	edit := func(path string) error {
+		return os.WriteFile(path, []byte("name: coder\nagent: opencode\nbackup:\n    to: /backups\n    key: hunter2 # the passphrase\n"), 0o600)
+	}
+
+	res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if diff := cmp.Diff([]SecretChange{{Name: agentdir.SecretBackupKey, Action: SecretStored}}, res.Secrets); diff != "" {
+		t.Fatalf("Edit() secrets wrong result (-want +got) diff = %s", diff)
+	}
+	for _, c := range res.Changes {
+		if c.Old == "hunter2" || c.New == "hunter2" {
+			t.Fatalf("Edit() changes = %+v, want no secret value", res.Changes)
+		}
+	}
+	saved, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "key: secret:BACKUP_KEY # the passphrase"; !strings.Contains(string(saved), want) || strings.Contains(string(saved), "hunter2") {
+		t.Fatalf("config.yaml = %q, want %q and no secret value", saved, want)
+	}
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatalf("LoadSecrets() error = %v", err)
+	}
+	if diff := cmp.Diff(agentdir.Secrets{agentdir.SecretBackupKey: "hunter2"}, secrets); diff != "" {
+		t.Fatalf("stored secrets wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestEditRefusesChannels(t *testing.T) {
+	t.Parallel()
+	const refused = "# ERROR: messengers are changed with a2a-serve channel add and a2a-serve channel rm\n"
+	telegram := &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}
+	tests := []struct {
+		name     string
+		telegram *agentdir.TelegramConfig
+		edit     string
+	}{
+		{name: "added", edit: "name: coder\nagent: opencode\nchannels:\n    telegram:\n        token: secret:TOK\n"},
+		{name: "changed", telegram: telegram, edit: "name: coder\nagent: opencode\nchannels:\n    telegram:\n        token: secret:TOK\n"},
+		{name: "removed", telegram: telegram, edit: "name: coder\nagent: opencode\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Channels: agentdir.ChannelsConfig{Telegram: tc.telegram}}, agentdir.Secrets{agentdir.SecretTelegram: "t", "TOK": "t2"})
+			orig, err := os.ReadFile(d.ConfigPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			var opened []string
+			edit := func(path string) error {
+				data, err := os.ReadFile(path)
+				if err != nil {
+					return err
+				}
+				opened = append(opened, string(data))
+				if len(opened) > 1 {
+					return nil
+				}
+				return os.WriteFile(path, []byte(tc.edit), 0o600)
+			}
+			retries := 0
+			_, err = Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { retries++; return retries == 1, nil })
+			var se *agentdir.SettingsError
+			if !errors.As(err, &se) {
+				t.Fatalf("Edit() error = %v, want a SettingsError", err)
+			}
+			if len(opened) != 2 || !strings.HasPrefix(opened[1], refused) {
+				t.Fatalf("Edit() opened %q, want the file reopened with %q", opened, refused)
+			}
+			got, err := os.ReadFile(d.ConfigPath())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(string(orig), string(got)); diff != "" {
+				t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}

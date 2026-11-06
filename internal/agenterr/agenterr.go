@@ -141,6 +141,8 @@ const (
 	HintConfigUnset Hint = "config-unset"
 	// HintConfigEdit fixes config.yaml in the editor.
 	HintConfigEdit Hint = "config-edit"
+	// HintChannelList lists the messengers.
+	HintChannelList Hint = "channel-list"
 )
 
 // HintedError is an error with a hint at how to fix it.

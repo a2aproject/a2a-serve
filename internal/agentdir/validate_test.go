@@ -586,13 +586,13 @@ func TestParseConfigRenamedKeys(t *testing.T) {
 	if diff := cmp.Diff([]string{"policy.privateAccess", "policy.publicAccess"}, legacy); diff != "" {
 		t.Fatalf("LegacyKeys() wrong result (-want +got) diff = %s", diff)
 	}
-	merged, err := mergeConfig([]byte(data), got)
+	merged, err := MergeConfig([]byte(data), got)
 	if err != nil {
-		t.Fatalf("mergeConfig() error = %v", err)
+		t.Fatalf("MergeConfig() error = %v", err)
 	}
 	wantSaved := "name: coder\nagent: opencode\npolicy:\n    privateAllowIncoming: paired\n    publicAllowIncoming: anyone\n"
 	if diff := cmp.Diff(wantSaved, string(merged)); diff != "" {
-		t.Fatalf("mergeConfig() wrong file (-want +got) diff = %s", diff)
+		t.Fatalf("MergeConfig() wrong file (-want +got) diff = %s", diff)
 	}
 }
 

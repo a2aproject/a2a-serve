@@ -93,16 +93,29 @@ func Unset(ctx context.Context, d agentdir.Dir, client *controlapi.Client, setti
 	}, dryRun)
 }
 
+// errMessengers refuses an edit of config.yaml that changes messengers,
+// which `a2a-serve channel add` checks with the messenger first.
+var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2a-serve channel add and a2a-serve channel rm"), agenterr.HintChannelList, "")
+
 // Replace replaces the agent's config with data, the content of
-// config.yaml as edited by hand, which is saved as it is.
+// config.yaml as edited by hand, which is saved as it is. Values typed into
+// secret settings are stored, and replaced by references in the saved
+// file. A change of messengers is refused.
 func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data []byte, dryRun bool) (*Result, error) {
 	next, err := agentdir.ParseConfig(data)
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
 	}
 	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+		if agentdir.ChannelsDiffer(cfg, next) {
+			return nil, nil, errMessengers
+		}
+		store, err := agentdir.StoreSecretValues(cfg, next)
+		if err != nil {
+			return nil, nil, agentdir.FileProblems(err)
+		}
 		*cfg = *next
-		return nil, nil, nil
+		return store, nil, nil
 	}, nil, dryRun, data)
 }
 
@@ -161,6 +174,12 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	if next.Approvals.OwnerChat != old.Approvals.OwnerChat {
 		if err := next.CheckOwnerChat(); err != nil {
 			return nil, &agentdir.SettingsError{Err: err}
+		}
+	}
+	if raw != nil && len(store) > 0 {
+		// The edited file keeps the references to the stored values.
+		if raw, err = agentdir.MergeConfig(raw, next); err != nil {
+			return nil, err
 		}
 	}
 	res := &Result{
