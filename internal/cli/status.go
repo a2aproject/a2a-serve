@@ -64,7 +64,7 @@ picked its port.`,
 					return clierr.Usage(err.Error())
 				}
 			}
-			d, err := sf.agentDir()
+			d, err := sf.serverDir()
 			if err != nil {
 				return err
 			}
@@ -73,28 +73,23 @@ picked its port.`,
 			if scope != "" {
 				return printStatusURL(cfg, d, st, err, scope)
 			}
+			problem := configProblem(d)
 			if errors.Is(err, agenterr.ErrNotRunning) {
-				conf, cerr := d.LoadConfig()
-				if cerr != nil {
-					return cerr
-				}
-				if cfg.IsJSON() {
-					return cfg.PrintJSON(statusJSON{Name: conf.Name, Harness: conf.Harness, Dir: d.Root, Recipe: recipeOf(d)})
-				}
-				_, err := fmt.Fprintf(cfg.Out, "%s (%s) in %s is not running; start it with `a2a-serve start --detach`\n", conf.Name, conf.Harness, d.Root)
-				return err
+				return printStopped(cfg, d, problem)
 			}
 			if err != nil {
 				return err
 			}
-			pending, _, err := agentctl.Pending(cmd.Context(), d, client)
-			if err != nil {
-				return err
+			var pending []string
+			if problem == "" {
+				if pending, _, err = agentctl.Pending(cmd.Context(), d, client); err != nil {
+					return err
+				}
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st, Pending: pending, Recipe: recipeOf(d)})
+				return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st, Pending: pending, Recipe: recipeOf(d), ConfigError: problem})
 			}
-			return printStatus(cfg, st, pending, recipeOf(d))
+			return printStatus(cfg, st, pending, recipeOf(d), problem)
 		},
 	}
 	f := cmd.Flags()
@@ -103,6 +98,27 @@ picked its port.`,
 	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate, scopePublic)))
 	sf.addControlFlags(f)
 	return cmd
+}
+
+// printStopped prints the status of the stopped agent in d, whose
+// config.yaml doesn't load if problem is set.
+func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
+	name, harness := d.NameOrDefault(), ""
+	if conf, err := d.ReadConfig(); err == nil {
+		harness = conf.Harness
+	}
+	if cfg.IsJSON() {
+		return cfg.PrintJSON(statusJSON{Name: name, Harness: harness, Dir: d.Root, Recipe: recipeOf(d), ConfigError: problem})
+	}
+	var sb strings.Builder
+	sb.WriteString(name)
+	if harness != "" {
+		fmt.Fprintf(&sb, " (%s)", harness)
+	}
+	fmt.Fprintf(&sb, " in %s is not running; start it with `a2a-serve start --detach`\n", d.Root)
+	writeConfigProblem(&sb, problem)
+	_, err := fmt.Fprint(cfg.Out, sb.String())
+	return err
 }
 
 // printStatusURL prints one URL of the agent in d, whose status is st or
@@ -152,6 +168,8 @@ type statusJSON struct {
 	Pending []string `json:"pending,omitempty"`
 	// Recipe is the recipe the agent came from, if any.
 	Recipe string `json:"recipe,omitempty"`
+	// ConfigError is why config.yaml doesn't load, if it doesn't.
+	ConfigError string `json:"configError,omitempty"`
 }
 
 // recipeOf describes the recipe the agent d came from and its commit, or
@@ -171,7 +189,7 @@ func recipeOf(d agentdir.Dir) string {
 	return src.Describe() + " (" + shortCommit(rec.Commit) + ")"
 }
 
-func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fromRecipe string) error {
+func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fromRecipe, configProblem string) error {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s (%s) running for %s, pid %d\n", st.Name, st.Harness, time.Since(st.Started).Round(time.Second), st.PID)
 	fmt.Fprintf(&sb, "  dir      %s\n", st.Dir)
@@ -250,6 +268,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fro
 	if len(pending) > 0 {
 		fmt.Fprintf(&sb, "  pending  %s (a2a-serve restart)\n", strings.Join(pending, ", "))
 	}
+	writeConfigProblem(&sb, configProblem)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
 }

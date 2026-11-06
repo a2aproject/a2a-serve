@@ -37,8 +37,8 @@ func TestStop(t *testing.T) {
 		wantCalls []string
 	}{
 		{name: "not running", wait: WaitStopped},
-		{name: "running", running: true, want: StopResult{Running: true}, wantCalls: []string{"GET /status", "POST /stop"}},
-		{name: "running and waits", running: true, wait: WaitStopped, want: StopResult{Running: true}, wantCalls: []string{"GET /status", "POST /stop"}},
+		{name: "running", running: true, want: StopResult{Name: "coder", Running: true}, wantCalls: []string{"GET /status", "POST /stop"}},
+		{name: "running and waits", running: true, wait: WaitStopped, want: StopResult{Name: "coder", Running: true}, wantCalls: []string{"GET /status", "POST /stop"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

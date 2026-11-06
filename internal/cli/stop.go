@@ -20,6 +20,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
@@ -30,11 +31,7 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Stop the agent",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			d, err := sf.agentDir()
-			if err != nil {
-				return err
-			}
-			conf, err := d.LoadConfig()
+			d, err := sf.serverDir()
 			if err != nil {
 				return err
 			}
@@ -42,23 +39,29 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			name := res.Name
+			if name == "" {
+				name = d.NameOrDefault()
+			}
+			problem := configProblem(d)
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(stopResult{Name: conf.Name, Stopped: res.Running, ServiceInstalled: res.ServiceInstalled && !res.ServiceRemoved, ServiceRemoved: res.ServiceRemoved})
+				return cfg.PrintJSON(stopResult{Name: name, Stopped: res.Running, ServiceInstalled: res.ServiceInstalled && !res.ServiceRemoved, ServiceRemoved: res.ServiceRemoved, ConfigError: problem})
 			}
 			var sb strings.Builder
 			if res.Running {
-				fmt.Fprintf(&sb, "✓ stopped %s\n", conf.Name)
+				fmt.Fprintf(&sb, "✓ stopped %s\n", name)
 			} else {
-				fmt.Fprintf(&sb, "%s is not running\n", conf.Name)
+				fmt.Fprintf(&sb, "%s is not running\n", name)
 			}
 			switch {
 			case res.ServiceRemoved:
-				fmt.Fprintf(&sb, "✓ removed the %s service\n", conf.Name)
+				fmt.Fprintf(&sb, "✓ removed the %s service\n", name)
 			case uninstall:
 				sb.WriteString("  no service was installed\n")
 			case res.ServiceInstalled:
 				sb.WriteString("  it starts again at login; remove the service with `a2a-serve stop --uninstall`\n")
 			}
+			writeConfigProblem(&sb, problem)
 			_, err = fmt.Fprint(cfg.Out, sb.String())
 			return err
 		},
@@ -76,4 +79,24 @@ type stopResult struct {
 	// ServiceInstalled is true if the agent starts again at login.
 	ServiceInstalled bool `json:"serviceInstalled"`
 	ServiceRemoved   bool `json:"serviceRemoved"`
+	// ConfigError is why config.yaml doesn't load, if it doesn't.
+	ConfigError string `json:"configError,omitempty"`
+}
+
+// configProblem describes why config.yaml of d doesn't load, or returns ""
+// if it does.
+func configProblem(d agentdir.Dir) string {
+	if !d.Exists() {
+		return d.ConfigPath() + " does not exist"
+	}
+	if _, err := d.LoadConfig(); err != nil {
+		return strings.ReplaceAll(err.Error(), "\n", "; ")
+	}
+	return ""
+}
+
+func writeConfigProblem(sb *strings.Builder, problem string) {
+	if problem != "" {
+		fmt.Fprintf(sb, "! the config is invalid: %s\n", problem)
+	}
 }

@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
 type showFlags struct {
@@ -62,6 +63,16 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 	if err != nil {
 		return err
 	}
+	if err := printConfigView(cfg, v, f); err != nil {
+		return err
+	}
+	if v.Invalid != "" {
+		return clierr.Exit(1, "the config is invalid")
+	}
+	return nil
+}
+
+func printConfigView(cfg *globalConfig, v *agentctl.View, f showFlags) error {
 	defaults := v.Defaults
 	if !f.defaults {
 		v.Defaults = nil
@@ -83,7 +94,7 @@ func runConfigShow(cmd *cobra.Command, cfg *globalConfig, sf *serverFlags, f sho
 		return cfg.PrintJSON(v)
 	}
 	v.Defaults = defaults
-	_, err = fmt.Fprint(cfg.Out, renderConfig(v, f.defaults))
+	_, err := fmt.Fprint(cfg.Out, renderConfig(v, f.defaults))
 	return err
 }
 
