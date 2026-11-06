@@ -53,9 +53,7 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 	if imageExists(ctx, image) {
 		return image, "using " + image, nil
 	}
-	pull := exec.CommandContext(ctx, "docker", "pull", image)
-	pull.Stdout, pull.Stderr = progress, progress
-	pullErr := pull.Run()
+	pullErr := pullImage(ctx, image, progress)
 	if pullErr == nil {
 		return image, "pulled " + image, nil
 	}
@@ -77,6 +75,23 @@ func EnsureImage(ctx context.Context, image string, profile Profile, progress io
 		return "", "", fmt.Errorf("docker pull %s failed (%v), and building it locally failed: %w", image, pullErr, err)
 	}
 	return local, "built " + local + " (" + strings.TrimPrefix(image, ImageRepo) + " is not published)", nil
+}
+
+// pullImage pulls image, streaming docker's progress. It keeps docker's
+// error output for the returned error, since an unpublished profile image
+// fails the pull as expected before it is built.
+func pullImage(ctx context.Context, image string, progress io.Writer) error {
+	var stderr bytes.Buffer
+	pull := exec.CommandContext(ctx, "docker", "pull", image)
+	pull.Stdout, pull.Stderr = progress, &stderr
+	err := pull.Run()
+	if err == nil {
+		return nil
+	}
+	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+		return fmt.Errorf("%s (%w)", msg, err)
+	}
+	return err
 }
 
 func imageExists(ctx context.Context, image string) bool {
