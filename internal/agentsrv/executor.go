@@ -62,7 +62,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
 
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
+	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(h.process(harnessLog)), s.acpConfig())
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
 	}
@@ -103,7 +103,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 	// Approvals reject questions after AnonymousQuestionTimeout; this stops
 	// the turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.AnonymousQuestionTimeout + time.Minute
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), cfg)
+	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(h.process(harnessLog)), cfg)
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.stop(ctx))
 	}
@@ -127,7 +127,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	// Approvals reject questions after UserQuestionTimeout; this stops the
 	// turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.UserQuestionTimeout + time.Minute
-	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
+	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(start), cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
 	}
