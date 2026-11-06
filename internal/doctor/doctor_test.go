@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -360,6 +361,29 @@ func TestFixLegacyConfigKeys(t *testing.T) {
 		if r.ID == "config-keys" {
 			t.Fatalf("Run() after the fix = %+v, want no config-keys result", r)
 		}
+	}
+}
+
+func TestUnknownConfigKeys(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nsandbx: local\ncard: {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var got []Result
+	for _, r := range Run(t.Context(), m.Env(), Options{Dir: &d}) {
+		if r.ID == "config-unknown-keys" {
+			got = append(got, r)
+		}
+	}
+	group := "Agent coder (" + d.Root + ")"
+	want := []Result{
+		{ID: "config-unknown-keys", Group: group, Status: StatusWarn, Message: "config.yaml has an unknown key card, which the server ignores", Fix: fixEdit},
+		{ID: "config-unknown-keys", Group: group, Status: StatusWarn, Message: "config.yaml has an unknown key sandbx: did you mean sandbox?", Fix: fixEdit},
+	}
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Result{})); diff != "" {
+		t.Fatalf("Run() wrong result (-want +got) diff = %s", diff)
 	}
 }
 

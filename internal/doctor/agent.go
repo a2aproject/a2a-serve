@@ -51,6 +51,7 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		if r, ok := checkConfigKeys(d); ok {
 			results = append(results, r)
 		}
+		results = append(results, checkUnknownKeys(d)...)
 		secrets, err := d.LoadSecrets()
 		if err != nil {
 			results = append(results, Result{ID: "secrets", Status: StatusFail, Message: err.Error(), Fix: fixEdit})
@@ -119,6 +120,20 @@ func checkConfigKeys(d agentdir.Dir) (Result, bool) {
 			return "renamed the keys of " + d.ConfigPath() + " to camelCase", nil
 		},
 	}, true
+}
+
+// checkUnknownKeys warns about the keys of config.yaml that the server
+// ignores, such as a misspelled setting.
+func checkUnknownKeys(d agentdir.Dir) []Result {
+	keys, err := d.UnknownConfigKeys()
+	if err != nil {
+		return nil
+	}
+	var results []Result
+	for _, k := range keys {
+		results = append(results, Result{ID: "config-unknown-keys", Status: StatusWarn, Message: k.String(), Fix: fixEdit})
+	}
+	return results
 }
 
 // unjoin returns the errors joined in err, or err itself.

@@ -67,10 +67,13 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		edited = stripErrors(edited)
 		if bytes.Equal(edited, orig) {
-			return &Result{Path: d.ConfigPath()}, nil
+			return withUnknownKeys(&Result{Path: d.ConfigPath()}, edited), nil
 		}
 		res, err := Replace(ctx, d, client, edited, false)
 		var se *agentdir.SettingsError
+		if err == nil {
+			return withUnknownKeys(res, edited), nil
+		}
 		if !errors.As(err, &se) {
 			return res, err
 		}
@@ -83,6 +86,19 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		content = withErrors(edited, err)
 	}
+}
+
+// withUnknownKeys adds a warning to res for each key of the config.yaml
+// content data that the server ignores.
+func withUnknownKeys(res *Result, data []byte) *Result {
+	keys, err := agentdir.UnknownKeys(data)
+	if err != nil {
+		return res
+	}
+	for _, k := range keys {
+		res.Warnings = append(res.Warnings, k.String())
+	}
+	return res
 }
 
 func withErrors(data []byte, err error) []byte {

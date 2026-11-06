@@ -98,3 +98,39 @@ func TestEdit(t *testing.T) {
 		})
 	}
 }
+
+func TestEditReportsUnknownKeys(t *testing.T) {
+	t.Parallel()
+	const typo = "name: coder\nagent: opencode\nsandbx: local\n"
+	tests := []struct {
+		name string
+		orig string
+		edit string
+	}{
+		{name: "typo added", orig: "name: coder\nagent: opencode\n", edit: typo},
+		{name: "typo kept", orig: typo},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.orig), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			edit := func(path string) error {
+				if tc.edit == "" {
+					return nil
+				}
+				return os.WriteFile(path, []byte(tc.edit), 0o600)
+			}
+			res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+			if err != nil {
+				t.Fatalf("Edit() error = %v", err)
+			}
+			want := []string{"config.yaml has an unknown key sandbx: did you mean sandbox?"}
+			if diff := cmp.Diff(want, res.Warnings); diff != "" {
+				t.Fatalf("Edit() warnings wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
