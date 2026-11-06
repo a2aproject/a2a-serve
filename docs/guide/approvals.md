@@ -14,6 +14,8 @@ Clients can also answer with the [Structured Input extension](https://github.com
 
 `--allow-tools` and `--deny-tools` answer by tool kind without asking. The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`; `*` matches all of them.
 
+The [agent process](../advanced/access-model.md#agent-processes) that asked remembers an `always` answer. It covers the matching tool calls of that process in every conversation, and other processes still ask. The process forgets it when it stops, such as on `a2a-serve restart`. When `--deny-tools` denies a kind it didn't deny before, the server restarts all agent processes, so that earlier `always` answers end. Their turns in progress fail, and their questions that wait for an answer can't be answered anymore.
+
 The person who started a task answers its approvals, in the place the task started. Owners can answer any approval.
 
 | Task started by | Who answers | Where |

@@ -123,6 +123,9 @@ type agent struct {
 	pending map[string]chan message
 	cancels map[string]chan struct{}
 	dir     string
+	// runAlways is set once whoami is allowed always, which lasts until
+	// the process exits, as with opencode.
+	runAlways bool
 }
 
 func main() {
@@ -220,7 +223,11 @@ func (a *agent) chunk(sessionID, text string) {
 // askPush asks permission to run git push in tool call toolCallID, and
 // returns the chosen option, or false if the request was canceled.
 func (a *agent) askPush(sessionID, toolCallID string) (string, bool) {
-	a.notify(sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": toolCallID, "title": "git push", "kind": "execute", "status": "pending", "rawInput": map[string]any{"command": "git push origin main"}})
+	return a.askTool(sessionID, toolCallID, "git push", "git push origin main")
+}
+
+func (a *agent) askTool(sessionID, toolCallID, title, command string) (string, bool) {
+	a.notify(sessionID, map[string]any{"sessionUpdate": "tool_call", "toolCallId": toolCallID, "title": title, "kind": "execute", "status": "pending", "rawInput": map[string]any{"command": command}})
 	resp := a.call("session/request_permission", map[string]any{
 		"sessionId": sessionID,
 		"toolCall":  map[string]any{"toolCallId": toolCallID},
@@ -447,6 +454,30 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		} else {
 			a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "completed"})
 			a.chunk(sid, "Pushed ("+option+").")
+		}
+		end("end_turn")
+	case "whoami":
+		a.mu.Lock()
+		remembered := a.runAlways
+		a.mu.Unlock()
+		option := "remembered"
+		if !remembered {
+			var ok bool
+			if option, ok = a.askTool(sid, "t4", "whoami", "whoami"); !ok {
+				end("cancelled")
+				return
+			}
+		}
+		switch option {
+		case "deny":
+			a.chunk(sid, "whoami denied.")
+		case "always":
+			a.mu.Lock()
+			a.runAlways = true
+			a.mu.Unlock()
+			fallthrough
+		default:
+			a.chunk(sid, "Ran whoami ("+option+").")
 		}
 		end("end_turn")
 	case "slow":

@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -62,7 +63,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Status:         s.status,
 		Stop:           s.Stop,
 		Config:         s.rt.Config,
-		ReloadConfig:   s.rt.Reload,
+		ReloadConfig:   s.reloadConfig,
 		Peers:          s.clients.Discover,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
@@ -142,4 +143,23 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controlapi.ChannelStatus {
 	s.supervisor.Add(ch)
 	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch))
+}
+
+// reloadConfig applies the live settings of config.yaml. When they deny
+// more tools, it restarts the agent processes, which forget the tool calls
+// callers allowed always.
+func (s *Server) reloadConfig() error {
+	before := s.rt.Config().Approvals.Deny
+	if err := s.rt.Reload(); err != nil {
+		return err
+	}
+	if !tightened(before, s.rt.Config().Approvals.Deny) {
+		return nil
+	}
+	n, err := s.procs.restart()
+	if err != nil {
+		return fmt.Errorf("restarting the agent processes for the new deny-tools: %w", err)
+	}
+	slog.Info("restarted the agent processes, so that the new deny-tools apply to tools allowed always", "count", n)
+	return nil
 }

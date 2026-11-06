@@ -18,6 +18,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -116,5 +118,41 @@ func TestStatusAccess(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)
+	}
+}
+
+func TestDenyToolsEndAlwaysApprovals(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		approvals agentdir.ApprovalsConfig
+		want      string
+	}{
+		{name: "more denied tools", approvals: agentdir.ApprovalsConfig{Deny: []string{"execute"}}, want: "whoami denied."},
+		{name: "more allowed tools", approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}, want: "Ran whoami (remembered)."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			asked := send(t, c, userText("whoami", "", ""))
+			wantResult(t, send(t, c, userText("always", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Ran whoami (always).")
+			wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "Ran whoami (remembered).")
+			saved, err := ts.dir.ReadConfig()
+			if err != nil {
+				t.Fatalf("ReadConfig() error = %v", err)
+			}
+			saved.Approvals = tc.approvals
+			if err := ts.dir.SaveConfig(saved); err != nil {
+				t.Fatalf("SaveConfig() error = %v", err)
+			}
+
+			if _, err := controlapi.NewClient(ts.dir).ReloadConfig(context.Background()); err != nil {
+				t.Fatalf("ReloadConfig() error = %v", err)
+			}
+
+			wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, tc.want)
+		})
 	}
 }

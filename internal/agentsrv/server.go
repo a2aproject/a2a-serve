@@ -167,6 +167,8 @@ type Server struct {
 	unattended *messenger.ContextSet
 	// users are the agent processes of users that run now.
 	users userAgents
+	// procs are all agent processes that run now.
+	procs *agentProcesses
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 
@@ -377,6 +379,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
 	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
+	s.procs = newAgentProcesses()
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
 		Bridge:   s.bridge,
