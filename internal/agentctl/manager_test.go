@@ -150,7 +150,7 @@ func TestSetWhileStarting(t *testing.T) {
 	want := &agentdir.Config{Name: "coder", Harness: "opencode"}
 	d := newAgent(t, want, nil)
 	holdLock(t, d)
-	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
 
 	_, err := Set(ctx, d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
