@@ -673,6 +673,11 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 			return ctx, nil, err
 		}
 	}
+	if msg.Message.TaskID == "" {
+		if err := i.checkWaiting(ctx, msg.Message.ContextID); err != nil {
+			return ctx, nil, err
+		}
+	}
 	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
 		if err := i.budget.admit(budgetListener(p)); err != nil {
 			return ctx, nil, fmt.Errorf("%w: %w", a2a.ErrUnauthorized, err)
@@ -716,6 +721,36 @@ func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Princi
 	}
 	if starter != p.ID {
 		return fmt.Errorf("%w: conversation %s belongs to someone else; leave out the context ID to start a new one", a2a.ErrUnauthorized, contextID)
+	}
+	return nil
+}
+
+// checkWaiting refuses a new task in a conversation with a task that waits
+// for an answer to a question of the agent, since the new task would wait
+// behind it without a word. Messages from chats and schedules still wait.
+// Questions of other agents don't hold the conversation.
+func (i *callerInterceptor) checkWaiting(ctx context.Context, contextID string) error {
+	if contextID == "" || auth.IsInProcess(ctx) {
+		return nil
+	}
+	history := 0
+	waiting, err := i.tasks.List(auth.WithPrincipal(ctx, auth.Owner()), &a2a.ListTasksRequest{
+		ContextID: contextID, Status: a2a.TaskStateInputRequired, HistoryLength: &history,
+	})
+	if err != nil {
+		return fmt.Errorf("checking conversation %s: %w", contextID, err)
+	}
+	for _, t := range waiting.Tasks {
+		q := approvals.FromStatus(t.Status)
+		if q == nil || asksCallerQuestion(t) {
+			continue
+		}
+		ids := make([]string, len(q.Options))
+		for i, o := range q.Options {
+			ids[i] = o.ID
+		}
+		return fmt.Errorf("%w: task %s in conversation %s waits for an answer to %q; answer it first with a2a send --task-id %s and one of: %s, or leave out the context ID to start a new conversation",
+			a2a.ErrInvalidRequest, t.ID, contextID, q.Title, t.ID, strings.Join(ids, ", "))
 	}
 	return nil
 }

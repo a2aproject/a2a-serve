@@ -8,6 +8,8 @@ a2a send --task-id <task-id> approve      # or: once, always, reject, deny
 
 A reply that chooses none of the options is refused with the list of options, and the question keeps waiting. To give the agent other instructions, answer `reject` first.
 
+While a task waits for an approval, a new message to its conversation is refused with the task ID and the question. Answer the question first, or leave out the context ID to start a new conversation. Messages of other people in a group chat, and runs of schedules, wait until the question is answered.
+
 Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises.
 
 `--allow-tools` and `--deny-tools` answer by tool kind without asking. The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`; `*` matches all of them.
