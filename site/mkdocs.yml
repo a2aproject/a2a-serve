@@ -80,6 +80,7 @@ nav:
       - Email Sign-In: guide/email-sign-in.md
       - Networks: guide/networks.md
       - Relays: guide/relays.md
+      - Relay on Cloud Run: guide/relay-cloud-run.md
       - Messengers: guide/messengers.md
       - Agent2Agent: guide/agent2agent.md
       - Schedules: guide/schedules.md
