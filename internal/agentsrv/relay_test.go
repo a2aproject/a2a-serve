@@ -130,7 +130,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 		t.Fatalf("relayed question = %q, want reviewer and git push", q.Text)
 	}
 	coder.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	coder.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow by owner"))
+	coder.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow once by owner"))
 
 	contextID, err := coder.srv.store.ContextOf(ctx, "fake", "dm1")
 	if err != nil {

@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/go-telegram/bot/models"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
@@ -495,5 +496,17 @@ func TestHandleMessageReportsFailedAttachments(t *testing.T) {
 	var failed *channel.AttachmentError
 	if !errors.As(err, &failed) || failed.Name != "big.bin" {
 		t.Fatalf("Inbound.Prepare() error = %v, want a *channel.AttachmentError for big.bin", err)
+	}
+}
+
+func TestKeyboardRows(t *testing.T) {
+	t.Parallel()
+	got := keyboard(&channel.Question{ID: "q1", Options: []string{"Allow once", "Always allow kubectl get *", "Deny"}})
+	want := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
+		{{Text: "Allow once", CallbackData: "h:q1:0"}, {Text: "Deny", CallbackData: "h:q1:2"}},
+		{{Text: "Always allow kubectl get *", CallbackData: "h:q1:1"}},
+	}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("keyboard() wrong result (-want +got) diff = %s", diff)
 	}
 }

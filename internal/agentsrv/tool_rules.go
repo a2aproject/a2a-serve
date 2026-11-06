@@ -16,25 +16,47 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"slices"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // toolDecider answers tool permissions with the allow and deny rules of the
-// current config, so that changing them doesn't need a restart. It logs
-// each answer by the entry that decided it, and notes the denied calls.
+// current config, so that changing them doesn't need a restart, and then
+// with the grants of the conversation for the person who started the task.
+// It logs each answer by what decided it, and notes the denied calls.
 type toolDecider struct {
 	config func() *agentdir.Config
 	// servers returns the names of the MCP servers of the project, which
 	// name the MCP tools of calls.
 	servers func() []string
 	notes   *toolNotes
+	store   *store.Store
+	// taskUser returns the user who started a stored task.
+	taskUser func(ctx context.Context, id a2a.TaskID) (string, error)
+}
+
+// starter returns the user who started the task of execCtx: the caller of
+// its first execution, or else the user stored with the task. It fails
+// rather than guess, so that nobody's grants apply to another's task.
+func (d *toolDecider) starter(ctx context.Context, execCtx *a2asrv.ExecutorContext) (string, error) {
+	if execCtx.StoredTask == nil {
+		p, ok := auth.Caller(ctx)
+		if !ok {
+			return "", errors.New("the task has no caller")
+		}
+		return p.ID, nil
+	}
+	return d.taskUser(ctx, execCtx.TaskID)
 }
 
 // call describes a tool call of a permission request.
@@ -56,9 +78,10 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	if q.Tool == nil {
 		return a2aacp.Answer{}, false
 	}
-	dec, ok := d.rules().Decide(d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input))
+	call := d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input)
+	dec, ok := d.rules().Decide(call)
 	if !ok {
-		return a2aacp.Answer{}, false
+		return d.granted(ctx, execCtx, q, call)
 	}
 	ans, ok := ruleAnswer(q.Options, dec.Allow)
 	if !ok {
@@ -71,6 +94,33 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 		slog.Info("approval answered by a rule", "task", execCtx.TaskID, "rule", dec.Entry, "kind", q.Tool.Kind, "option", ans.Option)
 	}
 	return ans, true
+}
+
+// granted allows a call that a grant of the conversation covers, for the
+// person who started the task.
+func (d *toolDecider) granted(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question, call toolrules.Call) (a2aacp.Answer, bool) {
+	if execCtx == nil || d.store == nil {
+		return a2aacp.Answer{}, false
+	}
+	user, err := d.starter(ctx, execCtx)
+	if err != nil {
+		slog.Warn("looking up who started a task, asking", "task", execCtx.TaskID, "error", err)
+		return a2aacp.Answer{}, false
+	}
+	grants, err := d.store.ToolGrants(ctx, execCtx.ContextID, user)
+	if err != nil {
+		slog.Warn("reading the grants of a conversation, asking", "task", execCtx.TaskID, "error", err)
+		return a2aacp.Answer{}, false
+	}
+	rule, ok := toolrules.Match(grants, call)
+	if !ok {
+		return a2aacp.Answer{}, false
+	}
+	ans, ok := ruleAnswer(q.Options, true)
+	if ok {
+		slog.Info("approval answered by a grant of the conversation", "task", execCtx.TaskID, "rule", rule, "kind", q.Tool.Kind, "user", user, "option", ans.Option)
+	}
+	return ans, ok
 }
 
 // ruleAnswer returns the option that allows a tool call once, or always if

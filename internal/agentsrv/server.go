@@ -177,8 +177,6 @@ type Server struct {
 	unattended *messenger.ContextSet
 	// users are the agent processes of users that run now.
 	users userAgents
-	// procs are all agent processes that run now.
-	procs *agentProcesses
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 
@@ -394,9 +392,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
 	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
-	s.procs = newAgentProcesses()
 	s.notes = newToolNotes()
-	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes}
+	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
+	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes, store: s.store, taskUser: records.TaskUser}
 	s.sessions = s.store.Sessions().In(s.workspace)
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
@@ -411,7 +409,6 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return err
 	}
 
-	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	s.chatApprovals = messenger.NewChatApprovals(ctx, messenger.ChatApprovalsDeps{
 		Store:      s.store,
 		Tasks:      s.tasks,
@@ -473,10 +470,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, answers: &ruleAnswers{store: s.store, tasks: s.tasks}}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),

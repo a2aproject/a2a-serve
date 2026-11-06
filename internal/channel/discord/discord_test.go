@@ -241,6 +241,15 @@ func TestComponents(t *testing.T) {
 	}
 }
 
+func TestComponentsShortenLongLabels(t *testing.T) {
+	t.Parallel()
+	got := components(&channel.Question{ID: "q1", Options: []string{"Always allow " + strings.Repeat("a", 100)}})
+	label := got[0].(discordgo.ActionsRow).Components[0].(discordgo.Button).Label
+	if n := len([]rune(label)); n != 80 || !strings.HasSuffix(label, "…") {
+		t.Fatalf("components() label = %q (%d runes), want 80 runes ending with …", label, n)
+	}
+}
+
 func TestMissed(t *testing.T) {
 	t.Parallel()
 	history := func(n int) []*discordgo.Message {

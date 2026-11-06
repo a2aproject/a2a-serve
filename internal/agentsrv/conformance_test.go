@@ -85,7 +85,7 @@ func TestConformanceApprovals(t *testing.T) {
 		want   string
 	}{
 		{name: "approve", answer: typed("approve"), want: "Pushed (allow)."},
-		{name: "always", answer: typed("always"), want: "Pushed (always)."},
+		{name: "always", answer: typed("always"), want: "Pushed (allow)."},
 		{name: "deny", answer: typed("deny"), want: "Push denied."},
 		{
 			name: "structured input",

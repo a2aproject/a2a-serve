@@ -62,8 +62,14 @@ func answersQuestion(msg *a2a.Message, q *approvals.Question) bool {
 // refuseReply asks the question of the stored task again, after a note that
 // the reply chose none of its options. The question keeps waiting.
 func refuseReply(execCtx *a2asrv.ExecutorContext, q *approvals.Question) iter.Seq2[a2a.Event, error] {
+	return askAgain(execCtx, refusal(execCtx, q))
+}
+
+// askAgain answers a reply with ev, which asks the question of the stored
+// task again.
+func askAgain(execCtx *a2asrv.ExecutorContext, ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
 	return withAnswerOrder(execCtx, func(yield func(a2a.Event, error) bool) {
-		yield(refusal(execCtx, q), nil)
+		yield(ev, nil)
 	})
 }
 
@@ -77,7 +83,13 @@ func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskSt
 	if len(reply) > maxQuotedReply {
 		reply = append(reply[:maxQuotedReply], '…')
 	}
-	note := a2a.NewTextPart(fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(reply), strings.Join(ids, ", ")))
+	return reask(execCtx, fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(reply), strings.Join(ids, ", ")))
+}
+
+// reask is the status update that asks the question of the stored task
+// again, after a note.
+func reask(execCtx *a2asrv.ExecutorContext, text string) *a2a.TaskStatusUpdateEvent {
+	note := a2a.NewTextPart(text)
 	note.Metadata = map[string]any{refusedReplyKey: true}
 	asked := execCtx.StoredTask.Status.Message
 	parts := []*a2a.Part{note}

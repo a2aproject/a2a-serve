@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -164,7 +165,11 @@ func (a *ChatApprovals) MarkAnswered(ctx context.Context, questionID, label, who
 	if err := a.store.ForgetPendingQuestion(ctx, questionID); err != nil {
 		slog.Warn("forgetting an answered question", "question", questionID, "error", err)
 	}
-	a.endQuestion(ctx, questionID, fmt.Sprintf("✓ %s by %s", label, who))
+	note := fmt.Sprintf("✓ %s by %s", label, who)
+	if rec, err := a.store.QuestionByID(ctx, questionID); err == nil && rec.Answer == a2aacp.OptionAlways && approvals.FromRecord(rec).Rule != "" {
+		note += ", for this conversation"
+	}
+	a.endQuestion(ctx, questionID, note)
 }
 
 // MarkClosed replaces the buttons of a question whose task no longer waits

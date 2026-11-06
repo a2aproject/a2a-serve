@@ -142,7 +142,7 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
 	assistant.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	assistant.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow by owner"))
+	assistant.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow once by owner"))
 
 	ctx := context.Background()
 	contextID, err := assistant.srv.store.ContextOf(ctx, "fake", "dm1")
@@ -187,7 +187,7 @@ func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 		t.Fatalf("questions asked again after the restart = %d, want 0", n)
 	}
 	restarted.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	restarted.ch.WaitEdited(t, ref, "✓ Allow by owner")
+	restarted.ch.WaitEdited(t, ref, "✓ Allow once by owner")
 }
 
 func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
@@ -749,7 +749,7 @@ func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
 	assistant.ch.Click("telegram:2", "dm2", ref, q.Question, 0)
-	assistant.ch.WaitEdited(t, ref, "✓ Allow by")
+	assistant.ch.WaitEdited(t, ref, "✓ Allow once by")
 }
 
 func TestContactNameTakenByNode(t *testing.T) {

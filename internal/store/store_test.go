@@ -421,6 +421,11 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	if err := s.PutCallTask(ctx, CallTask{ContextID: "c-anna", Agent: "ben", TaskID: "r1", RemoteContextID: "rc"}); err != nil {
 		t.Fatalf("PutCallTask() error = %v", err)
 	}
+	for _, contextID := range []string{"c-anna", "c-shared"} {
+		if err := s.AddToolGrant(ctx, contextID, "pair:bob", "edit"); err != nil {
+			t.Fatalf("AddToolGrant(%s) error = %v", contextID, err)
+		}
+	}
 
 	if err := s.DeletePairing(ctx, "anna", "pair:anna", "node:anna"); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
@@ -466,6 +471,12 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	}
 	if ok, err := s.HasCallTask(ctx, "c-anna", "ben", "r1"); err != nil || ok {
 		t.Fatalf("HasCallTask() after DeletePairing() = %v, %v, want false, nil", ok, err)
+	}
+	if rules, err := s.ToolGrants(ctx, "c-anna", "pair:bob"); err != nil || len(rules) != 0 {
+		t.Fatalf("ToolGrants() of the removed user's conversation = %q, %v, want none", rules, err)
+	}
+	if rules, err := s.ToolGrants(ctx, "c-shared", "pair:bob"); err != nil || len(rules) != 1 {
+		t.Fatalf("ToolGrants() of a conversation with other tasks = %q, %v, want one", rules, err)
 	}
 	var blobs int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {

@@ -116,7 +116,7 @@ func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.Execu
 	return func(yield func(a2a.Event, error) bool) {
 		if opt, ok := replyOption(execCtx.Message, q); ok {
 			p, _ := auth.Caller(ctx)
-			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "tool", q.Title, "option", opt.ID)
+			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "kind", q.Kind, "option", opt.ID)
 			if isRejection(opt.ID) {
 				e.notes.add(execCtx.TaskID, "Tool call rejected: "+q.Title+".")
 			}

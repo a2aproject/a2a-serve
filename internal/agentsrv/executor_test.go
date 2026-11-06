@@ -613,6 +613,25 @@ func TestRejectedToolCallIsNotedInTheResult(t *testing.T) {
 	}
 }
 
+func TestAlwaysAllowsTheRuleInTheConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+	q := approvals.FromStatus(asked.Status)
+	want := []approvals.Option{{ID: "once", Label: "Allow once"}, {ID: "always", Label: "Always allow git push *"}, {ID: "reject", Label: "Deny"}}
+	if q == nil || !cmp.Equal(want, q.Options) {
+		t.Fatalf("question = %+v, want the options %v", q, want)
+	}
+
+	wantResult(t, send(t, c, userText("always", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+
+	wantResult(t, send(t, c, userText("ask", "", asked.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+	if other := send(t, c, userText("ask", "", "")); other.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task in another conversation state = %s, want %s", other.Status.State, a2a.TaskStateInputRequired)
+	}
+}
+
 // Not parallel: it replaces the default logger, which the server logs to.
 func TestApprovalAnswersAreLogged(t *testing.T) {
 	var logs lockedBuffer
@@ -623,14 +642,17 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 
 	answered := send(t, c, userText("ask", "", ""))
-	send(t, c, userText("approve", string(answered.ID), answered.ContextID))
+	send(t, c, userText("always", string(answered.ID), answered.ContextID))
+	granted := send(t, c, userText("ask", "", answered.ContextID))
 	if err := ts.srv.rt.Update(func(c *agentdir.Config) error { c.Approvals.Deny = []string{"execute"}; return nil }); err != nil {
 		t.Fatalf("Runtime.Update() error = %v", err)
 	}
 	denied := send(t, c, userText("ask", "", ""))
 
 	for _, want := range []string{
-		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me tool="git push" option=once`, answered.ID),
+		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me kind=execute option=always`, answered.ID),
+		fmt.Sprintf(`msg="tool calls allowed for the conversation" task=%s context=%s rule="command:git push *" user=pair:me by=pair:me`, answered.ID, answered.ContextID),
+		fmt.Sprintf(`msg="approval answered by a grant of the conversation" task=%s rule="command:git push *" kind=execute user=pair:me option=once`, granted.ID),
 		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=execute kind=execute option=reject`, denied.ID),
 	} {
 		if !strings.Contains(logs.String(), want) {

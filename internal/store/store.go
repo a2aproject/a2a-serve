@@ -278,6 +278,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT ''`)
 		return err
 	},
+	// 17: tool calls that someone allowed always in a conversation.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TABLE tool_grants (
+	context_id TEXT NOT NULL, user_id TEXT NOT NULL, rule TEXT NOT NULL, created INTEGER NOT NULL,
+	PRIMARY KEY (context_id, user_id, rule))`)
+		return err
+	},
 }
 
 const schemaV1 = `

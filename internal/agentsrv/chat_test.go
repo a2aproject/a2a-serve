@@ -141,7 +141,9 @@ func TestRouterTurnAndApprovalInChat(t *testing.T) {
 		t.Fatalf("question options = %v, want 3", q.Question.Options)
 	}
 	ts.ch.Click("telegram:1", "dm1", ref, q.Question, 1)
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Pushed (always)."))
+	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Pushed (allow)."))
+	ts.ch.WaitEdited(t, ref, "✓ Always allow git push * by")
+	ts.ch.WaitEdited(t, ref, ", for this conversation")
 }
 
 func TestRouterTypedAnswer(t *testing.T) {
@@ -152,7 +154,7 @@ func TestRouterTypedAnswer(t *testing.T) {
 	linkOwner(t, ts, "me@example.com", "thread1")
 
 	ts.ch.Write("me@example.com", "thread1", "ask")
-	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always, deny"))
+	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always (allows git push * in this conversation), deny"))
 	ts.ch.Write("me@example.com", "thread1", "deny")
 	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Push denied."))
 }
@@ -164,11 +166,11 @@ func TestRouterTypedAnswerWithMoreTextIsAmbiguous(t *testing.T) {
 	ts := startServer(t, serverOpts{channel: ch})
 	linkOwner(t, ts, "me@example.com", "thread1")
 	ts.ch.Write("me@example.com", "thread1", "ask")
-	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always, deny"))
+	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always (allows git push * in this conversation), deny"))
 
 	ts.ch.Write("me@example.com", "thread1", "yes\n\nbut only in tests/")
 
-	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply with only one of: approve, always, deny."))
+	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply with only one of: approve, always (allows git push * in this conversation), deny."))
 	ts.ch.Write("me@example.com", "thread1", "deny")
 	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Push denied."))
 }
@@ -180,7 +182,7 @@ func TestRouterTypedReplyAfterStoppedQuestionReachesAgent(t *testing.T) {
 	ts := startServer(t, serverOpts{channel: ch})
 	linkOwner(t, ts, "me@example.com", "thread1")
 	ts.ch.Write("me@example.com", "thread1", "ask")
-	ref, _ := ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always, deny"))
+	ref, _ := ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always (allows git push * in this conversation), deny"))
 
 	ts.ch.Write("me@example.com", "thread1", "/stop")
 	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Stopped."))
@@ -212,7 +214,7 @@ func TestRouterTypedReplyAfterRestartReachesAgent(t *testing.T) {
 	ts := startServer(t, serverOpts{channel: ch})
 	linkOwner(t, ts, "me@example.com", "thread1")
 	ts.ch.Write("me@example.com", "thread1", "ask")
-	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always, deny"))
+	ts.ch.WaitFor(t, "thread1", channeltest.HasText("Reply approve, always (allows git push * in this conversation), deny"))
 	root := ts.dir.Root
 	ts.stop()
 
@@ -272,7 +274,7 @@ func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
 	ts.ch.Write("stranger@example.org", "thread9", "ask")
 	ts.ch.WaitFor(t, "thread9", channeltest.HasText("This needs the owner's approval"))
 	_, q := ts.ch.WaitFor(t, "owner-thread", channeltest.HasText("an anonymous caller, needs your approval"))
-	if !strings.Contains(q.Text, "stranger@example.org") || !strings.Contains(q.Text, "Reply approve, always, deny") {
+	if !strings.Contains(q.Text, "stranger@example.org") || !strings.Contains(q.Text, "Reply approve, always (allows git push * in this conversation), deny") {
 		t.Fatalf("owner chat question = %q, want it to name the sender and how to answer", q.Text)
 	}
 	ts.ch.Write("me@example.com", "owner-thread", "approve")
@@ -352,7 +354,7 @@ func TestRouterUnattendedApprovalGoesToOwnerChat(t *testing.T) {
 		t.Fatalf("question text = %q, want it to name anna", q.Text)
 	}
 	ts.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	ts.ch.WaitEdited(t, ref, "✓ Allow by owner")
+	ts.ch.WaitEdited(t, ref, "✓ Allow once by owner")
 }
 
 func TestRouterChatTurnApprovalGoesToItsUser(t *testing.T) {

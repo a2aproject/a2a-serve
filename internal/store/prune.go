@@ -98,7 +98,7 @@ func deleteTasks(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]
 }
 
 // contextTables keep the state of a context, which goes with its last task.
-var contextTables = []string{"convs", "sessions", "handles", "call_tasks"}
+var contextTables = []string{"convs", "sessions", "handles", "call_tasks", "tool_grants"}
 
 // forgetTasks deletes the attachment references and questions of deleted
 // tasks, and the rows of contextTables for the contexts left without tasks.

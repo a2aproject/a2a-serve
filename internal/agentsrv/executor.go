@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
@@ -43,6 +44,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // harnessSocketName is the name of the Unix socket an agent process reaches
@@ -67,7 +69,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		s.logf("! %s", w)
 	}
 
-	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(h.process(harnessLog)), s.acpConfig())
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
 	}
@@ -108,7 +110,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 	// Approvals reject questions after AnonymousQuestionTimeout; this stops
 	// the turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.AnonymousQuestionTimeout + time.Minute
-	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(h.process(harnessLog)), cfg)
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), cfg)
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.stop(ctx))
 	}
@@ -133,7 +135,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	// Approvals reject questions after UserQuestionTimeout; this stops the
 	// turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.UserQuestionTimeout + time.Minute
-	acp, err := a2aacp.NewExecutor(ctx, s.procs.track(start), cfg)
+	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
 	}
@@ -527,6 +529,9 @@ type observedExecutor struct {
 	notes *toolNotes
 	// moved continues conversations whose session is in another workspace.
 	moved *movedConversations
+	// decider suggests the rule that the always option of a permission
+	// allows.
+	decider *toolDecider
 }
 
 var (
@@ -559,14 +564,92 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	}
 	// a2aacp takes a reply that isn't an answer as a new instruction, and
 	// rejects the tool call without saying so.
-	events := e.withCallerQuestion(execCtx, e.turn(ctx, execCtx))
-	if q := pendingApproval(execCtx.StoredTask); q != nil {
-		if !answersQuestion(execCtx.Message, q) {
-			return e.observe(ctx, execCtx, refuseReply(execCtx, q))
-		}
-		events = e.withAnswer(ctx, execCtx, q, events)
+	q := pendingApproval(execCtx.StoredTask)
+	if q == nil {
+		return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
 	}
-	return e.observe(ctx, execCtx, events)
+	opt, chosen := replyOption(execCtx.Message, q)
+	_, ownOptions := q.AgentOption(a2aacp.OptionOnce)
+	if !answersQuestion(execCtx.Message, q) || (ownOptions && !chosen) {
+		return e.observe(ctx, execCtx, refuseReply(execCtx, q))
+	}
+	answer := execCtx
+	if ownOptions {
+		var err error
+		if answer, err = agentAnswer(execCtx, q, opt); err != nil {
+			slog.Warn("translating an approval", "task", execCtx.TaskID, "error", err)
+			return e.observe(ctx, execCtx, askAgain(execCtx, reask(execCtx, "I couldn't pass the answer on, so the question still waits for an answer. Try again.\n")))
+		}
+	}
+	return e.observe(ctx, execCtx, e.withAnswer(ctx, execCtx, q, e.withCallerQuestion(answer, e.turn(ctx, answer))))
+}
+
+// agentAnswer returns execCtx with its reply to q, a question with the
+// server's options, translated to the agent's option. "always" becomes
+// the option that allows once: [ruleAnswers] saved the grant of the
+// conversation before the execution, and the server enforces it.
+func agentAnswer(execCtx *a2asrv.ExecutorContext, q *approvals.Question, opt approvals.Option) (*a2asrv.ExecutorContext, error) {
+	agentOption, _ := q.AgentOption(opt.ID)
+	part, err := structuredinput.NewResponsePart(q.ID, a2aacp.Answer{Option: agentOption})
+	if err != nil {
+		return nil, err
+	}
+	msg := *execCtx.Message
+	msg.Parts = []*a2a.Part{part}
+	out := *execCtx
+	out.Message = &msg
+	return &out, nil
+}
+
+// withServerOptions gives the permission questions of the agent the
+// server's options, with the narrowest useful rule for the always option.
+func (e *observedExecutor) withServerOptions(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		for ev, err := range events {
+			if err == nil {
+				ev = e.serverOptions(execCtx, ev)
+			}
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+func (e *observedExecutor) serverOptions(execCtx *a2asrv.ExecutorContext, ev a2a.Event) a2a.Event {
+	var status a2a.TaskStatus
+	switch v := ev.(type) {
+	case *a2a.TaskStatusUpdateEvent:
+		status = v.Status
+	case *a2a.Task:
+		status = v.Status
+	default:
+		return ev
+	}
+	q := approvals.FromStatus(status)
+	if q == nil || q.Type != approvals.TypePermission {
+		return ev
+	}
+	rule := ""
+	if e.decider != nil {
+		rule = toolrules.Suggest(e.decider.call(q.Kind, q.ToolTitle, q.ToolInput))
+	}
+	msg, err := approvals.WithServerOptions(status.Message, rule)
+	if err != nil {
+		slog.Warn("writing the options of an approval", "task", execCtx.TaskID, "error", err)
+		return ev
+	}
+	switch v := ev.(type) {
+	case *a2a.TaskStatusUpdateEvent:
+		c := *v
+		c.Status.Message = msg
+		return &c
+	case *a2a.Task:
+		c := *v
+		c.Status.Message = msg
+		return &c
+	}
+	return ev
 }
 
 // turn runs a turn of the agent, with the line of the agents it may call
@@ -578,7 +661,7 @@ func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorCon
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
 	prompted, moved := e.moved.withEarlier(ctx, withLine)
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.inner.Execute(ctx, prompted))))
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted)))))
 	if prompted == execCtx && !moved {
 		return events
 	}
@@ -748,6 +831,8 @@ type callerInterceptor struct {
 	budget    *anonymousBudget
 	keys      *agentKeys
 	users     *userAgents
+	// answers saves what answers to permission questions allow.
+	answers *ruleAnswers
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -800,6 +885,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	}
 	if msg.Message.TaskID != "" {
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
+			return ctx, nil, err
+		}
+		if err := i.answers.record(ctx, p, msg.Message); err != nil {
 			return ctx, nil, err
 		}
 	}

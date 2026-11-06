@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -146,10 +145,9 @@ func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controla
 	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch))
 }
 
-// reloadConfig applies the live settings of config.yaml. When they deny
-// more tools, it restarts the agent processes, which forget the tool calls
-// callers allowed always. Otherwise the new rules answer the approvals that
-// wait.
+// reloadConfig applies the live settings of config.yaml, and the new rules
+// answer the approvals that wait. Rules decide before the grants of
+// conversations, so a new deny stops the calls that grants allowed.
 func (s *Server) reloadConfig(ctx context.Context) error {
 	before := s.rt.Config()
 	if err := s.rt.Reload(); err != nil {
@@ -158,13 +156,5 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	if before.Policy.PrivateAllowOutgoing != s.rt.Config().Policy.PrivateAllowOutgoing {
 		s.refreshInstructions(ctx)
 	}
-	if !tightened(before.Approvals.Deny, s.rt.Config().Approvals.Deny) {
-		return s.answerWaiting(ctx)
-	}
-	n, err := s.procs.restart()
-	if err != nil {
-		return fmt.Errorf("restarting the agent processes for the new deny-tools: %w", err)
-	}
-	slog.Info("restarted the agent processes, so that the new deny-tools apply to tools allowed always", "count", n)
-	return nil
+	return s.answerWaiting(ctx)
 }

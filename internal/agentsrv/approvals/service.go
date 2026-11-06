@@ -330,11 +330,20 @@ func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID s
 	slog.Info("rejected an unanswered approval", "task", taskID)
 }
 
-// Starter returns the user who started the task.
-func (r *Records) Starter(ctx context.Context, taskID a2a.TaskID) string {
+// TaskUser returns the user who started a stored task.
+func (r *Records) TaskUser(ctx context.Context, taskID a2a.TaskID) (string, error) {
 	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
-	if err == nil {
-		return stored.User
+	if err != nil {
+		return "", err
+	}
+	return stored.User, nil
+}
+
+// Starter returns the user who started the task, or the caller when the
+// task isn't stored yet.
+func (r *Records) Starter(ctx context.Context, taskID a2a.TaskID) string {
+	if user, err := r.TaskUser(ctx, taskID); err == nil {
+		return user
 	}
 	if p, ok := auth.Caller(ctx); ok {
 		return p.ID
