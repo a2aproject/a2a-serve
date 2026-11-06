@@ -75,73 +75,85 @@ func (d *toolDecider) rules() toolrules.Rules {
 	return toolrules.Rules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
 }
 
+// decision is how a call is answered without asking.
+type decision struct {
+	allow bool
+	// entry is the rule, preference or grant that decided, and by what it
+	// is.
+	entry string
+	by    string
+	// user is the person whose preference or grant decided.
+	user string
+}
+
+// What decides a call.
+const (
+	byRule       = "rule"
+	byPreference = "preference"
+	byGrant      = "grant of the conversation"
+)
+
+// decide answers call with the rules, then the preferences of user, who
+// started its task, then the grants of the conversation for user. It
+// returns false if none decides; without a user, only the rules decide.
+func (d *toolDecider) decide(ctx context.Context, contextID, user string, call toolrules.Call) (decision, bool, error) {
+	if dec, ok := d.rules().Decide(call); ok {
+		return decision{allow: dec.Allow, entry: dec.Entry, by: byRule}, true, nil
+	}
+	if user == "" || d.store == nil {
+		return decision{}, false, nil
+	}
+	prefs, err := d.store.ToolPreferences(ctx, user)
+	if err != nil {
+		return decision{}, false, err
+	}
+	if rule, ok := toolrules.Match(prefs, call); ok {
+		return decision{allow: true, entry: rule, by: byPreference, user: user}, true, nil
+	}
+	grants, err := d.store.ToolGrants(ctx, contextID, user)
+	if err != nil {
+		return decision{}, false, err
+	}
+	if rule, ok := toolrules.Match(grants, call); ok {
+		return decision{allow: true, entry: rule, by: byGrant, user: user}, true, nil
+	}
+	return decision{}, false, nil
+}
+
 func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
 	if q.Tool == nil {
 		return a2aacp.Answer{}, false
 	}
-	call := d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input)
-	dec, ok := d.rules().Decide(call)
-	if !ok {
-		return d.granted(ctx, execCtx, q, call)
-	}
-	ans, ok := ruleAnswer(q.Options, dec.Allow)
-	if !ok {
-		return ans, false
-	}
+	var contextID, user string
+	var taskID a2a.TaskID
 	if execCtx != nil {
-		if !dec.Allow {
-			d.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
+		contextID, taskID = execCtx.ContextID, execCtx.TaskID
+		var err error
+		if user, err = d.starter(ctx, execCtx); err != nil {
+			slog.Warn("looking up who started a task, asking only the rules", "task", taskID, "error", err)
 		}
-		slog.Info("approval answered by a rule", "task", execCtx.TaskID, "rule", dec.Entry, "kind", q.Tool.Kind, "option", ans.Option)
 	}
+	dec, ok, err := d.decide(ctx, contextID, user, d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input))
+	if err != nil {
+		slog.Warn("reading what a person allowed, asking", "task", taskID, "error", err)
+		return a2aacp.Answer{}, false
+	}
+	if !ok {
+		return a2aacp.Answer{}, false
+	}
+	ans, ok := ruleAnswer(q.Options, dec.allow)
+	if !ok || execCtx == nil {
+		return ans, ok
+	}
+	if !dec.allow {
+		d.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
+	}
+	attrs := []any{"task", execCtx.TaskID, "rule", dec.entry, "kind", q.Tool.Kind}
+	if dec.user != "" {
+		attrs = append(attrs, "user", dec.user)
+	}
+	slog.Info("approval answered by a "+dec.by, append(attrs, "option", ans.Option)...)
 	return ans, true
-}
-
-// granted allows a call that a preference of the person who started the
-// task covers, or a grant of the conversation for that person.
-func (d *toolDecider) granted(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question, call toolrules.Call) (a2aacp.Answer, bool) {
-	if execCtx == nil || d.store == nil {
-		return a2aacp.Answer{}, false
-	}
-	user, err := d.starter(ctx, execCtx)
-	if err != nil {
-		slog.Warn("looking up who started a task, asking", "task", execCtx.TaskID, "error", err)
-		return a2aacp.Answer{}, false
-	}
-	rule, by, err := d.allowedFor(ctx, execCtx.ContextID, user, call)
-	if err != nil {
-		slog.Warn("reading what a person allowed, asking", "task", execCtx.TaskID, "error", err)
-		return a2aacp.Answer{}, false
-	}
-	if rule == "" {
-		return a2aacp.Answer{}, false
-	}
-	ans, ok := ruleAnswer(q.Options, true)
-	if ok {
-		slog.Info("approval answered by a "+by, "task", execCtx.TaskID, "rule", rule, "kind", q.Tool.Kind, "user", user, "option", ans.Option)
-	}
-	return ans, ok
-}
-
-// allowedFor returns the preference of user, or else the grant of the
-// conversation for user, that allows call, and what it is; or "" if none
-// does.
-func (d *toolDecider) allowedFor(ctx context.Context, contextID, user string, call toolrules.Call) (rule, by string, err error) {
-	prefs, err := d.store.ToolPreferences(ctx, user)
-	if err != nil {
-		return "", "", err
-	}
-	if rule, ok := toolrules.Match(prefs, call); ok {
-		return rule, "preference", nil
-	}
-	grants, err := d.store.ToolGrants(ctx, contextID, user)
-	if err != nil {
-		return "", "", err
-	}
-	if rule, ok := toolrules.Match(grants, call); ok {
-		return rule, "grant of the conversation", nil
-	}
-	return "", "", nil
 }
 
 // ruleAnswer returns the option that allows a tool call once, or always if

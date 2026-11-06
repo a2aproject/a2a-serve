@@ -157,6 +157,45 @@ func TestDenyToolsEndGrants(t *testing.T) {
 	}
 }
 
+func TestDenyToolsAnswersPendingApprovalsAndEndsPreferences(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	waiting := send(t, c, userText("ask", "", ""))
+	if err := ts.srv.prefs.Allow(context.Background(), "pair:me", "command:whoami *"); err != nil {
+		t.Fatalf("Preferences.Allow() error = %v", err)
+	}
+	wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "Ran whoami (allow).")
+	saved, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	saved.Approvals.Deny = []string{"execute"}
+	if err := ts.dir.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	if _, err := controlapi.NewClient(ts.dir).ReloadConfig(context.Background()); err != nil {
+		t.Fatalf("ReloadConfig() error = %v", err)
+	}
+
+	wantResult(t, waitState(t, c, waiting.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
+	wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "whoami denied.")
+}
+
+func TestPreferenceAnswersPendingApprovals(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	waiting := send(t, bob, userText("ask", "", ""))
+
+	if err := ts.srv.prefs.Allow(context.Background(), "pair:bob", "command:git push *"); err != nil {
+		t.Fatalf("Preferences.Allow() error = %v", err)
+	}
+
+	wantResult(t, waitState(t, bob, waiting.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
+}
+
 func TestAllowToolsAnswersPendingApprovals(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})

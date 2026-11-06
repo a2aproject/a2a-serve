@@ -146,8 +146,8 @@ func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controla
 }
 
 // reloadConfig applies the live settings of config.yaml, and the new rules
-// answer the approvals that wait. Rules decide before the grants of
-// conversations, so a new deny stops the calls that grants allowed.
+// answer the approvals that wait. Rules decide before preferences and the
+// grants of conversations, so a new deny stops the calls they allowed.
 func (s *Server) reloadConfig(ctx context.Context) error {
 	before := s.rt.Config()
 	if err := s.rt.Reload(); err != nil {
@@ -156,5 +156,5 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	if before.Policy.PrivateAllowOutgoing != s.rt.Config().Policy.PrivateAllowOutgoing {
 		s.refreshInstructions(ctx)
 	}
-	return s.answerWaiting(ctx)
+	return s.answerWaiting(ctx, nil)
 }

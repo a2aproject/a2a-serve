@@ -37,6 +37,9 @@ import (
 type ruleAnswers struct {
 	store *store.Store
 	tasks *store.TaskStore
+	// granted answers the approvals that wait and that a new grant allows,
+	// besides the one of task except. Optional.
+	granted func(ctx context.Context, except a2a.TaskID)
 }
 
 // record saves what msg, p's reply to a stored task, allows.
@@ -71,6 +74,9 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, msg *a2a.Mes
 		return fmt.Errorf("%w: couldn't save the answer, so the question still waits for an answer; try again", a2a.ErrServerError)
 	}
 	slog.Info("tool calls allowed for the conversation", "task", msg.TaskID, "context", stored.Task.ContextID, "rule", q.Rule, "user", stored.User, "by", p.ID)
+	if r.granted != nil {
+		r.granted(ctx, msg.TaskID)
+	}
 	if !own {
 		return nil
 	}

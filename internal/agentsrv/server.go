@@ -171,6 +171,8 @@ type Server struct {
 	decider *toolDecider
 	// prefs are the tool calls people allowed in all their conversations.
 	prefs *approvals.Preferences
+	// allowed answers the approvals that new preferences and grants decide.
+	allowed *allowedAnswers
 	// sessions are the ACP sessions of the conversations in the current
 	// workspace. The agent keys of conversations come from all sessions.
 	sessions store.SessionStore
@@ -395,7 +397,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.notes = newToolNotes()
-	s.prefs = approvals.NewPreferences(s.store, nil)
+	s.allowed = newAllowedAnswers()
+	s.prefs = approvals.NewPreferences(s.store, func(ctx context.Context) { s.answerAllowed(ctx, "") })
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes, store: s.store, taskUser: records.TaskUser}
 	s.sessions = s.store.Sessions().In(s.workspace)
@@ -477,7 +480,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, answers: &ruleAnswers{store: s.store, tasks: s.tasks}}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),
@@ -596,6 +599,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	s.background.Go(func() { s.watchState(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
+	s.background.Go(func() { s.allowed.run(ctx, s.answerWaiting) })
 	s.startBackups(ctx)
 	return errc, s.printSummary(ctx, ownerErr)
 }
