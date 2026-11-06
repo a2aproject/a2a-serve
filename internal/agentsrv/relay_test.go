@@ -234,37 +234,37 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	reviewerCtl := controlapi.NewClient(reviewer.dir)
 
 	_, _, pubURL := reviewer.srv.URLs()
-	cardResp, err := http.Get(pubURL + "/.well-known/agent-card.json")
+	cardResp, err := testHTTP.Get(pubURL + "/.well-known/agent-card.json")
 	if err != nil {
-		t.Fatalf("http.Get(public card) error = %v, want nil", err)
+		t.Fatalf("testHTTP.Get(public card) error = %v, want nil", err)
 	}
 	if err := cardResp.Body.Close(); err != nil {
 		t.Fatalf("cardResp.Body.Close() error = %v, want nil", err)
 	}
 	if cardResp.StatusCode != http.StatusOK {
-		t.Fatalf("http.Get(public card) status = %d, want %d", cardResp.StatusCode, http.StatusOK)
+		t.Fatalf("testHTTP.Get(public card) status = %d, want %d", cardResp.StatusCode, http.StatusOK)
 	}
 
-	unauthResp, err := http.Post(pubURL+"/", "application/json", strings.NewReader(`{}`))
+	unauthResp, err := testHTTP.Post(pubURL+"/", "application/json", strings.NewReader(`{}`))
 	if err != nil {
-		t.Fatalf("http.Post(public unauthenticated) error = %v, want nil", err)
+		t.Fatalf("testHTTP.Post(public unauthenticated) error = %v, want nil", err)
 	}
 	if err := unauthResp.Body.Close(); err != nil {
 		t.Fatalf("unauthResp.Body.Close() error = %v, want nil", err)
 	}
 	if unauthResp.StatusCode != http.StatusUnauthorized {
-		t.Fatalf("http.Post(public unauthenticated) status = %d, want %d", unauthResp.StatusCode, http.StatusUnauthorized)
+		t.Fatalf("testHTTP.Post(public unauthenticated) status = %d, want %d", unauthResp.StatusCode, http.StatusUnauthorized)
 	}
 
 	extCode, err := reviewerCtl.Pair(ctx, controlapi.PairCodeRequest{Name: "external"})
 	if err != nil {
 		t.Fatalf("reviewerCtl.Pair(external) error = %v, want nil", err)
 	}
-	extCred, err := credstore.Pair(ctx, http.DefaultClient, pubURL, extCode.Code, pairapi.PairingPerson)
+	extCred, err := credstore.Pair(ctx, testHTTP, pubURL, extCode.Code, pairapi.PairingPerson)
 	if err != nil {
 		t.Fatalf("credstore.Pair() error = %v, want nil", err)
 	}
-	extHTTP := manage.TokenClient(http.DefaultClient, store.Contact{URL: pubURL, Token: extCred.Token})
+	extHTTP := manage.TokenClient(testHTTP, store.Contact{URL: pubURL, Token: extCred.Token})
 	card, err := agentcard.NewResolver(extHTTP).Resolve(ctx, pubURL)
 	if err != nil {
 		t.Fatalf("agentcard.Resolve(public) error = %v, want nil", err)
@@ -541,7 +541,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 func (n *testRelayNode) HTTPClient() *http.Client {
 	return &http.Client{Transport: roundTripperFunc(func(r *http.Request) (*http.Response, error) {
 		if r.URL == nil || !strings.EqualFold(r.URL.Host, network.AgentMeshHost) {
-			return http.DefaultTransport.RoundTrip(r)
+			return testHTTP.Transport.RoundTrip(r)
 		}
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/"), "/")
 		if len(parts) < 4 || parts[0] != "mesh" || parts[2] != "a2a" {

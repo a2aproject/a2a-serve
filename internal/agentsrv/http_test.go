@@ -131,7 +131,7 @@ func TestPrivateNetworkAccess(t *testing.T) {
 			tc.provider.net, tc.provider.name = &fakeNet{agents: map[string]string{}}, "coder"
 			ts := startServer(t, serverOpts{private: tc.provider, configure: func(c *agentdir.Config) { c.Policy.PrivateAccess = tc.access }})
 			_, private, _ := ts.srv.URLs()
-			resp, err := http.Post(private+"/", "application/json", strings.NewReader(listTasksRPC))
+			resp, err := testHTTP.Post(private+"/", "application/json", strings.NewReader(listTasksRPC))
 			if err != nil {
 				t.Fatalf("POST private error = %v", err)
 			}

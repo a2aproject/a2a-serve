@@ -293,7 +293,7 @@ type staticPeers struct {
 
 func (p *staticPeers) Peers(context.Context) ([]network.PeerInfo, error) { return p.peers, nil }
 
-func (p *staticPeers) HTTPClient() *http.Client { return http.DefaultClient }
+func (p *staticPeers) HTTPClient() *http.Client { return testHTTP }
 
 type askedQuestion struct {
 	To     approvals.Chat

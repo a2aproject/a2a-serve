@@ -231,7 +231,7 @@ func TestPairCodeSetsKind(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Pair() error = %v", err)
 			}
-			_, err = pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code, tc.kind)
+			_, err = pairapi.Pair(ctx, testHTTP, ts.localURL(), code.Code, tc.kind)
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("pairapi.Pair() error = %v, want %q", err, tc.wantErr)
@@ -254,7 +254,7 @@ func TestPairRefusesOwnerLinkCode(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant"})
 	code := ownerCode(t, ts)
 
-	if _, err := pairapi.Pair(context.Background(), http.DefaultClient, ts.localURL(), code, pairapi.PairingPerson); err == nil || !strings.Contains(err.Error(), "links your chat account") {
+	if _, err := pairapi.Pair(context.Background(), testHTTP, ts.localURL(), code, pairapi.PairingPerson); err == nil || !strings.Contains(err.Error(), "links your chat account") {
 		t.Fatalf("pairapi.Pair() with the owner link code error = %v, want a hint to send it to the bot", err)
 	}
 	if _, err := ts.srv.store.TakeCode(context.Background(), auth.NormalizeCode(code), store.AnyCode); err != nil {

@@ -52,6 +52,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 var fakeACP string
 
 // migratedDB is a server.db with every migration applied. Migrations take
@@ -287,7 +292,7 @@ func (ts *testServer) pair(name, role string) string {
 	if err != nil {
 		ts.t.Fatalf("Pair() error = %v", err)
 	}
-	resp, err := pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code, pairapi.PairingPerson)
+	resp, err := pairapi.Pair(ctx, testHTTP, ts.localURL(), code.Code, pairapi.PairingPerson)
 	if err != nil {
 		ts.t.Fatalf("pairapi.Pair() error = %v", err)
 	}
@@ -297,7 +302,7 @@ func (ts *testServer) pair(name, role string) string {
 // client returns an A2A client authenticated with token.
 func (ts *testServer) client(token string) *a2aclient.Client {
 	ts.t.Helper()
-	hc := manage.TokenClient(http.DefaultClient, store.Contact{URL: ts.localURL(), Token: token})
+	hc := manage.TokenClient(testHTTP, store.Contact{URL: ts.localURL(), Token: token})
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, ts.localURL())
 	if err != nil {

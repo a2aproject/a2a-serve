@@ -29,6 +29,11 @@ import (
 	"tailscale.com/ipn"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 func TestProbeAgents(t *testing.T) {
 	t.Parallel()
 	agent := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -44,7 +49,7 @@ func TestProbeAgents(t *testing.T) {
 	other := httptest.NewServer(http.NotFoundHandler())
 	defer other.Close()
 
-	got := ProbeAgents(t.Context(), http.DefaultClient, []PeerInfo{
+	got := ProbeAgents(t.Context(), testHTTP, []PeerInfo{
 		{Name: "laptop", URL: agent.URL, Online: true},
 		{Name: "printer", URL: other.URL, Online: true},
 	}, nil)
@@ -119,7 +124,7 @@ func TestProbeAgentsNamesAgentsUniquely(t *testing.T) {
 			}
 
 			got := map[string]string{}
-			for _, p := range ProbeAgents(t.Context(), http.DefaultClient, candidates, tc.taken) {
+			for _, p := range ProbeAgents(t.Context(), testHTTP, candidates, tc.taken) {
 				got[p.Node] = p.Name
 			}
 

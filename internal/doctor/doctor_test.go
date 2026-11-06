@@ -112,7 +112,7 @@ func (m *fakeMachine) Env() Env {
 			}
 			return nil, nil
 		},
-		HTTP: http.DefaultClient,
+		HTTP: testHTTP,
 		Status: func(context.Context, agentdir.Dir) (*controlapi.Status, error) {
 			if m.status == nil {
 				return nil, controlapi.ErrNotRunning
