@@ -230,7 +230,7 @@ func (q *Question) Match(text string) (Option, bool) {
 	return Option{}, false
 }
 
-// Words lists the replies Match accepts, for channels without buttons.
+// Words lists the replies Match accepts, for messengers without buttons.
 func (q *Question) Words() string {
 	var words []string
 	for _, o := range q.Options {

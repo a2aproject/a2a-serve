@@ -39,10 +39,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -95,7 +95,7 @@ func openTestStore(t *testing.T) *store.Store {
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -119,7 +119,7 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -161,7 +161,7 @@ func (statusExecutor) Cancel(context.Context, *a2asrv.ExecutorContext) iter.Seq2
 
 func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("telegram")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("telegram")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := auth.WithPrincipal(context.Background(), auth.Owner())
 	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
@@ -169,7 +169,7 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	ts.srv.unattended.Add(contextID)
 	exec := &observedExecutor{
 		inner:     statusExecutor{state: a2a.TaskStateInputRequired, msg: asked.Status.Message},
-		bus:       messenger.NewBus(),
+		bus:       chat.NewBus(),
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
 		notes:     newToolNotes(),
@@ -191,13 +191,13 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 		result = &a2a.Task{ID: u.TaskID, ContextID: u.ContextID, Status: u.Status}
 	}
 	exec.Cleanup(ctx, execCtx, result, nil)
-	ts.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
+	ts.ch.WaitFor(t, "dm1", messengertest.HasQuestion)
 }
 
 func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	t.Parallel()
-	bus := messenger.NewBus()
-	exec := &observedExecutor{bus: bus, unattended: &messenger.ContextSet{}}
+	bus := chat.NewBus()
+	exec := &observedExecutor{bus: bus, unattended: &chat.ContextSet{}}
 	changed, unsubscribe := bus.SubscribeContext("c1")
 	defer unsubscribe()
 	other, unsubscribeOther := bus.SubscribeContext("c2")
@@ -526,10 +526,10 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			unattended := &messenger.ContextSet{}
+			unattended := &chat.ContextSet{}
 			unattended.Add("c1")
 			unattended.Add("c2")
-			e := &observedExecutor{bus: messenger.NewBus(), unattended: unattended, notes: newToolNotes()}
+			e := &observedExecutor{bus: chat.NewBus(), unattended: unattended, notes: newToolNotes()}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
@@ -678,4 +678,40 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 			t.Fatalf("logs have no line with %q; logs:\n%s", want, logs.String())
 		}
 	}
+}
+
+func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
+	t.Parallel()
+	turns := &turnCount{}
+	e := &observedExecutor{bus: messenger.NewBus(), unattended: &messenger.ContextSet{}, notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})}), turns: turns}
+	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
+	completed := func(yield func(a2a.Event, error) bool) {
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
+	}
+	for _, err := range e.observe(t.Context(), execCtx, completed) {
+		if err != nil {
+			t.Fatalf("observe() error = %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	turns.wait(ctx)
+	if ctx.Err() == nil {
+		t.Fatalf("turns.wait() returned after the last event, want it to wait for Cleanup, which a2a-go calls once it stored the event")
+	}
+
+	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
+	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
+	e.Cleanup(t.Context(), &a2asrv.ExecutorContext{TaskID: "t2", ContextID: "c2"}, nil, errors.New("setup failed"))
+	turns.wait(t.Context())
+
+	turns.add()
+	ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	turns.wait(ctx)
+	if ctx.Err() == nil {
+		t.Fatalf("turns.wait() returned while a turn is counted, want extra Cleanup calls to leave the count alone")
+	}
+	turns.done()
 }

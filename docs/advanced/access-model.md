@@ -20,7 +20,7 @@ An agent is reachable from your machine, a private network, a public URL and mes
 | **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL | `--public tailscale\|<relay-url>\|none` |
 | **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. Created with a one-time code; the credential works on every network | `pair invite\|join\|list\|get\|set\|rm` |
 | **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm`; `--private-allow-outgoing everyone` |
-| **Channel** | A messenger the agent answers in: Telegram, Discord or email. Anyone can write to it, so chat accounts reach the agent once linked to a pairing | `channel add\|list\|rm`; `join <code>` in the chat |
+| **Messenger** | A chat app the agent answers in: Telegram, Discord or email. Anyone can write to it, so chat accounts reach the agent once linked to a pairing | `messenger add\|list\|rm`; `join <code>` in the chat |
 
 A pairing and a contact point in opposite directions. When agent `coder` should call agent `reviewer`, `reviewer` pairs `coder` (who may call me) and `coder` adds `reviewer` as a contact (whom I may call):
 
@@ -91,7 +91,7 @@ coder (opencode) running for 2h, pid 41233
 | **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, allow tool calls in their own tasks without asking, and let their conversations call this agent's contacts. Approving tool calls in their own tasks lets them run commands in the shared workspace and read the agent's `--secret` environment variables |
 | **Anyone**, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
 
-### Channels
+### Messengers
 
 | Sender | Treated as |
 |---|---|

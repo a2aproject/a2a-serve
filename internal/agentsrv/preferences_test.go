@@ -24,14 +24,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 )
 
-// chatSession follows the messages of one conversation of a test channel.
+// chatSession follows the messages of one conversation of a test messenger.
 type chatSession struct {
 	t        *testing.T
-	ch       *channeltest.Channel
+	ch       *messengertest.Messenger
 	identity string
 	conv     string
 	seen     map[string]bool
@@ -51,7 +51,7 @@ func (s *chatSession) waitCount(want string, n int) {
 	for time.Now().Before(deadline) {
 		got := 0
 		for _, m := range s.ch.Transcript() {
-			if string(m.Conv) == s.conv && channeltest.HasText(want)(m) {
+			if string(m.Conv) == s.conv && messengertest.HasText(want)(m) {
 				got++
 			}
 		}
@@ -64,22 +64,22 @@ func (s *chatSession) waitCount(want string, n int) {
 }
 
 // question waits for a message with buttons not seen before.
-func (s *chatSession) question() (string, *channel.Question) {
+func (s *chatSession) question() (string, *messenger.Question) {
 	s.t.Helper()
-	ref, m := s.ch.WaitFor(s.t, s.conv, func(m channel.Outbound) bool { return m.Question != nil && !s.seen[questionKey(m)] })
+	ref, m := s.ch.WaitFor(s.t, s.conv, func(m messenger.Outbound) bool { return m.Question != nil && !s.seen[questionKey(m)] })
 	s.seen[questionKey(m)] = true
 	return ref, m.Question
 }
 
-func questionKey(m channel.Outbound) string { return m.Question.ID + "|" + m.Text }
+func questionKey(m messenger.Outbound) string { return m.Question.ID + "|" + m.Text }
 
-func (s *chatSession) click(ref string, q *channel.Question, option int) {
+func (s *chatSession) click(ref string, q *messenger.Question, option int) {
 	s.ch.Click(s.identity, s.conv, ref, q, option)
 }
 
 func TestAlwaysAllowInThreeConversationsOffersAPreference(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	chat := &chatSession{t: t, ch: ts.ch, identity: "telegram:1", conv: "dm1", seen: map[string]bool{}}
 
@@ -184,9 +184,9 @@ func TestPreferencesCoverTheirPersonOnly(t *testing.T) {
 
 func TestAllowedWithoutButtons(t *testing.T) {
 	t.Parallel()
-	ch := channeltest.NewChannel("fake")
+	ch := messengertest.NewMessenger("fake")
 	ch.Buttons = false
-	ts := startServer(t, serverOpts{channel: ch})
+	ts := startServer(t, serverOpts{messenger: ch})
 	linkOwner(t, ts, "me@example.com", "thread1")
 	chat := &chatSession{t: t, ch: ts.ch, identity: "me@example.com", conv: "thread1", seen: map[string]bool{}}
 	chat.write("/allowed", "Nothing runs without asking in your conversations yet.", 1)

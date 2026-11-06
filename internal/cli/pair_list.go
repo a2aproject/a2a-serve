@@ -114,7 +114,7 @@ func printInvited(cfg *globalConfig, all []controlapi.Pairing, heading bool) err
 	}
 	rows := make([][]string, 0, len(all))
 	for _, p := range all {
-		rows = append(rows, []string{p.Name, orDash(p.Kind), p.Role, linkedChannels(p), lastUsed(p)})
+		rows = append(rows, []string{p.Name, orDash(p.Kind), p.Role, linkedMessengers(p), lastUsed(p)})
 	}
 	return cfg.PrintTableOrEmpty([]string{"NAME", "KIND", "ROLE", "LINKED", "LAST USED"}, rows, "no pairings; invite someone with `a2a-serve pair invite <name>`")
 }
@@ -165,12 +165,12 @@ func listJoined(cfg *globalConfig) ([]joinedAgent, error) {
 	return out, nil
 }
 
-// linkedChannels names the messengers of the accounts linked to p.
-func linkedChannels(p controlapi.Pairing) string {
+// linkedMessengers names the messengers of the accounts linked to p.
+func linkedMessengers(p controlapi.Pairing) string {
 	var out []string
 	for _, a := range p.Accounts {
-		if !slices.Contains(out, a.Channel) {
-			out = append(out, a.Channel)
+		if !slices.Contains(out, a.Messenger) {
+			out = append(out, a.Messenger)
 		}
 	}
 	return orDash(strings.Join(out, ","))

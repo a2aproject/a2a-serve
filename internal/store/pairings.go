@@ -135,7 +135,7 @@ func removedTasksOf(users []PairingUser) (string, []any) {
 // its webhook node and the node's watches. users are the users the pairing
 // acts as. Their schedules, watches, questions and allowed tool calls go
 // with it, and so do their tasks and every task of the conversations that
-// run in their agent processes. The channel conversations, agent sessions
+// run in their agent processes. The messenger conversations, agent sessions
 // and handles of the contexts left without tasks go too, so a new pairing
 // with the same name starts with none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, users ...PairingUser) error {
@@ -188,7 +188,7 @@ type PairingRemoval struct {
 	Tasks int
 	// Unfinished is the number of Tasks that are canceled first.
 	Unfinished int
-	// Conversations are the channel conversations of contexts left without
+	// Conversations are the messenger conversations of contexts left without
 	// tasks.
 	Conversations int
 	// Preferences are the tool calls the users allowed in all their
@@ -388,10 +388,10 @@ func (s *Store) PruneSignIns(ctx context.Context, allowed func(email, domain str
 // Link ties a chat account to a pairing. Conv is the conversation of the
 // account's direct chat, where the agent can reach the pairing unprompted.
 type Link struct {
-	Channel  string
-	Identity string
-	Pairing  string
-	Conv     string
+	Messenger string
+	Identity  string
+	Pairing   string
+	Conv      string
 }
 
 // PutLink links a chat account to a pairing, replacing an existing link. A
@@ -404,17 +404,17 @@ func (s *Store) putLinkTx(ctx context.Context, tx *sql.Tx, l Link, kind string) 
 	if err := setKindIfUnset(ctx, tx, l.Pairing, kind); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO links (channel, identity, pairing, conv, created) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (channel, identity) DO UPDATE SET pairing = excluded.pairing, conv = excluded.conv`,
-		l.Channel, l.Identity, l.Pairing, l.Conv, s.now().UnixNano())
+	_, err := tx.ExecContext(ctx, `INSERT INTO links (messenger, identity, pairing, conv, created) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT (messenger, identity) DO UPDATE SET pairing = excluded.pairing, conv = excluded.conv`,
+		l.Messenger, l.Identity, l.Pairing, l.Conv, s.now().UnixNano())
 	return err
 }
 
 // LinkOf returns the link of a chat account.
-func (s *Store) LinkOf(ctx context.Context, channel, identity string) (Link, error) {
-	l := Link{Channel: channel, Identity: identity}
-	err := s.reads.QueryRowContext(ctx, `SELECT pairing, conv FROM links WHERE channel = ? AND identity = ?`,
-		channel, identity).Scan(&l.Pairing, &l.Conv)
+func (s *Store) LinkOf(ctx context.Context, messenger, identity string) (Link, error) {
+	l := Link{Messenger: messenger, Identity: identity}
+	err := s.reads.QueryRowContext(ctx, `SELECT pairing, conv FROM links WHERE messenger = ? AND identity = ?`,
+		messenger, identity).Scan(&l.Pairing, &l.Conv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Link{}, ErrNotFound
 	}
@@ -433,7 +433,7 @@ func (s *Store) Links(ctx context.Context) (map[string][]Link, error) {
 }
 
 func (s *Store) links(ctx context.Context, where string, args ...any) (map[string][]Link, error) {
-	rows, err := s.reads.QueryContext(ctx, `SELECT channel, identity, pairing, conv FROM links `+where+` ORDER BY created`, args...)
+	rows, err := s.reads.QueryContext(ctx, `SELECT messenger, identity, pairing, conv FROM links `+where+` ORDER BY created`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -441,7 +441,7 @@ func (s *Store) links(ctx context.Context, where string, args ...any) (map[strin
 	out := map[string][]Link{}
 	for rows.Next() {
 		var l Link
-		if err := rows.Scan(&l.Channel, &l.Identity, &l.Pairing, &l.Conv); err != nil {
+		if err := rows.Scan(&l.Messenger, &l.Identity, &l.Pairing, &l.Conv); err != nil {
 			return nil, err
 		}
 		out[l.Pairing] = append(out[l.Pairing], l)

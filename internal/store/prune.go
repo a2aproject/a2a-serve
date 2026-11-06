@@ -31,7 +31,7 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // Prune deletes expired codes, and the pairings nobody redeemed a code of
 // when their last code expires; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; questions of remote agents
-// as old whose task nobody watches; the channel conversations, agent
+// as old whose task nobody watches; the messenger conversations, agent
 // sessions, handles, call tasks, grants and suggestions of contexts left
 // without tasks; the counts of taps on "Always allow" older than their
 // retention; and the dedup keys of messages older than the retention.

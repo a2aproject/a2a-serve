@@ -38,7 +38,7 @@ func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Change settings with the flags of ` + "`a2a-serve start <agent>`" + `, and the
 operational settings only config set takes: limits, network-provider
 options, backups and Google sign-in. Messengers are set with
-` + "`a2a-serve channel add`" + `. With --agent, config set also creates an
+` + "`a2a-serve messenger add`" + `. With --agent, config set also creates an
 agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, and the other

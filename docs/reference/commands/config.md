@@ -33,8 +33,8 @@ Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
 it is validated and applied like `a2a-serve config set`; if it is invalid,
 the file reopens with the errors on top, like crontab -e. A value typed into
 a secret setting is stored in .a2a/state/secrets, and the file keeps a
-secret:NAME reference. Messengers are changed with `a2a-serve channel add`
-and `a2a-serve channel rm`.
+secret:NAME reference. Messengers are changed with `a2a-serve messenger add`
+and `a2a-serve messenger rm`.
 
 ```
 a2a-serve config edit
@@ -45,7 +45,7 @@ a2a-serve config edit
 Change settings with the flags of `a2a-serve start <agent>`, and the
 operational settings only config set takes: limits, network-provider
 options, backups and Google sign-in. Messengers are set with
-`a2a-serve channel add`. With --agent, config set also creates an
+`a2a-serve messenger add`. With --agent, config set also creates an
 agent, to be started with `a2a-serve start`. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, and the other
@@ -134,7 +134,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 |---|---|---|
 | `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
 | `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
-| `--owner-chat channel[:who]` |  | Where an owner answers the approvals of tasks nobody watches: channel[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
+| `--owner-chat messenger[:who]` |  | Where an owner answers the approvals of tasks nobody watches: messenger[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
 
 **Flags**
 
@@ -172,7 +172,7 @@ Remove entries from a list setting, or the whole list without entries, or
 reset a setting to its default. The setting is the flag name without --.
 Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
-from .a2a/state/secrets. Messengers are removed with `a2a-serve channel rm`.
+from .a2a/state/secrets. Messengers are removed with `a2a-serve messenger rm`.
 
 Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 

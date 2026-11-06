@@ -484,7 +484,7 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 		return nil, err
 	}
 	for _, l := range links {
-		resp.Accounts = append(resp.Accounts, Account{Channel: l.Channel, Account: l.Identity})
+		resp.Accounts = append(resp.Accounts, Account{Messenger: l.Messenger, Account: l.Identity})
 	}
 	if name == LocalOwner {
 		resp.Kept = true
@@ -658,7 +658,7 @@ func (s *Service) List(ctx context.Context) ([]Pairing, error) {
 			}
 		}
 		for _, l := range links[p.Name] {
-			cp.Accounts = append(cp.Accounts, Account{Channel: l.Channel, Account: l.Identity})
+			cp.Accounts = append(cp.Accounts, Account{Messenger: l.Messenger, Account: l.Identity})
 		}
 		for _, c := range codes[p.Name] {
 			cp.PendingCodes = append(cp.PendingCodes, c.Expires)
@@ -679,7 +679,7 @@ func (s *Service) List(ctx context.Context) ([]Pairing, error) {
 	return out, nil
 }
 
-// DirectConv returns the direct chat of user on a channel.
+// DirectConv returns the direct chat of user on a messenger.
 func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
 	var links []store.Link
 	if name, ok := auth.PrincipalPairing(user); ok {
@@ -689,7 +689,7 @@ func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, 
 		}
 	}
 	for _, l := range links {
-		if l.Channel == ch && l.Conv != "" {
+		if l.Messenger == ch && l.Conv != "" {
 			return l.Conv, nil
 		}
 	}

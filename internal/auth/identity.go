@@ -20,7 +20,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
-// NetworkChat is the network of channel messages.
+// NetworkChat is the network of messenger messages.
 const NetworkChat = "chat"
 
 // Sources of a verified email.
@@ -38,7 +38,7 @@ const (
 type Identity struct {
 	// Network is one of the network.Listener* kinds, or NetworkChat.
 	Network string `json:"network,omitempty"`
-	// Provider is the network provider, such as tailscale, or the channel.
+	// Provider is the network provider, such as tailscale, or the messenger.
 	Provider string `json:"provider,omitempty"`
 	Email    string `json:"email,omitempty"`
 	// EmailSource is one of the EmailFrom* sources.
@@ -54,7 +54,7 @@ type Identity struct {
 	PairingRole string `json:"pairingRole,omitempty"`
 	// WebhookNode is the webhook node whose token was used.
 	WebhookNode string `json:"webhookNode,omitempty"`
-	// ChatAccount is the sender of a channel message: telegram:<id>,
+	// ChatAccount is the sender of a messenger message: telegram:<id>,
 	// discord:<id> or an email address.
 	ChatAccount string `json:"chatAccount,omitempty"`
 	// Direct is true for a message in a direct chat.

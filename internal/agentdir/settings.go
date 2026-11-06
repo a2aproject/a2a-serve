@@ -70,7 +70,7 @@ type Settings struct {
 	PIDs       int
 	AllowTools []string
 	DenyTools  []string
-	// OwnerChat is <channel>[:<who>].
+	// OwnerChat is <messenger>[:<who>].
 	OwnerChat string
 	// DisableMCP are MCP servers of the project's .mcp.json to turn off.
 	DisableMCP []string
@@ -96,9 +96,9 @@ type Settings struct {
 	ContactRefresh string
 }
 
-// EmailSettings configure the email channel. Password, OAuthClientSecret
+// EmailSettings configure the email messenger. Password, OAuthClientSecret
 // and OAuthRefreshToken are env:VAR, secret:NAME or the value. Set fields
-// override the configured channel.
+// override the configured messenger.
 type EmailSettings struct {
 	Address           string
 	IMAP              string

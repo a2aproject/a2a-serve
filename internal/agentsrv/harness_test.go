@@ -41,14 +41,14 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -71,7 +71,7 @@ var testTimings = Timings{
 	EditInterval:             50 * time.Millisecond,
 	ScheduleMinWait:          10 * time.Millisecond,
 	WebhookRetries:           []time.Duration{0, 100 * time.Millisecond},
-	ChannelRetryMin:          10 * time.Millisecond,
+	MessengerRetryMin:        10 * time.Millisecond,
 	FirstBackupDelay:         50 * time.Millisecond,
 	AnonymousQuestionTimeout: 5 * time.Second,
 	SendRetry:                time.Millisecond,
@@ -139,14 +139,14 @@ type testServer struct {
 	t    *testing.T
 	dir  agentdir.Dir
 	srv  *Server
-	ch   *channeltest.Channel
+	ch   *messengertest.Messenger
 	done chan error
 }
 
 type serverOpts struct {
 	name        string
 	dir         string
-	channel     *channeltest.Channel
+	messenger   *messengertest.Messenger
 	credentials *credstore.Store
 	telegramAPI string
 	secrets     agentdir.Secrets
@@ -205,11 +205,11 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 			t.Logf("stderr of the agent processes:\n%s", agentStderr)
 		}
 	})
-	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
+	ts := &testServer{t: t, dir: dir, ch: o.messenger, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
 	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
-	if o.channel != nil {
-		opts.Channels = []channel.Channel{o.channel}
+	if o.messenger != nil {
+		opts.Messengers = []messenger.Messenger{o.messenger}
 	}
 	go func() { ts.done <- Run(context.Background(), opts) }()
 	select {

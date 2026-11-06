@@ -28,12 +28,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 )
 
 func startPublicServer(t *testing.T, configure func(*agentdir.Config)) *testServer {
 	t.Helper()
-	return startServer(t, serverOpts{public: publicNet(), channel: channeltest.NewChannel("fake"), configure: func(c *agentdir.Config) {
+	return startServer(t, serverOpts{public: publicNet(), messenger: messengertest.NewMessenger("fake"), configure: func(c *agentdir.Config) {
 		c.Policy.PublicAllowIncoming = agentdir.AccessAnyone
 		if configure != nil {
 			configure(c)
@@ -123,7 +123,7 @@ func TestAnonymousApprovalTimesOut(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
-		channel:   channeltest.NewChannel("fake"),
+		messenger: messengertest.NewMessenger("fake"),
 		configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone },
 		timings:   func(tm *Timings) { tm.AnonymousQuestionTimeout = time.Second },
 	})
@@ -145,13 +145,13 @@ func TestAnonymousApprovalInOwnerChat(t *testing.T) {
 	linkOwner(t, ts, "telegram:1", "dm1")
 
 	ts.ch.Write("telegram:9", "dm9", "ask")
-	ts.ch.WaitFor(t, "dm9", channeltest.HasText("This needs the owner's approval"))
-	ref, q := ts.ch.WaitFor(t, "dm1", channeltest.HasText("telegram:9, an anonymous caller, needs your approval"))
+	ts.ch.WaitFor(t, "dm9", messengertest.HasText("This needs the owner's approval"))
+	ref, q := ts.ch.WaitFor(t, "dm1", messengertest.HasText("telegram:9, an anonymous caller, needs your approval"))
 	if n := ts.ch.Questions(); n != 1 {
 		t.Fatalf("questions with buttons = %d, want 1, in the owner chat only", n)
 	}
 	ts.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	ts.ch.WaitFor(t, "dm9", channeltest.HasText("Pushed (allow)."))
+	ts.ch.WaitFor(t, "dm9", messengertest.HasText("Pushed (allow)."))
 }
 
 func TestAnonymousBudget(t *testing.T) {

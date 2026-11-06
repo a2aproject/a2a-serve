@@ -19,7 +19,7 @@ import (
 	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -36,7 +36,7 @@ type CallerQuestion struct {
 // agent's next question, or its result.
 type CallerOutcome struct {
 	Question *CallerQuestion
-	Result   *messenger.PostedTurn
+	Result   *chat.PostedTurn
 }
 
 // callerWait is a context whose A2A caller waits for its task: the question
@@ -149,7 +149,7 @@ func (ws *Watches) toCaller(contextID string, q *CallerQuestion) bool {
 
 // resultToCaller hands a watched result to a task in its context which
 // waits for it, and reports whether one took it.
-func (ws *Watches) resultToCaller(t messenger.PostedTurn) bool {
+func (ws *Watches) resultToCaller(t chat.PostedTurn) bool {
 	ws.mu.Lock()
 	defer ws.mu.Unlock()
 	cw := ws.callers[t.ContextID]

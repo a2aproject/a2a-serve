@@ -35,7 +35,7 @@ func fullConfig() *Config {
 		Port:        4000,
 		Network:     NetworkConfig{Private: "tailscale"},
 		Policy:      PolicyConfig{PrivateAllowIncoming: AccessPaired, AllowEmails: []string{"mom@example.com", "*@example.com"}},
-		Channels: ChannelsConfig{
+		Messengers: MessengersConfig{
 			Telegram: &TelegramConfig{Token: "secret:TELEGRAM_BOT_TOKEN"},
 			Email:    &EmailConfig{Address: "a@x", IMAP: "i:993", SMTP: "s:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx"},
 		},
@@ -116,7 +116,7 @@ func TestDiff(t *testing.T) {
 	next.Sandbox = "local"
 	next.Description = "reviews code"
 	next.Approvals.Allow = []string{"read", "edit"}
-	next.Channels.Telegram = nil
+	next.Messengers.Telegram = nil
 	next.Policy.AllowEmails = append(next.Policy.AllowEmails, "ben@example.org")
 	next.Card.Skills[1].Description = "Reviews code."
 	got := Diff(old, next)
@@ -177,14 +177,14 @@ func TestDiffTreatsDefaultAsUnset(t *testing.T) {
 func TestCommands(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{
-		Name:     "coder",
-		Harness:  "acp",
-		Command:  []string{"gemini", "--experimental-acp"},
-		Secrets:  []string{"KEY"},
-		Network:  NetworkConfig{Public: "tailscale"},
-		Policy:   PolicyConfig{PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"*@example.com"}},
-		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
-		Backup:   BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
+		Name:       "coder",
+		Harness:    "acp",
+		Command:    []string{"gemini", "--experimental-acp"},
+		Secrets:    []string{"KEY"},
+		Network:    NetworkConfig{Public: "tailscale"},
+		Policy:     PolicyConfig{PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"*@example.com"}},
+		Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
+		Backup:     BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
 	}
 	var got []string
 	for _, args := range cfg.Commands(Secrets{SecretTailscaleKey: "k"}) {
@@ -193,7 +193,7 @@ func TestCommands(t *testing.T) {
 	want := []string{
 		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-allow-incoming anyone --allow-email '*@example.com'",
 		"a2a-serve config set --tailscale-authkey env:TS_AUTHKEY --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h",
-		"a2a-serve channel add telegram --token env:BOT",
+		"a2a-serve messenger add telegram --token env:BOT",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Commands() wrong result (-want +got) diff = %s", diff)

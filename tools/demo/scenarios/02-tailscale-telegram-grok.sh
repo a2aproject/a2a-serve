@@ -48,7 +48,7 @@ scene() {
   run B "mkdir -p ~/a2a-example2/coder && cd ~/a2a-example2/coder"
   run B "a2a-serve config set --agent $AGENT --name coder $AGENT_FLAGS \\
   --private tailscale --public tailscale"
-  run B "a2a-serve channel add telegram --token env:CODER_BOT_TOKEN"
+  run B "a2a-serve messenger add telegram --token env:CODER_BOT_TOKEN"
   if [[ -d "$TSNET_CACHE" ]]; then
     mkdir -p "$(dirname "$TSNET_DIR")" && cp -R "$TSNET_CACHE" "$TSNET_DIR"
   fi

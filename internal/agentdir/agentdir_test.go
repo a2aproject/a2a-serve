@@ -146,12 +146,12 @@ func TestConfigRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := &Config{
-		Name:     "coder",
-		Harness:  "opencode",
-		Mounts:   []string{"/home/u/docs:/docs:ro"},
-		Network:  NetworkConfig{Private: "tailscale"},
-		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
-		MCP:      MCPConfig{Disabled: []string{"kubernetes"}},
+		Name:       "coder",
+		Harness:    "opencode",
+		Mounts:     []string{"/home/u/docs:/docs:ro"},
+		Network:    NetworkConfig{Private: "tailscale"},
+		Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
+		MCP:        MCPConfig{Disabled: []string{"kubernetes"}},
 	}
 	if err := d.SaveConfig(want); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -291,14 +291,14 @@ func TestSettingsApply(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	want := &Config{
-		Name:      "my-app",
-		Harness:   "opencode",
-		Secrets:   []string{"A2A_TEST_KEY"},
-		Workspace: "/src/app",
-		Mounts:    []string{"/docs:ro"},
-		Network:   NetworkConfig{Private: "tailscale"},
-		Channels:  ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:A2A_TEST_BOT"}},
-		Limits:    LimitsConfig{Memory: "8g", CPUs: "4", PIDs: 1024},
+		Name:       "my-app",
+		Harness:    "opencode",
+		Secrets:    []string{"A2A_TEST_KEY"},
+		Workspace:  "/src/app",
+		Mounts:     []string{"/docs:ro"},
+		Network:    NetworkConfig{Private: "tailscale"},
+		Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:A2A_TEST_BOT"}},
+		Limits:     LimitsConfig{Memory: "8g", CPUs: "4", PIDs: 1024},
 	}
 	if diff := cmp.Diff(want, cfg); diff != "" {
 		t.Fatalf("Apply() wrong result (-want +got) diff = %s", diff)
@@ -363,7 +363,7 @@ func TestSettingsApplyEmail(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &Config{Channels: ChannelsConfig{Email: &EmailConfig{
+	cfg := &Config{Messengers: MessengersConfig{Email: &EmailConfig{
 		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
 	}}}
 	secrets, err := Settings{Email: &EmailSettings{Password: "new", Mailbox: "Agent"}}.Apply(cfg, d)
@@ -371,7 +371,7 @@ func TestSettingsApplyEmail(t *testing.T) {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	want := &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", Mailbox: "Agent", TrustedAuthServ: "mx"}
-	if diff := cmp.Diff(want, cfg.Channels.Email); diff != "" {
+	if diff := cmp.Diff(want, cfg.Messengers.Email); diff != "" {
 		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
 	}
 	if diff := cmp.Diff(Secrets{SecretEmailPassword: "new"}, secrets); diff != "" {
@@ -385,7 +385,7 @@ func TestSettingsApplyEmailOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cfg := &Config{Channels: ChannelsConfig{Email: &EmailConfig{
+	cfg := &Config{Messengers: MessengersConfig{Email: &EmailConfig{
 		Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx",
 	}}}
 	secrets, err := Settings{Email: &EmailSettings{
@@ -399,7 +399,7 @@ func TestSettingsApplyEmailOAuth(t *testing.T) {
 		OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id",
 		OAuthClientSecret: "secret:" + SecretEmailClient, OAuthRefreshToken: "secret:" + SecretEmailOAuth,
 	}
-	if diff := cmp.Diff(want, cfg.Channels.Email); diff != "" {
+	if diff := cmp.Diff(want, cfg.Messengers.Email); diff != "" {
 		t.Fatalf("Apply() wrong email (-want +got) diff = %s", diff)
 	}
 	if diff := cmp.Diff(Secrets{SecretEmailClient: "cs", SecretEmailOAuth: "rt"}, secrets); diff != "" {

@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Show whether the agent runs, its URLs, channels and who may call it.
+Show whether the agent runs, its URLs, messengers and who may call it.
 
 --url prints only the agent's URL that reaches furthest: public, then
 private, then local. --url local, --url private and --url public pick one;

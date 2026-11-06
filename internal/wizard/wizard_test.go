@@ -34,7 +34,7 @@ func TestRun(t *testing.T) {
 	command := func(s agentdir.Settings) ([]string, error) {
 		lines := []string{"a2a-serve start " + s.Harness + " --name " + s.Name}
 		if s.Telegram != "" {
-			lines = append(lines, "a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN")
+			lines = append(lines, "a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN")
 		}
 		return lines, nil
 	}
@@ -64,7 +64,7 @@ func TestRun(t *testing.T) {
 				Harness: "claude", Name: "coder", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}, Private: "tailscale", Public: "tailscale",
 				Telegram: "123:telegram-token",
 			}},
-			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a-serve start claude --name coder --service\n  a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN\n"},
+			wantOut:    []string{"Docker is not available", "Sandbox (docker, local) [local]", "Telegram bot token", "  a2a-serve start claude --name coder --service\n  a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN\n"},
 			wantNotOut: "123:telegram-token",
 		},
 	}

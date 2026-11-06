@@ -62,7 +62,7 @@ func TestClassify(t *testing.T) {
 		},
 		{
 			name:     "invalid request",
-			err:      agenterr.Invalidf("unknown channel %s", "irc"),
+			err:      agenterr.Invalidf("unknown messenger %s", "irc"),
 			wantCode: CodeUsage,
 			wantExit: 2,
 		},

@@ -23,9 +23,9 @@ import (
 )
 
 // NotFoundError is a request that names something the agent doesn't have,
-// such as a pairing or a channel.
+// such as a pairing or a messenger.
 type NotFoundError struct {
-	// Kind is what the request names: pairing, contact, schedule or channel.
+	// Kind is what the request names: pairing, contact, schedule or messenger.
 	Kind string
 	Name string
 }
@@ -141,8 +141,8 @@ const (
 	HintConfigUnset Hint = "config-unset"
 	// HintConfigEdit fixes config.yaml in the editor.
 	HintConfigEdit Hint = "config-edit"
-	// HintChannelList lists the messengers.
-	HintChannelList Hint = "channel-list"
+	// HintMessengerList lists the messengers.
+	HintMessengerList Hint = "messenger-list"
 )
 
 // HintedError is an error with a hint at how to fix it.

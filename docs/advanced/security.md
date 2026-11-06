@@ -88,7 +88,7 @@ The agent's instructions list the description and skills from the cards of conta
 | Relay identity | Membership of the Agent Mesh relay | `state/agentmesh` | Remove it on the relay, or delete the directory and join again |
 | Relay invite (`mesh-bt-…`) | Joins one agent to the relay, which then keeps renewing its membership | With the agent, until it joins once; it expires after a day, or after `--expires` | `a2a-serve relay remove <name>` on the relay, which revokes it while unused and removes the agent that joined with it |
 | Relay admin token | The relay's control API: invite, list and remove agents | The relay's `state/relay/secrets` (mode 0600), or the container's environment | Stop the relay, then start it with a new one: `a2a-serve relay run --admin-token <value>` |
-| `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve channel rm <kind>`, then rotate at the service |
+| `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve messenger rm <kind>`, then rotate at the service |
 
 `state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. Backups contain `state/secrets` and are always encrypted with the backup key.
 

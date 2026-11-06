@@ -25,7 +25,7 @@ import (
 	"github.com/google/go-cmp/cmp/cmpopts"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -33,7 +33,7 @@ import (
 const base = "https://coder.example.com"
 
 func chatVia(identity string) Via {
-	return Via{Chat: &channel.Inbound{Channel: "telegram", Identity: identity, Authentic: true}}
+	return Via{Chat: &messenger.Inbound{Messenger: "telegram", Identity: identity, Authentic: true}}
 }
 
 func pending(t *testing.T, s *Service, code string) bool {
@@ -111,7 +111,7 @@ func TestRedeem(t *testing.T) {
 		{
 			name:        "unverified chat sender",
 			code:        localCode,
-			via:         Via{Chat: &channel.Inbound{Channel: "telegram", Identity: "telegram:9"}},
+			via:         Via{Chat: &messenger.Inbound{Messenger: "telegram", Identity: "telegram:9"}},
 			wantErr:     ErrUnverifiedSender,
 			wantPending: true,
 		},
@@ -194,7 +194,7 @@ func TestRedeemIssuesWorkingCredentials(t *testing.T) {
 		t.Fatalf("NodeOfToken() = %+v, %v, %v, want node grok", got, ok, err)
 	}
 
-	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:9", Conv: "dm9", Direct: true, Authentic: true}
+	in := &messenger.Inbound{Messenger: "telegram", Identity: "telegram:9", Conv: "dm9", Direct: true, Authentic: true}
 	if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "ben"}).Code, Via{Chat: in}); err != nil {
 		t.Fatalf("Redeem(chat) error = %v", err)
 	}

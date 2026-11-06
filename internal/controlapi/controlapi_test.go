@@ -97,7 +97,7 @@ func TestClientRequests(t *testing.T) {
 			return err
 		}, wantMethod: http.MethodDelete, wantPath: "/signins/anna@example.com"},
 		{name: "delete contact", call: func(ctx context.Context, c *Client) error { return c.DeleteContact(ctx, "coder") }, wantMethod: http.MethodDelete, wantPath: "/contacts/coder"},
-		{name: "delete channel", call: func(ctx context.Context, c *Client) error { return c.DeleteChannel(ctx, "telegram") }, wantMethod: http.MethodDelete, wantPath: "/channels/telegram"},
+		{name: "delete messenger", call: func(ctx context.Context, c *Client) error { return c.DeleteMessenger(ctx, "telegram") }, wantMethod: http.MethodDelete, wantPath: "/messengers/telegram"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -204,26 +204,26 @@ func TestClientErrors(t *testing.T) {
 				return serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusBadRequest)
-					if _, err := w.Write([]byte(`{"error":"unknown channel"}`)); err != nil {
+					if _, err := w.Write([]byte(`{"error":"unknown messenger"}`)); err != nil {
 						t.Errorf("Write() error = %v", err)
 					}
 				}))
 			},
-			wantErr: "unknown channel",
+			wantErr: "unknown messenger",
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := NewClient(tc.dir(t)).DeleteChannel(t.Context(), "telegram")
+			err := NewClient(tc.dir(t)).DeleteMessenger(t.Context(), "telegram")
 			if err == nil {
-				t.Fatalf("Client.DeleteChannel() error = nil, want an error")
+				t.Fatalf("Client.DeleteMessenger() error = nil, want an error")
 			}
 			if got := errors.Is(err, agenterr.ErrNotRunning); got != tc.wantNotRunning {
-				t.Fatalf("Client.DeleteChannel() error = %v, want ErrNotRunning %v", err, tc.wantNotRunning)
+				t.Fatalf("Client.DeleteMessenger() error = %v, want ErrNotRunning %v", err, tc.wantNotRunning)
 			}
 			if tc.wantErr != "" && err.Error() != tc.wantErr {
-				t.Fatalf("Client.DeleteChannel() error = %v, want %v", err, tc.wantErr)
+				t.Fatalf("Client.DeleteMessenger() error = %v, want %v", err, tc.wantErr)
 			}
 		})
 	}
@@ -238,13 +238,13 @@ func TestClientRequestErrors(t *testing.T) {
 	}{
 		{
 			name:    "not found",
-			err:     fmt.Errorf("removing: %w", &agenterr.NotFoundError{Kind: "channel", Name: "telegram"}),
-			wantErr: &agenterr.NotFoundError{Kind: "channel", Name: "telegram"},
+			err:     fmt.Errorf("removing: %w", &agenterr.NotFoundError{Kind: "messenger", Name: "telegram"}),
+			wantErr: &agenterr.NotFoundError{Kind: "messenger", Name: "telegram"},
 		},
 		{
 			name:    "invalid",
-			err:     agenterr.Invalidf("unknown channel irc"),
-			wantErr: agenterr.Invalidf("unknown channel irc"),
+			err:     agenterr.Invalidf("unknown messenger irc"),
+			wantErr: agenterr.Invalidf("unknown messenger irc"),
 		},
 		{
 			name:    "conflict",
@@ -262,14 +262,14 @@ func TestClientRequestErrors(t *testing.T) {
 			t.Parallel()
 			dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, tc.err) }))
 
-			err := NewClient(dir).DeleteChannel(t.Context(), "telegram")
+			err := NewClient(dir).DeleteMessenger(t.Context(), "telegram")
 
 			var ce *clierr.Error
 			if errors.As(err, &ce) {
 				err = ce.Unwrap()
 			}
 			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return fmt.Sprintf("%T %v", a, a) == fmt.Sprintf("%T %v", b, b) })); diff != "" {
-				t.Fatalf("Client.DeleteChannel() wrong error (-want +got) diff = %s", diff)
+				t.Fatalf("Client.DeleteMessenger() wrong error (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -349,11 +349,11 @@ func TestClientRequestErrorKeepsHint(t *testing.T) {
 	err := agenterr.WithHint(agenterr.Conflictf("anna is already paired"), agenterr.HintPairRm, "anna")
 	dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, err) }))
 
-	got := clierr.Classify(NewClient(dir).DeleteChannel(t.Context(), "telegram"))
+	got := clierr.Classify(NewClient(dir).DeleteMessenger(t.Context(), "telegram"))
 
 	want := &clierr.Error{Code: clierr.CodeUsage, Message: "anna is already paired", Hint: "pick another name, or run `a2a-serve pair rm anna` first", Exit: 2}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(clierr.Error{})); diff != "" {
-		t.Fatalf("Client.DeleteChannel() wrong error (-want +got) diff = %s", diff)
+		t.Fatalf("Client.DeleteMessenger() wrong error (-want +got) diff = %s", diff)
 	}
 }
 

@@ -30,7 +30,7 @@ Use `a2a-serve config set` for the settings you name, and for secret values. It 
 
 Use `a2a-serve config edit` for several changes at once, for comments, and to repair a `config.yaml` that doesn't load. It reopens the file with the errors on top until the file is valid. A value typed into a secret setting, such as `backup.key`, is stored in `.a2a/state/secrets` like a flag value, and the file keeps a `secret:NAME` reference.
 
-Both commands follow the same rules. Messengers are changed with `a2a-serve channel add` and `a2a-serve channel rm`, which check the token with the messenger first. An error about `config.yaml` names the key and the entry, and its hint names the command that fixes it:
+Both commands follow the same rules. Messengers are changed with `a2a-serve messenger add` and `a2a-serve messenger rm`, which check the token with the messenger first. An error about `config.yaml` names the key and the entry, and its hint names the command that fixes it:
 
 ```console
 $ a2a-serve config set --deny-tools execute

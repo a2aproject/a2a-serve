@@ -65,19 +65,19 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 		t.Fatalf("Config() wrong result (-want +got) diff = %s", diff)
 	}
 
-	if _, err := client.AddChannel(ctx, controlapi.ChannelRequest{
-		Kind:    agentdir.ChannelTelegram,
+	if _, err := client.AddMessenger(ctx, controlapi.MessengerRequest{
+		Kind:    agentdir.MessengerTelegram,
 		Token:   "secret:" + agentdir.SecretTelegram,
 		Secrets: agentdir.Secrets{agentdir.SecretTelegram: "good"},
 	}); err != nil {
-		t.Fatalf("AddChannel() error = %v", err)
+		t.Fatalf("AddMessenger() error = %v", err)
 	}
 	got, err := ts.dir.ReadConfig()
 	if err != nil {
 		t.Fatalf("ReadConfig() error = %v", err)
 	}
-	if got.Sandbox != harness.SandboxDocker || got.Channels.Telegram == nil {
-		t.Fatalf("config.yaml after AddChannel = %+v, want the pending sandbox and the channel", got)
+	if got.Sandbox != harness.SandboxDocker || got.Messengers.Telegram == nil {
+		t.Fatalf("config.yaml after AddMessenger = %+v, want the pending sandbox and the messenger", got)
 	}
 }
 

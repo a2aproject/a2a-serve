@@ -42,14 +42,14 @@ import (
 // fakeServer answers on the control socket of an agent like a running
 // server, and records the calls it gets.
 type fakeServer struct {
-	mu       sync.Mutex
-	calls    []string
-	bodies   map[string]string
-	pid      int
-	running  *agentdir.Config
-	noReload bool
-	channels []controlapi.ChannelStatus
-	access   *controlapi.Access
+	mu         sync.Mutex
+	calls      []string
+	bodies     map[string]string
+	pid        int
+	running    *agentdir.Config
+	noReload   bool
+	messengers []controlapi.MessengerStatus
+	access     *controlapi.Access
 }
 
 func (f *fakeServer) record(r *http.Request) {
@@ -90,17 +90,17 @@ func serveFake(t *testing.T, d agentdir.Dir, f *fakeServer) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /status", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
-		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder", PID: f.pid, Channels: f.channels, Access: f.access})
+		jsonhttp.Write(w, http.StatusOK, controlapi.Status{Name: "coder", PID: f.pid, Messengers: f.messengers, Access: f.access})
 	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
 		jsonhttp.Write(w, http.StatusOK, f.running)
 	})
-	mux.HandleFunc("POST /channels", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("POST /messengers", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
-		jsonhttp.Write(w, http.StatusOK, controlapi.ChannelStatus{Name: "telegram"})
+		jsonhttp.Write(w, http.StatusOK, controlapi.MessengerStatus{Name: "telegram"})
 	})
-	mux.HandleFunc("DELETE /channels/{kind}", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("DELETE /messengers/{kind}", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
 		jsonhttp.Write(w, http.StatusOK, map[string]string{})
 	})
@@ -189,7 +189,7 @@ func TestSetOwnerChatWithItsMessenger(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{
 		Name: "coder", Harness: "opencode",
-		Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}},
+		Messengers: agentdir.MessengersConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}},
 	}, agentdir.Secrets{agentdir.SecretTelegram: "token"})
 
 	if _, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{OwnerChat: "telegram:anna"}, false); err != nil {
@@ -342,14 +342,14 @@ func TestSetRunning(t *testing.T) {
 	}{
 		{
 			name:        "live settings applied",
-			wantCalls:   []string{"GET /status", "POST /channels", "POST /config/reload"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload"},
 			wantApplied: []string{"telegram", "description"},
 			wantRestart: []string{"sandbox"},
 		},
 		{
 			name:        "server without reload",
 			noReload:    true,
-			wantCalls:   []string{"GET /status", "POST /channels", "POST /config/reload"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload"},
 			wantApplied: []string{"telegram"},
 			wantRestart: []string{"sandbox", "description"},
 		},
@@ -367,13 +367,13 @@ func TestSetRunning(t *testing.T) {
 			if diff := cmp.Diff(tc.wantCalls, f.Calls()); diff != "" {
 				t.Fatalf("Set() wrong calls (-want +got) diff = %s", diff)
 			}
-			var req controlapi.ChannelRequest
-			if err := json.Unmarshal([]byte(f.Body("POST /channels")), &req); err != nil {
-				t.Fatalf("parsing the channel request error = %v", err)
+			var req controlapi.MessengerRequest
+			if err := json.Unmarshal([]byte(f.Body("POST /messengers")), &req); err != nil {
+				t.Fatalf("parsing the messenger request error = %v", err)
 			}
-			wantReq := controlapi.ChannelRequest{Kind: "telegram", Token: "secret:TELEGRAM_BOT_TOKEN", Secrets: agentdir.Secrets{"TELEGRAM_BOT_TOKEN": "123:abc"}}
+			wantReq := controlapi.MessengerRequest{Kind: "telegram", Token: "secret:TELEGRAM_BOT_TOKEN", Secrets: agentdir.Secrets{"TELEGRAM_BOT_TOKEN": "123:abc"}}
 			if diff := cmp.Diff(wantReq, req); diff != "" {
-				t.Fatalf("channel request wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("messenger request wrong result (-want +got) diff = %s", diff)
 			}
 			if !got.Running {
 				t.Fatalf("Set().Running = false, want true")

@@ -46,10 +46,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -167,17 +167,17 @@ func waitFile(t *testing.T, path string) string {
 func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
+	assistant := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 
 	assistant.ch.Write("telegram:1", "dm1", "call coder ask")
-	ref, q := assistant.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
+	ref, q := assistant.ch.WaitFor(t, "dm1", messengertest.HasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
 	assistant.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
-	assistant.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow once by owner"))
+	assistant.ch.WaitFor(t, "dm1", messengertest.HasText("✓ Allow once by owner"))
 
 	ctx := context.Background()
 	contextID, err := assistant.srv.store.ContextOf(ctx, "fake", "dm1")
@@ -203,19 +203,19 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	ch := channeltest.NewChannel("fake")
+	ch := messengertest.NewMessenger("fake")
 	ch.SendDelay = 200 * time.Millisecond
-	assistant := startServer(t, serverOpts{name: "assistant", channel: ch})
+	assistant := startServer(t, serverOpts{name: "assistant", messenger: ch})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 
 	assistant.ch.Write("telegram:1", "dm1", "call coder ask")
-	ref, q := assistant.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
+	ref, q := assistant.ch.WaitFor(t, "dm1", messengertest.HasQuestion)
 	waitQuestionMessage(t, assistant, q.Question.ID)
 	root := assistant.dir.Root
 	assistant.stop()
 
-	restarted := startServer(t, serverOpts{name: "assistant", dir: root, channel: channeltest.NewChannel("fake")})
+	restarted := startServer(t, serverOpts{name: "assistant", dir: root, messenger: messengertest.NewMessenger("fake")})
 	restarted.ch.WaitReady(t)
 	time.Sleep(3 * testTimings.WatchMaxInterval)
 	if n := restarted.ch.Questions(); n != 0 {
@@ -856,13 +856,13 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
+	assistant := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 
 	assistant.ch.Write("telegram:2", "dm2", "call coder ask")
-	ref, q := assistant.ch.WaitFor(t, "dm2", channeltest.HasQuestion)
+	ref, q := assistant.ch.WaitFor(t, "dm2", messengertest.HasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}

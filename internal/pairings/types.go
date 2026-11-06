@@ -88,8 +88,8 @@ type Token struct {
 
 // Account is a messenger account linked to a pairing.
 type Account struct {
-	Channel string
-	Account string
+	Messenger string
+	Account   string
 }
 
 // NodeDetails describe the webhook of a node pairing and its mailbox.

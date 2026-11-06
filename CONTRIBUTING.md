@@ -23,7 +23,7 @@ Code is only one way to help. The project grows through many kinds of contributi
 
 Commit messages and pull request titles follow the [Conventional Commits](https://www.conventionalcommits.org/) specification. PR titles are lint-checked. Choose the type and scope based on what you changed:
 
-- **Code**: `feat:` for new behavior, `fix:` for bug fixes (e.g., `feat: add a Slack channel`).
+- **Code**: `feat:` for new behavior, `fix:` for bug fixes (e.g., `feat: add a schedule pause command`).
 - **Doc files**: `docs:` for documentation.
 
 ## Contribution process
@@ -116,7 +116,7 @@ E2E_HARNESS=opencode go test -tags e2e -run '^TestHarness' -v ./e2e/...
 
 Add a test there when a change affects a journey across commands or processes.
 
-The e2e build of `a2a-serve` (`-tags e2e`) reads `A2A_SERVE_E2E_TELEGRAM_URL` and sends Telegram calls there. `TestTelegram` points it at the fake Bot API in `internal/channel/telegram/telegramtest`, which plays a user who links as owner, chats, presses approval buttons and gets scheduled runs.
+The e2e build of `a2a-serve` (`-tags e2e`) reads `A2A_SERVE_E2E_TELEGRAM_URL` and sends Telegram calls there. `TestTelegram` points it at the fake Bot API in `internal/messenger/telegram/telegramtest`, which plays a user who links as owner, chats, presses approval buttons and gets scheduled runs.
 
 `TestTelegramLive` runs the same journey, but the fake forwards the bot's messages to the real Bot API. Telegram then checks their MarkdownV2 and buttons, and the messages appear in your chat with the bot. The fake still plays the user and never polls Telegram for updates, since a bot can't receive messages from another bot. To run it:
 

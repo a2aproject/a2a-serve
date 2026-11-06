@@ -34,11 +34,11 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -170,7 +170,7 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 
 func TestNodeAnswersOwnApproval(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("telegram")})
+	ts := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("telegram")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	node := addNode(t, ts, "grok", 0)
 	node.mu.Lock()
@@ -305,13 +305,13 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 
 func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("fake")})
 	addNode(t, ts, "grok", 200*time.Millisecond)
 	linkOwner(t, ts, "telegram:1", "dm1")
 
 	ts.ch.Write("telegram:1", "dm1", "acall grok what's new?")
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("tool result: task"))
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Hello from fakeacp."))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("tool result: task"))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Hello from fakeacp."))
 
 	contextID, err := ts.srv.store.ContextOf(context.Background(), "fake", "dm1")
 	if err != nil {

@@ -13,10 +13,10 @@
 // limitations under the License.
 
 // Package agentops implements the management operations of an agent:
-// pairings, contacts, schedules and channels. The control socket of a
+// pairings, contacts, schedules and messengers. The control socket of a
 // running agent serves them, and the CLI calls them directly for a stopped
 // one, so both behave the same. [Hooks] add what only a running agent
-// does, such as starting a channel. It maps the results of the domain
+// does, such as starting a messenger. It maps the results of the domain
 // services to the DTOs of the control API.
 package agentops
 
@@ -28,10 +28,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/messenger/configured"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -56,14 +56,14 @@ type Deps struct {
 // Hooks are the side effects of the operations on a running agent. A
 // stopped agent has none.
 type Hooks struct {
-	// NewChannel creates the channel of kind configured in cfg. Nil creates
+	// NewMessenger creates the messenger of kind configured in cfg. Nil creates
 	// it without state, which only suits checking its credentials.
-	NewChannel func(cfg *agentdir.Config, secrets agentdir.Secrets, kind string) (channel.Channel, error)
-	// ChannelAdded starts a channel once it is saved, and describes it. Nil
+	NewMessenger func(cfg *agentdir.Config, secrets agentdir.Secrets, kind string) (messenger.Messenger, error)
+	// MessengerAdded starts a messenger once it is saved, and describes it. Nil
 	// describes it by name.
-	ChannelAdded func(ctx context.Context, ch channel.Channel) *controlapi.ChannelStatus
-	// ChannelRemoved stops a channel once it is removed. Optional.
-	ChannelRemoved func(kind string)
+	MessengerAdded func(ctx context.Context, ch messenger.Messenger) *controlapi.MessengerStatus
+	// MessengerRemoved stops a messenger once it is removed. Optional.
+	MessengerRemoved func(kind string)
 	// RunSchedule starts a run of a schedule at once. Nil refuses runs,
 	// which need the running server.
 	RunSchedule func(ctx context.Context, name string) (store.Schedule, error)
@@ -282,58 +282,58 @@ func (s *Service) DeleteSchedule(ctx context.Context, name string) error {
 	return s.deps.Schedules.Remove(ctx, name, auth.Owner())
 }
 
-// AddChannel checks the channel's credentials, saves it and its secrets,
+// AddMessenger checks the messenger's credentials, saves it and its secrets,
 // and starts it on a running agent.
-func (s *Service) AddChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error) {
+func (s *Service) AddMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error) {
 	secrets, err := s.deps.Runtime.SavedSecrets()
 	if err != nil {
 		return nil, err
 	}
 	maps.Copy(secrets, req.Secrets)
 	next := s.deps.Runtime.Config()
-	if err := next.SetChannel(req.Kind, req.Token, req.Email); err != nil {
+	if err := next.SetMessenger(req.Kind, req.Token, req.Email); err != nil {
 		return nil, agenterr.Invalid(err)
 	}
-	ch, err := s.newChannel(next, secrets, req.Kind)
+	ch, err := s.newMessenger(next, secrets, req.Kind)
 	if err != nil {
 		return nil, agenterr.Invalid(err)
 	}
-	if err := channel.Validate(ctx, ch); err != nil {
+	if err := messenger.Validate(ctx, ch); err != nil {
 		return nil, err
 	}
 	if err := s.deps.Runtime.SaveSecrets(req.Secrets); err != nil {
 		return nil, err
 	}
-	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
+	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(req.Kind, req.Token, req.Email) }); err != nil {
 		return nil, err
 	}
-	if s.deps.Hooks.ChannelAdded == nil {
-		return &controlapi.ChannelStatus{Name: req.Kind}, nil
+	if s.deps.Hooks.MessengerAdded == nil {
+		return &controlapi.MessengerStatus{Name: req.Kind}, nil
 	}
-	return s.deps.Hooks.ChannelAdded(ctx, ch), nil
+	return s.deps.Hooks.MessengerAdded(ctx, ch), nil
 }
 
-func (s *Service) newChannel(cfg *agentdir.Config, secrets agentdir.Secrets, kind string) (channel.Channel, error) {
-	if s.deps.Hooks.NewChannel != nil {
-		return s.deps.Hooks.NewChannel(cfg, secrets, kind)
+func (s *Service) newMessenger(cfg *agentdir.Config, secrets agentdir.Secrets, kind string) (messenger.Messenger, error) {
+	if s.deps.Hooks.NewMessenger != nil {
+		return s.deps.Hooks.NewMessenger(cfg, secrets, kind)
 	}
 	return configured.New(cfg, secrets, kind, configured.Options{})
 }
 
-// DeleteChannel removes a channel from the config, and stops it on a
+// DeleteMessenger removes a messenger from the config, and stops it on a
 // running agent.
-func (s *Service) DeleteChannel(_ context.Context, kind string) error {
-	if err := (&agentdir.Config{}).SetChannel(kind, "", nil); err != nil {
+func (s *Service) DeleteMessenger(_ context.Context, kind string) error {
+	if err := (&agentdir.Config{}).SetMessenger(kind, "", nil); err != nil {
 		return agenterr.Invalid(err)
 	}
-	if !s.deps.Runtime.Config().HasChannel(kind) {
-		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
+	if !s.deps.Runtime.Config().HasMessenger(kind) {
+		return &agenterr.NotFoundError{Kind: "messenger", Name: kind}
 	}
-	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
+	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(kind, "", nil) }); err != nil {
 		return err
 	}
-	if s.deps.Hooks.ChannelRemoved != nil {
-		s.deps.Hooks.ChannelRemoved(kind)
+	if s.deps.Hooks.MessengerRemoved != nil {
+		s.deps.Hooks.MessengerRemoved(kind)
 	}
 	return nil
 }

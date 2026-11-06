@@ -41,8 +41,8 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var scope string
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show whether the agent runs, its URLs, channels and who may call it, or print one of its URLs",
-		Long: `Show whether the agent runs, its URLs, channels and who may call it.
+		Short: "Show whether the agent runs, its URLs, messengers and who may call it, or print one of its URLs",
+		Long: `Show whether the agent runs, its URLs, messengers and who may call it.
 
 --url prints only the agent's URL that reaches furthest: public, then
 private, then local. --url local, --url private and --url public pick one;
@@ -234,7 +234,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fro
 		fmt.Fprintf(&sb, "  public   %s\n", st.Public)
 	}
 	writeNetworkProblem(&sb, "public", st.Public, st.PublicProblem)
-	for _, c := range st.Channels {
+	for _, c := range st.Messengers {
 		fmt.Fprintf(&sb, "  %-8s %s\n", c.Name, c.Account)
 		if c.Error != "" {
 			fmt.Fprintf(&sb, "  %-8s ! failing, retrying: %s\n", "", c.Error)

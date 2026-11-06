@@ -39,7 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -515,11 +515,11 @@ func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
-	bus       *messenger.Bus
+	bus       *chat.Bus
 	claims    *CallClaims
 	approvals *approvals.Service
 	// unattended is told when the task of a context ends.
-	unattended *messenger.ContextSet
+	unattended *chat.ContextSet
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
 	watches *agentproxy.Watches
@@ -532,7 +532,8 @@ type observedExecutor struct {
 	// decider suggests the rule that the always option of a permission
 	// allows.
 	decider *toolDecider
-	// turns counts the executions until their last event is consumed.
+	// turns counts the executions until a2a-go stored their last event and
+	// called Cleanup.
 	turns *turnCount
 }
 
@@ -547,6 +548,9 @@ var (
 // execution is done with its last event and stored it, so an answer to the
 // question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
+	if e.turns != nil {
+		defer e.turns.release(execCtx)
+	}
 	e.bus.ExecutionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
 	if err != nil || (ok && task.Status.State.Terminal()) {
@@ -791,8 +795,7 @@ func canceledFirst(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, 
 func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		if e.turns != nil {
-			e.turns.add()
-			defer e.turns.done()
+			e.turns.hold(execCtx)
 		}
 		start := time.Now()
 		from := ""

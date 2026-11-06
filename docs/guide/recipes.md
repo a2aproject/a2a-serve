@@ -62,7 +62,7 @@ A running agent applies the settings it can at once, and the update lists the ot
 A recipe sets what the agent is: the agent, its command and image, the sandbox, mounts, secrets, environment, description, approvals and limits. You decide where the agent is reachable and who may call it. The command leaves out the recipe's port, workspace, networks, access settings, messengers, backups and Google sign-in, and the review lists the ones it left out. Add messengers and networks afterwards, as for any agent:
 
 ```sh
-a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN
+a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN
 a2a-serve config set --private tailscale
 ```
 

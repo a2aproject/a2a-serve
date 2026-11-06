@@ -39,8 +39,8 @@ const (
 	placeAgent
 	// placeOperational settings are flags of `config set` only.
 	placeOperational
-	// placeChannel settings are flags of `channel add` only.
-	placeChannel
+	// placeMessenger settings are flags of `messenger add` only.
+	placeMessenger
 	// placeFile settings have no flag: they are set in config.yaml, and
 	// `config unset` resets them.
 	placeFile
@@ -157,16 +157,16 @@ func strs(p func(*Config) *[]string, arg func(*Settings) *[]string) access {
 func email(p func(*EmailConfig) *string, arg func(*EmailSettings) *string) access {
 	return access{
 		get: func(c *Config) []string {
-			if c.Channels.Email == nil {
+			if c.Messengers.Email == nil {
 				return nil
 			}
-			return nonEmpty(*p(c.Channels.Email))
+			return nonEmpty(*p(c.Messengers.Email))
 		},
 		put: func(c *Config, v []string) {
-			if c.Channels.Email == nil {
-				c.Channels.Email = &EmailConfig{}
+			if c.Messengers.Email == nil {
+				c.Messengers.Email = &EmailConfig{}
 			}
-			*p(c.Channels.Email) = first(v)
+			*p(c.Messengers.Email) = first(v)
 		},
 		arg: func(s *Settings) any {
 			if s.Email == nil {
@@ -179,7 +179,7 @@ func email(p func(*EmailConfig) *string, arg func(*EmailSettings) *string) acces
 
 func token(kind string, set func(*Config, string), arg func(*Settings) *string) access {
 	return access{
-		get: func(c *Config) []string { return nonEmpty(c.ChannelToken(kind)) },
+		get: func(c *Config) []string { return nonEmpty(c.MessengerToken(kind)) },
 		put: func(c *Config, v []string) { set(c, first(v)) },
 		arg: func(s *Settings) any { return arg(s) },
 	}
@@ -480,44 +480,44 @@ var fields = []field{
 		usage: "Join token of an Agent Mesh relay, to join without the sign-in link",
 	},
 	{
-		access: token(ChannelTelegram, func(c *Config, v string) {
-			c.Channels.Telegram = nil
+		access: token(MessengerTelegram, func(c *Config, v string) {
+			c.Messengers.Telegram = nil
 			if v != "" {
-				c.Channels.Telegram = &TelegramConfig{Token: v}
+				c.Messengers.Telegram = &TelegramConfig{Token: v}
 			}
 		}, func(s *Settings) *string { return &s.Telegram }),
-		flag: ChannelTelegram, path: "channels.telegram.token", place: placeChannel, scope: scopeOwner, live: true, secret: SecretTelegram,
+		flag: MessengerTelegram, path: "messengers.telegram.token", place: placeMessenger, scope: scopeOwner, live: true, secret: SecretTelegram,
 	},
 	{
-		access: token(ChannelDiscord, func(c *Config, v string) {
-			c.Channels.Discord = nil
+		access: token(MessengerDiscord, func(c *Config, v string) {
+			c.Messengers.Discord = nil
 			if v != "" {
-				c.Channels.Discord = &DiscordConfig{Token: v}
+				c.Messengers.Discord = &DiscordConfig{Token: v}
 			}
 		}, func(s *Settings) *string { return &s.Discord }),
-		flag: ChannelDiscord, path: "channels.discord.token", place: placeChannel, scope: scopeOwner, live: true, secret: SecretDiscord,
+		flag: MessengerDiscord, path: "messengers.discord.token", place: placeMessenger, scope: scopeOwner, live: true, secret: SecretDiscord,
 	},
-	emailField("address", "address", "Email channel: the agent's address",
+	emailField("address", "address", "Email messenger: the agent's address",
 		email(func(e *EmailConfig) *string { return &e.Address }, func(e *EmailSettings) *string { return &e.Address })),
-	emailField("imap", "imap", "Email channel: IMAP host:port, such as imap.example.com:993",
+	emailField("imap", "imap", "Email messenger: IMAP host:port, such as imap.example.com:993",
 		email(func(e *EmailConfig) *string { return &e.IMAP }, func(e *EmailSettings) *string { return &e.IMAP })),
-	emailField("smtp", "smtp", "Email channel: SMTP host:port, such as smtp.example.com:465",
+	emailField("smtp", "smtp", "Email messenger: SMTP host:port, such as smtp.example.com:465",
 		email(func(e *EmailConfig) *string { return &e.SMTP }, func(e *EmailSettings) *string { return &e.SMTP })),
-	emailField("username", "username", "Email channel: login (default: the address)",
+	emailField("username", "username", "Email messenger: login (default: the address)",
 		email(func(e *EmailConfig) *string { return &e.Username }, func(e *EmailSettings) *string { return &e.Username })),
-	emailSecret(emailField("password", "password", "Email channel: password",
+	emailSecret(emailField("password", "password", "Email messenger: password",
 		email(func(e *EmailConfig) *string { return &e.Password }, func(e *EmailSettings) *string { return &e.Password })), SecretEmailPassword),
-	emailField("mailbox", "mailbox", "Email channel: mailbox to watch (default INBOX)",
+	emailField("mailbox", "mailbox", "Email messenger: mailbox to watch (default INBOX)",
 		email(func(e *EmailConfig) *string { return &e.Mailbox }, func(e *EmailSettings) *string { return &e.Mailbox })),
-	emailField("trusted-authserv", "trustedAuthServ", "Email channel: authserv-id of your mail server's Authentication-Results",
+	emailField("trusted-authserv", "trustedAuthServ", "Email messenger: authserv-id of your mail server's Authentication-Results",
 		email(func(e *EmailConfig) *string { return &e.TrustedAuthServ }, func(e *EmailSettings) *string { return &e.TrustedAuthServ })),
-	emailField("oauth-token-url", "oauthTokenURL", "Email channel: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token",
+	emailField("oauth-token-url", "oauthTokenURL", "Email messenger: OAuth token endpoint, such as https://login.microsoftonline.com/common/oauth2/v2.0/token",
 		email(func(e *EmailConfig) *string { return &e.OAuthTokenURL }, func(e *EmailSettings) *string { return &e.OAuthTokenURL })),
-	emailField("oauth-client-id", "oauthClientID", "Email channel: OAuth client ID",
+	emailField("oauth-client-id", "oauthClientID", "Email messenger: OAuth client ID",
 		email(func(e *EmailConfig) *string { return &e.OAuthClientID }, func(e *EmailSettings) *string { return &e.OAuthClientID })),
-	emailSecret(emailField("oauth-client-secret", "oauthClientSecret", "Email channel: OAuth client secret, if the client has one",
+	emailSecret(emailField("oauth-client-secret", "oauthClientSecret", "Email messenger: OAuth client secret, if the client has one",
 		email(func(e *EmailConfig) *string { return &e.OAuthClientSecret }, func(e *EmailSettings) *string { return &e.OAuthClientSecret })), SecretEmailClient),
-	emailSecret(emailField("oauth-refresh-token", "oauthRefreshToken", "Email channel: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused",
+	emailSecret(emailField("oauth-refresh-token", "oauthRefreshToken", "Email messenger: OAuth refresh token, which signs in with OAuth (XOAUTH2); the password is then unused",
 		email(func(e *EmailConfig) *string { return &e.OAuthRefreshToken }, func(e *EmailSettings) *string { return &e.OAuthRefreshToken })), SecretEmailOAuth),
 	{
 		access: strs(func(c *Config) *[]string { return &c.Approvals.Allow }, func(s *Settings) *[]string { return &s.AllowTools }),
@@ -541,8 +541,8 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Approvals.OwnerChat }, func(s *Settings) *string { return &s.OwnerChat }),
 		flag:   "owner-chat", path: "approvals.ownerChat", scope: scopeOwner, live: true, section: SectionApprovals,
-		usage:  "Where an owner answers the approvals of tasks nobody watches: `channel[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)",
-		values: ChannelKinds,
+		usage:  "Where an owner answers the approvals of tasks nobody watches: `messenger[:who]`, with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner)",
+		values: MessengerKinds,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Limits.Memory }, func(s *Settings) *string { return &s.Memory }),
@@ -650,12 +650,12 @@ func cardSkillKey(e string) string {
 	return e
 }
 
-// emailField is the --email-<name> setting of the email channel, with the
-// key in channels.email.
+// emailField is the --email-<name> setting of the email messenger, with the
+// key in messengers.email.
 func emailField(name, key, usage string, a access) field {
 	return field{
-		access: a, flag: ChannelEmail + "-" + name, path: "channels.email." + key,
-		place: placeChannel, scope: scopeOwner, live: true, usage: usage,
+		access: a, flag: MessengerEmail + "-" + name, path: "messengers.email." + key,
+		place: placeMessenger, scope: scopeOwner, live: true, usage: usage,
 	}
 }
 
@@ -676,7 +676,7 @@ func lookupField(flag string) (field, bool) {
 func SettingNames() []string {
 	var out []string
 	for _, f := range fields {
-		if f.place != placeChannel {
+		if f.place != placeMessenger {
 			out = append(out, f.flag)
 		}
 	}
@@ -691,9 +691,9 @@ func CheckUnset(setting string) error {
 	switch {
 	case !ok:
 		return &SettingsError{Err: fmt.Errorf("unknown setting %q: want one of %s", setting, strings.Join(SettingNames(), ", "))}
-	case f.place == placeChannel:
+	case f.place == placeMessenger:
 		kind, _, _ := strings.Cut(setting, "-")
-		return &SettingsError{Err: fmt.Errorf("%s is a channel setting: change it with `a2a-serve channel add %s`, or remove the channel with `a2a-serve channel rm %s`", setting, kind, kind)}
+		return &SettingsError{Err: fmt.Errorf("%s is a messenger setting: change it with `a2a-serve messenger add %s`, or remove the messenger with `a2a-serve messenger rm %s`", setting, kind, kind)}
 	case f.place == placeAgent:
 		return &SettingsError{Err: fmt.Errorf("the agent can't be unset; switch it with `a2a-serve config set --agent <name>`")}
 	}
@@ -702,7 +702,7 @@ func CheckUnset(setting string) error {
 
 // liveSetting reports whether f is a setting of `config set` that a running
 // server applies without a restart.
-func (f field) liveSetting() bool { return f.live && f.place != placeChannel }
+func (f field) liveSetting() bool { return f.live && f.place != placeMessenger }
 
 // LiveSettings returns the names of the settings of `config set` that a
 // running server applies without a restart, in the order of the fields.
@@ -843,8 +843,8 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	default:
 		f.put(cfg, nil)
 	}
-	if e := cfg.Channels.Email; e != nil && *e == (EmailConfig{}) {
-		cfg.Channels.Email = nil
+	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
+		cfg.Messengers.Email = nil
 	}
 	after := cfg.referencedSecrets()
 	for name := range before {
@@ -858,7 +858,7 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 
 // Commands returns the commands which recreate the agent in an empty
 // directory: `a2a-serve start`, then `config set` for the settings only it
-// takes, then `channel add` for each channel. Secrets are passed as
+// takes, then `messenger add` for each messenger. Secrets are passed as
 // env:NAME; stored is used to tell which network secrets are set.
 func (c *Config) Commands(stored Secrets) [][]string {
 	h := c.Harness
@@ -867,7 +867,7 @@ func (c *Config) Commands(stored Secrets) [][]string {
 	}
 	start := []string{"a2a-serve", "start", h}
 	set := []string{"a2a-serve", "config", "set"}
-	channels := map[string][]string{}
+	messengers := map[string][]string{}
 	for _, f := range fields {
 		if f.flag == "name" && c.Name == "" {
 			continue
@@ -881,22 +881,22 @@ func (c *Config) Commands(stored Secrets) [][]string {
 			start = appendFlag(start, f.flag, f.get(c)...)
 		case f.place == placeOperational:
 			set = appendFlag(set, f.flag, f.get(c)...)
-		case f.place == placeChannel:
+		case f.place == placeMessenger:
 			kind, _, _ := strings.Cut(f.flag, "-")
 			flag := f.flag
-			if kind != ChannelEmail {
+			if kind != MessengerEmail {
 				flag = "token"
 			}
-			channels[kind] = appendFlag(channels[kind], flag, f.get(c)...)
+			messengers[kind] = appendFlag(messengers[kind], flag, f.get(c)...)
 		}
 	}
 	out := [][]string{start}
 	if len(set) > 3 {
 		out = append(out, set)
 	}
-	for _, kind := range ChannelKinds {
-		if args := channels[kind]; len(args) > 0 {
-			out = append(out, append([]string{"a2a-serve", "channel", "add", kind}, args...))
+	for _, kind := range MessengerKinds {
+		if args := messengers[kind]; len(args) > 0 {
+			out = append(out, append([]string{"a2a-serve", "messenger", "add", kind}, args...))
 		}
 	}
 	return out
@@ -945,15 +945,15 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// ChannelsDiffer reports whether a and b have different messengers.
-func ChannelsDiffer(a, b *Config) bool {
+// MessengersDiffer reports whether a and b have different messengers.
+func MessengersDiffer(a, b *Config) bool {
 	return slices.ContainsFunc(fields, func(f field) bool {
-		return f.place == placeChannel && !slices.Equal(f.get(a), f.get(b))
+		return f.place == placeMessenger && !slices.Equal(f.get(a), f.get(b))
 	})
 }
 
 // CopyLive copies the settings a running server applies without a restart,
-// other than channels, from src to dst.
+// other than messengers, from src to dst.
 func CopyLive(dst, src *Config) {
 	for _, f := range fields {
 		if f.liveSetting() {
@@ -970,7 +970,7 @@ func IsAccess(setting string) bool {
 
 // label names the flag of f in errors.
 func (f field) label() string {
-	if f.flag == ChannelTelegram || f.flag == ChannelDiscord {
+	if f.flag == MessengerTelegram || f.flag == MessengerDiscord {
 		return f.flag + " token"
 	}
 	return "--" + f.flag
@@ -1009,7 +1009,7 @@ const (
 	// OperationalFlags are the flags of `config set` only: limits,
 	// network-provider options, backups and Google sign-in.
 	OperationalFlags
-	// EmailFlags are the --email-* flags of `channel add email`.
+	// EmailFlags are the --email-* flags of `messenger add email`.
 	EmailFlags
 )
 
@@ -1019,7 +1019,7 @@ func (p placement) flagSet() FlagSet {
 		return AgentFlag
 	case placeOperational:
 		return OperationalFlags
-	case placeChannel:
+	case placeMessenger:
 		return EmailFlags
 	case placeFile:
 		return 0
@@ -1032,7 +1032,7 @@ func (s *Settings) Flags(sets FlagSet) []Flag {
 	var out []Flag
 	for _, f := range fields {
 		// The bot tokens have no usage: they are the --token flag of
-		// `channel add`.
+		// `messenger add`.
 		if sets&f.place.flagSet() == 0 || f.usage == "" {
 			continue
 		}
@@ -1074,10 +1074,10 @@ func SettingDocs() []SettingDoc {
 		case placeFile:
 			d.FileOnly = true
 			d.Commands = []string{"config edit"}
-		case placeChannel:
+		case placeMessenger:
 			kind, _, _ := strings.Cut(f.flag, "-")
-			d.Commands = []string{"channel add " + kind}
-			if kind != ChannelEmail {
+			d.Commands = []string{"messenger add " + kind}
+			if kind != MessengerEmail {
 				d.Flag = "token"
 			}
 		}
