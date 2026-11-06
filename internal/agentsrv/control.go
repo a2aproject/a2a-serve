@@ -129,6 +129,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.rt.Secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}
+	st.AllowTools, st.DenyTools = cfg.Approvals.Allow, cfg.Approvals.Deny
 	st.Backup = s.backups.get()
 	a, err := s.ops.Access(ctx)
 	if err != nil {

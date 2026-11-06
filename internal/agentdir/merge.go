@@ -16,6 +16,7 @@ package agentdir
 
 import (
 	"slices"
+	"strings"
 )
 
 // Conflict is an agent setting, or an entry of a list setting, changed both
@@ -37,7 +38,11 @@ func Merge3(base, local, upstream *Config) (*Config, []Conflict) {
 	out := local.Clone()
 	var conflicts []Conflict
 	for _, f := range fields {
-		if f.scope != scopeAgent {
+		if f.scope != scopeAgent || f.flag == "deny-tools" {
+			continue
+		}
+		if f.flag == "allow-tools" {
+			conflicts = append(conflicts, mergeToolLists(base, local, upstream, out)...)
 			continue
 		}
 		b, l, u := f.get(base), f.get(local), f.get(upstream)
@@ -137,4 +142,43 @@ func UnusedSecrets(old, next *Config) []string {
 	}
 	slices.Sort(out)
 	return out
+}
+
+// mergeToolLists merges --allow-tools and --deny-tools into out as one
+// list keyed by entry, so that an entry moved from one list to the other
+// stays where it was moved.
+func mergeToolLists(base, local, upstream, out *Config) []Conflict {
+	const allow, deny = "allow\x00", "deny\x00"
+	tagged := func(c *Config) []string {
+		var l []string
+		for _, e := range c.Approvals.Allow {
+			l = append(l, allow+e)
+		}
+		for _, e := range c.Approvals.Deny {
+			l = append(l, deny+e)
+		}
+		return l
+	}
+	key := func(e string) string {
+		_, k, _ := strings.Cut(e, "\x00")
+		return k
+	}
+	merged, keys := mergeList(tagged(base), tagged(local), tagged(upstream), key)
+	out.Approvals.Allow, out.Approvals.Deny = nil, nil
+	for _, e := range merged {
+		if v, ok := strings.CutPrefix(e, allow); ok {
+			out.Approvals.Allow = append(out.Approvals.Allow, v)
+		} else {
+			out.Approvals.Deny = append(out.Approvals.Deny, strings.TrimPrefix(e, deny))
+		}
+	}
+	var conflicts []Conflict
+	for _, k := range keys {
+		setting := "allow-tools"
+		if slices.Contains(local.Approvals.Deny, k) {
+			setting = "deny-tools"
+		}
+		conflicts = append(conflicts, Conflict{Setting: setting, Key: k})
+	}
+	return conflicts
 }

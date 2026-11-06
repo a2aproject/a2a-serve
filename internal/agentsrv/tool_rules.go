@@ -1,0 +1,100 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentsrv
+
+import (
+	"context"
+	"log/slog"
+	"slices"
+
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
+)
+
+// toolDecider answers tool permissions with the allow and deny rules of the
+// current config, so that changing them doesn't need a restart. It logs
+// each answer by the entry that decided it, and notes the denied calls.
+type toolDecider struct {
+	config func() *agentdir.Config
+	// servers returns the names of the MCP servers of the project, which
+	// name the MCP tools of calls.
+	servers func() []string
+	notes   *toolNotes
+}
+
+// call describes a tool call of a permission request.
+func (d *toolDecider) call(kind, title string, input any) toolrules.Call {
+	var servers []string
+	if d.servers != nil {
+		servers = d.servers()
+	}
+	return toolrules.NewCall(kind, title, input, servers)
+}
+
+// rules returns the allow and deny rules of the current config.
+func (d *toolDecider) rules() toolrules.Rules {
+	cfg := d.config()
+	return toolrules.Rules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
+}
+
+func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
+	if q.Tool == nil {
+		return a2aacp.Answer{}, false
+	}
+	dec, ok := d.rules().Decide(d.call(q.Tool.Kind, q.Tool.Title, q.Tool.Input))
+	if !ok {
+		return a2aacp.Answer{}, false
+	}
+	ans, ok := ruleAnswer(q.Options, dec.Allow)
+	if !ok {
+		return ans, false
+	}
+	if execCtx != nil {
+		if !dec.Allow {
+			d.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
+		}
+		slog.Info("approval answered by a rule", "task", execCtx.TaskID, "rule", dec.Entry, "kind", q.Tool.Kind, "option", ans.Option)
+	}
+	return ans, true
+}
+
+// ruleAnswer returns the option that allows a tool call once, or always if
+// the agent offers no other way to allow it, or the option that rejects
+// it, canceling it if the agent offers no way to reject it.
+func ruleAnswer(options []string, allow bool) (a2aacp.Answer, bool) {
+	if !allow {
+		if id := firstOffered(options, a2aacp.OptionReject, a2aacp.OptionRejectAlways); id != "" {
+			return a2aacp.Answer{Option: id}, true
+		}
+		return a2aacp.Answer{Option: a2aacp.OptionCancel}, true
+	}
+	if id := firstOffered(options, a2aacp.OptionOnce, a2aacp.OptionAlways); id != "" {
+		return a2aacp.Answer{Option: id}, true
+	}
+	return a2aacp.Answer{}, false
+}
+
+// firstOffered returns the first of ids that options has, or "".
+func firstOffered(options []string, ids ...string) string {
+	for _, id := range ids {
+		if slices.Contains(options, id) {
+			return id
+		}
+	}
+	return ""
+}

@@ -57,6 +57,11 @@ func TestValidate(t *testing.T) {
 		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
 		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
 		{name: "unknown denied tool kind", modify: func(c *Config) { c.Approvals.Deny = []string{"shell"} }, wantErr: `invalid --deny-tools "shell"`},
+		{name: "tool and command rules", modify: func(c *Config) {
+			c.Approvals.Allow, c.Approvals.Deny = []string{"tool:grafana.*", "command:kubectl get *"}, []string{"command:git push *"}
+		}},
+		{name: "command rule with several parts", modify: func(c *Config) { c.Approvals.Allow = []string{"command:ls | sh"} }, wantErr: `invalid --allow-tools "command:ls | sh": a command rule can't match`},
+		{name: "empty tool rule", modify: func(c *Config) { c.Approvals.Deny = []string{"tool:"} }, wantErr: `invalid --deny-tools "tool:": want tool:<server>.<tool>`},
 		{name: "disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{"github"} }},
 		{name: "empty disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{""} }, wantErr: `invalid --disable-mcp ""`},
 		{name: "owner chat", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:anna" }},

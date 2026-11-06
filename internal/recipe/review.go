@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // Line is a line of the review of what a recipe makes the machine run.
@@ -208,9 +209,14 @@ func approvalItems(a agentdir.ApprovalsConfig) []Item {
 	return out
 }
 
-// allowsChanges reports whether the patterns match a tool kind besides the
-// ones that don't change anything.
+// allowsChanges reports whether the patterns allow MCP tools or commands,
+// or match a tool kind besides the ones that don't change anything.
 func allowsChanges(patterns []string) bool {
+	for _, p := range patterns {
+		if strings.HasPrefix(p, toolrules.PrefixTool) || strings.HasPrefix(p, toolrules.PrefixCommand) {
+			return true
+		}
+	}
 	for _, kind := range agentdir.ToolKinds {
 		if slices.Contains(safeKinds, kind) {
 			continue

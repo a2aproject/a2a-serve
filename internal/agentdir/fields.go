@@ -23,6 +23,8 @@ import (
 	"strings"
 
 	"github.com/google/shlex"
+
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // placement is the command whose flags change a setting.
@@ -79,6 +81,9 @@ type field struct {
 	live bool
 	// split says commas also separate the entries of a list flag.
 	split bool
+	// splitEntry splits a value of a list flag into entries, in place of
+	// splitting at every comma.
+	splitEntry func(string) []string
 	// secret is the name a secret value of the flag is stored under.
 	secret string
 	// secretOnly settings are kept in the secrets file alone.
@@ -207,6 +212,74 @@ func mountArgKey(s string) string {
 }
 
 func trimSpace(_ Dir, v string) (string, error) { return strings.TrimSpace(v), nil }
+
+// toolValues are the completions of --allow-tools and --deny-tools.
+var toolValues = append(slices.Clone(ToolKinds), toolrules.PrefixTool, toolrules.PrefixCommand)
+
+// splitToolEntries splits a value of --allow-tools or --deny-tools at
+// commas, except in a command entry, which takes the rest of the value.
+func splitToolEntries(v string) []string {
+	var out []string
+	for v != "" {
+		if strings.HasPrefix(strings.TrimSpace(v), toolrules.PrefixCommand) {
+			return append(out, v)
+		}
+		entry, rest, _ := strings.Cut(v, ",")
+		out = append(out, entry)
+		v = rest
+	}
+	return out
+}
+
+// toolKey writes a valid entry of --allow-tools or --deny-tools the way it
+// is kept. Validation reports invalid entries.
+func toolKey(v string) string {
+	v = strings.TrimSpace(v)
+	e, err := toolrules.Parse(v)
+	if err != nil {
+		return v
+	}
+	return e.String()
+}
+
+// mergeToolEntries adds the entries of --allow-tools, or of --deny-tools
+// if deny, and removes them from the other list, since an entry is in one
+// of the two at most.
+func mergeToolEntries(deny bool) func(s *Settings, cfg *Config, d Dir, secrets Secrets) error {
+	return func(s *Settings, cfg *Config, _ Dir, _ Secrets) error {
+		added, mentioned := toolEntries(s.AllowTools), toolEntries(s.DenyTools)
+		self, other := &cfg.Approvals.Allow, &cfg.Approvals.Deny
+		if deny {
+			added, mentioned = mentioned, added
+			self, other = other, self
+		}
+		for _, e := range added {
+			if slices.Contains(mentioned, e) {
+				return fmt.Errorf("%q is in both --allow-tools and --deny-tools: an entry either allows or denies", e)
+			}
+		}
+		for _, e := range added {
+			*self = putKeyed(*self, e, identity)
+		}
+		*other = slices.DeleteFunc(slices.Clone(*other), func(e string) bool { return slices.Contains(added, e) })
+		if len(*other) == 0 {
+			*other = nil
+		}
+		return nil
+	}
+}
+
+// toolEntries returns the entries of the values of --allow-tools or
+// --deny-tools, parsed.
+func toolEntries(values []string) []string {
+	var out []string
+	for _, v := range values {
+		for _, e := range splitToolEntries(v) {
+			out = append(out, toolKey(e))
+		}
+	}
+	return out
+}
 
 // parseNetwork reads "none" as no provider.
 func parseNetwork(_ Dir, v string) (string, error) {
@@ -437,15 +510,17 @@ var fields = []field{
 		email(func(e *EmailConfig) *string { return &e.OAuthRefreshToken }, func(e *EmailSettings) *string { return &e.OAuthRefreshToken })), SecretEmailOAuth),
 	{
 		access: strs(func(c *Config) *[]string { return &c.Approvals.Allow }, func(s *Settings) *[]string { return &s.AllowTools }),
-		flag:   "allow-tools", path: "approvals.allow", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: identity,
-		usage:  "ACP tool `kinds` approved without asking: " + strings.Join(ToolKinds, ", ") + ", or a glob",
-		values: ToolKinds,
+		flag:   "allow-tools", path: "approvals.allow", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: toolKey,
+		splitEntry: splitToolEntries, merge: mergeToolEntries(false),
+		usage:  "Tool `entries` approved without asking: ACP tool kinds (" + strings.Join(ToolKinds, ", ") + "), tool:<server>.<tool> for MCP tools, or command:<command> for shell commands; * matches any text, and the most specific entry of --allow-tools and --deny-tools decides",
+		values: toolValues,
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Approvals.Deny }, func(s *Settings) *[]string { return &s.DenyTools }),
-		flag:   "deny-tools", path: "approvals.deny", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: identity,
-		usage:  "ACP tool `kinds` denied without asking, like --allow-tools",
-		values: ToolKinds,
+		flag:   "deny-tools", path: "approvals.deny", scope: scopeAgent, live: true, section: SectionApprovals, split: true, key: toolKey,
+		splitEntry: splitToolEntries, merge: mergeToolEntries(true),
+		usage:  "Tool `entries` denied without asking, in the forms of --allow-tools",
+		values: toolValues,
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.MCP.Disabled }, func(s *Settings) *[]string { return &s.DisableMCP }),
@@ -844,6 +919,9 @@ type Flag struct {
 	Value any
 	// Split says commas also separate the values of a list.
 	Split bool
+	// KeepCommas says the settings split the values themselves, so the flag
+	// keeps each value whole.
+	KeepCommas bool
 	// Secret says the flag takes secret values.
 	Secret bool
 	// Values are the completions of the flag.
@@ -890,7 +968,7 @@ func (s *Settings) Flags(sets FlagSet) []Flag {
 			continue
 		}
 		out = append(out, Flag{
-			Name: f.flag, Usage: f.usage, Section: f.section, Value: f.arg(s), Split: f.split, Values: f.values, UnsetTo: f.unsetTo,
+			Name: f.flag, Usage: f.usage, Section: f.section, Value: f.arg(s), Split: f.split, KeepCommas: f.splitEntry != nil, Values: f.values, UnsetTo: f.unsetTo,
 			// --secret takes NAME=value, stored under NAME.
 			Secret: f.secret != "" || f.flag == "secret",
 		})

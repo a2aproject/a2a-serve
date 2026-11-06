@@ -62,9 +62,13 @@ type Status struct {
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`
 	// ProjectError is why the project's MCP servers or skills couldn't be read.
-	ProjectError string        `json:"projectError,omitempty"`
-	Backup       *BackupStatus `json:"backup,omitempty"`
-	Access       *Access       `json:"access,omitempty"`
+	ProjectError string `json:"projectError,omitempty"`
+	// AllowTools and DenyTools are the rules that decide tool calls without
+	// asking.
+	AllowTools []string      `json:"allowTools,omitempty"`
+	DenyTools  []string      `json:"denyTools,omitempty"`
+	Backup     *BackupStatus `json:"backup,omitempty"`
+	Access     *Access       `json:"access,omitempty"`
 }
 
 // Access describes who may call the agent.

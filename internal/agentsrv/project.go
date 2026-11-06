@@ -85,6 +85,24 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 	return a2aacp.SessionParams{Cwd: ws, MCPServers: servers}, nil
 }
 
+// mcpServerNames returns the names of the MCP servers of the project's
+// .mcp.json, or none if it can't be read.
+func (s *Server) mcpServerNames() []string {
+	ws, err := s.workspace()
+	if err != nil {
+		return nil
+	}
+	found, err := project.LoadMCP(ws)
+	if err != nil {
+		return nil
+	}
+	names := make([]string, len(found))
+	for i, srv := range found {
+		names[i] = srv.Name
+	}
+	return names
+}
+
 // workspace returns the working directory of the agent's sessions.
 func (s *Server) workspace() (string, error) {
 	ws, err := s.dir.WorkspaceMount(s.rt.Config())

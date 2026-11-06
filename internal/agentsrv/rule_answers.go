@@ -20,7 +20,6 @@ import (
 	"fmt"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -34,9 +33,8 @@ var rulesPrincipal = auth.Principal{ID: "allow-tools", Role: auth.RoleOwner}
 // answerWaiting answers the approvals that wait and that the allow and
 // deny rules of the current config answer, as if they had been asked now.
 func (s *Server) answerWaiting(ctx context.Context) error {
-	cfg := s.rt.Config()
-	rules := a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
-	if len(rules.Allow) == 0 && len(rules.Deny) == 0 {
+	rules := s.decider.rules()
+	if rules.Empty() {
 		return nil
 	}
 	waiting, err := s.waitingApprovals(ctx)
@@ -50,7 +48,11 @@ func (s *Server) answerWaiting(ctx context.Context) error {
 		for i, o := range q.Options {
 			ids[i] = o.ID
 		}
-		ans, ok := rules.AutoAnswer(ctx, nil, a2aacp.Question{Options: ids, Tool: &a2aacp.ToolCall{Kind: q.Kind}})
+		dec, ok := rules.Decide(s.decider.call(q.Kind, q.ToolTitle, q.ToolInput))
+		if !ok {
+			continue
+		}
+		ans, ok := ruleAnswer(ids, dec.Allow)
 		if !ok {
 			continue
 		}

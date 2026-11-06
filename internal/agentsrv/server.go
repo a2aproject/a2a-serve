@@ -167,6 +167,8 @@ type Server struct {
 	budget *anonymousBudget
 	// notes are the notes on tool calls for the results of tasks.
 	notes *toolNotes
+	// decider answers tool permissions without asking.
+	decider *toolDecider
 	// sessions are the ACP sessions of the conversations in the current
 	// workspace. The agent keys of conversations come from all sessions.
 	sessions store.SessionStore
@@ -394,6 +396,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.procs = newAgentProcesses()
 	s.notes = newToolNotes()
+	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes}
 	s.sessions = s.store.Sessions().In(s.workspace)
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,

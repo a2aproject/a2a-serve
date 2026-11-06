@@ -163,7 +163,14 @@ func (f field) entries(s *Settings) []string {
 		}
 		return []string{strconv.Itoa(*v)}
 	case *[]string:
-		return *v
+		if f.splitEntry == nil {
+			return *v
+		}
+		var out []string
+		for _, e := range *v {
+			out = append(out, f.splitEntry(e)...)
+		}
+		return out
 	}
 	return nil
 }

@@ -90,6 +90,24 @@ func TestMerge3(t *testing.T) {
 			want:     func(c *Config) { c.Approvals.Allow = []string{"search"} },
 		},
 		{
+			name:  "entry moved to deny-tools stays there",
+			local: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = nil, []string{"read"} },
+			upstream: func(c *Config) {
+				c.Approvals.Allow = []string{"read", "tool:grafana.*"}
+				c.Approvals.Deny = []string{"execute"}
+			},
+			want: func(c *Config) {
+				c.Approvals.Allow, c.Approvals.Deny = []string{"tool:grafana.*"}, []string{"read", "execute"}
+			},
+		},
+		{
+			name:          "entry moved locally and removed upstream",
+			local:         func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"command:git *"}, []string{"read"} },
+			upstream:      func(c *Config) { c.Approvals.Allow = []string{"command:git *"} },
+			want:          func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"command:git *"}, []string{"read"} },
+			wantConflicts: []Conflict{{Setting: "deny-tools", Key: "read"}},
+		},
+		{
 			name:     "owner settings stay local",
 			local:    func(c *Config) { c.Port = 9100; c.Network.Private = "tailscale" },
 			upstream: func(c *Config) { c.Port = 9200; c.Name = "other"; c.Network.Public = "tailscale" },

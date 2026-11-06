@@ -531,6 +531,85 @@ func TestToolKindsAreRepeatable(t *testing.T) {
 	}
 }
 
+func TestConfigSetToolRules(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		args    []string
+		want    agentdir.ApprovalsConfig
+		wantOut []string
+		wantErr string
+	}{
+		{
+			name: "tool and command entries",
+			args: []string{"--allow-tools", "tool:grafana.*, read", "--allow-tools", "command:npm test -- --grep a,b", "--deny-tools", "command:git push *"},
+			want: agentdir.ApprovalsConfig{
+				Allow: []string{"execute", "tool:grafana.*", "read", "command:npm test -- --grep a,b"},
+				Deny:  []string{"command:git push *"},
+			},
+		},
+		{
+			name:    "entry moves between the lists",
+			args:    []string{"--deny-tools", "execute"},
+			want:    agentdir.ApprovalsConfig{Deny: []string{"execute"}},
+			wantOut: []string{"allow-tools", "− execute", "deny-tools", "+ execute"},
+		},
+		{
+			name:    "entry in both lists",
+			args:    []string{"--allow-tools", "read", "--deny-tools", "read"},
+			wantErr: `"read" is in both --allow-tools and --deny-tools`,
+		},
+		{
+			name:    "command with several parts",
+			args:    []string{"--allow-tools", "command:git status; *"},
+			wantErr: `invalid --allow-tools "command:git status; *": a command rule can't match`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Approvals: agentdir.ApprovalsConfig{Allow: []string{"execute"}}})
+			out, err := runCMD(t, append([]string{"config", "set", "--dir", d.Root}, tc.args...)...)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("a2a-serve config set error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("a2a-serve config set error = %v", err)
+			}
+			for _, w := range tc.wantOut {
+				if !strings.Contains(out, w) {
+					t.Fatalf("a2a-serve config set = %q, want %q in it", out, w)
+				}
+			}
+			got, err := d.ReadConfig()
+			if err != nil {
+				t.Fatalf("ReadConfig() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got.Approvals); diff != "" {
+				t.Fatalf("a2a-serve config set wrong approvals (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestConfigUnsetToolRule(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Approvals: agentdir.ApprovalsConfig{Allow: []string{"read", "command:kubectl get *"}}})
+	if _, err := runCMD(t, "config", "unset", "allow-tools", "command:kubectl get *", "--dir", d.Root); err != nil {
+		t.Fatalf("a2a-serve config unset allow-tools error = %v", err)
+	}
+	got, err := d.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"read"}, got.Approvals.Allow); diff != "" {
+		t.Fatalf("a2a-serve config unset allow-tools wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSettingsHelpSections(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

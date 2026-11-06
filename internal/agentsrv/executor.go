@@ -371,7 +371,7 @@ func (s *Server) localCLI() string {
 // acpConfig is the config of every ACP executor of the server.
 func (s *Server) acpConfig() *a2aacp.Config {
 	return &a2aacp.Config{
-		AutoAnswer:   liveToolRules{config: s.rt.Config, notes: s.notes},
+		AutoAnswer:   s.decider,
 		SessionStore: s.sessions,
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,

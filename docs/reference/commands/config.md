@@ -131,8 +131,8 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-tools kinds` |  | ACP tool kinds approved without asking: read, edit, delete, move, search, execute, think, fetch, switch_mode, other, or a glob (repeatable; commas also separate values) |
-| `--deny-tools kinds` |  | ACP tool kinds denied without asking, like --allow-tools (repeatable; commas also separate values) |
+| `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
+| `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
 | `--owner-chat channel[:who]` |  | Where an owner answers the approvals of tasks nobody watches: channel[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
 
 **Flags**
