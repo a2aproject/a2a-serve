@@ -199,7 +199,7 @@ func TestConformanceQueuedConcurrentTask(t *testing.T) {
 func TestUnauthenticatedCallerIsRejected(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	resp, err := http.Post(ts.localURL()+"/", "application/json", nil)
+	resp, err := testHTTP.Post(ts.localURL()+"/", "application/json", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -209,7 +209,7 @@ func TestUnauthenticatedCallerIsRejected(t *testing.T) {
 	if resp.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("POST / status = %d, want %d", resp.StatusCode, http.StatusUnauthorized)
 	}
-	card, err := http.Get(ts.localURL() + "/.well-known/agent-card.json")
+	card, err := testHTTP.Get(ts.localURL() + "/.well-known/agent-card.json")
 	if err != nil {
 		t.Fatal(err)
 	}

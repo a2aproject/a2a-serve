@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 	"testing"
 	"time"
 
@@ -35,7 +34,7 @@ import (
 // urlClient returns an A2A client of url authenticated with token.
 func urlClient(t *testing.T, url, token string) *a2aclient.Client {
 	t.Helper()
-	hc := contacts.TokenClient(http.DefaultClient, store.Contact{URL: url, Token: token})
+	hc := contacts.TokenClient(testHTTP, store.Contact{URL: url, Token: token})
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, url)
 	if err != nil {

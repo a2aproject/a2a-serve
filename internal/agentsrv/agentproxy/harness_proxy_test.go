@@ -147,7 +147,7 @@ func getURL(t *testing.T, u, authorization string) proxyResponse {
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testHTTP.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s error = %v", u, err)
 	}
@@ -339,11 +339,11 @@ func TestHarnessProxyCallsContactForTheUserOfTheTurn(t *testing.T) {
 func proxyClient(t *testing.T, agentURL string) *a2aclient.Client {
 	t.Helper()
 	ctx := context.Background()
-	card, err := agentcard.NewResolver(http.DefaultClient).Resolve(ctx, agentURL)
+	card, err := agentcard.NewResolver(testHTTP).Resolve(ctx, agentURL)
 	if err != nil {
 		t.Fatalf("Resolve(%s) error = %v", agentURL, err)
 	}
-	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(http.DefaultClient), a2aclient.WithRESTTransport(http.DefaultClient))
+	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(testHTTP), a2aclient.WithRESTTransport(testHTTP))
 	if err != nil {
 		t.Fatalf("NewFromCard() error = %v", err)
 	}

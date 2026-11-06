@@ -103,7 +103,7 @@ func addNode(t *testing.T, ts *testServer, id string, delay time.Duration) *fake
 	if diff := cmp.Diff(wantInstructions, resp.Instructions); diff != "" {
 		t.Fatalf("Pair() wrong instructions (-want +got) diff = %s", diff)
 	}
-	paired, err := credstore.Pair(ctx, http.DefaultClient, ts.srv.bestURL(), resp.Code, pairapi.PairingAgent)
+	paired, err := credstore.Pair(ctx, testHTTP, ts.srv.bestURL(), resp.Code, pairapi.PairingAgent)
 	if err != nil {
 		t.Fatalf("Pair() error = %v", err)
 	}
@@ -190,7 +190,7 @@ func TestNodeSkill(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant"})
 	path := mailboxapi.Prefix + "/skill.md"
 
-	resp, err := http.Get(ts.localURL() + path)
+	resp, err := testHTTP.Get(ts.localURL() + path)
 	if err != nil {
 		t.Fatalf("GET %s error = %v", path, err)
 	}
@@ -285,7 +285,7 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer "+tok)
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("A2A-Version", "1.0")
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testHTTP.Do(req)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -362,7 +362,7 @@ func TestNodeCardIsServedToCallersWhoMayCallTheNode(t *testing.T) {
 			if tc.token != "" {
 				req.Header.Set("Authorization", "Bearer "+tc.token)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := testHTTP.Do(req)
 			if err != nil {
 				t.Fatalf("GET %s error = %v", tc.path, err)
 			}

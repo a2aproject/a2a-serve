@@ -363,6 +363,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		WebhookRetries: s.timings.WebhookRetries,
 		Advertised:     s.ads.Advertised,
 	})
+	closers.push(func(context.Context) error {
+		s.nodes.Stop()
+		return nil
+	})
 	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
 	closers.push(s.clients.Close)

@@ -98,6 +98,9 @@ type Host struct {
 	open     map[a2a.TaskID]*nodeWaiter
 	keys     map[a2a.TaskID]*turnKeys
 	inbox    map[string][]*mailboxapi.InboxEntry
+	// stopped is set by Stop, after which wakes aren't delivered.
+	stopped    bool
+	deliveries sync.WaitGroup
 }
 
 type nodeWaiter struct {
@@ -742,10 +745,20 @@ func (n *Host) wake(nodeID string, env mailboxapi.Envelope) *mailboxapi.InboxEnt
 		list = list[len(list)-inboxSize:]
 	}
 	n.inbox[nodeID] = list
+	if !n.stopped {
+		n.deliveries.Go(func() { n.deliver(n.ctx, entry) })
+	}
 	n.mu.Unlock()
-
-	go n.deliver(n.ctx, entry)
 	return entry
+}
+
+// Stop waits for the wake deliveries in progress, which end with the
+// context of the host, and keeps later wakes from being delivered.
+func (n *Host) Stop() {
+	n.mu.Lock()
+	n.stopped = true
+	n.mu.Unlock()
+	n.deliveries.Wait()
 }
 
 func (n *Host) deliver(ctx context.Context, entry *mailboxapi.InboxEntry) {

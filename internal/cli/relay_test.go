@@ -36,6 +36,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 const relayAdminToken = "relay-admin"
 
 // remoteRelay serves the control API of a relay at its URL, over a fake
@@ -45,7 +50,7 @@ func remoteRelay(t *testing.T) (string, *meshtest.Mesh) {
 	m := meshtest.New(t, relayAdminToken)
 	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)}, time.Time{}, "ci-bot")
 	var relayURL string
-	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, http.DefaultClient), func() control.Status {
+	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, testHTTP), func() control.Status {
 		return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
 	}, func(control.Member) bool { return false })
 	h := control.RequireToken(relayAdminToken, backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now), control.Handler(svc, nil))

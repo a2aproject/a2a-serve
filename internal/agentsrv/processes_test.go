@@ -20,11 +20,13 @@ import (
 	"iter"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -201,5 +203,80 @@ func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
 	defer keys.mu.Unlock()
 	if got := len(keys.pending); got != 0 {
 		t.Fatalf("agentKeys.pending has %d entries after the turn, want 0", got)
+	}
+}
+
+func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
+	t.Parallel()
+	started := false
+	e := newSplitExecutor(context.Background(), splitDeps{
+		Main:   emptyExecutor{},
+		Keys:   newAgentKeys(openTestStore(t).Sessions()),
+		Budget: newAnonymousBudget(),
+		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			started = true
+			return emptyExecutor{}, func(context.Context) error { return nil }, nil
+		},
+	})
+	if err := e.close(context.Background()); err != nil {
+		t.Fatalf("splitExecutor.close() error = %v", err)
+	}
+
+	_, err := e.pool(usersPool)
+
+	if err == nil {
+		t.Fatalf("splitExecutor.pool() after close error = nil, want error")
+	}
+	if started {
+		t.Fatalf("splitExecutor.pool() after close started the pool, want it not started")
+	}
+}
+
+// blockingExecutor runs every turn until its context ends.
+type blockingExecutor struct {
+	a2asrv.AgentExecutor
+	started chan struct{}
+	ended   atomic.Bool
+}
+
+func (b *blockingExecutor) Execute(ctx context.Context, _ *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(func(a2a.Event, error) bool) {
+		close(b.started)
+		<-ctx.Done()
+		time.Sleep(50 * time.Millisecond)
+		b.ended.Store(true)
+	}
+}
+
+func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
+	t.Parallel()
+	serverCtx, stopServer := context.WithCancel(context.Background())
+	inner := &blockingExecutor{started: make(chan struct{})}
+	e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newAnonymousBudget()})
+	go func() {
+		for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
+		}
+	}()
+	<-inner.started
+
+	stopServer()
+	if err := e.close(context.Background()); err != nil {
+		t.Fatalf("splitExecutor.close() error = %v", err)
+	}
+
+	if !inner.ended.Load() {
+		t.Fatal("splitExecutor.close() returned while a turn ran, want it to stop the turns first")
+	}
+	var got []a2a.TaskState
+	for ev, err := range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c2", TaskID: "t2"}) {
+		if err != nil {
+			t.Fatalf("splitExecutor.Execute() after close() error = %v", err)
+		}
+		if st, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
+			got = append(got, st.Status.State)
+		}
+	}
+	if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateFailed}, got); diff != "" {
+		t.Fatalf("splitExecutor.Execute() after close() wrong states (-want +got) diff = %s", diff)
 	}
 }

@@ -36,6 +36,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 const (
 	sharedClientID = "shared-app"
 	verifier       = "verifier-0123456789-0123456789-0123456789"
@@ -387,7 +392,7 @@ func TestServerMetadata(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			o := startOAuth(t, g, tc.cfg, tc.shared)
-			resp, err := http.Get(o.url + oauth.AuthServerPath)
+			resp, err := testHTTP.Get(o.url + oauth.AuthServerPath)
 			if err != nil {
 				t.Fatal(err)
 			}

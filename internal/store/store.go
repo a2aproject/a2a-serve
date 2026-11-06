@@ -71,7 +71,10 @@ func Open(path string) (*Store, error) {
 	// WAL lets reads proceed during a write; NORMAL syncs at checkpoints
 	// only, which can't corrupt the database in WAL mode.
 	const common = "_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=foreign_keys(1)&_pragma=synchronous(NORMAL)"
-	u.RawQuery = common
+	// A deferred transaction that reads before it writes gets SQLITE_BUSY
+	// without the busy timeout when a reader holds the write lock for a
+	// moment; IMMEDIATE takes the lock up front, where the timeout applies.
+	u.RawQuery = common + "&_txlock=immediate"
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err

@@ -55,7 +55,7 @@ func startSignInServer(t *testing.T, g *googletest.Google, policy agentdir.Polic
 
 func getJSON(t *testing.T, u string, out any) {
 	t.Helper()
-	resp, err := http.Get(u)
+	resp, err := testHTTP.Get(u)
 	if err != nil {
 		t.Fatalf("GET %s error = %v", u, err)
 	}
@@ -104,7 +104,7 @@ func signIn(t *testing.T, ts *testServer, verifier string) (url.Values, string) 
 		"response_type": {"code"}, "client_id": {"a2a-cli"}, "redirect_uri": {redirect}, "state": {"s1"},
 		"code_challenge": {googleauth.Challenge(verifier)}, "code_challenge_method": {"S256"},
 	}
-	resp, err := http.Get(meta["authorization_endpoint"].(string) + "?" + q.Encode())
+	resp, err := testHTTP.Get(meta["authorization_endpoint"].(string) + "?" + q.Encode())
 	if err != nil {
 		t.Fatalf("GET authorize error = %v", err)
 	}
@@ -123,7 +123,7 @@ func TestGoogleSignIn(t *testing.T) {
 	ts := startSignInServer(t, g, agentdir.PolicyConfig{AllowEmails: []string{"mom@example.org", "*@example.com"}})
 	ctx := context.Background()
 
-	resp, err := http.Post(ts.publicURL()+"/", "application/json", strings.NewReader(`{}`))
+	resp, err := testHTTP.Post(ts.publicURL()+"/", "application/json", strings.NewReader(`{}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +206,7 @@ func TestSignInOnlyOnPublicURL(t *testing.T) {
 			if got := statusOf(t, http.MethodGet, tc.url+oauth.AuthServerPath, "", nil); got != tc.want {
 				t.Fatalf("GET %s on the %s URL = %d, want %d", oauth.AuthServerPath, tc.name, got, tc.want)
 			}
-			resp, err := http.Post(tc.url+"/", "application/json", strings.NewReader(listTasksRPC))
+			resp, err := testHTTP.Post(tc.url+"/", "application/json", strings.NewReader(listTasksRPC))
 			if err != nil {
 				t.Fatal(err)
 			}
