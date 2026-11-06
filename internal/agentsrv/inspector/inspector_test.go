@@ -27,6 +27,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
@@ -95,7 +96,7 @@ func startInspector(t *testing.T) *testInspector {
 		Config:  func() *agentdir.Config { return &agentdir.Config{Name: "coder"} },
 		BaseURL: func() string { return "https://coder.example.com" },
 		Status: func(context.Context) (*controlapi.Status, error) {
-			return &controlapi.Status{Name: "coder", Harness: "opencode"}, nil
+			return &controlapi.Status{Name: "coder", Harness: "opencode", Started: time.Now().Add(-2 * time.Minute)}, nil
 		},
 		MarkAnswered: func(context.Context, string, string, string) {},
 	})
@@ -173,8 +174,8 @@ func TestInspectorLogin(t *testing.T) {
 	if code, _ := ti.get(t, login); code != http.StatusSeeOther {
 		t.Fatalf("GET login with a fresh code = %d, want %d", code, http.StatusSeeOther)
 	}
-	if code, body := ti.get(t, inspector.Path+"/"); code != http.StatusOK || !strings.Contains(body, "<h1>coder") {
-		t.Fatalf("GET %s/ with the session = %d %q, want the overview", inspector.Path, code, body)
+	if code, body := ti.get(t, inspector.Path+"/"); code != http.StatusOK || !strings.Contains(body, "<h1>coder") || !strings.Contains(body, "<td>for 2m") || strings.Contains(body, "ago, pid") {
+		t.Fatalf("GET %s/ with the session = %d %q, want the overview running for 2m", inspector.Path, code, body)
 	}
 	other := startInspector(t)
 	if code, _ := other.get(t, login); code != http.StatusUnauthorized {
@@ -221,12 +222,15 @@ func TestInspectorPendingApprovals(t *testing.T) {
 	if err := ti.store.PutQuestion(ctx, rec); err != nil {
 		t.Fatalf("PutQuestion() error = %v", err)
 	}
+	if err := ti.store.PutWatch(ctx, store.Watch{Contact: "reviewer", TaskID: "t1", RemoteContextID: "c1", OriginContextID: "local-c1"}); err != nil {
+		t.Fatalf("PutWatch() error = %v", err)
+	}
 	got, err := ti.PendingApprovals(ctx)
 	if err != nil {
 		t.Fatalf("Inspector.PendingApprovals() error = %v", err)
 	}
 	want := []inspector.Approval{{
-		Action: inspector.Path + "/questions/q1", Text: "git push origin main", ContextID: "c1", Contact: "reviewer",
+		Action: inspector.Path + "/questions/q1", Text: "git push origin main", ContextID: "local-c1", Contact: "reviewer",
 		Options: []approvals.Option{{ID: "allow", Label: "Allow"}},
 	}}
 	if diff := cmp.Diff(want, got, cmp.FilterPath(func(p cmp.Path) bool { return p.Last().String() == ".Created" }, cmp.Ignore())); diff != "" {
@@ -435,14 +439,14 @@ func TestInspectorConversation(t *testing.T) {
 	task := &a2a.Task{
 		ID: "t1", ContextID: "c1",
 		Status:  a2a.TaskStatus{State: a2a.TaskStateCompleted, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("hi back"))},
-		History: []*a2a.Message{user},
+		History: []*a2a.Message{user, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Running edit"))},
 	}
 	asBob := ti.store.Tasks("", func(context.Context) (string, bool, error) { return "pair:bob", false, nil })
 	if _, err := asBob.Create(ctx, task); err != nil {
 		t.Fatalf("TaskStore.Create() error = %v", err)
 	}
 	overview := ti.login(t)
-	for _, text := range []string{inspector.Path + "/conversations/c1", "hello there", "completed", "<td>bob</td>"} {
+	for _, text := range []string{inspector.Path + "/conversations/c1", "<td>hello there</td>", "completed", "<td>bob</td>"} {
 		if !strings.Contains(overview, text) {
 			t.Fatalf("overview = %q, want it to contain %q", overview, text)
 		}
@@ -458,5 +462,23 @@ func TestInspectorConversation(t *testing.T) {
 	}
 	if code, _ := ti.get(t, inspector.Path+"/conversations/unknown"); code != http.StatusNotFound {
 		t.Fatalf("GET unknown conversation = %d, want %d", code, http.StatusNotFound)
+	}
+}
+
+func TestInspectorRelayedApprovalWithoutConversation(t *testing.T) {
+	t.Parallel()
+	ti := startInspector(t)
+	rec := store.Question{
+		ID: "q1", Token: "tok1", TaskID: "t1", ContextID: "remote-c1", Contact: "reviewer", HitlID: "h1",
+		Data: map[string]any{"id": "h1", "type": "permission", "text": "git push", "options": []any{map[string]any{"id": "allow", "label": "Allow"}}},
+	}
+	if err := ti.store.PutQuestion(context.Background(), rec); err != nil {
+		t.Fatalf("PutQuestion() error = %v", err)
+	}
+
+	overview := ti.login(t)
+
+	if !strings.Contains(overview, "git push") || strings.Contains(overview, "/conversations/remote-c1") {
+		t.Fatalf("overview = %q, want the approval without a link to the other agent's conversation", overview)
 	}
 }

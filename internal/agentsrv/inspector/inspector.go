@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"slices"
 	"strings"
@@ -51,6 +52,8 @@ const (
 	// recentTasks is how many recent tasks the overview groups into
 	// conversations.
 	recentTasks = 100
+	// fullHistory asks the task store for the whole history of a task.
+	fullHistory = math.MaxInt32
 )
 
 // Sender sends messages to the agent's A2A handler.
@@ -188,8 +191,10 @@ type Approval struct {
 	Action string
 	// Question is the ID of the task's question that the answer is for,
 	// set when the answer is posted on the task.
-	Question  string
-	Text      string
+	Question string
+	Text     string
+	// ContextID is this agent's conversation the question belongs to, or
+	// empty if the inspector doesn't know it.
 	ContextID string
 	Contact   string
 	Options   []approvals.Option
@@ -279,7 +284,15 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 			continue
 		}
 		q := approvals.FromRecord(rec)
-		out = append(out, Approval{Action: Path + "/questions/" + rec.ID, Text: q.Display(), ContextID: rec.ContextID, Contact: rec.Contact, Options: q.Options, Created: rec.Created})
+		a := Approval{Action: Path + "/questions/" + rec.ID, Text: q.Display(), Contact: rec.Contact, Options: q.Options, Created: rec.Created}
+		// The record has the other agent's context; the watch of its task
+		// has the conversation here that called it.
+		w, err := in.deps.Store.Watch(ctx, rec.Contact, rec.TaskID)
+		if err != nil && !errors.Is(err, store.ErrNotFound) {
+			return nil, err
+		}
+		a.ContextID = w.OriginContextID
+		out = append(out, a)
 	}
 	tasks, err := waitingTasks(ctx, in.deps.Tasks)
 	if err != nil {
@@ -332,7 +345,7 @@ func waitingTasks(ctx context.Context, tasks *store.TaskStore) ([]*a2a.Task, err
 
 // conversations groups the recent tasks by context, the most recent first.
 func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) {
-	history := 1
+	history := fullHistory
 	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{PageSize: recentTasks, HistoryLength: &history})
 	if err != nil {
 		return nil, err
@@ -342,8 +355,8 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 	for i, t := range resp.Tasks {
 		if j, ok := index[t.ContextID]; ok {
 			out[j].Tasks++
-			if len(t.History) > 0 {
-				out[j].Snippet = snippet(a2atext.Message(t.History[0]))
+			if text, ok := prompt(t); ok {
+				out[j].Snippet = text
 			}
 			continue
 		}
@@ -351,9 +364,7 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
-		if len(t.History) > 0 {
-			c.Snippet = snippet(a2atext.Message(t.History[0]))
-		}
+		c.Snippet, _ = prompt(t)
 		if ch, _, err := in.deps.Store.ConvOf(ctx, t.ContextID); err == nil {
 			c.Chat = ch
 		} else if !errors.Is(err, store.ErrNotFound) {
@@ -363,6 +374,16 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 		out = append(out, c)
 	}
 	return out, nil
+}
+
+// prompt is a snippet of the first user message of t.
+func prompt(t *a2a.Task) (string, bool) {
+	for _, m := range t.History {
+		if m.Role == a2a.MessageRoleUser {
+			return snippet(a2atext.Message(m)), true
+		}
+	}
+	return "", false
 }
 
 func snippet(s string) string {
