@@ -29,10 +29,10 @@ import (
 )
 
 // stallGuard fails a turn in which the agent sends nothing for timeout while
-// none of its tool calls runs. opencode reports no errors of a model's
-// provider over ACP: it retries the request, waiting as long as the
-// provider's retry-after asks, and the task would stay working with no
-// reason.
+// none of its tool calls runs. opencode retries a failed request to the
+// model's provider before it reports the error over ACP, waiting as long as
+// the provider's retry-after asks, so the task could stay working with no
+// reason for hours.
 type stallGuard struct {
 	timeout time.Duration
 
