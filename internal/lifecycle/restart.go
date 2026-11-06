@@ -31,8 +31,9 @@ import (
 var ErrForeground = errors.New("it runs in the foreground of another terminal; press Ctrl-C there and run `a2a-serve start` again")
 
 // Restart stops the running agent and starts it again in the same mode,
-// detached or as a user service. The config is checked first, so that an
-// agent which couldn't start again isn't stopped.
+// detached or as a user service. A stopped agent is started as a user
+// service if one is installed, and detached otherwise. The config is
+// checked first, so that an agent which couldn't start again isn't stopped.
 func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, quiet bool, out io.Writer) error {
 	cfg, err := d.LoadConfig()
 	if err != nil {
@@ -45,11 +46,14 @@ func Restart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, qui
 	if err := d.CheckConfig(cfg, secrets); err != nil {
 		return &agentdir.SettingsError{Err: err}
 	}
+	asService := service.Installed(d.ServiceName())
 	pid, err := runningPID(ctx, d, client, cfg.Name)
+	if errors.Is(err, agenterr.ErrNotRunning) {
+		return background(ctx, d, asService, quiet, out)
+	}
 	if err != nil {
 		return err
 	}
-	asService := service.Installed(d.ServiceName())
 	if !asService {
 		leader, err := sessionLeader(pid)
 		if err != nil {

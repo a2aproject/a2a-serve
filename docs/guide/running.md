@@ -16,12 +16,12 @@ Each agent lives in its project directory and runs as its own process, with its 
 | `a2a-serve status --url` | Prints only the URL that reaches furthest: public, then private, then local. `--url=local\|private\|public` picks one. |
 | `a2a-serve logs [-f]` | Shows the log. |
 | `a2a-serve stop [--uninstall]` | Stops it, and waits until it exits. A server that doesn't answer gets SIGTERM, then SIGKILL after 10 seconds. `--uninstall` also removes the service. |
-| `a2a-serve restart` | Stops it and starts it again in the same mode. |
+| `a2a-serve restart` | Stops it and starts it again in the same mode. Starts a stopped agent. |
 
 Commands that only change stored data, such as `pair`, `contact add --url`, `contact rm`, `schedule add`, `channel add` and `channel rm`, also work while the agent is stopped. It picks up the changes on its next start. While the agent starts or stops, these commands fail with exit code 8; run them again once `a2a-serve status` shows it running or stopped.
 
 `start --detach` and `start --service` return once the agent serves. If the server stops with an error first, they fail and show the end of the log. A service that failed this way stays installed, and the service manager keeps restarting it until you run `a2a-serve stop --uninstall`.
 
-`restart` checks the settings first, so a misconfigured agent keeps running. To restart an agent running in the foreground of another terminal, press Ctrl-C there and run `a2a-serve start` again.
+`restart` checks the settings first, so a misconfigured agent keeps running. A stopped agent starts as a user service if one is installed, and in the background otherwise. To restart an agent running in the foreground of another terminal, press Ctrl-C there and run `a2a-serve start` again.
 
 A stop fails the tasks that still run, with a message to send them again. Callers that follow such a task get this failed status as the final event. The server also stops when its `.a2a/state` directory is deleted.
