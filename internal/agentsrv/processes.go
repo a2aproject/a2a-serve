@@ -91,6 +91,11 @@ type splitExecutor struct {
 	pools   map[string]*startedPool
 	// closed is set by close; a pool started after it would never stop.
 	closed bool
+	// closing is set once close starts, and running counts the turns in
+	// progress, which close waits for: an agent process that a turn starts
+	// after its pool closed would outlive the server.
+	closing bool
+	running sync.WaitGroup
 	// pending are the agent keys of conversations without a stored session
 	// yet.
 	pending map[string]string
@@ -103,8 +108,35 @@ type startedPool struct {
 
 var _ a2asrv.AgentExecutor = (*splitExecutor)(nil)
 
+// track registers a turn for close to wait for. The returned context ends
+// when the server stops.
+func (e *splitExecutor) track(ctx context.Context) (context.Context, func(), error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.closing {
+		return nil, nil, errServerStopping
+	}
+	e.running.Add(1)
+	ctx, cancel := context.WithCancel(ctx)
+	stop := func() bool { return true }
+	if e.ctx != nil {
+		stop = context.AfterFunc(e.ctx, cancel)
+	}
+	return ctx, func() {
+		stop()
+		cancel()
+		e.running.Done()
+	}, nil
+}
+
 func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		ctx, done, err := e.track(ctx)
+		if err != nil {
+			failTask(execCtx, err)(yield)
+			return
+		}
+		defer done()
 		exec, err := e.pick(ctx, execCtx.ContextID, true)
 		defer e.forgetPending(execCtx.ContextID)
 		if err != nil {
@@ -129,6 +161,12 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 
 func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		ctx, done, err := e.track(ctx)
+		if err != nil {
+			yield(nil, err)
+			return
+		}
+		defer done()
 		exec, err := e.pick(ctx, execCtx.ContextID, false)
 		if err != nil {
 			yield(nil, err)
@@ -202,7 +240,7 @@ func (e *splitExecutor) Anonymous(ctx context.Context, contextID string) bool {
 	return key == anonymousAgentKey
 }
 
-// errServerStopping is returned for turns that would start agent processes
+// errServerStopping fails turns that start, or would start agent processes,
 // while the server stops.
 var errServerStopping = errors.New("the server is stopping")
 
@@ -231,8 +269,13 @@ func (e *splitExecutor) pool(name string) (a2asrv.AgentExecutor, error) {
 	return exec, nil
 }
 
-// close stops the agent processes of the pools that started.
+// close waits for the turns in progress, which end when the server stops,
+// and then stops the agent processes of the pools that started.
 func (e *splitExecutor) close(ctx context.Context) error {
+	e.mu.Lock()
+	e.closing = true
+	e.mu.Unlock()
+	e.running.Wait()
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	e.mu.Lock()

@@ -81,10 +81,27 @@ func New(opts Options) *Relay {
 	return &Relay{opts: opts}
 }
 
+// errMeshPortTaken is returned by run when agentmesh-one exited while
+// starting because another process took the port picked for it.
+var errMeshPortTaken = errors.New("another process took the port of agentmesh-one")
+
+// meshStartAttempts bounds how often Run starts again on another port.
+const meshStartAttempts = 3
+
 // Run runs the relay until ctx ends, agentmesh-one or the tunnel exits, or
 // `relay upgrade` asks for a restart, which returns [ErrRestart]. The caller
 // holds the relay's lock.
-func (r *Relay) Run(ctx context.Context) (err error) {
+func (r *Relay) Run(ctx context.Context) error {
+	for attempt := 1; ; attempt++ {
+		err := r.run(ctx)
+		if !errors.Is(err, errMeshPortTaken) || attempt == meshStartAttempts {
+			return err
+		}
+		slog.Debug("starting the relay again on another port", "error", err)
+	}
+}
+
+func (r *Relay) run(ctx context.Context) (err error) {
 	d := r.opts.Dir
 	conf, err := d.Resolve()
 	if err != nil {
@@ -177,7 +194,7 @@ func (r *Relay) Run(ctx context.Context) (err error) {
 		return stoppedOr(ctx, err)
 	}
 	defer func() { err = errors.Join(err, mesh.stop()) }()
-	if err := waitReady(ctx, admin, mesh); err != nil {
+	if err := waitReady(ctx, admin, mesh, port); err != nil {
 		return stoppedOr(ctx, err)
 	}
 	if err := admin.SetPolicy(ctx, Policy(conf.SignIn())); err != nil {
@@ -339,7 +356,7 @@ func (p *meshProcess) stop() error {
 	return p.stopErr
 }
 
-func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess) error {
+func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess, port int) error {
 	ctx, cancel := context.WithTimeout(ctx, readyTimeout)
 	defer cancel()
 	tick := time.NewTicker(200 * time.Millisecond)
@@ -352,10 +369,25 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess) 
 		case <-ctx.Done():
 			return fmt.Errorf("agentmesh-one didn't become ready within %v", readyTimeout)
 		case <-mesh.exited:
-			return fmt.Errorf("agentmesh-one exited while starting: %v; its log says why", mesh.err)
+			err := fmt.Errorf("agentmesh-one exited while starting: %v; its log says why", mesh.err)
+			if portTaken(port) {
+				return fmt.Errorf("%w: %w", errMeshPortTaken, err)
+			}
+			return err
 		case <-tick.C:
 		}
 	}
+}
+
+// portTaken reports whether another process listens on port. freePort
+// can't reserve the port it returns.
+func portTaken(port int) bool {
+	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if err != nil {
+		return errors.Is(err, syscall.EADDRINUSE)
+	}
+	closeLogged(ln)
+	return false
 }
 
 // Ports from freePortMin up to freePortMax lie below the ephemeral ranges of

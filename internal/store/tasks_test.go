@@ -15,12 +15,15 @@
 package store
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -345,6 +348,48 @@ func TestOldTerminalTaskCompactedOnRead(t *testing.T) {
 
 	if gotSnapshot, gotEvents := storedLog(t, s, "t1"); gotSnapshot != 5 || gotEvents != 0 {
 		t.Fatalf("after Get(): snapshot version, events = %d, %d, want 5, 0", gotSnapshot, gotEvents)
+	}
+}
+
+func TestUpdateWaitsForAnotherWriter(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	s := openStoreAt(t, path)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	task := newTask("t1", "c1")
+	applyEvents(t, ts, "owner", task, streamedEvents(task, 1)...)
+	other, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := other.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	ctx := context.Background()
+	conn, err := other.Conn(ctx)
+	if err != nil {
+		t.Fatalf("Conn() error = %v", err)
+	}
+	if _, err := conn.ExecContext(ctx, `BEGIN IMMEDIATE`); err != nil {
+		t.Fatalf("BEGIN IMMEDIATE error = %v", err)
+	}
+	committed := make(chan error, 1)
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_, err := conn.ExecContext(ctx, `COMMIT`)
+		committed <- errors.Join(err, conn.Close())
+	}()
+
+	_, err = ts.Update(owner, &taskstore.UpdateRequest{Task: task, Event: a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil)})
+
+	if cerr := <-committed; cerr != nil {
+		t.Fatalf("COMMIT error = %v", cerr)
+	}
+	if err != nil {
+		t.Fatalf("Update() while another connection writes error = %v, want it to wait", err)
 	}
 }
 
