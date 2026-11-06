@@ -17,8 +17,8 @@ package email
 import (
 	"context"
 	"errors"
-	"net"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
 	"time"
