@@ -86,8 +86,19 @@ func TestEnsureImage(t *testing.T) {
 	}
 }
 
+func TestCheckDockerHostUnreachable(t *testing.T) {
+	fakeDocker(t, noImagesDocker)
+	t.Setenv("DOCKER_HOST", "unix:///tmp/missing.sock")
+	_, err := CheckDocker(context.Background())
+	want := "docker is not reachable at unix:///tmp/missing.sock from DOCKER_HOST; fix or unset DOCKER_HOST"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("CheckDocker() error = %v, want %q", err, want)
+	}
+}
+
 func TestCheckDockerNotRunning(t *testing.T) {
 	fakeDocker(t, noImagesDocker)
+	t.Setenv("DOCKER_HOST", "")
 	_, err := CheckDocker(context.Background())
 	want := "start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor"
 	if err == nil || !strings.Contains(err.Error(), want) {

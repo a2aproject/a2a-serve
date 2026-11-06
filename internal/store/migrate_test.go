@@ -15,10 +15,12 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +31,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 // prototypeSchema is the schema of databases created before user_version
@@ -120,6 +124,20 @@ func TestOpenNewerDatabaseFails(t *testing.T) {
 	}
 	if _, err := Open(path); err == nil || !strings.Contains(err.Error(), "newer than this a2a-serve supports") {
 		t.Fatalf("Open() error = %v, want a newer version error naming a2a-serve", err)
+	}
+}
+
+func TestOpenDamagedDatabaseHints(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	if err := os.WriteFile(path, bytes.Repeat([]byte("not a database "), 512), 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+
+	_, err := Open(path)
+
+	if h, arg, _ := agenterr.HintOf(err); h != agenterr.HintDamagedDB || arg != path {
+		t.Fatalf("Open() error = %v with hint %q %q, want hint %q %q", err, h, arg, agenterr.HintDamagedDB, path)
 	}
 }
 

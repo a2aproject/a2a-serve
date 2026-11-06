@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -129,6 +130,75 @@ func TestWaitReadyFailsWhenServerStops(t *testing.T) {
 
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitReady() error = %v, want the error the server stopped with", err)
+	}
+}
+
+func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	stop := func(err string) string {
+		var b bytes.Buffer
+		slog.New(slog.NewTextHandler(&b, nil)).Error(stopMsg, "error", errors.New(err))
+		return b.String()
+	}
+	type result struct {
+		Out, Message, Hint string
+	}
+	tests := []struct {
+		name string
+		log  string
+		want result
+	}{
+		{
+			name: "error and hint the server printed",
+			log: "✓ opencode is running (ACP)\n" +
+				stop("listening on localhost:1: address already in use") +
+				"Error: listening on localhost:1: address already in use\n" +
+				"hint: pick another port\n",
+			want: result{
+				Out:     "✓ opencode is running (ACP)\n",
+				Message: "the server exited: listening on localhost:1: address already in use",
+				Hint:    "pick another port",
+			},
+		},
+		{
+			name: "error the server printed before logging",
+			log:  "Error: the server is already running in /a (a2a-serve status)\n",
+			want: result{Message: "the server exited: the server is already running in /a (a2a-serve status)"},
+		},
+		{
+			name: "stop record only",
+			log:  "pulling the harness image\n" + stop("pulling the image: exit status 1"),
+			want: result{
+				Out:     "pulling the harness image\n",
+				Message: "the server exited: pulling the image: exit status 1",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if err := os.WriteFile(dir.LogPath(), []byte(tt.log), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+			defer cancel()
+			var out bytes.Buffer
+
+			err := waitReady(ctx, dir, 0, func() bool { return false }, &out)
+
+			ce := clierr.Classify(err)
+			if ce == nil {
+				t.Fatalf("waitReady() error = nil, want the error the server exited with")
+			}
+			got := result{Out: out.String(), Message: ce.Message, Hint: ce.Hint}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("waitReady() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 

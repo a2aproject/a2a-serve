@@ -45,6 +45,22 @@ func isStop(line string) bool {
 	return !isProgress(line) && strings.Contains(line, " msg="+strconv.Quote(stopMsg))
 }
 
+// logAttr returns the value of the attribute key of a log record line.
+func logAttr(line, key string) string {
+	_, v, ok := strings.Cut(line, " "+key+"=")
+	if !ok {
+		return ""
+	}
+	if q, err := strconv.QuotedPrefix(v); err == nil {
+		unq, err := strconv.Unquote(q)
+		if err == nil {
+			return unq
+		}
+	}
+	v, _, _ = strings.Cut(v, " ")
+	return v
+}
+
 // readFrom returns the complete lines of the file at path after offset, and
 // the offset after them. A file shorter than offset was replaced, as on a
 // restart, and is read from the start.

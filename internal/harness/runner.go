@@ -290,6 +290,9 @@ func CheckDocker(ctx context.Context) (rootless bool, err error) {
 		return false, fmt.Errorf("docker is not installed; install Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", err)
 	}
 	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.SecurityOptions}}").Output()
+	if host := os.Getenv("DOCKER_HOST"); err != nil && host != "" {
+		return false, fmt.Errorf("docker is not reachable at %s from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", host, exitErr(err))
+	}
 	if err != nil {
 		return false, fmt.Errorf("docker is not running; start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", exitErr(err))
 	}

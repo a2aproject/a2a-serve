@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -37,6 +38,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -608,6 +610,9 @@ func (s *Server) logf(format string, args ...any) {
 func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- error) error {
 	port := s.rt.Config().Port
 	ln, err := net.Listen("tcp", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return agenterr.WithHint(fmt.Errorf("listening on localhost:%d: %w", port, err), agenterr.HintPortInUse, "")
+	}
 	if err != nil {
 		return fmt.Errorf("listening on localhost:%d: %w", port, err)
 	}

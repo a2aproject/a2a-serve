@@ -18,7 +18,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net"
+	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 
@@ -126,6 +129,18 @@ func TestClassify(t *testing.T) {
 			wantExit: 3,
 		},
 		{
+			name:     "missing file is internal, exit 1",
+			err:      fmt.Errorf("restoring: %w", &fs.PathError{Op: "open", Path: "/a/nope", Err: syscall.ENOENT}),
+			wantCode: CodeInternal,
+			wantExit: 1,
+		},
+		{
+			name:     "port in use is internal, exit 1",
+			err:      &net.OpError{Op: "listen", Net: "tcp", Err: &os.SyscallError{Syscall: "bind", Err: syscall.EADDRINUSE}},
+			wantCode: CodeInternal,
+			wantExit: 1,
+		},
+		{
 			name:     "unclassified error is internal, exit 1",
 			err:      errors.New("something odd happened"),
 			wantCode: CodeInternal,
@@ -157,6 +172,48 @@ type markedUsage struct{}
 
 func (markedUsage) Error() string    { return "invalid setting" }
 func (markedUsage) UsageError() bool { return true }
+
+func TestClassifyHint(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	existing := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(existing, nil, 0o600); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	tests := []struct {
+		name string
+		err  error
+		want string
+	}{
+		{
+			name: "net error",
+			err:  &net.OpError{Op: "dial", Net: "tcp", Err: syscall.ECONNREFUSED},
+			want: IOHint,
+		},
+		{
+			name: "missing file",
+			err:  &fs.PathError{Op: "open", Path: "/a/nope", Err: syscall.ENOENT},
+		},
+		{
+			name: "file without permission",
+			err:  fmt.Errorf("reading the config: %w", &fs.PathError{Op: "open", Path: existing, Err: syscall.EACCES}),
+			want: "check the permissions of " + existing + " and the directories above it",
+		},
+		{
+			name: "file the directory doesn't allow to create",
+			err:  fmt.Errorf("writing the config: %w", &fs.PathError{Op: "open", Path: filepath.Join(dir, "state", "pid"), Err: syscall.EACCES}),
+			want: "check the permissions of " + filepath.Join(dir, "state") + " and the directories above it",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Classify(tt.err).Hint; got != tt.want {
+				t.Fatalf("Classify(%v).Hint = %q, want %q", tt.err, got, tt.want)
+			}
+		})
+	}
+}
 
 func TestClassifyWrapped(t *testing.T) {
 	t.Parallel()

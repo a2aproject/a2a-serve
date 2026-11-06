@@ -50,6 +50,10 @@ func TestBackupAndRestore(t *testing.T) {
 	}
 
 	target := t.TempDir()
+	_, err = runCMD(t, "backup", "restore", to, "--snapshot", "nope", "--dir", target, "--backup-key", "k")
+	if want := "omit --snapshot to restore the latest one, " + snaps[0].Name; clierr.Classify(err).Hint != want {
+		t.Fatalf("a2a-serve backup restore --snapshot nope error = %v with hint %q, want hint %q", err, clierr.Classify(err).Hint, want)
+	}
 	if out, err := runCMD(t, "backup", "restore", to, "--dir", target, "--backup-key", "k"); err != nil || !strings.Contains(out, "restored "+snaps[0].Name) {
 		t.Fatalf("a2a-serve backup restore = %q, %v, want the snapshot restored", out, err)
 	}
@@ -75,6 +79,7 @@ func TestRestoreUsageErrors(t *testing.T) {
 		{name: "no key", args: []string{"backup", "restore", t.TempDir()}, wantErr: "--backup-key is required"},
 		{name: "stored secret", args: []string{"backup", "restore", t.TempDir(), "--backup-key", "secret:BACKUP_KEY"}, wantErr: "secret:NAME only applies to agent settings"},
 		{name: "unknown destination", args: []string{"backup", "restore", "ftp://host/dir", "--backup-key", "k"}, wantErr: "unsupported backup destination"},
+		{name: "missing snapshot", args: []string{"backup", "restore", t.TempDir(), "--snapshot", "nope", "--backup-key", "k", "--dir", t.TempDir()}, wantErr: "no snapshot nope"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -153,12 +153,32 @@ func Latest(ctx context.Context, dest Dest) (Snapshot, error) {
 	return snaps[len(snaps)-1], nil
 }
 
+// checkSnapshot returns a not-found error, with a hint naming the latest
+// snapshot, if dest has no snapshot name.
+func checkSnapshot(ctx context.Context, dest Dest, name string) error {
+	snaps, err := List(ctx, dest, "")
+	if err != nil {
+		return err
+	}
+	if slices.ContainsFunc(snaps, func(s Snapshot) bool { return s.Name == name }) {
+		return nil
+	}
+	nf := &agenterr.NotFoundError{Kind: "snapshot", Name: name}
+	if len(snaps) == 0 {
+		return nf
+	}
+	return agenterr.WithHint(nf, agenterr.HintRestoreLatest, snaps[len(snaps)-1].Name)
+}
+
 // Restore recreates an agent's .a2a directory in root from a snapshot. It
 // extracts the snapshot into a directory next to .a2a and renames that into
 // place, so that a damaged snapshot or an interruption leaves no partial
 // agent behind. The network identity is restored only with takeOver, so
 // that the old and the new host don't run as the same machine.
 func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (err error) {
+	if err := checkSnapshot(ctx, dest, name); err != nil {
+		return err
+	}
 	d, err := agentdir.Open(root)
 	if err != nil {
 		return err
