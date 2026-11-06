@@ -532,6 +532,8 @@ type observedExecutor struct {
 	// decider suggests the rule that the always option of a permission
 	// allows.
 	decider *toolDecider
+	// turns counts the executions until their last event is consumed.
+	turns *turnCount
 }
 
 var (
@@ -766,6 +768,10 @@ func canceledFirst(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, 
 
 func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		if e.turns != nil {
+			e.turns.add()
+			defer e.turns.done()
+		}
 		start := time.Now()
 		from := ""
 		if p, ok := auth.Caller(ctx); ok {
