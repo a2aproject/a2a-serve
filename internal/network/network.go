@@ -69,6 +69,9 @@ type PeerInfo struct {
 	Online      bool   `json:"online"`
 	// Node identifies the machine of the agent, as [Peer.Node] does.
 	Node string `json:"-"`
+	// CardName is the name in the agent's card, the name it advertises its
+	// pairings under. Name differs from it when another agent has it.
+	CardName string `json:"-"`
 	// Card is what the agent's card says about it.
 	Card cardinfo.Summary `json:"-"`
 }
@@ -131,7 +134,7 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 	var (
 		mu     sync.Mutex
 		wg     sync.WaitGroup
-		agents []probedAgent
+		agents []PeerInfo
 	)
 	for _, c := range candidates {
 		wg.Go(func() {
@@ -140,9 +143,10 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 				return
 			}
 			c.Description = card.Description
+			c.CardName = card.Name
 			c.Card = cardinfo.Of(card)
 			mu.Lock()
-			agents = append(agents, probedAgent{PeerInfo: c, card: card.Name})
+			agents = append(agents, c)
 			mu.Unlock()
 		})
 	}
@@ -154,35 +158,30 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 	return nameAgents(agents, machines)
 }
 
-type probedAgent struct {
-	PeerInfo
-	card string
-}
-
 // nameAgents names each agent by its network name, or by its card name when
 // no other agent declares it and no other machine has it as its network name.
 // Agents that still share a name get a suffix derived from their node, so a
 // name never stands for two agents. machines are the network names of every
 // machine on the network but this one.
-func nameAgents(agents []probedAgent, machines []string) []PeerInfo {
+func nameAgents(agents []PeerInfo, machines []string) []PeerInfo {
 	machineNames, cardNames := map[string]int{}, map[string]int{}
 	for _, m := range machines {
 		machineNames[strings.ToLower(m)]++
 	}
 	for _, a := range agents {
-		cardNames[strings.ToLower(a.card)]++
+		cardNames[strings.ToLower(a.CardName)]++
 	}
 	out := make([]PeerInfo, 0, len(agents))
 	for _, a := range agents {
-		card := strings.ToLower(a.card)
+		card := strings.ToLower(a.CardName)
 		othersNamed := machineNames[card]
 		if card == strings.ToLower(a.Name) {
 			othersNamed--
 		}
-		if a.card != "" && cardNames[card] == 1 && othersNamed == 0 {
-			a.Name = a.card
+		if a.CardName != "" && cardNames[card] == 1 && othersNamed == 0 {
+			a.Name = a.CardName
 		}
-		out = append(out, a.PeerInfo)
+		out = append(out, a)
 	}
 	counts := countNames(out)
 	for i := range out {
