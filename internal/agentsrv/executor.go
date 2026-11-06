@@ -369,7 +369,7 @@ func (s *Server) localCLI() string {
 // acpConfig is the config of every ACP executor of the server.
 func (s *Server) acpConfig() *a2aacp.Config {
 	return &a2aacp.Config{
-		AutoAnswer:   liveToolRules(s.rt.Config),
+		AutoAnswer:   liveToolRules{config: s.rt.Config, notes: s.notes},
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
@@ -437,15 +437,6 @@ func (s *Server) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[
 	return profile.SessionSettings(cfg.Model), nil
 }
 
-// liveToolRules answers tool permissions with the allow and deny rules of
-// the current config, so that changing them doesn't need a restart.
-type liveToolRules func() *agentdir.Config
-
-func (f liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
-	cfg := f()
-	return a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.AutoAnswer(ctx, execCtx, q)
-}
-
 // listenHarness opens the listeners through which agent processes call
 // other agents: Unix sockets, which are mounted into containers, or TCP with
 // a key for Docker Desktop, which can't mount them.
@@ -471,6 +462,8 @@ type observedExecutor struct {
 	watches *agentproxy.Watches
 	// store has the records of those questions.
 	store *store.Store
+	// notes are put in the results of tasks.
+	notes *toolNotes
 }
 
 var (
@@ -503,10 +496,14 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	}
 	// a2aacp takes a reply that isn't an answer as a new instruction, and
 	// rejects the tool call without saying so.
-	if q := pendingApproval(execCtx.StoredTask); q != nil && !answersQuestion(execCtx.Message, q) {
-		return e.observe(ctx, execCtx, refuseReply(execCtx, q))
+	events := e.withCallerQuestion(execCtx, e.turn(ctx, execCtx))
+	if q := pendingApproval(execCtx.StoredTask); q != nil {
+		if !answersQuestion(execCtx.Message, q) {
+			return e.observe(ctx, execCtx, refuseReply(execCtx, q))
+		}
+		events = e.withAnswer(ctx, execCtx, q, events)
 	}
-	return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
+	return e.observe(ctx, execCtx, events)
 }
 
 // turn runs a turn of the agent, with the line of the agents it may call
@@ -624,10 +621,15 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 			from = p.ID
 		}
 		slog.Info("task received", "task", execCtx.TaskID, "context", execCtx.ContextID, "from", from)
+		stopNotes := e.notes.start(execCtx.TaskID)
+		defer stopNotes()
 		closed := false
 		for ev, err := range events {
 			if err != nil {
 				slog.Info("task failed", "task", execCtx.TaskID, "duration", time.Since(start).Round(time.Millisecond), "error", err)
+			}
+			if state, ok := eventState(ev); ok && err == nil && state.Terminal() {
+				ev = withNotes(execCtx, ev, e.notes.take(execCtx.TaskID))
 			}
 			if err == nil {
 				logTransition(execCtx.TaskID, ev, start)

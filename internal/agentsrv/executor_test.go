@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"iter"
 	"log/slog"
@@ -34,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -93,7 +95,7 @@ func openTestStore(t *testing.T) *store.Store {
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -117,7 +119,7 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: messenger.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -170,6 +172,7 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 		bus:       messenger.NewBus(),
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
+		notes:     newToolNotes(),
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
 
@@ -217,7 +220,7 @@ func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{}
-	rules := liveToolRules(func() *agentdir.Config { return cfg })
+	rules := liveToolRules{config: func() *agentdir.Config { return cfg }, notes: newToolNotes()}
 	q := a2aacp.Question{Options: []string{a2aacp.OptionOnce, a2aacp.OptionReject}, Tool: &a2aacp.ToolCall{Kind: "read"}}
 
 	if _, ok := rules.AutoAnswer(context.Background(), nil, q); ok {
@@ -406,7 +409,7 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			unattended := &messenger.ContextSet{}
 			unattended.Add("c1")
 			unattended.Add("c2")
-			e := &observedExecutor{bus: messenger.NewBus(), unattended: unattended}
+			e := &observedExecutor{bus: messenger.NewBus(), unattended: unattended, notes: newToolNotes()}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
@@ -474,5 +477,63 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 				t.Fatalf("Server.prepareHarness() wrote %v into the home, error = %v", home, err)
 			}
 		})
+	}
+}
+
+func TestRejectedToolCallIsNotedInTheResult(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		approvals agentdir.ApprovalsConfig
+		reply     string
+		want      string
+	}{
+		{name: "rejected by the caller", reply: "deny", want: "Tool call rejected: git push."},
+		{name: "denied by deny-tools", approvals: agentdir.ApprovalsConfig{Deny: []string{"execute"}}, want: "Tool call denied by --deny-tools: git push."},
+		{name: "approved", reply: "approve"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{configure: func(c *agentdir.Config) { c.Approvals = tc.approvals }})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			task := send(t, c, userText("ask", "", ""))
+			if tc.reply != "" {
+				task = send(t, c, userText(tc.reply, string(task.ID), task.ContextID))
+			}
+
+			if task.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateCompleted)
+			}
+			if got := a2atext.Message(task.Status.Message); got != tc.want {
+				t.Fatalf("task status message = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// Not parallel: it replaces the default logger, which the server logs to.
+func TestApprovalAnswersAreLogged(t *testing.T) {
+	var logs lockedBuffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	answered := send(t, c, userText("ask", "", ""))
+	send(t, c, userText("approve", string(answered.ID), answered.ContextID))
+	if err := ts.srv.rt.Update(func(c *agentdir.Config) error { c.Approvals.Deny = []string{"execute"}; return nil }); err != nil {
+		t.Fatalf("Runtime.Update() error = %v", err)
+	}
+	denied := send(t, c, userText("ask", "", ""))
+
+	for _, want := range []string{
+		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me tool="git push" option=once`, answered.ID),
+		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=deny-tools tool="git push" option=reject`, denied.ID),
+	} {
+		if !strings.Contains(logs.String(), want) {
+			t.Fatalf("logs have no line with %q; logs:\n%s", want, logs.String())
+		}
 	}
 }
