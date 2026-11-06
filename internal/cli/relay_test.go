@@ -50,9 +50,17 @@ func remoteRelay(t *testing.T) (string, *meshtest.Mesh) {
 	m := meshtest.New(t, relayAdminToken)
 	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)}, time.Time{}, "ci-bot")
 	var relayURL string
-	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, testHTTP), control.NewRemovedAgents(filepath.Join(t.TempDir(), "removed-agents.json")), meshadmin.Policy{}, func() control.Status {
-		return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
-	}, func(control.Member) bool { return false })
+	dir := t.TempDir()
+	svc := control.NewService(control.Options{
+		Mesh:        meshadmin.New(m.URL, relayAdminToken, testHTTP),
+		Removed:     control.NewRemovedAgents(filepath.Join(dir, "removed-agents.json")),
+		InviteNames: control.NewInviteNames(filepath.Join(dir, "invite-names.json")),
+		Status: func() control.Status {
+			return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
+		},
+		Admits: func(control.Member) bool { return false },
+		Now:    func() time.Time { return meshtest.Issued },
+	})
 	h := control.RequireToken(relayAdminToken, backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now), control.Handler(svc, nil))
 	srv := httptest.NewServer(http.StripPrefix(control.RemotePath, h))
 	t.Cleanup(srv.Close)
@@ -106,6 +114,55 @@ func TestRelayCommandsAtURL(t *testing.T) {
 				t.Fatalf("%s wrong output (-want +got) diff = %s", strings.Join(tt.args, " "), diff)
 			}
 		})
+	}
+}
+
+func TestRelayUnusedInvites(t *testing.T) {
+	t.Parallel()
+	url, _ := remoteRelay(t)
+	if _, err := runRelayCMD(t, "relay", "invite", "build-box", "--url", url, "--admin-token", "-"); err != nil {
+		t.Fatalf("relay invite error = %v", err)
+	}
+	joined := time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC).Local().Format("2006-01-02 15:04")
+	expires := meshtest.Issued.Add(24 * time.Hour).Local().Format("2006-01-02 15:04")
+	steps := []struct {
+		args []string
+		want string
+	}{
+		{
+			args: []string{"relay", "members"},
+			want: "AGENT   WHO               JOINED                         SEEN  PEER\n" +
+				"ci-bot  invite            " + joined + "               -     12D3bot\n" +
+				"-       invite build-box  unused until " + expires + "  -     -\n",
+		},
+		{args: []string{"relay", "remove", "build-box"}, want: "✓ revoked the unused invite build-box (1)\n"},
+		{
+			args: []string{"relay", "members"},
+			want: "AGENT   WHO     JOINED            SEEN  PEER\nci-bot  invite  " + joined + "  -     12D3bot\n",
+		},
+	}
+	for _, step := range steps {
+		got, err := runRelayCMD(t, append(step.args, "--url", url, "--admin-token", "-")...)
+		if err != nil {
+			t.Fatalf("%s error = %v", strings.Join(step.args, " "), err)
+		}
+		if diff := cmp.Diff(step.want, got); diff != "" {
+			t.Fatalf("%s wrong output (-want +got) diff = %s", strings.Join(step.args, " "), diff)
+		}
+	}
+}
+
+func TestRelayInviteRefusesAnInvalidName(t *testing.T) {
+	t.Parallel()
+	url, m := remoteRelay(t)
+
+	_, err := runRelayCMD(t, "relay", "invite", "bad name!", "--url", url, "--admin-token", "-")
+
+	if err == nil {
+		t.Fatal("relay invite 'bad name!' error = nil, want an error")
+	}
+	if got := m.Tokens(); len(got) != 0 {
+		t.Fatalf("relay invite 'bad name!' minted %v, want nothing", got)
 	}
 }
 

@@ -32,7 +32,12 @@ func newRelayInviteCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 		Short: "Create a token that joins one agent to the relay",
 		Long: `Create an invite: a single-use token that joins one agent to the relay
 without a sign-in, such as an agent on a server. The token is printed once.
-An unused invite expires.
+The name has up to 64 letters, digits, dots, hyphens or underscores, and
+starts with a letter or digit.
+
+An unused invite expires. ` + "`a2a-serve relay members`" + ` lists the unused invites
+and the invite each agent joined with. ` + "`a2a-serve relay remove <name>`" + `
+revokes the unused invites of that name.
 
 An invited agent keeps renewing its membership, even after it slept for days,
 until it is removed with ` + "`a2a-serve relay remove`" + `. One that stays away

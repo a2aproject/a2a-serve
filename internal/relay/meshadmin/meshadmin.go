@@ -89,6 +89,34 @@ type BootstrapToken struct {
 	Expires time.Time `json:"expire_time"`
 }
 
+// TokenInfo is a minted token as the admin API lists it
+// (api.BootstrapToken).
+type TokenInfo struct {
+	ID          string    `json:"id"`
+	MaxUsages   int       `json:"max_usages"`
+	UsagesCount int       `json:"usages_count"`
+	Description string    `json:"description"`
+	Created     time.Time `json:"create_time"`
+	Expires     time.Time `json:"expire_time"`
+	Revoked     time.Time `json:"revoke_time,omitzero"`
+}
+
+// Usable reports whether the token can still enroll a node at now.
+func (t TokenInfo) Usable(now time.Time) bool {
+	return t.Revoked.IsZero() && t.UsagesCount < t.MaxUsages && now.Before(t.Expires)
+}
+
+// EnrollmentApproved is the status of an enrollment that admitted its node.
+const EnrollmentApproved = "ENROLLMENT_STATUS_APPROVED"
+
+// Enrollment is a bootstrap enrollment (api.EnrollmentRequest). Agent Mesh
+// forgets it some time after it is resolved.
+type Enrollment struct {
+	PeerID  string `json:"peer_id"`
+	TokenID string `json:"token_id"`
+	Status  string `json:"status"`
+}
+
 // Status is what the admin API reports of the mesh (api.AdminStatusResponse).
 type Status struct {
 	Nodes   []Node                  `json:"enrolled_nodes"`
@@ -186,6 +214,34 @@ func (c *Client) CreateBootstrapToken(ctx context.Context, req BootstrapTokenReq
 		return nil, err
 	}
 	return &out, nil
+}
+
+// BootstrapTokens lists the minted tokens Agent Mesh still keeps.
+func (c *Client) BootstrapTokens(ctx context.Context) ([]TokenInfo, error) {
+	var out struct {
+		Tokens []TokenInfo `json:"tokens"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/admin/bootstrap-tokens", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Tokens, nil
+}
+
+// RevokeBootstrapToken revokes the token with id, so it enrolls no more
+// nodes. The nodes it enrolled stay.
+func (c *Client) RevokeBootstrapToken(ctx context.Context, id string) error {
+	return c.do(ctx, http.MethodDelete, "/admin/bootstrap-tokens/"+url.PathEscape(id), nil, nil)
+}
+
+// Enrollments lists the bootstrap enrollments Agent Mesh still keeps.
+func (c *Client) Enrollments(ctx context.Context) ([]Enrollment, error) {
+	var out struct {
+		Requests []Enrollment `json:"requests"`
+	}
+	if err := c.do(ctx, http.MethodGet, "/admin/enrollments", nil, &out); err != nil {
+		return nil, err
+	}
+	return out.Requests, nil
 }
 
 // Status returns the admitted and banned nodes and what they serve.

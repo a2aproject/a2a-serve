@@ -38,8 +38,14 @@ type Mesh struct {
 	mu       sync.Mutex
 	nodes    []meshadmin.Node
 	cat      map[string]meshadmin.NodeServices
-	tokens   []meshadmin.BootstrapTokenRequest
+	tokens   []token
+	enrolled []meshadmin.Enrollment
 	policies []meshadmin.Policy
+}
+
+type token struct {
+	req  meshadmin.BootstrapTokenRequest
+	info meshadmin.TokenInfo
 }
 
 // New starts a fake that accepts adminToken.
@@ -66,11 +72,50 @@ func (m *Mesh) AddNode(n meshadmin.Node, reported time.Time, agents ...string) {
 	}
 }
 
+// Enroll enrolls a node with the bootstrap token id, which spends a use of
+// it, like [Mesh.AddNode].
+func (m *Mesh) Enroll(id string, n meshadmin.Node, reported time.Time, agents ...string) {
+	m.mu.Lock()
+	for i := range m.tokens {
+		if m.tokens[i].info.ID == id {
+			m.tokens[i].info.UsagesCount++
+		}
+	}
+	m.enrolled = append(m.enrolled, meshadmin.Enrollment{PeerID: n.PeerID, TokenID: id, Status: meshadmin.EnrollmentApproved})
+	m.mu.Unlock()
+	m.AddNode(n, reported, agents...)
+}
+
+// ForgetEnrollments drops the enrollments, as Agent Mesh does some time
+// after it resolves them.
+func (m *Mesh) ForgetEnrollments() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.enrolled = nil
+}
+
 // Tokens returns the bootstrap tokens requested.
 func (m *Mesh) Tokens() []meshadmin.BootstrapTokenRequest {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return append([]meshadmin.BootstrapTokenRequest(nil), m.tokens...)
+	out := make([]meshadmin.BootstrapTokenRequest, 0, len(m.tokens))
+	for _, t := range m.tokens {
+		out = append(out, t.req)
+	}
+	return out
+}
+
+// Revoked returns the IDs of the revoked bootstrap tokens.
+func (m *Mesh) Revoked() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for _, t := range m.tokens {
+		if !t.info.Revoked.IsZero() {
+			out = append(out, t.info.ID)
+		}
+	}
+	return out
 }
 
 // Policies returns the policies set.
@@ -111,15 +156,54 @@ func (m *Mesh) handler() http.Handler {
 			return
 		}
 		m.mu.Lock()
-		m.tokens = append(m.tokens, req)
-		n := len(m.tokens)
+		n := len(m.tokens) + 1
+		info := meshadmin.TokenInfo{
+			ID: fmt.Sprint(n), MaxUsages: req.MaxUsages, Description: req.Description,
+			Created: Issued, Expires: Issued.Add(time.Duration(req.TTLHours) * time.Hour),
+		}
+		m.tokens = append(m.tokens, token{req: req, info: info})
 		m.mu.Unlock()
 		w.WriteHeader(http.StatusCreated)
 		write(w, map[string]any{
-			"id":          fmt.Sprint(n),
+			"id":          info.ID,
 			"token":       fmt.Sprintf("mesh-bt-%d", n),
-			"expire_time": Issued.Add(time.Duration(req.TTLHours) * time.Hour),
+			"expire_time": info.Expires,
 		})
+	})
+	mux.HandleFunc("GET /admin/bootstrap-tokens", func(w http.ResponseWriter, r *http.Request) {
+		if !m.auth(w, r) {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		out := []meshadmin.TokenInfo{}
+		for _, t := range m.tokens {
+			out = append(out, t.info)
+		}
+		write(w, map[string]any{"tokens": out})
+	})
+	mux.HandleFunc("DELETE /admin/bootstrap-tokens/{id}", func(w http.ResponseWriter, r *http.Request) {
+		if !m.auth(w, r) {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		for i := range m.tokens {
+			if m.tokens[i].info.ID == r.PathValue("id") {
+				m.tokens[i].info.Revoked = Issued
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+		}
+		http.Error(w, "Bootstrap token not found", http.StatusNotFound)
+	})
+	mux.HandleFunc("GET /admin/enrollments", func(w http.ResponseWriter, r *http.Request) {
+		if !m.auth(w, r) {
+			return
+		}
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		write(w, map[string]any{"requests": append([]meshadmin.Enrollment{}, m.enrolled...)})
 	})
 	mux.HandleFunc("GET /admin/status", func(w http.ResponseWriter, r *http.Request) {
 		if !m.auth(w, r) {
