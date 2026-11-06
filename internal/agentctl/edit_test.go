@@ -23,6 +23,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -67,15 +68,15 @@ func TestEdit(t *testing.T) {
 				}
 				return os.WriteFile(path, []byte(next), 0o600)
 			}
-			res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return tc.retry, nil })
+			res, editErr := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return tc.retry, nil })
 			var se *agentdir.SettingsError
-			if tc.wantErr != errors.As(err, &se) {
-				t.Fatalf("Edit() error = %v, want a SettingsError %v", err, tc.wantErr)
+			if tc.wantErr != errors.As(editErr, &se) {
+				t.Fatalf("Edit() error = %v, want a SettingsError %v", editErr, tc.wantErr)
 			}
 			if len(opened) != len(tc.edits) {
 				t.Fatalf("Edit() opened the editor %d times, want %d", len(opened), len(tc.edits))
 			}
-			if len(opened) > 1 && !strings.HasPrefix(opened[1], `# ERROR: invalid --sandbox "vm"`) {
+			if len(opened) > 1 && !strings.HasPrefix(opened[1], `# ERROR: config.yaml: sandbox has "vm"`) {
 				t.Fatalf("Edit() reopened %q, want the error on top", opened[1])
 			}
 			got, err := os.ReadFile(d.ConfigPath())
@@ -90,6 +91,9 @@ func TestEdit(t *testing.T) {
 				t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
 			}
 			if tc.wantErr {
+				if got, want := agenterr.HintText(editErr), "fix it with `a2a-serve config unset sandbox`"; got != want {
+					t.Fatalf("agenterr.HintText() = %q, want %q", got, want)
+				}
 				return
 			}
 			if len(res.Changes) != tc.wantChanges {

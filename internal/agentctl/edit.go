@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -82,7 +81,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			return nil, rerr
 		}
 		if !again {
-			return nil, &agentdir.SettingsError{Err: fmt.Errorf("config.yaml was not changed: %w", err)}
+			return nil, &agentdir.SettingsError{Err: errors.Join(err, errors.New("config.yaml was not changed"))}
 		}
 		content = withErrors(edited, err)
 	}

@@ -98,7 +98,7 @@ func Unset(ctx context.Context, d agentdir.Dir, client *controlapi.Client, setti
 func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data []byte, dryRun bool) (*Result, error) {
 	next, err := agentdir.ParseConfig(data)
 	if err != nil {
-		return nil, &agentdir.SettingsError{Err: err}
+		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
 	}
 	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		*cfg = *next
@@ -150,7 +150,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		delete(all, name)
 	}
 	if err := d.CheckConfig(next, all); err != nil {
-		return nil, &agentdir.SettingsError{Err: err}
+		return nil, &agentdir.SettingsError{Err: fileProblems(d, err, old, stored, created, raw != nil)}
 	}
 	if next.Approvals.OwnerChat != old.Approvals.OwnerChat {
 		if err := next.CheckOwnerChat(); err != nil {
@@ -205,6 +205,19 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		}
 	}
 	return res, nil
+}
+
+// fileProblems names the problems of err, the error of the changed config,
+// that config.yaml has by their key: all of them for an edited file, else
+// those the saved config old has too.
+func fileProblems(d agentdir.Dir, err error, old *agentdir.Config, stored agentdir.Secrets, created, edited bool) error {
+	switch {
+	case edited:
+		return agentdir.FileProblems(err)
+	case created:
+		return err
+	}
+	return agentdir.FileProblemsOf(err, d.CheckConfig(old, stored))
 }
 
 // CheckEnclosing refuses to create an agent in d while an agent whose

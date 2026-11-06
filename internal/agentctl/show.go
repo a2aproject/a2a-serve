@@ -18,6 +18,7 @@ import (
 	"context"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
@@ -58,7 +59,7 @@ func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View
 	}
 	v := &View{Dir: d.Root, Path: d.ConfigPath(), Config: cfg, Secrets: map[string]string{}, Commands: cfg.Commands(stored)}
 	if err := d.CheckConfig(cfg, stored); err != nil {
-		v.Invalid = err.Error()
+		v.Invalid = agenterr.Text(agentdir.FileProblems(err))
 	}
 	for _, name := range append(cfg.Secrets, channelSecrets(cfg)...) {
 		v.Secrets[name] = SecretStateMissing

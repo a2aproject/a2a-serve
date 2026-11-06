@@ -99,7 +99,7 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 	if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
 		return nil, err
 	}
-	cfg, err := d.LoadConfig()
+	cfg, err := d.ReadConfig()
 	if err != nil {
 		return nil, err
 	}

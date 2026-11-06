@@ -106,8 +106,8 @@ var brokenConfigs = []struct {
 	content []byte
 	wantErr string
 }{
-	{name: "invalid setting", content: []byte("name: coder\nagent: opencode\nsandbox: bogus\n"), wantErr: `invalid --sandbox "bogus"`},
-	{name: "invalid YAML", content: []byte("name: [coder\n"), wantErr: "parsing "},
+	{name: "invalid setting", content: []byte("name: coder\nagent: opencode\nsandbox: bogus\n"), wantErr: "config.yaml: sandbox has \"bogus\": want docker or local: fix it with `a2a-serve config unset sandbox`"},
+	{name: "invalid YAML", content: []byte("name: [coder\n"), wantErr: "config.yaml: yaml: line 1"},
 	{name: "empty", content: []byte{}, wantErr: "no agent"},
 	{name: "deleted", wantErr: "config.yaml does not exist"},
 }
