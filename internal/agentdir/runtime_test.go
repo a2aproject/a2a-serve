@@ -16,6 +16,8 @@ package agentdir
 
 import (
 	"os"
+	"strconv"
+	"sync"
 	"testing"
 	"time"
 
@@ -163,5 +165,29 @@ func TestRuntimeSaveSecrets(t *testing.T) {
 
 	if diff := cmp.Diff(Secrets{"SAVED": "1", "TOKEN": "2"}, rt.Secrets()); diff != "" {
 		t.Fatalf("Runtime.Secrets() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRuntimeConcurrentReplaceSecretKeepsFileAndMemoryEqual(t *testing.T) {
+	t.Parallel()
+	for range 50 {
+		rt, _ := newRuntime(t, &Config{Name: "coder"})
+		var wg sync.WaitGroup
+		for i := range 4 {
+			wg.Go(func() {
+				if err := rt.ReplaceSecret("TOKEN", strconv.Itoa(i)); err != nil {
+					t.Errorf("Runtime.ReplaceSecret() error = %v", err)
+				}
+			})
+		}
+		wg.Wait()
+
+		saved, err := rt.SavedSecrets()
+		if err != nil {
+			t.Fatalf("Runtime.SavedSecrets() error = %v", err)
+		}
+		if got, want := rt.Secrets()["TOKEN"], saved["TOKEN"]; got != want {
+			t.Fatalf("Runtime.Secrets()[TOKEN] = %q, want %q from the secrets file", got, want)
+		}
 	}
 }

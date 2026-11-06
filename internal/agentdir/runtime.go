@@ -114,12 +114,12 @@ func (r *Runtime) SaveSecrets(s Secrets) error {
 // ReplaceSecret stores a secret that replaced the one in use, such as a
 // token a channel refreshed, and uses it from now on.
 func (r *Runtime) ReplaceSecret(name, value string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	update := Secrets{name: value}
 	if err := r.dir.LockConfig(func() error { return r.dir.SaveSecrets(update) }); err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	cur := r.cur.Load()
 	next := Secrets{}
 	maps.Copy(next, cur.secrets)
