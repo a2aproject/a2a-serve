@@ -27,7 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
-	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
+	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 

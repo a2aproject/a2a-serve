@@ -12,9 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-// Package schedules adds, lists and removes the schedules of an agent. The
+// Package schedulesvc adds, lists and removes the schedules of an agent. The
 // control socket of a running agent and the CLI of a stopped one share it.
-package schedules
+package schedulesvc
 
 import (
 	"context"
