@@ -88,7 +88,7 @@ func TestAgentCallsContact(t *testing.T) {
 	}
 
 	unknown := send(t, c, userText("call nobody hi", "", ""))
-	wantResult(t, unknown, a2a.TaskStateCompleted, "404")
+	wantResult(t, unknown, a2a.TaskStateCompleted, `"nobody" is not an agent you can call`)
 }
 
 func TestAgentCallsContactWhileWaitingForApproval(t *testing.T) {

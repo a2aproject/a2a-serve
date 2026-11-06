@@ -129,28 +129,20 @@ func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
-		if !claims.User.MayCallAgents() {
-			jsonhttp.Error(w, http.StatusForbidden, "the user of this conversation can't call other agents; answer without calling one")
-			return
-		}
-		if claims.User.Hops+1 > auth.MaxHops {
-			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops))
-			return
-		}
 		rest := "/" + r.PathValue("rest")
 		base := "http://" + r.Host + "/" + handle + "/" + name
-		if name == pairings.SchedulesAgent {
-			hp.serveSchedules(w, r, claims, base, rest)
-			return
-		}
-		ok, err = hp.clients.callable(r.Context(), name)
+		refusal, err := hp.refusal(r.Context(), claims, name)
 		if err != nil {
 			slog.Error("looking up a callable agent", "agent", name, "error", err)
 			jsonhttp.Error(w, http.StatusInternalServerError, "looking up "+name+" failed")
 			return
 		}
-		if !ok {
-			jsonhttp.Error(w, http.StatusNotFound, fmt.Sprintf("%q is not an agent you can call; the [a2a agents] line lists them", name))
+		if refusal != nil {
+			serveRefusal(w, r, name, base, rest, refusal)
+			return
+		}
+		if name == pairings.SchedulesAgent {
+			hp.serveSchedules(w, r, claims, base, rest)
 			return
 		}
 		if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
@@ -174,6 +166,46 @@ func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 		}
 		inner.ServeHTTP(w, r2)
 	})
+}
+
+// refusal returns why the conversation of claims may not call name, or nil
+// when it may.
+func (hp *HarnessProxy) refusal(ctx context.Context, claims Claims, name string) (*a2a.Error, error) {
+	if !claims.User.MayCallAgents() {
+		return a2a.NewError(a2a.ErrUnauthorized, "the user of this conversation can't call other agents; answer without calling one"), nil
+	}
+	if claims.User.Hops+1 > auth.MaxHops {
+		return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops)), nil
+	}
+	if name == pairings.SchedulesAgent {
+		return nil, nil
+	}
+	ok, err := hp.clients.callable(ctx, name)
+	if err != nil || ok {
+		return nil, err
+	}
+	return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("%q is not an agent you can call; the [a2a agents] line lists them", name)), nil
+}
+
+// serveRefusal serves a card for name and fails every call with refusal.
+// A2A clients fetch the card before the call and report a failed card fetch
+// by its status alone, so the refusal travels on the call, where the client
+// shows its message.
+func serveRefusal(w http.ResponseWriter, r *http.Request, name, base, rest string, refusal *a2a.Error) {
+	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
+		card := proxyCard(name, base)
+		card.Description = refusal.Message
+		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
+		return
+	}
+	h := refusingHandler{err: refusal}
+	r2 := r.Clone(r.Context())
+	r2.URL.Path, r2.URL.RawPath = rest, ""
+	inner := a2asrv.NewRESTHandler(h)
+	if r.Method == http.MethodPost && rest == "/" {
+		inner = a2asrv.NewJSONRPCHandler(h)
+	}
+	inner.ServeHTTP(w, r2)
 }
 
 // serveSchedules serves the built-in schedules agent for the conversation

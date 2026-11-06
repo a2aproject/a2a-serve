@@ -185,12 +185,10 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 		{name: "owner calls the schedules agent", user: auth.Owner(), agent: pairings.SchedulesAgent, wantCode: http.StatusOK},
 		{name: "unknown handle", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusNotFound, wantError: ErrUnknownHandle.Error()},
 		{name: "conversation without a running turn", user: auth.Owner(), noTurn: true, agent: "coder", wantCode: http.StatusForbidden, wantError: ErrNoTurn.Error()},
-		{name: "anonymous user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
-		{name: "anonymous user and the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: pairings.SchedulesAgent, wantCode: http.StatusForbidden, wantError: "can't call other agents"},
-		{name: "user without a role", user: auth.Principal{ID: "pair:gone"}, agent: "coder", wantCode: http.StatusForbidden, wantError: "can't call other agents"},
-		{name: "user at the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}, agent: "coder", wantCode: http.StatusForbidden, wantError: "too many agents"},
+		{name: "anonymous user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantCode: http.StatusOK},
+		{name: "user at the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}, agent: "coder", wantCode: http.StatusOK},
 		{name: "user below the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops - 1}}, agent: "coder", wantCode: http.StatusOK},
-		{name: "name that isn't callable", user: auth.Owner(), agent: "nobody", wantCode: http.StatusNotFound, wantError: `"nobody" is not an agent you can call`},
+		{name: "name that isn't callable", user: auth.Owner(), agent: "nobody", wantCode: http.StatusOK},
 		{name: "harness key", key: "harness-key", header: "Bearer harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusOK},
 		{name: "no harness key", key: "harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
 		{name: "wrong harness key", key: "harness-key", header: "Bearer nope", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
@@ -220,6 +218,54 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 			}
 			if !strings.Contains(got.Error, tc.wantError) {
 				t.Fatalf("GET agent card error = %q, want it to contain %q", got.Error, tc.wantError)
+			}
+		})
+	}
+}
+
+func TestHarnessProxyRefusesTheCall(t *testing.T) {
+	t.Parallel()
+	anonymous := auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}
+	atHopLimit := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}
+	tests := []struct {
+		name      string
+		user      auth.Principal
+		agent     string
+		transport a2a.TransportProtocol
+		want      string
+	}{
+		{name: "anonymous user", user: anonymous, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
+		{name: "anonymous user and the schedules agent", user: anonymous, agent: pairings.SchedulesAgent, transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
+		{name: "user without a role", user: auth.Principal{ID: "pair:gone"}, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
+		{name: "user at the hop limit", user: atHopLimit, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "too many agents in this chain (3); answer without calling another agent"},
+		{name: "user at the hop limit over REST", user: atHopLimit, agent: "coder", transport: a2a.TransportProtocolHTTPJSON, want: "too many agents in this chain (3); answer without calling another agent"},
+		{name: "name that isn't callable", user: auth.Owner(), agent: "nobody", transport: a2a.TransportProtocolJSONRPC, want: `"nobody" is not an agent you can call; the [a2a agents] line lists them`},
+		{name: "name that isn't callable over REST", user: auth.Owner(), agent: "nobody", transport: a2a.TransportProtocolHTTPJSON, want: `"nobody" is not an agent you can call; the [a2a agents] line lists them`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newProxyFixture(t)
+			putContact(t, f.store, store.Contact{Name: "coder", URL: f.remote.URL})
+			srv := f.serve(t, "")
+			handle := f.runTurn(t, "c1", tc.user)
+			client := proxyClientOver(t, srv.URL+"/"+handle+"/"+tc.agent, tc.transport)
+			msg := &a2a.SendMessageRequest{Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(promptDone))}
+
+			_, err := client.SendMessage(context.Background(), msg)
+			if err == nil || err.Error() != tc.want || !errors.Is(err, a2a.ErrUnauthorized) {
+				t.Fatalf("SendMessage() error = %v, want permission denied with %q", err, tc.want)
+			}
+			for _, err := range client.SendStreamingMessage(context.Background(), msg) {
+				if err == nil || err.Error() != tc.want {
+					t.Fatalf("SendStreamingMessage() error = %v, want %q", err, tc.want)
+				}
+			}
+			if _, err := client.GetTask(context.Background(), &a2a.GetTaskRequest{ID: "t1"}); err == nil || err.Error() != tc.want {
+				t.Fatalf("GetTask() error = %v, want %q", err, tc.want)
+			}
+			if got := f.remote.received(); len(got) != 0 {
+				t.Fatalf("calls that reached the contact = %v, want none", got)
 			}
 		})
 	}
@@ -338,12 +384,19 @@ func TestHarnessProxyCallsContactForTheUserOfTheTurn(t *testing.T) {
 
 func proxyClient(t *testing.T, agentURL string) *a2aclient.Client {
 	t.Helper()
+	return proxyClientOver(t, agentURL, a2a.TransportProtocolJSONRPC)
+}
+
+// proxyClientOver returns a client of the agent at agentURL that prefers
+// transport.
+func proxyClientOver(t *testing.T, agentURL string, transport a2a.TransportProtocol) *a2aclient.Client {
+	t.Helper()
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(testHTTP).Resolve(ctx, agentURL)
 	if err != nil {
 		t.Fatalf("Resolve(%s) error = %v", agentURL, err)
 	}
-	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(testHTTP), a2aclient.WithRESTTransport(testHTTP))
+	client, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(testHTTP), a2aclient.WithRESTTransport(testHTTP), a2aclient.WithConfig(a2aclient.Config{PreferredTransports: []a2a.TransportProtocol{transport}}))
 	if err != nil {
 		t.Fatalf("NewFromCard() error = %v", err)
 	}
