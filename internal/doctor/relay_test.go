@@ -31,6 +31,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 // fakeRelay serves /readyz with ready, and the version route with info, or
 // 404 when info is nil.
 func fakeRelay(t *testing.T, ready bool, info *agentmesh.Info) string {
@@ -78,7 +83,7 @@ func TestRelayOnline(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got := relayOnline(context.Background(), http.DefaultClient, fakeRelay(t, tt.ready, tt.info))
+			got := relayOnline(context.Background(), testHTTP, fakeRelay(t, tt.ready, tt.info))
 			if diff := cmp.Diff([]check{{"relay", tt.want}}, checks(got)); diff != "" {
 				t.Fatalf("relayOnline() wrong result (-want +got) diff = %s\n%+v", diff, got)
 			}

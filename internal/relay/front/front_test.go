@@ -33,6 +33,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/front"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 var info = agentmesh.Info{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}
 
 // upstream fakes agentmesh-one: it answers with the method and path it
@@ -102,7 +107,7 @@ func do(t *testing.T, method, rawURL string) (int, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	resp, err := http.DefaultTransport.RoundTrip(req)
+	resp, err := testHTTP.Transport.RoundTrip(req)
 	if err != nil {
 		t.Fatalf("%s %s error = %v", method, rawURL, err)
 	}

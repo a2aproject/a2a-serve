@@ -222,7 +222,7 @@ func TestGossipRelayCantHideEntriesOfTheirHost(t *testing.T) {
 		{Name: "helper", Host: "dora", Version: 1, Expires: expires},
 	}}
 
-	for _, hc := range []*http.Client{fnet.provider("carl").HTTPClient(), http.DefaultClient} {
+	for _, hc := range []*http.Client{fnet.provider("carl").HTTPClient(), testHTTP} {
 		if err := postJSON(ctx, hc, anna.srv.privateURL+gossipEntriesPath, relayed, nil); err != nil {
 			t.Fatalf("POST %s error = %v", gossipEntriesPath, err)
 		}
@@ -249,7 +249,7 @@ func TestGossipRefusesOversizedBody(t *testing.T) {
 	for _, path := range []string{gossipPath, gossipEntriesPath} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			resp, err := http.Post(anna.srv.privateURL+path, "application/json", strings.NewReader(body))
+			resp, err := testHTTP.Post(anna.srv.privateURL+path, "application/json", strings.NewReader(body))
 			if err != nil {
 				t.Fatalf("POST %s error = %v", path, err)
 			}
