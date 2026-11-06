@@ -99,7 +99,7 @@ The agent calls other agents through its server, which holds the credentials. Th
 
 ### Agent processes
 
-Each authenticated user's conversations run in an agent process of their own. Your conversations run in the owner's process, and all anonymous callers share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. All processes work on the same workspace. Anyone who can call the agent and approve their own commands can read and change what is in it.
+Each authenticated user's conversations run in an agent process of their own. Your conversations run in the owner's process, and all anonymous callers share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of authenticated users run at once. When all of them work on tasks or wait for approvals, a user without a running process gets an error for a new task and can send it again later. All processes work on the same workspace. Anyone who can call the agent and approve their own commands can read and change what is in it.
 
 A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
 

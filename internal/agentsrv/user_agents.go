@@ -34,18 +34,27 @@ import (
 // agent key. a2aacp has no way to stop the process of one key, so removing
 // a user closes the process the server started, and keeps a new one from
 // starting until the removal ends.
+// They also keep the count of processes at maxUserAgents: a2aacp checks
+// the count before a process starts, so concurrent starts could exceed it.
 type userAgents struct {
 	mu   sync.Mutex
 	keys map[string]*userAgent
+	// starting counts the processes that start now.
+	starting int
 }
 
 type userAgent struct {
 	// startMu is held while the process starts and while its user is
 	// removed.
 	startMu sync.Mutex
-	// proc is guarded by userAgents.mu.
-	proc io.Closer
+	// proc, starting and turns are guarded by userAgents.mu. turns counts
+	// the turns that use the process, including those waiting for an answer.
+	proc     io.Closer
+	starting bool
+	turns    int
 }
+
+var errAgentsBusy = fmt.Errorf("all %d agents are busy, send the message again later", maxUserAgents)
 
 // get returns the entry of key, creating it if needed.
 func (u *userAgents) get(key string) *userAgent {
@@ -63,6 +72,75 @@ func (u *userAgents) get(key string) *userAgent {
 }
 
 // started records proc as the running process of a.
+// reserve counts a process of a as starting until release, or returns
+// errAgentsBusy if maxUserAgents processes run or start.
+func (u *userAgents) reserve(a *userAgent) (release func(), err error) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if u.runningLocked()+u.starting >= maxUserAgents {
+		return nil, errAgentsBusy
+	}
+	u.starting++
+	a.starting = true
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			u.mu.Lock()
+			defer u.mu.Unlock()
+			u.starting--
+			a.starting = false
+		})
+	}, nil
+}
+
+func (u *userAgents) runningLocked() int {
+	n := 0
+	for _, a := range u.keys {
+		if a.proc != nil {
+			n++
+		}
+	}
+	return n
+}
+
+// turn counts a turn in the process of key until end.
+func (u *userAgents) turn(key string) (end func()) {
+	a := u.get(key)
+	u.mu.Lock()
+	a.turns++
+	u.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			u.mu.Lock()
+			defer u.mu.Unlock()
+			a.turns--
+		})
+	}
+}
+
+// hasRoom reports whether a turn in the process of key can run now: the
+// process runs or starts, or it can start, possibly after an idle process
+// stops.
+func (u *userAgents) hasRoom(key string) bool {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if a := u.keys[key]; a != nil && (a.proc != nil || a.starting) {
+		return true
+	}
+	running, idle := 0, 0
+	for _, a := range u.keys {
+		if a.proc == nil {
+			continue
+		}
+		running++
+		if a.turns == 0 {
+			idle++
+		}
+	}
+	return running+u.starting < maxUserAgents || idle > 0
+}
+
 func (u *userAgents) started(a *userAgent, proc io.Closer) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
