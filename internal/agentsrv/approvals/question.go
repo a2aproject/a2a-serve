@@ -44,6 +44,8 @@ type Question struct {
 	Type    string
 	Title   string
 	Options []Option
+	// Kind is the ACP tool kind of a permission, if its message tells.
+	Kind string
 	// Text is the text of the status message.
 	Text string
 	// Data is the question as stored in records: id, type, title and options.
@@ -93,6 +95,12 @@ func FromMessage(msg *a2a.Message) *Question {
 	for _, p := range msg.Parts {
 		if t := p.Text(); t != "" {
 			texts = append(texts, t)
+		}
+		if data, ok := p.Data().(map[string]any); ok {
+			tool, _ := data["toolCall"].(map[string]any)
+			if kind, ok := tool["kind"].(string); ok {
+				q.Kind = kind
+			}
 		}
 	}
 	q.Text = strings.Join(texts, "\n")

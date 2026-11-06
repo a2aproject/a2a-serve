@@ -12,7 +12,7 @@ While a task waits for an approval, a new message to its conversation is refused
 
 Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises.
 
-`--allow-tools` and `--deny-tools` answer by tool kind without asking. The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`; `*` matches all of them.
+`--allow-tools` and `--deny-tools` answer by tool kind without asking. A change on a running agent also answers the approvals that wait for a kind it now allows. The kinds are `read`, `edit`, `delete`, `move`, `search`, `execute`, `think`, `fetch`, `switch_mode` and `other`; `*` matches all of them.
 
 The [agent process](../advanced/access-model.md#agent-processes) that asked remembers an `always` answer. It covers the matching tool calls of that process in every conversation, and other processes still ask. The process forgets it when it stops, such as on `a2a-serve restart`. When `--deny-tools` denies a kind it didn't deny before, the server restarts all agent processes, so that earlier `always` answers end. Their turns in progress fail, and their questions that wait for an answer can't be answered anymore.
 
@@ -30,10 +30,11 @@ The person who started a task answers its approvals, in the place the task start
 | A schedule without `--chat` | an owner | the owner chat |
 | An [anonymous caller](identities.md#anonymous-callers) | an owner, within 10 minutes | the owner chat |
 
-- Set the **owner chat** with `--owner-chat <channel>[:<who>]`. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
+- Set the **owner chat** with `--owner-chat <channel>[:<who>]`, on a messenger the agent has. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
 - In a group chat, only the person who started the task, or an owner, can answer.
 - A message that isn't an answer doesn't reach the agent while a question waits for you in that chat. Answer the question first, or send `/stop`.
 - A typed answer such as `approve` answers the question whose message it replies to. When several questions wait in one chat, reply to the message of the one you answer. A typed answer that replies to none of them gets a prompt to do so.
 - Authenticated callers approve their own tasks, so use `--deny-tools` to limit what they can run.
 - An approval in a conversation of an authenticated caller is rejected after 4 hours without an answer. Until then, it keeps the caller's agent process running.
+- Other approvals, such as those of owners' tasks and schedules, are rejected after 24 hours without an answer. A message that waits behind an approval waits as long.
 - Email approvals link to a web page where the person who started the task answers. Approvals that only an owner can answer have no link.

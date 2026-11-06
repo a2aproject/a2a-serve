@@ -147,14 +147,15 @@ func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controla
 
 // reloadConfig applies the live settings of config.yaml. When they deny
 // more tools, it restarts the agent processes, which forget the tool calls
-// callers allowed always.
-func (s *Server) reloadConfig() error {
+// callers allowed always. Otherwise the new rules answer the approvals that
+// wait.
+func (s *Server) reloadConfig(ctx context.Context) error {
 	before := s.rt.Config().Approvals.Deny
 	if err := s.rt.Reload(); err != nil {
 		return err
 	}
 	if !tightened(before, s.rt.Config().Approvals.Deny) {
-		return nil
+		return s.answerWaiting(ctx)
 	}
 	n, err := s.procs.restart()
 	if err != nil {

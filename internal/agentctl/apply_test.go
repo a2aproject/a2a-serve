@@ -195,6 +195,7 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 		{name: "invalid", s: agentdir.Settings{Private: "tailscal"}, wantErr: true},
 		{name: "missing mount", s: agentdir.Settings{Mounts: []string{"/nonexistent-a2a"}}, wantErr: true},
 		{name: "secret with a line break", s: agentdir.Settings{Secrets: []string{"MULTI"}, SecretValues: agentdir.Secrets{"MULTI": "line1\nline2"}}, wantErr: true},
+		{name: "owner chat without its messenger", s: agentdir.Settings{OwnerChat: "telegram:anna"}, wantErr: true},
 		{name: "dry run", s: agentdir.Settings{Sandbox: "local"}, dryRun: true},
 	}
 	for _, tc := range tests {

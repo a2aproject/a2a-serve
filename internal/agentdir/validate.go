@@ -406,3 +406,14 @@ func (c *Config) CheckHarness(name string) error {
 	}
 	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --agent %s`", c.Harness, name)}
 }
+
+// CheckOwnerChat refuses an owner chat on a channel the agent doesn't have.
+// Only a change of the owner chat checks it, so that removing the channel
+// later doesn't make the config invalid.
+func (c *Config) CheckOwnerChat() error {
+	kind, _, _ := strings.Cut(c.Approvals.OwnerChat, ":")
+	if kind == "" || c.HasChannel(kind) {
+		return nil
+	}
+	return fmt.Errorf("--owner-chat %s needs the %s channel: add it first with a2a-serve channel add %s", c.Approvals.OwnerChat, kind, kind)
+}
