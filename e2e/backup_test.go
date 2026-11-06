@@ -69,3 +69,25 @@ func TestBackupRestoreKeepsConversationAndPairings(t *testing.T) {
 		t.Fatalf("a2a send by anna to the restored agent = %+v, want the agent's answer", got)
 	}
 }
+
+func TestBackupRestoreIntoNewDirectory(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	dest := filepath.Join(owner.home, "backups")
+	coder.serve("config", "set", "--backup", dest, "--backup-key", "e2e-backup-key")
+	coder.serve("backup", "now")
+	dir := filepath.Join(owner.home, "restored", "app")
+
+	if _, err := owner.exec(owner.home, "a2a", "serve", "backup", "restore", dest, "--dir", dir, "--backup-key", "wrong-key"); err == nil {
+		t.Fatalf("a2a-serve backup restore with the wrong key error = nil, want error")
+	}
+	if _, err := os.Stat(filepath.Join(owner.home, "restored")); !os.IsNotExist(err) {
+		t.Fatalf("a2a-serve backup restore with the wrong key left %s: %v", filepath.Join(owner.home, "restored"), err)
+	}
+	owner.run(owner.home, "a2a", "serve", "backup", "restore", dest, "--dir", dir, "--backup-key", "e2e-backup-key")
+	got, err := os.ReadFile(filepath.Join(dir, ".a2a", ".gitignore"))
+	if err != nil || string(got) != "state/\n" {
+		t.Fatalf("restored .a2a/.gitignore = %q, %v, want %q", got, err, "state/\n")
+	}
+}

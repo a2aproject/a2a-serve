@@ -306,13 +306,23 @@ func (a *agent) invite(args ...string) string {
 	return resp.Code
 }
 
+// agentStatus is the output of `a2a-serve status -o json`.
+type agentStatus struct {
+	Running bool     `json:"running"`
+	PID     int      `json:"pid"`
+	Pending []string `json:"pending"`
+}
+
+func (a *agent) status() agentStatus {
+	a.u.t.Helper()
+	var status agentStatus
+	a.serveJSON(&status, "status")
+	return status
+}
+
 func (a *agent) running() bool {
 	a.u.t.Helper()
-	var status struct {
-		Running bool `json:"running"`
-	}
-	a.serveJSON(&status, "status")
-	return status.Running
+	return a.status().Running
 }
 
 func (a *agent) cleanup() {

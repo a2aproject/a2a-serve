@@ -202,7 +202,15 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(d.Root, 0o700); err != nil {
+	created, err := fsutil.MkdirAll(d.Root)
+	if created != "" {
+		defer func() {
+			if err != nil {
+				removeCreated(d.Root, created)
+			}
+		}()
+	}
+	if err != nil {
 		return err
 	}
 	tmp, release, err := restoreDir(d)
@@ -218,6 +226,9 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err := extractArchive(ctx, plain, tmp, takeOver); err != nil {
 		return err
 	}
+	if err := agentdir.WriteGitignore(tmp); err != nil {
+		return err
+	}
 	// os.Rename doesn't replace a directory, even an empty one.
 	if err := os.Remove(d.Path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
@@ -226,6 +237,21 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return fmt.Errorf("moving the restored agent into place: %w", err)
 	}
 	return nil
+}
+
+// removeCreated removes the empty directories from dir up to created, the
+// topmost one a failed restore created. A directory that isn't empty, such
+// as one another process wrote to, is kept.
+func removeCreated(dir, created string) {
+	for p := dir; ; p = filepath.Dir(p) {
+		if err := os.Remove(p); err != nil {
+			slog.Warn("removing a directory of a failed restore", "dir", p, "error", err)
+			return
+		}
+		if p == created || filepath.Dir(p) == p {
+			return
+		}
+	}
 }
 
 // restoreDir creates the directory next to the .a2a directory of d to

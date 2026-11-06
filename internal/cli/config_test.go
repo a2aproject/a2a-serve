@@ -348,6 +348,15 @@ func TestConfigRunningAgent(t *testing.T) {
 	if _, err := runCMD(t, "restart", "--dir", dir); err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
 		t.Fatalf("a2a-serve restart of a foreground agent error = %v, want a refusal", err)
 	}
+	for _, args := range [][]string{
+		{"config", "set", "--dir", dir, "--env", "TRACE=1", "--restart"},
+		{"config", "unset", "--dir", dir, "private", "--restart"},
+	} {
+		out, err := runCMD(t, args...)
+		if err == nil || !strings.Contains(err.Error(), "press Ctrl-C there") {
+			t.Fatalf("a2a-serve %s with env pending = %q, %v, want a restart refused for a foreground agent", strings.Join(args, " "), out, err)
+		}
+	}
 
 	if _, err := runCMD(t, "stop", "--dir", dir); err != nil {
 		t.Fatalf("a2a-serve stop error = %v", err)
@@ -409,6 +418,40 @@ func TestSettingsFlagPlacement(t *testing.T) {
 			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
 			if !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a-serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestSettingsFlagZero(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		existing *agentdir.Config
+		args     []string
+		wantErr  string
+	}{
+		{
+			name:     "port on config set",
+			existing: &agentdir.Config{Name: "coder", Harness: "opencode", Port: 8080},
+			args:     []string{"config", "set", "--port", "0"},
+			wantErr:  "run `a2a-serve config unset port` to go back to a free port",
+		},
+		{
+			name:     "pids on config set",
+			existing: &agentdir.Config{Name: "coder", Harness: "opencode"},
+			args:     []string{"config", "set", "--pids", "0"},
+			wantErr:  "run `a2a-serve config unset pids` to go back to the default of 512",
+		},
+		{name: "port on start", args: []string{"start", "acp", "--port", "0"}, wantErr: "run `a2a-serve config unset port` to go back to a free port"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, tc.existing)
+			_, err := runCMD(t, append(tc.args, "--dir", d.Root)...)
+			if err == nil || !isUsage(err) || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("a2a-serve %s error = %v, want a usage error %q", strings.Join(tc.args, " "), err, tc.wantErr)
 			}
 		})

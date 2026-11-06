@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -26,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -70,6 +72,28 @@ Without a subcommand, shows the settings.`,
 		newConfigEditCmd(cfg, sf),
 	)
 	return cmd
+}
+
+const restartUsage = "Restart the running agent if the change, or one saved before, needs it"
+
+// printConfigChange prints the result of `config set` or `config unset`.
+// With restart, it restarts the running agent if settings wait for it,
+// including those saved by an earlier change.
+func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, d agentdir.Dir, res *agentctl.Result, restart bool) error {
+	if restart {
+		waiting, err := agentctl.WaitingForRestart(ctx, d, sf.controlClient(d), res)
+		if err != nil {
+			return err
+		}
+		res.Restart = waiting
+	}
+	if err := printConfigResult(cfg, res); err != nil {
+		return err
+	}
+	if !restart || len(res.Restart) == 0 {
+		return nil
+	}
+	return lifecycle.Restart(ctx, d, sf.controlClient(d), false, cfg.progress())
 }
 
 // printConfigResult prints the diff of a change, and whether it applies now

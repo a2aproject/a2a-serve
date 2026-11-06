@@ -17,6 +17,7 @@
 package e2e
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -55,6 +56,36 @@ func TestRestartStartsStoppedAgent(t *testing.T) {
 
 	if !coder.running() {
 		t.Fatalf("a2a-serve status running = false after restart, want true")
+	}
+}
+
+func TestConfigRestartAppliesPendingSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "set an unchanged value", args: []string{"config", "set", "--env", "DEBUG=1", "--restart"}},
+		{name: "unset a setting that isn't set", args: []string{"config", "unset", "task-ttl", "--restart"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			owner := newUser(t)
+			coder := owner.startAgent("coder")
+			coder.serve("config", "set", "--env", "DEBUG=1")
+			before := coder.status()
+			if diff := cmp.Diff([]string{"env"}, before.Pending); diff != "" {
+				t.Fatalf("a2a-serve status pending wrong result (-want +got) diff = %s", diff)
+			}
+
+			coder.serve(tc.args...)
+
+			after := coder.status()
+			if !after.Running || after.PID == before.PID || len(after.Pending) > 0 {
+				t.Fatalf("a2a-serve status after a2a-serve %s = %+v, want a restarted agent (pid %d) with nothing pending", strings.Join(tc.args, " "), after, before.PID)
+			}
+		})
 	}
 }
 

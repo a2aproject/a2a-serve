@@ -450,6 +450,44 @@ func TestPending(t *testing.T) {
 	}
 }
 
+func TestWaitingForRestart(t *testing.T) {
+	t.Parallel()
+	running := &agentdir.Config{Name: "coder", Harness: "opencode"}
+	tests := []struct {
+		name     string
+		running  bool
+		settings agentdir.Settings
+		dryRun   bool
+		want     []string
+	}{
+		{name: "unchanged setting pending", running: true, settings: agentdir.Settings{Sandbox: "local"}, want: []string{"sandbox"}},
+		{name: "change and a pending setting", running: true, settings: agentdir.Settings{Env: []string{"DEBUG=1"}}, want: []string{"env", "sandbox"}},
+		{name: "dry run", running: true, settings: agentdir.Settings{Sandbox: "local"}, dryRun: true},
+		{name: "stopped", settings: agentdir.Settings{Env: []string{"DEBUG=1"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local"}, nil)
+			if tc.running {
+				serveFake(t, d, &fakeServer{running: running})
+			}
+			client := controlapi.NewClient(d)
+			res, err := Set(t.Context(), d, client, tc.settings, tc.dryRun)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			got, err := WaitingForRestart(t.Context(), d, client, res)
+			if err != nil {
+				t.Fatalf("WaitingForRestart() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("WaitingForRestart() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestHarnessesMatchProfiles(t *testing.T) {
 	t.Parallel()
 	if diff := cmp.Diff(harness.ProfileNames(), agentdir.Harnesses); diff != "" {

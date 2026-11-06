@@ -24,7 +24,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
-	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -69,13 +68,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 			if err != nil {
 				return err
 			}
-			if err := printConfigResult(cfg, res); err != nil {
-				return err
-			}
-			if !restart || len(res.Restart) == 0 {
-				return nil
-			}
-			return lifecycle.Restart(cmd.Context(), d, sf.controlClient(d), false, cfg.progress())
+			return printConfigChange(cmd.Context(), cfg, sf, d, res, restart)
 		},
 	}
 	flags.register(cmd, agentdir.AgentFlag|agentdir.CoreFlags|agentdir.OperationalFlags)
@@ -83,7 +76,7 @@ may call the agent, or to its networks, prints who may call afterwards.
 	hideImageForLocalSandbox(cmd, sf.agentDir)
 	f := cmd.Flags()
 	f.BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
-	f.BoolVar(&restart, "restart", false, "Restart the running agent if a change needs it")
+	f.BoolVar(&restart, "restart", false, restartUsage)
 	return cmd
 }
 

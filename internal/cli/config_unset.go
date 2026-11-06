@@ -24,7 +24,7 @@ import (
 )
 
 func newConfigUnsetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
-	var dryRun bool
+	var dryRun, restart bool
 	cmd := &cobra.Command{
 		Use:   "unset <setting> [<entry>...]",
 		Short: "Remove entries from a list setting, or reset a setting to its default",
@@ -39,7 +39,7 @@ Settings: ` + strings.Join(agentdir.SettingNames(), ", "),
   a2a-serve config unset env DEBUG
   a2a-serve config unset mount /docs
   a2a-serve config unset allow-email '*@example.com'
-  a2a-serve config unset private`,
+  a2a-serve config unset private --restart`,
 		Args:      namedArgs,
 		ValidArgs: agentdir.SettingNames(),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,9 +54,10 @@ Settings: ` + strings.Join(agentdir.SettingNames(), ", "),
 			if err != nil {
 				return err
 			}
-			return printConfigResult(cfg, res)
+			return printConfigChange(cmd.Context(), cfg, sf, d, res, restart)
 		},
 	}
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Print the diff without saving")
+	cmd.Flags().BoolVar(&restart, "restart", false, restartUsage)
 	return cmd
 }

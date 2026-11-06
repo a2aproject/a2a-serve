@@ -183,13 +183,7 @@ func (d Dir) Init() error {
 	if err := d.mkdirState(); err != nil {
 		return err
 	}
-	gi := filepath.Join(d.Path(), ".gitignore")
-	if _, err := os.Stat(gi); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(gi, []byte("state/\n"), 0o644); err != nil {
-			return err
-		}
-	}
-	return nil
+	return agentdir.WriteGitignore(d.Path())
 }
 
 // Lock takes the lock the running relay holds, and returns the function

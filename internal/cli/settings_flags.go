@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -66,7 +67,7 @@ func registerSettingFlag(cmd *cobra.Command, fl agentdir.Flag) {
 	case *string:
 		f.StringVar(v, fl.Name, "", usage)
 	case *int:
-		f.IntVar(v, fl.Name, 0, usage)
+		f.Var(&intFlag{name: fl.Name, unsetTo: fl.UnsetTo, p: v}, fl.Name, usage)
 	case *[]string:
 		if fl.Split {
 			f.StringSliceVar(v, fl.Name, nil, listUsage(usage, true))
@@ -82,6 +83,33 @@ func registerSettingFlag(cmd *cobra.Command, fl agentdir.Flag) {
 	if len(fl.Values) > 0 {
 		must(cmd.RegisterFlagCompletionFunc(fl.Name, fixedCompletions(fl.Values...)))
 	}
+}
+
+// intFlag is a number settings flag. Its 0 means the flag isn't given, so
+// it refuses an explicit 0.
+type intFlag struct {
+	name, unsetTo string
+	p             *int
+}
+
+func (f *intFlag) String() string { return strconv.Itoa(*f.p) }
+
+func (f *intFlag) Type() string { return "int" }
+
+func (f *intFlag) Set(s string) error {
+	v, err := strconv.ParseInt(s, 0, 0)
+	if err != nil {
+		return err
+	}
+	if v == 0 {
+		to := f.unsetTo
+		if to == "" {
+			to = "the default"
+		}
+		return fmt.Errorf("run `a2a-serve config unset %s` to go back to %s", f.name, to)
+	}
+	*f.p = int(v)
+	return nil
 }
 
 // settings returns the parsed settings. Secret-valued flags set to - are
