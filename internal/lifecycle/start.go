@@ -129,11 +129,12 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 	if ready := opts.Ready; ready != nil {
 		srvOpts.Ready = func(*agentsrv.Server) { ready() }
 	}
-	err = agentsrv.Run(ctx, srvOpts)
-	if err != nil {
+	if err := agentsrv.Run(ctx, srvOpts); err != nil {
 		slog.Error(stopMsg, "error", err)
+		return err
 	}
-	return err
+	slog.Info("the server stopped")
+	return nil
 }
 
 // checkNotRunning fails if a server holds the lock of dir. The lock

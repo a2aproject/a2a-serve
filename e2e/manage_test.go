@@ -227,6 +227,10 @@ func TestManageStoppedAgent(t *testing.T) {
 	owner, bob := newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
 	coder.stop()
+	if logs := coder.serve("logs", "-n", "5"); !strings.Contains(logs, `msg="the server stopped"`) {
+		t.Fatalf("a2a-serve logs after a stop = %q, want a line that the server stopped", logs)
+	}
+	coder.mustFail("--lines", "logs", "-n", "-1")
 
 	code := coder.invite("bob")
 	coder.serve("schedule", "add", "nightly", "--cron", "@daily", "--prompt", "x")

@@ -32,3 +32,6 @@ func terminate(pid int) error {
 	}
 	return nil
 }
+
+// killProcess stops the process like [terminate].
+func killProcess(pid int) error { return terminate(pid) }

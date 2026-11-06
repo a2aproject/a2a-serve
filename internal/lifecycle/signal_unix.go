@@ -22,9 +22,20 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-// terminate asks the process to shut down. A process that is gone is fine.
+// terminate asks the process to shut down, and continues it in case it
+// was stopped. A process that is gone is fine.
 func terminate(pid int) error {
-	if err := unix.Kill(pid, unix.SIGTERM); err != nil && !errors.Is(err, unix.ESRCH) {
+	for _, sig := range []unix.Signal{unix.SIGTERM, unix.SIGCONT} {
+		if err := unix.Kill(pid, sig); err != nil && !errors.Is(err, unix.ESRCH) {
+			return err
+		}
+	}
+	return nil
+}
+
+// killProcess kills the process. A process that is gone is fine.
+func killProcess(pid int) error {
+	if err := unix.Kill(pid, unix.SIGKILL); err != nil && !errors.Is(err, unix.ESRCH) {
 		return err
 	}
 	return nil

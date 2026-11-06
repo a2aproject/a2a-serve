@@ -17,13 +17,16 @@ package lifecycle
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 func TestFollowLogPrintsLastLines(t *testing.T) {
@@ -58,12 +61,55 @@ func TestFollowLogPrintsLastLines(t *testing.T) {
 			}
 			var out bytes.Buffer
 
-			if err := FollowLog(context.Background(), dir, tc.n, false, &out); err != nil {
+			if err := FollowLog(context.Background(), dir, tc.n, false, &out, io.Discard); err != nil {
 				t.Fatalf("FollowLog() error = %v", err)
 			}
 
 			if diff := cmp.Diff(tc.want, out.String()); diff != "" {
 				t.Fatalf("FollowLog() wrong output (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestFollowLogNotesStoppedAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		running  bool
+		wantNote string
+	}{
+		{name: "stopped", wantNote: "note: the agent is not running; waiting for it to write to its log (Ctrl-C to stop)\n"},
+		{name: "running", running: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if err := os.WriteFile(dir.LogPath(), []byte("a\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if tc.running {
+				release, err := fsutil.TryLock(dir.LockPath())
+				if err != nil {
+					t.Fatalf("fsutil.TryLock() error = %v", err)
+				}
+				t.Cleanup(func() {
+					if err := release(); err != nil {
+						t.Errorf("release() error = %v", err)
+					}
+				})
+			}
+			ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+			defer cancel()
+			var out, notes bytes.Buffer
+
+			if err := FollowLog(ctx, dir, 10, true, &out, &notes); err != nil {
+				t.Fatalf("FollowLog() error = %v", err)
+			}
+
+			if got := notes.String(); got != tc.wantNote {
+				t.Fatalf("FollowLog() notes = %q, want %q", got, tc.wantNote)
 			}
 		})
 	}

@@ -50,6 +50,9 @@ func newStopCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			var sb strings.Builder
 			if res.Running {
 				fmt.Fprintf(&sb, "✓ stopped %s\n", name)
+				if res.Unresponsive {
+					sb.WriteString("  it didn't answer, so it was stopped by its PID\n")
+				}
 			} else {
 				fmt.Fprintf(&sb, "%s is not running\n", name)
 			}

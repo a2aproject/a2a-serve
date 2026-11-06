@@ -409,7 +409,12 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 		if ctlhttp.IsDialError(err) {
 			return agenterr.ErrNotRunning
 		}
-		return err
+		// The URL of the control socket is internal.
+		var uerr *url.Error
+		if errors.As(err, &uerr) {
+			err = uerr.Err
+		}
+		return fmt.Errorf("the server did not answer: %w", err)
 	}
 	defer func() {
 		if err := resp.Body.Close(); err != nil {
