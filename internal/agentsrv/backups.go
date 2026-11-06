@@ -51,11 +51,11 @@ func (b *backups) update(fn func(*controlapi.BackupStatus)) {
 // startBackups reports the backup destination in status right away, and
 // takes snapshots in the background until ctx ends.
 func (s *Server) startBackups(ctx context.Context) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	if cfg.Backup.To == "" {
 		return
 	}
-	dest, bcfg, err := backup.ForAgent(cfg, s.secrets(), nil)
+	dest, bcfg, err := backup.ForAgent(cfg, s.rt.Secrets(), nil)
 	if err != nil {
 		s.logf("! backups are off: %v", err)
 		return

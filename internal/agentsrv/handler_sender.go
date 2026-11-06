@@ -24,21 +24,24 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 )
 
-// errNotReady is returned by a [handlerSender] whose handler isn't set yet.
+// errNotReady is returned by a [handlerSender] while its handler is being built.
 var errNotReady = errors.New("the agent is not ready")
 
-// handlerSender sends turns to the agent's A2A handler. The components which send
-// turns are built before the handler, which runs them, so the handler is
-// set once it exists.
+// handlerSender sends turns to the agent's A2A handler. The handler runs
+// components that send it turns, such as answers to the agent's questions,
+// so [bindHandler] builds the handler together with its sender.
 type handlerSender struct {
 	h atomic.Pointer[a2asrv.RequestHandler]
 }
 
-// set sets the handler. It panics when called twice.
-func (s *handlerSender) set(h a2asrv.RequestHandler) {
-	if !s.h.CompareAndSwap(nil, &h) {
-		panic("agentsrv: handlerSender.set called twice")
-	}
+// bindHandler builds the agent's A2A handler with build, which gets the sender of
+// the turns that the handler's components send to it, and returns both.
+// The sender refuses turns with [errNotReady] until build returns.
+func bindHandler(build func(*handlerSender) a2asrv.RequestHandler) (*handlerSender, a2asrv.RequestHandler) {
+	s := &handlerSender{}
+	h := build(s)
+	s.h.Store(&h)
+	return s, h
 }
 
 func (s *handlerSender) handler() (a2asrv.RequestHandler, error) {

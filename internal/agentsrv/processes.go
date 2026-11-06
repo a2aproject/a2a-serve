@@ -20,24 +20,14 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
-	"strings"
 	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-)
-
-// Agent keys, which a2aacp stores with the session of each conversation:
-// the owner's conversations run in the main agent process, which has no
-// key, all anonymous conversations in one process, and the conversations of
-// each authenticated user in a process of their own. Processes don't share
-// a home, so a conversation can't read what another user's left there.
-const (
-	anonymousAgentKey  = "anonymous"
-	userAgentKeyPrefix = "user:"
 )
 
 // Pools of agent processes besides the main one.
@@ -46,43 +36,87 @@ const (
 	usersPool     = "users"
 )
 
-// agentKeyOf returns the agent key of a new conversation that p starts.
-// Calls without a principal come from the server itself.
-func agentKeyOf(p auth.Principal, ok bool) string {
-	if !ok {
-		return ""
-	}
-	switch p.Role {
-	case auth.RoleAnonymous:
-		return anonymousAgentKey
-	case auth.RoleAuthenticated:
-		return userAgentKeyPrefix + p.ID
-	}
-	return ""
-}
-
-// userOfKey returns the principal ID of a user's agent key.
-func userOfKey(key string) (string, bool) {
-	return strings.CutPrefix(key, userAgentKeyPrefix)
-}
-
 func poolOf(key string) string {
-	if key == anonymousAgentKey {
+	if key == agentkey.Anonymous {
 		return anonymousPool
 	}
 	return usersPool
 }
 
+// agentKeys tells which agent process each conversation runs in, by its
+// agent key.
+type agentKeys struct {
+	sessions a2aacp.SessionStore
+
+	mu sync.Mutex
+	// pending are the agent keys of conversations without a stored session
+	// yet.
+	pending map[string]string
+}
+
+func newAgentKeys(sessions a2aacp.SessionStore) *agentKeys {
+	return &agentKeys{sessions: sessions, pending: map[string]string{}}
+}
+
+// of returns the agent key of a conversation: the one stored with its
+// session, or, for a new conversation, the one of the caller who starts it.
+func (k *agentKeys) of(ctx context.Context, contextID string) (string, error) {
+	sess, ok, err := k.sessions.Get(ctx, contextID)
+	if err != nil {
+		return "", err
+	}
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	if ok {
+		delete(k.pending, contextID)
+		return sess.AgentKey, nil
+	}
+	if key, ok := k.pending[contextID]; ok {
+		return key, nil
+	}
+	return agentkey.Of(auth.Caller(ctx)), nil
+}
+
+// remember keeps the agent key of a conversation until forget, in case its
+// session isn't stored yet.
+func (k *agentKeys) remember(contextID, key string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	k.pending[contextID] = key
+}
+
+// forget drops the agent key kept for a conversation once its turn ended:
+// a conversation that has a session is looked up there, and one that has
+// none after a whole turn starts over with its next caller.
+func (k *agentKeys) forget(contextID string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	delete(k.pending, contextID)
+}
+
+// anonymous reports whether a conversation runs in the agent process of
+// anonymous callers.
+func (k *agentKeys) anonymous(ctx context.Context, contextID string) bool {
+	key, err := k.of(ctx, contextID)
+	if err != nil {
+		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
+	}
+	return key == agentkey.Anonymous
+}
+
+// startPool starts the executor of a pool of agent processes.
+type startPool func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error)
+
 // splitExecutor runs each conversation in the agent process of the user
 // who started it. A conversation stays with its process, so the owner's
 // message to a user's conversation runs there too.
 type splitExecutor struct {
-	main     a2asrv.AgentExecutor
-	sessions a2aacp.SessionStore
-	budget   *anonymousBudget
+	main   a2asrv.AgentExecutor
+	keys   *agentKeys
+	budget *anonymousBudget
 	// start starts the executor of a pool. If nil, every conversation runs
 	// in main.
-	start func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error)
+	start startPool
 	// ctx ends when the server stops; pools start in it.
 	ctx context.Context
 
@@ -96,9 +130,20 @@ type splitExecutor struct {
 	// after its pool closed would outlive the server.
 	closing bool
 	running sync.WaitGroup
-	// pending are the agent keys of conversations without a stored session
-	// yet.
-	pending map[string]string
+}
+
+// splitDeps are the dependencies of [splitExecutor].
+type splitDeps struct {
+	Main   a2asrv.AgentExecutor
+	Keys   *agentKeys
+	Budget *anonymousBudget
+	// Start starts the executor of a pool. If nil, every conversation runs
+	// in Main.
+	Start startPool
+}
+
+func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
+	return &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, ctx: ctx}
 }
 
 type startedPool struct {
@@ -138,7 +183,7 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 		}
 		defer done()
 		exec, err := e.pick(ctx, execCtx.ContextID, true)
-		defer e.forgetPending(execCtx.ContextID)
+		defer e.keys.forget(execCtx.ContextID)
 		if err != nil {
 			failTask(execCtx, err)(yield)
 			return
@@ -182,9 +227,9 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 
 // pick returns the executor of a conversation, and starts its pool if
 // needed. If remember is set, the conversation keeps its agent key until
-// forgetPending, in case its session isn't stored yet.
+// the keys forget it, in case its session isn't stored yet.
 func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, error) {
-	key, err := e.agentKey(ctx, contextID)
+	key, err := e.keys.of(ctx, contextID)
 	if err != nil {
 		return nil, err
 	}
@@ -192,52 +237,9 @@ func (e *splitExecutor) pick(ctx context.Context, contextID string, remember boo
 		return e.main, nil
 	}
 	if remember {
-		e.mu.Lock()
-		if e.pending == nil {
-			e.pending = map[string]string{}
-		}
-		e.pending[contextID] = key
-		e.mu.Unlock()
+		e.keys.remember(contextID, key)
 	}
 	return e.pool(poolOf(key))
-}
-
-// forgetPending drops the agent key kept for a conversation once its turn
-// ended: a conversation that has a session is looked up there, and one that
-// has none after a whole turn starts over with its next caller.
-func (e *splitExecutor) forgetPending(contextID string) {
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	delete(e.pending, contextID)
-}
-
-// agentKey returns the agent key of a conversation: the one stored with its
-// session, or, for a new conversation, the one of the caller who starts it.
-func (e *splitExecutor) agentKey(ctx context.Context, contextID string) (string, error) {
-	sess, ok, err := e.sessions.Get(ctx, contextID)
-	if err != nil {
-		return "", err
-	}
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if ok {
-		delete(e.pending, contextID)
-		return sess.AgentKey, nil
-	}
-	if key, ok := e.pending[contextID]; ok {
-		return key, nil
-	}
-	return agentKeyOf(auth.Caller(ctx)), nil
-}
-
-// Anonymous reports whether a conversation runs in the agent process of
-// anonymous callers.
-func (e *splitExecutor) Anonymous(ctx context.Context, contextID string) bool {
-	key, err := e.agentKey(ctx, contextID)
-	if err != nil {
-		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
-	}
-	return key == anonymousAgentKey
 }
 
 // errServerStopping fails turns that start, or would start agent processes,

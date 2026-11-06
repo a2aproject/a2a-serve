@@ -29,6 +29,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -50,7 +52,7 @@ type CallClaims struct {
 	turnsMu sync.Mutex
 	// turns has the claims of the running turn of each conversation; a2aacp
 	// runs one turn of a conversation at a time.
-	turns map[string]*callerClaims
+	turns map[string]*agentproxy.Claims
 
 	linedMu sync.Mutex
 	// lined has the ACP session of each conversation whose prompt had the
@@ -83,17 +85,10 @@ func newCallClaims(deps CallClaimsDeps) *CallClaims {
 		chain:     deps.Chain,
 		agentKey:  deps.AgentKey,
 		sessions:  deps.Sessions,
-		turns:     map[string]*callerClaims{},
+		turns:     map[string]*agentproxy.Claims{},
 		lined:     map[string]*linedSession{},
 		lineEvery: agentsLineEvery,
 	}
-}
-
-// callerClaims is who calls through the agents URL of a conversation: the
-// harness in the conversation's running turn, for the user who started it.
-type callerClaims struct {
-	ContextID string
-	User      auth.Principal
 }
 
 // handleAlphabet avoids characters that are easy to confuse.
@@ -125,44 +120,37 @@ func (cl *CallClaims) handle(ctx context.Context, contextID string) (string, err
 	}
 }
 
-var (
-	errUnknownHandle = errors.New("unknown agents URL: use the one from the [a2a agents] line of this conversation")
-	errNoTurn        = errors.New("this conversation has no running turn, and its agents URL works only while one runs")
-)
-
-// claimsOf returns the claims of the running turn of a handle's
-// conversation, for a call from the agent process of process:
-// [errUnknownHandle] for an unknown handle or one of a conversation of
-// another process, and [errNoTurn] when no turn runs.
-func (cl *CallClaims) claimsOf(ctx context.Context, handle, process string) (callerClaims, error) {
+// ClaimsOf returns the claims of the running turn of a handle's
+// conversation. It implements [agentproxy.ClaimsSource].
+func (cl *CallClaims) ClaimsOf(ctx context.Context, handle, process string) (agentproxy.Claims, error) {
 	h, err := cl.store.HandleByName(ctx, handle)
 	if errors.Is(err, store.ErrNotFound) {
-		return callerClaims{}, errUnknownHandle
+		return agentproxy.Claims{}, agentproxy.ErrUnknownHandle
 	}
 	if err != nil {
-		return callerClaims{}, fmt.Errorf("loading agents URL handle: %w", err)
+		return agentproxy.Claims{}, fmt.Errorf("loading agents URL handle: %w", err)
 	}
 	key := ""
 	if cl.agentKey != nil {
 		if key, err = cl.agentKey(ctx, h.ContextID); err != nil {
-			return callerClaims{}, fmt.Errorf("finding the agent process of an agents URL: %w", err)
+			return agentproxy.Claims{}, fmt.Errorf("finding the agent process of an agents URL: %w", err)
 		}
 	}
 	if key != process {
-		return callerClaims{}, errUnknownHandle
+		return agentproxy.Claims{}, agentproxy.ErrUnknownHandle
 	}
 	cl.turnsMu.Lock()
 	defer cl.turnsMu.Unlock()
 	c := cl.turns[h.ContextID]
 	if c == nil {
-		return callerClaims{}, errNoTurn
+		return agentproxy.Claims{}, agentproxy.ErrNoTurn
 	}
 	return *c, nil
 }
 
 // beginTurn opens the agents URL of c's conversation to calls with c, until
 // end is called.
-func (cl *CallClaims) beginTurn(c callerClaims) (end func()) {
+func (cl *CallClaims) beginTurn(c agentproxy.Claims) (end func()) {
 	turn := &c
 	cl.turnsMu.Lock()
 	cl.turns[c.ContextID] = turn
@@ -208,7 +196,7 @@ func (cl *CallClaims) callerIn(ctx context.Context, contextID string, user auth.
 		return user, err
 	}
 	process := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
-	if id, ok := userOfKey(key); ok {
+	if id, ok := agentkey.UserOf(key); ok {
 		if process, err = cl.chain.Refresh(ctx, id, auth.Identity{}); err != nil {
 			slog.Warn("resolving the user of an agent process", "user", id, "error", err)
 			process = auth.Principal{ID: id}
@@ -332,8 +320,8 @@ func (cl *CallClaims) forgetPruned(ctx context.Context) {
 }
 
 // turnClaims returns the claims of the caller of execCtx.
-func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) callerClaims {
-	c := callerClaims{ContextID: execCtx.ContextID}
+func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) agentproxy.Claims {
+	c := agentproxy.Claims{ContextID: execCtx.ContextID}
 	if caller, ok := auth.Caller(ctx); ok {
 		c.User = caller
 	} else if execCtx.User != nil {
@@ -378,7 +366,7 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 		slog.Warn("finding the agent process of a conversation", "context", execCtx.ContextID, "error", err)
 		return ctx, execCtx
 	}
-	if !mayCallAgents(user) || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
+	if !user.MayCallAgents() || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
 		return ctx, execCtx
 	}
 	agents, err := callableAgents(ctx, cl.store)

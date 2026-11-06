@@ -159,7 +159,7 @@ func TestGoogleSignIn(t *testing.T) {
 	task := send(t, c, userText("hello", "", ""))
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
-	if err := ts.srv.updateConfig(func(c *agentdir.Config) error {
+	if err := ts.srv.rt.Update(func(c *agentdir.Config) error {
 		c.Policy.AllowEmails = []string{"*@example.com"}
 		return nil
 	}); err != nil {

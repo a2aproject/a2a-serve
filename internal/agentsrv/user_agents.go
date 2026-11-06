@@ -24,6 +24,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -118,31 +120,34 @@ func (u *userAgents) stop(keys ...string) (release func(), err error) {
 // stopUsers cancels the unfinished tasks of principals and stops their
 // agent processes, which don't start again until release is called. It
 // implements [pairings.Users].
-type stopUsers struct{ s *Server }
+type stopUsers struct {
+	tasks  *store.TaskStore
+	sender *handlerSender
+	users  *userAgents
+	posted *messenger.PostedTurns
+}
 
 func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
 	// Tasks are canceled before the starts are held: a task that waits for
 	// its agent process to start would keep its cancellation waiting.
-	if u.s.chatTurns != nil {
-		u.s.chatTurns.dropPostedOf(principals...)
-	}
+	u.posted.DropUsers(principals)
 	as := auth.InProcess(ctx, auth.Owner())
 	for _, p := range principals {
-		ids, err := u.s.tasks.UnfinishedOf(ctx, p)
+		ids, err := u.tasks.UnfinishedOf(ctx, p)
 		if err != nil {
 			return nil, err
 		}
 		for _, id := range ids {
-			if _, err := u.s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: id}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
+			if _, err := u.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: id}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
 				return nil, fmt.Errorf("canceling task %s: %w", id, err)
 			}
 		}
 	}
 	keys := make([]string, len(principals))
 	for i, p := range principals {
-		keys[i] = userAgentKeyPrefix + p
+		keys[i] = agentkey.User(p)
 	}
-	return u.s.users.stop(keys...)
+	return u.users.stop(keys...)
 }
 
 // userHomes deletes the homes of users' agent processes and forgets their

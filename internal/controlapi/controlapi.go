@@ -18,7 +18,6 @@ package controlapi
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -26,14 +25,13 @@ import (
 	"io"
 	"log/slog"
 	"math"
-	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -109,91 +107,6 @@ type BackupStatus struct {
 	Last      time.Time `json:"last,omitzero"`
 	LastError string    `json:"lastError,omitempty"`
 	Next      time.Time `json:"next,omitzero"`
-}
-
-// URL scopes of an agent.
-const (
-	ScopeLocal   = "local"
-	ScopePrivate = "private"
-	ScopePublic  = "public"
-)
-
-// URL returns the agent's URL in scope, or with an empty scope the one
-// which reaches furthest: public, then private, then local.
-func (s *Status) URL(scope string) (string, error) {
-	switch scope {
-	case "":
-		return cmp.Or(s.Public, s.Private, s.Local), nil
-	case ScopeLocal:
-		return s.Local, nil
-	case ScopePrivate:
-		if s.Private == "" {
-			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
-		}
-		return s.Private, nil
-	case ScopePublic:
-		if s.Public == "" {
-			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
-		}
-		return s.Public, nil
-	}
-	return "", unknownScope(scope)
-}
-
-func unknownScope(scope string) error {
-	return fmt.Errorf("unknown URL scope %q", scope)
-}
-
-// CheckScope reports whether scope is empty, local, private or public, the
-// values [Status.URL] takes.
-func CheckScope(scope string) error {
-	switch scope {
-	case "", ScopeLocal, ScopePrivate, ScopePublic:
-		return nil
-	}
-	return unknownScope(scope)
-}
-
-// CheckInspectorScope reports whether scope is local or private, the values
-// [Status.InspectorURL] takes.
-func CheckInspectorScope(scope string) error {
-	switch scope {
-	case ScopeLocal, ScopePrivate:
-		return nil
-	}
-	return fmt.Errorf("the inspector isn't served on the %s URL; want local or private", scope)
-}
-
-// InspectorURL returns the URL to open the web inspector at in scope: the
-// local URL, or the private URL, where it is served only over HTTPS.
-func (s *Status) InspectorURL(scope string) (string, error) {
-	if err := CheckInspectorScope(scope); err != nil {
-		return "", err
-	}
-	if scope == ScopeLocal {
-		return s.Local, nil
-	}
-	u, err := s.URL(ScopePrivate)
-	if err != nil {
-		return "", err
-	}
-	if !strings.HasPrefix(u, "https://") {
-		return "", fmt.Errorf("the inspector isn't served on %s, because its login link and session would cross the network unencrypted; run `a2a-serve inspect --url local` on the agent's machine", u)
-	}
-	return u, nil
-}
-
-// LocalOnly reports whether rawURL only works on this machine.
-func LocalOnly(rawURL string) bool {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return false
-	}
-	if u.Hostname() == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(u.Hostname())
-	return ip != nil && ip.IsLoopback()
 }
 
 // ChannelStatus describes a channel of the agent.
@@ -425,37 +338,11 @@ type NodeInfo struct {
 	Created time.Time `json:"created"`
 }
 
-// PairCommand is the command a caller or a node runs to pair with code.
-func PairCommand(agentURL, code string) string {
-	return fmt.Sprintf("a2a-serve pair join %s %s", agentURL, code)
-}
-
-// NodeInstructions is the message which tells the agent behind webhook node
-// to pair with the agent at agentURL using code.
-func NodeInstructions(agentURL, node, code string) string {
-	agentURL = strings.TrimRight(agentURL, "/")
-	return fmt.Sprintf("You are the webhook node %q of the agent at %s.\nRead %s/mailbox/skill.md and follow it.\nYour pairing code is %s.", node, agentURL, agentURL, code)
-}
-
 // ChannelRequestFromConfig is the request which starts the channel of kind
 // as configured in conf.
 func ChannelRequestFromConfig(conf *agentdir.Config, kind string) ChannelRequest {
 	return ChannelRequest{Kind: kind, Token: conf.ChannelToken(kind), Email: conf.Channels.Email}
 }
-
-// ErrNotRunning is returned when no server answers on the control socket.
-var ErrNotRunning error = clierr.NotRunning(&notRunningError{name: "the server"})
-
-// NotRunning returns an error, matching [ErrNotRunning], for the agent name.
-func NotRunning(name string) error { return clierr.NotRunning(&notRunningError{name: name}) }
-
-type notRunningError struct{ name string }
-
-func (e *notRunningError) Error() string {
-	return e.name + " is not running; start it with `a2a-serve start --detach`"
-}
-
-func (e *notRunningError) Is(target error) bool { return target == ErrNotRunning }
 
 // WriteError writes err as the response of a failed control call, with the
 // status of its [agenterr] type; [Client] turns it back into that type.
@@ -520,7 +407,7 @@ func (c *Client) do(ctx context.Context, method, path string, in, out any) error
 	resp, err := c.hc.Do(req)
 	if err != nil {
 		if ctlhttp.IsDialError(err) {
-			return ErrNotRunning
+			return agenterr.ErrNotRunning
 		}
 		return err
 	}

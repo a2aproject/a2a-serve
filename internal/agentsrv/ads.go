@@ -101,11 +101,11 @@ func (s *Server) gossipPeer(r *http.Request) string {
 		}
 		return ""
 	}
-	peers, err := s.clients.discover(r.Context())
+	peers, err := s.clients.Discover(r.Context())
 	name, ok := agentOnNode(peers, who.Node)
 	if err == nil && !ok {
 		// A peer which joined since the last discovery is found by a new one.
-		peers, err = s.clients.rediscover(r.Context(), gossipRediscoverEvery)
+		peers, err = s.clients.Rediscover(r.Context(), gossipRediscoverEvery)
 		name, _ = agentOnNode(peers, who.Node)
 	}
 	if err != nil {
@@ -148,12 +148,12 @@ func (s *Server) runGossip(ctx context.Context) {
 }
 
 func (s *Server) gossipRound(ctx context.Context) {
-	peers, err := s.clients.discover(ctx)
+	peers, err := s.clients.Discover(ctx)
 	if err != nil {
 		slog.Debug("finding peers to gossip with", "error", err)
 		return
 	}
-	self := s.config().Name
+	self := s.rt.Config().Name
 	var targets []network.PeerInfo
 	for _, p := range peers {
 		if p.Online && !strings.EqualFold(p.Name, self) {

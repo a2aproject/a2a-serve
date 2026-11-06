@@ -30,6 +30,6 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 ### Architecture and developer experience
 
 - **The `schedule` package imports `pflag`** (`internal/schedule/schedule.go:27,150`). The CLI and the in-sandbox schedules command share the flag definitions on purpose.
-- **Package and type names differ from the names in the architecture doc**, for example `harness` for "Sandbox". Rename them when the packages are extracted (#80).
+- **Some package and type names differ from the names in the architecture doc**, for example `harness` for "Sandbox" and `HarnessProxy` in `agentproxy`. The packages extracted in #80 (`messenger`, `agentproxy`, `schedules`) follow the doc, and renaming the rest is churn without a change in behavior.
 - **The secret-value help paragraph repeats on several commands, and durations print in Go format such as `5m0s`.** This is help-text polish.
 - **Caller-side `pair` commands could move under their own noun.** This is a redesign preference. The exit-code inconsistency is tracked in #81.

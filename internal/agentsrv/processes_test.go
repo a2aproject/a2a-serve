@@ -28,8 +28,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -41,14 +42,14 @@ func TestAuthenticatedUsersRunInTheirOwnProcesses(t *testing.T) {
 	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
 
 	annaTask := send(t, anna, userText("pid", "", ""))
-	ownerPID, annaPID, benPID := resultText(send(t, owner, userText("pid", "", ""))), resultText(annaTask), resultText(send(t, ben, userText("pid", "", "")))
+	ownerPID, annaPID, benPID := a2atext.Result(send(t, owner, userText("pid", "", ""))), a2atext.Result(annaTask), a2atext.Result(send(t, ben, userText("pid", "", "")))
 	if ownerPID == annaPID || ownerPID == benPID || annaPID == benPID {
 		t.Fatalf("owner, anna and ben ran in %q, %q and %q, want separate processes", ownerPID, annaPID, benPID)
 	}
-	if got := resultText(send(t, anna, userText("pid", "", ""))); got != annaPID {
+	if got := a2atext.Result(send(t, anna, userText("pid", "", ""))); got != annaPID {
 		t.Fatalf("anna's second conversation ran in %q, want %q", got, annaPID)
 	}
-	if got := resultText(send(t, owner, userText("pid", "", annaTask.ContextID))); got != annaPID {
+	if got := a2atext.Result(send(t, owner, userText("pid", "", annaTask.ContextID))); got != annaPID {
 		t.Fatalf("owner message in anna's conversation ran in %q, want %q", got, annaPID)
 	}
 }
@@ -131,13 +132,13 @@ func TestLocalSandboxWarning(t *testing.T) {
 	tests := []struct {
 		name     string
 		sandbox  string
-		access   controlapi.Access
+		access   access.Description
 		wantWarn bool
 	}{
-		{name: "docker with others", sandbox: harness.SandboxDocker, access: controlapi.Access{Pairings: 1}},
-		{name: "local for you only", sandbox: harness.SandboxLocal, access: controlapi.Access{Pairings: 1, OwnerPairings: 1}},
-		{name: "local with a paired user", sandbox: harness.SandboxLocal, access: controlapi.Access{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
-		{name: "local open to others", sandbox: harness.SandboxLocal, access: controlapi.Access{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
+		{name: "docker with others", sandbox: harness.SandboxDocker, access: access.Description{Pairings: 1}},
+		{name: "local for you only", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 1, OwnerPairings: 1}},
+		{name: "local with a paired user", sandbox: harness.SandboxLocal, access: access.Description{Pairings: 2, OwnerPairings: 1}, wantWarn: true},
+		{name: "local open to others", sandbox: harness.SandboxLocal, access: access.Description{Others: []string{"anyone on the public URL or in a direct chat"}}, wantWarn: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -184,38 +185,39 @@ func (emptyExecutor) Execute(context.Context, *a2asrv.ExecutorContext) iter.Seq2
 
 func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
 	t.Parallel()
-	e := &splitExecutor{
-		main:     emptyExecutor{},
-		sessions: openTestStore(t).Sessions(),
-		budget:   newAnonymousBudget(),
-		start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	keys := newAgentKeys(openTestStore(t).Sessions())
+	e := newSplitExecutor(context.Background(), splitDeps{
+		Main:   emptyExecutor{},
+		Keys:   keys,
+		Budget: newAnonymousBudget(),
+		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 			return emptyExecutor{}, func(context.Context) error { return nil }, nil
 		},
-	}
+	})
 	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
 
 	for range e.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 	}
 
-	e.mu.Lock()
-	defer e.mu.Unlock()
-	if got := len(e.pending); got != 0 {
-		t.Fatalf("splitExecutor.pending has %d entries after the turn, want 0", got)
+	keys.mu.Lock()
+	defer keys.mu.Unlock()
+	if got := len(keys.pending); got != 0 {
+		t.Fatalf("agentKeys.pending has %d entries after the turn, want 0", got)
 	}
 }
 
 func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
 	t.Parallel()
 	started := false
-	e := &splitExecutor{
-		main:     emptyExecutor{},
-		sessions: openTestStore(t).Sessions(),
-		budget:   newAnonymousBudget(),
-		start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	e := newSplitExecutor(context.Background(), splitDeps{
+		Main:   emptyExecutor{},
+		Keys:   newAgentKeys(openTestStore(t).Sessions()),
+		Budget: newAnonymousBudget(),
+		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 			started = true
 			return emptyExecutor{}, func(context.Context) error { return nil }, nil
 		},
-	}
+	})
 	if err := e.close(context.Background()); err != nil {
 		t.Fatalf("splitExecutor.close() error = %v", err)
 	}
@@ -250,7 +252,7 @@ func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
 	t.Parallel()
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	inner := &blockingExecutor{started: make(chan struct{})}
-	e := &splitExecutor{main: inner, sessions: openTestStore(t).Sessions(), budget: newAnonymousBudget(), ctx: serverCtx}
+	e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newAnonymousBudget()})
 	go func() {
 		for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 		}

@@ -79,3 +79,84 @@ func IsRequest(err error) bool {
 	)
 	return errors.As(err, &nf) || errors.As(err, &in) || errors.As(err, &co)
 }
+
+// ErrNotRunning matches the errors of a command that needs the agent
+// server while it doesn't run.
+var ErrNotRunning error = NotRunning("the server")
+
+// NotRunningError is a command that needs a server, such as the agent
+// server, while it doesn't run.
+type NotRunningError struct {
+	Msg string
+	// Hint is how to start the server.
+	Hint Hint
+}
+
+func (e *NotRunningError) Error() string { return e.Msg }
+
+// Is matches [ErrNotRunning].
+func (e *NotRunningError) Is(target error) bool { return target == ErrNotRunning }
+
+// NotRunning returns the error, matching [ErrNotRunning], of the agent
+// server called name.
+func NotRunning(name string) error {
+	return &NotRunningError{Msg: name + " is not running", Hint: HintStart}
+}
+
+// Hint names how to fix an error. The control socket carries the code;
+// [HintText] words it as a command to run.
+type Hint string
+
+// Hints. Arg is the pairing name for the hints of a pairing.
+const (
+	// HintStart starts the agent server.
+	HintStart Hint = "start"
+	// HintStartOrURL starts the agent server, or passes the agent's URL.
+	HintStartOrURL Hint = "start-or-url"
+	// HintRelayRun starts the relay.
+	HintRelayRun Hint = "relay-run"
+	// HintPairInvite pairs a user first.
+	HintPairInvite Hint = "pair-invite"
+	// HintLinkChat links a chat account with a pairing code.
+	HintLinkChat Hint = "link-chat"
+	// HintPairSet changes the pairing Arg.
+	HintPairSet Hint = "pair-set"
+	// HintPairSetOwner makes the pairing Arg an owner.
+	HintPairSetOwner Hint = "pair-set-owner"
+	// HintPairRm picks another name, or removes the pairing Arg first.
+	HintPairRm Hint = "pair-rm"
+	// HintPairRmLocal tells what removing the local pairing Arg does.
+	HintPairRmLocal Hint = "pair-rm-local"
+	// HintPairInviteWebhook adds a webhook node.
+	HintPairInviteWebhook Hint = "pair-invite-webhook"
+)
+
+// HintedError is an error with a hint at how to fix it.
+type HintedError struct {
+	Err  error
+	Hint Hint
+	// Arg is what the hint applies to, such as a pairing name.
+	Arg string
+}
+
+func (e *HintedError) Error() string { return e.Err.Error() }
+
+func (e *HintedError) Unwrap() error { return e.Err }
+
+// WithHint attaches the hint h, about arg, to err.
+func WithHint(err error, h Hint, arg string) error {
+	return &HintedError{Err: err, Hint: h, Arg: arg}
+}
+
+// HintOf returns the hint of err and what it applies to, if it has one.
+func HintOf(err error) (Hint, string, bool) {
+	var he *HintedError
+	if errors.As(err, &he) {
+		return he.Hint, he.Arg, true
+	}
+	var nr *NotRunningError
+	if errors.As(err, &nr) && nr.Hint != "" {
+		return nr.Hint, "", true
+	}
+	return "", "", false
+}

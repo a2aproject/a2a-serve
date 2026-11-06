@@ -79,7 +79,7 @@ func TestNotRunningSuggestsDetach(t *testing.T) {
 
 	_, err := runCMD(t, "contact", "add", "grok", "--dir", d.Root)
 
-	if err == nil || !strings.Contains(err.Error(), "a2a-serve start --detach") {
+	if err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve start --detach") {
 		t.Fatalf("a2a-serve contact add error = %v, want a hint to start it with `a2a-serve start --detach`", err)
 	}
 }

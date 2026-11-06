@@ -25,13 +25,15 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 )
 
 func startPublicServer(t *testing.T, configure func(*agentdir.Config)) *testServer {
 	t.Helper()
-	return startServer(t, serverOpts{public: publicNet(), channel: newFakeChannel("fake"), configure: func(c *agentdir.Config) {
+	return startServer(t, serverOpts{public: publicNet(), channel: channeltest.NewChannel("fake"), configure: func(c *agentdir.Config) {
 		c.Policy.PublicAccess = agentdir.AccessAnyone
 		if configure != nil {
 			configure(c)
@@ -66,11 +68,11 @@ func TestAnonymousConversationsRunInTheirOwnProcess(t *testing.T) {
 	owner := ts.client(ts.pair("phone", auth.RoleOwner))
 
 	task := send(t, anon, userText("pid", "", ""))
-	anonPID, ownerPID := resultText(task), resultText(send(t, owner, userText("pid", "", "")))
+	anonPID, ownerPID := a2atext.Result(task), a2atext.Result(send(t, owner, userText("pid", "", "")))
 	if anonPID == ownerPID {
 		t.Fatalf("anonymous and owner conversations both ran in %q, want separate processes", anonPID)
 	}
-	if got := resultText(send(t, owner, userText("pid", "", task.ContextID))); got != anonPID {
+	if got := a2atext.Result(send(t, owner, userText("pid", "", task.ContextID))); got != anonPID {
 		t.Fatalf("owner message in an anonymous conversation ran in %q, want %q", got, anonPID)
 	}
 }
@@ -121,7 +123,7 @@ func TestAnonymousApprovalTimesOut(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
-		channel:   newFakeChannel("fake"),
+		channel:   channeltest.NewChannel("fake"),
 		configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone },
 		timings:   func(tm *Timings) { tm.AnonymousQuestionTimeout = time.Second },
 	})
@@ -142,14 +144,14 @@ func TestAnonymousApprovalInOwnerChat(t *testing.T) {
 	ts := startPublicServer(t, func(c *agentdir.Config) { c.Approvals.OwnerChat = "fake" })
 	linkOwner(t, ts, "telegram:1", "dm1")
 
-	ts.ch.write("telegram:9", "dm9", "ask")
-	ts.ch.waitFor(t, "dm9", hasText("This needs the owner's approval"))
-	ref, q := ts.ch.waitFor(t, "dm1", hasText("telegram:9, an anonymous caller, needs your approval"))
-	if n := ts.ch.questions(); n != 1 {
+	ts.ch.Write("telegram:9", "dm9", "ask")
+	ts.ch.WaitFor(t, "dm9", channeltest.HasText("This needs the owner's approval"))
+	ref, q := ts.ch.WaitFor(t, "dm1", channeltest.HasText("telegram:9, an anonymous caller, needs your approval"))
+	if n := ts.ch.Questions(); n != 1 {
 		t.Fatalf("questions with buttons = %d, want 1, in the owner chat only", n)
 	}
-	ts.ch.click("telegram:1", "dm1", ref, q.Question, 0)
-	ts.ch.waitFor(t, "dm9", hasText("Pushed (allow)."))
+	ts.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
+	ts.ch.WaitFor(t, "dm9", channeltest.HasText("Pushed (allow)."))
 }
 
 func TestAnonymousBudget(t *testing.T) {
@@ -184,5 +186,23 @@ func TestAnonymousBudget(t *testing.T) {
 	now = now.Add(time.Hour)
 	if err := b.admit("public"); err != nil {
 		t.Fatalf("admit() an hour later error = %v, want nil", err)
+	}
+}
+
+func TestAnonymousBudgetCheckRate(t *testing.T) {
+	t.Parallel()
+	b := newAnonymousBudget()
+	p := auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous, Identity: auth.Identity{Network: auth.NetworkChat, Provider: "fake"}}
+	if err := b.CheckRate(p); err != nil {
+		t.Fatalf("anonymousBudget.CheckRate() of a fresh budget error = %v", err)
+	}
+	for range b.perHour {
+		if err := b.admit(budgetListener(p)); err != nil {
+			t.Fatalf("anonymousBudget.admit() error = %v", err)
+		}
+	}
+
+	if err := b.CheckRate(p); !errors.Is(err, errAnonymousRate) {
+		t.Fatalf("anonymousBudget.CheckRate() of a used-up budget error = %v, want %v", err, errAnonymousRate)
 	}
 }

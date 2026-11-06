@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"maps"
 	"net"
 	"net/http"
 	"net/url"
@@ -27,8 +26,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -36,10 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
-	"github.com/a2aproject/a2a-serve/internal/manage"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // serveControl serves the control socket, through which management commands
@@ -63,21 +58,12 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		return errors.Join(err, ln.Close())
 	}
 	mux := control.Handler(control.Deps{
-		Status:        s.status,
-		Stop:          s.Stop,
-		Config:        s.config,
-		ReloadConfig:  s.reloadSavedConfig,
-		Pairings:      s.pairings,
-		Peers:         s.clients.discover,
-		Contacts:      s.contacts,
-		AddChannel:    s.addChannel,
-		RemoveChannel: s.deleteChannel,
-		Store:         s.store,
-		AddSchedule: func(ctx context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			return s.schedules.add(ctx, req, by)
-		},
-		RunSchedule:    s.schedules.runNow,
-		RemoveSchedule: s.schedules.remove,
+		Ops:            s.ops,
+		Status:         s.status,
+		Stop:           s.Stop,
+		Config:         s.rt.Config,
+		ReloadConfig:   s.rt.Reload,
+		Peers:          s.clients.Discover,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
@@ -103,7 +89,7 @@ func removeIfExists(path string) error {
 
 // status describes the running server, as `a2a-serve status` shows it.
 func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	local, private, public := s.URLs()
 	st := &controlapi.Status{
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
@@ -112,7 +98,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
-	st.Channels = s.supervisor.status()
+	st.Channels = s.supervisor.Status()
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -127,7 +113,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	for _, l := range links {
 		st.Owners = append(st.Owners, l.Identity)
 	}
-	contacts, err := s.store.Contacts(ctx)
+	cs, err := s.store.Contacts(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -135,77 +121,25 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if err != nil {
 		return nil, err
 	}
-	st.Contacts, st.Nodes = len(contacts), len(nodes)
-	if st.Approvals, err = s.inspector.ApprovalCount(ctx); err != nil {
+	st.Contacts, st.Nodes = len(cs), len(nodes)
+	if st.Approvals, err = inspector.ApprovalCount(ctx, s.store, s.tasks); err != nil {
 		return nil, err
 	}
-	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.secrets()); err != nil {
+	if st.MCPServers, st.Skills, err = ProjectStatus(s.dir, cfg, s.rt.Secrets()); err != nil {
 		st.ProjectError = err.Error()
 	}
 	st.Backup = s.backups.get()
-	if st.Access, err = s.access(ctx); err != nil {
+	a, err := s.ops.Access(ctx)
+	if err != nil {
 		return nil, err
 	}
+	st.Access = agentops.AccessInfo(a)
 	return st, nil
 }
 
-// contacts manages the contacts, refreshing the harness instructions
-// which list them.
-func (s *Server) contacts() manage.Contacts {
-	m := s.clients.contacts()
-	m.Changed = s.refreshInstructions
-	return m
-}
-
-// addChannel checks the channel of req, saves it and starts it.
-func (s *Server) addChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error) {
-	secrets, err := s.dir.LoadSecrets()
-	if err != nil {
-		return nil, err
-	}
-	maps.Copy(secrets, req.Secrets)
-	next := s.config()
-	if err := next.SetChannel(req.Kind, req.Token, req.Email); err != nil {
-		return nil, agenterr.Invalid(err)
-	}
-	ch, err := s.buildChannel(next, secrets, req.Kind)
-	if err != nil {
-		return nil, agenterr.Invalid(err)
-	}
-	if err := channel.Validate(ctx, ch); err != nil {
-		return nil, err
-	}
-	if err := s.dir.SaveSecrets(req.Secrets); err != nil {
-		return nil, err
-	}
-	s.setSecrets(secrets)
-	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(req.Kind, req.Token, req.Email) }); err != nil {
-		return nil, err
-	}
-	s.supervisor.add(ch)
-	return s.supervisor.channelStatus(ch, s.supervisor.ownerLink(ctx, ch)), nil
-}
-
-func (s *Server) deleteChannel(kind string) error {
-	if err := (&agentdir.Config{}).SetChannel(kind, "", nil); err != nil {
-		return agenterr.Invalid(err)
-	}
-	if !s.config().HasChannel(kind) {
-		return &agenterr.NotFoundError{Kind: "channel", Name: kind}
-	}
-	if err := s.updateConfig(func(c *agentdir.Config) error { return c.SetChannel(kind, "", nil) }); err != nil {
-		return err
-	}
-	s.supervisor.remove(kind)
-	return nil
-}
-
-// reloadSavedConfig applies the live settings of config.yaml.
-func (s *Server) reloadSavedConfig() error {
-	saved, err := s.dir.LoadConfig()
-	if err != nil {
-		return err
-	}
-	s.reloadConfig(saved)
-	return nil
+// startChannel starts a channel that was added, and describes it with the
+// link for the owner if nobody is linked on it yet.
+func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controlapi.ChannelStatus {
+	s.supervisor.Add(ch)
+	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch))
 }

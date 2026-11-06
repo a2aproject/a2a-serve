@@ -23,7 +23,6 @@ import (
 	"log/slog"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -34,7 +33,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -61,7 +63,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
-		AutoAnswer:   liveToolRules(s.config),
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
@@ -78,7 +80,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 // earlier server left running, such as those of a crash or a stop that ran
 // out of time.
 func (s *Server) pruneContainers(ctx context.Context) {
-	if sb := s.config().Sandbox; sb != "" && sb != harness.SandboxDocker {
+	if sb := s.rt.Config().Sandbox; sb != "" && sb != harness.SandboxDocker {
 		return
 	}
 	n, err := harness.PruneContainers(ctx, map[string]string{"a2a.dir": s.dir.Root})
@@ -96,15 +98,15 @@ func (s *Server) pruneContainers(ctx context.Context) {
 // It gets no way to call other agents: no socket, credential helper or CLI.
 // With Docker it runs in its own container with its own home.
 func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-	h, err := s.prepareHarness(ctx, harnessLog, anonymousAgentKey)
+	h, err := s.prepareHarness(ctx, harnessLog, agentkey.Anonymous)
 	if err != nil {
 		return nil, nil, err
 	}
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
 		Pool: &a2aacp.PoolConfig{
-			Key: func(context.Context, string) (string, error) { return anonymousAgentKey, nil },
+			Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
 		},
-		AutoAnswer:   liveToolRules(s.config),
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
@@ -132,8 +134,8 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		return s.startUserAgent(ctx, key, harnessLog)
 	})
 	acp, err := a2aacp.NewExecutor(ctx, start, &a2aacp.Config{
-		Pool:         &a2aacp.PoolConfig{Key: s.split.agentKey, MaxAgents: maxUserAgents},
-		AutoAnswer:   liveToolRules(s.config),
+		Pool:         &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents},
+		AutoAnswer:   liveToolRules(s.rt.Config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
@@ -148,7 +150,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 // startUserAgent starts the agent process of a user's agent key, unless
 // the user's pairing was removed.
 func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
-	id, ok := userOfKey(key)
+	id, ok := agentkey.UserOf(key)
 	if !ok {
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
@@ -210,7 +212,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 // prepareHarness prepares the harness of the agent process of an agent
 // key: the owner's for no key, anonymous callers' or a user's.
 func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
 		return nil, err
@@ -221,7 +223,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	env := append([]string{}, cfg.Env...)
 	for _, name := range cfg.Secrets {
-		v, ok := s.secrets()[name]
+		v, ok := s.rt.Secrets()[name]
 		if !ok {
 			return nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
 		}
@@ -243,9 +245,9 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress: imageProgress,
 	}
-	id, isUser := userOfKey(key)
+	id, isUser := agentkey.UserOf(key)
 	switch {
-	case key == anonymousAgentKey:
+	case key == agentkey.Anonymous:
 		spec.Home = s.dir.AnonymousHomeDir()
 	case isUser:
 		spec.Home = s.dir.UserHomeDir(id)
@@ -254,7 +256,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, err
 	}
 	closeEndpoint := func() error { return nil }
-	if key == anonymousAgentKey {
+	if key == agentkey.Anonymous {
 		spec.Name += "-anonymous"
 		spec.Labels["a2a.role"] = auth.RoleAnonymous
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {
@@ -340,7 +342,7 @@ func (s *Server) localCLI() string {
 // sessionSettings selects the model of the config in every session, so that
 // a model the harness doesn't know fails the turn.
 func (s *Server) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[string]any, error) {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
 	if err != nil {
 		return nil, err
@@ -361,7 +363,7 @@ func (f liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorC
 // other agents: Unix sockets, which are mounted into containers, or TCP with
 // a key for Docker Desktop, which can't mount them.
 func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
-	bind, dial, tcp := harness.TCPBridge(s.config().Sandbox)
+	bind, dial, tcp := harness.TCPBridge(s.rt.Config().Sandbox)
 	if !sandboxed || !tcp {
 		return listenHarnessSockets(s.dir.HarnessSocketDir())
 	}
@@ -372,14 +374,16 @@ func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
-	bus       *eventBus
+	bus       *messenger.Bus
 	claims    *CallClaims
 	approvals *approvals.Service
 	// unattended is told when the task of a context ends.
-	unattended *contextSet
+	unattended *messenger.ContextSet
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
-	watches *Watches
+	watches *agentproxy.Watches
+	// store has the records of those questions.
+	store *store.Store
 }
 
 var (
@@ -393,10 +397,10 @@ var (
 // execution is done with its last event and stored it, so an answer to the
 // question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
-	e.bus.executionEnded(execCtx.ContextID)
+	e.bus.ExecutionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
 	if err != nil || (ok && task.Status.State.Terminal()) {
-		e.unattended.remove(execCtx.ContextID)
+		e.unattended.Remove(execCtx.ContextID)
 	}
 	if err != nil || !ok {
 		return
@@ -539,7 +543,7 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 					closed = true
 					e.approvals.CloseQuestions(ctx, execCtx.TaskID)
 				}
-				e.bus.publish(execCtx.TaskID, ev)
+				e.bus.Publish(execCtx.TaskID, ev)
 			}
 			if !yield(ev, err) {
 				return
@@ -570,116 +574,6 @@ func eventState(ev a2a.Event) (a2a.TaskState, bool) {
 		return e.Status.State, true
 	}
 	return "", false
-}
-
-// eventBus fans out task events to in-process followers, such as a channel
-// conversation waiting for a task someone else answered. Followers never
-// miss events: a slow follower's events queue up. Followers of a context
-// learn when an execution in it ended.
-type eventBus struct {
-	mu       sync.Mutex
-	subs     map[a2a.TaskID]map[*subscription]struct{}
-	contexts map[string]map[chan struct{}]struct{}
-}
-
-// subscription is the queue of events of one follower. ready has a value
-// when events are queued.
-type subscription struct {
-	mu     sync.Mutex
-	events []a2a.Event
-	ready  chan struct{}
-}
-
-// next returns the next event, or false when ctx ends or done is closed.
-func (s *subscription) next(ctx context.Context, done <-chan time.Time) (a2a.Event, bool) {
-	for {
-		s.mu.Lock()
-		if len(s.events) > 0 {
-			ev := s.events[0]
-			s.events = s.events[1:]
-			s.mu.Unlock()
-			return ev, true
-		}
-		s.mu.Unlock()
-		select {
-		case <-ctx.Done():
-			return nil, false
-		case <-done:
-			return nil, false
-		case <-s.ready:
-		}
-	}
-}
-
-func (s *subscription) push(ev a2a.Event) {
-	s.mu.Lock()
-	s.events = append(s.events, ev)
-	s.mu.Unlock()
-	select {
-	case s.ready <- struct{}{}:
-	default:
-	}
-}
-
-func newEventBus() *eventBus {
-	return &eventBus{subs: map[a2a.TaskID]map[*subscription]struct{}{}, contexts: map[string]map[chan struct{}]struct{}{}}
-}
-
-func (b *eventBus) subscribe(id a2a.TaskID) (*subscription, func()) {
-	sub := &subscription{ready: make(chan struct{}, 1)}
-	b.mu.Lock()
-	if b.subs[id] == nil {
-		b.subs[id] = map[*subscription]struct{}{}
-	}
-	b.subs[id][sub] = struct{}{}
-	b.mu.Unlock()
-	return sub, func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		delete(b.subs[id], sub)
-		if len(b.subs[id]) == 0 {
-			delete(b.subs, id)
-		}
-	}
-}
-
-func (b *eventBus) publish(id a2a.TaskID, ev a2a.Event) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for sub := range b.subs[id] {
-		sub.push(ev)
-	}
-}
-
-// subscribeContext returns a channel that has a value once an execution in
-// the context ended after the call.
-func (b *eventBus) subscribeContext(contextID string) (<-chan struct{}, func()) {
-	ch := make(chan struct{}, 1)
-	b.mu.Lock()
-	if b.contexts[contextID] == nil {
-		b.contexts[contextID] = map[chan struct{}]struct{}{}
-	}
-	b.contexts[contextID][ch] = struct{}{}
-	b.mu.Unlock()
-	return ch, func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		delete(b.contexts[contextID], ch)
-		if len(b.contexts[contextID]) == 0 {
-			delete(b.contexts, contextID)
-		}
-	}
-}
-
-func (b *eventBus) executionEnded(contextID string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	for ch := range b.contexts[contextID] {
-		select {
-		case ch <- struct{}{}:
-		default:
-		}
-	}
 }
 
 // callerInterceptor makes the authenticated principal the A2A user and

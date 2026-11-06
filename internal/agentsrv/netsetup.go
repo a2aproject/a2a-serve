@@ -26,7 +26,7 @@ import (
 // setupNetwork creates the private and public providers from the config.
 // They start listening in listenNetwork.
 func (s *Server) setupNetwork(closers *stack) error {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	var ts *network.Tailscale
 	tailscale := func() *network.Tailscale {
 		if ts == nil {
@@ -34,7 +34,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 				Hostname:   cfg.Name,
 				StateDir:   s.dir.TSNetDir(),
 				ControlURL: cfg.Network.TailscaleControlURL,
-				AuthKey:    s.secrets()[agentdir.SecretTailscaleKey],
+				AuthKey:    s.rt.Secrets()[agentdir.SecretTailscaleKey],
 				Logf:       s.logf,
 			}
 		}
@@ -53,7 +53,7 @@ func (s *Server) setupNetwork(closers *stack) error {
 		var err error
 		relay, err = newRelay(network.RelayConfig{
 			AgentName: cfg.Name, Description: cfg.Description, URL: strings.TrimSuffix(u, "/"),
-			StateDir: s.dir.AgentMeshDir(), Token: s.secrets()[agentdir.SecretRelayToken],
+			StateDir: s.dir.AgentMeshDir(), Token: s.rt.Secrets()[agentdir.SecretRelayToken],
 			Private: network.IsRelayURL(cfg.Network.Private), Public: network.IsRelayURL(cfg.Network.Public),
 			Logf: s.logf,
 		})

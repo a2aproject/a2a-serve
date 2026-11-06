@@ -21,6 +21,7 @@ import (
 	"io"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
@@ -73,12 +74,12 @@ func runningPID(ctx context.Context, d agentdir.Dir, client *controlapi.Client, 
 	if err == nil {
 		return st.PID, nil
 	}
-	if !errors.Is(err, controlapi.ErrNotRunning) {
+	if !errors.Is(err, agenterr.ErrNotRunning) {
 		return 0, err
 	}
 	pid, starting := findStarting(d)
 	if !starting {
-		return 0, controlapi.NotRunning(name)
+		return 0, agenterr.NotRunning(name)
 	}
 	return pid, nil
 }

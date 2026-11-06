@@ -31,9 +31,11 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/jsonschema-go/jsonschema"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -70,12 +72,12 @@ func startInspector(t *testing.T) *testInspector {
 		Store:     st,
 		Tasks:     tasks,
 		Approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Tasks: tasks})}),
-		ListPairings: func(context.Context) ([]controlapi.Pairing, error) {
-			return []controlapi.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
+		ListPairings: func(context.Context) ([]pairings.Pairing, error) {
+			return []pairings.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
 		},
-		Sender:    fakeSender{},
-		AgentName: func() string { return "coder" },
-		BaseURL:   func() string { return "https://coder.example.com" },
+		Sender:  fakeSender{},
+		Config:  func() *agentdir.Config { return &agentdir.Config{Name: "coder"} },
+		BaseURL: func() string { return "https://coder.example.com" },
 		Status: func(context.Context) (*controlapi.Status, error) {
 			return &controlapi.Status{Name: "coder", Harness: "opencode"}, nil
 		},
@@ -257,12 +259,12 @@ func TestInspectorApprovalCount(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Inspector.PendingApprovals() error = %v", err)
 	}
-	got, err := ti.ApprovalCount(ctx)
+	got, err := inspector.ApprovalCount(ctx, ti.store, ti.tasks)
 	if err != nil {
-		t.Fatalf("Inspector.ApprovalCount() error = %v", err)
+		t.Fatalf("ApprovalCount() error = %v", err)
 	}
 	if got != 2 || len(pending) != 2 {
-		t.Fatalf("Inspector.ApprovalCount() = %d with %d pending approvals, want 2", got, len(pending))
+		t.Fatalf("ApprovalCount() = %d with %d pending approvals, want 2", got, len(pending))
 	}
 }
 

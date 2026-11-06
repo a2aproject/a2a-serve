@@ -21,7 +21,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -96,18 +95,18 @@ func TestDescribe(t *testing.T) {
 		settings agentdir.PolicyConfig
 		net      Network
 		pairings Pairings
-		want     *controlapi.Access
+		want     *Description
 	}{
 		{
 			name: "this machine only",
-			want: &controlapi.Access{
+			want: &Description{
 				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{},
 				Summary: []string{"you: this machine", "nobody else"},
 			},
 		},
 		{
 			name: "tailnet with a public URL", settings: agentdir.PolicyConfig{AllowEmails: []string{"*@example.com"}}, net: tailnet, pairings: Pairings{All: 2, Owners: 1},
-			want: &controlapi.Access{
+			want: &Description{
 				PrivateAccess: "everyone", PublicAccess: "paired",
 				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
 				Pairings: 2, OwnerPairings: 1, Others: []string{"everyone on the tailnet", "emails matching *@example.com"},
@@ -120,7 +119,7 @@ func TestDescribe(t *testing.T) {
 		},
 		{
 			name: "closed tailnet, public URL open to anyone", settings: agentdir.PolicyConfig{PrivateAccess: "paired", PublicAccess: "anyone"}, net: tailnet, pairings: Pairings{All: 1},
-			want: &controlapi.Access{
+			want: &Description{
 				PrivateAccess: "paired", PublicAccess: "anyone",
 				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{"anyone"},
 				Pairings: 1, Others: []string{"anyone on the public URL or in a direct chat"},
@@ -134,7 +133,7 @@ func TestDescribe(t *testing.T) {
 		},
 		{
 			name: "relay", net: Network{Private: network.ProviderRelay, Public: true},
-			want: &controlapi.Access{
+			want: &Description{
 				PrivateAccess: "everyone", PublicAccess: "paired",
 				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{},
 				Others: []string{"everyone on the relay"},
@@ -147,7 +146,7 @@ func TestDescribe(t *testing.T) {
 		},
 		{
 			name: "closed relay", settings: agentdir.PolicyConfig{PrivateAccess: "paired"}, net: Network{Private: network.ProviderRelay},
-			want: &controlapi.Access{
+			want: &Description{
 				PrivateAccess: "paired",
 				Owner:         []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
 				Summary: []string{

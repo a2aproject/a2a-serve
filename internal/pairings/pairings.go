@@ -32,7 +32,6 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -58,8 +57,8 @@ type Advertiser interface {
 	Advertised(name string) bool
 }
 
-// Service manages the pairings of an agent.
-type Service struct {
+// Deps are the dependencies of [Service].
+type Deps struct {
 	Store *store.Store
 	// BaseURL returns the URL codes are redeemed at.
 	BaseURL func() string
@@ -74,11 +73,8 @@ type Service struct {
 	Forget func(id string)
 	// Changed is called after a node is added, changed or removed. Optional.
 	Changed func(ctx context.Context)
-	// Access describes who may call the agent, which responses to changes
-	// carry. Optional.
-	Access func(ctx context.Context) (*controlapi.Access, error)
-	// Limiter limits failed attempts to redeem codes. [Service.Redeem]
-	// needs it.
+	// Limiter limits failed attempts to redeem codes. Nil limits them on
+	// the system clock.
 	Limiter *Limiter
 	// Users stops what the users of a pairing run while it is removed.
 	// Optional: a stopped agent runs nothing.
@@ -86,9 +82,22 @@ type Service struct {
 	// Homes deletes the agent homes of the users of a removed pairing.
 	// Optional.
 	Homes Homes
+}
+
+// Service manages the pairings of an agent.
+type Service struct {
+	deps Deps
 
 	mu       sync.Mutex
 	removing map[string]int
+}
+
+// New returns the pairings service over deps.
+func New(deps Deps) *Service {
+	if deps.Limiter == nil {
+		deps.Limiter = NewLimiter(time.Now)
+	}
+	return &Service{deps: deps}
 }
 
 // Users stops the tasks and agent processes of users.
@@ -125,7 +134,7 @@ func validateName(name string) error {
 }
 
 func (s *Service) pairing(ctx context.Context, name string) (store.Pairing, bool, error) {
-	p, err := s.Store.Pairing(ctx, name)
+	p, err := s.deps.Store.Pairing(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return store.Pairing{}, false, nil
 	}
@@ -135,15 +144,7 @@ func (s *Service) pairing(ctx context.Context, name string) (store.Pairing, bool
 // Invite issues a pairing code for a new pairing, or for another device or
 // account of an existing one, whose tokens keep working. With Webhook, it
 // creates a webhook node.
-func (s *Service) Invite(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
-	resp, err := s.invite(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, s.withAccess(ctx, &resp.Access)
-}
-
-func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
+func (s *Service) Invite(ctx context.Context, req InviteRequest) (*Code, error) {
 	req.Name = strings.TrimSpace(req.Name)
 	if err := validateName(req.Name); err != nil {
 		return nil, err
@@ -156,9 +157,9 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil
 	switch {
 	case nodeFlags && isWebhook:
-		return nil, invalid("%s already exists; change it with `a2a-serve pair set %s`", req.Name, req.Name)
+		return nil, agenterr.WithHint(invalid("%s already exists", req.Name), agenterr.HintPairSet, req.Name)
 	case nodeFlags && exists:
-		return nil, agenterr.Conflictf("%s is already paired; pick another name, or run `a2a-serve pair rm %s` first", req.Name, req.Name)
+		return nil, agenterr.WithHint(agenterr.Conflictf("%s is already paired", req.Name), agenterr.HintPairRm, req.Name)
 	case nodeFlags && req.Webhook == "":
 		return nil, invalid("--webhook-header, --description and --advertised go with --webhook")
 	case (nodeFlags || isWebhook) && req.Owner:
@@ -166,13 +167,13 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	case nodeFlags:
 		return s.addNode(ctx, req)
 	case isWebhook:
-		node, err := s.Store.Node(ctx, req.Name)
+		node, err := s.deps.Store.Node(ctx, req.Name)
 		if err != nil {
 			return nil, err
 		}
 		return s.nodeCode(ctx, node, false)
 	case exists && req.Owner && p.Role != auth.RoleOwner:
-		return nil, invalid("%s is paired as %s; make it an owner with `a2a-serve pair set %s --owner`", req.Name, p.Role, req.Name)
+		return nil, agenterr.WithHint(invalid("%s is paired as %s", req.Name, p.Role), agenterr.HintPairSetOwner, req.Name)
 	}
 	role := auth.RoleAuthenticated
 	if req.Owner {
@@ -183,33 +184,33 @@ func (s *Service) invite(ctx context.Context, req controlapi.PairCodeRequest) (*
 	})
 }
 
-func (s *Service) callerCode(ctx context.Context, name string, mint func(context.Context, *store.Store, string) (string, time.Time, error)) (*controlapi.PairCodeResponse, error) {
-	code, expires, err := mint(ctx, s.Store, name)
+func (s *Service) callerCode(ctx context.Context, name string, mint func(context.Context, *store.Store, string) (string, time.Time, error)) (*Code, error) {
+	code, expires, err := mint(ctx, s.deps.Store, name)
 	if err != nil {
 		return nil, err
 	}
-	base := s.BaseURL()
-	resp := &controlapi.PairCodeResponse{Code: code, Expires: expires, URL: base, PairCommand: controlapi.PairCommand(base, code)}
-	if s.LinkHints != nil {
-		resp.Hints = s.LinkHints(code)
+	base := s.deps.BaseURL()
+	resp := &Code{Code: code, Expires: expires, URL: base}
+	if s.deps.LinkHints != nil {
+		resp.Hints = s.deps.LinkHints(code)
 	}
 	return resp, nil
 }
 
-func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
+func (s *Service) addNode(ctx context.Context, req InviteRequest) (*Code, error) {
 	if req.Name == SchedulesAgent {
 		return nil, invalid("%q is the built-in agent that manages schedules; pick another name", SchedulesAgent)
 	}
 	if err := mailboxapi.ValidateWebhook(req.Webhook); err != nil {
 		return nil, invalid("%v", err)
 	}
-	if _, err := s.Store.Contact(ctx, req.Name); err == nil {
+	if _, err := s.deps.Store.Contact(ctx, req.Name); err == nil {
 		return nil, agenterr.Conflictf("%q is already a contact", req.Name)
 	}
-	if req.Advertised != nil && s.Ads == nil {
+	if req.Advertised != nil && s.deps.Ads == nil {
 		return nil, invalid("advertising needs the private network of a running agent")
 	}
-	_, err := s.Store.Node(ctx, req.Name)
+	_, err := s.deps.Store.Node(ctx, req.Name)
 	if err != nil && !errors.Is(err, store.ErrNotFound) {
 		return nil, err
 	}
@@ -218,7 +219,7 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 		ID: req.Name, Name: req.Name, Description: req.Description, Webhook: req.Webhook, Headers: req.Headers,
 		Secret: cryptoutil.RandomString(40, cryptoutil.Alphanumeric),
 	}
-	err = s.Store.PutNode(ctx, node)
+	err = s.deps.Store.PutNode(ctx, node)
 	if errors.Is(err, store.ErrExists) {
 		return nil, agenterr.Conflictf("%s is already paired; pick another name", req.Name)
 	}
@@ -237,64 +238,53 @@ func (s *Service) addNode(ctx context.Context, req controlapi.PairCodeRequest) (
 	if existed {
 		return nil, err
 	}
-	if derr := s.Store.DeletePairing(ctx, node.ID, auth.PairPrincipal(node.ID), auth.NodePrincipal(node.ID)); derr != nil {
+	if derr := s.deps.Store.DeletePairing(ctx, node.ID, auth.PairPrincipal(node.ID), auth.NodePrincipal(node.ID)); derr != nil {
 		err = errors.Join(err, fmt.Errorf("removing the node that wasn't set up: %w", derr))
 	}
 	return nil, err
 }
 
-func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*controlapi.PairCodeResponse, error) {
+func (s *Service) nodeCode(ctx context.Context, node store.Node, sole bool) (*Code, error) {
 	mint := auth.MintCode
 	if sole {
 		mint = auth.MintSoleCode
 	}
-	code, expires, err := mint(ctx, s.Store, node.ID)
+	code, expires, err := mint(ctx, s.deps.Store, node.ID)
 	if err != nil {
 		return nil, err
 	}
-	base := s.BaseURL()
+	base := s.deps.BaseURL()
 	info := NodeInfo(base, node)
-	return &controlapi.PairCodeResponse{
-		Code: code, Expires: expires, URL: base, PairCommand: controlapi.PairCommand(base, code), Node: &info,
-		Instructions: controlapi.NodeInstructions(base, node.Name, code),
-	}, nil
+	return &Code{Code: code, Expires: expires, URL: base, Node: &info}, nil
 }
 
 // NodeInfo describes a node hosted at the agent URL base.
-func NodeInfo(base string, node store.Node) controlapi.NodeInfo {
-	return controlapi.NodeInfo{
+func NodeInfo(base string, node store.Node) Node {
+	return Node{
 		ID: node.ID, Name: node.Name, URL: mailboxapi.NodeURL(base, node.ID),
 		Webhook: mailboxapi.RedactWebhookURL(node.Webhook), Paired: node.TokenHash != "", Created: node.Created,
 	}
 }
 
 func (s *Service) setAdvertised(node store.Node, on bool) error {
-	if s.Ads == nil {
+	if s.deps.Ads == nil {
 		return invalid("advertising needs the private network of a running agent")
 	}
 	if on {
-		return s.Ads.Advertise(node.ID, node.Description)
+		return s.deps.Ads.Advertise(node.ID, node.Description)
 	}
-	return s.Ads.Withdraw(node.ID)
+	return s.deps.Ads.Withdraw(node.ID)
 }
 
 func (s *Service) changed(ctx context.Context) {
-	if s.Changed != nil {
-		s.Changed(ctx)
+	if s.deps.Changed != nil {
+		s.deps.Changed(ctx)
 	}
 }
 
 // Update changes the pairing called name in place. Rotate revokes its tokens
-// and issues a new code, which the response carries.
-func (s *Service) Update(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
-	resp, err := s.update(ctx, name, req)
-	if err != nil {
-		return nil, err
-	}
-	return resp, s.withAccess(ctx, &resp.Access)
-}
-
-func (s *Service) update(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
+// and issues a new code, which the result carries.
+func (s *Service) Update(ctx context.Context, name string, req UpdateRequest) (*UpdateResult, error) {
 	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
 		return nil, err
@@ -303,14 +293,14 @@ func (s *Service) update(ctx context.Context, name string, req controlapi.Pairin
 		return nil, notFound(name)
 	}
 	if p.Kind == pairapi.PairingWebhook {
-		node, err := s.Store.Node(ctx, name)
+		node, err := s.deps.Store.Node(ctx, name)
 		if err != nil {
 			return nil, err
 		}
 		return s.updateNode(ctx, node, req)
 	}
 	if name == LocalOwner {
-		return nil, invalid("%s is you, on this machine and in your linked chats; `a2a-serve pair rm %s` revokes its token and chat links, and the next start issues a new token", name, name)
+		return nil, agenterr.WithHint(invalid("%s is you, on this machine and in your linked chats", name), agenterr.HintPairRmLocal, name)
 	}
 	if req.Webhook != "" || len(req.Headers) > 0 || req.Description != nil || req.Advertised != nil {
 		return nil, invalid("--webhook, --webhook-header, --description and --advertised apply to webhook nodes")
@@ -318,7 +308,7 @@ func (s *Service) update(ctx context.Context, name string, req controlapi.Pairin
 	next := p
 	if req.Kind != "" {
 		if req.Kind == pairapi.PairingWebhook || !slices.Contains(pairapi.PairingKinds, req.Kind) {
-			return nil, invalid("--kind must be %s, %s or %s; webhook nodes come from `a2a-serve pair invite --webhook`", pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent)
+			return nil, agenterr.WithHint(invalid("--kind must be %s, %s or %s", pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent), agenterr.HintPairInviteWebhook, "")
 		}
 		next.Kind = req.Kind
 	}
@@ -329,13 +319,13 @@ func (s *Service) update(ctx context.Context, name string, req controlapi.Pairin
 		}
 	}
 	if next != p {
-		if err := s.Store.UpdatePairing(ctx, next); err != nil {
+		if err := s.deps.Store.UpdatePairing(ctx, next); err != nil {
 			return nil, err
 		}
 	}
-	var resp controlapi.PairingUpdateResponse
+	var resp UpdateResult
 	if req.Rotate {
-		if err := s.Store.DeleteTokens(ctx, name); err != nil {
+		if err := s.deps.Store.DeleteTokens(ctx, name); err != nil {
 			return nil, err
 		}
 		if resp.Code, err = s.callerCode(ctx, name, auth.MintSoleCode); err != nil {
@@ -350,7 +340,7 @@ func (s *Service) update(ctx context.Context, name string, req controlapi.Pairin
 	return &resp, nil
 }
 
-func (s *Service) updateNode(ctx context.Context, node store.Node, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
+func (s *Service) updateNode(ctx context.Context, node store.Node, req UpdateRequest) (*UpdateResult, error) {
 	prev := node
 	if req.Owner != nil || req.Kind != "" {
 		return nil, invalid("--owner and --kind don't apply to webhook nodes")
@@ -371,7 +361,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		node.Secret = cryptoutil.RandomString(40, cryptoutil.Alphanumeric)
 		node.TokenHash = ""
 	}
-	advertised := s.Ads != nil && s.Ads.Advertised(node.ID)
+	advertised := s.deps.Ads != nil && s.deps.Ads.Advertised(node.ID)
 	wasAdvertised := advertised
 	if req.Advertised != nil {
 		advertised = *req.Advertised
@@ -392,7 +382,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		}
 		return err
 	}
-	var resp controlapi.PairingUpdateResponse
+	var resp UpdateResult
 	if req.Rotate {
 		code, err := s.nodeCode(ctx, node, true)
 		if err != nil {
@@ -401,7 +391,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 		code.Advertised = advertised
 		resp.Code = code
 	}
-	err := s.Store.UpdateNode(ctx, prev, node)
+	err := s.deps.Store.UpdateNode(ctx, prev, node)
 	if errors.Is(err, store.ErrChanged) {
 		return nil, undo(agenterr.Conflictf("%s changed while it was updated; try again", node.ID))
 	}
@@ -423,7 +413,7 @@ func (s *Service) updateNode(ctx context.Context, node store.Node, req controlap
 // processes and deletes their agent homes, so a new pairing with the same
 // name starts with none of them. The local pairing stays; only its
 // credentials are revoked.
-func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
+func (s *Service) Remove(ctx context.Context, name string) (*RemoveResult, error) {
 	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
 		return nil, err
@@ -431,10 +421,10 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 	if !exists {
 		return nil, notFound(name)
 	}
-	resp := &controlapi.RevokeResponse{Kind: p.Kind}
+	resp := &RemoveResult{Kind: p.Kind}
 	if name == LocalOwner {
 		resp.Kept = true
-		return resp, s.Store.RevokeCredentials(ctx, name)
+		return resp, s.deps.Store.RevokeCredentials(ctx, name)
 	}
 	endRemoval := s.beginRemoval(name)
 	err = s.deletePairing(ctx, name, auth.PairPrincipal(name), auth.NodePrincipal(name))
@@ -444,28 +434,21 @@ func (s *Service) Remove(ctx context.Context, name string) (*controlapi.RevokeRe
 	}
 	if p.Kind == pairapi.PairingWebhook {
 		defer s.changed(ctx)
-		if s.Forget != nil {
-			s.Forget(name)
+		if s.deps.Forget != nil {
+			s.deps.Forget(name)
 		}
-		if s.Ads != nil {
-			if err := s.Ads.Withdraw(name); err != nil {
+		if s.deps.Ads != nil {
+			if err := s.deps.Ads.Withdraw(name); err != nil {
 				return nil, fmt.Errorf("withdrawing the advertisement of %s: %w", name, err)
 			}
 		}
-		return resp, s.withAccess(ctx, &resp.Access)
-	}
-	if err := s.withAccess(ctx, &resp.Access); err != nil {
-		return nil, err
-	}
-	if resp.Access != nil {
-		resp.StillAllowed = resp.Access.Others
 	}
 	return resp, nil
 }
 
 // PreviewRemove describes what [Service.Remove] would delete for the
 // pairing called name, and changes nothing.
-func (s *Service) PreviewRemove(ctx context.Context, name string) (*controlapi.RemovalPreview, error) {
+func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPreview, error) {
 	p, exists, err := s.pairing(ctx, name)
 	if err != nil {
 		return nil, err
@@ -473,17 +456,17 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*controlapi.R
 	if !exists {
 		return nil, notFound(name)
 	}
-	resp := &controlapi.RemovalPreview{Kind: p.Kind, Accounts: []controlapi.LinkedAccount{}, AgentHomes: []string{}}
-	links, err := s.Store.LinksOf(ctx, name)
+	resp := &RemovalPreview{Kind: p.Kind, Accounts: []Account{}, AgentHomes: []string{}}
+	links, err := s.deps.Store.LinksOf(ctx, name)
 	if err != nil {
 		return nil, err
 	}
 	for _, l := range links {
-		resp.Accounts = append(resp.Accounts, controlapi.LinkedAccount{Channel: l.Channel, Account: l.Identity})
+		resp.Accounts = append(resp.Accounts, Account{Channel: l.Channel, Account: l.Identity})
 	}
 	if name == LocalOwner {
 		resp.Kept = true
-		counts, err := s.Store.PairingRemoval(ctx, name)
+		counts, err := s.deps.Store.PairingRemoval(ctx, name)
 		if err != nil {
 			return nil, err
 		}
@@ -491,18 +474,18 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*controlapi.R
 		return resp, nil
 	}
 	principals := []string{auth.PairPrincipal(name), auth.NodePrincipal(name)}
-	counts, err := s.Store.PairingRemoval(ctx, name, principals...)
+	counts, err := s.deps.Store.PairingRemoval(ctx, name, principals...)
 	if err != nil {
 		return nil, err
 	}
 	resp.Tokens, resp.Codes, resp.Node = counts.Tokens, counts.Codes, p.Kind == pairapi.PairingWebhook
 	resp.Schedules, resp.Watches, resp.Approvals = counts.Schedules, counts.Watches, counts.Questions
 	resp.Tasks, resp.RunningTasks, resp.Conversations = counts.Tasks, counts.Unfinished, counts.Conversations
-	if s.Homes == nil {
+	if s.deps.Homes == nil {
 		return resp, nil
 	}
 	for _, id := range principals {
-		dir := s.Homes.UserHomeDir(id)
+		dir := s.deps.Homes.UserHomeDir(id)
 		_, err := os.Stat(dir)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -543,61 +526,47 @@ func (s *Service) isRemoving(name string) bool {
 // deletePairing deletes the pairing called name, and the agent homes of
 // principals, while the principals run nothing.
 func (s *Service) deletePairing(ctx context.Context, name string, principals ...string) error {
-	if s.Users != nil {
-		release, err := s.Users.Stop(ctx, principals...)
+	if s.deps.Users != nil {
+		release, err := s.deps.Users.Stop(ctx, principals...)
 		if err != nil {
 			return fmt.Errorf("stopping what %s runs: %w", name, err)
 		}
 		defer release()
 	}
-	if s.Homes != nil {
+	if s.deps.Homes != nil {
 		for _, p := range principals {
-			if err := s.Homes.RemoveUserHome(p); err != nil {
+			if err := s.deps.Homes.RemoveUserHome(p); err != nil {
 				return fmt.Errorf("deleting the agent home of %s: %w", name, err)
 			}
 		}
 	}
-	return s.Store.DeletePairing(ctx, name, principals...)
+	return s.deps.Store.DeletePairing(ctx, name, principals...)
 }
 
 // SignOut revokes the Google sign-in tokens of email at every URL. The
 // person can sign in again while --allow-email matches the email.
-func (s *Service) SignOut(ctx context.Context, email string) (*controlapi.SignOutResponse, error) {
+func (s *Service) SignOut(ctx context.Context, email string) (*SignOutResult, error) {
 	email = strings.ToLower(strings.TrimSpace(email))
 	if !strings.Contains(email, "@") {
 		return nil, invalid("%q is not an email address", email)
 	}
-	n, err := s.Store.DeleteSignIns(ctx, email)
+	n, err := s.deps.Store.DeleteSignIns(ctx, email)
 	if err != nil {
 		return nil, err
 	}
 	if n == 0 {
 		return nil, &agenterr.NotFoundError{Kind: "Google sign-in of", Name: email}
 	}
-	resp := &controlapi.SignOutResponse{Email: email, Tokens: int(n)}
-	return resp, s.withAccess(ctx, &resp.Access)
-}
-
-// withAccess sets dst to who may call the agent, if the service knows.
-func (s *Service) withAccess(ctx context.Context, dst **controlapi.Access) error {
-	if s.Access == nil {
-		return nil
-	}
-	a, err := s.Access(ctx)
-	if err != nil {
-		return err
-	}
-	*dst = a
-	return nil
+	return &SignOutResult{Email: email, Tokens: int(n)}, nil
 }
 
 // Get describes the pairing called name.
-func (s *Service) Get(ctx context.Context, name string) (*controlapi.Pairing, error) {
+func (s *Service) Get(ctx context.Context, name string) (*Pairing, error) {
 	all, err := s.List(ctx)
 	if err != nil {
 		return nil, err
 	}
-	i := slices.IndexFunc(all, func(p controlapi.Pairing) bool { return p.Name == name })
+	i := slices.IndexFunc(all, func(p Pairing) bool { return p.Name == name })
 	if i < 0 {
 		return nil, notFound(name)
 	}
@@ -605,24 +574,24 @@ func (s *Service) Get(ctx context.Context, name string) (*controlapi.Pairing, er
 }
 
 // List describes every pairing, by name.
-func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
-	all, err := s.Store.Pairings(ctx)
+func (s *Service) List(ctx context.Context) ([]Pairing, error) {
+	all, err := s.deps.Store.Pairings(ctx)
 	if err != nil {
 		return nil, err
 	}
-	toks, err := s.Store.Tokens(ctx)
+	toks, err := s.deps.Store.Tokens(ctx)
 	if err != nil {
 		return nil, err
 	}
-	links, err := s.Store.Links(ctx)
+	links, err := s.deps.Store.Links(ctx)
 	if err != nil {
 		return nil, err
 	}
-	codes, err := s.Store.PendingCodes(ctx)
+	codes, err := s.deps.Store.PendingCodes(ctx)
 	if err != nil {
 		return nil, err
 	}
-	nodeList, err := s.Store.Nodes(ctx)
+	nodeList, err := s.deps.Store.Nodes(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -630,40 +599,57 @@ func (s *Service) List(ctx context.Context) ([]controlapi.Pairing, error) {
 	for _, n := range nodeList {
 		nodesByID[n.ID] = n
 	}
-	base := s.BaseURL()
-	out := make([]controlapi.Pairing, 0, len(all))
+	base := s.deps.BaseURL()
+	out := make([]Pairing, 0, len(all))
 	for _, p := range all {
-		cp := controlapi.Pairing{
+		cp := Pairing{
 			Name: p.Name, Kind: p.Kind, Role: p.Role, Principal: auth.PairingPrincipal(p.Name), Created: p.Created,
-			Tokens: []controlapi.PairingToken{}, Accounts: []controlapi.LinkedAccount{}, PendingCodes: []time.Time{},
+			Tokens: []Token{}, Accounts: []Account{}, PendingCodes: []time.Time{},
 		}
 		for _, t := range toks {
 			if t.Pairing != p.Name {
 				continue
 			}
-			cp.Tokens = append(cp.Tokens, controlapi.PairingToken{URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
+			cp.Tokens = append(cp.Tokens, Token{URL: t.URL, Created: t.Created, LastUsed: t.LastUsed})
 			if t.LastUsed.After(cp.LastUsed) {
 				cp.LastUsed = t.LastUsed
 			}
 		}
 		for _, l := range links[p.Name] {
-			cp.Accounts = append(cp.Accounts, controlapi.LinkedAccount{Channel: l.Channel, Account: l.Identity})
+			cp.Accounts = append(cp.Accounts, Account{Channel: l.Channel, Account: l.Identity})
 		}
 		for _, c := range codes[p.Name] {
 			cp.PendingCodes = append(cp.PendingCodes, c.Expires)
 		}
 		if n, ok := nodesByID[p.Name]; ok {
 			cp.Principal = auth.NodePrincipal(n.ID)
-			cp.Node = &controlapi.NodeDetails{
+			cp.Node = &NodeDetails{
 				URL: mailboxapi.NodeURL(base, n.ID), Webhook: mailboxapi.RedactWebhookURL(n.Webhook), Description: n.Description,
 				HeaderNames: slices.Sorted(maps.Keys(n.Headers)), Paired: n.TokenHash != "",
-				Advertised: s.Ads != nil && s.Ads.Advertised(n.ID),
+				Advertised: s.deps.Ads != nil && s.deps.Ads.Advertised(n.ID),
 			}
-			if s.Mailbox != nil {
-				cp.Node.Waiting, cp.Node.Open = s.Mailbox(n.ID)
+			if s.deps.Mailbox != nil {
+				cp.Node.Waiting, cp.Node.Open = s.deps.Mailbox(n.ID)
 			}
 		}
 		out = append(out, cp)
 	}
 	return out, nil
+}
+
+// DirectConv returns the direct chat of user on a channel.
+func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
+	var links []store.Link
+	if name, ok := auth.PrincipalPairing(user); ok {
+		var err error
+		if links, err = st.LinksOf(ctx, name); err != nil {
+			return "", err
+		}
+	}
+	for _, l := range links {
+		if l.Channel == ch && l.Conv != "" {
+			return l.Conv, nil
+		}
+	}
+	return "", agenterr.WithHint(agenterr.Invalidf("%s has no chat on %s", auth.DisplayPrincipal(user), ch), agenterr.HintLinkChat, "")
 }

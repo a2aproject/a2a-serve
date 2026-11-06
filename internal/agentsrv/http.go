@@ -191,7 +191,7 @@ func unauthorizedHint(kind string) string {
 
 // card builds the agent card served at baseURL.
 func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
-	cfg := s.config()
+	cfg := s.rt.Config()
 	desc := cfg.Description
 	if desc == "" {
 		desc = cfg.Name + " is " + output.WithArticle(cfg.Harness) + " coding agent reached through `a2a-serve`."
@@ -240,7 +240,7 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 // the private one with --private-access paired, and the public one unless
 // --public-access anyone.
 func (s *Server) needsPairing(kind string) bool {
-	p := s.config().Policy
+	p := s.rt.Config().Policy
 	switch kind {
 	case network.ListenerPrivate:
 		return access.PrivateAccess(p) == agentdir.AccessPaired
@@ -281,7 +281,7 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 		jsonhttp.Error(w, http.StatusInternalServerError, "pairing failed")
 		return
 	}
-	agent := s.config().Name
+	agent := s.rt.Config().Name
 	if red.Kind == pairapi.KindNode {
 		agent = red.Node
 	}

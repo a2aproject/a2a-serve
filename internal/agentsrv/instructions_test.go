@@ -201,9 +201,8 @@ func TestWriteInstructionsSkipsHomeThatFailsTheSandboxCheck(t *testing.T) {
 			if err != nil {
 				t.Fatalf("harness.NewPins() error = %v", err)
 			}
-			s := &Server{dir: dir, pins: pins, store: openTestStore(t)}
 			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
-			s.rt.Store(&runtimeConfig{cfg: cfg, secrets: agentdir.Secrets{}})
+			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{}), store: openTestStore(t)}
 			home := dir.HomeDir()
 			if tc.replace {
 				home = t.TempDir()

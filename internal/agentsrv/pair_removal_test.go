@@ -30,6 +30,8 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -83,10 +85,10 @@ func wantEnded(t *testing.T, ended <-chan a2a.TaskState, want a2a.TaskState) {
 
 func pidOf(t *testing.T, task *a2a.Task) int {
 	t.Helper()
-	text := resultText(task)
+	text := a2atext.Result(task)
 	pid, err := strconv.Atoi(text[strings.LastIndex(text, "/")+1:])
 	if err != nil {
-		t.Fatalf("parsing the pid in %q: %v", resultText(task), err)
+		t.Fatalf("parsing the pid in %q: %v", a2atext.Result(task), err)
 	}
 	return pid
 }
@@ -190,7 +192,7 @@ func TestUserAgentOfRemovedPairingDoesNotStart(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 
-	_, err := ts.srv.startUserAgent(context.Background(), userAgentKeyPrefix+auth.PairPrincipal("gone"), io.Discard)
+	_, err := ts.srv.startUserAgent(context.Background(), agentkey.User(auth.PairPrincipal("gone")), io.Discard)
 
 	if err == nil {
 		t.Fatalf("startUserAgent() of a removed pairing error = nil, want an error")

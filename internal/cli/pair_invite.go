@@ -158,7 +158,7 @@ func warnPairCode(w io.Writer, resp *controlapi.PairCodeResponse, offline bool) 
 			return err
 		}
 	}
-	if !controlapi.LocalOnly(resp.URL) {
+	if !localOnly(resp.URL) {
 		return nil
 	}
 	_, err := fmt.Fprint(w, "! this URL only works on this machine; to invite someone on another one, add a private or public URL with\n"+

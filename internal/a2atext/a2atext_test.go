@@ -88,3 +88,30 @@ func TestMergeChunks(t *testing.T) {
 		})
 	}
 }
+
+func TestResult(t *testing.T) {
+	t.Parallel()
+	status := func(text string) a2a.TaskStatus {
+		return a2a.TaskStatus{Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(text))}
+	}
+	tests := []struct {
+		name string
+		task *a2a.Task
+		want string
+	}{
+		{name: "one artifact", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a"), a2a.NewTextPart("b")}}}}, want: "ab"},
+		{name: "artifacts", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}, {Parts: a2a.ContentParts{a2a.NewTextPart("b")}}}}, want: "a\n\nb"},
+		{name: "artifact without text", task: &a2a.Task{Artifacts: []*a2a.Artifact{{}}, Status: status("fallback")}, want: "fallback"},
+		{name: "artifacts win over the status", task: &a2a.Task{Artifacts: []*a2a.Artifact{{Parts: a2a.ContentParts{a2a.NewTextPart("a")}}}, Status: status("fallback")}, want: "a"},
+		{name: "status message", task: &a2a.Task{Status: status("boom")}, want: "boom"},
+		{name: "nothing", task: &a2a.Task{}, want: Message(nil)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := Result(tc.task); got != tc.want {
+				t.Fatalf("Result() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

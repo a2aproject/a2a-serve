@@ -26,8 +26,8 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
-	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -356,7 +356,7 @@ func checkState(stateDir, secrets string) (Result, bool) {
 // its port is free.
 func checkServer(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Config) []Result {
 	st, err := env.Status(ctx, d)
-	if errors.Is(err, controlapi.ErrNotRunning) {
+	if errors.Is(err, agenterr.ErrNotRunning) {
 		results := []Result{{ID: "running", Status: StatusWarn, Message: "not running", Fix: "a2a-serve start --detach"}}
 		if cfg.Port > 0 && !env.PortFree(cfg.Port) {
 			results = append(results, Result{

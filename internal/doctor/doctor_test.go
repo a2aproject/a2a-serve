@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -115,7 +116,7 @@ func (m *fakeMachine) Env() Env {
 		HTTP: testHTTP,
 		Status: func(context.Context, agentdir.Dir) (*controlapi.Status, error) {
 			if m.status == nil {
-				return nil, controlapi.ErrNotRunning
+				return nil, agenterr.ErrNotRunning
 			}
 			return m.status, nil
 		},

@@ -17,6 +17,9 @@ package agentsrv
 import (
 	"cmp"
 	"time"
+
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 )
 
 // Timings are the delays and timeouts of the server. Zero fields take their
@@ -49,6 +52,14 @@ type Timings struct {
 	// AnonymousQuestionTimeout is how long the approvals of anonymous
 	// callers wait for an owner.
 	AnonymousQuestionTimeout time.Duration
+}
+
+func (t Timings) messenger() messenger.Timings {
+	return messenger.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, AnonymousQuestionTimeout: t.AnonymousQuestionTimeout}
+}
+
+func (t Timings) agentproxy() agentproxy.Timings {
+	return agentproxy.Timings{WatchInterval: t.WatchInterval, WatchMaxInterval: t.WatchMaxInterval, WatchStale: t.WatchStale, WatchMaxAge: t.WatchMaxAge}
 }
 
 func (t Timings) withDefaults() Timings {

@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -342,7 +343,7 @@ func appendNew(list []string, items ...string) []string {
 // server started, and whether it runs.
 func Pending(ctx context.Context, d agentdir.Dir, client *controlapi.Client) ([]string, bool, error) {
 	running, err := client.Config(ctx)
-	if errors.Is(err, controlapi.ErrNotRunning) {
+	if errors.Is(err, agenterr.ErrNotRunning) {
 		return nil, false, nil
 	}
 	if errors.Is(err, controlapi.ErrUnsupported) {

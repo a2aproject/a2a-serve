@@ -79,6 +79,12 @@ func (b *anonymousBudget) admit(listener string) error {
 	return nil
 }
 
+// CheckRate is checkRate of the listener of the anonymous caller p. It
+// implements [messenger.Budget].
+func (b *anonymousBudget) CheckRate(p auth.Principal) error {
+	return b.checkRate(budgetListener(p))
+}
+
 // checkRate reports the error admit would return because the listener
 // started all the tasks it may in an hour, without counting a task.
 func (b *anonymousBudget) checkRate(listener string) error {

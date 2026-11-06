@@ -59,7 +59,7 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.config().Name, Principal: principal, Created: time.Now().UTC()}); err != nil {
+	if err := s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.rt.Config().Name, Principal: principal, Created: time.Now().UTC()}); err != nil {
 		return err
 	}
 	for _, u := range stale {
@@ -73,7 +73,7 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 // renameSavedOwnerToken keeps the name of the agent in the saved credential
 // current after the agent was renamed.
 func (s *Server) renameSavedOwnerToken(saved credstore.Credential) error {
-	name := s.config().Name
+	name := s.rt.Config().Name
 	if saved.Agent == name {
 		return nil
 	}

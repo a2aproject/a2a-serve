@@ -20,18 +20,18 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -54,9 +54,35 @@ func serve(t *testing.T, deps Deps, method, path, body string) (int, map[string]
 	return rec.Code, got
 }
 
+// newOps returns the operations of an agent with a Telegram channel.
+func newOps(t *testing.T) *agentops.Service {
+	t.Helper()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode"}
+	if err := cfg.SetChannel(agentdir.ChannelTelegram, "secret:TELEGRAM_TOKEN", nil); err != nil {
+		t.Fatalf("SetChannel() error = %v", err)
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	return agentops.New(agentops.Deps{Store: st, Runtime: agentdir.NewRuntime(d, cfg.Clone(), nil)})
+}
+
 func TestHandler(t *testing.T) {
 	t.Parallel()
-	errNotFound := &agenterr.NotFoundError{Kind: "channel", Name: "slack"}
+	ops := newOps(t)
 	tests := []struct {
 		name       string
 		deps       Deps
@@ -82,15 +108,15 @@ func TestHandler(t *testing.T) {
 		},
 		{
 			name:   "remove channel",
-			deps:   Deps{RemoveChannel: func(string) error { return nil }},
+			deps:   Deps{Ops: ops},
 			method: http.MethodDelete, path: "/channels/telegram", wantStatus: http.StatusOK,
 			want: map[string]any{"removed": "telegram"},
 		},
 		{
 			name:   "remove unknown channel",
-			deps:   Deps{RemoveChannel: func(string) error { return errNotFound }},
-			method: http.MethodDelete, path: "/channels/slack", wantStatus: http.StatusNotFound,
-			want: map[string]any{"error": errNotFound.Error(), "kind": "channel", "name": "slack", "code": clierr.CodeUsage, "hint": clierr.UsageHint},
+			deps:   Deps{Ops: ops},
+			method: http.MethodDelete, path: "/channels/discord", wantStatus: http.StatusNotFound,
+			want: map[string]any{"error": "no channel discord", "kind": "channel", "name": "discord", "code": clierr.CodeUsage, "hint": clierr.UsageHint},
 		},
 		{
 			name:   "inspector login",
@@ -142,31 +168,6 @@ func TestHandlerStatus(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, &got); diff != "" {
 		t.Fatalf("GET /status wrong result (-want +got) diff = %s", diff)
-	}
-}
-
-func TestHandlerSchedulesActAsOwner(t *testing.T) {
-	t.Parallel()
-	var added, removed auth.Principal
-	deps := Deps{
-		AddSchedule: func(_ context.Context, req schedule.Request, by auth.Principal) (store.Schedule, error) {
-			added = by
-			return store.Schedule{Name: req.Name}, nil
-		},
-		RemoveSchedule: func(_ context.Context, _ string, by auth.Principal) error {
-			removed = by
-			return nil
-		},
-	}
-
-	if status, _ := serve(t, deps, http.MethodPost, "/schedules", `{"name":"daily","every":"24h","prompt":"hi"}`); status != http.StatusOK {
-		t.Fatalf("POST /schedules status = %d, want %d", status, http.StatusOK)
-	}
-	if status, _ := serve(t, deps, http.MethodDelete, "/schedules/daily", ""); status != http.StatusOK {
-		t.Fatalf("DELETE /schedules/daily status = %d, want %d", status, http.StatusOK)
-	}
-	if diff := cmp.Diff([]auth.Principal{auth.Owner(), auth.Owner()}, []auth.Principal{added, removed}); diff != "" {
-		t.Fatalf("Handler() wrong principals (-want +got) diff = %s", diff)
 	}
 }
 

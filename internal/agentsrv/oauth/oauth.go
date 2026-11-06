@@ -74,8 +74,8 @@ type Deps struct {
 	// there is none.
 	SharedClientID string
 	Tokens         TokenStore
-	Config         func() *agentdir.Config
-	Secrets        func() agentdir.Secrets
+	// Runtime has the config and secrets the agent runs with.
+	Runtime *agentdir.Runtime
 }
 
 // Server signs people in with Google at the public URL, limited to the
@@ -113,7 +113,7 @@ func New(deps Deps) *Server {
 	}
 }
 
-func (o *Server) enabled() bool { return len(o.deps.Config().Policy.AllowEmails) > 0 }
+func (o *Server) enabled() bool { return len(o.deps.Runtime.Config().Policy.AllowEmails) > 0 }
 
 // Register serves the sign-in routes on mux, where base is the URL the
 // request reached the agent at, and limit bounds the requests to the
@@ -154,7 +154,7 @@ func (o *Server) flow() signInFlow {
 	switch {
 	case !o.enabled():
 		return signInOff
-	case o.deps.Config().Auth.GoogleClientID != "":
+	case o.deps.Runtime.Config().Auth.GoogleClientID != "":
 		return signInOwnerApp
 	case o.deps.SharedClientID != "":
 		return signInShared
@@ -251,7 +251,7 @@ func oauthError(w http.ResponseWriter, status int, code, desc string) {
 
 // authorize sends a client's sign-in to Google with the owner's app.
 func (o *Server) authorize(w http.ResponseWriter, r *http.Request, base string) {
-	cfg := o.deps.Config()
+	cfg := o.deps.Runtime.Config()
 	q := r.URL.Query()
 	if cfg.Auth.GoogleClientID == "" {
 		oauthError(w, http.StatusBadRequest, "unsupported_response_type", "this agent signs people in with the A2A project's shared Google app; use a client that supports it")
@@ -305,8 +305,8 @@ func (o *Server) callback(w http.ResponseWriter, r *http.Request) {
 		o.redirectClient(w, r, p, url.Values{"error": {"access_denied"}, "error_description": {"Google sign-in: " + e}})
 		return
 	}
-	cfg := o.deps.Config()
-	secret, err := o.deps.Secrets().Resolve(cfg.Auth.GoogleClientSecret)
+	cfg := o.deps.Runtime.Config()
+	secret, err := o.deps.Runtime.Secrets().Resolve(cfg.Auth.GoogleClientSecret)
 	if err != nil {
 		slog.Error("signing in with Google", "error", err)
 		http.Error(w, "The agent's Google app isn't set up: "+err.Error(), http.StatusInternalServerError)
@@ -411,7 +411,7 @@ func (o *Server) exchange(w http.ResponseWriter, r *http.Request, base string) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "the Google token was requested for another agent")
 		return
 	}
-	if !googleauth.Allowed(o.deps.Config().Policy.AllowEmails, claims) {
+	if !googleauth.Allowed(o.deps.Runtime.Config().Policy.AllowEmails, claims) {
 		oauthError(w, http.StatusForbidden, "access_denied", claims.Email+" may not call this agent; ask its owner to allow it")
 		return
 	}
