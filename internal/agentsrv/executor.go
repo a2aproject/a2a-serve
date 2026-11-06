@@ -124,6 +124,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	})
 	cfg := s.acpConfig()
 	cfg.Pool = &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents}
+	cfg.Turn = s.stalls.turn(s.userTurn)
 	// Approvals reject questions after UserQuestionTimeout; this stops the
 	// turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.UserQuestionTimeout + time.Minute
@@ -132,6 +133,23 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
 	}
 	return s.guardACP(acp), func(context.Context) error { return acp.Close() }, nil
+}
+
+// userTurn counts a turn in the agent process of its user, so that new
+// tasks are refused while all processes are busy.
+func (s *Server) userTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
+	key, err := s.keys.of(ctx, execCtx.ContextID)
+	if err != nil {
+		slog.Warn("looking up the session of a conversation", "context", execCtx.ContextID, "error", err)
+	}
+	endUser := s.users.turn(key)
+	endClaims := s.claims.turn(ctx, execCtx)
+	return func() {
+		if endClaims != nil {
+			endClaims()
+		}
+		endUser()
+	}
 }
 
 // startUserAgent starts the agent process of a user's agent key, unless
@@ -147,6 +165,11 @@ func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.W
 	if err := s.checkUser(ctx, id); err != nil {
 		return nil, err
 	}
+	release, err := s.users.reserve(ua)
+	if err != nil {
+		return nil, err
+	}
+	defer release()
 	h, err := s.prepareHarness(ctx, harnessLog, key)
 	if err != nil {
 		return nil, err
@@ -636,6 +659,8 @@ type callerInterceptor struct {
 	approvals *approvals.Service
 	tasks     *store.TaskStore
 	budget    *anonymousBudget
+	keys      *agentKeys
+	users     *userAgents
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -677,6 +702,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		if err := i.checkWaiting(ctx, msg.Message.ContextID); err != nil {
 			return ctx, nil, err
 		}
+		if err := i.checkUserAgents(ctx, msg.Message.ContextID); err != nil {
+			return ctx, nil, err
+		}
 	}
 	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
 		if err := i.budget.admit(budgetListener(p)); err != nil {
@@ -703,6 +731,20 @@ func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principa
 		return fmt.Errorf("%w: %w", a2a.ErrUnauthorized, errCallerBusy)
 	}
 	return nil
+}
+
+// checkUserAgents refuses a new task in a conversation of an authenticated
+// user while that user's agent process can't run, so that the caller gets
+// an error to retry on and no failed task is stored.
+func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID string) error {
+	key, err := i.keys.of(ctx, contextID)
+	if err != nil {
+		return fmt.Errorf("looking up the session of conversation %s: %w", contextID, err)
+	}
+	if _, ok := agentkey.UserOf(key); !ok || i.users.hasRoom(key) {
+		return nil
+	}
+	return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
 }
 
 // checkConversation refuses a message into a conversation that another
