@@ -341,6 +341,35 @@ func TestOwnerMessageKeepsConversationWithItsUser(t *testing.T) {
 	}
 }
 
+func TestUserApprovalTimesOut(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.UserQuestionTimeout = time.Second }})
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	task := send(t, anna, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	wantResult(t, waitState(t, anna, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
+}
+
+func TestCallerLimitCountsTasksWaitingForApproval(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	owner := ts.client(ts.pair("me", auth.RoleOwner))
+	for range maxCallerExecutions {
+		if task := send(t, anna, userText("ask", "", "")); task.Status.State != a2a.TaskStateInputRequired {
+			t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+		}
+	}
+
+	_, err := anna.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+	if !errors.Is(err, a2a.ErrUnauthorized) {
+		t.Fatalf("SendMessage() over the limit error = %v, want %v", err, a2a.ErrUnauthorized)
+	}
+	send(t, owner, userText("hello", "", ""))
+}
+
 func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

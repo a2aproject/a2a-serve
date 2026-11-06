@@ -111,6 +111,11 @@ type Deps struct {
 	// rejected after AnonymousTimeout.
 	Anonymous        func(ctx context.Context, contextID string) bool
 	AnonymousTimeout time.Duration
+	// User reports whether a conversation runs in the agent process of an
+	// authenticated user. An open question keeps that process busy, so its
+	// questions are rejected after UserTimeout.
+	User        func(ctx context.Context, contextID string) bool
+	UserTimeout time.Duration
 	// Config returns the current config of the agent.
 	Config func() *agentdir.Config
 }
@@ -124,6 +129,8 @@ type Service struct {
 	unattended       func(contextID string) bool
 	anonymous        func(ctx context.Context, contextID string) bool
 	anonymousTimeout time.Duration
+	user             func(ctx context.Context, contextID string) bool
+	userTimeout      time.Duration
 	config           func() *agentdir.Config
 }
 
@@ -137,6 +144,8 @@ func New(deps Deps) *Service {
 		unattended:       deps.Unattended,
 		anonymous:        deps.Anonymous,
 		anonymousTimeout: deps.AnonymousTimeout,
+		user:             deps.User,
+		userTimeout:      deps.UserTimeout,
 		config:           deps.Config,
 	}
 }
@@ -205,12 +214,17 @@ func (r *Records) pageUser(ctx context.Context, rec store.Question) (auth.Princi
 // OnQuestion sends a permission question of a task nobody watches, or of
 // an anonymous conversation, to the owner chat. Whoever started any other
 // task answers in the place it came from: inline in an A2A task, or in its
-// conversation.
+// conversation. Questions of authenticated users are rejected after
+// UserTimeout.
 func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *Question) {
 	if q.Type != TypePermission {
 		return
 	}
 	anonymous := s.anonymous != nil && s.anonymous(ctx, execCtx.ContextID)
+	if !anonymous && s.user != nil && s.user(ctx, execCtx.ContextID) {
+		taskID, contextID := execCtx.TaskID, execCtx.ContextID
+		time.AfterFunc(s.userTimeout, func() { s.expireTask(context.WithoutCancel(ctx), taskID, contextID, q) })
+	}
 	if !anonymous && (s.unattended == nil || !s.unattended(execCtx.ContextID)) {
 		return
 	}
@@ -282,6 +296,38 @@ func (s *Service) expire(ctx context.Context, id string) {
 	}
 	slog.Info("rejected an unanswered approval", "task", rec.TaskID, "question", id)
 	s.notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
+}
+
+// expireTask rejects the question of a task if the task still waits for
+// its answer. Unlike expire, it needs no stored record.
+func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question) {
+	stored, err := s.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	if err != nil {
+		slog.Warn("loading the task of an expired question", "task", taskID, "error", err)
+		return
+	}
+	if open := FromStatus(stored.Task.Status); open == nil || open.ID != q.ID {
+		return
+	}
+	opt, ok := q.Match("reject")
+	if !ok {
+		slog.Warn("an expired question has no option to reject it", "task", taskID)
+		return
+	}
+	msg, err := AnswerMessage(taskID, contextID, q.ID, opt.ID)
+	if err != nil {
+		slog.Warn("rejecting an expired question", "task", taskID, "error", err)
+		return
+	}
+	_, err = s.sender.SendMessage(auth.InProcess(ctx, timeoutPrincipal), &a2a.SendMessageRequest{
+		Message: msg,
+		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
+	})
+	if err != nil {
+		slog.Warn("rejecting an expired question", "task", taskID, "error", err)
+		return
+	}
+	slog.Info("rejected an unanswered approval", "task", taskID)
 }
 
 // Starter returns the user who started the task.

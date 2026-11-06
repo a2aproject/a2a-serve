@@ -104,6 +104,17 @@ func (k *agentKeys) anonymous(ctx context.Context, contextID string) bool {
 	return key == agentkey.Anonymous
 }
 
+// user reports whether a conversation runs in the agent process of an
+// authenticated user.
+func (k *agentKeys) user(ctx context.Context, contextID string) bool {
+	key, err := k.of(ctx, contextID)
+	if err != nil {
+		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
+	}
+	_, ok := agentkey.UserOf(key)
+	return ok
+}
+
 // startPool starts the executor of a pool of agent processes.
 type startPool func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error)
 

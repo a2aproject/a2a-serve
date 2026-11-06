@@ -52,6 +52,10 @@ type Timings struct {
 	// AnonymousQuestionTimeout is how long the approvals of anonymous
 	// callers wait for an owner.
 	AnonymousQuestionTimeout time.Duration
+	// UserQuestionTimeout is how long the approvals of authenticated users
+	// wait for an answer. An open approval keeps the user's agent process
+	// busy, so the pool of these processes fills up if nobody answers.
+	UserQuestionTimeout time.Duration
 }
 
 func (t Timings) messenger() messenger.Timings {
@@ -73,5 +77,6 @@ func (t Timings) withDefaults() Timings {
 	t.ChannelRetryMin = cmp.Or(t.ChannelRetryMin, 5*time.Second)
 	t.FirstBackupDelay = cmp.Or(t.FirstBackupDelay, time.Minute)
 	t.AnonymousQuestionTimeout = cmp.Or(t.AnonymousQuestionTimeout, 10*time.Minute)
+	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)
 	return t
 }
