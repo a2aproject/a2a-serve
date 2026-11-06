@@ -74,12 +74,12 @@ func (r *Runtime) Update(fn func(*Config) error) error {
 // Reload applies the live settings of config.yaml, which [CopyLive]
 // copies, to the config in use.
 func (r *Runtime) Reload() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	saved, err := r.dir.LoadConfig()
 	if err != nil {
 		return err
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
 	cur := r.cur.Load()
 	next := *cur.cfg
 	CopyLive(&next, saved)
@@ -96,11 +96,15 @@ func (r *Runtime) SavedSecrets() (Secrets, error) { return r.dir.LoadSecrets() }
 func (r *Runtime) SaveSecrets(s Secrets) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if err := r.dir.SaveSecrets(s); err != nil {
+	var all Secrets
+	if err := r.dir.LockConfig(func() error {
+		if err := r.dir.SaveSecrets(s); err != nil {
+			return err
+		}
+		var err error
+		all, err = r.dir.LoadSecrets()
 		return err
-	}
-	all, err := r.dir.LoadSecrets()
-	if err != nil {
+	}); err != nil {
 		return err
 	}
 	r.cur.Store(&runtimeState{cfg: r.cur.Load().cfg, secrets: all})

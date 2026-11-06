@@ -84,39 +84,49 @@ func TestRuntimeUpdateKeepsUnparsableConfigFile(t *testing.T) {
 	}
 }
 
-func TestRuntimeUpdateWaitsForConfigLock(t *testing.T) {
+func TestRuntimeWritesWaitForConfigLock(t *testing.T) {
 	t.Parallel()
-	rt, d := newRuntime(t, &Config{Name: "coder", Harness: "opencode"})
-	locked := make(chan struct{})
-	unlock := make(chan struct{})
-	holderDone := make(chan error, 1)
-	go func() {
-		holderDone <- d.LockConfig(func() error {
-			close(locked)
-			<-unlock
-			return nil
-		})
-	}()
-	<-locked
-	done := make(chan error, 1)
-	go func() {
-		done <- rt.Update(func(c *Config) error {
-			c.Description = "changed"
-			return nil
-		})
-	}()
+	tests := []struct {
+		name  string
+		write func(*Runtime) error
+	}{
+		{name: "Update", write: func(rt *Runtime) error {
+			return rt.Update(func(c *Config) error { c.Description = "changed"; return nil })
+		}},
+		{name: "SaveSecrets", write: func(rt *Runtime) error { return rt.SaveSecrets(Secrets{"TOKEN": "1"}) }},
+		{name: "ReplaceSecret", write: func(rt *Runtime) error { return rt.ReplaceSecret("TOKEN", "2") }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			rt, d := newRuntime(t, &Config{Name: "coder", Harness: "opencode"})
+			locked := make(chan struct{})
+			unlock := make(chan struct{})
+			holderDone := make(chan error, 1)
+			go func() {
+				holderDone <- d.LockConfig(func() error {
+					close(locked)
+					<-unlock
+					return nil
+				})
+			}()
+			<-locked
+			done := make(chan error, 1)
+			go func() { done <- tc.write(rt) }()
 
-	select {
-	case err := <-done:
-		t.Fatalf("Runtime.Update() returned while the config was locked, error = %v", err)
-	case <-time.After(200 * time.Millisecond):
-	}
-	close(unlock)
-	if err := <-holderDone; err != nil {
-		t.Fatal(err)
-	}
-	if err := <-done; err != nil {
-		t.Fatalf("Runtime.Update() error = %v", err)
+			select {
+			case err := <-done:
+				t.Fatalf("Runtime.%s() returned while the config was locked, error = %v", tc.name, err)
+			case <-time.After(200 * time.Millisecond):
+			}
+			close(unlock)
+			if err := <-holderDone; err != nil {
+				t.Fatal(err)
+			}
+			if err := <-done; err != nil {
+				t.Fatalf("Runtime.%s() error = %v", tc.name, err)
+			}
+		})
 	}
 }
 
