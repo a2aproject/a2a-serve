@@ -44,6 +44,8 @@ type meshSession interface {
 	WhoIs(remoteAddr string) (*meshnet.CallerInfo, bool)
 	Discover(ctx context.Context, serviceType api.ServiceType, serviceName string) ([]*api.DiscoveredProvider, error)
 	HTTPClient() *http.Client
+	Status() meshnet.Status
+	Refresh(ctx context.Context) error
 	Close() error
 }
 
@@ -64,6 +66,9 @@ type agentMesh struct {
 	owner      string
 	privateURL *url.URL
 	publicURL  *url.URL
+	health     Health
+	probedAt   time.Time
+	stopHealth func()
 }
 
 // NewRelay returns the provider of an Agent Mesh relay.
@@ -185,6 +190,10 @@ func (a *agentMesh) start(ctx context.Context) error {
 	a.attach(ep.PrivateListener, ep.PrivateURL, ep.PublicListener, ep.PublicURL)
 	slog.Info("joined the relay", "relay", a.cfg.URL, "peer_id", st.PeerID, "routers", st.AttachedRouters)
 	a.started.Store(true)
+	watchCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go a.watchHealth(watchCtx, done)
+	a.stopHealth = func() { cancel(); <-done }
 	return nil
 }
 
@@ -311,6 +320,14 @@ func (a *agentMesh) HTTPClient() *http.Client {
 }
 
 func (a *agentMesh) Close() error {
+	a.mu.Lock()
+	stopHealth := a.stopHealth
+	a.stopHealth = nil
+	a.mu.Unlock()
+	// The health check takes the lock, so it stops before Close takes it.
+	if stopHealth != nil {
+		stopHealth()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var errs []error

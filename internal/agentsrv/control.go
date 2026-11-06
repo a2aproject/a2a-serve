@@ -99,6 +99,18 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
 	}
+	if s.private != nil {
+		st.PrivateProblem = networkProblem(network.HealthOf(s.private))
+	}
+	if s.public != nil {
+		st.PublicProblem = networkProblem(network.HealthOf(s.public))
+	}
+	if p := st.PrivateProblem; p != nil && p.State == string(network.HealthRemoved) {
+		st.Private, st.PrivateNote = "", ""
+	}
+	if p := st.PublicProblem; p != nil && p.State == string(network.HealthRemoved) {
+		st.Public = ""
+	}
 	st.Channels = s.supervisor.Status()
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
@@ -172,4 +184,13 @@ const peersRediscoverEvery = time.Second
 
 func (s *Server) listPeers(ctx context.Context) ([]network.PeerInfo, error) {
 	return s.clients.Rediscover(ctx, peersRediscoverEvery)
+}
+
+// networkProblem describes h for the status, or returns nil when the
+// network reaches the agent.
+func networkProblem(h network.Health) *controlapi.NetworkProblem {
+	if h.OK() {
+		return nil
+	}
+	return &controlapi.NetworkProblem{State: string(h.State), Problem: h.Problem, Fix: h.Fix}
 }

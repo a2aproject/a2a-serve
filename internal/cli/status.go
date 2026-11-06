@@ -151,6 +151,18 @@ func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, er
 			return err
 		}
 	}
+	for _, p := range []struct {
+		url     string
+		problem *controlapi.NetworkProblem
+	}{{st.Private, st.PrivateProblem}, {st.Public, st.PublicProblem}} {
+		if p.problem == nil || u != p.url {
+			continue
+		}
+		if _, err := fmt.Fprintf(cfg.stderr(), "note: this URL doesn't work now: %s\n", p.problem.Line()); err != nil {
+			return err
+		}
+		break
+	}
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(map[string]string{"url": u})
 	}
@@ -191,6 +203,18 @@ func recipeOf(d agentdir.Dir) string {
 	return src.Describe() + " (" + shortCommit(rec.Commit) + ")"
 }
 
+// writeNetworkProblem writes why the URL u of the label scope doesn't work,
+// under u, or in its place when the server left it out.
+func writeNetworkProblem(sb *strings.Builder, label, u string, p *controlapi.NetworkProblem) {
+	if p == nil {
+		return
+	}
+	if u != "" {
+		label = ""
+	}
+	fmt.Fprintf(sb, "  %-8s ! %s\n", label, p.Line())
+}
+
 func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fromRecipe, configProblem string) error {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s (%s) running for %s, pid %d\n", st.Name, st.Harness, time.Since(st.Started).Round(time.Second), st.PID)
@@ -205,9 +229,11 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fro
 			fmt.Fprintf(&sb, "  %-8s (%s)\n", "", st.PrivateNote)
 		}
 	}
+	writeNetworkProblem(&sb, "private", st.Private, st.PrivateProblem)
 	if st.Public != "" {
 		fmt.Fprintf(&sb, "  public   %s\n", st.Public)
 	}
+	writeNetworkProblem(&sb, "public", st.Public, st.PublicProblem)
 	for _, c := range st.Channels {
 		fmt.Fprintf(&sb, "  %-8s %s\n", c.Name, c.Account)
 		if c.Error != "" {

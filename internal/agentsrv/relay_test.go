@@ -361,6 +361,68 @@ func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
 	wantResult(t, extTask, a2a.TaskStateCompleted, "Hello from fakeacp.")
 }
 
+func TestRelayStatusAndPeersShowTheConnection(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fabric := newTestRelayFabric(t, "")
+	coder := startServer(t, serverOpts{
+		name:     "coder",
+		secrets:  agentdir.Secrets{agentdir.SecretRelayToken: "join-secret"},
+		newRelay: fabric.newRelay,
+		configure: func(c *agentdir.Config) {
+			c.Network.Private = fabric.url()
+			c.Network.Public = fabric.url()
+		},
+	})
+	node := fabric.node("peer-coder")
+	ctl := controlapi.NewClient(coder.dir)
+	_, privateURL, publicURL := coder.srv.URLs()
+
+	disconnected := network.Health{State: network.HealthDisconnected, Problem: "not connected to the relay", Fix: "check the relay"}
+	removed := network.Health{State: network.HealthRemoved, Problem: "the relay removed this agent", Fix: "ask the relay's operator"}
+	tests := []struct {
+		name    string
+		health  network.Health
+		want    controlapi.Status
+		wantErr string
+	}{
+		{
+			name:    "disconnected",
+			health:  disconnected,
+			want:    controlapi.Status{Private: privateURL, Public: publicURL, PrivateProblem: networkProblem(disconnected), PublicProblem: networkProblem(disconnected)},
+			wantErr: "not connected to the relay",
+		},
+		{
+			name:    "removed",
+			health:  removed,
+			want:    controlapi.Status{PrivateProblem: networkProblem(removed), PublicProblem: networkProblem(removed)},
+			wantErr: "the relay removed this agent",
+		},
+		{
+			name: "connected",
+			want: controlapi.Status{Private: privateURL, Public: publicURL},
+		},
+	}
+	for _, tc := range tests {
+		node.setHealth(tc.health)
+		st, err := ctl.Status(ctx)
+		if err != nil {
+			t.Fatalf("%s: ctl.Status() error = %v, want nil", tc.name, err)
+		}
+		got := controlapi.Status{Private: st.Private, Public: st.Public, PrivateProblem: st.PrivateProblem, PublicProblem: st.PublicProblem}
+		if diff := cmp.Diff(tc.want, got); diff != "" {
+			t.Fatalf("%s: ctl.Status() wrong result (-want +got) diff = %s", tc.name, diff)
+		}
+		_, err = ctl.Peers(ctx)
+		if tc.wantErr == "" && err != nil {
+			t.Fatalf("%s: ctl.Peers() error = %v, want nil", tc.name, err)
+		}
+		if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+			t.Fatalf("%s: ctl.Peers() error = %v, want %q", tc.name, err, tc.wantErr)
+		}
+	}
+}
+
 type testRelayFabric struct {
 	t            *testing.T
 	srv          *httptest.Server
@@ -394,6 +456,12 @@ func newTestRelayFabric(t *testing.T, defaultEmail string) *testRelayFabric {
 }
 
 func (f *testRelayFabric) url() string { return f.srv.URL }
+
+func (f *testRelayFabric) node(peerID string) *testRelayNode {
+	f.mu.RLock()
+	defer f.mu.RUnlock()
+	return f.nodes[peerID]
+}
 
 func (f *testRelayFabric) setAccountForAgent(agentName, email string) {
 	f.mu.Lock()
@@ -504,6 +572,21 @@ type testRelayNode struct {
 	privLn    *relayPipeListener
 	pubLn     *relayPipeListener
 	conns     sync.Map
+
+	healthMu sync.Mutex
+	health   network.Health
+}
+
+func (n *testRelayNode) setHealth(h network.Health) {
+	n.healthMu.Lock()
+	defer n.healthMu.Unlock()
+	n.health = h
+}
+
+func (n *testRelayNode) Health() network.Health {
+	n.healthMu.Lock()
+	defer n.healthMu.Unlock()
+	return n.health
 }
 
 func (n *testRelayNode) Name() string { return network.ProviderRelay }

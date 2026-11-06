@@ -127,6 +127,9 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 	if cc.private == nil {
 		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
 	}
+	if err := network.HealthOf(cc.private).Err(); err != nil {
+		return nil, err
+	}
 	cc.mu.Lock()
 	if time.Since(cc.cachedAt) < maxAge {
 		out := cc.cache

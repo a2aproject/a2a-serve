@@ -29,7 +29,12 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+<<<<<<< HEAD
 	"strings"
+=======
+	"sync"
+	"sync/atomic"
+>>>>>>> c5b9e36 (fix: report a relay that removed the agent or lost its connection)
 	"testing"
 	"time"
 
@@ -41,9 +46,31 @@ import (
 )
 
 type fakeMeshSession struct {
-	callers   map[string]*meshnet.CallerInfo
-	providers []*api.DiscoveredProvider
-	hc        *http.Client
+	callers    map[string]*meshnet.CallerInfo
+	providers  []*api.DiscoveredProvider
+	hc         *http.Client
+	refreshErr error
+	refreshes  atomic.Int32
+
+	mu      sync.Mutex
+	routers []string
+}
+
+func (f *fakeMeshSession) setRouters(routers []string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.routers = routers
+}
+
+func (f *fakeMeshSession) Status() meshnet.Status {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return meshnet.Status{AttachedRouters: f.routers}
+}
+
+func (f *fakeMeshSession) Refresh(context.Context) error {
+	f.refreshes.Add(1)
+	return f.refreshErr
 }
 
 func (f *fakeMeshSession) WhoIs(addr string) (*meshnet.CallerInfo, bool) {
@@ -332,5 +359,65 @@ func TestNewRelayAttachAndClose(t *testing.T) {
 	}
 	if !epClosed {
 		t.Fatal("Close() did not call endpoint closer")
+	}
+}
+
+func TestAgentMeshHealth(t *testing.T) {
+	t.Parallel()
+	const relay = "https://relay.example.com"
+	banned := errors.New("refresh refused (403 Forbidden): Node is banned")
+	down := errors.New("http request failed: connection refused")
+	tests := []struct {
+		name       string
+		routers    []string
+		refreshErr error
+		want       HealthState
+	}{
+		{name: "attached to a router", routers: []string{"r1"}, refreshErr: banned, want: HealthOK},
+		{name: "relay refuses the credential", refreshErr: banned, want: HealthRemoved},
+		{name: "relay unreachable", refreshErr: down, want: HealthDisconnected},
+		{name: "control plane answers without routers", want: HealthDisconnected},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := &fakeMeshSession{routers: tc.routers, refreshErr: tc.refreshErr}
+			a := startedMesh(s, "", "self")
+			a.cfg.URL = relay
+			a.checkHealth(context.Background(), time.Now())
+			got := a.Health()
+			if got.State != tc.want {
+				t.Fatalf("Health() = %+v, want state %q", got, tc.want)
+			}
+			if got.OK() != (got.Problem == "") {
+				t.Fatalf("Health() = %+v, want a problem exactly when not OK", got)
+			}
+		})
+	}
+}
+
+func TestAgentMeshHealthRecoversAndProbesSparingly(t *testing.T) {
+	t.Parallel()
+	s := &fakeMeshSession{refreshErr: errors.New("refresh refused (403 Forbidden): Node is banned")}
+	a := startedMesh(s, "", "self")
+	a.cfg.URL = "https://relay.example.com"
+	now := time.Now()
+	a.checkHealth(context.Background(), now)
+	a.checkHealth(context.Background(), now.Add(healthProbeEvery/2))
+	if got := s.refreshes.Load(); got != 1 {
+		t.Fatalf("Refresh() calls within %v = %d, want 1", healthProbeEvery, got)
+	}
+	if got := a.Health().State; got != HealthRemoved {
+		t.Fatalf("Health() state between probes = %q, want %q", got, HealthRemoved)
+	}
+	a.checkHealth(context.Background(), now.Add(healthProbeEvery))
+	if got := s.refreshes.Load(); got != 2 {
+		t.Fatalf("Refresh() calls after %v = %d, want 2", healthProbeEvery, got)
+	}
+
+	s.setRouters([]string{"r1"})
+	a.checkHealth(context.Background(), now.Add(2*healthProbeEvery))
+	if got := a.Health(); !got.OK() {
+		t.Fatalf("Health() after reattaching = %+v, want OK", got)
 	}
 }

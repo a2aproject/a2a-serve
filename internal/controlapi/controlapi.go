@@ -51,13 +51,17 @@ type Status struct {
 	Private string    `json:"private,omitempty"`
 	// PrivateNote explains a private URL people can't open, such as one on
 	// an Agent Mesh relay.
-	PrivateNote string          `json:"privateNote,omitempty"`
-	Public      string          `json:"public,omitempty"`
-	Channels    []ChannelStatus `json:"channels,omitempty"`
-	Tasks       map[string]int  `json:"tasks"`
-	Owners      []string        `json:"owners,omitempty"`
-	Contacts    int             `json:"contacts"`
-	Nodes       int             `json:"nodes"`
+	PrivateNote string `json:"privateNote,omitempty"`
+	Public      string `json:"public,omitempty"`
+	// PrivateProblem and PublicProblem say why the private or public URL
+	// doesn't work now. A URL that won't work again is left out.
+	PrivateProblem *NetworkProblem `json:"privateProblem,omitempty"`
+	PublicProblem  *NetworkProblem `json:"publicProblem,omitempty"`
+	Channels       []ChannelStatus `json:"channels,omitempty"`
+	Tasks          map[string]int  `json:"tasks"`
+	Owners         []string        `json:"owners,omitempty"`
+	Contacts       int             `json:"contacts"`
+	Nodes          int             `json:"nodes"`
 	// Approvals counts the approvals waiting for an answer, which owners can
 	// give in the inspector.
 	Approvals int `json:"approvals"`
@@ -72,6 +76,23 @@ type Status struct {
 	DenyTools  []string      `json:"denyTools,omitempty"`
 	Backup     *BackupStatus `json:"backup,omitempty"`
 	Access     *Access       `json:"access,omitempty"`
+}
+
+// NetworkProblem says why a network doesn't reach the agent now.
+type NetworkProblem struct {
+	// State is a network.HealthState: removed, for a relay that removed
+	// the agent, or disconnected, for a network the server reconnects to.
+	State   string `json:"state"`
+	Problem string `json:"problem"`
+	Fix     string `json:"fix,omitempty"`
+}
+
+// Line is the problem and its fix in one line.
+func (p *NetworkProblem) Line() string {
+	if p.Fix == "" {
+		return p.Problem
+	}
+	return p.Problem + "; " + p.Fix
 }
 
 // Access describes who may call the agent.
