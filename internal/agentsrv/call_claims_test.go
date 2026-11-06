@@ -429,7 +429,7 @@ func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := openTestStore(t)
-	if err := st.PutContact(ctx, store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaHTTPS}); err != nil {
+	if err := st.PutContact(ctx, store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaDirect}); err != nil {
 		t.Fatalf("store.PutContact() error = %v", err)
 	}
 	cl := newCallClaims(CallClaimsDeps{
@@ -521,7 +521,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cl := newTestCallClaims(t, tc.bridge)
-			if err := cl.store.PutContact(context.Background(), store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaHTTPS}); err != nil {
+			if err := cl.store.PutContact(context.Background(), store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaDirect}); err != nil {
 				t.Fatalf("store.PutContact() error = %v", err)
 			}
 			var origParts a2a.ContentParts

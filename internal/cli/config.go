@@ -143,6 +143,24 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 	return err
 }
 
+// printStartRunning prints the diff of a start on a running agent, then one
+// line that says the agent keeps running and what waits for a restart.
+func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
+	shown := *res
+	if !cfg.IsJSON() {
+		shown.Restart = nil
+	}
+	if err := printConfigResult(cfg, &shown); err != nil {
+		return err
+	}
+	if len(res.Restart) > 0 {
+		_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running; restart to apply %s (a2a-serve restart)\n", res.Name, strings.Join(res.Restart, ", "))
+		return err
+	}
+	_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
+	return err
+}
+
 // printWarnings prints the warnings about the saved settings.
 func printWarnings(cfg *globalConfig, warnings []string) error {
 	if cfg.IsJSON() {

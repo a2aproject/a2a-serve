@@ -18,6 +18,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -265,6 +266,36 @@ func TestCLIChecks(t *testing.T) {
 			got := CLIChecks(t.Context(), m.Env())
 			if diff := cmp.Diff(tc.want, checks(got)); diff != "" {
 				t.Fatalf("CLIChecks() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestCredentialHelperConfigured(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		config string
+		env    map[string]string
+		want   bool
+	}{
+		{name: "configured", config: "credential-helper:\n  - command: [a2a-serve, credential]\n", want: true},
+		{name: "not configured", config: "plugins-enabled: true\n"},
+		{name: "another helper", config: "credential-helper:\n  - command: [other]\n"},
+		{name: "overridden by the environment", config: "credential-helper:\n  - command: [a2a-serve, credential]\n", env: map[string]string{envCredentialHelper: "/x"}},
+		{name: "unreadable config", config: "credential-helper: [\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newFakeMachine(t)
+			m.writeUserConfig(t, tc.config)
+			maps.Copy(m.env, tc.env)
+
+			got := CredentialHelperConfigured(m.Env())
+
+			if got != tc.want {
+				t.Fatalf("CredentialHelperConfigured() = %v, want %v", got, tc.want)
 			}
 		})
 	}

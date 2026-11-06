@@ -23,6 +23,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -116,6 +118,57 @@ func TestUsageHints(t *testing.T) {
 			}
 			if got.Hint != tc.want {
 				t.Fatalf("a2a-serve %s hint = %q, want %q", strings.Join(tc.args, " "), got.Hint, tc.want)
+			}
+		})
+	}
+}
+
+func TestUnknownCommandSuggestions(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		args     []string
+		wantErr  string
+		wantHint string
+	}{
+		{
+			name: "root", args: []string{"stat"},
+			wantErr: `unknown command "stat" for "a2a-serve"; did you mean start, status, stop?`, wantHint: clierr.UsageHint,
+		},
+		{
+			name: "root typo", args: []string{"statsu"},
+			wantErr: `unknown command "statsu" for "a2a-serve"; did you mean status?`, wantHint: clierr.UsageHint,
+		},
+		{
+			name: "group", args: []string{"config", "sett"},
+			wantErr: `unknown command "sett" for "a2a-serve config"; did you mean set?`, wantHint: "run `a2a-serve config --help` for its flags",
+		},
+		{
+			name: "no close command", args: []string{"zzzzzzzz"},
+			wantErr: `unknown command "zzzzzzzz" for "a2a-serve"`, wantHint: clierr.UsageHint,
+		},
+		{
+			name: "other group", args: []string{"pair", "lst"},
+			wantErr: `unknown command "lst" for "a2a-serve pair"; did you mean get, list, set?`, wantHint: "run `a2a-serve pair --help` for its flags",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &globalConfig{}
+			cfg.Printer = output.NewPrinter(io.Discard, output.ModeText)
+			root := newRootCmd(cfg)
+			root.SetOut(io.Discard)
+			root.SetArgs(tc.args)
+
+			cmd, err := root.ExecuteC()
+
+			if err == nil {
+				t.Fatalf("a2a-serve %s error = nil, want a usage error", strings.Join(tc.args, " "))
+			}
+			got := classify(err, cmd)
+			if diff := cmp.Diff([]any{tc.wantErr, tc.wantHint, 2}, []any{got.Message, got.Hint, got.Exit}); diff != "" {
+				t.Fatalf("a2a-serve %s wrong message, hint and exit (-want +got) diff = %s", strings.Join(tc.args, " "), diff)
 			}
 		})
 	}

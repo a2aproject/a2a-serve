@@ -128,6 +128,44 @@ func TestDiff(t *testing.T) {
 	}
 }
 
+func TestDiffTreatsDefaultAsUnset(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		old  *Config
+		next *Config
+		want []Change
+	}{
+		{
+			name: "explicit default over unset",
+			old:  &Config{},
+			next: &Config{Policy: PolicyConfig{PrivateAllowIncoming: AccessEveryone}, Sandbox: SandboxDocker, Limits: LimitsConfig{PIDs: 512}},
+		},
+		{
+			name: "unset over explicit default",
+			old:  &Config{Policy: PolicyConfig{PublicAllowIncoming: AccessPaired}},
+			next: &Config{},
+		},
+		{
+			name: "other value over default",
+			old:  &Config{Policy: PolicyConfig{PrivateAllowIncoming: AccessEveryone}},
+			next: &Config{Policy: PolicyConfig{PrivateAllowIncoming: AccessPaired}},
+			want: []Change{{Setting: "private-allow-incoming", Old: AccessEveryone, New: AccessPaired, Live: true}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := Diff(tc.old, tc.next)
+
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Diff() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestCommands(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{

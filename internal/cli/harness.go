@@ -79,16 +79,15 @@ workspace unless --allow-broad-mount names it.
 			if err != nil {
 				return err
 			}
+			if res.Running {
+				return printStartRunning(cfg, res)
+			}
 			if res.Created {
 				err = printWarnings(cfg, res.Warnings)
 			} else {
 				err = printConfigResult(cfg, res)
 			}
 			if err != nil {
-				return err
-			}
-			if res.Running {
-				_, err := fmt.Fprintf(cfg.Out, "✓ %s is already running (a2a-serve status)\n", res.Name)
 				return err
 			}
 			mode.created = res.Created

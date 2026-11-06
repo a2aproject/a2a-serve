@@ -94,6 +94,33 @@ func TestPair(t *testing.T) {
 	}
 }
 
+func TestPairMessenger(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		cfg  *agentdir.Config
+		want bool
+	}{
+		{name: "no messenger", cfg: &agentdir.Config{Name: "coder"}},
+		{name: "telegram", cfg: &agentdir.Config{Name: "coder", Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:T"}}}, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s, _ := newServiceWith(t, agentdir.NewRuntime(agentdir.Dir{}, tc.cfg, nil), Hooks{})
+
+			got, err := s.Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
+
+			if err != nil {
+				t.Fatalf("Pair() error = %v", err)
+			}
+			if got.Messenger != tc.want {
+				t.Fatalf("Pair().Messenger = %v, want %v", got.Messenger, tc.want)
+			}
+		})
+	}
+}
+
 func TestRevoke(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

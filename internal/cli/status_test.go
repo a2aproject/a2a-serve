@@ -138,3 +138,26 @@ func TestStatusJSONNamesAgentOnce(t *testing.T) {
 		t.Fatalf("status -o json agent = %v, want %q", got["agent"], "opencode")
 	}
 }
+
+func TestStatusHelp(t *testing.T) {
+	t.Parallel()
+
+	out, err := runCMD(t, "status", "--help")
+
+	if err != nil {
+		t.Fatalf("a2a-serve status --help error = %v", err)
+	}
+	if strings.Contains(out, "[=") {
+		t.Fatalf("a2a-serve status --help = %q, want no [=value] after --url", out)
+	}
+	for _, want := range []string{"--url scope  ", "--url=local does the same. --url local also works while the agent is\nstopped,"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("a2a-serve status --help = %q, want %q", out, want)
+		}
+	}
+	for line := range strings.Lines(strings.SplitN(out, "Usage:", 2)[0]) {
+		if len(line) > 80 {
+			t.Fatalf("a2a-serve status --help has the line %q, want at most 80 characters", line)
+		}
+	}
+}

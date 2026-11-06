@@ -59,9 +59,9 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if x.HasToken {
 					auth = "token"
 				}
-				rows = append(rows, []string{x.Name, x.URL, x.Via, auth})
+				rows = append(rows, []string{x.Name, x.URL, routeLabel(x.Via), auth})
 			}
-			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`"); err != nil || !peers {
+			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "ROUTE", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`"); err != nil || !peers {
 				return err
 			}
 			_, err = fmt.Fprintln(cfg.Out, "\n"+peersNote)

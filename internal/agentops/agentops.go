@@ -104,7 +104,7 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	resp := codeInfo(c)
+	resp := s.codeInfo(c)
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
 	}
@@ -142,7 +142,7 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 	}
 	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing)}
 	if r.Code != nil {
-		resp.Code = codeInfo(r.Code)
+		resp.Code = s.codeInfo(r.Code)
 	}
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err

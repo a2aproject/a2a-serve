@@ -142,7 +142,10 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 			fmt.Fprintf(&sb, "  advertised to the private network; other agents add it with `a2a-serve contact add %s@<this agent>`\n", resp.Node.ID)
 		}
 	} else {
-		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller:    %s\n  messenger: send \"join %s\" to the agent's bot\n", resp.Code, mins, resp.PairCommand, resp.Code)
+		fmt.Fprintf(&sb, "→ code %s (%d min, single use)\n  caller:    %s\n", resp.Code, mins, resp.PairCommand)
+		if resp.Messenger {
+			fmt.Fprintf(&sb, "  messenger: send \"join %s\" to the agent's bot\n", resp.Code)
+		}
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")

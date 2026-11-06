@@ -802,7 +802,7 @@ func (s *Server) policy() auth.Policy {
 
 // networks are the networks the agent is on.
 func (s *Server) networks() access.Network {
-	n := access.Network{Public: s.public != nil}
+	n := access.Network{Public: s.public != nil, Messenger: s.rt.Config().HasMessenger()}
 	if s.private != nil {
 		n.Private = s.private.Name()
 	}

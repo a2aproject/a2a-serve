@@ -125,10 +125,24 @@ func EmailMatches(pattern, email, domain string) bool {
 	return pattern == email
 }
 
+func anyoneOn(public, chat bool) string {
+	switch {
+	case public && chat:
+		return "anyone on the public URL or in a direct chat"
+	case public:
+		return "anyone on the public URL"
+	case chat:
+		return "anyone in a direct chat"
+	}
+	return "anyone (no public URL or messenger is set up yet)"
+}
+
 // Others describes who may call under the policy without a pairing, such
-// as "everyone on the tailnet" or "emails matching *@example.com". provider is the private network's provider, or empty without
-// one.
-func (p Policy) Others(provider string) []string {
+// as "everyone on the tailnet" or "emails matching *@example.com". provider
+// is the private network's provider, or empty without one. public and chat
+// say whether the agent has a public URL and a messenger, the routes that
+// anyone reaches it by.
+func (p Policy) Others(provider string, public, chat bool) []string {
 	var out []string
 	add := func(members []string) {
 		for _, m := range members {
@@ -137,7 +151,7 @@ func (p Policy) Others(provider string) []string {
 			case m == MemberPrivate && provider != "":
 				who = "everyone" + where(Identity{Network: network.ListenerPrivate, Provider: provider})
 			case m == MemberAnyone:
-				who = "anyone on the public URL or in a direct chat"
+				who = anyoneOn(public, chat)
 			case email:
 				who = "emails matching " + pattern
 			}

@@ -302,9 +302,29 @@ func newHelpCmd(serve *cobra.Command) *cobra.Command {
 	}
 }
 
+// suggestionDistance is the edit distance within which a command is
+// suggested for an unknown one. It is cobra's default, which SuggestionsFor
+// applies only once set.
+const suggestionDistance = 2
+
+// withSuggestions adds the commands close to the unknown command in args to
+// msg. Cobra suggests them only for commands without an Args check, which
+// every command with subcommands here has.
+func withSuggestions(c *cobra.Command, args []string, msg string) string {
+	if !c.HasSubCommands() || len(args) == 0 {
+		return msg
+	}
+	suggestions := c.SuggestionsFor(args[0])
+	if len(suggestions) == 0 {
+		return msg
+	}
+	return fmt.Sprintf("%s; did you mean %s?", msg, strings.Join(suggestions, ", "))
+}
+
 // markUsageErrors makes cobra's flag- and argument-validation failures surface
 // as clierr usage errors.
 func markUsageErrors(cmd *cobra.Command) {
+	cmd.SuggestionsMinimumDistance = suggestionDistance
 	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
 		return clierr.Usage(err.Error())
 	})
@@ -326,7 +346,7 @@ func markUsageErrors(cmd *cobra.Command) {
 	if validate := cmd.Args; validate != nil {
 		cmd.Args = func(c *cobra.Command, args []string) error {
 			if err := validate(c, args); err != nil {
-				return clierr.Usage(err.Error())
+				return clierr.Usage(withSuggestions(c, args, err.Error()))
 			}
 			return nil
 		}

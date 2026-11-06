@@ -302,6 +302,11 @@ func (c *Config) HasChannel(kind string) bool {
 	return false
 }
 
+// HasMessenger reports whether any channel is configured.
+func (c *Config) HasMessenger() bool {
+	return slices.ContainsFunc(ChannelKinds, c.HasChannel)
+}
+
 // ChannelToken returns the bot token reference of a telegram or discord
 // channel, or "" if it isn't configured.
 func (c *Config) ChannelToken(kind string) string {

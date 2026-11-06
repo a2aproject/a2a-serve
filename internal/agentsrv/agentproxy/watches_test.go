@@ -632,7 +632,7 @@ func TestWatchesPollKeepsClientOnTransientError(t *testing.T) {
 	t.Parallel()
 	f := newWatchesFixture(t)
 	down := newStatusContact(t, http.StatusServiceUnavailable)
-	contact := store.Contact{Name: "coder", URL: down.URL, Via: ViaHTTPS}
+	contact := store.Contact{Name: "coder", URL: down.URL, Via: ViaDirect}
 	putContact(t, f.store, contact)
 	built, err := f.clients.contactClient(context.Background(), "coder")
 	if err != nil {

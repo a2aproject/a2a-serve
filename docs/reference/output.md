@@ -64,7 +64,8 @@ the text output doesn't show are listed after it.
 | | `LAST USED` | `lastUsed`; the text shows `never`, `not paired`, `code pending` or `no credentials` when it is unset |
 | `pair list` (joined) | `URL`, `AGENT`, `JOINED` | `url`, `agent`, `joined` |
 | | `AS` | `principal` |
-| `contact list` | `NAME`, `URL`, `VIA` | `name`, `url`, `via` |
+| `contact list` | `NAME`, `URL` | `name`, `url` |
+| | `ROUTE` | `via` is `private` or `direct`; the text shows `private network` or `direct connection` |
 | | `AUTH` | `hasToken`; the text shows `token` or `network identity` |
 | `schedule list` | `NAME`, `CHAT`, `NEXT` | `name`, `chat`, `nextRun` |
 | | `WHEN` | `cron` or `at`, with `tz`; the text shows `once` for `at` |
