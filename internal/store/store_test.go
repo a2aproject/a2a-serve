@@ -1347,7 +1347,8 @@ func TestTaskAttachmentsStoredOnce(t *testing.T) {
 	if diff := cmp.Diff(task, latest); diff != "" {
 		t.Fatalf("LatestInContext() wrong result (-want +got) diff = %s", diff)
 	}
-	list, err := ts.List(owner, &a2a.ListTasksRequest{IncludeArtifacts: true})
+	history := len(task.History)
+	list, err := ts.List(owner, &a2a.ListTasksRequest{HistoryLength: &history, IncludeArtifacts: true})
 	if err != nil {
 		t.Fatalf("List() error = %v", err)
 	}

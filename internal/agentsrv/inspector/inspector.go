@@ -418,7 +418,8 @@ type conversationPage struct {
 func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
 	id := r.PathValue("id")
-	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, IncludeArtifacts: true})
+	history := fullHistory
+	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{ContextID: id, PageSize: 100, HistoryLength: &history, IncludeArtifacts: true})
 	if err != nil {
 		http.Error(w, "Couldn't load the conversation: "+err.Error(), http.StatusInternalServerError)
 		return

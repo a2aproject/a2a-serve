@@ -86,15 +86,16 @@ const (
 func (s *Server) routes(l listener) http.Handler {
 	baseURL := l.baseURL
 	mux := http.NewServeMux()
-	card := func(w http.ResponseWriter, r *http.Request) {
+	card := httpserver.PublicCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a2asrv.NewStaticAgentCardHandler(s.card(l.kind, base(baseURL, r))).ServeHTTP(w, r)
-	}
+	}))
 	jsonrpc := a2asrv.NewJSONRPCHandler(s.handler, a2asrv.WithTransportKeepAlive(15*time.Second))
 	rest := a2asrv.NewRESTHandler(s.handler, a2asrv.WithTransportKeepAlive(15*time.Second))
 
-	mux.HandleFunc("GET /{$}", card)
-	mux.HandleFunc("GET "+a2asrv.WellKnownAgentCardPath, card)
-	mux.HandleFunc("GET /.well-known/agent.json", card)
+	for _, path := range []string{"/{$}", a2asrv.WellKnownAgentCardPath, "/.well-known/agent.json"} {
+		mux.Handle("GET "+path, card)
+		mux.Handle("OPTIONS "+path, card)
+	}
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Write(w, http.StatusOK, map[string]string{"status": "ok"})
 	})

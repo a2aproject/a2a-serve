@@ -405,10 +405,7 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 	return &taskstore.StoredTask{Task: task, Version: taskstore.TaskVersion(h.version), User: h.owner}, nil
 }
 
-const (
-	defaultPageSize   = 50
-	defaultMaxHistory = 100
-)
+const defaultPageSize = 50
 
 // List implements [taskstore.Store].
 func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
@@ -451,7 +448,9 @@ func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksReque
 	}
 	filter := strings.Join(where, " AND ")
 
-	history := defaultMaxHistory
+	// Lists carry history only when asked, so that large messages don't
+	// make every page large.
+	history := 0
 	if req.HistoryLength != nil {
 		history = *req.HistoryLength
 	}
