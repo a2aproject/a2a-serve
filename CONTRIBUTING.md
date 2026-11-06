@@ -56,8 +56,11 @@ A few checks run on every pull request. Follow these tips to pass them:
   go mod tidy -diff
   go build ./...
   go test -race ./...
-  golangci-lint run
+  GOTOOLCHAIN=go$(go list -m -f '{{.GoVersion}}') \
+    go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run
   ```
+
+  This runs the linter version of `.github/workflows/go.yaml` with the Go version of `go.mod`, as CI does. A linter built with an older Go refuses the module, and one run with a newer Go can't read its standard library.
 
 ### Trying changes end to end
 
