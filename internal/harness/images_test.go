@@ -16,7 +16,6 @@ package harness
 
 import (
 	"context"
-	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -30,6 +29,11 @@ const noImagesDocker = `case "$1" in
 build) cat >/dev/null; exit 0 ;;
 *) echo "fake docker: $1 failed" >&2; exit 1 ;;
 esac
+`
+
+// noImagesNoBuildDocker is noImagesDocker whose builds fail too.
+const noImagesNoBuildDocker = `echo "fake docker: $1 failed" >&2
+exit 1
 `
 
 // fakeDocker puts a docker on PATH which runs script and logs its arguments,
@@ -56,20 +60,26 @@ func putOnPath(t *testing.T, name, script string) {
 }
 
 func TestEnsureImage(t *testing.T) {
-	fakeDocker(t, noImagesDocker)
 	tests := []struct {
 		name    string
+		docker  string
 		image   string
 		want    string
 		wantErr string
 	}{
-		{name: "profile default", image: opencode{}.Image(), want: LocalImage("opencode")},
-		{name: "empty means the profile default", want: LocalImage("opencode")},
-		{name: "user image", image: "registry.example/custom:1", wantErr: "docker pull registry.example/custom:1"},
+		{name: "profile default", docker: noImagesDocker, image: opencode{}.Image(), want: LocalImage("opencode")},
+		{name: "empty means the profile default", docker: noImagesDocker, want: LocalImage("opencode")},
+		{name: "user image", docker: noImagesDocker, image: "registry.example/custom:1", wantErr: "docker pull registry.example/custom:1: fake docker: pull failed"},
+		{name: "build fails", docker: noImagesNoBuildDocker, wantErr: "fake docker: pull failed"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, _, err := EnsureImage(context.Background(), tc.image, opencode{}, io.Discard)
+			fakeDocker(t, tc.docker)
+			var progress strings.Builder
+			got, _, err := EnsureImage(context.Background(), tc.image, opencode{}, &progress)
+			if strings.Contains(progress.String(), "pull failed") {
+				t.Fatalf("EnsureImage() progress = %q, want no pull error", progress.String())
+			}
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("EnsureImage() error = %v, want %q", err, tc.wantErr)
