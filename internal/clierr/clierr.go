@@ -20,7 +20,10 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"net"
+	"os"
+	"path/filepath"
 	"syscall"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -227,16 +230,39 @@ func classify(err error) *Error {
 		return Wrap(CodeIO, err)
 	}
 
-	return Wrap(CodeInternal, err)
+	e := Wrap(CodeInternal, err)
+	if path := deniedPath(err); path != "" {
+		e.Hint = "check the permissions of " + path + " and the directories above it"
+	}
+	return e
+}
+
+// deniedPath returns the file that err was denied access to, or its
+// directory when the file doesn't exist and so couldn't be created.
+func deniedPath(err error) string {
+	var pe *fs.PathError
+	if !errors.Is(err, fs.ErrPermission) || !errors.As(err, &pe) {
+		return ""
+	}
+	if _, err := os.Lstat(pe.Path); errors.Is(err, fs.ErrNotExist) {
+		return filepath.Dir(pe.Path)
+	}
+	return pe.Path
 }
 
 // isIOError reports whether err is a transport-level failure — a network error,
 // a broken stream, or a reset/closed connection — identified by type and
 // sentinel rather than by matching message text.
 func isIOError(err error) bool {
+	if errors.Is(err, syscall.EADDRINUSE) {
+		return false
+	}
+	// A bare syscall.Errno also implements net.Error, as file errors do.
 	var netErr net.Error
 	if errors.As(err, &netErr) {
-		return true
+		if _, ok := netErr.(syscall.Errno); !ok {
+			return true
+		}
 	}
 	return errors.Is(err, io.ErrUnexpectedEOF) ||
 		errors.Is(err, io.ErrClosedPipe) ||

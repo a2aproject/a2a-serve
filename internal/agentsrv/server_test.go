@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
@@ -89,5 +90,41 @@ func TestRunCanceledDuringStartup(t *testing.T) {
 		}
 	case <-time.After(30 * time.Second):
 		t.Fatal("the server did not stop")
+	}
+}
+
+func TestRunPortInUse(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("closing the listener: %v", err)
+		}
+	})
+	root, err := os.MkdirTemp("", "a2a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(root); err != nil {
+			t.Errorf("removing %s: %v", root, err)
+		}
+	})
+	dir, err := agentdir.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: ln.Addr().(*net.TCPAddr).Port}
+	if err := dir.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+
+	err = Run(t.Context(), Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Timings: testTimings})
+
+	if h, _, _ := agenterr.HintOf(err); h != agenterr.HintPortInUse {
+		t.Fatalf("Run() error = %v with hint %q, want hint %q", err, h, agenterr.HintPortInUse)
 	}
 }

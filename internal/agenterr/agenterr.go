@@ -129,6 +129,13 @@ const (
 	HintPairRmLocal Hint = "pair-rm-local"
 	// HintPairInviteWebhook adds a webhook node.
 	HintPairInviteWebhook Hint = "pair-invite-webhook"
+	// HintRestoreLatest restores the latest snapshot Arg.
+	HintRestoreLatest Hint = "restore-latest"
+	// HintDamagedDB restores the agent, or moves its damaged database Arg
+	// aside.
+	HintDamagedDB Hint = "damaged-db"
+	// HintPortInUse picks another port for the agent.
+	HintPortInUse Hint = "port-in-use"
 )
 
 // HintedError is an error with a hint at how to fix it.

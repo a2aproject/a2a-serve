@@ -28,7 +28,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	_ "modernc.org/sqlite" // registers the sqlite driver
+	"modernc.org/sqlite" // registers the sqlite driver
+	sqlite3 "modernc.org/sqlite/lib"
+
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 // ErrNotFound is returned when a record doesn't exist.
@@ -96,12 +99,27 @@ func newStore(db, reads *sql.DB, path string) (*Store, error) {
 	s := &Store{db: db, reads: reads, now: time.Now}
 	s.SetTaskTTL(DefaultTaskTTL)
 	if err := s.migrate(context.Background()); err != nil {
-		return nil, errors.Join(fmt.Errorf("migrating %s: %w", path, err), s.closeDBs())
+		err = fmt.Errorf("migrating %s: %w", path, err)
+		if damaged(err) {
+			err = agenterr.WithHint(err, agenterr.HintDamagedDB, path)
+		}
+		return nil, errors.Join(err, s.closeDBs())
 	}
 	if _, err := s.db.Exec(indexes); err != nil {
 		return nil, errors.Join(fmt.Errorf("indexing %s: %w", path, err), s.closeDBs())
 	}
 	return s, nil
+}
+
+// damaged reports whether err is SQLite's error for a file that isn't a
+// database or is corrupt.
+func damaged(err error) bool {
+	var se *sqlite.Error
+	if !errors.As(err, &se) {
+		return false
+	}
+	code := se.Code() & 0xff
+	return code == sqlite3.SQLITE_NOTADB || code == sqlite3.SQLITE_CORRUPT
 }
 
 // indexes are created when the store opens, outside the migrations, so that
