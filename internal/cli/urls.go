@@ -40,11 +40,17 @@ func statusURL(s *controlapi.Status, scope string) (string, error) {
 	case scopeLocal:
 		return s.Local, nil
 	case scopePrivate:
+		if s.Private == "" && s.PrivateProblem != nil {
+			return "", fmt.Errorf("%s has no private URL now: %s", s.Name, s.PrivateProblem.Line())
+		}
 		if s.Private == "" {
 			return "", fmt.Errorf("%s has no private URL; add one with `a2a-serve config set --private tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
 		}
 		return s.Private, nil
 	case scopePublic:
+		if s.Public == "" && s.PublicProblem != nil {
+			return "", fmt.Errorf("%s has no public URL now: %s", s.Name, s.PublicProblem.Line())
+		}
 		if s.Public == "" {
 			return "", fmt.Errorf("%s has no public URL; add one with `a2a-serve config set --public tailscale` (or a relay URL), then `a2a-serve restart`", s.Name)
 		}

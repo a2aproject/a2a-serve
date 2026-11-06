@@ -103,6 +103,8 @@ a2a-serve relay remove reviewer
 
 Removing an agent that signed in bans the Google account behind it, so the person's other agents lose their place too, and they can't sign in again until the relay lets them back.
 
+The removed agent's server logs the removal. On that agent, `a2a-serve status` and `a2a-serve doctor` report it, and `status` leaves out the private and public URLs.
+
 For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email.
 
 To let a removed invited agent back, invite its name again:
@@ -150,5 +152,7 @@ The relay's sign-in keys derive from its admin token, so a container keeps its s
 ## Check a relay
 
 In the relay directory, `a2a-serve doctor` checks the relay's settings, the permissions of its state, the downloaded `agentmesh-one` and the version of its data. With `--online`, it also checks that the relay answers at its URL, and that it serves its sign-in there.
+
+On an agent, `a2a-serve status`, `a2a-serve peers` and `a2a-serve doctor` report a lost connection to the relay. The server reconnects when the relay is back.
 
 The relay reads its own sign-in at its URL when it starts, as `agentmesh-one` does. So the machine that runs the relay has to reach the relay's URL, and `relay run` fails with a reason when it can't.
