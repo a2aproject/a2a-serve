@@ -112,7 +112,7 @@ func (r *Runtime) SaveSecrets(s Secrets) error {
 }
 
 // ReplaceSecret stores a secret that replaced the one in use, such as a
-// token a channel refreshed, and uses it from now on.
+// token a messenger refreshed, and uses it from now on.
 func (r *Runtime) ReplaceSecret(name, value string) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()

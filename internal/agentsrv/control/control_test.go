@@ -54,7 +54,7 @@ func serve(t *testing.T, deps Deps, method, path, body string) (int, map[string]
 	return rec.Code, got
 }
 
-// newOps returns the operations of an agent with a Telegram channel.
+// newOps returns the operations of an agent with a Telegram messenger.
 func newOps(t *testing.T) *agentops.Service {
 	t.Helper()
 	d, err := agentdir.Open(t.TempDir())
@@ -62,8 +62,8 @@ func newOps(t *testing.T) *agentops.Service {
 		t.Fatalf("agentdir.Open() error = %v", err)
 	}
 	cfg := &agentdir.Config{Name: "coder", Harness: "opencode"}
-	if err := cfg.SetChannel(agentdir.ChannelTelegram, "secret:TELEGRAM_TOKEN", nil); err != nil {
-		t.Fatalf("SetChannel() error = %v", err)
+	if err := cfg.SetMessenger(agentdir.MessengerTelegram, "secret:TELEGRAM_TOKEN", nil); err != nil {
+		t.Fatalf("SetMessenger() error = %v", err)
 	}
 	if err := d.SaveConfig(cfg); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
@@ -107,16 +107,16 @@ func TestHandler(t *testing.T) {
 			want: map[string]any{"list": []any{map[string]any{"name": "grok", "url": "http://grok", "online": true}}},
 		},
 		{
-			name:   "remove channel",
+			name:   "remove messenger",
 			deps:   Deps{Ops: ops},
-			method: http.MethodDelete, path: "/channels/telegram", wantStatus: http.StatusOK,
+			method: http.MethodDelete, path: "/messengers/telegram", wantStatus: http.StatusOK,
 			want: map[string]any{"removed": "telegram"},
 		},
 		{
-			name:   "remove unknown channel",
+			name:   "remove unknown messenger",
 			deps:   Deps{Ops: ops},
-			method: http.MethodDelete, path: "/channels/discord", wantStatus: http.StatusNotFound,
-			want: map[string]any{"error": "no channel discord", "kind": "channel", "name": "discord", "code": clierr.CodeUsage, "hint": clierr.UsageHint},
+			method: http.MethodDelete, path: "/messengers/discord", wantStatus: http.StatusNotFound,
+			want: map[string]any{"error": "no messenger discord", "kind": "messenger", "name": "discord", "code": clierr.CodeUsage, "hint": clierr.UsageHint},
 		},
 		{
 			name:   "inspector login",

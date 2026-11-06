@@ -83,7 +83,7 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if err := s.PutLink(ctx, store.Link{Channel: "telegram", Identity: "telegram:1", Pairing: auth.LocalPairing, Conv: "dm1"}, ""); err != nil {
+	if err := s.PutLink(ctx, store.Link{Messenger: "telegram", Identity: "telegram:1", Pairing: auth.LocalPairing, Conv: "dm1"}, ""); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 
@@ -92,8 +92,8 @@ func TestAddScheduleAsLocalRunsAsOwner(t *testing.T) {
 		t.Fatalf("Add() error = %v", err)
 	}
 
-	want := struct{ User, DeliverUser, DeliverChannel string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, DeliverChannel: "telegram"}
-	if diff := cmp.Diff(want, struct{ User, DeliverUser, DeliverChannel string }{got.UserID, got.DeliverUser, got.DeliverChannel}); diff != "" {
+	want := struct{ User, DeliverUser, DeliverMessenger string }{User: auth.OwnerID, DeliverUser: auth.OwnerID, DeliverMessenger: "telegram"}
+	if diff := cmp.Diff(want, struct{ User, DeliverUser, DeliverMessenger string }{got.UserID, got.DeliverUser, got.DeliverMessenger}); diff != "" {
 		t.Fatalf("Add() wrong result (-want +got) diff = %s", diff)
 	}
 }

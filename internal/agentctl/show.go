@@ -61,7 +61,7 @@ func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View
 	if err := d.CheckConfig(cfg, stored); err != nil {
 		v.Invalid = agenterr.Text(agentdir.FileProblems(err))
 	}
-	for _, name := range append(cfg.Secrets, channelSecrets(cfg)...) {
+	for _, name := range append(cfg.Secrets, messengerSecrets(cfg)...) {
 		v.Secrets[name] = SecretStateMissing
 		if stored[name] != "" {
 			v.Secrets[name] = SecretStateStored
@@ -77,10 +77,10 @@ func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View
 	return v, nil
 }
 
-func channelSecrets(cfg *agentdir.Config) []string {
+func messengerSecrets(cfg *agentdir.Config) []string {
 	var out []string
-	for _, kind := range channelKinds {
-		out = append(out, channelSecretsOf(cfg, kind)...)
+	for _, kind := range messengerKinds {
+		out = append(out, messengerSecretsOf(cfg, kind)...)
 	}
 	return out
 }

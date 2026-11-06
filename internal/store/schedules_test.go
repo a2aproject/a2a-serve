@@ -31,7 +31,7 @@ func TestSchedules(t *testing.T) {
 	next := time.Date(2026, 11, 9, 6, 0, 0, 0, time.UTC)
 	brief := Schedule{
 		Name: "brief", Cron: "0 7 * * 1-5", TZ: "Europe/Zurich", Prompt: "Summarize today's meetings.",
-		UserID: "user:owner", DeliverChannel: "telegram", DeliverUser: "user:owner", Conversation: "new",
+		UserID: "user:owner", DeliverMessenger: "telegram", DeliverUser: "user:owner", Conversation: "new",
 		CreatedBy: "user:owner", NextRun: next,
 	}
 	remind := Schedule{

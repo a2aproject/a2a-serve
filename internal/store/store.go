@@ -14,7 +14,7 @@
 
 // Package store keeps the state of an agent server in SQLite: tasks, ACP
 // sessions, pairings with their tokens, chat links and codes, contacts,
-// webhook nodes, channel conversations, questions and the handles of agents
+// webhook nodes, messenger conversations, questions and the handles of agents
 // URLs.
 package store
 
@@ -304,7 +304,21 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		return err
 	},
+	// 21: channels are called messengers.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV21)
+		return err
+	},
 }
+
+const schemaV21 = `
+ALTER TABLE links RENAME COLUMN channel TO messenger;
+ALTER TABLE convs RENAME COLUMN channel TO messenger;
+ALTER TABLE pending_questions RENAME COLUMN channel TO messenger;
+ALTER TABLE question_messages RENAME COLUMN channel TO messenger;
+ALTER TABLE schedules RENAME COLUMN deliver_channel TO deliver_messenger;
+ALTER TABLE channel_state RENAME TO messenger_state;
+`
 
 const schemaV18 = `
 CREATE TABLE tool_preferences (user_id TEXT NOT NULL, rule TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (user_id, rule));
@@ -585,17 +599,17 @@ var ErrClosed = errors.New("the database is closed")
 // ErrExists is returned when a record to create already exists.
 var ErrExists = errors.New("already exists")
 
-// ChannelState keeps small state of the channels, such as the last message
-// seen, across restarts. Keys start with the channel name.
-type ChannelState struct{ s *Store }
+// MessengerState keeps small state of the messengers, such as the last message
+// seen, across restarts. Keys start with the messenger name.
+type MessengerState struct{ s *Store }
 
-// ChannelState returns the state of the channels.
-func (s *Store) ChannelState() ChannelState { return ChannelState{s: s} }
+// MessengerState returns the state of the messengers.
+func (s *Store) MessengerState() MessengerState { return MessengerState{s: s} }
 
 // Get returns the value of key, or false if it is not set.
-func (cs ChannelState) Get(ctx context.Context, key string) (string, bool, error) {
+func (cs MessengerState) Get(ctx context.Context, key string) (string, bool, error) {
 	var v string
-	err := cs.s.reads.QueryRowContext(ctx, `SELECT value FROM channel_state WHERE key = ?`, key).Scan(&v)
+	err := cs.s.reads.QueryRowContext(ctx, `SELECT value FROM messenger_state WHERE key = ?`, key).Scan(&v)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", false, nil
 	}
@@ -603,22 +617,22 @@ func (cs ChannelState) Get(ctx context.Context, key string) (string, bool, error
 }
 
 // Set stores the value of key.
-func (cs ChannelState) Set(ctx context.Context, key, value string) error {
-	_, err := cs.s.exec(ctx, `INSERT INTO channel_state (key, value) VALUES (?, ?)
+func (cs MessengerState) Set(ctx context.Context, key, value string) error {
+	_, err := cs.s.exec(ctx, `INSERT INTO messenger_state (key, value) VALUES (?, ?)
 		ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, value)
 	return err
 }
 
 // Delete removes key.
-func (cs ChannelState) Delete(ctx context.Context, key string) error {
-	_, err := cs.s.exec(ctx, `DELETE FROM channel_state WHERE key = ?`, key)
+func (cs MessengerState) Delete(ctx context.Context, key string) error {
+	_, err := cs.s.exec(ctx, `DELETE FROM messenger_state WHERE key = ?`, key)
 	return err
 }
 
 // seenRetention is how long dedup keys are kept.
 const seenRetention = 7 * 24 * time.Hour
 
-// FirstSeen records key and reports whether it was new. Channels use it to
+// FirstSeen records key and reports whether it was new. Messengers use it to
 // drop redelivered messages. [Store.Prune] forgets old keys.
 func (s *Store) FirstSeen(ctx context.Context, key string) (bool, error) {
 	res, err := s.exec(ctx, `INSERT INTO seen (key, at) VALUES (?, ?) ON CONFLICT DO NOTHING`, key, s.now().UnixNano())

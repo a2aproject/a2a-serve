@@ -94,8 +94,8 @@ func Unset(ctx context.Context, d agentdir.Dir, client *controlapi.Client, setti
 }
 
 // errMessengers refuses an edit of config.yaml that changes messengers,
-// which `a2a-serve channel add` checks with the messenger first.
-var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2a-serve channel add and a2a-serve channel rm"), agenterr.HintChannelList, "")
+// which `a2a-serve messenger add` checks with the messenger first.
+var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2a-serve messenger add and a2a-serve messenger rm"), agenterr.HintMessengerList, "")
 
 // Replace replaces the agent's config with data, the content of
 // config.yaml as edited by hand, which is saved as it is. Values typed into
@@ -107,7 +107,7 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
 	}
 	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
-		if agentdir.ChannelsDiffer(cfg, next) {
+		if agentdir.MessengersDiffer(cfg, next) {
 			return nil, nil, errMessengers
 		}
 		store, err := agentdir.StoreSecretValues(cfg, next)
@@ -120,7 +120,7 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 }
 
 // Apply changes the agent's config with mutate, validates the result and
-// saves it. A running server applies channels, the description and
+// saves it. A running server applies messengers, the description and
 // approval settings at once, through client; the result lists the settings
 // which wait for a restart. The directory of a stopped agent stays locked
 // against a start while Apply saves. Invalid settings are a
@@ -201,7 +201,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		}
 	}
 	if res.Running {
-		if err := applyChannels(ctx, client, next, store, res); err != nil {
+		if err := applyMessengers(ctx, client, next, store, res); err != nil {
 			return nil, err
 		}
 	}
@@ -304,21 +304,21 @@ func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange 
 	return out
 }
 
-var channelKinds = []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}
+var messengerKinds = []string{agentdir.MessengerTelegram, agentdir.MessengerDiscord, agentdir.MessengerEmail}
 
-// channelOf returns the channel kind a setting configures, or "".
-func channelOf(setting string) string {
-	if kind, _, _ := strings.Cut(setting, "-"); slices.Contains(channelKinds, kind) {
+// messengerOf returns the messenger kind a setting configures, or "".
+func messengerOf(setting string) string {
+	if kind, _, _ := strings.Cut(setting, "-"); slices.Contains(messengerKinds, kind) {
 		return kind
 	}
 	return ""
 }
 
-// channelSecretsOf returns the names of the stored secrets the channel of
+// messengerSecretsOf returns the names of the stored secrets the messenger of
 // kind refers to.
-func channelSecretsOf(cfg *agentdir.Config, kind string) []string {
-	refs := []string{cfg.ChannelToken(kind)}
-	if e := cfg.Channels.Email; kind == agentdir.ChannelEmail && e != nil {
+func messengerSecretsOf(cfg *agentdir.Config, kind string) []string {
+	refs := []string{cfg.MessengerToken(kind)}
+	if e := cfg.Messengers.Email; kind == agentdir.MessengerEmail && e != nil {
 		refs = []string{e.Password, e.OAuthClientSecret, e.OAuthRefreshToken}
 	}
 	var out []string
@@ -330,26 +330,26 @@ func channelSecretsOf(cfg *agentdir.Config, kind string) []string {
 	return out
 }
 
-// applyChannels adds, replaces or removes the channels which changed on the
+// applyMessengers adds, replaces or removes the messengers which changed on the
 // running server, which checks them first.
-func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdir.Config, store agentdir.Secrets, res *Result) error {
-	for _, kind := range channelKinds {
+func applyMessengers(ctx context.Context, client *controlapi.Client, next *agentdir.Config, store agentdir.Secrets, res *Result) error {
+	for _, kind := range messengerKinds {
 		var settings []string
 		for _, c := range res.Changes {
-			if channelOf(c.Setting) == kind {
+			if messengerOf(c.Setting) == kind {
 				settings = append(settings, c.Setting)
 			}
 		}
-		secrets := channelSecretsOf(next, kind)
+		secrets := messengerSecretsOf(next, kind)
 		if slices.ContainsFunc(res.Secrets, func(s SecretChange) bool { return slices.Contains(secrets, s.Name) && s.Action != SecretDeleted }) {
 			settings = append(settings, kind)
 		}
 		if len(settings) == 0 {
 			continue
 		}
-		req := controlapi.ChannelRequestFromConfig(next, kind)
+		req := controlapi.MessengerRequestFromConfig(next, kind)
 		if req.Token == "" && req.Email == nil {
-			if err := client.DeleteChannel(ctx, kind); err != nil {
+			if err := client.DeleteMessenger(ctx, kind); err != nil {
 				return fmt.Errorf("removing %s from the running agent: %w", kind, err)
 			}
 		} else {
@@ -362,7 +362,7 @@ func applyChannels(ctx context.Context, client *controlapi.Client, next *agentdi
 				}
 				req.Secrets[name] = store[name]
 			}
-			if _, err := client.AddChannel(ctx, req); err != nil {
+			if _, err := client.AddMessenger(ctx, req); err != nil {
 				return fmt.Errorf("applying %s to the running agent: %w", kind, err)
 			}
 		}
@@ -377,7 +377,7 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	var live []string
 	for _, c := range res.Changes {
 		switch {
-		case channelOf(c.Setting) != "":
+		case messengerOf(c.Setting) != "":
 		case c.Live:
 			live = append(live, c.Setting)
 		default:

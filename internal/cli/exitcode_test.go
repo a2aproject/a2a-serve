@@ -36,7 +36,7 @@ func TestExitCodes(t *testing.T) {
 		{name: "peers of a stopped agent", args: []string{"peers"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "schedule run on a stopped agent", args: []string{"schedule", "run", "brief"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
 		{name: "contact found by name on a stopped agent", args: []string{"contact", "add", "grok"}, wantCode: clierr.CodeNotRunning, wantExit: 6},
-		{name: "channel rm of an unconfigured channel", args: []string{"channel", "rm", "telegram"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "messenger rm of an unconfigured messenger", args: []string{"messenger", "rm", "telegram"}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "status without an agent", args: []string{"status"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
 		{name: "start without an agent", args: []string{"start"}, noAgent: true, wantCode: clierr.CodeNoAgent, wantExit: 7},
 		{name: "mutually exclusive flags", args: []string{"pair", "list", "--joined", "--invited"}, wantCode: clierr.CodeUsage, wantExit: 2},

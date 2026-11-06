@@ -41,7 +41,7 @@ A changed key reaches the agent after `a2a-serve restart`, or with `--restart` o
 
 ## Tokens for the server
 
-Flags that give the server a token or password, such as `channel add --token` or `config set --tailscale-authkey`, store the value in `state/secrets` too. The agent never sees these values.
+Flags that give the server a token or password, such as `messenger add --token` or `config set --tailscale-authkey`, store the value in `state/secrets` too. The agent never sees these values.
 
 ### Value forms
 
@@ -57,8 +57,8 @@ They accept these forms:
 `-` keeps tokens out of your shell history:
 
 ```sh
-a2a-serve channel add telegram --token -
-pass show coder/bot | a2a-serve channel add discord --token -
+a2a-serve messenger add telegram --token -
+pass show coder/bot | a2a-serve messenger add discord --token -
 ```
 
 `pair invite --webhook-header` takes a whole header, which may end in `env:VAR` or `-`: `"Authorization: Bearer env:TOKEN"`.

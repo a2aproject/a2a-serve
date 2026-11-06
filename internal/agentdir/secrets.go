@@ -145,11 +145,11 @@ func ResolveInput(v, fallbackName string) (ref string, s Secrets, err error) {
 // StoreSecretValues moves the values of the secret settings that next, a
 // config.yaml edited by hand, changed since old to the secrets to store, as
 // the flags of the settings do. next keeps references to them. Messengers
-// are left alone, since only `a2a-serve channel add` changes them.
+// are left alone, since only `a2a-serve messenger add` changes them.
 func StoreSecretValues(old, next *Config) (Secrets, error) {
 	secrets := Secrets{}
 	for _, f := range fields {
-		if f.secret == "" || f.secretOnly || f.place == placeChannel {
+		if f.secret == "" || f.secretOnly || f.place == placeMessenger {
 			continue
 		}
 		v := first(f.get(next))

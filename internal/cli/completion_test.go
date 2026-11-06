@@ -57,7 +57,7 @@ func TestCompletion(t *testing.T) {
 		{name: "public access", args: []string{"config", "set", "--public-allow-incoming", ""}, want: []string{"paired", "anyone"}},
 		{name: "sandbox", args: []string{"start", "claude", "--sandbox", ""}, want: []string{"docker", "local"}},
 		{name: "agent", args: []string{"config", "set", "--agent", ""}, want: []string{"claude", "opencode", "acp"}},
-		{name: "channel kinds", args: []string{"channel", "rm", ""}, want: []string{"telegram", "discord", "email"}},
+		{name: "messenger kinds", args: []string{"messenger", "rm", ""}, want: []string{"telegram", "discord", "email"}},
 		{name: "kind", args: []string{"pair", "set", "anna", "--kind", ""}, want: []string{"person", "device", "agent"}},
 		{name: "joined agents", args: []string{"pair", "rm", "--dir", "/nonexistent-a2a-agent", ""}, want: []string{agentURL}},
 		{name: "contacts of a stopped agent", args: []string{"contact", "rm", "--dir", "/nonexistent-a2a-agent", ""}},
@@ -85,7 +85,7 @@ func TestCompletionCommands(t *testing.T) {
 
 	got := completions(t, creds, "")
 
-	for _, want := range []string{"start", "pair", "channel"} {
+	for _, want := range []string{"start", "pair", "messenger"} {
 		if !slices.Contains(got, want) {
 			t.Fatalf("a2a-serve __complete \"\" = %v, want %q among them", got, want)
 		}

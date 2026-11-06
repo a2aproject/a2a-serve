@@ -197,23 +197,23 @@ func TestEditStoresSecretValues(t *testing.T) {
 	}
 }
 
-func TestEditRefusesChannels(t *testing.T) {
+func TestEditRefusesMessengers(t *testing.T) {
 	t.Parallel()
-	const refused = "# ERROR: messengers are changed with a2a-serve channel add and a2a-serve channel rm\n"
+	const refused = "# ERROR: messengers are changed with a2a-serve messenger add and a2a-serve messenger rm\n"
 	telegram := &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}
 	tests := []struct {
 		name     string
 		telegram *agentdir.TelegramConfig
 		edit     string
 	}{
-		{name: "added", edit: "name: coder\nagent: opencode\nchannels:\n    telegram:\n        token: secret:TOK\n"},
-		{name: "changed", telegram: telegram, edit: "name: coder\nagent: opencode\nchannels:\n    telegram:\n        token: secret:TOK\n"},
+		{name: "added", edit: "name: coder\nagent: opencode\nmessengers:\n    telegram:\n        token: secret:TOK\n"},
+		{name: "changed", telegram: telegram, edit: "name: coder\nagent: opencode\nmessengers:\n    telegram:\n        token: secret:TOK\n"},
 		{name: "removed", telegram: telegram, edit: "name: coder\nagent: opencode\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Channels: agentdir.ChannelsConfig{Telegram: tc.telegram}}, agentdir.Secrets{agentdir.SecretTelegram: "t", "TOK": "t2"})
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Messengers: agentdir.MessengersConfig{Telegram: tc.telegram}}, agentdir.Secrets{agentdir.SecretTelegram: "t", "TOK": "t2"})
 			orig, err := os.ReadFile(d.ConfigPath())
 			if err != nil {
 				t.Fatal(err)

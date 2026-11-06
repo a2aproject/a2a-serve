@@ -31,9 +31,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -81,7 +81,7 @@ type questionChat interface {
 // TurnInjector is where watches post late results.
 type TurnInjector interface {
 	// InjectTurn posts a turn into its context.
-	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
+	InjectTurn(ctx context.Context, t chat.PostedTurn) error
 }
 
 // QuestionTasks ask relayed questions in the conversations they come from,
@@ -139,7 +139,7 @@ func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task 
 		header = fmt.Sprintf("%s wants to run %s", agent, q.Title)
 	}
 	if chName != "" {
-		ws.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
+		ws.chat.Ask(ctx, approvals.Chat{Messenger: chName, Conv: messenger.ConvKey(conv)}, header, rec)
 		return
 	}
 	cq := &CallerQuestion{Rec: rec, Header: header, Msg: task.Status.Message}
@@ -184,7 +184,7 @@ func (ws *Watches) directChat(ctx context.Context, user string) (approvals.Chat,
 	}
 	for _, l := range links {
 		if l.Conv != "" {
-			return approvals.Chat{Channel: l.Channel, Conv: channel.ConvKey(l.Conv)}, true
+			return approvals.Chat{Messenger: l.Messenger, Conv: messenger.ConvKey(l.Conv)}, true
 		}
 	}
 	return approvals.Chat{}, false
@@ -497,7 +497,7 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	text, files := resultTurn(text)
-	t := messenger.PostedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
+	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
 	if ws.resultToCaller(t) {
 		return true
 	}
@@ -559,7 +559,7 @@ const (
 const resultFile = "result.txt"
 
 // resultTurn returns the text and the files of a turn that posts text.
-func resultTurn(text string) (string, []channel.File) {
+func resultTurn(text string) (string, []messenger.File) {
 	if len(text) <= maxInlineResult {
 		return text, nil
 	}
@@ -569,5 +569,5 @@ func resultTurn(text string) (string, []channel.File) {
 		preview = strings.ToValidUTF8(preview[:previewBytes], "")
 	}
 	note := fmt.Sprintf("[The full result, %d bytes, is attached as %s.]", len(text), resultFile)
-	return strings.TrimRight(preview, "\n") + "\n…\n" + note, []channel.File{{Name: resultFile, MediaType: "text/plain", Data: []byte(text)}}
+	return strings.TrimRight(preview, "\n") + "\n…\n" + note, []messenger.File{{Name: resultFile, MediaType: "text/plain", Data: []byte(text)}}
 }

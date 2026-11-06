@@ -39,7 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -515,11 +515,11 @@ func (s *Server) listenHarness(sandboxed bool) (*harnessListeners, error) {
 // bus and relays questions which the task's caller can't answer.
 type observedExecutor struct {
 	inner     a2asrv.AgentExecutor
-	bus       *messenger.Bus
+	bus       *chat.Bus
 	claims    *CallClaims
 	approvals *approvals.Service
 	// unattended is told when the task of a context ends.
-	unattended *messenger.ContextSet
+	unattended *chat.ContextSet
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
 	watches *agentproxy.Watches

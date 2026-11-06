@@ -66,10 +66,10 @@ func TestValidate(t *testing.T) {
 		{name: "disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{"github"} }},
 		{name: "empty disabled MCP server", modify: func(c *Config) { c.MCP.Disabled = []string{""} }, wantErr: `invalid --disable-mcp ""`},
 		{name: "owner chat", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:anna" }},
-		{name: "owner chat channel", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
+		{name: "owner chat messenger", modify: func(c *Config) { c.Approvals.OwnerChat = "fax" }, wantErr: `invalid --owner-chat "fax"`},
 		{name: "owner chat without who", modify: func(c *Config) { c.Approvals.OwnerChat = "telegram:" }, wantErr: `invalid --owner-chat "telegram:"`},
 		{name: "removed approvers", modify: func(c *Config) { c.Approvals.RemovedApprovers = []string{"pair:anna"} }, wantErr: "approvals.approvers was removed"},
-		{name: "telegram without a token", modify: func(c *Config) { c.Channels.Telegram = &TelegramConfig{} }, wantErr: "the telegram channel needs a token"},
+		{name: "telegram without a token", modify: func(c *Config) { c.Messengers.Telegram = &TelegramConfig{} }, wantErr: "the telegram messenger needs a token"},
 		{name: "sign-in", modify: func(c *Config) {
 			c.Policy.AllowEmails = []string{"mom@example.com", "*@example.com"}
 			c.Auth = AuthConfig{GoogleClientID: "id", GoogleClientSecret: "secret:GOOGLE_CLIENT_SECRET"}
@@ -124,7 +124,7 @@ func TestValidate(t *testing.T) {
 		{
 			name: "email with OAuth",
 			modify: func(c *Config) {
-				c.Channels.Email = &EmailConfig{
+				c.Messengers.Email = &EmailConfig{
 					Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx",
 					OAuthTokenURL: "https://login.example.com/token", OAuthClientID: "id", OAuthRefreshToken: "secret:EMAIL_OAUTH_REFRESH_TOKEN",
 				}
@@ -133,14 +133,14 @@ func TestValidate(t *testing.T) {
 		{
 			name: "incomplete email OAuth",
 			modify: func(c *Config) {
-				c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx", OAuthRefreshToken: "r"}
+				c.Messengers.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", TrustedAuthServ: "mx", OAuthRefreshToken: "r"}
 			},
-			wantErr: "the email channel needs --email-oauth-client-id, --email-oauth-token-url",
+			wantErr: "the email messenger needs --email-oauth-client-id, --email-oauth-token-url",
 		},
 		{
 			name:    "incomplete email",
-			modify:  func(c *Config) { c.Channels.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },
-			wantErr: "the email channel needs --email-password, --email-smtp, --email-trusted-authserv",
+			modify:  func(c *Config) { c.Messengers.Email = &EmailConfig{Address: "a@x", IMAP: "imap:993"} },
+			wantErr: "the email messenger needs --email-password, --email-smtp, --email-trusted-authserv",
 		},
 	}
 	for _, tc := range tests {
@@ -183,7 +183,7 @@ func TestCheckConfig(t *testing.T) {
 			name: "valid",
 			cfg: Config{
 				Name: "coder", Harness: "opencode", Mounts: []string{docs + ":/docs:ro"}, Secrets: []string{"KEY"},
-				Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
+				Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 			},
 			secrets: Secrets{"KEY": "k", "BOT": "b"},
 		},
@@ -209,9 +209,9 @@ func TestCheckConfig(t *testing.T) {
 			secrets: Secrets{"MULTI": "line1\nline2"},
 		},
 		{
-			name:    "missing channel secret",
-			cfg:     Config{Name: "coder", Harness: "opencode", Channels: ChannelsConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
-			wantErr: "discord token (a2a-serve channel add discord --token): secret BOT is not set",
+			name:    "missing messenger secret",
+			cfg:     Config{Name: "coder", Harness: "opencode", Messengers: MessengersConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
+			wantErr: "discord token (a2a-serve messenger add discord --token): secret BOT is not set",
 		},
 	}
 	for _, tc := range tests {
@@ -391,12 +391,12 @@ func TestUnknownKeys(t *testing.T) {
 	}{
 		{
 			name: "known keys",
-			data: "name: coder\nagent: opencode\nnetwork:\n  private: tailscale\nchannels:\n  telegram:\n    token: secret:T\napprovals:\n  allow: [read]\n",
+			data: "name: coder\nagent: opencode\nnetwork:\n  private: tailscale\nmessengers:\n  telegram:\n    token: secret:T\napprovals:\n  allow: [read]\n",
 		},
 		{
 			name: "unknown keys at any depth",
-			data: "name: coder\nbadge: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    chat: x\n",
-			want: []UnknownKey{{Path: "badge"}, {Path: "channels.telegram.chat"}, {Path: "network.allowlist"}},
+			data: "name: coder\nbadge: {}\nnetwork:\n  allowlist: [example.com]\nmessengers:\n  telegram:\n    chat: x\n",
+			want: []UnknownKey{{Path: "badge"}, {Path: "messengers.telegram.chat"}, {Path: "network.allowlist"}},
 		},
 		{
 			name: "typos",
@@ -414,7 +414,7 @@ func TestUnknownKeys(t *testing.T) {
 		},
 		{
 			name: "snake_case keys",
-			data: "task_ttl: 7d\npolicy:\n  allow_emails: [a@example.com]\nchannels:\n  email:\n    trusted_authserv: mx\n",
+			data: "task_ttl: 7d\npolicy:\n  allow_emails: [a@example.com]\nmessengers:\n  email:\n    trusted_authserv: mx\n",
 		},
 		{
 			name: "snake_case key besides its camelCase key",
@@ -523,7 +523,7 @@ approvals:
 auth:
   google_client_id: id
   google_client_secret: secret:GOOGLE_CLIENT_SECRET
-channels:
+messengers:
   email:
     trusted_authserv: mx
     oauth_token_url: https://login.example.com/token
@@ -544,7 +544,7 @@ approvals:
 auth:
   googleClientID: id
   googleClientSecret: secret:GOOGLE_CLIENT_SECRET
-channels:
+messengers:
   email:
     trustedAuthServ: mx
     oauthTokenURL: https://login.example.com/token
@@ -563,7 +563,7 @@ channels:
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("ParseConfig() wrong result (-want +got) diff = %s", diff)
 	}
-	if want.TaskTTL != "7d" || want.Channels.Email == nil || want.Channels.Email.OAuthRefreshToken == "" {
+	if want.TaskTTL != "7d" || want.Messengers.Email == nil || want.Messengers.Email.OAuthRefreshToken == "" {
 		t.Fatalf("ParseConfig() = %+v, want the camelCase keys read", want)
 	}
 	legacy, err := LegacyKeys([]byte(data))
@@ -572,8 +572,8 @@ channels:
 	}
 	wantLegacy := []string{
 		"auth.google_client_id", "auth.google_client_secret", "approvals.owner_chat",
-		"channels.email.oauth_client_id", "channels.email.oauth_client_secret", "channels.email.oauth_refresh_token",
-		"channels.email.oauth_token_url", "channels.email.trusted_authserv",
+		"messengers.email.oauth_client_id", "messengers.email.oauth_client_secret", "messengers.email.oauth_refresh_token",
+		"messengers.email.oauth_token_url", "messengers.email.trusted_authserv",
 		"network.tailscale_control_url", "policy.allow_emails", "policy.private_access", "policy.public_access", "task_ttl",
 	}
 	slices.Sort(wantLegacy)

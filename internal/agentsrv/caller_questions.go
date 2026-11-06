@@ -31,7 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -63,7 +63,7 @@ func callerQuestionEvent(task a2a.TaskInfoProvider, q *agentproxy.CallerQuestion
 type questionTasks struct {
 	store *store.Store
 	tasks *store.TaskStore
-	bus   *messenger.Bus
+	bus   *chat.Bus
 }
 
 var _ agentproxy.QuestionTasks = (*questionTasks)(nil)
@@ -232,7 +232,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 
 // continueWithResult runs the next turn of a task with the result of
 // another agent it waited for.
-func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2asrv.ExecutorContext, t *messenger.PostedTurn, yield func(a2a.Event, error) bool) {
+func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2asrv.ExecutorContext, t *chat.PostedTurn, yield func(a2a.Event, error) bool) {
 	msg := a2a.NewMessage(a2a.MessageRoleUser, t.Parts()...)
 	msg.TaskID, msg.ContextID = execCtx.TaskID, execCtx.ContextID
 	shown := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(t.Text))

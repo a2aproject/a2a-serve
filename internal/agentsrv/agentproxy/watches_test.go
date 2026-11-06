@@ -32,7 +32,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -219,7 +219,7 @@ func TestWatchesWatchPostsLongResultAsFile(t *testing.T) {
 	got := f.nextTurn(t)
 
 	full := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactLongResult())
-	if diff := cmp.Diff([]channel.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(full)}}, got.Files); diff != "" {
+	if diff := cmp.Diff([]messenger.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(full)}}, got.Files); diff != "" {
 		t.Fatalf("injected turn files wrong result (-want +got) diff = %s", diff)
 	}
 	lines := strings.SplitAfter(full, "\n")
@@ -688,10 +688,10 @@ func TestWatchesRelay(t *testing.T) {
 					t.Fatalf("store.SetContext() error = %v", err)
 				}
 			},
-			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			ownerChat: &approvals.Chat{Messenger: "owner", Conv: "oc"},
 			user:      anna,
 			title:     "git push",
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "fake", Conv: "dm1"}, Header: "coder wants to run git push"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "fake", Conv: "dm1"}, Header: "coder wants to run git push"}},
 			wantUser:  "pair:anna",
 		},
 		{
@@ -702,7 +702,7 @@ func TestWatchesRelay(t *testing.T) {
 				}
 			},
 			user:      anna,
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "fake", Conv: "dm1"}, Header: "coder wants to"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "fake", Conv: "dm1"}, Header: "coder wants to"}},
 			wantUser:  "pair:anna",
 		},
 		{
@@ -710,10 +710,10 @@ func TestWatchesRelay(t *testing.T) {
 			setup: func(t *testing.T, st *store.Store) {
 				linkChat(t, st, "anna", "telegram", "telegram:2", "dm2")
 			},
-			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			ownerChat: &approvals.Chat{Messenger: "owner", Conv: "oc"},
 			user:      anna,
 			title:     "git push",
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "telegram", Conv: "dm2"}, Header: "coder wants to run git push"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "telegram", Conv: "dm2"}, Header: "coder wants to run git push"}},
 			wantUser:  "pair:anna",
 		},
 		{
@@ -723,23 +723,23 @@ func TestWatchesRelay(t *testing.T) {
 			},
 			user:      auth.Owner(),
 			title:     "git push",
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "telegram", Conv: "dm1"}, Header: "coder wants to run git push"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "telegram", Conv: "dm1"}, Header: "coder wants to run git push"}},
 			wantUser:  auth.OwnerID,
 		},
 		{
 			name:      "owner chat when the user has none",
-			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			ownerChat: &approvals.Chat{Messenger: "owner", Conv: "oc"},
 			user:      anna,
 			title:     "git push",
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "owner", Conv: "oc"}, Header: "coder wants to run git push for anna"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "owner", Conv: "oc"}, Header: "coder wants to run git push for anna"}},
 			wantUser:  "pair:anna",
 		},
 		{
 			name:      "user without an account goes to the owner chat as the owner",
-			ownerChat: &approvals.Chat{Channel: "owner", Conv: "oc"},
+			ownerChat: &approvals.Chat{Messenger: "owner", Conv: "oc"},
 			user:      auth.Principal{},
 			title:     "git push",
-			wantAsked: []askedQuestion{{To: approvals.Chat{Channel: "owner", Conv: "oc"}, Header: "coder wants to run git push for owner"}},
+			wantAsked: []askedQuestion{{To: approvals.Chat{Messenger: "owner", Conv: "oc"}, Header: "coder wants to run git push for owner"}},
 			wantUser:  auth.OwnerID,
 		},
 		{
@@ -810,7 +810,7 @@ func TestWatchesWatchRelaysPermissionQuestionOnce(t *testing.T) {
 	if len(asked) != 1 {
 		t.Fatalf("questions asked while the task waits = %d, want 1", len(asked))
 	}
-	if want := (approvals.Chat{Channel: "fake", Conv: channel.ConvKey("dm1")}); asked[0].To != want {
+	if want := (approvals.Chat{Messenger: "fake", Conv: messenger.ConvKey("dm1")}); asked[0].To != want {
 		t.Fatalf("question asked in %+v, want %+v", asked[0].To, want)
 	}
 	if n := len(f.turns.turns); n != 0 {
@@ -862,13 +862,13 @@ func TestWatchesWatchEndsQuestionTasksOnceTheTaskMovesOn(t *testing.T) {
 	}
 }
 
-func linkChat(t *testing.T, st *store.Store, pairing, channelName, identity, conv string) {
+func linkChat(t *testing.T, st *store.Store, pairing, messengerName, identity, conv string) {
 	t.Helper()
 	ctx := context.Background()
 	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: pairing, Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated}); err != nil {
 		t.Fatalf("store.EnsurePairing() error = %v", err)
 	}
-	if err := st.PutLink(ctx, store.Link{Channel: channelName, Identity: identity, Pairing: pairing, Conv: conv}, pairapi.PairingPerson); err != nil {
+	if err := st.PutLink(ctx, store.Link{Messenger: messengerName, Identity: identity, Pairing: pairing, Conv: conv}, pairapi.PairingPerson); err != nil {
 		t.Fatalf("store.PutLink() error = %v", err)
 	}
 }
@@ -900,7 +900,7 @@ func TestResultTurn(t *testing.T) {
 			if !strings.HasPrefix(text, tc.wantPreview+"\n") {
 				t.Fatalf("resultTurn() text = %q, want it to start with %d bytes of the result", text, len(tc.wantPreview))
 			}
-			if diff := cmp.Diff([]channel.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(tc.text)}}, files); diff != "" {
+			if diff := cmp.Diff([]messenger.File{{Name: "result.txt", MediaType: "text/plain", Data: []byte(tc.text)}}, files); diff != "" {
 				t.Fatalf("resultTurn() files wrong result (-want +got) diff = %s", diff)
 			}
 		})

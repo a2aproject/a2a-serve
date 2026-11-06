@@ -76,8 +76,8 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("POST /contacts", a.addContact)
 	mux.HandleFunc("POST /contacts/refresh", a.refreshContacts)
 	mux.HandleFunc("DELETE /contacts/{name}", a.deleteContact)
-	mux.HandleFunc("POST /channels", a.addChannel)
-	mux.HandleFunc("DELETE /channels/{kind}", a.deleteChannel)
+	mux.HandleFunc("POST /messengers", a.addMessenger)
+	mux.HandleFunc("DELETE /messengers/{kind}", a.deleteMessenger)
 	mux.HandleFunc("GET /schedules", a.schedules)
 	mux.HandleFunc("POST /schedules", a.addSchedule)
 	mux.HandleFunc("POST /schedules/{name}/run", a.runSchedule)
@@ -201,18 +201,18 @@ func (a *api) deleteContact(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]string{"deleted": name}, err)
 }
 
-func (a *api) addChannel(w http.ResponseWriter, r *http.Request) {
-	var req controlapi.ChannelRequest
+func (a *api) addMessenger(w http.ResponseWriter, r *http.Request) {
+	var req controlapi.MessengerRequest
 	if !jsonhttp.Read(w, r, &req) {
 		return
 	}
-	st, err := a.deps.Ops.AddChannel(r.Context(), req)
+	st, err := a.deps.Ops.AddMessenger(r.Context(), req)
 	reply(w, st, err)
 }
 
-func (a *api) deleteChannel(w http.ResponseWriter, r *http.Request) {
+func (a *api) deleteMessenger(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	err := a.deps.Ops.DeleteChannel(r.Context(), kind)
+	err := a.deps.Ops.DeleteMessenger(r.Context(), kind)
 	reply(w, map[string]string{"removed": kind}, err)
 }
 

@@ -26,9 +26,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
@@ -102,7 +102,7 @@ func TestPairMessenger(t *testing.T) {
 		want bool
 	}{
 		{name: "no messenger", cfg: &agentdir.Config{Name: "coder"}},
-		{name: "telegram", cfg: &agentdir.Config{Name: "coder", Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:T"}}}, want: true},
+		{name: "telegram", cfg: &agentdir.Config{Name: "coder", Messengers: agentdir.MessengersConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:T"}}}, want: true},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -168,7 +168,7 @@ func pairAnnaWithTelegram(t *testing.T, s *Service, st *store.Store) {
 	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "anna"}); err != nil {
 		t.Fatalf("Pair(anna) error = %v", err)
 	}
-	if err := st.PutLink(ctx, store.Link{Channel: agentdir.ChannelTelegram, Identity: "telegram:1", Pairing: "anna", Conv: "dm1"}, pairapi.PairingPerson); err != nil {
+	if err := st.PutLink(ctx, store.Link{Messenger: agentdir.MessengerTelegram, Identity: "telegram:1", Pairing: "anna", Conv: "dm1"}, pairapi.PairingPerson); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 }
@@ -191,7 +191,7 @@ func TestPairings(t *testing.T) {
 	want := controlapi.Pairing{
 		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated, Principal: auth.PairingPrincipal("anna"),
 		Created: anna.Created, Tokens: []controlapi.PairingToken{},
-		Accounts:     []controlapi.LinkedAccount{{Channel: agentdir.ChannelTelegram, Account: "telegram:1"}},
+		Accounts:     []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 		PendingCodes: anna.PendingCodes,
 	}
 	if diff := cmp.Diff(want, *anna); diff != "" {
@@ -247,7 +247,7 @@ func TestPreviewRevoke(t *testing.T) {
 
 	want := &controlapi.RemovalPreview{
 		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{},
-		Accounts: []controlapi.LinkedAccount{{Channel: agentdir.ChannelTelegram, Account: "telegram:1"}},
+		Accounts: []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("PreviewRevoke() wrong result (-want +got) diff = %s", diff)
@@ -303,15 +303,15 @@ func TestRunScheduleNeedsRunningServer(t *testing.T) {
 	}
 }
 
-// fakeChannel is a channel whose credentials check fails with err.
-type fakeChannel struct {
-	channel.Channel
+// fakeMessenger is a messenger whose credentials check fails with err.
+type fakeMessenger struct {
+	messenger.Messenger
 	kind string
 	err  error
 }
 
-func (c *fakeChannel) Name() string                   { return c.kind }
-func (c *fakeChannel) Validate(context.Context) error { return c.err }
+func (c *fakeMessenger) Name() string                   { return c.kind }
+func (c *fakeMessenger) Validate(context.Context) error { return c.err }
 
 func newAgentRuntime(t *testing.T, cfg *agentdir.Config) (*agentdir.Runtime, agentdir.Dir) {
 	t.Helper()
@@ -325,7 +325,7 @@ func newAgentRuntime(t *testing.T, cfg *agentdir.Config) (*agentdir.Runtime, age
 	return agentdir.NewRuntime(d, cfg.Clone(), nil), d
 }
 
-func TestAddChannel(t *testing.T) {
+func TestAddMessenger(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -333,11 +333,11 @@ func TestAddChannel(t *testing.T) {
 		checkErr    error
 		wantSaved   bool
 		wantErr     bool
-		wantStatus  *controlapi.ChannelStatus
+		wantStatus  *controlapi.MessengerStatus
 		wantStarted []string
 	}{
-		{name: "valid credentials", wantSaved: true, wantStatus: &controlapi.ChannelStatus{Name: agentdir.ChannelTelegram, Account: "@bot"}, wantStarted: []string{agentdir.ChannelTelegram}},
-		{name: "stopped agent", stopped: true, wantSaved: true, wantStatus: &controlapi.ChannelStatus{Name: agentdir.ChannelTelegram}},
+		{name: "valid credentials", wantSaved: true, wantStatus: &controlapi.MessengerStatus{Name: agentdir.MessengerTelegram, Account: "@bot"}, wantStarted: []string{agentdir.MessengerTelegram}},
+		{name: "stopped agent", stopped: true, wantSaved: true, wantStatus: &controlapi.MessengerStatus{Name: agentdir.MessengerTelegram}},
 		{name: "invalid credentials", checkErr: errors.New("unauthorized"), wantErr: true},
 	}
 	for _, tc := range tests {
@@ -346,26 +346,26 @@ func TestAddChannel(t *testing.T) {
 			rt, d := newAgentRuntime(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 			var started []string
 			hooks := Hooks{
-				NewChannel: func(_ *agentdir.Config, secrets agentdir.Secrets, kind string) (channel.Channel, error) {
+				NewMessenger: func(_ *agentdir.Config, secrets agentdir.Secrets, kind string) (messenger.Messenger, error) {
 					if secrets["TELEGRAM_TOKEN"] != "tok" {
 						return nil, errors.New("the new secret is missing")
 					}
-					return &fakeChannel{kind: kind, err: tc.checkErr}, nil
+					return &fakeMessenger{kind: kind, err: tc.checkErr}, nil
 				},
 			}
 			if !tc.stopped {
-				hooks.ChannelAdded = func(_ context.Context, ch channel.Channel) *controlapi.ChannelStatus {
+				hooks.MessengerAdded = func(_ context.Context, ch messenger.Messenger) *controlapi.MessengerStatus {
 					started = append(started, ch.Name())
-					return &controlapi.ChannelStatus{Name: ch.Name(), Account: "@bot"}
+					return &controlapi.MessengerStatus{Name: ch.Name(), Account: "@bot"}
 				}
 			}
 			s, _ := newServiceWith(t, rt, hooks)
-			req := controlapi.ChannelRequest{Kind: agentdir.ChannelTelegram, Token: "secret:TELEGRAM_TOKEN", Secrets: agentdir.Secrets{"TELEGRAM_TOKEN": "tok"}}
+			req := controlapi.MessengerRequest{Kind: agentdir.MessengerTelegram, Token: "secret:TELEGRAM_TOKEN", Secrets: agentdir.Secrets{"TELEGRAM_TOKEN": "tok"}}
 
-			got, err := s.AddChannel(context.Background(), req)
+			got, err := s.AddMessenger(context.Background(), req)
 
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("AddChannel() error = %v, want error %v", err, tc.wantErr)
+				t.Fatalf("AddMessenger() error = %v, want error %v", err, tc.wantErr)
 			}
 			saved, readErr := d.ReadConfig()
 			if readErr != nil {
@@ -375,24 +375,24 @@ func TestAddChannel(t *testing.T) {
 			if loadErr != nil {
 				t.Fatalf("LoadSecrets() error = %v", loadErr)
 			}
-			gotSaved := []bool{saved.HasChannel(agentdir.ChannelTelegram), rt.Config().HasChannel(agentdir.ChannelTelegram), secrets["TELEGRAM_TOKEN"] == "tok"}
+			gotSaved := []bool{saved.HasMessenger(agentdir.MessengerTelegram), rt.Config().HasMessenger(agentdir.MessengerTelegram), secrets["TELEGRAM_TOKEN"] == "tok"}
 			if diff := cmp.Diff([]bool{tc.wantSaved, tc.wantSaved, tc.wantSaved}, gotSaved); diff != "" {
-				t.Fatalf("AddChannel() saved the channel in config.yaml, the running config and the secrets (-want +got) diff = %s", diff)
+				t.Fatalf("AddMessenger() saved the messenger in config.yaml, the running config and the secrets (-want +got) diff = %s", diff)
 			}
 			if tc.wantErr {
 				return
 			}
 			if diff := cmp.Diff(tc.wantStatus, got); diff != "" {
-				t.Fatalf("AddChannel() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("AddMessenger() wrong result (-want +got) diff = %s", diff)
 			}
 			if diff := cmp.Diff(tc.wantStarted, started); diff != "" {
-				t.Fatalf("AddChannel() started wrong channels (-want +got) diff = %s", diff)
+				t.Fatalf("AddMessenger() started wrong messengers (-want +got) diff = %s", diff)
 			}
 		})
 	}
 }
 
-func TestDeleteChannel(t *testing.T) {
+func TestDeleteMessenger(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name        string
@@ -400,8 +400,8 @@ func TestDeleteChannel(t *testing.T) {
 		wantErr     func(error) bool
 		wantStopped []string
 	}{
-		{name: "configured", kind: agentdir.ChannelTelegram, wantStopped: []string{agentdir.ChannelTelegram}},
-		{name: "not configured", kind: agentdir.ChannelDiscord, wantErr: func(err error) bool {
+		{name: "configured", kind: agentdir.MessengerTelegram, wantStopped: []string{agentdir.MessengerTelegram}},
+		{name: "not configured", kind: agentdir.MessengerDiscord, wantErr: func(err error) bool {
 			var nf *agenterr.NotFoundError
 			return errors.As(err, &nf)
 		}},
@@ -414,33 +414,33 @@ func TestDeleteChannel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &agentdir.Config{Name: "coder", Harness: "opencode"}
-			if err := cfg.SetChannel(agentdir.ChannelTelegram, "secret:TELEGRAM_TOKEN", nil); err != nil {
-				t.Fatalf("SetChannel() error = %v", err)
+			if err := cfg.SetMessenger(agentdir.MessengerTelegram, "secret:TELEGRAM_TOKEN", nil); err != nil {
+				t.Fatalf("SetMessenger() error = %v", err)
 			}
 			rt, d := newAgentRuntime(t, cfg)
 			var stopped []string
-			s, _ := newServiceWith(t, rt, Hooks{ChannelRemoved: func(kind string) { stopped = append(stopped, kind) }})
+			s, _ := newServiceWith(t, rt, Hooks{MessengerRemoved: func(kind string) { stopped = append(stopped, kind) }})
 
-			err := s.DeleteChannel(context.Background(), tc.kind)
+			err := s.DeleteMessenger(context.Background(), tc.kind)
 
 			if tc.wantErr != nil {
 				if !tc.wantErr(err) {
-					t.Fatalf("DeleteChannel(%q) error = %v, want a refused request", tc.kind, err)
+					t.Fatalf("DeleteMessenger(%q) error = %v, want a refused request", tc.kind, err)
 				}
 				return
 			}
 			if err != nil {
-				t.Fatalf("DeleteChannel(%q) error = %v", tc.kind, err)
+				t.Fatalf("DeleteMessenger(%q) error = %v", tc.kind, err)
 			}
 			saved, err := d.ReadConfig()
 			if err != nil {
 				t.Fatalf("ReadConfig() error = %v", err)
 			}
-			if saved.HasChannel(tc.kind) || rt.Config().HasChannel(tc.kind) {
-				t.Fatalf("DeleteChannel(%q) kept the channel in the config", tc.kind)
+			if saved.HasMessenger(tc.kind) || rt.Config().HasMessenger(tc.kind) {
+				t.Fatalf("DeleteMessenger(%q) kept the messenger in the config", tc.kind)
 			}
 			if diff := cmp.Diff(tc.wantStopped, stopped); diff != "" {
-				t.Fatalf("DeleteChannel(%q) stopped wrong channels (-want +got) diff = %s", tc.kind, diff)
+				t.Fatalf("DeleteMessenger(%q) stopped wrong messengers (-want +got) diff = %s", tc.kind, diff)
 			}
 		})
 	}

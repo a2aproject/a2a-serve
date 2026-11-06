@@ -24,7 +24,7 @@ git finds a repository, or take --dir.
 | [`logs`](logs.md) | Print the agent's log |
 | [`restart`](restart.md) | Stop the agent and start it again in the same mode, detached or as a service |
 | [`start`](start.md) | Start the agent, or a local test server |
-| [`status`](status.md) | Show whether the agent runs, its URLs, channels and who may call it, or print one of its URLs |
+| [`status`](status.md) | Show whether the agent runs, its URLs, messengers and who may call it, or print one of its URLs |
 | [`stop`](stop.md) | Stop the agent |
 
 ## Configure the agent
@@ -32,8 +32,8 @@ git finds a repository, or take --dir.
 | Command | Description |
 |---|---|
 | [`backup`](backup.md) | Take, list and restore encrypted backup snapshots of the agent |
-| [`channel`](channel.md) | Manage the messengers the agent is reachable from |
 | [`config`](config.md) | Show and change the agent's settings |
+| [`messenger`](messenger.md) | Manage the messengers the agent is reachable from |
 | [`recipe`](recipe.md) | Create an agent from a recipe, a directory with a ready-made agent, or update it |
 | [`schedule`](schedule.md) | Run prompts on a schedule |
 

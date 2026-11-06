@@ -265,7 +265,7 @@ func TestCloseKeepsQuestionClosed(t *testing.T) {
 
 func TestOnQuestion(t *testing.T) {
 	t.Parallel()
-	owner := Chat{Channel: "telegram", Conv: "dm1"}
+	owner := Chat{Messenger: "telegram", Conv: "dm1"}
 	tests := []struct {
 		name       string
 		unattended bool

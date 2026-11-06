@@ -167,14 +167,14 @@ type secretRef struct{ what, value, fix string }
 
 func secretRefs(cfg *agentdir.Config) []secretRef {
 	refs := []secretRef{
-		{"telegram token", cfg.ChannelToken(agentdir.ChannelTelegram), "a2a-serve channel add telegram --token -"},
-		{"discord token", cfg.ChannelToken(agentdir.ChannelDiscord), "a2a-serve channel add discord --token -"},
+		{"telegram token", cfg.MessengerToken(agentdir.MessengerTelegram), "a2a-serve messenger add telegram --token -"},
+		{"discord token", cfg.MessengerToken(agentdir.MessengerDiscord), "a2a-serve messenger add discord --token -"},
 	}
-	if e := cfg.Channels.Email; e != nil {
+	if e := cfg.Messengers.Email; e != nil {
 		refs = append(refs,
-			secretRef{"email password", e.Password, "a2a-serve channel add email --email-password -"},
-			secretRef{"email OAuth client secret", e.OAuthClientSecret, "a2a-serve channel add email --email-oauth-client-secret -"},
-			secretRef{"email OAuth refresh token", e.OAuthRefreshToken, "a2a-serve channel add email --email-oauth-refresh-token -"},
+			secretRef{"email password", e.Password, "a2a-serve messenger add email --email-password -"},
+			secretRef{"email OAuth client secret", e.OAuthClientSecret, "a2a-serve messenger add email --email-oauth-client-secret -"},
+			secretRef{"email OAuth refresh token", e.OAuthRefreshToken, "a2a-serve messenger add email --email-oauth-refresh-token -"},
 		)
 	}
 	refs = append(refs, secretRef{"--google-client-secret", cfg.Auth.GoogleClientSecret, "a2a-serve config set --google-client-secret -"})
@@ -575,33 +575,33 @@ func networkChecks(d agentdir.Dir, cfg *agentdir.Config) []Result {
 	return results
 }
 
-// channelChecks checks the credentials of the channels with their services.
-func channelChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Config) []Result {
+// messengerChecks checks the credentials of the messengers with their services.
+func messengerChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Config) []Result {
 	secrets, err := d.LoadSecrets()
 	if err != nil {
 		return nil
 	}
 	var results []Result
-	for _, kind := range []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail} {
-		if !cfg.HasChannel(kind) {
+	for _, kind := range []string{agentdir.MessengerTelegram, agentdir.MessengerDiscord, agentdir.MessengerEmail} {
+		if !cfg.HasMessenger(kind) {
 			continue
 		}
-		what, fix := kind+" bot token", fmt.Sprintf("a2a-serve channel add %s --token -", kind)
-		if kind == agentdir.ChannelEmail {
-			what, fix = "email IMAP and SMTP login", "a2a-serve channel add email --email-username <user> --email-password -"
+		what, fix := kind+" bot token", fmt.Sprintf("a2a-serve messenger add %s --token -", kind)
+		if kind == agentdir.MessengerEmail {
+			what, fix = "email IMAP and SMTP login", "a2a-serve messenger add email --email-username <user> --email-password -"
 		}
 		r := Result{ID: kind}
-		if env.ValidateChannel == nil {
+		if env.ValidateMessenger == nil {
 			r.Status, r.Message = StatusSkip, what+" not checked"
 			results = append(results, r)
 			continue
 		}
-		if kind != agentdir.ChannelEmail {
-			if _, err := secrets.Resolve(cfg.ChannelToken(kind)); err != nil {
+		if kind != agentdir.MessengerEmail {
+			if _, err := secrets.Resolve(cfg.MessengerToken(kind)); err != nil {
 				continue
 			}
 		}
-		if err := env.ValidateChannel(ctx, cfg, secrets, kind); err != nil {
+		if err := env.ValidateMessenger(ctx, cfg, secrets, kind); err != nil {
 			r.Status, r.Message, r.Fix = StatusFail, kind+": "+err.Error(), fix
 		} else {
 			r.Status, r.Message = StatusOK, what+" valid"
@@ -609,7 +609,7 @@ func channelChecks(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.C
 		results = append(results, r)
 	}
 	for i := range results {
-		results[i].Group = GroupChannels
+		results[i].Group = GroupMessengers
 	}
 	return results
 }

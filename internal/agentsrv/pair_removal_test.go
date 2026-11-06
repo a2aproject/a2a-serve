@@ -37,7 +37,7 @@ import (
 )
 
 // streamSlow starts a task that runs until it is stopped, and returns once
-// it runs. The channel gets the task's last state when its stream ends.
+// it runs. The messenger gets the task's last state when its stream ends.
 func streamSlow(t *testing.T, c *a2aclient.Client) <-chan a2a.TaskState {
 	t.Helper()
 	working := make(chan struct{})

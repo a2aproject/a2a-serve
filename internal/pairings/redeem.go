@@ -26,9 +26,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -41,7 +41,7 @@ var ErrInvalidCode = errors.New("invalid or expired code")
 var ErrLocalCode = errors.New("this code links your chat account; send \"join <code>\" to the agent's bot")
 
 // ErrUnverifiedSender is returned for a chat message whose sender the
-// channel couldn't verify.
+// messenger couldn't verify.
 var ErrUnverifiedSender = errors.New("the sender of this message could not be verified")
 
 // RateLimitError is returned to a client that failed to redeem codes too
@@ -76,7 +76,7 @@ type Via struct {
 	Kind string
 	// Chat is the message with the code, whose sender's chat account the
 	// code links.
-	Chat *channel.Inbound
+	Chat *messenger.Inbound
 }
 
 // Redemption is what a code was exchanged for.
@@ -108,7 +108,7 @@ func (s *Service) Redeem(ctx context.Context, code string, via Via) (*Redemption
 		if !via.Chat.Authentic {
 			return nil, ErrUnverifiedSender
 		}
-		client = "chat:" + via.Chat.Channel + ":" + via.Chat.Identity
+		client = "chat:" + via.Chat.Messenger + ":" + via.Chat.Identity
 	} else {
 		kind = cmp.Or(via.Kind, pairapi.PairingPerson)
 		if kind == pairapi.PairingWebhook || !slices.Contains(pairapi.PairingKinds, kind) {
@@ -153,7 +153,7 @@ func (s *Service) grant(ctx context.Context, c store.Code, via Via, kind string,
 		if c.Kind == pairapi.PairingWebhook {
 			return store.Grant{}, store.ErrNotFound
 		}
-		l := store.Link{Channel: via.Chat.Channel, Identity: via.Chat.Identity}
+		l := store.Link{Messenger: via.Chat.Messenger, Identity: via.Chat.Identity}
 		if via.Chat.Direct {
 			l.Conv = string(via.Chat.Conv)
 		}

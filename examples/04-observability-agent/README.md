@@ -109,7 +109,7 @@ Make the agent reachable on your tailnet and from Telegram:
 
 ```bash
 a2a-serve config set --private tailscale --restart
-a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN
+a2a-serve messenger add telegram --token env:TELEGRAM_BOT_TOKEN
 ```
 
 Optionally, send a digest every weekday morning:

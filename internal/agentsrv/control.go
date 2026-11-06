@@ -30,10 +30,10 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -111,7 +111,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	if p := st.PublicProblem; p != nil && p.State == string(network.HealthRemoved) {
 		st.Public = ""
 	}
-	st.Channels = s.supervisor.Status()
+	st.Messengers = s.supervisor.Status()
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err
@@ -151,11 +151,11 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	return st, nil
 }
 
-// startChannel starts a channel that was added, and describes it with the
+// startMessenger starts a messenger that was added, and describes it with the
 // link for the owner if nobody is linked on it yet.
-func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controlapi.ChannelStatus {
+func (s *Server) startMessenger(ctx context.Context, ch messenger.Messenger) *controlapi.MessengerStatus {
 	s.supervisor.Add(ch)
-	return s.supervisor.ChannelStatus(ch, s.supervisor.OwnerLink(ctx, ch))
+	return s.supervisor.MessengerStatus(ch, s.supervisor.OwnerLink(ctx, ch))
 }
 
 // reloadConfig applies the live settings of config.yaml, and the new rules

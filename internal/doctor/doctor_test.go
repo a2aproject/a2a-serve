@@ -42,16 +42,16 @@ import (
 
 // fakeMachine is a machine on which every tool works and is configured.
 type fakeMachine struct {
-	home    string
-	env     map[string]string
-	paths   map[string]string
-	outputs map[string]string
-	fails   map[string]bool
-	self    string
-	status  *controlapi.Status
-	busy    map[int]bool
-	unit    string
-	channel error
+	home      string
+	env       map[string]string
+	paths     map[string]string
+	outputs   map[string]string
+	fails     map[string]bool
+	self      string
+	status    *controlapi.Status
+	busy      map[int]bool
+	unit      string
+	messenger error
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -124,8 +124,8 @@ func (m *fakeMachine) Env() Env {
 		},
 		PortFree:    func(port int) bool { return !m.busy[port] },
 		ServiceUnit: func(agentdir.Dir) (string, error) { return m.unit, nil },
-		ValidateChannel: func(context.Context, *agentdir.Config, agentdir.Secrets, string) error {
-			return m.channel
+		ValidateMessenger: func(context.Context, *agentdir.Config, agentdir.Secrets, string) error {
+			return m.messenger
 		},
 	}
 }
@@ -659,7 +659,7 @@ func TestAgentChecks(t *testing.T) {
 			cfg: agentdir.Config{
 				Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
 				Secrets: []string{"API_KEY", "OTHER_KEY"}, Mounts: []string{".", "/nonexistent-a2a:/docs"},
-				Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:TELEGRAM_TOKEN"}},
+				Messengers: agentdir.MessengersConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:TELEGRAM_TOKEN"}},
 			},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
@@ -859,18 +859,18 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}, {"tailscale", StatusOK}},
 		},
 		{
-			name:   "rejected channel credentials",
+			name:   "rejected messenger credentials",
 			online: true,
 			cfg: agentdir.Config{
 				Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
-				Channels: agentdir.ChannelsConfig{
+				Messengers: agentdir.MessengersConfig{
 					Telegram: &agentdir.TelegramConfig{Token: "secret:TELEGRAM_TOKEN"},
 					Email:    &agentdir.EmailConfig{Address: "a@x", IMAP: "imap:993", SMTP: "smtp:465", Password: "pw", TrustedAuthServ: "x"},
 				},
 			},
 			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
 				m.paths["opencode"] = "/usr/bin/opencode"
-				m.channel = errors.New("invalid Telegram bot token")
+				m.messenger = errors.New("invalid Telegram bot token")
 				if err := d.SaveSecrets(agentdir.Secrets{"TELEGRAM_TOKEN": "x"}); err != nil {
 					t.Fatalf("SaveSecrets() error = %v", err)
 				}
@@ -994,9 +994,9 @@ Agent coder (/src/app)
 func TestCheckSecretsFixes(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Backup: agentdir.BackupConfig{To: "/tmp/b", Key: "secret:BACKUP_KEY"}}
-	for _, kind := range []string{agentdir.ChannelTelegram, agentdir.ChannelDiscord} {
-		if err := cfg.SetChannel(kind, "secret:"+strings.ToUpper(kind)+"_TOKEN", nil); err != nil {
-			t.Fatalf("SetChannel(%s) error = %v", kind, err)
+	for _, kind := range []string{agentdir.MessengerTelegram, agentdir.MessengerDiscord} {
+		if err := cfg.SetMessenger(kind, "secret:"+strings.ToUpper(kind)+"_TOKEN", nil); err != nil {
+			t.Fatalf("SetMessenger(%s) error = %v", kind, err)
 		}
 	}
 	var got []string
@@ -1004,8 +1004,8 @@ func TestCheckSecretsFixes(t *testing.T) {
 		got = append(got, r.Message+" | "+r.Fix)
 	}
 	want := []string{
-		"secret TELEGRAM_TOKEN (telegram token) not stored | a2a-serve channel add telegram --token -",
-		"secret DISCORD_TOKEN (discord token) not stored | a2a-serve channel add discord --token -",
+		"secret TELEGRAM_TOKEN (telegram token) not stored | a2a-serve messenger add telegram --token -",
+		"secret DISCORD_TOKEN (discord token) not stored | a2a-serve messenger add discord --token -",
 		"secret BACKUP_KEY (--backup-key) not stored | a2a-serve config set --backup-key -",
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

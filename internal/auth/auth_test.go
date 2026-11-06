@@ -24,9 +24,9 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -342,13 +342,13 @@ func putGoogleToken(t *testing.T, s *store.Store, email, domain string) string {
 	return tok
 }
 
-func TestChainAuthenticateChannel(t *testing.T) {
+func TestChainAuthenticateMessenger(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
 	link := func(identity, name, role string) {
 		pair(t, s, name, role)
-		if err := s.PutLink(ctx, store.Link{Channel: "telegram", Identity: identity, Pairing: name}, "person"); err != nil {
+		if err := s.PutLink(ctx, store.Link{Messenger: "telegram", Identity: identity, Pairing: name}, "person"); err != nil {
 			t.Fatalf("PutLink() error = %v", err)
 		}
 	}
@@ -359,7 +359,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 	tests := []struct {
 		name        string
 		policy      Policy
-		in          channel.Inbound
+		in          messenger.Inbound
 		want        Principal
 		wantErr     error
 		wantRefused string
@@ -367,7 +367,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:   "owner link",
 			policy: testPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:1", Direct: true, Authentic: true},
+			in:     messenger.Inbound{Messenger: "telegram", Identity: "telegram:1", Direct: true, Authentic: true},
 			want: Principal{ID: OwnerID, Role: RoleOwner, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:1", Direct: true, Self: true,
 			}},
@@ -375,7 +375,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:   "linked pairing",
 			policy: testPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:2", Authentic: true},
+			in:     messenger.Inbound{Messenger: "telegram", Identity: "telegram:2", Authentic: true},
 			want: Principal{ID: "pair:anna", Role: RoleAuthenticated, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:2", Pairing: "anna", PairingRole: RoleAuthenticated,
 			}},
@@ -383,7 +383,7 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:   "linked owner pairing",
 			policy: testPolicy(true, nil),
-			in:     channel.Inbound{Channel: "telegram", Identity: "telegram:3", Authentic: true},
+			in:     messenger.Inbound{Messenger: "telegram", Identity: "telegram:3", Authentic: true},
 			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
 				Network: NetworkChat, Provider: "telegram", ChatAccount: "telegram:3", Pairing: "phone", PairingRole: RoleOwner,
 			}},
@@ -391,13 +391,13 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:        "unlinked account",
 			policy:      testPolicy(true, nil),
-			in:          channel.Inbound{Channel: "telegram", Identity: "telegram:4", Direct: true, Authentic: true},
+			in:          messenger.Inbound{Messenger: "telegram", Identity: "telegram:4", Direct: true, Authentic: true},
 			wantRefused: "telegram:4 on telegram",
 		},
 		{
 			name:   "allowed email sender that passed DMARC",
 			policy: testPolicy(true, []string{"*@example.com"}),
-			in:     channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
+			in:     messenger.Inbound{Messenger: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			want: Principal{ID: "email:anna@example.com", Role: RoleAuthenticated, Identity: Identity{
 				Network: NetworkChat, Provider: "email", ChatAccount: "anna@example.com", Direct: true,
 				Email: "anna@example.com", EmailSource: EmailFromMail, Domain: "example.com",
@@ -406,20 +406,20 @@ func TestChainAuthenticateChannel(t *testing.T) {
 		{
 			name:        "email sender not allowed",
 			policy:      testPolicy(true, []string{"bob@example.com"}),
-			in:          channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
+			in:          messenger.Inbound{Messenger: "email", Identity: "anna@example.com", Direct: true, Authentic: true},
 			wantRefused: "anna@example.com by email",
 		},
 		{
 			name:    "unverified sender",
 			policy:  testPolicy(true, []string{"anna@example.com"}),
-			in:      channel.Inbound{Channel: "email", Identity: "anna@example.com", Direct: true},
+			in:      messenger.Inbound{Messenger: "email", Identity: "anna@example.com", Direct: true},
 			wantErr: ErrNoCredential,
 		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			chain := &Chain{Store: s, Policy: func() Policy { return tc.policy }}
-			got, err := chain.Authenticate(ctx, Request{Channel: &tc.in})
+			got, err := chain.Authenticate(ctx, Request{Messenger: &tc.in})
 			if tc.wantRefused != "" {
 				var refused *RefusedError
 				if !errors.As(err, &refused) {
@@ -598,9 +598,9 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	chain := &Chain{Store: s, Policy: func() Policy { return testPolicy(false, nil) }}
-	in := &channel.Inbound{Channel: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
+	in := &messenger.Inbound{Messenger: "telegram", Identity: "telegram:42", Conv: "42", Direct: true, Authentic: true}
 	pair(t, s, "phone", RoleAuthenticated)
-	if err := s.PutLink(ctx, store.Link{Channel: in.Channel, Identity: in.Identity, Pairing: "phone"}, "person"); err != nil {
+	if err := s.PutLink(ctx, store.Link{Messenger: in.Messenger, Identity: in.Identity, Pairing: "phone"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 	tok := issueToken(t, s, "phone", "device")
@@ -609,7 +609,7 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	if err := s.UpdatePairing(ctx, store.Pairing{Name: "phone", Kind: "person", Role: RoleOwner}); err != nil {
 		t.Fatalf("UpdatePairing() error = %v", err)
 	}
-	for _, r := range []Request{{Channel: in}, byToken} {
+	for _, r := range []Request{{Messenger: in}, byToken} {
 		got, err := chain.Authenticate(ctx, r)
 		if err != nil || got.Role != RoleOwner {
 			t.Fatalf("Authenticate() after the role change = %+v, %v, want owner", got, err)
@@ -620,7 +620,7 @@ func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 	var refused *RefusedError
-	if _, err := chain.Authenticate(ctx, Request{Channel: in}); !errors.As(err, &refused) {
+	if _, err := chain.Authenticate(ctx, Request{Messenger: in}); !errors.As(err, &refused) {
 		t.Fatalf("Authenticate() of a chat link after DeletePairing() error = %v, want a refusal", err)
 	}
 	if _, err := chain.Authenticate(ctx, byToken); !errors.Is(err, ErrNoCredential) {

@@ -37,10 +37,10 @@ func TestRemoveCommandsJSON(t *testing.T) {
 		want    map[string]any
 	}{
 		{
-			name:    "channel rm",
-			args:    []string{"channel", "rm", "telegram"},
+			name:    "messenger rm",
+			args:    []string{"messenger", "rm", "telegram"},
 			inAgent: true,
-			want:    map[string]any{"removed": true, "kind": "channel", "name": "telegram"},
+			want:    map[string]any{"removed": true, "kind": "messenger", "name": "telegram"},
 		},
 		{
 			name: "pair rm of a joined agent",
@@ -58,7 +58,7 @@ func TestRemoveCommandsJSON(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &agentdir.Config{Name: "coder", Harness: "opencode"}
-			if err := cfg.SetChannel("telegram", "secret:TELEGRAM_TOKEN", nil); err != nil {
+			if err := cfg.SetMessenger("telegram", "secret:TELEGRAM_TOKEN", nil); err != nil {
 				t.Fatal(err)
 			}
 			d := newTestAgent(t, cfg)
@@ -90,7 +90,7 @@ func TestRemoveCommandsJSON(t *testing.T) {
 func TestRemoveCommandsHaveDeleteAlias(t *testing.T) {
 	t.Parallel()
 	root := newRootCmd(&globalConfig{Printer: output.NewPrinter(&strings.Builder{}, output.ModeText)})
-	for _, group := range []string{"channel", "contact", "pair", "schedule"} {
+	for _, group := range []string{"messenger", "contact", "pair", "schedule"} {
 		cmd, _, err := root.Find([]string{group, "delete"})
 		if err != nil || cmd.Name() != "rm" {
 			t.Fatalf("a2a-serve %s delete = %v, %v, want the rm command", group, cmd, err)

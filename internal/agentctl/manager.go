@@ -29,7 +29,7 @@ import (
 )
 
 // Manager changes what an agent keeps besides its settings: pairings,
-// contacts, schedules and channels. A running agent applies the changes at
+// contacts, schedules and messengers. A running agent applies the changes at
 // once, and a stopped one when it starts.
 type Manager interface {
 	// Running reports whether the changes go to the running server.
@@ -62,10 +62,10 @@ type Manager interface {
 	AddSchedule(ctx context.Context, req schedule.Request) (*controlapi.ScheduleInfo, error)
 	// DeleteSchedule removes a schedule.
 	DeleteSchedule(ctx context.Context, name string) error
-	// AddChannel checks the channel's credentials and saves it.
-	AddChannel(ctx context.Context, req controlapi.ChannelRequest) (*controlapi.ChannelStatus, error)
-	// DeleteChannel removes a channel.
-	DeleteChannel(ctx context.Context, kind string) error
+	// AddMessenger checks the messenger's credentials and saves it.
+	AddMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error)
+	// DeleteMessenger removes a messenger.
+	DeleteMessenger(ctx context.Context, kind string) error
 }
 
 // Open returns the Manager of the agent in d. While the agent runs, it

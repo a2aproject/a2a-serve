@@ -164,7 +164,7 @@ func TestSetWhileStarting(t *testing.T) {
 	}
 }
 
-func TestOfflineDeleteChannel(t *testing.T) {
+func TestOfflineDeleteMessenger(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name    string
@@ -172,14 +172,14 @@ func TestOfflineDeleteChannel(t *testing.T) {
 		wantErr error
 	}{
 		{name: "configured", kind: "telegram"},
-		{name: "not configured", kind: "discord", wantErr: &agenterr.NotFoundError{Kind: "channel", Name: "discord"}},
-		{name: "unknown kind", kind: "fax", wantErr: agenterr.Invalidf(`unknown channel "fax": want telegram, discord or email`)},
+		{name: "not configured", kind: "discord", wantErr: &agenterr.NotFoundError{Kind: "messenger", Name: "discord"}},
+		{name: "unknown kind", kind: "fax", wantErr: agenterr.Invalidf(`unknown messenger "fax": want telegram, discord or email`)},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &agentdir.Config{Name: "coder", Harness: "opencode"}
-			if err := cfg.SetChannel("telegram", "secret:TELEGRAM_TOKEN", nil); err != nil {
+			if err := cfg.SetMessenger("telegram", "secret:TELEGRAM_TOKEN", nil); err != nil {
 				t.Fatal(err)
 			}
 			d := newAgent(t, cfg, nil)
@@ -193,13 +193,13 @@ func TestOfflineDeleteChannel(t *testing.T) {
 				}
 			})
 
-			err = m.DeleteChannel(t.Context(), tc.kind)
+			err = m.DeleteMessenger(t.Context(), tc.kind)
 
 			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return fmt.Sprintf("%T %v", a, a) == fmt.Sprintf("%T %v", b, b) })); diff != "" {
-				t.Fatalf("DeleteChannel() wrong error (-want +got) diff = %s", diff)
+				t.Fatalf("DeleteMessenger() wrong error (-want +got) diff = %s", diff)
 			}
-			if got := loadConfig(t, d).HasChannel("telegram"); got != (tc.kind != "telegram") {
-				t.Fatalf("config.yaml has telegram = %v after DeleteChannel(%s)", got, tc.kind)
+			if got := loadConfig(t, d).HasMessenger("telegram"); got != (tc.kind != "telegram") {
+				t.Fatalf("config.yaml has telegram = %v after DeleteMessenger(%s)", got, tc.kind)
 			}
 		})
 	}

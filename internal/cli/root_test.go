@@ -72,7 +72,7 @@ func TestUsageHints(t *testing.T) {
 		{name: "unknown command", args: []string{"bogus"}, want: clierr.UsageHint},
 		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve pair list` to see the pairings"},
 		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve contact list` to see the contacts"},
-		{name: "unknown channel", args: []string{"channel", "rm", "telegram", "--dir", "{dir}"}, want: "run `a2a-serve channel list` to see the channels"},
+		{name: "unknown messenger", args: []string{"messenger", "rm", "telegram", "--dir", "{dir}"}, want: "run `a2a-serve messenger list` to see the messengers"},
 		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", "{dir}"}, want: "run `a2a-serve config unset --help` for its flags"},
 		{name: "invalid flag value", args: []string{"config", "set", "--deny-tools", "exec", "--dir", "{dir}"}, want: "run `a2a-serve config set --help` for its flags"},
 		{
