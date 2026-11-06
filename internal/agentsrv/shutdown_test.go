@@ -71,8 +71,14 @@ func TestServerStopsWhenStateDirIsDeleted(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 
-	if err := os.RemoveAll(ts.dir.Path()); err != nil {
-		t.Fatalf("os.RemoveAll() error = %v", err)
+	// The server writes to its state directory until it notices, so a
+	// removal can find a file it didn't list.
+	deadline := time.Now().Add(10 * time.Second)
+	for err := os.RemoveAll(ts.dir.Path()); err != nil; err = os.RemoveAll(ts.dir.Path()) {
+		if time.Now().After(deadline) {
+			t.Fatalf("os.RemoveAll() error = %v", err)
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 
 	select {

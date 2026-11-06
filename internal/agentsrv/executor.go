@@ -204,6 +204,7 @@ func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
 	return checkedProcess{
 		Process: a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr},
 		check:   h.prepared.Check,
+		onHost:  h.prepared.OnHost,
 	}
 }
 
@@ -212,6 +213,9 @@ func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
 type checkedProcess struct {
 	a2aacp.Process
 	check func() error
+	// onHost marks each process, so that the processes it starts are killed
+	// once it stops.
+	onHost bool
 }
 
 // Start implements [a2aacp.Agent].
@@ -219,7 +223,17 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 	if err := p.check(); err != nil {
 		return nil, err
 	}
-	return p.Process.Start(ctx, key)
+	if !p.onHost {
+		return p.Process.Start(ctx, key)
+	}
+	mark := harness.NewProcessMark()
+	proc := p.Process
+	proc.Env = append(slices.Clone(proc.Env), mark.Env())
+	rwc, err := proc.Start(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	return mark.Watch(rwc), nil
 }
 
 // prepareHarness prepares the harness of the agent process of an agent

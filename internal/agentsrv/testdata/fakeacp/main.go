@@ -26,6 +26,8 @@
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
 //	crash            exits mid-turn
+//	orphan <file>    starts a process in a session of its own, writes its
+//	                 PID to file, and exits mid-turn
 //	mcp              replies with the MCP servers of session/new
 //	pid              replies with the host name and process ID
 //	model            replies with the model of the session
@@ -54,9 +56,11 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -581,6 +585,20 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")
+		os.Exit(3)
+	case "orphan":
+		child := exec.Command("sleep", "60")
+		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+		if err := child.Start(); err != nil {
+			a.chunk(sid, "orphan error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		if err := os.WriteFile(arg, []byte(strconv.Itoa(child.Process.Pid)), 0o600); err != nil {
+			a.chunk(sid, "orphan error: "+err.Error())
+			end("end_turn")
+			return
+		}
 		os.Exit(3)
 	case "call", "acall":
 		agentName, msg, _ := strings.Cut(arg, " ")

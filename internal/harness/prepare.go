@@ -113,6 +113,9 @@ type Prepared struct {
 	Check func() error
 	// Warnings are problems of the sandbox that don't stop the harness.
 	Warnings []string
+	// OnHost is set when the harness runs on the host, where the processes
+	// it starts outlive it unless they are killed; see [ProcessMark].
+	OnHost bool
 }
 
 // Prepare bootstraps the harness home and returns the command which runs
@@ -339,7 +342,7 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return nil }}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return nil }, OnHost: true}, nil
 }
 
 // TCPBridge reports whether a harness in sandbox must reach the agent
