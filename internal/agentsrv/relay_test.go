@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -45,6 +46,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -197,7 +199,79 @@ func TestRelaySignInAdmitsEveryoneOnTheRelay(t *testing.T) {
 	wantResult(t, allowed, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	denied := send(t, annaClient, userText("call closed-reviewer hello", "", ""))
-	wantResult(t, denied, a2a.TaskStateCompleted, "this agent doesn't accept anna@example.com through another agent on the relay")
+	wantResult(t, denied, a2a.TaskStateCompleted, "this agent doesn't accept anna, an agent of anna@example.com on the relay")
+	for _, step := range []string{"`a2a-serve pair invite anna`", "`a2a-serve contact add closed-reviewer --url http://agentmesh.local/mesh/peer-closed-reviewer/a2a/closed-reviewer --code <code>`"} {
+		if got := a2atext.Result(denied); !strings.Contains(got, step) {
+			t.Fatalf("task result = %q, want it to contain %q", got, step)
+		}
+	}
+	if got := a2atext.Result(denied); strings.Contains(got, "pair join") {
+		t.Fatalf("task result = %q, want no pair join step for an agent", got)
+	}
+}
+
+func TestRelayPeersDropStoppedAgent(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fabric := newTestRelayFabric(t, "Ben@example.com")
+	relayed := func(c *agentdir.Config) { c.Network.Private = fabric.url() }
+	reviewer := startServer(t, serverOpts{name: "reviewer", newRelay: fabric.newRelay, configure: relayed})
+	coder := startServer(t, serverOpts{name: "coder", newRelay: fabric.newRelay, configure: relayed})
+	coderCtl := controlapi.NewClient(coder.dir)
+	peers, err := coderCtl.Peers(ctx)
+	if err != nil {
+		t.Fatalf("coderCtl.Peers() error = %v, want nil", err)
+	}
+	if len(peers) != 1 || peers[0].Name != "reviewer" {
+		t.Fatalf("coderCtl.Peers() = %v, want reviewer", peers)
+	}
+
+	reviewer.stop()
+
+	waitFor(t, "peers to drop the stopped reviewer", func() bool {
+		peers, err := coderCtl.Peers(ctx)
+		if err != nil {
+			t.Fatalf("coderCtl.Peers() error = %v, want nil", err)
+		}
+		return len(peers) == 0
+	})
+}
+
+// joinFailingRelay is a relay that refuses the agent's invite.
+type joinFailingRelay struct {
+	network.Provider
+	err error
+}
+
+func (r joinFailingRelay) Name() string               { return network.ProviderRelay }
+func (r joinFailingRelay) Join(context.Context) error { return r.err }
+func (r joinFailingRelay) Close() error               { return nil }
+
+func (r joinFailingRelay) ListenPrivate(context.Context) (net.Listener, *url.URL, error) {
+	return nil, nil, r.err
+}
+
+func TestRelayRefusedInviteFailsBeforeAgentStarts(t *testing.T) {
+	t.Parallel()
+	dir, err := agentdir.Open(shortTempDir(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: freePort(t)}
+	if err := dir.SaveConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	refused := errors.New("joining the relay: the invite was already used")
+	out := &lockedBuffer{}
+
+	err = Run(context.Background(), Options{Dir: dir, Config: cfg, Secrets: agentdir.Secrets{}, Private: joinFailingRelay{err: refused}, Out: out, HarnessLog: io.Discard, Timings: testTimings})
+
+	if !errors.Is(err, refused) {
+		t.Fatalf("Run() error = %v, want %v", err, refused)
+	}
+	if strings.Contains(out.String(), "is running") {
+		t.Fatalf("Run() output = %q, want the agent not started", out.String())
+	}
 }
 
 func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {

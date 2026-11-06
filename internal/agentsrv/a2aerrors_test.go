@@ -106,7 +106,7 @@ func TestA2AErrorBodies(t *testing.T) {
 			body:      listTasksRPC,
 			wantRPC:   a2aErrorBody{Status: http.StatusUnauthorized, Code: -31401, Reason: "UNAUTHENTICATED"},
 			wantREST:  a2aErrorBody{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Reason: "UNAUTHENTICATED"},
-			wantInMsg: "the token is no longer valid",
+			wantInMsg: "this agent doesn't recognize the token, which may be mistyped, revoked or replaced; ask the agent's owner for a pairing code",
 		},
 		{
 			name:      "body too large",
@@ -228,7 +228,7 @@ func TestClientSeesUnauthorizedHint(t *testing.T) {
 
 			err = tc.call(c)
 
-			if !errors.Is(err, a2a.ErrUnauthenticated) || !strings.Contains(err.Error(), "the token is no longer valid") {
+			if !errors.Is(err, a2a.ErrUnauthenticated) || !strings.Contains(err.Error(), "this agent doesn't recognize the token") {
 				t.Fatalf("client call error = %v, want %v with the server's hint", err, a2a.ErrUnauthenticated)
 			}
 		})

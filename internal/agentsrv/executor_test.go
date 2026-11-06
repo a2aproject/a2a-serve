@@ -491,6 +491,25 @@ func TestMessageToConversationWaitingForApprovalIsRefused(t *testing.T) {
 	wantResult(t, send(t, c, userText("hello", "", asked.ContextID)), a2a.TaskStateCompleted, "Hello from fakeacp.")
 }
 
+func TestUserMessageToConversationWaitingForOwnerApprovalIsRefused(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	owner := ts.client(ts.pair("me", auth.RoleOwner))
+	started := send(t, anna, userText("hello", "", ""))
+	if asked := send(t, owner, userText("ask", "", started.ContextID)); asked.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("owner's task state = %s, want %s", asked.Status.State, a2a.TaskStateInputRequired)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := anna.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", started.ContextID)})
+
+	if err == nil || !strings.Contains(err.Error(), "waits for the agent's owner") || strings.Contains(err.Error(), "--task-id") {
+		t.Fatalf("SendMessage() into a conversation waiting for the owner error = %v, want a refusal that says it waits for the owner", err)
+	}
+}
+
 func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

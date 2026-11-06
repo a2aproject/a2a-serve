@@ -877,7 +877,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		}
 	}
 	if msg.Message.TaskID == "" {
-		if err := i.checkWaiting(ctx, msg.Message.ContextID); err != nil {
+		if err := i.checkWaiting(ctx, p, msg.Message.ContextID); err != nil {
 			return ctx, nil, err
 		}
 		if err := i.checkUserAgents(ctx, msg.Message.ContextID); err != nil {
@@ -955,7 +955,7 @@ func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Princi
 // for an answer to a question of the agent, since the new task would wait
 // behind it without a word. Messages from chats and schedules still wait.
 // Questions of other agents don't hold the conversation.
-func (i *callerInterceptor) checkWaiting(ctx context.Context, contextID string) error {
+func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, contextID string) error {
 	if contextID == "" || auth.IsInProcess(ctx) {
 		return nil
 	}
@@ -970,6 +970,14 @@ func (i *callerInterceptor) checkWaiting(ctx context.Context, contextID string) 
 		q := approvals.FromStatus(t.Status)
 		if q == nil || asksCallerQuestion(t) {
 			continue
+		}
+		err := i.approvals.CheckAnswer(ctx, p, t.ID)
+		if errors.Is(err, a2a.ErrTaskNotFound) || errors.Is(err, a2a.ErrUnauthorized) {
+			return fmt.Errorf("%w: conversation %s waits for the agent's owner to answer %q; send the message again after they answer, or leave out the context ID to start a new conversation",
+				a2a.ErrInvalidRequest, contextID, q.Title)
+		}
+		if err != nil {
+			return err
 		}
 		ids := make([]string, len(q.Options))
 		for i, o := range q.Options {
