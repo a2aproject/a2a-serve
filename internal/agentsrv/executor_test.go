@@ -235,12 +235,12 @@ func TestToolDeciderReadsCurrentConfig(t *testing.T) {
 
 func TestToolDeciderAnswers(t *testing.T) {
 	t.Parallel()
-	approvals := agentdir.ApprovalsConfig{
+	rules := agentdir.ApprovalsConfig{
 		Allow: []string{"tool:grafana.*", "command:kubectl get *"},
 		Deny:  []string{"execute", "other"},
 	}
 	decider := &toolDecider{
-		config:  func() *agentdir.Config { return &agentdir.Config{Approvals: approvals} },
+		config:  func() *agentdir.Config { return &agentdir.Config{Approvals: rules} },
 		servers: func() []string { return []string{"grafana"} },
 		notes:   newToolNotes(),
 	}

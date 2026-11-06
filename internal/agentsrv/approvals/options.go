@@ -17,6 +17,7 @@ package approvals
 import (
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -171,10 +172,8 @@ func (q *Question) AgentOption(id string) (string, bool) {
 
 func firstOf(offered []string, ids ...string) string {
 	for _, id := range ids {
-		for _, o := range offered {
-			if o == id {
-				return id
-			}
+		if slices.Contains(offered, id) {
+			return id
 		}
 	}
 	return ""
