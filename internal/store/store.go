@@ -272,6 +272,12 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV15)
 		return err
 	},
+	// 16: ACP sessions record the workspace they were created in, so that a
+	// session isn't continued after the workspace moved.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE sessions ADD COLUMN workspace TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
 }
 
 const schemaV1 = `

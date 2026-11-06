@@ -166,6 +166,9 @@ type Server struct {
 	budget *anonymousBudget
 	// notes are the notes on tool calls for the results of tasks.
 	notes *toolNotes
+	// sessions are the ACP sessions of the conversations in the current
+	// workspace. The agent keys of conversations come from all sessions.
+	sessions store.SessionStore
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
 	unattended *messenger.ContextSet
@@ -390,12 +393,13 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.procs = newAgentProcesses()
 	s.notes = newToolNotes()
+	s.sessions = s.store.Sessions().In(s.workspace)
 	s.claims = newCallClaims(CallClaimsDeps{
 		Store:    s.store,
 		Bridge:   s.bridge,
 		Chain:    s.chain,
 		AgentKey: s.keys.of,
-		Sessions: s.store.Sessions(),
+		Sessions: s.sessions,
 	})
 	s.refreshInstructions(ctx)
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
@@ -464,7 +468,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes},
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),

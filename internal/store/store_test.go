@@ -992,6 +992,48 @@ func TestSessions(t *testing.T) {
 	}
 }
 
+func TestSessionsInWorkspace(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		putIn     string
+		getIn     string
+		wantOK    bool
+		wantMoved bool
+	}{
+		{name: "same workspace", putIn: "/a", getIn: "/a", wantOK: true},
+		{name: "moved workspace", putIn: "/a", getIn: "/b", wantMoved: true},
+		{name: "recorded without a workspace", getIn: "/b", wantOK: true},
+		{name: "read without a workspace", putIn: "/a", wantOK: true},
+	}
+	in := func(s *Store, dir string) SessionStore {
+		if dir == "" {
+			return s.Sessions()
+		}
+		return s.Sessions().In(func() (string, error) { return dir, nil })
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			if err := in(s, tc.putIn).Put(ctx, "c", a2aacp.Session{ID: "s1"}); err != nil {
+				t.Fatalf("Put() error = %v", err)
+			}
+			ss := in(s, tc.getIn)
+
+			_, ok, err := ss.Get(ctx, "c")
+			if err != nil || ok != tc.wantOK {
+				t.Fatalf("Get() = %v, %v, want %v, nil", ok, err, tc.wantOK)
+			}
+			moved, err := ss.Moved(ctx, "c")
+			if err != nil || moved != tc.wantMoved {
+				t.Fatalf("Moved() = %v, %v, want %v, nil", moved, err, tc.wantMoved)
+			}
+		})
+	}
+}
+
 func TestRemoteQuestionStoredOnce(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

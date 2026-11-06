@@ -371,7 +371,7 @@ func (s *Server) localCLI() string {
 func (s *Server) acpConfig() *a2aacp.Config {
 	return &a2aacp.Config{
 		AutoAnswer:   liveToolRules{config: s.rt.Config, notes: s.notes},
-		SessionStore: s.store.Sessions(),
+		SessionStore: s.sessions,
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
 		Turn:         s.stalls.turn(s.claims.turn),
@@ -497,6 +497,8 @@ type observedExecutor struct {
 	store *store.Store
 	// notes are put in the results of tasks.
 	notes *toolNotes
+	// moved continues conversations whose session is in another workspace.
+	moved *movedConversations
 }
 
 var (
@@ -540,20 +542,25 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 // turn runs a turn of the agent, with the line of the agents it may call
-// added to the prompt and kept out of the task store.
+// and the earlier messages of a moved conversation added to the prompt and
+// kept out of the task store.
 func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	ctx, withLine := e.claims.withAgentsLine(ctx, execCtx)
 	if execCtx.Message != nil {
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
-	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.inner.Execute(ctx, withLine))))
-	if withLine == execCtx {
+	prompted, moved := e.moved.withEarlier(ctx, withLine)
+	events := withAnswerOrder(execCtx, coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.inner.Execute(ctx, prompted))))
+	if prompted == execCtx && !moved {
 		return events
 	}
 	return func(yield func(a2a.Event, error) bool) {
+		if moved {
+			e.notes.add(execCtx.TaskID, movedNote)
+		}
 		for ev, err := range events {
 			if t, ok := ev.(*a2a.Task); ok {
-				ev = withOriginalMessage(t, withLine.Message, execCtx.Message)
+				ev = withOriginalMessage(t, prompted.Message, execCtx.Message)
 			}
 			if !yield(ev, err) {
 				return

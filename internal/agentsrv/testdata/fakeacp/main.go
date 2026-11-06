@@ -80,6 +80,10 @@ const markdownSample = "# Release v1.2.3\n\n" +
 	"```go\nfmt.Println(\"a_b*c\")\n```\n\n" +
 	"> quoted text\n\nDone."
 
+// earlierPrefix starts the prompt part in which the server gives a new
+// session the earlier messages of its conversation.
+const earlierPrefix = "[a2a earlier conversation]"
+
 // agentsLinePrefix starts the line the agent server adds to the first
 // prompt of a session.
 const agentsLinePrefix = "[a2a agents]"
@@ -105,6 +109,9 @@ type session struct {
 	// agent keeps in its history.
 	AgentsURL string `json:"agentsURL"`
 	Model     string `json:"model"`
+	// Dir is the working directory the session was created in. Like
+	// opencode, the agent loads the session elsewhere but fails its prompts.
+	Dir string `json:"dir"`
 }
 
 func (s *session) configOptions() []map[string]any {
@@ -300,7 +307,7 @@ func (a *agent) handle(m message) {
 		}
 		a.dir = p.Cwd
 		id := fmt.Sprintf("s%d", time.Now().UnixNano())
-		s := &session{MCPServers: p.MCPServers}
+		s := &session{MCPServers: p.MCPServers, Dir: p.Cwd}
 		if err := a.save(id, s); err != nil {
 			a.fail(m.ID, err.Error())
 			return
@@ -387,9 +394,13 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		return
 	}
 	var texts []string
-	agentsURL := ""
+	agentsURL, earlier := "", ""
 	for _, b := range p.Prompt {
 		if b.Type != "text" {
+			continue
+		}
+		if strings.HasPrefix(b.Text, earlierPrefix) {
+			earlier = b.Text
 			continue
 		}
 		if strings.HasPrefix(b.Text, agentsLinePrefix) {
@@ -403,6 +414,10 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 	s, err := a.load(sid)
 	if err != nil {
 		a.fail(m.ID, "unknown session")
+		return
+	}
+	if s.Dir != "" && s.Dir != a.dir {
+		a.fail(m.ID, "Internal error: service failure")
 		return
 	}
 	lined := agentsURL != ""
@@ -535,6 +550,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			return
 		}
 		a.chunk(sid, "OK.")
+		end("end_turn")
+	case "earlier":
+		a.chunk(sid, "Earlier: "+earlier)
 		end("end_turn")
 	case "recall":
 		a.chunk(sid, "You said: "+s.Memory)

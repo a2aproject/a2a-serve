@@ -56,14 +56,14 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 // inside the harness.
 func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
 	cfg := s.rt.Config()
-	ws, err := s.dir.WorkspaceMount(cfg)
+	ws, err := s.workspace()
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
-	found, err := project.LoadMCP(ws.Src)
+	found, err := project.LoadMCP(ws)
 	if err != nil {
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
-		return a2aacp.SessionParams{Cwd: ws.Src}, nil
+		return a2aacp.SessionParams{Cwd: ws}, nil
 	}
 	vars := project.Vars(cfg, s.rt.Secrets())
 	var servers []json.RawMessage
@@ -82,5 +82,14 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 		}
 		servers = append(servers, raw)
 	}
-	return a2aacp.SessionParams{Cwd: ws.Src, MCPServers: servers}, nil
+	return a2aacp.SessionParams{Cwd: ws, MCPServers: servers}, nil
+}
+
+// workspace returns the working directory of the agent's sessions.
+func (s *Server) workspace() (string, error) {
+	ws, err := s.dir.WorkspaceMount(s.rt.Config())
+	if err != nil {
+		return "", err
+	}
+	return ws.Src, nil
 }

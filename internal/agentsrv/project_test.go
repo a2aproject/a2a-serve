@@ -19,6 +19,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -144,5 +145,36 @@ func TestDisabledMCPServersApplyLive(t *testing.T) {
 	}
 	if diff := cmp.Diff(wantServers, st.MCPServers); diff != "" {
 		t.Fatalf("Status() wrong MCP servers (-want +got) diff = %s", diff)
+	}
+}
+
+func TestConversationContinuesAfterWorkspaceMoved(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	first := send(t, ts.client(token), userText("remember red", "", ""))
+	wantResult(t, first, a2a.TaskStateCompleted, "OK.")
+	dir := ts.dir.Root
+	ts.stop()
+	moved := shortTempDir(t)
+	copyAgent(t, dir, moved)
+
+	ts = startServer(t, serverOpts{dir: moved})
+	c := ts.client(token)
+	task := send(t, c, userText("earlier", "", first.ContextID))
+
+	wantResult(t, task, a2a.TaskStateCompleted, "remember red")
+	if got := a2atext.Message(task.Status.Message); !strings.Contains(got, "new session") {
+		t.Fatalf("task status message = %q, want a note about the new session", got)
+	}
+	for _, m := range task.History {
+		if text := a2atext.Message(m); strings.Contains(text, earlierPrefix) {
+			t.Fatalf("task history has %q, want the earlier messages kept out of it", text)
+		}
+	}
+	next := send(t, c, userText("earlier", "", first.ContextID))
+	wantResult(t, next, a2a.TaskStateCompleted, "Earlier: ")
+	if got := a2atext.Result(next); got != "Earlier: " {
+		t.Fatalf("task result in the new session = %q, want no earlier conversation", got)
 	}
 }
