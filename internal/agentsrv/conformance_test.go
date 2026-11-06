@@ -277,16 +277,19 @@ func TestConformanceStalledTurn(t *testing.T) {
 		wantState a2a.TaskState
 		wantText  string
 	}{
-		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 300ms"},
-		{name: "silent tool call", prompt: "build 1s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
-		{name: "streaming agent", prompt: "slow 1s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
+		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 1s"},
+		{name: "silent tool call", prompt: "build 2s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
+		{name: "streaming agent", prompt: "slow 2s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = 300 * time.Millisecond }})
+			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = time.Second }})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
-			task := send(t, c, userText(tc.prompt, "", ""))
+			// A first turn starts the agent process, which the guard would count as silence.
+			warm := send(t, c, userText("hello", "", ""))
+			wantResult(t, warm, a2a.TaskStateCompleted, "Hello from fakeacp.")
+			task := send(t, c, userText(tc.prompt, "", warm.ContextID))
 			if task.Status.State != tc.wantState {
 				t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), tc.wantState)
 			}
