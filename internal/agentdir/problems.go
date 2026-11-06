@@ -34,7 +34,7 @@ type FieldError struct {
 }
 
 func (e *FieldError) Error() string {
-	if f, ok := lookupField(e.Flag); ok && e.inFile && f.path != "" {
+	if f, ok := lookupField(e.Flag); ok && (e.inFile || f.place == placeFile) && f.path != "" {
 		return fmt.Sprintf("%s: %s has %q: %s", configFile, f.path, e.Entry, e.Reason)
 	}
 	return fmt.Sprintf("invalid --%s %q: %s", e.Flag, e.Entry, e.Reason)

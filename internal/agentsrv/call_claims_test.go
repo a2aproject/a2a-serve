@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -429,12 +430,14 @@ func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	st := openTestStore(t)
-	if err := st.PutContact(ctx, store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaDirect}); err != nil {
+	if err := st.PutContact(ctx, store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaDirect, Card: cardinfo.Summary{Description: "Writes Go."}}); err != nil {
 		t.Fatalf("store.PutContact() error = %v", err)
 	}
 	cl := newCallClaims(CallClaimsDeps{
 		Store: st, Bridge: harnessBridge{socket: "/tmp/h.sock"}, Sessions: st.Sessions(),
-		Peers: func(context.Context) []string { return []string{"Coder", "ben"} },
+		Peers: func(context.Context) []AgentRef {
+			return []AgentRef{{Name: "Coder"}, {Name: "ben", Card: cardinfo.Summary{Description: "Reviews.", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
+		},
 	})
 	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello"))}
 
@@ -444,7 +447,8 @@ func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallClaims.agentsURL() error = %v", err)
 	}
-	want := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s, coder, ben; call one with a2a send -a %s/<name>)", agentsLinePrefix, u, pairings.SchedulesAgent, u)
+	want := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s (built-in): schedule prompts for later in this conversation, such as reminders; send it help"+
+		` | coder (contact), says of itself: "Writes Go." | ben (private network), says of itself: "Reviews." Skills: review (Code review). %s`, agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote)
 	if got.Message.Parts[0].Text() != want {
 		t.Fatalf("CallClaims.withAgentsLine() line = %q, want %q", got.Message.Parts[0].Text(), want)
 	}
@@ -544,7 +548,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallClaims.agentsURL() error = %v", err)
 			}
-			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s, coder; call one with a2a send -a %s/<name>)", agentsLinePrefix, u, pairings.SchedulesAgent, u)
+			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s (built-in): schedule prompts for later in this conversation, such as reminders; send it help | coder (contact). %s", agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote)
 			if len(got.Message.Parts) != 2 || got.Message.Parts[0].Text() != wantLine || got.Message.Parts[1].Text() != "hello" {
 				t.Fatalf("CallClaims.withAgentsLine() parts = %v, want the line %q before the message", got.Message.Parts, wantLine)
 			}

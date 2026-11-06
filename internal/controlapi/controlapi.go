@@ -30,8 +30,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/ctlhttp"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
@@ -329,6 +332,16 @@ type ContactInfo struct {
 	// direct for an ordinary connection. It doesn't depend on the URL scheme.
 	Via      string `json:"via"`
 	HasToken bool   `json:"hasToken"`
+	// Description and Skills are what the contact's agent card said when
+	// it was last fetched.
+	Description string           `json:"description,omitempty"`
+	Skills      []cardinfo.Skill `json:"skills,omitempty"`
+}
+
+// ContactRefreshRequest fetches the card of the contact Name, or of every
+// contact without one.
+type ContactRefreshRequest struct {
+	Name string `json:"name,omitempty"`
 }
 
 // ChannelRequest adds or replaces a channel. Token is a secret reference
@@ -525,6 +538,13 @@ func (c *Client) Peers(ctx context.Context) ([]Peer, error) {
 	return out, c.do(ctx, http.MethodGet, "/peers", nil, &out)
 }
 
+// Card returns the agent card served on the listener kind: local, private
+// or public.
+func (c *Client) Card(ctx context.Context, kind string) (*a2a.AgentCard, error) {
+	var out a2a.AgentCard
+	return &out, c.do(ctx, http.MethodGet, "/card?listener="+url.QueryEscape(kind), nil, &out)
+}
+
 // Contacts lists contacts.
 func (c *Client) Contacts(ctx context.Context) ([]ContactInfo, error) {
 	var out []ContactInfo
@@ -535,6 +555,12 @@ func (c *Client) Contacts(ctx context.Context) ([]ContactInfo, error) {
 func (c *Client) AddContact(ctx context.Context, req ContactRequest) (*ContactInfo, error) {
 	var out ContactInfo
 	return &out, c.do(ctx, http.MethodPost, "/contacts", req, &out)
+}
+
+// RefreshContacts fetches the cards of contacts again.
+func (c *Client) RefreshContacts(ctx context.Context, req ContactRefreshRequest) ([]ContactInfo, error) {
+	var out []ContactInfo
+	return out, c.do(ctx, http.MethodPost, "/contacts/refresh", req, &out)
 }
 
 // DeleteContact removes a contact.

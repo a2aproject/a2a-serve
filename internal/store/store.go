@@ -292,6 +292,11 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, schemaV18)
 		return err
 	},
+	// 19: contacts keep the description and skills of their agent card.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE contacts ADD COLUMN card TEXT NOT NULL DEFAULT ''`)
+		return err
+	},
 }
 
 const schemaV18 = `

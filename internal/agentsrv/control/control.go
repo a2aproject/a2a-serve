@@ -20,6 +20,8 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/a2aproject/a2a-go/v2/a2a"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -43,6 +45,8 @@ type Deps struct {
 	// ReloadConfig applies the live settings of config.yaml, which the CLI
 	// has validated and saved.
 	ReloadConfig func(ctx context.Context) error
+	// Card returns the agent card served on the listener kind.
+	Card func(kind string) (*a2a.AgentCard, error)
 	// Peers lists the agents on the private network.
 	Peers func(ctx context.Context) ([]network.PeerInfo, error)
 	// Ads are the advertised pairings of the private network.
@@ -66,9 +70,11 @@ func Handler(deps Deps) http.Handler {
 	mux.HandleFunc("DELETE /pair/{name}", a.revoke)
 	mux.HandleFunc("GET /pair/{name}/removal", a.previewRevoke)
 	mux.HandleFunc("DELETE /signins/{email}", a.signOut)
+	mux.HandleFunc("GET /card", a.card)
 	mux.HandleFunc("GET /peers", a.peers)
 	mux.HandleFunc("GET /contacts", a.contacts)
 	mux.HandleFunc("POST /contacts", a.addContact)
+	mux.HandleFunc("POST /contacts/refresh", a.refreshContacts)
 	mux.HandleFunc("DELETE /contacts/{name}", a.deleteContact)
 	mux.HandleFunc("POST /channels", a.addChannel)
 	mux.HandleFunc("DELETE /channels/{kind}", a.deleteChannel)
@@ -148,6 +154,11 @@ func (a *api) signOut(w http.ResponseWriter, r *http.Request) {
 	reply(w, resp, err)
 }
 
+func (a *api) card(w http.ResponseWriter, r *http.Request) {
+	card, err := a.deps.Card(r.URL.Query().Get("listener"))
+	reply(w, card, err)
+}
+
 func (a *api) peers(w http.ResponseWriter, r *http.Request) {
 	peers, err := a.deps.Peers(r.Context())
 	if err != nil {
@@ -173,6 +184,15 @@ func (a *api) addContact(w http.ResponseWriter, r *http.Request) {
 	}
 	c, err := a.deps.Ops.AddContact(r.Context(), req)
 	reply(w, c, err)
+}
+
+func (a *api) refreshContacts(w http.ResponseWriter, r *http.Request) {
+	var req controlapi.ContactRefreshRequest
+	if !jsonhttp.Read(w, r, &req) {
+		return
+	}
+	out, err := a.deps.Ops.RefreshContacts(r.Context(), req)
+	reply(w, out, err)
 }
 
 func (a *api) deleteContact(w http.ResponseWriter, r *http.Request) {

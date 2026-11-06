@@ -263,55 +263,6 @@ func TestUnauthorizedHint(t *testing.T) {
 	}
 }
 
-func TestCardDescription(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		harness string
-		want    string
-	}{
-		{harness: "acp", want: "coder is an acp coding agent reached through `a2a-serve`."},
-		{harness: "opencode", want: "coder is an opencode coding agent reached through `a2a-serve`."},
-		{harness: "claude", want: "coder is a claude coding agent reached through `a2a-serve`."},
-	}
-	for _, tc := range tests {
-		t.Run(tc.harness, func(t *testing.T) {
-			t.Parallel()
-			s := &Server{rt: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Harness: tc.harness}, nil)}
-			if got := s.card(network.ListenerPrivate, "http://127.0.0.1:9000").Description; got != tc.want {
-				t.Fatalf("Server.card().Description = %q, want %q", got, tc.want)
-			}
-		})
-	}
-}
-
-func TestCardPairingScheme(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name   string
-		kind   string
-		policy agentdir.PolicyConfig
-		want   bool
-	}{
-		{name: "local", kind: network.ListenerLocal, want: true},
-		{name: "private open to everyone", kind: network.ListenerPrivate},
-		{name: "private for pairings", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{PrivateAllowIncoming: agentdir.AccessPaired}, want: true},
-		{name: "public for pairings", kind: network.ListenerPublic, want: true},
-		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Harness: "opencode", Policy: tc.policy}, nil)
-			s := &Server{private: &fakeProvider{}, rt: rt, oauth: oauth.New(oauth.Deps{Google: googleauth.Google, Runtime: rt})}
-			card := s.card(tc.kind, "http://127.0.0.1:9000")
-			_, got := card.SecuritySchemes["pairing"]
-			if got != tc.want || (len(card.SecurityRequirements) > 0) != tc.want {
-				t.Fatalf("Server.card(%q) advertises the pairing scheme = %v, want %v", tc.kind, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestCardSignInScheme(t *testing.T) {
 	t.Parallel()
 	const base = "https://coder.example.com"

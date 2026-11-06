@@ -289,11 +289,11 @@ func TestRecipeRefuses(t *testing.T) {
 		{
 			name: "unknown setting",
 			setup: func(t *testing.T, src, _ string) {
-				if err := os.WriteFile(filepath.Join(src, ".a2a", "config.yaml"), []byte("agent: opencode\ncard: {}\n"), 0o644); err != nil {
+				if err := os.WriteFile(filepath.Join(src, ".a2a", "config.yaml"), []byte("agent: opencode\nbadge: {}\n"), 0o644); err != nil {
 					t.Fatal(err)
 				}
 			},
-			wantErr: "doesn't know: card",
+			wantErr: "doesn't know: badge",
 		},
 		{
 			name: "missing mount source of a required server",

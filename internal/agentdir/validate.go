@@ -148,6 +148,14 @@ func (c *Config) Validate() error {
 			invalid("task-ttl", c.TaskTTL, "want at least %s", MinTaskTTL)
 		}
 	}
+	if c.ContactRefresh != "" {
+		if d, err := ParseDays(c.ContactRefresh); err != nil {
+			invalid("contact-refresh", c.ContactRefresh, "%s", reasonOf(err))
+		} else if d < MinContactRefresh {
+			invalid("contact-refresh", c.ContactRefresh, "want at least %s", MinContactRefresh)
+		}
+	}
+	errs = append(errs, c.Card.validate()...)
 	if c.Limits.PIDs < 0 {
 		invalid("pids", strconv.Itoa(c.Limits.PIDs), "want a positive number")
 	}
@@ -238,6 +246,29 @@ func ValidEmailPattern(entry string) bool {
 // Mesh relay by its URL.
 func isRelayURL(v string) bool {
 	return strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "http://")
+}
+
+func (c CardConfig) validate() []error {
+	var errs []error
+	invalid := func(entry, format string, args ...any) {
+		errs = append(errs, &FieldError{Flag: cardSkillsSetting, Entry: entry, Reason: fmt.Sprintf(format, args...)})
+	}
+	if len(c.Skills) > MaxCardSkills {
+		errs = append(errs, fmt.Errorf("card.skills has %d skills: want at most %d", len(c.Skills), MaxCardSkills))
+	}
+	seen := map[string]bool{}
+	for _, sk := range c.Skills {
+		switch {
+		case strings.TrimSpace(sk.ID) == "":
+			invalid(sk.Name, "want a non-empty id")
+		case seen[sk.ID]:
+			invalid(sk.ID, "the id is taken by another skill")
+		case len([]rune(sk.Description)) > MaxCardSkillDescription:
+			invalid(sk.ID, "the description is longer than %d characters", MaxCardSkillDescription)
+		}
+		seen[sk.ID] = true
+	}
+	return errs
 }
 
 func (b BackupConfig) validate() []error {

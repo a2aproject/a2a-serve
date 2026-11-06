@@ -6,6 +6,7 @@ references such as `secret:TELEGRAM_BOT_TOKEN`. [Config](../guide/config.md#whic
 
 ```yaml
 name: coder
+description: Writes and reviews the Go services of this repository.
 agent: opencode
 command: [cloudcode, acp]        # optional: replaces the profile's command
 sandbox: docker                  # or local
@@ -32,6 +33,13 @@ mcp:
   disabled: [kubernetes]         # servers of .mcp.json the agent doesn't get
 limits: {memory: 8g, cpus: "4", pids: 1024}
 taskTTL: 30d                     # tasks idle this long are deleted
+contactRefresh: 1h               # how often the cards of contacts and peers are fetched
+card:
+  skills:                        # replace the card's default skill
+    - id: release-notes
+      name: Release notes
+      description: Writes release notes from merged pull requests.
+      tags: [git, docs]
 auth:
   googleClientID: 1234.apps.googleusercontent.com
   googleClientSecret: secret:GOOGLE_CLIENT_SECRET
@@ -41,6 +49,10 @@ backup:
   interval: 1h
   retention: 7d
 ```
+
+## Card skills
+
+`card.skills` lists the skills of the agent card. Without it, the card lists one skill, "Coding agent". Each skill has an `id`, and may have a `name` (default: the id), a `description` and `tags`. IDs are unique and not empty. The card holds at most 20 skills, with descriptions of at most 1000 characters. `a2a-serve config unset card-skills <id>` removes a skill, and `a2a-serve card` prints the card.
 
 ## Keys
 
@@ -56,6 +68,7 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--agent` | `agent` | `config set` |
 | `--name` | `name` | `start <agent>`, `config set` |
 | `--description` | `description` | `start <agent>`, `config set` |
+|  | `card.skills` | `config edit` |
 | `--command` | `command` | `start <agent>`, `config set` |
 | `--model` | `model` | `start <agent>`, `config set` |
 | `--image` | `image` | `start <agent>`, `config set` |
@@ -102,4 +115,5 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--backup-interval` | `backup.interval` | `config set` |
 | `--backup-retention` | `backup.retention` | `config set` |
 | `--task-ttl` | `taskTTL` | `config set` |
+| `--contact-refresh` | `contactRefresh` | `config set` |
 <!-- /generated:settings -->

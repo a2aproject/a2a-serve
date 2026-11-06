@@ -16,6 +16,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -23,6 +24,28 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
+
+// writeContactCard writes the description and skills of a contact's agent
+// card, indented under the line naming the contact.
+func writeContactCard(sb *strings.Builder, info *controlapi.ContactInfo) {
+	if info.Description != "" {
+		fmt.Fprintf(sb, "  %s\n", info.Description)
+	}
+	if len(info.Skills) == 0 {
+		return
+	}
+	sb.WriteString("  skills:\n")
+	for _, sk := range info.Skills {
+		line := sk.ID
+		switch {
+		case sk.Name != "" && sk.Description != "":
+			line += "  " + sk.Name + ": " + sk.Description
+		case sk.Name != "" || sk.Description != "":
+			line += "  " + sk.Name + sk.Description
+		}
+		fmt.Fprintf(sb, "    %s\n", line)
+	}
+}
 
 // routeLabel names how the agent reaches a contact. It doesn't depend on the
 // scheme of the contact's URL.
@@ -67,7 +90,10 @@ calls to it go through that agent.
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ the agent can call %s (%s, %s)\n", info.Name, info.URL, routeLabel(info.Via))
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "✓ the agent can call %s (%s, %s)\n", info.Name, info.URL, routeLabel(info.Via))
+			writeContactCard(&sb, info)
+			_, err = fmt.Fprint(cfg.Out, sb.String())
 			return err
 		},
 	}

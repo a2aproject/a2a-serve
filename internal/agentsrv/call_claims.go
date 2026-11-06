@@ -46,7 +46,7 @@ type CallClaims struct {
 	chain    *auth.Chain
 	agentKey func(ctx context.Context, contextID string) (string, error)
 	sessions a2aacp.SessionStore
-	peers    func(context.Context) []string
+	peers    func(context.Context) []AgentRef
 
 	handleMu sync.Mutex
 
@@ -79,7 +79,7 @@ type CallClaimsDeps struct {
 	Sessions a2aacp.SessionStore
 	// Peers returns the agents on the private network the agent may call by
 	// name. If nil, it calls only its contacts and nodes.
-	Peers func(context.Context) []string
+	Peers func(context.Context) []AgentRef
 }
 
 func newCallClaims(deps CallClaimsDeps) *CallClaims {
@@ -374,7 +374,7 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 	if !user.MayCallAgents() || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
 		return ctx, execCtx
 	}
-	var peers []string
+	var peers []AgentRef
 	if cl.peers != nil {
 		peers = cl.peers(ctx)
 	}
@@ -391,12 +391,12 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 		slog.Warn("creating the agents URL", "error", err)
 		return ctx, execCtx
 	}
-	names := make([]string, len(agents))
+	descs := make([]string, len(agents))
 	for i, a := range agents {
-		names[i] = a.Name
+		descs[i] = a.String()
 	}
-	line := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s; call one with a2a send -a %s/<name>)",
-		agentsLinePrefix, u, strings.Join(names, ", "), u)
+	line := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s. %s",
+		agentsLinePrefix, u, u, strings.Join(descs, " | "), cardNote)
 	ec := *execCtx
 	msg := *execCtx.Message
 	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)

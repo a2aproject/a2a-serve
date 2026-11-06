@@ -16,6 +16,7 @@ package cli
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/output"
@@ -59,9 +60,13 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				if x.HasToken {
 					auth = "token"
 				}
-				rows = append(rows, []string{x.Name, x.URL, routeLabel(x.Via), auth})
+				skills := make([]string, len(x.Skills))
+				for i, sk := range x.Skills {
+					skills[i] = sk.ID
+				}
+				rows = append(rows, []string{x.Name, x.URL, routeLabel(x.Via), auth, strings.Join(skills, ", ")})
 			}
-			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "ROUTE", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`"); err != nil || !peers {
+			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "ROUTE", "AUTH", "SKILLS"}, rows, "no contacts; add one with `a2a-serve contact add <name>`"); err != nil || !peers {
 				return err
 			}
 			_, err = fmt.Fprintln(cfg.Out, "\n"+peersNote)

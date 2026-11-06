@@ -14,11 +14,12 @@ Each agent lives in its project directory and runs as its own process, with its 
 | `a2a-serve start --service` | Installs and starts it as a systemd (Linux) or launchd (macOS) user service. |
 | `a2a-serve status` | Shows URLs, messengers, owner links and task counts. |
 | `a2a-serve status --url` | Prints only the URL that reaches furthest: public, then private, then local. `--url=local\|private\|public` picks one. |
+| `a2a-serve card` | Prints the agent card as callers see it. `--url=local\|private\|public` picks the URL. |
 | `a2a-serve logs [-f]` | Shows the log. |
 | `a2a-serve stop [--uninstall]` | Stops it, and waits until it exits. A server that doesn't answer gets SIGTERM, then SIGKILL after 10 seconds. `--uninstall` also removes the service. |
 | `a2a-serve restart` | Stops it and starts it again in the same mode. Starts a stopped agent. |
 
-Commands that only change stored data, such as `pair`, `contact add --url`, `contact rm`, `schedule add`, `channel add` and `channel rm`, also work while the agent is stopped. It picks up the changes on its next start. While the agent starts or stops, these commands fail with exit code 8; run them again once `a2a-serve status` shows it running or stopped.
+Commands that only change stored data, such as `pair`, `contact add --url`, `contact refresh`, `contact rm`, `schedule add`, `channel add` and `channel rm`, also work while the agent is stopped. It picks up the changes on its next start. While the agent starts or stops, these commands fail with exit code 8; run them again once `a2a-serve status` shows it running or stopped.
 
 `start --detach` and `start --service` return once the agent serves. If the server stops with an error first, they fail and show the end of the log. A service that failed this way stays installed, and the service manager keeps restarting it until you run `a2a-serve stop --uninstall`.
 

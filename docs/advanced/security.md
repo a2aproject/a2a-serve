@@ -69,6 +69,8 @@ The server calls contacts and wakes webhook nodes at the URLs you configure. A c
 
 The server refuses redirects from https to http. A node sees only the HTTP status of a failed wake, and the server log has the details.
 
+The agent's instructions list the description and skills from the cards of contacts and peers. That text comes from the other agent, so the server bounds it first: at most 300 characters of description, 10 skills and 150 characters for each skill's description. It removes line breaks and markdown characters, and labels the text as the agent's own description of itself.
+
 ## Tokens and secrets
 
 | Token | Grants | Stored | Revoke |

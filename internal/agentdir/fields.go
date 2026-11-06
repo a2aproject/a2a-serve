@@ -15,6 +15,7 @@
 package agentdir
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -40,6 +41,9 @@ const (
 	placeOperational
 	// placeChannel settings are flags of `channel add` only.
 	placeChannel
+	// placeFile settings have no flag: they are set in config.yaml, and
+	// `config unset` resets them.
+	placeFile
 )
 
 // scope tells who decides a setting.
@@ -95,6 +99,8 @@ type field struct {
 	unsetTo string
 	// key returns the key of an entry, or of an argument naming it.
 	key func(string) string
+	// show returns how a change lists an entry; nil shows it as it is.
+	show func(string) string
 	// parse normalizes an entry of the flag before it is merged.
 	parse func(d Dir, v string) (string, error)
 	// merge replaces the default merge of the flag's entries into cfg.
@@ -357,6 +363,11 @@ var fields = []field{
 		usage: "Agent description for its card",
 	},
 	{
+		access: cardSkills(),
+		flag:   cardSkillsSetting, path: "card.skills", place: placeFile, scope: scopeAgent, live: true,
+		key: cardSkillKey, show: cardSkillKey,
+	},
+	{
 		access: access{
 			get: func(c *Config) []string { return nonEmpty(ShellJoin(c.Command)) },
 			put: func(c *Config, v []string) { c.Command = shellSplit(first(v)) },
@@ -589,6 +600,54 @@ var fields = []field{
 		flag:   "task-ttl", path: "taskTTL", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
 		usage: "How long tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted",
 	},
+	{
+		access: str(func(c *Config) *string { return &c.ContactRefresh }, func(s *Settings) *string { return &s.ContactRefresh }),
+		flag:   "contact-refresh", path: "contactRefresh", place: placeOperational, scope: scopeOwner, live: true, section: SectionGeneral,
+		usage: "How often the server fetches the agent cards of contacts and peers again, a `duration` such as 30m or 1h (default 1h)",
+	},
+}
+
+// cardSkillsSetting names the skills of the agent card, which config.yaml
+// sets.
+const cardSkillsSetting = "card-skills"
+
+// cardSkills reads and writes the card skills as one JSON entry each, so
+// that the entries carry whole skills.
+func cardSkills() access {
+	return access{
+		list: true,
+		get: func(c *Config) []string {
+			out := make([]string, 0, len(c.Card.Skills))
+			for _, sk := range c.Card.Skills {
+				data, err := json.Marshal(sk)
+				if err != nil {
+					continue
+				}
+				out = append(out, string(data))
+			}
+			return out
+		},
+		put: func(c *Config, v []string) {
+			c.Card.Skills = nil
+			for _, e := range v {
+				var sk CardSkill
+				if err := json.Unmarshal([]byte(e), &sk); err == nil {
+					c.Card.Skills = append(c.Card.Skills, sk)
+				}
+			}
+		},
+		arg: func(*Settings) any { return nil },
+	}
+}
+
+// cardSkillKey is the ID of a card skill entry, or the argument that names
+// one.
+func cardSkillKey(e string) string {
+	var sk CardSkill
+	if err := json.Unmarshal([]byte(e), &sk); err == nil {
+		return sk.ID
+	}
+	return e
 }
 
 // emailField is the --email-<name> setting of the email channel, with the
@@ -719,12 +778,12 @@ func Diff(old, next *Config) []Change {
 		if f.list {
 			for _, e := range n {
 				if !slices.Contains(o, e) {
-					c.Added = append(c.Added, e)
+					c.Added = append(c.Added, f.shown(e))
 				}
 			}
 			for _, e := range o {
 				if !slices.Contains(n, e) {
-					c.Removed = append(c.Removed, e)
+					c.Removed = append(c.Removed, f.shown(e))
 				}
 			}
 		} else {
@@ -733,6 +792,14 @@ func Diff(old, next *Config) []Change {
 		out = append(out, c)
 	}
 	return out
+}
+
+// shown returns how a change lists the entry e.
+func (f field) shown(e string) string {
+	if f.show == nil {
+		return e
+	}
+	return f.show(e)
 }
 
 // valueOr returns the value of a scalar setting, which is def when empty.
@@ -954,6 +1021,8 @@ func (p placement) flagSet() FlagSet {
 		return OperationalFlags
 	case placeChannel:
 		return EmailFlags
+	case placeFile:
+		return 0
 	}
 	return CoreFlags
 }
@@ -979,9 +1048,10 @@ func (s *Settings) Flags(sets FlagSet) []Flag {
 // SettingDoc describes a setting for the configuration reference.
 type SettingDoc struct {
 	// Flag is the flag which changes the setting, and Commands the commands
-	// which take it.
+	// which take it. A FileOnly setting has no flag: Flag only names it.
 	Flag     string
 	Commands []string
+	FileOnly bool
 	// Key is the dotted key in config.yaml. A setting without one is kept
 	// in the secrets file as Secret.
 	Key    string
@@ -1001,6 +1071,9 @@ func SettingDocs() []SettingDoc {
 			d.Commands = []string{"start <agent>", "config set"}
 		case placeAgent, placeOperational:
 			d.Commands = []string{"config set"}
+		case placeFile:
+			d.FileOnly = true
+			d.Commands = []string{"config edit"}
 		case placeChannel:
 			kind, _, _ := strings.Cut(f.flag, "-")
 			d.Commands = []string{"channel add " + kind}

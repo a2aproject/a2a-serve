@@ -52,6 +52,8 @@ type Manager interface {
 	Contacts(ctx context.Context) ([]controlapi.ContactInfo, error)
 	// AddContact adds a contact.
 	AddContact(ctx context.Context, req controlapi.ContactRequest) (*controlapi.ContactInfo, error)
+	// RefreshContacts fetches the cards of contacts again.
+	RefreshContacts(ctx context.Context, req controlapi.ContactRefreshRequest) ([]controlapi.ContactInfo, error)
 	// DeleteContact removes a contact.
 	DeleteContact(ctx context.Context, name string) error
 	// Schedules lists the schedules.

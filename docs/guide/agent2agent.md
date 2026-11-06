@@ -7,17 +7,43 @@ a2a-serve peers                     # agents on the private network
 a2a-serve contact add coder         # a peer on the tailnet: no code needed
 a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4
 a2a-serve contact list
+a2a-serve contact refresh           # fetch the contacts' agent cards again
 a2a-serve contact rm coder
 ```
 
 To let the agent call every agent on the private network without adding each one, run `a2a-serve config set --private-allow-outgoing everyone`. It calls them by name with its network identity, and the agents line at the start of each conversation lists them. [Access Model](../advanced/access-model.md#whom-the-agent-may-call) explains who can make it call them.
 
-- Each prompt tells the agent which agents it can call.
+- Each prompt tells the agent which agents it can call, with the description and skills from each agent's card. See [Cards of other agents](#cards-of-other-agents).
 - With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. A result over 16 KiB arrives as the file `result.txt`, with its first lines in the message. The server watches the task for at most 7 days. It also stops when the task keeps the same state for 24 hours, not counting the time the task waits for your approval. Either way, the agent gets a message that says so.
 - A response from a contact can be at most 32 MiB. Streams have no limit.
 - A contact on a public URL can't point the server into your private network (see [Security](../advanced/security.md#calls-to-other-agents-and-webhooks)).
 - When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it.
 - A chain of calls stops after 3 hops, so agents can't call each other in a loop.
+
+## Your agent's card
+
+Callers read the agent card to learn what the agent does. `a2a-serve card` prints it as callers see it. Each URL serves its own card, so the command takes `--url=local|private|public` like `a2a-serve status`.
+
+The card lists one skill, "Coding agent", until you list skills under `card.skills` in `config.yaml`:
+
+```yaml
+card:
+  skills:
+    - id: release-notes
+      name: Release notes
+      description: Writes release notes from merged pull requests.
+      tags: [git, docs]
+```
+
+Edit them with `a2a-serve config edit`. A running agent serves the new card at once. The [configuration reference](../reference/configuration.md#card-skills) lists the rules. The server doesn't read skills from the project's skill folders, because the agent can write those files.
+
+## Cards of other agents
+
+`a2a-serve contact add` fetches the contact's agent card, keeps its description and skills, and prints them. The server fetches the cards of contacts again every hour, and the cards of the agents on the private network too. Change the period with `a2a-serve config set --contact-refresh 30m`, or refresh the contacts now with `a2a-serve contact refresh [name]`.
+
+The agent's instructions and the agents line at the start of each conversation list each agent with its description and skills. They change only after a refresh, and a change rewrites the instruction files. Agents that leave the private network drop out at the next refresh.
+
+A card comes from the other agent, so the server bounds its text before the agent reads it. It keeps at most 10 skills and short descriptions, removes line breaks and markdown, and quotes the text as the agent's own description of itself.
 
 ## Peer names
 

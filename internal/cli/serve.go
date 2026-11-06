@@ -88,6 +88,7 @@ git finds a repository, or take --dir.`,
 	cmd.AddCommand(
 		newStartCmd(cfg, &f),
 		newStatusCmd(cfg, &f),
+		newCardCmd(cfg, &f),
 		newInspectCmd(cfg, &f),
 		newLogsCmd(cfg, &f),
 		newStopCmd(cfg, &f),

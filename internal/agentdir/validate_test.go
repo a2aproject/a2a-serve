@@ -16,6 +16,7 @@ package agentdir
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -105,6 +106,21 @@ func TestValidate(t *testing.T) {
 		{name: "backup retention", modify: func(c *Config) { c.Backup.Retention = "a week" }, wantErr: `invalid --backup-retention "a week": want a number of days`},
 		{name: "task ttl", modify: func(c *Config) { c.TaskTTL = "a month" }, wantErr: `invalid --task-ttl "a month": want a number of days`},
 		{name: "task ttl too short", modify: func(c *Config) { c.TaskTTL = "10m" }, wantErr: `invalid --task-ttl "10m": want at least 1h`},
+		{name: "contact refresh", modify: func(c *Config) { c.ContactRefresh = "30m" }},
+		{name: "contact refresh too short", modify: func(c *Config) { c.ContactRefresh = "10s" }, wantErr: `invalid --contact-refresh "10s": want at least 1m`},
+		{name: "card skills", modify: func(c *Config) {
+			c.Card.Skills = []CardSkill{{ID: "release-notes", Name: "Release notes", Description: "Writes release notes.", Tags: []string{"git"}}, {ID: "review"}}
+		}},
+		{name: "card skill without an id", modify: func(c *Config) { c.Card.Skills = []CardSkill{{Name: "Review"}} }, wantErr: `config.yaml: card.skills has "Review": want a non-empty id`},
+		{name: "card skills with one id", modify: func(c *Config) { c.Card.Skills = []CardSkill{{ID: "review"}, {ID: "review"}} }, wantErr: `card.skills has "review": the id is taken by another skill`},
+		{name: "card skill description too long", modify: func(c *Config) {
+			c.Card.Skills = []CardSkill{{ID: "review", Description: strings.Repeat("a", MaxCardSkillDescription+1)}}
+		}, wantErr: `card.skills has "review": the description is longer than 1000 characters`},
+		{name: "too many card skills", modify: func(c *Config) {
+			for i := range MaxCardSkills + 1 {
+				c.Card.Skills = append(c.Card.Skills, CardSkill{ID: fmt.Sprint(i)})
+			}
+		}, wantErr: "card.skills has 21 skills: want at most 20"},
 		{
 			name: "email with OAuth",
 			modify: func(c *Config) {
@@ -379,8 +395,8 @@ func TestUnknownKeys(t *testing.T) {
 		},
 		{
 			name: "unknown keys at any depth",
-			data: "name: coder\ncard: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    chat: x\n",
-			want: []UnknownKey{{Path: "card"}, {Path: "channels.telegram.chat"}, {Path: "network.allowlist"}},
+			data: "name: coder\nbadge: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    chat: x\n",
+			want: []UnknownKey{{Path: "badge"}, {Path: "channels.telegram.chat"}, {Path: "network.allowlist"}},
 		},
 		{
 			name: "typos",
