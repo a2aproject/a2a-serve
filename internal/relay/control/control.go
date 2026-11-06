@@ -358,14 +358,14 @@ func members(st *meshadmin.Status, banned bool) []Member {
 		m := Member{Peer: n.PeerID, Email: n.Email(), Domain: n.Domain(), Joined: n.Enrolled, Banned: n.Banned}
 		m.Invite = m.Email == ""
 		if svc, ok := st.Catalog[n.PeerID]; ok {
-			var names []string
+			var agents []string
 			for _, s := range svc.Services {
 				if s.Type == meshadmin.ServiceTypeA2A && s.Name != "" {
-					names = append(names, s.Name)
+					agents = append(agents, s.Name)
 				}
 			}
-			slices.Sort(names)
-			m.Agent, m.Seen = strings.Join(slices.Compact(names), ","), svc.Reported
+			slices.Sort(agents)
+			m.Agent, m.Seen = strings.Join(slices.Compact(agents), ","), svc.Reported
 		}
 		out = append(out, m)
 	}
@@ -483,14 +483,14 @@ func forget(peers map[string]string, peer string) {
 
 // agentsOf returns the agent names peers record for peer.
 func agentsOf(peers map[string]string, peer string) string {
-	var names []string
+	var agents []string
 	for name, p := range peers {
 		if p == peer {
-			names = append(names, name)
+			agents = append(agents, name)
 		}
 	}
-	slices.Sort(names)
-	return strings.Join(names, ",")
+	slices.Sort(agents)
+	return strings.Join(agents, ",")
 }
 
 // revoke revokes the unused invites ms and returns them. It stops at the
