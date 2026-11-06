@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -190,7 +191,7 @@ func (sc *Runner) recordFailure(name string) func(error) {
 }
 
 func (sc *Runner) record(ctx context.Context, name string, ran time.Time, runErr error) {
-	if err := sc.store.RecordScheduleResult(ctx, name, ran, errText(runErr)); err != nil {
+	if err := sc.store.RecordScheduleResult(ctx, name, ran, clierr.Text(runErr)); err != nil {
 		slog.Error("recording a schedule run", "schedule", name, "error", err)
 	}
 }
@@ -222,13 +223,6 @@ func (sc *Runner) finish(ctx context.Context, name string) {
 	if err := sc.store.SetScheduleNextRun(ctx, name, time.Time{}); err != nil {
 		slog.Error("clearing the run of a finished schedule", "schedule", name, "error", err)
 	}
-}
-
-func errText(err error) string {
-	if err == nil {
-		return ""
-	}
-	return err.Error()
 }
 
 func whenOf(s store.Schedule) schedule.When {
@@ -338,7 +332,7 @@ func (sc *Runner) RunNow(ctx context.Context, name string) (store.Schedule, erro
 		return store.Schedule{}, err
 	}
 	runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
-	s.LastRun, s.LastError = sc.now(), errText(runErr)
+	s.LastRun, s.LastError = sc.now(), clierr.Text(runErr)
 	if err := sc.store.RecordScheduleResult(ctx, s.Name, s.LastRun, s.LastError); err != nil {
 		return store.Schedule{}, err
 	}

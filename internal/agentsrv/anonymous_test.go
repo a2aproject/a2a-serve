@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"context"
 	"errors"
-	"net/http"
 	"testing"
 	"time"
 
@@ -45,11 +44,11 @@ func startPublicServer(t *testing.T, configure func(*agentdir.Config)) *testServ
 func anonymousClient(t *testing.T, ts *testServer) *a2aclient.Client {
 	t.Helper()
 	ctx := context.Background()
-	card, err := agentcard.NewResolver(http.DefaultClient).Resolve(ctx, ts.publicURL())
+	card, err := agentcard.NewResolver(testHTTP).Resolve(ctx, ts.publicURL())
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(http.DefaultClient), a2aclient.WithRESTTransport(http.DefaultClient))
+	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(testHTTP), a2aclient.WithRESTTransport(testHTTP))
 	if err != nil {
 		t.Fatalf("NewFromCard() error = %v", err)
 	}

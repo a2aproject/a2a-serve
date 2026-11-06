@@ -53,6 +53,11 @@ var (
 	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleAuthenticated}
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which fails requests that parallel
+// tests send through it.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 // postOversized declares a body over jsonhttp.MaxBody to u without sending
 // it and returns the status of the response.
 func postOversized(t *testing.T, u, authorization string) int {
@@ -356,7 +361,7 @@ type staticPeers struct {
 
 func (p *staticPeers) Peers(context.Context) ([]network.PeerInfo, error) { return p.peers, nil }
 
-func (p *staticPeers) HTTPClient() *http.Client { return http.DefaultClient }
+func (p *staticPeers) HTTPClient() *http.Client { return testHTTP }
 
 type askedQuestion struct {
 	To     approvals.Chat

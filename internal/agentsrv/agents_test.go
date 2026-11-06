@@ -646,7 +646,7 @@ func TestAgentsProxyOverTCPNeedsKey(t *testing.T) {
 			if tc.header != "" {
 				req.Header.Set("Authorization", tc.header)
 			}
-			resp, err := http.DefaultClient.Do(req)
+			resp, err := testHTTP.Do(req)
 			if err != nil {
 				t.Fatal(err)
 			}

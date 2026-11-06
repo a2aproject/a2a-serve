@@ -35,6 +35,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 const (
 	adminToken = "admin-secret"
 	relayURL   = "https://relay.example.com"
@@ -62,7 +67,7 @@ func newService(m *meshtest.Mesh) *control.Service {
 
 // newServiceAllowing returns the service of a relay whose allowlist is allow.
 func newServiceAllowing(m *meshtest.Mesh, allow ...string) *control.Service {
-	return control.NewService(meshadmin.New(m.URL, adminToken, http.DefaultClient), func() control.Status {
+	return control.NewService(meshadmin.New(m.URL, adminToken, testHTTP), func() control.Status {
 		return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
 	}, func(m control.Member) bool {
 		return googleauth.Allowed(allow, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})

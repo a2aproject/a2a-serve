@@ -55,6 +55,11 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
+// testHTTP has a transport of its own: httptest.Server.Close closes the idle
+// connections of http.DefaultTransport, which breaks requests that parallel
+// tests send through it at the same time.
+var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
 var fakeACP string
 
 // migratedDB is a server.db with every migration applied. Migrations take
@@ -174,7 +179,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		}
 		t.Cleanup(func() {
 			if err := os.RemoveAll(d); err != nil {
-				t.Errorf("removing %s: %v", d, err)
+				t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
 			}
 		})
 		o.dir = d
@@ -203,9 +208,16 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if o.timings != nil {
 		o.timings(&timings)
 	}
+	// The agent processes' stderr explains why one exited.
+	agentStderr := &lockedBuffer{}
+	t.Cleanup(func() {
+		if t.Failed() {
+			t.Logf("stderr of the agent processes:\n%s", agentStderr)
+		}
+	})
 	ts := &testServer{t: t, dir: dir, ch: o.channel, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, Ready: func(s *Server) { ready <- s }}
 	if o.channel != nil {
 		opts.Channels = []channel.Channel{o.channel}
 	}
@@ -219,6 +231,19 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	}
 	t.Cleanup(ts.stop)
 	return ts
+}
+
+// leftFiles lists the files under dir, which a writer that outlived the
+// server left there.
+func leftFiles(dir string) []string {
+	var left []string
+	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
+		left = append(left, path)
+		return err
+	}); err != nil {
+		left = append(left, err.Error())
+	}
+	return left
 }
 
 // Agents keep their port across restarts. Ports are picked below the
@@ -290,7 +315,7 @@ func (ts *testServer) pair(name, role string) string {
 	if err != nil {
 		ts.t.Fatalf("Pair() error = %v", err)
 	}
-	resp, err := pairapi.Pair(ctx, http.DefaultClient, ts.localURL(), code.Code, pairapi.PairingPerson)
+	resp, err := pairapi.Pair(ctx, testHTTP, ts.localURL(), code.Code, pairapi.PairingPerson)
 	if err != nil {
 		ts.t.Fatalf("pairapi.Pair() error = %v", err)
 	}
@@ -300,7 +325,7 @@ func (ts *testServer) pair(name, role string) string {
 // client returns an A2A client authenticated with token.
 func (ts *testServer) client(token string) *a2aclient.Client {
 	ts.t.Helper()
-	hc := contacts.TokenClient(http.DefaultClient, store.Contact{URL: ts.localURL(), Token: token})
+	hc := contacts.TokenClient(testHTTP, store.Contact{URL: ts.localURL(), Token: token})
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, ts.localURL())
 	if err != nil {
@@ -607,7 +632,7 @@ func getURL(t *testing.T, u, authorization string) proxyResponse {
 	if authorization != "" {
 		req.Header.Set("Authorization", authorization)
 	}
-	resp, err := http.DefaultClient.Do(req)
+	resp, err := testHTTP.Do(req)
 	if err != nil {
 		t.Fatalf("GET %s error = %v", u, err)
 	}

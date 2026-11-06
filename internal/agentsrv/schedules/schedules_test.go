@@ -24,6 +24,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
@@ -123,6 +124,21 @@ func TestSchedulesOneTimeRunEndsWhenItsTurnIsAccepted(t *testing.T) {
 	posted[0].Accept(nil)
 	if _, err := fx.store.Schedule(fx.ctx, "once"); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("Schedule() after its turn was accepted error = %v, want %v", err, store.ErrNotFound)
+	}
+}
+
+func TestSchedulesRecordErrorHints(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
+
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(agenterr.WithHint(agenterr.Invalidf("anna has no chat on telegram"), agenterr.HintLinkChat, ""))
+
+	want := "anna has no chat on telegram: link it with a code from `a2a-serve pair invite`"
+	if got := fx.schedule(t, "hourly").LastError; got != want {
+		t.Fatalf("Schedule().LastError = %q, want %q", got, want)
 	}
 }
 
