@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func TestLocalAgentProcessesDontOutliveAgent(t *testing.T) {
@@ -60,7 +61,9 @@ func TestLocalAgentProcessesDontOutliveAgent(t *testing.T) {
 	deadline := time.Now().Add(10 * time.Second)
 	for alive(pid) {
 		if time.Now().After(deadline) {
-			t.Fatalf("process %d that the agent started outlived it", pid)
+			stat, statErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat")
+			env, envErr := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/environ")
+			t.Fatalf("process %d that the agent started outlived it; stat %q (%v), marked %v (%v)", pid, stat, statErr, strings.Contains(string(env), harness.EnvProcessMark+"="), envErr)
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
