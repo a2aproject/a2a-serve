@@ -97,9 +97,10 @@ type Provider interface {
 }
 
 // Joiner is a [Provider] which joins its network before it listens, such
-// as with an invite. The server joins before it starts the agent, so a
-// refused join stops the start early.
+// as with an invite.
 type Joiner interface {
+	// Join joins the network. The server calls it before it starts the
+	// agent, so a refused join stops the start early.
 	Join(ctx context.Context) error
 }
 
