@@ -84,7 +84,7 @@ func TestDeletePairingDeletesItsGrants(t *testing.T) {
 		t.Fatalf("AddToolGrant() error = %v", err)
 	}
 
-	if err := s.DeletePairing(ctx, "bob", "pair:bob"); err != nil {
+	if err := s.DeletePairing(ctx, "bob", usersOf("bob")...); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 

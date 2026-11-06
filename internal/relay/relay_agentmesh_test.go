@@ -343,6 +343,58 @@ func TestRelayRunsAgentMesh(t *testing.T) {
 	}
 }
 
+func TestRelayLetsBackARemovedAgent(t *testing.T) {
+	bin := agentmeshOne(t)
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelay(t, d, bin)
+	coder := joinAgent(t, r, "coder")
+	inv, err := r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	cfg := network.RelayConfig{AgentName: "reviewer", URL: r.url, StateDir: t.TempDir(), Token: inv.Token, Private: true, Public: true, Logf: t.Logf}
+	reviewer := serveAgent(t, cfg)
+	eventually(t, "members lists reviewer", func() error {
+		_, err := r.client.Remove(t.Context(), control.RemoveRequest{Target: "reviewer"})
+		return err
+	})
+	if err := reviewer.provider.Close(); err != nil {
+		t.Fatalf("closing reviewer: %v", err)
+	}
+
+	p, err := network.NewRelay(cfg)
+	if err != nil {
+		t.Fatalf("network.NewRelay() error = %v", err)
+	}
+	if _, _, err := p.ListenPrivate(t.Context()); err == nil || !strings.Contains(err.Error(), "removed this agent") {
+		t.Fatalf("joining a relay that removed the agent: error = %v, want one that says the relay removed it", err)
+	}
+
+	inv, err = r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	if inv.LetBack == nil {
+		t.Fatal("Client.Invite() let back no agent, want reviewer")
+	}
+	cfg.Token = inv.Token
+	back := serveAgent(t, cfg)
+	if back.privateURL != reviewer.privateURL {
+		t.Fatalf("reviewer's private URL after it came back = %s, want %s", back.privateURL, reviewer.privateURL)
+	}
+	eventually(t, "coder calls reviewer after it came back", func() error {
+		_, err := get(t.Context(), coder.provider.HTTPClient(), reviewer.privateURL+"/hello")
+		return err
+	})
+}
+
 // browser is the person behind signed-in agents: it approves every sign-in
 // link an agent prints, signing in at the fake Google at once.
 type browser struct {

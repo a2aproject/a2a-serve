@@ -395,6 +395,49 @@ func (c *fakeQuestionChat) questions() []askedQuestion {
 	return append([]askedQuestion(nil), c.asked...)
 }
 
+// fakeQuestionTasks records the questions asked on tasks of their own and
+// the tasks ended.
+type fakeQuestionTasks struct {
+	mu    sync.Mutex
+	asked []taskQuestion
+	ended []endedQuestions
+}
+
+type taskQuestion struct {
+	ContextID string
+	Header    string
+	Rec       store.Question
+}
+
+type endedQuestions struct {
+	ContextID, Agent, TaskID string
+}
+
+func (f *fakeQuestionTasks) Ask(_ context.Context, contextID string, q *CallerQuestion) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.asked = append(f.asked, taskQuestion{ContextID: contextID, Header: q.Header, Rec: q.Rec})
+	return nil
+}
+
+func (f *fakeQuestionTasks) End(_ context.Context, contextID, agent, taskID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ended = append(f.ended, endedQuestions{ContextID: contextID, Agent: agent, TaskID: taskID})
+}
+
+func (f *fakeQuestionTasks) questions() []taskQuestion {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]taskQuestion(nil), f.asked...)
+}
+
+func (f *fakeQuestionTasks) ends() []endedQuestions {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]endedQuestions(nil), f.ended...)
+}
+
 type injectedTurn struct {
 	ContextID string
 	User      auth.Principal

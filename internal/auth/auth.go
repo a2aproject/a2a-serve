@@ -114,13 +114,13 @@ type Request struct {
 var ErrNoCredential = errors.New("this agent needs a credential")
 
 // ErrUnknownToken is returned for a caller whose token the agent doesn't
-// know, such as one that was revoked or replaced. It matches
+// know, such as one that is mistyped, revoked or replaced. It matches
 // [ErrNoCredential].
 var ErrUnknownToken error = unknownTokenError{}
 
 type unknownTokenError struct{}
 
-func (unknownTokenError) Error() string { return "the token is no longer valid" }
+func (unknownTokenError) Error() string { return "this agent doesn't recognize the token" }
 
 func (unknownTokenError) Is(target error) bool { return target == ErrNoCredential }
 

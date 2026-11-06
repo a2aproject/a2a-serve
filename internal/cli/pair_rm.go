@@ -37,9 +37,10 @@ func newPairRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short:   "Revoke a pairing, remove a webhook node, or forget an agent you joined",
 		Long: `Delete a pairing with its tokens, linked messenger accounts, pending
 codes, the schedules that run as it, and its tasks, approvals and
-conversations, or remove a webhook node with its schedules. Its running
-tasks are canceled, its agent process stops, and its agent home directory
-is deleted. A new pairing with the same name starts with none of them. The
+conversations, or remove a webhook node with its schedules. Its
+conversations go with your messages in them. Its running tasks are
+canceled, its agent process stops, and its agent home directory is
+deleted. A new pairing with the same name starts with none of them. The
 person may still call the agent through the private network or an
 --allow-email rule; the command says so, and prints who may call
 afterwards.

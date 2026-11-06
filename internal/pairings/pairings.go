@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -265,7 +266,7 @@ func (s *Service) addNode(ctx context.Context, req InviteRequest) (*Code, error)
 	if existed {
 		return nil, err
 	}
-	if derr := s.deps.Store.DeletePairing(ctx, node.ID, auth.PairPrincipal(node.ID), auth.NodePrincipal(node.ID)); derr != nil {
+	if derr := s.deps.Store.DeletePairing(ctx, node.ID, pairingUsers(node.ID)...); derr != nil {
 		err = errors.Join(err, fmt.Errorf("removing the node that wasn't set up: %w", derr))
 	}
 	return nil, err
@@ -454,7 +455,7 @@ func (s *Service) Remove(ctx context.Context, name string) (*RemoveResult, error
 		return resp, s.deps.Store.RevokeCredentials(ctx, name)
 	}
 	endRemoval := s.beginRemoval(name)
-	err = s.deletePairing(ctx, name, auth.PairPrincipal(name), auth.NodePrincipal(name))
+	err = s.deletePairing(ctx, name)
 	endRemoval()
 	if err != nil {
 		return nil, err
@@ -500,8 +501,8 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 		resp.Tokens, resp.Codes = counts.Tokens, counts.Codes
 		return resp, nil
 	}
-	principals := []string{auth.PairPrincipal(name), auth.NodePrincipal(name)}
-	counts, err := s.deps.Store.PairingRemoval(ctx, name, principals...)
+	users := pairingUsers(name)
+	counts, err := s.deps.Store.PairingRemoval(ctx, name, users...)
 	if err != nil {
 		return nil, err
 	}
@@ -512,8 +513,8 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 	if s.deps.Homes == nil {
 		return resp, nil
 	}
-	for _, id := range principals {
-		dir := s.deps.Homes.UserHomeDir(id)
+	for _, u := range users {
+		dir := s.deps.Homes.UserHomeDir(u.Principal)
 		_, err := os.Stat(dir)
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -551,9 +552,23 @@ func (s *Service) isRemoving(name string) bool {
 	return s.removing[name] > 0
 }
 
-// deletePairing deletes the pairing called name, and the agent homes of
-// principals, while the principals run nothing.
-func (s *Service) deletePairing(ctx context.Context, name string, principals ...string) error {
+// pairingUsers returns the users that the pairing called name acts as.
+func pairingUsers(name string) []store.PairingUser {
+	var out []store.PairingUser
+	for _, p := range []string{auth.PairPrincipal(name), auth.NodePrincipal(name)} {
+		out = append(out, store.PairingUser{Principal: p, AgentKey: agentkey.User(p)})
+	}
+	return out
+}
+
+// deletePairing deletes the pairing called name, and the agent homes of its
+// users, while the users run nothing.
+func (s *Service) deletePairing(ctx context.Context, name string) error {
+	users := pairingUsers(name)
+	principals := make([]string, len(users))
+	for i, u := range users {
+		principals[i] = u.Principal
+	}
 	if s.deps.Users != nil {
 		release, err := s.deps.Users.Stop(ctx, principals...)
 		if err != nil {
@@ -568,7 +583,7 @@ func (s *Service) deletePairing(ctx context.Context, name string, principals ...
 			}
 		}
 	}
-	return s.deps.Store.DeletePairing(ctx, name, principals...)
+	return s.deps.Store.DeletePairing(ctx, name, users...)
 }
 
 // SignOut revokes the Google sign-in tokens of email at every URL. The

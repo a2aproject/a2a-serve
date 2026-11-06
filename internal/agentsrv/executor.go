@@ -36,7 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
@@ -743,7 +743,29 @@ func withOriginalMessage(t *a2a.Task, withLine, original *a2a.Message) *a2a.Task
 func (e *observedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	// a2asrv cancels ctx once it has the canceled event, which comes before
 	// the inner Cancel runs, but the turn must still stop.
-	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.inner.Cancel(context.WithoutCancel(ctx), execCtx)))
+	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.cancelingCalls(ctx, execCtx, e.inner.Cancel(context.WithoutCancel(ctx), execCtx))))
+}
+
+// cancelingCalls cancels the tasks that the task started at other agents,
+// once the inner Cancel stopped its turn and with it new calls.
+func (e *observedExecutor) cancelingCalls(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		defer e.cancelCalls(context.WithoutCancel(ctx), execCtx)
+		for ev, err := range events {
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+func (e *observedExecutor) cancelCalls(ctx context.Context, execCtx *a2asrv.ExecutorContext) {
+	if e.watches == nil || e.claims == nil {
+		return
+	}
+	if err := e.watches.CancelCalls(ctx, e.claims.claimsOf(ctx, execCtx)); err != nil {
+		slog.Warn("canceling the calls of a canceled task", "task", execCtx.TaskID, "error", err)
+	}
 }
 
 // canceledFirst yields the canceled event before the inner Cancel runs.
@@ -877,7 +899,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		}
 	}
 	if msg.Message.TaskID == "" {
-		if err := i.checkWaiting(ctx, msg.Message.ContextID); err != nil {
+		if err := i.checkWaiting(ctx, p, msg.Message.ContextID); err != nil {
 			return ctx, nil, err
 		}
 		if err := i.checkUserAgents(ctx, msg.Message.ContextID); err != nil {
@@ -955,7 +977,7 @@ func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Princi
 // for an answer to a question of the agent, since the new task would wait
 // behind it without a word. Messages from chats and schedules still wait.
 // Questions of other agents don't hold the conversation.
-func (i *callerInterceptor) checkWaiting(ctx context.Context, contextID string) error {
+func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, contextID string) error {
 	if contextID == "" || auth.IsInProcess(ctx) {
 		return nil
 	}
@@ -970,6 +992,14 @@ func (i *callerInterceptor) checkWaiting(ctx context.Context, contextID string) 
 		q := approvals.FromStatus(t.Status)
 		if q == nil || asksCallerQuestion(t) {
 			continue
+		}
+		err := i.approvals.CheckAnswer(ctx, p, t.ID)
+		if errors.Is(err, a2a.ErrTaskNotFound) || errors.Is(err, a2a.ErrUnauthorized) {
+			return fmt.Errorf("%w: conversation %s waits for the agent's owner to answer %q; send the message again after they answer, or leave out the context ID to start a new conversation",
+				a2a.ErrInvalidRequest, contextID, q.Title)
+		}
+		if err != nil {
+			return err
 		}
 		ids := make([]string, len(q.Options))
 		for i, o := range q.Options {

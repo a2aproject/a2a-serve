@@ -148,7 +148,7 @@ func (r *Relay) run(ctx context.Context) (err error) {
 	meshURL := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
 	admin := meshadmin.New(meshURL.String(), conf.AdminToken, &http.Client{Timeout: 30 * time.Second})
 	started := r.opts.Now()
-	svc := control.NewService(admin, func() control.Status {
+	svc := control.NewService(admin, control.NewRemovedAgents(d.RemovedAgentsPath()), Policy(conf.SignIn()), func() control.Status {
 		return control.Status{
 			URL: publicURL, PID: os.Getpid(), Started: started,
 			Versions: control.Versions{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version},
@@ -201,8 +201,8 @@ func (r *Relay) run(ctx context.Context) (err error) {
 	if err := waitReady(ctx, admin, mesh, port); err != nil {
 		return stoppedOr(ctx, err)
 	}
-	if err := admin.SetPolicy(ctx, Policy(conf.SignIn())); err != nil {
-		return stoppedOr(ctx, fmt.Errorf("applying the relay's policy: %w", err))
+	if err := svc.ApplyPolicy(ctx); err != nil {
+		return stoppedOr(ctx, err)
 	}
 	removed, readmitted, err := svc.Reconcile(ctx)
 	if err != nil {

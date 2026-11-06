@@ -29,7 +29,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -174,13 +174,7 @@ func (cl *CallClaims) beginTurn(c agentproxy.Claims) (end func()) {
 // the [a2aacp.Config.Turn] of the harness, so a turn which stops for a
 // question goes on for its caller, whoever answers.
 func (cl *CallClaims) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
-	c := turnClaims(ctx, execCtx)
-	user, err := cl.callerIn(ctx, c.ContextID, c.User)
-	if err != nil {
-		slog.Error("finding the agent process of a conversation", "context", c.ContextID, "error", err)
-		user = auth.Principal{ID: c.User.ID}
-	}
-	c.User = user
+	c := cl.claimsOf(ctx, execCtx)
 	// a2aacp stores the session of a new conversation before the turn
 	// begins. The line is recorded now, since the next message may come
 	// before the turn's end is called.
@@ -188,6 +182,19 @@ func (cl *CallClaims) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext)
 		cl.markLined(ctx, c.ContextID)
 	}
 	return cl.beginTurn(c)
+}
+
+// claimsOf returns the claims of the caller of execCtx, capped to the user
+// of the agent process its conversation runs in.
+func (cl *CallClaims) claimsOf(ctx context.Context, execCtx *a2asrv.ExecutorContext) agentproxy.Claims {
+	c := turnClaims(ctx, execCtx)
+	user, err := cl.callerIn(ctx, c.ContextID, c.User)
+	if err != nil {
+		slog.Error("finding the agent process of a conversation", "context", c.ContextID, "error", err)
+		user = auth.Principal{ID: c.User.ID}
+	}
+	c.User = user
+	return c
 }
 
 // callerIn returns who user acts as through the agents URL of a
@@ -326,7 +333,7 @@ func (cl *CallClaims) forgetPruned(ctx context.Context) {
 
 // turnClaims returns the claims of the caller of execCtx.
 func turnClaims(ctx context.Context, execCtx *a2asrv.ExecutorContext) agentproxy.Claims {
-	c := agentproxy.Claims{ContextID: execCtx.ContextID}
+	c := agentproxy.Claims{ContextID: execCtx.ContextID, TaskID: string(execCtx.TaskID)}
 	if caller, ok := auth.Caller(ctx); ok {
 		c.User = caller
 	} else if execCtx.User != nil {

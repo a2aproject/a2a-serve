@@ -81,7 +81,10 @@ func NewHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
 // harness in the conversation's running turn, for the user who started it.
 type Claims struct {
 	ContextID string
-	User      auth.Principal
+	// TaskID is the task of the running turn, which the calls it starts
+	// are recorded for.
+	TaskID string
+	User   auth.Principal
 }
 
 // Errors of [ClaimsSource.ClaimsOf].
@@ -129,28 +132,20 @@ func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 			jsonhttp.Error(w, http.StatusInternalServerError, "resolving the agents URL failed")
 			return
 		}
-		if !claims.User.MayCallAgents() {
-			jsonhttp.Error(w, http.StatusForbidden, "the user of this conversation can't call other agents; answer without calling one")
-			return
-		}
-		if claims.User.Hops+1 > auth.MaxHops {
-			jsonhttp.Error(w, http.StatusForbidden, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops))
-			return
-		}
 		rest := "/" + r.PathValue("rest")
 		base := "http://" + r.Host + "/" + handle + "/" + name
-		if name == pairings.SchedulesAgent {
-			hp.serveSchedules(w, r, claims, base, rest)
-			return
-		}
-		ok, err = hp.clients.callable(r.Context(), name)
+		refusal, err := hp.refusal(r.Context(), claims, name)
 		if err != nil {
 			slog.Error("looking up a callable agent", "agent", name, "error", err)
 			jsonhttp.Error(w, http.StatusInternalServerError, "looking up "+name+" failed")
 			return
 		}
-		if !ok {
-			jsonhttp.Error(w, http.StatusNotFound, fmt.Sprintf("%q is not an agent you can call; the [a2a agents] line lists them", name))
+		if refusal != nil {
+			serveRefusal(w, r, name, base, rest, refusal)
+			return
+		}
+		if name == pairings.SchedulesAgent {
+			hp.serveSchedules(w, r, claims, base, rest)
 			return
 		}
 		if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
@@ -174,6 +169,46 @@ func (hp *HarnessProxy) agentsHandler(caller Caller) http.Handler {
 		}
 		inner.ServeHTTP(w, r2)
 	})
+}
+
+// refusal returns why the conversation of claims may not call name, or nil
+// when it may.
+func (hp *HarnessProxy) refusal(ctx context.Context, claims Claims, name string) (*a2a.Error, error) {
+	if !claims.User.MayCallAgents() {
+		return a2a.NewError(a2a.ErrUnauthorized, "the user of this conversation can't call other agents; answer without calling one"), nil
+	}
+	if claims.User.Hops+1 > auth.MaxHops {
+		return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("too many agents in this chain (%d); answer without calling another agent", claims.User.Hops)), nil
+	}
+	if name == pairings.SchedulesAgent {
+		return nil, nil
+	}
+	ok, err := hp.clients.callable(ctx, name)
+	if err != nil || ok {
+		return nil, err
+	}
+	return a2a.NewError(a2a.ErrUnauthorized, fmt.Sprintf("%q is not an agent you can call; the [a2a agents] line lists them", name)), nil
+}
+
+// serveRefusal serves a card for name and fails every call with refusal.
+// A2A clients fetch the card before the call and report a failed card fetch
+// by its status alone, so the refusal travels on the call, where the client
+// shows its message.
+func serveRefusal(w http.ResponseWriter, r *http.Request, name, base, rest string, refusal *a2a.Error) {
+	if r.Method == http.MethodGet && (rest == "/" || rest == "/.well-known/agent-card.json") {
+		card := proxyCard(name, base)
+		card.Description = refusal.Message
+		a2asrv.NewStaticAgentCardHandler(card).ServeHTTP(w, r)
+		return
+	}
+	h := refusingHandler{err: refusal}
+	r2 := r.Clone(r.Context())
+	r2.URL.Path, r2.URL.RawPath = rest, ""
+	inner := a2asrv.NewRESTHandler(h)
+	if r.Method == http.MethodPost && rest == "/" {
+		inner = a2asrv.NewJSONRPCHandler(h)
+	}
+	inner.ServeHTTP(w, r2)
 }
 
 // serveSchedules serves the built-in schedules agent for the conversation
@@ -226,6 +261,9 @@ func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 	if err := g.checkMessage(ctx, req); err != nil {
 		return nil, err
 	}
+	if req.Config == nil || !req.Config.ReturnImmediately {
+		return g.sendStreamed(ctx, req)
+	}
 	res, err := g.RequestHandler.SendMessage(ctx, req)
 	if task, ok := res.(*a2a.Task); ok && err == nil {
 		g.record(ctx, task.ID, task.ContextID)
@@ -234,10 +272,42 @@ func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 	return res, err
 }
 
+// sendStreamed sends a message that waits for the task to settle as a
+// stream, so that the task is recorded once the agent starts it, and
+// canceling the turn that sent it cancels it too.
+func (g *guardedHandler) sendStreamed(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	var last a2a.Event
+	for ev, err := range g.stream(ctx, req) {
+		if err != nil {
+			return nil, err
+		}
+		last = ev
+	}
+	switch ev := last.(type) {
+	case nil:
+		return nil, fmt.Errorf("%s sent no result", g.agent)
+	case *a2a.Message:
+		return ev, nil
+	case *a2a.Task:
+		return ev, nil
+	}
+	var history *int
+	if req.Config != nil {
+		history = req.Config.HistoryLength
+	}
+	return g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: last.TaskInfo().TaskID, HistoryLength: history})
+}
+
 func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	if err := g.checkMessage(ctx, req); err != nil {
 		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
 	}
+	return g.stream(ctx, req)
+}
+
+// stream sends a checked message as a stream, records the task it starts
+// and watches it if the stream ends before the task does.
+func (g *guardedHandler) stream(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		var last *a2a.Task
 		recorded := false
@@ -400,7 +470,7 @@ func (g *guardedHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.Dele
 
 // record notes that this conversation started a task.
 func (g *guardedHandler) record(ctx context.Context, id a2a.TaskID, contextID string) {
-	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID}
+	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID, OriginTaskID: g.claims.TaskID}
 	if err := g.proxy.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
 		slog.Error("recording a call task", "agent", g.agent, "task", id, "error", err)
 	}

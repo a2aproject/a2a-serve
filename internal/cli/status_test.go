@@ -136,6 +136,63 @@ func TestPrintStatusTools(t *testing.T) {
 	}
 }
 
+func TestPrintStatusNetworkProblems(t *testing.T) {
+	t.Parallel()
+	removed := &controlapi.NetworkProblem{State: "removed", Problem: "the relay https://relay.example.com removed this agent", Fix: "ask the relay's operator to let it back"}
+	down := &controlapi.NetworkProblem{State: "disconnected", Problem: "not connected to the relay https://relay.example.com; reconnecting"}
+	tests := []struct {
+		name string
+		st   controlapi.Status
+		want string
+	}{
+		{
+			name: "removed",
+			st:   controlapi.Status{PrivateProblem: removed, PublicProblem: removed},
+			want: "  local    http://127.0.0.1:4000\n" +
+				"  private  ! the relay https://relay.example.com removed this agent; ask the relay's operator to let it back\n" +
+				"  public   ! the relay https://relay.example.com removed this agent; ask the relay's operator to let it back\n",
+		},
+		{
+			name: "disconnected",
+			st:   controlapi.Status{Private: "http://agentmesh.local/mesh/p1/a2a/coder", PrivateProblem: down},
+			want: "  local    http://127.0.0.1:4000\n" +
+				"  private  http://agentmesh.local/mesh/p1/a2a/coder\n" +
+				"           ! not connected to the relay https://relay.example.com; reconnecting\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+			st := tc.st
+			st.Name, st.Harness, st.Started, st.Local = "coder", "opencode", time.Now(), "http://127.0.0.1:4000"
+			if err := printStatus(cfg, &st, nil, "", ""); err != nil {
+				t.Fatalf("printStatus() error = %v", err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("printStatus() = %q, want the URL block %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
+func TestStatusURLOfRemovedAgent(t *testing.T) {
+	t.Parallel()
+	removed := &controlapi.NetworkProblem{State: "removed", Problem: "the relay https://relay.example.com removed this agent", Fix: "ask the relay's operator to let it back"}
+	st := &controlapi.Status{Name: "coder", Local: "http://127.0.0.1:4000", PrivateProblem: removed, PublicProblem: removed}
+	for _, scope := range []string{scopePrivate, scopePublic} {
+		_, err := statusURL(st, scope)
+		if err == nil || !strings.Contains(err.Error(), removed.Line()) {
+			t.Fatalf("statusURL(%q) error = %v, want %q", scope, err, removed.Line())
+		}
+	}
+	got, err := statusURL(st, "")
+	if err != nil || got != st.Local {
+		t.Fatalf("statusURL(\"\") = (%q, %v), want %q", got, err, st.Local)
+	}
+}
+
 func TestStatusJSONNamesAgentOnce(t *testing.T) {
 	t.Parallel()
 	st := &controlapi.Status{Name: "coder", Harness: "opencode", Dir: "/work"}

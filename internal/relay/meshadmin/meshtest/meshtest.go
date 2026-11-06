@@ -127,7 +127,14 @@ func (m *Mesh) handler() http.Handler {
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		write(w, meshadmin.Status{Nodes: m.nodes, Catalog: m.cat})
+		// Agent Mesh forgets what a banned node serves.
+		cat := map[string]meshadmin.NodeServices{}
+		for _, n := range m.nodes {
+			if svc, ok := m.cat[n.PeerID]; ok && !n.Banned {
+				cat[n.PeerID] = svc
+			}
+		}
+		write(w, meshadmin.Status{Nodes: m.nodes, Catalog: cat})
 	})
 	mux.HandleFunc("POST /admin/revoke", func(w http.ResponseWriter, r *http.Request) {
 		var req struct {

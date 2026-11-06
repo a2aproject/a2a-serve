@@ -36,7 +36,7 @@ a2a-serve config unset allow-email '*@example.com'
 - Each paired or signed-in caller gets their own container for conversation history. All containers share the workspace, the `--mount` directories, and the `--secret` environment variables, including the shared container of anonymous callers. Anyone who can approve commands on the agent can read its secrets ([Secrets](secrets.md) and [Security](../advanced/security.md)).
 - `--private-allow-incoming` and `--public-allow-incoming` take `everyone` and `anyone` as the same word: `--private-allow-incoming anyone` is `everyone`, and `--public-allow-incoming everyone` is `anyone`.
 - [Anonymous callers](identities.md#anonymous-callers) start tasks in their own conversation and never answer approvals.
-- A caller without a credential gets 401, with the steps to pair. A caller with a revoked or replaced token gets 401 that says the token is no longer valid. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
+- A caller without a credential gets 401, with the steps to pair. A caller with a token the agent doesn't recognize, such as a mistyped, revoked or replaced one, gets 401 with the same steps. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`. A refused call from another agent names that agent and gives the steps to pair agents: `pair invite` on this side and `contact add --code` on the caller's.
 
 The [access model](../advanced/access-model.md) describes the model and its guarantees.
 
@@ -56,7 +56,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 - The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
 - A change of role applies to the next request of every token and messenger account of the pairing.
-- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations and agent home directory. A new pairing with the same name starts with none of them. `pair rm <name> --dry-run` prints what it would remove and removes nothing.
+- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations and agent home directory. Its conversations go with your messages in them. A new pairing with the same name starts with none of them. `pair rm <name> --dry-run` prints what it would remove and removes nothing.
 - `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
 - The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
 

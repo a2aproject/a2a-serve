@@ -31,6 +31,8 @@ import (
 
 	"github.com/google/agentmesh/api"
 	"github.com/google/agentmesh/sdk/meshnet"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // AgentMeshBuilt reports whether this a2a-serve can join Agent Mesh relays.
@@ -42,6 +44,8 @@ type meshSession interface {
 	WhoIs(remoteAddr string) (*meshnet.CallerInfo, bool)
 	Discover(ctx context.Context, serviceType api.ServiceType, serviceName string) ([]*api.DiscoveredProvider, error)
 	HTTPClient() *http.Client
+	Status() meshnet.Status
+	Refresh(ctx context.Context) error
 	Close() error
 }
 
@@ -62,6 +66,9 @@ type agentMesh struct {
 	owner      string
 	privateURL *url.URL
 	publicURL  *url.URL
+	health     Health
+	probedAt   time.Time
+	stopHealth func()
 }
 
 // NewRelay returns the provider of an Agent Mesh relay.
@@ -105,6 +112,23 @@ func hasMeshIdentity(stateDir string) bool {
 	return err == nil && len(cred.GetBiscuit()) > 0
 }
 
+// savedPeerID returns the peer ID of the mesh identity in stateDir, or "".
+func savedPeerID(stateDir string) string {
+	key, _, err := meshnet.ReadStateDir(stateDir)
+	if err != nil {
+		return ""
+	}
+	priv, err := crypto.UnmarshalPrivateKey(key)
+	if err != nil {
+		return ""
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		return ""
+	}
+	return id.String()
+}
+
 func (a *agentMesh) start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -135,7 +159,16 @@ func (a *agentMesh) start(ctx context.Context) error {
 		}
 	}
 	st, err := srv.Up(ctx)
+	err = explainJoin(err)
+	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
+		slog.Warn("recording the relay join", "error", rerr)
+	}
 	if err != nil {
+		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
+			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {
+				err = rerr
+			}
+		}
 		return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err), srv.Close())
 	}
 	opts := meshnet.A2AOptions{Name: a.cfg.AgentName, Description: a.cfg.Description, Public: a.cfg.Public}
@@ -157,8 +190,16 @@ func (a *agentMesh) start(ctx context.Context) error {
 	a.attach(ep.PrivateListener, ep.PrivateURL, ep.PublicListener, ep.PublicURL)
 	slog.Info("joined the relay", "relay", a.cfg.URL, "peer_id", st.PeerID, "routers", st.AttachedRouters)
 	a.started.Store(true)
+	watchCtx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go a.watchHealth(watchCtx, done)
+	a.stopHealth = func() { cancel(); <-done }
 	return nil
 }
+
+// Join joins the relay, so that a refused invite fails before the agent
+// starts.
+func (a *agentMesh) Join(ctx context.Context) error { return a.start(ctx) }
 
 func (a *agentMesh) attach(privLn net.Listener, privURL *url.URL, pubLn net.Listener, pubURL *url.URL) {
 	attach := func(want bool, ln net.Listener, u *url.URL) (*splitListener, *url.URL) {
@@ -274,11 +315,19 @@ func (a *agentMesh) HTTPClient() *http.Client {
 		if srv == nil {
 			return nil, errors.New("not connected to the relay")
 		}
-		return srv.HTTPClient().Transport.RoundTrip(r)
+		return checkPeerResponse(srv.HTTPClient().Transport.RoundTrip(r))
 	})}
 }
 
 func (a *agentMesh) Close() error {
+	a.mu.Lock()
+	stopHealth := a.stopHealth
+	a.stopHealth = nil
+	a.mu.Unlock()
+	// The health check takes the lock, so it stops before Close takes it.
+	if stopHealth != nil {
+		stopHealth()
+	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var errs []error

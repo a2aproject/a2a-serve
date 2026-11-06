@@ -31,7 +31,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -172,6 +172,32 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 	}
 	if _, err := os.Stat(marker); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of the old anna's file in the new anna's home error = %v, want %v", err, os.ErrNotExist)
+	}
+}
+
+func TestPairRmDeletesTheOwnersTasksInTheUsersConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	boss := ts.client(ts.pair("boss", auth.RoleOwner))
+	started := send(t, anna, userText("pid", "", ""))
+	joined := send(t, boss, userText("pid", "", started.ContextID))
+	if got, want := pidOf(t, joined), pidOf(t, started); got != want {
+		t.Fatalf("the owner's message in anna's conversation ran in process %d, want anna's process %d", got, want)
+	}
+
+	if _, err := controlapi.NewClient(ts.dir).Revoke(ctx, "anna"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+
+	if _, err := boss.GetTask(ctx, &a2a.GetTaskRequest{ID: joined.ID}); !errors.Is(err, a2a.ErrTaskNotFound) {
+		t.Fatalf("GetTask() of the owner's task in anna's conversation error = %v, want %v", err, a2a.ErrTaskNotFound)
+	}
+	newAnna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	newPid := pidOf(t, send(t, newAnna, userText("pid", "", "")))
+	if got := pidOf(t, send(t, boss, userText("pid", "", started.ContextID))); got == newPid {
+		t.Fatalf("the owner's message in the old anna's conversation ran in the new anna's process %d", got)
 	}
 }
 

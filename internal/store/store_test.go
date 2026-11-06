@@ -71,6 +71,13 @@ func testViewer(ctx context.Context) (string, bool, error) {
 	return u, u == "owner", nil
 }
 
+func usersOf(pairing string) []PairingUser {
+	return []PairingUser{
+		{Principal: "pair:" + pairing, AgentKey: "user:pair:" + pairing},
+		{Principal: "node:" + pairing, AgentKey: "user:node:" + pairing},
+	}
+}
+
 func newTask(id, contextID string) *a2a.Task {
 	return &a2a.Task{ID: a2a.TaskID(id), ContextID: contextID, Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}
 }
@@ -332,7 +339,7 @@ func TestDeletePairing(t *testing.T) {
 		}
 	}
 
-	if err := s.DeletePairing(ctx, "grok", "pair:grok", "node:grok"); err != nil {
+	if err := s.DeletePairing(ctx, "grok", usersOf("grok")...); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 
@@ -422,7 +429,7 @@ func TestPairingRemoval(t *testing.T) {
 		}
 	}
 
-	got, err := s.PairingRemoval(ctx, "anna", "pair:anna", "node:anna")
+	got, err := s.PairingRemoval(ctx, "anna", usersOf("anna")...)
 	if err != nil {
 		t.Fatalf("Store.PairingRemoval() error = %v", err)
 	}
@@ -496,7 +503,7 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 		t.Fatalf("CountToolTap() error = %v", err)
 	}
 
-	if err := s.DeletePairing(ctx, "anna", "pair:anna", "node:anna"); err != nil {
+	if err := s.DeletePairing(ctx, "anna", usersOf("anna")...); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 
@@ -559,6 +566,79 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	}
 	if blobs != 0 {
 		t.Fatalf("blobs after DeletePairing() = %d, want 0", blobs)
+	}
+}
+
+func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	for _, c := range []struct {
+		user string
+		task *a2a.Task
+	}{
+		{"pair:anna", newTask("anna-1", "c-anna")},
+		{"owner", newTask("owner-in-anna", "c-anna")},
+		{"owner", newTask("owner-1", "c-owner")},
+		{"pair:anna", newTask("anna-in-owner", "c-owner")},
+	} {
+		if _, err := ts.Create(asUser(c.user), c.task); err != nil {
+			t.Fatalf("Create(%s) error = %v", c.task.ID, err)
+		}
+	}
+	for conv, sess := range map[string]struct {
+		contextID string
+		key       string
+	}{
+		"anna-dm":  {"c-anna", "user:pair:anna"},
+		"owner-dm": {"c-owner", ""},
+	} {
+		if err := s.SetContext(ctx, "telegram", conv, sess.contextID); err != nil {
+			t.Fatalf("SetContext(%s) error = %v", conv, err)
+		}
+		if err := s.Sessions().Put(ctx, sess.contextID, a2aacp.Session{ID: "s-" + sess.contextID, AgentKey: sess.key}); err != nil {
+			t.Fatalf("Sessions().Put(%s) error = %v", sess.contextID, err)
+		}
+	}
+	unfinished, err := ts.UnfinishedRemoved(ctx, usersOf("anna")[0])
+	if err != nil {
+		t.Fatalf("UnfinishedRemoved() error = %v", err)
+	}
+	slices.Sort(unfinished)
+	if diff := cmp.Diff([]a2a.TaskID{"anna-1", "anna-in-owner", "owner-in-anna"}, unfinished); diff != "" {
+		t.Fatalf("UnfinishedRemoved() wrong result (-want +got) diff = %s", diff)
+	}
+	counts, err := s.PairingRemoval(ctx, "anna", usersOf("anna")...)
+	if err != nil {
+		t.Fatalf("PairingRemoval() error = %v", err)
+	}
+	if diff := cmp.Diff(PairingRemoval{Tasks: 3, Unfinished: 3, Conversations: 1}, counts); diff != "" {
+		t.Fatalf("PairingRemoval() wrong result (-want +got) diff = %s", diff)
+	}
+
+	if err := s.DeletePairing(ctx, "anna", usersOf("anna")...); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+
+	for _, id := range []a2a.TaskID{"anna-1", "owner-in-anna", "anna-in-owner"} {
+		if _, err := ts.Get(owner, id); !errors.Is(err, a2a.ErrTaskNotFound) {
+			t.Fatalf("Get(%s) after DeletePairing() error = %v, want %v", id, err, a2a.ErrTaskNotFound)
+		}
+	}
+	if _, err := ts.Get(owner, "owner-1"); err != nil {
+		t.Fatalf("Get() of the owner's conversation error = %v", err)
+	}
+	if _, err := s.ContextOf(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ContextOf() of the removed user's conversation error = %v, want %v", err, ErrNotFound)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-anna"); err != nil || ok {
+		t.Fatalf("Sessions().Get() of the removed user's conversation = %v, %v, want false, nil", ok, err)
+	}
+	if _, ok, err := s.Sessions().Get(ctx, "c-owner"); err != nil || !ok {
+		t.Fatalf("Sessions().Get() of the owner's conversation = %v, %v, want true, nil", ok, err)
 	}
 }
 
@@ -1350,6 +1430,31 @@ func TestCallTasks(t *testing.T) {
 				t.Fatalf("check = %v, want %v", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestCallTasksOf(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	calls := []CallTask{
+		{ContextID: "c1", Agent: "coder", TaskID: "t1", RemoteContextID: "r1", OriginTaskID: "o1"},
+		{ContextID: "c1", Agent: "reviewer", TaskID: "t2", RemoteContextID: "r2", OriginTaskID: "o1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t3", RemoteContextID: "r1", OriginTaskID: "o2"},
+		{ContextID: "c2", Agent: "coder", TaskID: "t4", RemoteContextID: "r1", OriginTaskID: "o1"},
+	}
+	for _, c := range calls {
+		if err := s.PutCallTask(ctx, c); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+
+	got, err := s.CallTasksOf(ctx, "c1", "o1")
+	if err != nil {
+		t.Fatalf("CallTasksOf() error = %v", err)
+	}
+	if diff := cmp.Diff(calls[:2], got); diff != "" {
+		t.Fatalf("CallTasksOf() wrong result (-want +got) diff = %s", diff)
 	}
 }
 

@@ -323,3 +323,53 @@ func TestIsRelayURL(t *testing.T) {
 		}
 	}
 }
+
+func TestRelayRemoval(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		token   string
+		banned  []string
+		wantErr string
+	}{
+		{
+			name:    "invited agent",
+			token:   "mesh-bt-1",
+			banned:  []string{"12D3KooWOther", "12D3KooWMe"},
+			wantErr: "the relay {url} removed this agent (peer 12D3KooWMe); ask its operator to let it back with `a2a-serve relay invite coder`, then run `a2a-serve restart`",
+		},
+		{
+			name:    "agent that signed in",
+			banned:  []string{"12D3KooWMe"},
+			wantErr: "the relay {url} removed this agent (peer 12D3KooWMe); ask its operator to let you back on --allow-email and restart the relay",
+		},
+		{name: "agent on the relay", token: "mesh-bt-1", banned: []string{"12D3KooWOther"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				payload := encodeControlPlaneInfo("", "", "", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
+				for _, id := range tt.banned {
+					payload = protowire.AppendTag(payload, 5, protowire.BytesType)
+					payload = protowire.AppendString(payload, id)
+				}
+				w.Header().Set("Content-Type", "application/x-protobuf")
+				if _, err := w.Write(payload); err != nil {
+					t.Errorf("writing /info: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			err := relayRemoval(t.Context(), srv.Client(), RelayConfig{URL: srv.URL, AgentName: "coder", Token: tt.token}, "12D3KooWMe")
+
+			got := ""
+			if err != nil {
+				got = err.Error()
+			}
+			if want := strings.ReplaceAll(tt.wantErr, "{url}", srv.URL); got != want {
+				t.Fatalf("relayRemoval() error = %q, want %q", got, want)
+			}
+		})
+	}
+}

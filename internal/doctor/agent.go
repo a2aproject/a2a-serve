@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
@@ -63,6 +64,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		}
 		results = append(results, checkMounts(d, cfg)...)
 		results = append(results, checkRelay(ctx, env, cfg, online)...)
+		if r, ok := checkRelayInvite(d, cfg); ok {
+			results = append(results, r)
+		}
 		if r, ok := checkBackupCLI(env, cfg); ok {
 			results = append(results, r)
 		}
@@ -312,6 +316,22 @@ func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 	return relayOnline(ctx, env.HTTP, relay)
 }
 
+// checkRelayInvite reports the invite the relay refused at the agent's
+// last join, which the server recorded.
+func checkRelayInvite(d agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
+	if !network.IsRelayURL(cfg.Network.Private) && !network.IsRelayURL(cfg.Network.Public) {
+		return Result{}, false
+	}
+	problem, err := network.InviteProblem(d.AgentMeshDir())
+	if err != nil {
+		return Result{ID: "relay-invite", Status: StatusFail, Message: err.Error()}, true
+	}
+	if problem == "" {
+		return Result{}, false
+	}
+	return Result{ID: "relay-invite", Status: StatusFail, Message: "the relay refused the agent's invite at the last start: " + problem, Fix: network.InviteFix}, true
+}
+
 // checkBackupCLI checks that the CLI the backup destination needs is
 // installed.
 func checkBackupCLI(env Env, cfg *agentdir.Config) (Result, bool) {
@@ -411,7 +431,27 @@ func checkServer(ctx context.Context, env Env, d agentdir.Dir, cfg *agentdir.Con
 	if err := get(ctx, env, st.Local+"/healthz", "", http.StatusOK); err != nil {
 		return append(results, Result{ID: "local-url", Status: StatusFail, Message: fmt.Sprintf("%s doesn't answer: %v", st.Local, err), Fix: fixRestart})
 	}
-	return append(results, checkOwnerToken(ctx, env, st.Local))
+	results = append(results, checkOwnerToken(ctx, env, st.Local))
+	return append(results, checkNetworks(st)...)
+}
+
+// checkNetworks reports the networks that don't reach the running agent,
+// once for a relay that serves both its URLs.
+func checkNetworks(st *controlapi.Status) []Result {
+	var results []Result
+	var seen []controlapi.NetworkProblem
+	for _, p := range []*controlapi.NetworkProblem{st.PrivateProblem, st.PublicProblem} {
+		if p == nil || slices.Contains(seen, *p) {
+			continue
+		}
+		seen = append(seen, *p)
+		status := StatusWarn
+		if p.State == string(network.HealthRemoved) {
+			status = StatusFail
+		}
+		results = append(results, Result{ID: "network", Status: status, Message: p.Problem, Fix: p.Fix})
+	}
+	return results
 }
 
 func checkOwnerToken(ctx context.Context, env Env, local string) Result {

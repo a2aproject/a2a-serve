@@ -359,6 +359,9 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if err := s.setupNetwork(closers); err != nil {
 		return err
 	}
+	if err := s.joinNetwork(ctx); err != nil {
+		return err
+	}
 	hl, err := s.listenHarness(sandboxed)
 	if err != nil {
 		return err
@@ -491,6 +494,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Records: records,
 			Chat:    s.chatApprovals,
 			Turns:   s.chatTurns,
+			Asked:   &questionTasks{store: s.store, tasks: s.tasks, bus: s.bus},
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})

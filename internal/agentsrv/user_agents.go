@@ -24,7 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -195,9 +195,9 @@ func (u *userAgents) stop(keys ...string) (release func(), err error) {
 	return release, nil
 }
 
-// stopUsers cancels the unfinished tasks of principals and stops their
-// agent processes, which don't start again until release is called. It
-// implements [pairings.Users].
+// stopUsers cancels the unfinished tasks that removing principals deletes
+// and stops their agent processes, which don't start again until release
+// is called. It implements [pairings.Users].
 type stopUsers struct {
 	tasks  *store.TaskStore
 	sender *handlerSender
@@ -210,8 +210,10 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	// its agent process to start would keep its cancellation waiting.
 	u.posted.DropUsers(principals)
 	as := auth.InProcess(ctx, auth.Owner())
-	for _, p := range principals {
-		ids, err := u.tasks.UnfinishedOf(ctx, p)
+	keys := make([]string, len(principals))
+	for i, p := range principals {
+		keys[i] = agentkey.User(p)
+		ids, err := u.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: p, AgentKey: keys[i]})
 		if err != nil {
 			return nil, err
 		}
@@ -220,10 +222,6 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 				return nil, fmt.Errorf("canceling task %s: %w", id, err)
 			}
 		}
-	}
-	keys := make([]string, len(principals))
-	for i, p := range principals {
-		keys[i] = agentkey.User(p)
 	}
 	return u.users.stop(keys...)
 }

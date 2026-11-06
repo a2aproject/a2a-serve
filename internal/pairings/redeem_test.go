@@ -19,6 +19,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
@@ -350,5 +351,24 @@ func TestRedeemRefusesPairingBeingRemoved(t *testing.T) {
 	}
 	if _, err := s.Redeem(ctx, users.code, Via{Client: "9.9.9.9", URL: base}); !errors.Is(err, ErrInvalidCode) {
 		t.Fatalf("Redeem() after anna is removed error = %v, want %v", err, ErrInvalidCode)
+	}
+}
+
+func TestRateLimitErrorMessage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		wait time.Duration
+		want string
+	}{
+		{wait: 300 * time.Millisecond, want: "too many invalid pairing codes; try again in 1 second"},
+		{wait: 1500 * time.Millisecond, want: "too many invalid pairing codes; try again in 2 seconds"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.want, func(t *testing.T) {
+			t.Parallel()
+			if got := (&RateLimitError{Wait: tc.wait}).Error(); got != tc.want {
+				t.Fatalf("RateLimitError.Error() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }

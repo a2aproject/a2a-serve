@@ -19,7 +19,10 @@
 // rounds every agent has every entry, including agents which were offline
 // or can't reach the host directly. An entry an agent got from its host
 // can only change by another one from the host, so a peer relaying entries
-// can't hide or alter the advertisements of others.
+// can't hide or alter the advertisements of others. The agent that gets an
+// entry from its host records the host's machine in it, so that agents find
+// the host among the agents of the private network even when its name is
+// listed with a suffix.
 package gossip
 
 import (
@@ -37,6 +40,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 // Lifetimes of advertisements.
@@ -51,6 +55,8 @@ const (
 	// MaxPerHost bounds the entries of one host, so that one agent can't
 	// fill the table.
 	MaxPerHost = 100
+	// maxNode bounds the machine ID of an entry.
+	maxNode = 256
 	// saveDelay is how long the table waits to save merged entries, so
 	// that the merges of a gossip round write it once.
 	saveDelay = 10 * time.Second
@@ -64,8 +70,12 @@ const (
 type Entry struct {
 	// Name is the pairing's name on its host, such as grok.
 	Name string `json:"name"`
-	// Host is the name of the agent hosting it on the private network.
-	Host        string `json:"host"`
+	// Host is the name of the agent hosting it, as its agent card says.
+	Host string `json:"host"`
+	// Node identifies the host's machine on the private network, as
+	// [network.PeerInfo.Node] does. The agent that got the entry from its
+	// host sets it; it is empty in the host's own table.
+	Node        string `json:"node,omitempty"`
 	Description string `json:"description,omitempty"`
 	// Version orders the updates of an entry; the host sets it.
 	Version int64     `json:"version"`
@@ -75,7 +85,8 @@ type Entry struct {
 	Removed bool `json:"removed,omitempty"`
 }
 
-// Key is name@host, how other agents refer to the entry.
+// Key is name@host, how the table refers to the entry. Other agents refer to
+// it with the host's listed name, see [Table.List].
 func (e Entry) Key() string { return e.Name + "@" + e.Host }
 
 var namePart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
@@ -83,6 +94,9 @@ var namePart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
 func (e Entry) validate() error {
 	if !namePart.MatchString(e.Name) || !namePart.MatchString(e.Host) {
 		return fmt.Errorf("invalid advertisement %q", e.Key())
+	}
+	if len(e.Node) > maxNode {
+		return fmt.Errorf("advertisement %s has a too long machine ID", e.Key())
 	}
 	if len(e.Description) > 1000 {
 		return fmt.Errorf("advertisement %s has a too long description", e.Key())
@@ -328,6 +342,46 @@ func (t *Table) Live() []Entry {
 	return out
 }
 
+// Listing is a live entry of another agent, with its host among the agents
+// found on the private network.
+type Listing struct {
+	Entry
+	// Key is name@agent with the host's listed name, or the entry's own key
+	// when the host isn't on the private network now.
+	Key string
+	// Agent is the host, or nil when it isn't on the private network now.
+	Agent *network.PeerInfo
+}
+
+// List returns the live entries of other agents with their hosts among
+// peers, the agents found on the private network. The host is the agent on
+// the entry's machine; an entry with no machine, which an older version
+// relayed, falls back to the agent listed by its host's name. Entries that
+// end up with the same key are listed once.
+func (t *Table) List(peers []network.PeerInfo) []Listing {
+	var out []Listing
+	seen := map[string]bool{}
+	for _, e := range t.Live() {
+		l := Listing{Entry: e, Key: e.Key()}
+		if i := slices.IndexFunc(peers, e.hostedBy); i >= 0 {
+			l.Agent = &peers[i]
+			l.Key = e.Name + "@" + peers[i].Name
+		}
+		if k := strings.ToLower(l.Key); !seen[k] {
+			seen[k] = true
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+func (e Entry) hostedBy(p network.PeerInfo) bool {
+	if e.Node != "" {
+		return e.Node == p.Node
+	}
+	return strings.EqualFold(e.Host, p.Name)
+}
+
 // Lookup returns the live entry of key.
 func (t *Table) Lookup(key string) (Entry, bool) {
 	for _, e := range t.Live() {
@@ -352,8 +406,17 @@ func (t *Table) Digest() Digest {
 	return d
 }
 
+// Peer is an agent that gossips with this one.
+type Peer struct {
+	// Name is the agent's name as its agent card says, which its entries
+	// carry as their host. It is empty when the sender is unknown.
+	Name string
+	// Node identifies its machine on the private network.
+	Node string
+}
+
 // Compare returns the entries newer here than in the digest of the agent
-// named peer, and the keys peer has newer. Entries of this agent and keys
+// named peer, as its agent card says, and the keys peer has newer. Entries of this agent and keys
 // of peer's own entries count as newer whenever their versions differ, so
 // that an entry from its host replaces a relayed one of a higher version.
 func (t *Table) Compare(peer string, d Digest) (newer []Entry, want []string) {
@@ -390,14 +453,14 @@ func (t *Table) Get(keys []string) []Entry {
 	return out
 }
 
-// Merge keeps the entries newer than the ones here, which the agent named
-// peer sent; peer is empty when the sender is unknown. Entries of this agent
-// only come from this agent, and invalid, expired or future ones are
-// dropped. Entries of peer itself replace the ones relayed by others. A
-// relayed entry never replaces one that came from its host. When the table
+// Merge keeps the entries newer than the ones here, which peer sent.
+// Entries of this agent only come from this agent, and invalid, expired or
+// future ones are dropped. Entries of peer itself replace the ones relayed
+// by others, and get peer's machine. A relayed entry never replaces one that
+// came from its host. When the table
 // or the host has no room left, see [Table.makeRoom], new entries are
 // dropped. Merged entries are saved within saveDelay.
-func (t *Table) Merge(peer string, entries []Entry) error {
+func (t *Table) Merge(peer Peer, entries []Entry) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	// Removals go first, so that the room they free takes the host's new
@@ -419,7 +482,10 @@ func (t *Table) Merge(peer string, entries []Entry) error {
 			continue
 		}
 		key := e.Key()
-		direct := peer != "" && strings.EqualFold(e.Host, peer)
+		direct := peer.Name != "" && strings.EqualFold(e.Host, peer.Name)
+		if direct {
+			e.Node = peer.Node
+		}
 		cur, ok := t.entries[key]
 		switch {
 		case !ok && !t.makeRoom(e, direct):

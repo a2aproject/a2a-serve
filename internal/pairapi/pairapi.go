@@ -24,7 +24,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
@@ -67,33 +69,69 @@ type Response struct {
 	URL       string `json:"url"`
 }
 
+// maxBackoffWait bounds the backoff Pair waits out before it tries once
+// more. The agent backs off after invalid codes, including those of other
+// callers behind the same address or relay.
+const maxBackoffWait = 15 * time.Second
+
 // Pair exchanges code at the agent at agentURL for a token, as a redeemer
-// of kind.
+// of kind. It waits out a short backoff of the agent once.
 func Pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Response, error) {
+	out, wait, err := pair(ctx, hc, agentURL, code, kind)
+	if err == nil || wait < 0 {
+		return out, err
+	}
+	t := time.NewTimer(wait)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return Response{}, err
+	case <-t.C:
+	}
+	out, _, err = pair(ctx, hc, agentURL, code, kind)
+	return out, err
+}
+
+// pair makes one pairing request. When the agent backs off for at most
+// maxBackoffWait, it returns how long to wait, and -1 otherwise.
+func pair(ctx context.Context, hc *http.Client, agentURL, code, kind string) (Response, time.Duration, error) {
 	agentURL = strings.TrimSuffix(agentURL, "/")
 	body, err := json.Marshal(Request{Code: code, Kind: kind})
 	if err != nil {
-		return Response{}, err
+		return Response{}, -1, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, agentURL+Path, bytes.NewReader(body))
 	if err != nil {
-		return Response{}, err
+		return Response{}, -1, err
 	}
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := hc.Do(req)
 	if err != nil {
-		return Response{}, err
+		return Response{}, -1, err
 	}
 	data, readErr := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err := errors.Join(readErr, resp.Body.Close()); err != nil {
-		return Response{}, err
+		return Response{}, -1, err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return Response{}, fmt.Errorf("pairing with %s: %s", agentURL, jsonhttp.ErrorMessage(resp.Status, data))
+		return Response{}, retryAfter(resp), fmt.Errorf("pairing with %s: %s", agentURL, jsonhttp.ErrorMessage(resp.Status, data))
 	}
 	var out Response
 	if err := json.Unmarshal(data, &out); err != nil {
-		return Response{}, fmt.Errorf("pairing with %s: %w", agentURL, err)
+		return Response{}, -1, fmt.Errorf("pairing with %s: %w", agentURL, err)
 	}
-	return out, nil
+	return out, -1, nil
+}
+
+// retryAfter returns the backoff of a 429 response when it is at most
+// maxBackoffWait, or -1.
+func retryAfter(resp *http.Response) time.Duration {
+	if resp.StatusCode != http.StatusTooManyRequests {
+		return -1
+	}
+	n, err := strconv.Atoi(resp.Header.Get("Retry-After"))
+	if err != nil || n < 0 || n > int(maxBackoffWait/time.Second) {
+		return -1
+	}
+	return time.Duration(n) * time.Second
 }

@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -57,6 +58,7 @@ type watchesFixture struct {
 	store   *store.Store
 	chat    *fakeQuestionChat
 	turns   *fakeTurnInjector
+	asked   *fakeQuestionTasks
 	remote  *fakeContact
 }
 
@@ -79,7 +81,7 @@ func newWatchesFixtureNet(t *testing.T, timings Timings, net network.Provider) *
 	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
 	clients := newTestContactClients(t, st, nil)
 	chain := &auth.Chain{Store: st, Net: net, Policy: func() auth.Policy { return auth.Policy{} }}
-	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), remote: remote}
+	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{}, remote: remote}
 	ctx, cancel := context.WithCancel(context.Background())
 	f.ws = NewWatches(ctx, WatchesDeps{
 		Store:   st,
@@ -87,6 +89,7 @@ func newWatchesFixtureNet(t *testing.T, timings Timings, net network.Provider) *
 		Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Chain: chain, BaseURL: func() string { return "http://assistant.test" }}),
 		Chat:    f.chat,
 		Turns:   f.turns,
+		Asked:   f.asked,
 		Chain:   chain,
 		Timings: withWatchLimits(timings),
 	})
@@ -674,7 +677,9 @@ func TestWatchesRelay(t *testing.T) {
 		user      auth.Principal
 		title     string
 		wantAsked []askedQuestion
-		wantUser  string
+		// wantOnTask are the contexts asked on a task of their own.
+		wantOnTask []string
+		wantUser   string
 	}{
 		{
 			name: "conversation chat",
@@ -738,10 +743,11 @@ func TestWatchesRelay(t *testing.T) {
 			wantUser:  auth.OwnerID,
 		},
 		{
-			name:     "no chat at all",
-			user:     anna,
-			title:    "git push",
-			wantUser: "pair:anna",
+			name:       "no chat at all asks in the conversation",
+			user:       anna,
+			title:      "git push",
+			wantOnTask: []string{"origin"},
+			wantUser:   "pair:anna",
 		},
 	}
 	for _, tc := range tests {
@@ -762,6 +768,14 @@ func TestWatchesRelay(t *testing.T) {
 			got := f.chat.questions()
 			if diff := cmp.Diff(tc.wantAsked, got, cmpopts.IgnoreFields(askedQuestion{}, "Rec")); diff != "" {
 				t.Fatalf("Watches.relay() questions asked wrong result (-want +got) diff = %s", diff)
+			}
+			var onTask []string
+			for _, q := range f.asked.questions() {
+				onTask = append(onTask, q.ContextID)
+				got = append(got, askedQuestion{Header: q.Header, Rec: q.Rec})
+			}
+			if diff := cmp.Diff(tc.wantOnTask, onTask); diff != "" {
+				t.Fatalf("Watches.relay() questions asked on tasks wrong result (-want +got) diff = %s", diff)
 			}
 			for _, a := range got {
 				want := store.Question{TaskID: "t1", ContextID: "remote", Contact: "coder", HitlID: "tool1", User: tc.wantUser}
@@ -817,6 +831,35 @@ func TestWatchesWatchRelaysPermissionQuestionOnce(t *testing.T) {
 		t.Fatalf("injected text = %q, want %q", turn.Text, want)
 	}
 	f.wantNoWatches(t)
+}
+
+func TestWatchesWatchEndsQuestionTasksOnceTheTaskMovesOn(t *testing.T) {
+	t.Parallel()
+	f := newWatchesFixture(t)
+	task := f.remote.startTask(t, promptAsk)
+	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
+
+	waitFor(t, "the question to be asked", func() bool { return len(f.asked.questions()) > 0 })
+	f.waitPolls(t, 3)
+	asked := f.asked.questions()
+	if len(asked) != 1 || asked[0].ContextID != "origin" || asked[0].Header != "coder wants to run git push" {
+		t.Fatalf("questions asked on tasks = %+v, want one in the origin conversation", asked)
+	}
+	if got := f.asked.ends(); len(got) != 0 {
+		t.Fatalf("question tasks ended while the task waits = %+v, want none", got)
+	}
+
+	rec := asked[0].Rec
+	q := approvals.FromRecord(rec)
+	if err := f.clients.AnswerRemote(context.Background(), rec, q, q.Options[0], auth.Owner()); err != nil {
+		t.Fatalf("ContactClients.AnswerRemote() error = %v", err)
+	}
+	f.nextTurn(t)
+
+	want := []endedQuestions{{ContextID: "origin", Agent: "coder", TaskID: string(task.ID)}}
+	if diff := cmp.Diff(want, slices.Compact(f.asked.ends())); diff != "" {
+		t.Fatalf("question tasks ended wrong result (-want +got) diff = %s", diff)
+	}
 }
 
 func linkChat(t *testing.T, st *store.Store, pairing, channelName, identity, conv string) {

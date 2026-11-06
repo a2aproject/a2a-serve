@@ -297,6 +297,13 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 		_, err := tx.ExecContext(ctx, `ALTER TABLE contacts ADD COLUMN card TEXT NOT NULL DEFAULT ''`)
 		return err
 	},
+	// 20: call tasks record the task whose turn started them, so that
+	// canceling that task cancels them.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `ALTER TABLE call_tasks ADD COLUMN origin_task_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
+		return err
+	},
 }
 
 const schemaV18 = `

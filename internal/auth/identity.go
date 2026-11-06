@@ -139,8 +139,12 @@ func IdentityOf(id string) Identity {
 }
 
 // Describe names the identity for people, such as "anna@example.com on the
-// tailnet".
+// tailnet", or "an agent of anna@example.com on the relay" for a call from
+// another agent.
 func (id Identity) Describe() string {
+	if id.Hops > 0 {
+		return id.describeAgent() + where(id)
+	}
 	who := id.Email
 	switch {
 	case id.Self:
@@ -157,14 +161,32 @@ func (id Identity) Describe() string {
 		who = "an unknown caller"
 	}
 	switch {
-	case id.Hops > 0:
-		who += " through another agent"
 	case id.EmailSource == EmailFromGoogle && who == id.Email:
 		return who + " with Google sign-in"
 	case id.EmailSource == EmailFromMail && who == id.Email:
 		return who + " by email"
 	}
 	return who + where(id)
+}
+
+// describeAgent names the agent server a call came from by what the call
+// proves about it.
+func (id Identity) describeAgent() string {
+	switch {
+	case id.Self:
+		return "one of your agents"
+	case id.Pairing != "":
+		return "an agent with the pairing " + id.Pairing
+	case id.WebhookNode != "":
+		return "the webhook node " + id.WebhookNode
+	case id.Email != "":
+		return "an agent of " + id.Email
+	case id.ChatAccount != "":
+		return "an agent of " + id.ChatAccount
+	case id.Node != "":
+		return "the agent on the machine " + id.Node
+	}
+	return "an unknown agent"
 }
 
 func where(id Identity) string {

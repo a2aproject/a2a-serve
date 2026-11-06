@@ -748,6 +748,17 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"relay", relayStatus}, {"running", StatusWarn}},
 		},
 		{
+			name: "relay that refused the invite",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := network.RecordJoin(d.AgentMeshDir(), &network.InviteError{Problem: "the invite was already used"}); err != nil {
+					t.Fatalf("network.RecordJoin() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"relay", relayStatus}, {"relay-invite", StatusFail}, {"running", StatusWarn}},
+		},
+		{
 			name: "backups to GCS",
 			cfg: agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,
 				Backup: agentdir.BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY"}},
@@ -904,13 +915,26 @@ func TestRunningAgent(t *testing.T) {
 		}
 	}))
 	t.Cleanup(srv.Close)
+	removed := &controlapi.NetworkProblem{State: "removed", Problem: "the relay https://relay.example.com removed this agent", Fix: "ask the relay's operator to let it back"}
+	down := &controlapi.NetworkProblem{State: "disconnected", Problem: "not connected to the relay https://relay.example.com; reconnecting"}
 	tests := []struct {
-		name  string
-		token string
-		local string
-		want  []check
+		name   string
+		token  string
+		local  string
+		status controlapi.Status
+		want   []check
 	}{
 		{name: "token accepted", token: token, local: srv.URL, want: []check{{"running", StatusOK}, {"owner-token", StatusOK}}},
+		{
+			name: "relay removed the agent", token: token, local: srv.URL,
+			status: controlapi.Status{PrivateProblem: removed, PublicProblem: removed},
+			want:   []check{{"running", StatusOK}, {"owner-token", StatusOK}, {"network", StatusFail}},
+		},
+		{
+			name: "relay disconnected", token: token, local: srv.URL,
+			status: controlapi.Status{Private: "http://agentmesh.local/mesh/p1/a2a/coder", PrivateProblem: down},
+			want:   []check{{"running", StatusOK}, {"owner-token", StatusOK}, {"network", StatusWarn}},
+		},
 		{name: "token rejected", token: "stale", local: srv.URL, want: []check{{"running", StatusOK}, {"owner-token", StatusFail}}},
 		{name: "no token", local: srv.URL, want: []check{{"running", StatusOK}, {"owner-token", StatusFail}}},
 		{name: "local URL down", token: token, local: "http://127.0.0.1:1", want: []check{{"running", StatusOK}, {"local-url", StatusFail}}},
@@ -920,7 +944,9 @@ func TestRunningAgent(t *testing.T) {
 			t.Parallel()
 			m := newFakeMachine(t)
 			m.paths["opencode"] = "/usr/bin/opencode"
-			m.status = &controlapi.Status{Local: tc.local, PID: 42}
+			st := tc.status
+			st.Local, st.PID = tc.local, 42
+			m.status = &st
 			env := m.Env()
 			env.HTTP = &http.Client{Timeout: 5 * time.Second}
 			if tc.token != "" {

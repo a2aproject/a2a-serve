@@ -66,7 +66,7 @@ type gossipEntries struct {
 
 // registerGossip serves the exchange of advertisements. Only agents on the
 // private network reach it; an advertisement only names a pairing, and a
-// call to it goes to the host found by name on the private network. The
+// call to it goes to the host found on the private network. The
 // entries a caller sends of its own host replace the ones others relayed.
 func (s *Server) registerGossip(mux *http.ServeMux) {
 	mux.Handle("POST "+gossipPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -74,7 +74,7 @@ func (s *Server) registerGossip(mux *http.ServeMux) {
 		if !jsonhttp.Read(w, r, &req) {
 			return
 		}
-		newer, want := s.ads.Compare(s.gossipPeer(r), req.Digest)
+		newer, want := s.ads.Compare(s.gossipPeer(r).Name, req.Digest)
 		jsonhttp.Write(w, http.StatusOK, gossipResponse{Entries: newer, Want: want})
 	})))
 	mux.Handle("POST "+gossipEntriesPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -90,39 +90,43 @@ func (s *Server) registerGossip(mux *http.ServeMux) {
 	})))
 }
 
-// gossipPeer returns the name of the agent on the private network which
-// sent r, the agent whose machine the network identifies as the caller's,
-// or "" if there is none.
-func (s *Server) gossipPeer(r *http.Request) string {
+// gossipPeer returns the agent on the private network which sent r, the
+// agent whose machine the network identifies as the caller's, or the zero
+// Peer if there is none.
+func (s *Server) gossipPeer(r *http.Request) gossip.Peer {
 	who, err := s.private.WhoIs(r.Context(), r.RemoteAddr)
 	if err != nil {
 		if !errors.Is(err, network.ErrNoIdentity) {
 			slog.Warn("identifying a gossip peer", "error", err)
 		}
-		return ""
+		return gossip.Peer{}
 	}
 	peers, err := s.clients.Discover(r.Context())
-	name, ok := agentOnNode(peers, who.Node)
+	peer, ok := agentOnNode(peers, who.Node)
 	if err == nil && !ok {
 		// A peer which joined since the last discovery is found by a new one.
 		peers, err = s.clients.Rediscover(r.Context(), gossipRediscoverEvery)
-		name, _ = agentOnNode(peers, who.Node)
+		peer, _ = agentOnNode(peers, who.Node)
 	}
 	if err != nil {
 		slog.Warn("finding gossip peers", "error", err)
-		return ""
+		return gossip.Peer{}
 	}
-	return name
+	return peer
 }
 
-// agentOnNode returns the name of the agent of peers on the machine node.
-func agentOnNode(peers []network.PeerInfo, node string) (string, bool) {
+// agentOnNode returns the agent of peers on the machine node.
+func agentOnNode(peers []network.PeerInfo, node string) (gossip.Peer, bool) {
 	for _, p := range peers {
 		if p.Node != "" && p.Node == node {
-			return p.Name, true
+			return gossipPeerOf(p), true
 		}
 	}
-	return "", false
+	return gossip.Peer{}, false
+}
+
+func gossipPeerOf(p network.PeerInfo) gossip.Peer {
+	return gossip.Peer{Name: p.CardName, Node: p.Node}
 }
 
 // runGossip renews this agent's advertisements, drops stale ones and swaps
@@ -176,7 +180,7 @@ func (s *Server) gossipWith(ctx context.Context, hc *http.Client, peer network.P
 	if err := postJSON(ctx, hc, trimSlash(peer.URL)+gossipPath, gossipRequest{Digest: s.ads.Digest()}, &resp); err != nil {
 		return err
 	}
-	if err := s.ads.Merge(peer.Name, resp.Entries); err != nil {
+	if err := s.ads.Merge(gossipPeerOf(peer), resp.Entries); err != nil {
 		return err
 	}
 	if len(resp.Want) == 0 {

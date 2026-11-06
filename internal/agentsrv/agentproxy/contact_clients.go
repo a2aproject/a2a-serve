@@ -127,6 +127,9 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 	if cc.private == nil {
 		return nil, errors.New("this agent has no private network; add one with `a2a-serve config set --private tailscale` (or a relay URL) and `a2a-serve restart`")
 	}
+	if err := network.HealthOf(cc.private).Err(); err != nil {
+		return nil, err
+	}
 	cc.mu.Lock()
 	if time.Since(cc.cachedAt) < maxAge {
 		out := cc.cache
@@ -154,8 +157,8 @@ func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, s
 		}
 		return u, ViaDirect, nil
 	}
-	if node, host, ok := gossip.ParseKey(name); ok {
-		u, err := cc.advertisedURL(ctx, name, node, host)
+	if _, _, ok := gossip.ParseKey(name); ok {
+		u, err := cc.advertisedURL(ctx, name)
 		return u, ViaPrivate, err
 	}
 	peers, err := cc.Discover(ctx)
@@ -170,23 +173,25 @@ func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, s
 	return "", "", fmt.Errorf("no agent named %q on the private network; pass its URL with --url", name)
 }
 
-// advertisedURL returns the URL of a pairing advertised as key: the node
-// name at the agent host, found by name on the private network. The
-// advertisement only says it exists, so it can't send calls elsewhere.
-func (cc *ContactClients) advertisedURL(ctx context.Context, key, name, host string) (string, error) {
-	if _, ok := cc.ads.Lookup(key); !ok {
-		return "", fmt.Errorf("no agent advertises %s on the private network; `a2a-serve peers` lists the advertised pairings", key)
-	}
+// advertisedURL returns the URL of a pairing advertised as key, with the
+// name `a2a-serve peers` lists it by: the node at its host found on the
+// private network. The advertisement only says it exists, so it can't send
+// calls outside the private network.
+func (cc *ContactClients) advertisedURL(ctx context.Context, key string) (string, error) {
 	peers, err := cc.Discover(ctx)
 	if err != nil {
 		return "", err
 	}
-	for _, pi := range peers {
-		if strings.EqualFold(pi.Name, host) {
-			return mailboxapi.NodeURL(pi.URL, name), nil
+	for _, l := range cc.ads.List(peers) {
+		if !strings.EqualFold(l.Key, key) {
+			continue
 		}
+		if l.Agent == nil {
+			return "", fmt.Errorf("%s advertises %s, but isn't on the private network now", l.Host, key)
+		}
+		return mailboxapi.NodeURL(l.Agent.URL, l.Name), nil
 	}
-	return "", fmt.Errorf("%s advertises %s, but isn't on the private network now", host, key)
+	return "", fmt.Errorf("no agent advertises %s on the private network; `a2a-serve peers` lists the advertised pairings", key)
 }
 
 func (cc *ContactClients) onPrivateNetwork(ctx context.Context, u string) bool {
@@ -232,6 +237,7 @@ type target interface {
 	send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error)
 	// get returns the task with no history, which watches don't read.
 	get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
+	cancel(ctx context.Context, id a2a.TaskID) error
 }
 
 type remoteTarget struct {
@@ -247,6 +253,11 @@ func (t remoteTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
 	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
 }
 
+func (t remoteTarget) cancel(ctx context.Context, id a2a.TaskID) error {
+	_, err := t.c.CancelTask(viaAgent(ctx, t.hops), &a2a.CancelTaskRequest{ID: id})
+	return err
+}
+
 type localTarget struct {
 	h a2asrv.RequestHandler
 	p auth.Principal
@@ -258,6 +269,11 @@ func (t localTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessag
 
 func (t localTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
 	return t.h.GetTask(auth.InProcess(ctx, t.p), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
+}
+
+func (t localTarget) cancel(ctx context.Context, id a2a.TaskID) error {
+	_, err := t.h.CancelTask(auth.InProcess(ctx, t.p), &a2a.CancelTaskRequest{ID: id})
+	return err
 }
 
 // ErrOffline is returned when a contact can't be reached.
