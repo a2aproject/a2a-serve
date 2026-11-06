@@ -111,6 +111,9 @@ type_keys() {
     c="${text:i:1}"
     if [[ "$c" == $'\n' ]]; then
       t send-keys -t "$id" Enter
+    elif [[ "$c" == ";" ]]; then
+      # tmux takes a lone ; as the end of its command.
+      t send-keys -t "$id" -l -- '\;'
     else
       t send-keys -t "$id" -l -- "$c"
     fi
