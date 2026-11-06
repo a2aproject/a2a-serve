@@ -138,3 +138,25 @@ func TestEditReportsUnknownKeys(t *testing.T) {
 		})
 	}
 }
+
+func TestEditRepairsFileThatDoesNotParse(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: [\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	const fixed = "name: coder\nagent: opencode\n"
+	edit := func(path string) error { return os.WriteFile(path, []byte(fixed), 0o600) }
+
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil }); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+
+	got, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(fixed, string(got)); diff != "" {
+		t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
+	}
+}

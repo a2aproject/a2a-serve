@@ -132,6 +132,12 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		}
 	}
 	old, err := d.LoadOrNewConfig()
+	var se *agentdir.SettingsError
+	if raw != nil && errors.As(err, &se) {
+		// An edit repairs a config.yaml that doesn't parse, and is
+		// compared against an empty config.
+		old, err = &agentdir.Config{}, nil
+	}
 	if err != nil {
 		return nil, err
 	}
