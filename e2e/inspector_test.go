@@ -100,12 +100,15 @@ type approval struct {
 	Text    string
 	Action  string
 	CSRF    string
-	Options []string
+	// Question is the ID of the task's question that the form answers.
+	Question string
+	Options  []string
 }
 
 var (
 	approvalRE = regexp.MustCompile(`(?s)<div class="approval">\s*<div class="muted">(?:from ([^,<]+), )?.*?</div>\s*<pre>(.*?)</pre>\s*<form method="post" action="([^"]+)"><input type="hidden" name="csrf" value="([^"]+)">(.*?)</form>`)
 	optionRE   = regexp.MustCompile(`<button name="option" value="([^"]+)">`)
+	questionRE = regexp.MustCompile(`<input type="hidden" name="question" value="([^"]+)">`)
 )
 
 // approvals returns the pending approvals of the overview.
@@ -114,6 +117,9 @@ func (in *inspector) approvals() []approval {
 	var out []approval
 	for _, m := range approvalRE.FindAllStringSubmatch(in.page(), -1) {
 		a := approval{Contact: html.UnescapeString(m[1]), Text: html.UnescapeString(m[2]), Action: html.UnescapeString(m[3]), CSRF: m[4]}
+		if q := questionRE.FindStringSubmatch(m[5]); q != nil {
+			a.Question = html.UnescapeString(q[1])
+		}
 		for _, o := range optionRE.FindAllStringSubmatch(m[5], -1) {
 			a.Options = append(a.Options, html.UnescapeString(o[1]))
 		}
@@ -157,7 +163,11 @@ func (in *inspector) answer(a approval, option, csrf string) int {
 		in.t.Fatalf("url.Parse(%q) error = %v", in.overview, err)
 	}
 	target.Path = a.Action
-	resp, _ := in.do(http.MethodPost, target.String(), url.Values{"csrf": {csrf}, "option": {option}})
+	form := url.Values{"csrf": {csrf}, "option": {option}}
+	if a.Question != "" {
+		form.Set("question", a.Question)
+	}
+	resp, _ := in.do(http.MethodPost, target.String(), form)
 	return resp.StatusCode
 }
 

@@ -155,7 +155,20 @@ func TestInspectorShowsBackup(t *testing.T) {
 	}
 }
 
-var csrfField = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+var (
+	csrfField     = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
+	questionField = regexp.MustCompile(`name="question" value="([^"]+)"`)
+)
+
+// answerForm is the form of the overview's first approval with csrf and
+// option filled in.
+func answerForm(overview, csrf, option string) url.Values {
+	form := url.Values{"option": {option}, "csrf": {csrf}}
+	if m := questionField.FindStringSubmatch(overview); m != nil {
+		form.Set("question", m[1])
+	}
+	return form
+}
 
 func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 	t.Parallel()
@@ -198,7 +211,7 @@ func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 		t.Fatalf("cross-site POST answer = %d, want %d", code, http.StatusForbidden)
 	}
 	c.site = "same-origin"
-	if code, body := c.post(action[1], url.Values{"option": {"allow"}, "csrf": {m[1]}}); code != http.StatusOK || strings.Contains(body, "git push origin main") {
+	if code, body := c.post(action[1], answerForm(overview, m[1], "allow")); code != http.StatusOK || strings.Contains(body, "git push origin main") {
 		t.Fatalf("POST answer = %d %q, want the overview without the approval", code, body)
 	}
 	wantResult(t, waitState(t, a2ac, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
@@ -226,7 +239,7 @@ func TestInspectorAnswersMembersApproval(t *testing.T) {
 	if m == nil || a == nil {
 		t.Fatalf("overview = %q, want the member's approval with a form", overview)
 	}
-	if code, body := c.post(a[1], url.Values{"option": {"allow"}, "csrf": {m[1]}}); code != http.StatusOK {
+	if code, body := c.post(a[1], answerForm(overview, m[1], "allow")); code != http.StatusOK {
 		t.Fatalf("POST answer = %d %q, want the overview", code, body)
 	}
 	wantResult(t, waitState(t, member, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
