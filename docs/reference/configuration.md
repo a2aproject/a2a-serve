@@ -25,7 +25,8 @@ policy:
 channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:
-  allow: [read, search]
+  allow: [read, search, "tool:grafana.*", "command:kubectl get *"]
+  deny: ["command:git push *"]
   ownerChat: telegram:anna
 mcp:
   disabled: [kubernetes]         # servers of .mcp.json the agent doesn't get

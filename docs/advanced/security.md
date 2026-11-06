@@ -13,7 +13,7 @@ By default the agent runs in Docker with:
 
 Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server. All containers share the workspace, the `--mount` directories and the `--secret` values.
 
-Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide/approvals.md)). The agent can't answer the approvals of agents it calls; the server relays them to the user.
+Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide/approvals.md)). The agent can't answer the approvals of agents it calls; the server relays them to the user. Only the owner's settings, `--allow-tools` and `--deny-tools`, decide calls for every caller. A person who taps "Always allow" skips the question for calls like it in that conversation, or in all their conversations after they accept the offer to remember it. Either covers only the tasks that person starts, which they could approve anyway, and `--deny-tools` decides before both. Rules, preferences and grants trust what the agent reports about a call, such as its kind and command. Approvals keep you informed and able to step in; the sandbox and scoped credentials are what protect you.
 
 What the sandbox doesn't protect yet:
 
@@ -56,6 +56,7 @@ What a role allows:
 | Talk to the agent and start tasks | yes | yes | yes, within a budget per listener |
 | See tasks | all | their own | their own; on the public URL, the tasks whose task or conversation ID they have |
 | Answer tool approvals | all | their own tasks; `--deny-tools` limits what they can run | no |
+| Allow tool calls without asking | for everyone, with `--allow-tools` | in their own tasks, from chat | no |
 | Call other agents and use the schedules agent | yes | yes | no |
 | Send a message into another user's conversation (A2A `contextId`) | yes | no | no |
 | Continue another user's waiting task in a shared chat | yes | no | no |
@@ -104,4 +105,4 @@ Starting an agent runs what its files say. Read the ones you didn't write before
 - **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the agent's `--secret` and `--env` values, which the sandbox sees anyway. In the Docker sandbox, the agent can't read or edit the file. With `sandbox: local`, the agent can edit it, and Claude Code may start its servers on its own, including the ones `--disable-mcp` turns off.
 - **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills`, and instruction files such as `AGENTS.md` and `CLAUDE.md`, are instructions for the agent. Commands they suggest still wait for approval.
 
-`a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`: the local sandbox, read-write mounts, approvals of tool kinds that change things, and agent configuration files such as `.claude/settings.json`, which can change what the agent runs and approves. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups. It can't bring files into `.a2a`, or symlinks that lead out of the recipe.
+`a2a-serve recipe` shows what a [recipe](../guide/recipes.md) makes the agent run before it creates the agent, and marks risky entries with `!`: the local sandbox, read-write mounts, approvals of tool kinds that change things or of MCP tools and commands, and agent configuration files such as `.claude/settings.json`, which can change what the agent runs and approves. A recipe can't set where the agent is reachable, who may call it, its messengers or its backups. It can't bring files into `.a2a`, or symlinks that lead out of the recipe.

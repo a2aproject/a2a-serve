@@ -66,6 +66,16 @@ a2a-serve channel add telegram --token env:TELEGRAM_BOT_TOKEN
 a2a-serve config set --private tailscale
 ```
 
+A recipe can let its read-only MCP tools run without asking, for every caller, with `tool:` entries. It denies the rest by kind, since the most specific entry decides:
+
+```yaml
+approvals:
+  allow: [read, search, think, "tool:grafana.*", "tool:kubernetes.*"]
+  deny: [edit, delete, move, execute, fetch]
+```
+
+An update of the recipe keeps the entries you added or moved between the two lists.
+
 An agent that queries your systems acts with the credentials you give it, for every caller. Give it credentials limited to the data it needs. A recipe's README says which access it needs.
 
 ## Write a recipe
