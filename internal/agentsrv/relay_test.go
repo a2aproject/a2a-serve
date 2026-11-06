@@ -193,7 +193,7 @@ func TestRelaySignInAdmitsEveryoneOnTheRelay(t *testing.T) {
 	wantResult(t, allowed, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	denied := send(t, annaClient, userText("call closed-reviewer hello", "", ""))
-	wantResult(t, denied, a2a.TaskStateCompleted, "403")
+	wantResult(t, denied, a2a.TaskStateCompleted, "this agent doesn't accept anna@example.com through another agent on the relay")
 }
 
 func TestRelayTokenJoinOpensPrivateNetworkAndServesPublicIngress(t *testing.T) {
