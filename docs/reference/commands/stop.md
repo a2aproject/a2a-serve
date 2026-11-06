@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Stop the agent
+Stop the agent.
 
 ```
 a2a-serve stop [flags]

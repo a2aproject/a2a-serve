@@ -35,7 +35,7 @@ func newMailboxCmd(cfg *globalConfig) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mailbox",
 		Short: "Answer tasks as a webhook node hosted by a server",
-		Long: `Commands a webhook node runs: an agent which only runs when woken, such as a
+		Long: `Commands a webhook node runs: an agent that only runs when woken, such as a
 Grok Bot routine, hosted by a server ("a2a-serve pair invite --webhook" on its side).
 The server holds the node's tasks in a mailbox until the node wakes. The node
 pairs once with "a2a-serve pair join <agent-url> <code>", then answers each wake

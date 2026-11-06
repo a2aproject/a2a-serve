@@ -5,7 +5,7 @@
 Check the a2a CLI and its config, the sandbox, and, inside an agent
 directory or with --dir, the agent's config, secrets, server and service.
 In a relay directory, check the relay's settings, state, agentmesh-one and
-data instead. Every failure names the command which fixes it. Exits 1 if a
+data instead. Every failure names the command that fixes it. Exits 1 if a
 check failed.
 
 --fix enables command plugins and the credential helper in
@@ -25,4 +25,4 @@ a2a-serve doctor [flags]
 |---|---|---|
 | `--dir string` |  | Agent directory (default: the nearest directory with .a2a, walking up from the current one) |
 | `--fix` |  | Apply the local fixes and check again |
-| `--online` |  | Also run checks which call external services |
+| `--online` |  | Also run checks that call external services |

@@ -27,9 +27,9 @@ func newRestartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "restart",
 		Short: "Stop the agent and start it again in the same mode, detached or as a service",
 		Long: `Stop the agent and start it again in the same mode, detached or as a
-user service, to apply settings which wait for a restart. A stopped agent
+user service, to apply settings that wait for a restart. A stopped agent
 is started as a user service if one is installed, and detached otherwise.
-The settings are checked first, so an agent which couldn't start again
+The settings are checked first, so an agent that couldn't start again
 isn't stopped. An agent running in the foreground of a terminal is
 restarted there: press Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 		Args: cobra.NoArgs,

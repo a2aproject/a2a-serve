@@ -87,6 +87,7 @@ nav:
       - Backups: guide/backups.md
       - Shell Completion: guide/shell-completion.md
   - Examples:
+      - Overview: examples/index.md
       - Serve a Coding Agent: examples/01-agent-server/index.md
       - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
       - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
@@ -103,6 +104,7 @@ nav:
           - a2a-serve: reference/commands/a2a-serve.md
           - start: reference/commands/start.md
           - status: reference/commands/status.md
+          - card: reference/commands/card.md
           - logs: reference/commands/logs.md
           - stop: reference/commands/stop.md
           - restart: reference/commands/restart.md

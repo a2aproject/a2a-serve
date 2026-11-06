@@ -42,6 +42,7 @@ func newVersionCmd(cfg *globalConfig) *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
 		Short: "Print version information",
+		Long:  "Print version information.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			info := buildVersionInfo()

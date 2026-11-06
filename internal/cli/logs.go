@@ -29,6 +29,7 @@ func newLogsCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "logs",
 		Short: "Print the agent's log",
+		Long:  "Print the agent's log.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if lines < 0 {

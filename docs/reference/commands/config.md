@@ -17,7 +17,7 @@ a2a-serve config [flags]
 
 | Flag | Default | Description |
 |---|---|---|
-| `--as-command` |  | Print the a2a-serve commands which recreate the agent, with secrets as env:NAME |
+| `--as-command` |  | Print the a2a-serve commands that recreate the agent, with secrets as env:NAME |
 | `--defaults` |  | Also show the settings left at their defaults, with the default values |
 
 **Flags of every `a2a-serve config` command**
@@ -163,7 +163,7 @@ a2a-serve config show --as-command
 
 | Flag | Default | Description |
 |---|---|---|
-| `--as-command` |  | Print the a2a-serve commands which recreate the agent, with secrets as env:NAME |
+| `--as-command` |  | Print the a2a-serve commands that recreate the agent, with secrets as env:NAME |
 | `--defaults` |  | Also show the settings left at their defaults, with the default values |
 
 ## a2a-serve config unset

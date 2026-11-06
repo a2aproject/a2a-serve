@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Print the agent's log
+Print the agent's log.
 
 ```
 a2a-serve logs [flags]

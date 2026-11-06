@@ -38,7 +38,7 @@ func newCardCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Print the agent card as callers see it",
 		Long: `Print the agent card as callers see it, in JSON. Each URL serves its own
 card, which differs in the URL and in the credentials it asks for. Without
---url, the card of the URL which reaches furthest: public, then private, then
+--url, the card of the URL that reaches furthest: public, then private, then
 local. --url local also works while the agent is stopped, once its first
 start picked its port.
 
@@ -71,7 +71,7 @@ configuration reference.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&scope, "url", "", "Print the card of the agent's `scope` URL: local, private or public (default: the one which reaches furthest)")
+	f.StringVar(&scope, "url", "", "Print the card of the agent's `scope` URL: local, private or public (default: the one that reaches furthest)")
 	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate, scopePublic)))
 	sf.addControlFlags(f)
 	return cmd

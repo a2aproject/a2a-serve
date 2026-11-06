@@ -34,7 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 )
 
-// urlFurthest is the value of a bare --url: the URL which reaches furthest.
+// urlFurthest is the value of a bare --url: the URL that reaches furthest.
 const urlFurthest = "furthest"
 
 func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -44,7 +44,7 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Show whether the agent runs, its URLs, channels and who may call it, or print one of its URLs",
 		Long: `Show whether the agent runs, its URLs, channels and who may call it.
 
---url prints only the agent's URL which reaches furthest: public, then
+--url prints only the agent's URL that reaches furthest: public, then
 private, then local. --url local, --url private and --url public pick one;
 --url=local does the same. --url local also works while the agent is
 stopped, once its first start picked its port.`,
@@ -93,7 +93,7 @@ stopped, once its first start picked its port.`,
 		},
 	}
 	f := cmd.Flags()
-	f.StringVar(&scope, "url", "", "Print only the agent's `scope` URL: local, private or public; without a value, the one which reaches furthest")
+	f.StringVar(&scope, "url", "", "Print only the agent's `scope` URL: local, private or public; without a value, the one that reaches furthest")
 	f.Lookup("url").NoOptDefVal = urlFurthest
 	hideBareValue(f, "url")
 	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate, scopePublic)))

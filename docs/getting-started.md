@@ -4,8 +4,10 @@ Install a2a-serve, start a coding agent in your project, and talk to it from you
 
 ## Install
 
+Homebrew (macOS and Linux):
+
 ```bash
-brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli    # macOS and Linux
+brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli
 brew install a2aproject/a2a-cli/a2a-serve
 a2a-serve doctor --fix    # set up the a2a CLI and check Docker
 ```
@@ -16,7 +18,15 @@ Without Homebrew, use the install script:
 curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
 ```
 
-Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
+From source with Go 1.26+:
+
+```bash
+go install github.com/a2aproject/a2a-serve@latest
+go install github.com/a2aproject/a2a-cli@latest && mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
+a2a-serve doctor --fix
+```
+
+Homebrew and the install script install published releases (`v0.1.0` and later). Before the first release, or to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 
 ## Start an agent
 

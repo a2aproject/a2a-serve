@@ -15,7 +15,7 @@ of the conversation.
 `send` waits for the answer and prints it. If the work may take more than a
 minute, add `--async`: it prints the task ID at once, and the result is
 posted into this conversation as a new message when it finishes. Tell the
-user and end your turn instead of waiting. The server stops watching a task
+user and end your turn. The server stops watching a task
 that keeps its state for 24 hours, or after 7 days, and tells you so.
 
     a2a send -a http://a2a/k3/<name> --async "Run the full test suite"

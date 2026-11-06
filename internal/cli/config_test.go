@@ -393,7 +393,7 @@ func TestConfigShowAsCommandHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("a2a-serve config show --help error = %v", err)
 	}
-	if !regexp.MustCompile(`--as-command\s+Print the a2a-serve commands which`).MatchString(out) {
+	if !regexp.MustCompile(`--as-command\s+Print the a2a-serve commands that`).MatchString(out) {
 		t.Fatalf("a2a-serve config show --help = %q, want --as-command without a value name", out)
 	}
 }

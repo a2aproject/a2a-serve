@@ -22,6 +22,7 @@ func newChannelCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "channel",
 		Short: "Manage the messengers the agent is reachable from",
+		Long:  "Manage the messengers the agent is reachable from.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()

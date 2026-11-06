@@ -1,6 +1,6 @@
 # How to contribute
 
-We'd love to accept your patches and contributions to this project. This repository holds `a2a-serve`, the agent server and a command plugin of the [A2A CLI](https://github.com/a2aproject/a2a-cli).
+We'd love to accept your patches and contributions to this project. This repository holds `a2a-serve`, which serves coding agents over A2A and runs as a command plugin of the [A2A CLI](https://github.com/a2aproject/a2a-cli).
 
 ## Ways to contribute
 
@@ -8,9 +8,9 @@ Code is only one way to help. The project grows through many kinds of contributi
 
 - **Request a feature.** Open a [feature request](https://github.com/a2aproject/a2a-serve/issues/new?template=feature-request.yml) to propose a new command or flag.
 - **Report a bug.** File a [bug report](https://github.com/a2aproject/a2a-serve/issues/new?template=bug-report.yml) with steps to reproduce, your `a2a-serve` and `a2a` versions, and your OS.
-- **Contribute code.** Fix a bug or build a feature — see the workflow below.
+- **Contribute code.** Fix a bug or build a feature: see the workflow below.
 - **Improve the docs.** Clarify the README, the guides, or these guidelines.
-- **Share feedback.** Tell us how you use the tool, what works, and what's rough — on our [Discord server](https://discord.com/invite/9UpukKSpRN) or in an issue.
+- **Share feedback.** Tell us how you use the tool, what works, and what's rough: join our [Discord server](https://discord.com/invite/9UpukKSpRN) or open an issue.
 - **Help the community.** Answer questions, help reproduce and triage issues, and review pull requests.
 
 ## Before you start
@@ -23,8 +23,8 @@ Code is only one way to help. The project grows through many kinds of contributi
 
 Commit messages and pull request titles follow the [Conventional Commits](https://www.conventionalcommits.org/) specification. PR titles are lint-checked. Choose the type and scope based on what you changed:
 
-- **Code** — `feat:` for new behavior, `fix:` for bug fixes (e.g., `feat: add a Slack channel`).
-- **Doc files** — `docs:` for documentation.
+- **Code**: `feat:` for new behavior, `fix:` for bug fixes (e.g., `feat: add a Slack channel`).
+- **Doc files**: `docs:` for documentation.
 
 ## Contribution process
 
@@ -39,9 +39,9 @@ We use GitHub pull requests for reviews. See [GitHub Help](https://help.github.c
 3. **Create a feature branch** and make your changes there.
 4. **Commit** using a Conventional Commits message.
 5. **Open a pull request** from your feature branch to the official repository's `main` branch.
-6. **Resolve feedback** — work with reviewers to address comments.
+6. **Resolve feedback**: work with reviewers to address comments.
 
-Be patient — reviewing and merging a pull request can take time.
+Be patient: reviewing and merging a pull request can take time.
 
 ### Pull request tips
 

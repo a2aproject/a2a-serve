@@ -28,7 +28,7 @@ func newExecCmd(cfg *globalConfig) *cobra.Command {
 	)
 	cmd := &cobra.Command{
 		Use:   "exec <command>",
-		Short: "Run a test server which runs a shell command per message",
+		Short: "Run a test server that runs a shell command per message",
 		Long: `Run a test server, an agent driven by a script. For each message:
 
   - the command runs with sh -c, with the message text on stdin, and

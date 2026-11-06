@@ -70,7 +70,9 @@ def rewrite_target(target, src_repo_file, dst_site_file):
     path, _, anchor = target.partition("#")
     repo_path = os.path.normpath(os.path.join(os.path.dirname(src_repo_file), path))
     if repo_path.startswith(".."):
-        return target
+        sys.exit(f"error: {src_repo_file}: relative link escapes repository: {target}")
+    if not os.path.exists(os.path.join(REPO, repo_path)):
+        sys.exit(f"error: {src_repo_file}: target not found: {target} (resolved to {repo_path})")
     mapped = site_path(repo_path)
     if mapped is None or not mapped.endswith(SERVED):
         kind = "tree" if os.path.isdir(os.path.join(REPO, repo_path)) else "blob"

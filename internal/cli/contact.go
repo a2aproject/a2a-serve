@@ -22,6 +22,7 @@ func newContactCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "contact",
 		Short: "Manage the agents this agent may call",
+		Long:  "Manage the agents this agent may call.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()

@@ -32,7 +32,7 @@ const (
 )
 
 // statusURL returns the agent's URL in scope, or with an empty scope the
-// one which reaches furthest: public, then private, then local.
+// one that reaches furthest: public, then private, then local.
 func statusURL(s *controlapi.Status, scope string) (string, error) {
 	switch scope {
 	case "":

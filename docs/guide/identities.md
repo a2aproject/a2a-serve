@@ -33,6 +33,7 @@ a2a-serve config unset allow-email '*@example.com'
 
 - Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
+- Each authenticated caller gets a separate container for conversation history, while sharing the workspace, `--mount` directories, and `--secret` environment variables. Anyone who can approve commands on the agent can read its secrets ([Secrets](secrets.md) and [Security](../advanced/security.md)).
 - `--private-allow-incoming` and `--public-allow-incoming` take `everyone` and `anyone` as the same word: `--private-allow-incoming anyone` is `everyone`, and `--public-allow-incoming everyone` is `anyone`.
 - [Anonymous callers](identities.md#anonymous-callers) start tasks in their own conversation and never answer approvals.
 - A caller without a credential gets 401, with the steps to pair. A caller with a revoked or replaced token gets 401 that says the token is no longer valid. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`.
