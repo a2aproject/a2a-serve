@@ -20,6 +20,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -209,27 +210,77 @@ func TestConformanceSessionModel(t *testing.T) {
 	tests := []struct {
 		name      string
 		model     string
+		secret    string
 		wantState a2a.TaskState
 		wantText  string
+		notText   string
 	}{
 		{name: "known model", model: "fake/other", wantState: a2a.TaskStateCompleted, wantText: "model: fake/other"},
 		{name: "unknown model", model: "fake/missing", wantState: a2a.TaskStateFailed, wantText: "model not found: fake/missing"},
 		{name: "no model", wantState: a2a.TaskStateCompleted, wantText: "model: fake/default"},
+		{
+			name: "model of a provider without a key", model: "google/gemini-3-flash-preview", wantState: a2a.TaskStateFailed,
+			wantText: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`",
+		},
+		{
+			name: "unknown model of a provider with a key", model: "google/gemini-missing", secret: "GEMINI_API_KEY", wantState: a2a.TaskStateFailed,
+			wantText: "model not found: google/gemini-missing", notText: "no key",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ts := startServer(t, serverOpts{configure: func(cfg *agentdir.Config) {
+			secrets := agentdir.Secrets{}
+			if tc.secret != "" {
+				secrets[tc.secret] = "key"
+			}
+			ts := startServer(t, serverOpts{secrets: secrets, configure: func(cfg *agentdir.Config) {
 				cfg.Harness, cfg.Model = "opencode", tc.model
+				if tc.secret != "" {
+					cfg.Secrets = []string{tc.secret}
+				}
 			}})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
 			task := send(t, c, userText("model", "", ""))
 			if task.Status.State != tc.wantState {
 				t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), tc.wantState)
 			}
+			got := a2atext.Result(task) + a2atext.Message(task.Status.Message)
+			if !strings.Contains(got, tc.wantText) {
+				t.Fatalf("task result = %q, want it to contain %q", got, tc.wantText)
+			}
+			if tc.notText != "" && strings.Contains(got, tc.notText) {
+				t.Fatalf("task result = %q, want it without %q", got, tc.notText)
+			}
+		})
+	}
+}
+
+func TestConformanceStalledTurn(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		prompt    string
+		wantState a2a.TaskState
+		wantText  string
+	}{
+		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 300ms"},
+		{name: "silent tool call", prompt: "build 1s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
+		{name: "streaming agent", prompt: "slow 1s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = 300 * time.Millisecond }})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			task := send(t, c, userText(tc.prompt, "", ""))
+			if task.Status.State != tc.wantState {
+				t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), tc.wantState)
+			}
 			if got := a2atext.Result(task) + a2atext.Message(task.Status.Message); !strings.Contains(got, tc.wantText) {
 				t.Fatalf("task result = %q, want it to contain %q", got, tc.wantText)
 			}
+			wantResult(t, send(t, c, userText("hello", "", task.ContextID)), a2a.TaskStateCompleted, "Hello from fakeacp.")
 		})
 	}
 }

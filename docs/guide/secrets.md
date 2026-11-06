@@ -17,6 +17,8 @@ a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret
 
 opencode uses `OPENROUTER_API_KEY` only with an OpenRouter model, so pass `--model` too. Without one, `start` and `config set` print a warning.
 
+When no secret holds the key of the model's provider, each task fails with the name of the key to set. Without `--model`, opencode uses its free default model. When that model refuses requests, the agent sends nothing, and the server fails the task after 10 minutes.
+
 Your shell needs the variable only when you run the command. Later starts, restarts and services use the stored value.
 
 `--secret` takes the name of the variable, and the agent sees the same name. `start` and `config set` both take it, and it repeats: `--secret OPENROUTER_API_KEY --secret GITHUB_TOKEN`.
