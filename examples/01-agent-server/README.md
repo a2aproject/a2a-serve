@@ -138,16 +138,24 @@ Now ask coder to delegate:
 a2a send "Ask the reviewer agent what files it sees in its workspace, and tell me."
 ```
 
-Coder runs `a2a send -a http://a2a/<handle>/reviewer ...` in its sandbox. Its
-server makes the call with the token it just stored, so no credential enters
-the sandbox. If reviewer needs an approval, your task waits for it and shows
-reviewer's request. Answer it like coder's own:
+Coder calls reviewer with `a2a send` in its sandbox. That is a bash command,
+so coder asks first, as in step 5:
+
+```
+Status:   input-required
+  Permission required: a2a send -a http://a2a/<handle>/reviewer "What files do you see in your workspace?".
+```
+
+Approve it:
 
 ```bash
 a2a send --task-id <task-id> approve
 ```
 
-The task then continues with reviewer's result.
+Coder's server makes the call with the token it just stored, so no credential
+enters the sandbox. If reviewer needs an approval too, your task waits again
+and shows reviewer's request. Approve it the same way. The task then
+completes with reviewer's answer.
 
 ## 8. Clean up
 
