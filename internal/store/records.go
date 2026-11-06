@@ -26,29 +26,74 @@ import (
 )
 
 // SessionStore implements the a2aacp session store: A2A context → ACP session.
-type SessionStore struct{ s *Store }
+type SessionStore struct {
+	s *Store
+	// workspace, if set, returns the current workspace of the agent.
+	workspace func() (string, error)
+}
 
 // Sessions returns the ACP session store.
 func (s *Store) Sessions() SessionStore { return SessionStore{s: s} }
+
+// In returns the session store that records the workspace of new sessions,
+// and that doesn't return a session created in another workspace. Agents
+// such as opencode load such a session but fail its prompts.
+func (ss SessionStore) In(workspace func() (string, error)) SessionStore {
+	ss.workspace = workspace
+	return ss
+}
 
 var _ a2aacp.SessionStore = SessionStore{}
 
 // Get returns the ACP session of an A2A context.
 func (ss SessionStore) Get(ctx context.Context, contextID string) (a2aacp.Session, bool, error) {
-	var sess a2aacp.Session
-	err := ss.s.reads.QueryRowContext(ctx, `SELECT session_id, agent_key FROM sessions WHERE context_id = ?`, contextID).
-		Scan(&sess.ID, &sess.AgentKey)
-	if errors.Is(err, sql.ErrNoRows) {
-		return a2aacp.Session{}, false, nil
+	sess, moved, ok, err := ss.get(ctx, contextID)
+	if err != nil || !ok || moved {
+		return a2aacp.Session{}, false, err
 	}
-	return sess, err == nil, err
+	return sess, true, nil
+}
+
+// Moved reports whether the A2A context has an ACP session that was
+// created in another workspace. A session recorded without a workspace
+// counts as created in the current one.
+func (ss SessionStore) Moved(ctx context.Context, contextID string) (bool, error) {
+	_, moved, _, err := ss.get(ctx, contextID)
+	return moved, err
+}
+
+func (ss SessionStore) get(ctx context.Context, contextID string) (sess a2aacp.Session, moved, ok bool, err error) {
+	var workspace string
+	err = ss.s.reads.QueryRowContext(ctx, `SELECT session_id, agent_key, workspace FROM sessions WHERE context_id = ?`, contextID).
+		Scan(&sess.ID, &sess.AgentKey, &workspace)
+	if errors.Is(err, sql.ErrNoRows) {
+		return a2aacp.Session{}, false, false, nil
+	}
+	if err != nil {
+		return a2aacp.Session{}, false, false, err
+	}
+	if ss.workspace == nil || workspace == "" {
+		return sess, false, true, nil
+	}
+	current, err := ss.workspace()
+	if err != nil {
+		return a2aacp.Session{}, false, false, err
+	}
+	return sess, workspace != current, true, nil
 }
 
 // Put records the ACP session of an A2A context.
 func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Session) error {
-	_, err := ss.s.exec(ctx, `INSERT INTO sessions (context_id, session_id, agent_key) VALUES (?, ?, ?)
-		ON CONFLICT (context_id) DO UPDATE SET session_id = excluded.session_id, agent_key = excluded.agent_key`,
-		contextID, sess.ID, sess.AgentKey)
+	workspace := ""
+	if ss.workspace != nil {
+		var err error
+		if workspace, err = ss.workspace(); err != nil {
+			return err
+		}
+	}
+	_, err := ss.s.exec(ctx, `INSERT INTO sessions (context_id, session_id, agent_key, workspace) VALUES (?, ?, ?, ?)
+		ON CONFLICT (context_id) DO UPDATE SET session_id = excluded.session_id, agent_key = excluded.agent_key, workspace = excluded.workspace`,
+		contextID, sess.ID, sess.AgentKey, workspace)
 	return err
 }
 
