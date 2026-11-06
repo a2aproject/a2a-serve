@@ -170,28 +170,67 @@ func TestA2AErrorBodies(t *testing.T) {
 	}
 }
 
-func TestRESTClientSeesUnauthorizedHint(t *testing.T) {
+func TestClientSeesUnauthorizedHint(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
+	ts := startServer(t, serverOpts{})
 	hc := contacts.TokenClient(testHTTP, store.Contact{URL: ts.localURL(), Token: auth.TokenPrefix + "revoked"})
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, ts.localURL())
 	if err != nil {
 		t.Fatalf("Resolve() error = %v", err)
 	}
-	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithDefaultsDisabled(), a2aclient.WithRESTTransport(hc))
-	if err != nil {
-		t.Fatalf("NewFromCard() error = %v", err)
+	tests := []struct {
+		name      string
+		transport a2aclient.FactoryOption
+		call      func(*a2aclient.Client) error
+	}{
+		{
+			name:      "REST",
+			transport: a2aclient.WithRESTTransport(hc),
+			call: func(c *a2aclient.Client) error {
+				_, err := c.ListTasks(ctx, &a2a.ListTasksRequest{})
+				return err
+			},
+		},
+		{
+			name:      "JSON-RPC",
+			transport: a2aclient.WithJSONRPCTransport(hc),
+			call: func(c *a2aclient.Client) error {
+				_, err := c.ListTasks(ctx, &a2a.ListTasksRequest{})
+				return err
+			},
+		},
+		{
+			name:      "JSON-RPC stream",
+			transport: a2aclient.WithJSONRPCTransport(hc),
+			call: func(c *a2aclient.Client) error {
+				for _, err := range c.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")}) {
+					if err != nil {
+						return err
+					}
+				}
+				return nil
+			},
+		},
 	}
-	t.Cleanup(func() {
-		if err := c.Destroy(); err != nil {
-			t.Errorf("Destroy() error = %v", err)
-		}
-	})
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithDefaultsDisabled(), tc.transport)
+			if err != nil {
+				t.Fatalf("NewFromCard() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := c.Destroy(); err != nil {
+					t.Errorf("Destroy() error = %v", err)
+				}
+			})
 
-	_, err = c.ListTasks(ctx, &a2a.ListTasksRequest{})
+			err = tc.call(c)
 
-	if !errors.Is(err, a2a.ErrUnauthenticated) || !strings.Contains(err.Error(), "the token is no longer valid") {
-		t.Fatalf("ListTasks() error = %v, want %v with the server's hint", err, a2a.ErrUnauthenticated)
+			if !errors.Is(err, a2a.ErrUnauthenticated) || !strings.Contains(err.Error(), "the token is no longer valid") {
+				t.Fatalf("client call error = %v, want %v with the server's hint", err, a2a.ErrUnauthenticated)
+			}
+		})
 	}
 }
