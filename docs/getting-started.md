@@ -4,40 +4,41 @@ Install a2a-serve, start a coding agent in your project, and talk to it from you
 
 ## Install
 
-Homebrew (macOS and Linux):
-
 ```bash
 brew tap a2aproject/a2a-cli https://github.com/a2aproject/a2a-cli
-brew install a2aproject/a2a-cli/a2a-serve
-a2a-serve doctor --fix    # set up the a2a CLI and check Docker
+brew install a2aproject/a2a-cli/a2a-serve && a2a-serve doctor --fix
 ```
 
-Without Homebrew, use the install script:
+Without Homebrew, run the install script:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
 ```
 
-From source with Go 1.26+:
+<details markdown="1">
+<summary>Build from <code>main</code> with Go 1.26+ (required before <code>v0.1.0</code> is released)</summary>
 
 ```bash
-go install github.com/a2aproject/a2a-serve@latest
-go install github.com/a2aproject/a2a-cli@latest && mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"
-a2a-serve doctor --fix
+go install github.com/a2aproject/a2a-serve@latest &&
+  go install github.com/a2aproject/a2a-cli@latest &&
+  mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a" &&
+  a2a-serve doctor --fix
 ```
 
-Homebrew and the install script are planned for the first release, `v0.1.0`. Until then, and to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
+</details>
+
+Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 
 ## Start an agent
 
-In your project, start opencode with your model and its API key:
+In your project, start Claude Code (or `opencode`) with its API key:
 
 ```bash
 cd ~/src/app
-a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach
+a2a-serve start claude --secret ANTHROPIC_API_KEY --detach
 ```
 
-For Claude Code, run `a2a-serve start claude --secret ANTHROPIC_API_KEY --detach`. Without Docker, add `--sandbox local`.
+For `opencode`, run `a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach`. Without Docker, add `--sandbox local`.
 
 ## Talk to it
 
@@ -78,7 +79,7 @@ If anything fails, run `a2a-serve doctor`. It checks your setup and prints a fix
 
 ## Next steps
 
-- [Serve a Coding Agent](../examples/01-agent-server/README.md) covers pairing, approvals and an agent that calls another agent.
-- [Tailscale, Telegram and a Grok Bot](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet with a Telegram bot and a Grok webhook node.
+- [Serve a Coding Agent](../examples/01-agent-server/README.md) covers pairing, approvals, and an agent that calls another agent.
+- [Tailscale, Telegram, and Grok](../examples/02-tailscale-telegram-grok/README.md) puts the agent on your tailnet with a Telegram bot and a Grok webhook node.
 - [Agent Mesh Relay](../examples/03-agentmesh-relay/README.md) runs two agents on an Agent Mesh relay.
 - The [user guide](index.md#user-guide) covers every feature.
