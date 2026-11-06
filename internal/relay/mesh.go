@@ -58,6 +58,11 @@ func MeshArgs(c MeshConfig) []string {
 		"--no-join-token",
 		"--enroll-qr=false",
 		"--router-allow-loopback=" + strconv.FormatBool(relaydir.Loopback(c.URL)),
+		// The router's peer ID derives from the admin token, so a relay that
+		// replaces this one, such as a new Cloud Run revision, leases the same
+		// router. A shortened lease at shutdown would drop that router from the
+		// directory until its next renewal, minutes later.
+		"--router-shutdown-lease-ttl", "0",
 	}
 	if c.Database != "" {
 		args = append(args, "--db-driver", "postgres")

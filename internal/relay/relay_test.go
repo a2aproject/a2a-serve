@@ -52,6 +52,7 @@ func TestMeshArgsAndEnv(t *testing.T) {
 			wantArgs: []string{
 				"--bind-address", "127.0.0.1", "--port", "4100", "--external-url", "https://relay.example.com",
 				"--data-dir", "/r/agentmesh", "--no-join-token", "--enroll-qr=false", "--router-allow-loopback=false",
+				"--router-shutdown-lease-ttl", "0",
 			},
 			wantEnv: []string{"HOME=/home/me", "AGENTMESH_ADMIN_TOKEN=tok"},
 		},
@@ -61,6 +62,7 @@ func TestMeshArgsAndEnv(t *testing.T) {
 			wantArgs: []string{
 				"--bind-address", "127.0.0.1", "--port", "4100", "--external-url", "http://127.0.0.1:8443",
 				"--data-dir", "/r/agentmesh", "--no-join-token", "--enroll-qr=false", "--router-allow-loopback=true",
+				"--router-shutdown-lease-ttl", "0",
 				"--db-driver", "postgres",
 			},
 			wantEnv: []string{"HOME=/home/me", "AGENTMESH_ADMIN_TOKEN=tok", "AGENTMESH_DB_DSN=postgres://db"},
@@ -71,6 +73,7 @@ func TestMeshArgsAndEnv(t *testing.T) {
 			wantArgs: []string{
 				"--bind-address", "127.0.0.1", "--port", "4100", "--external-url", "https://relay.example.com",
 				"--data-dir", "/r/agentmesh", "--no-join-token", "--enroll-qr=false", "--router-allow-loopback=false",
+				"--router-shutdown-lease-ttl", "0",
 				"--issuer", "https://relay.example.com/a2a-serve/signin", "--workload-issuer", "https://relay.example.com/a2a-serve/signin",
 				"--oidc-client-id", "a2a-serve", "--allowed-audiences", "a2a-serve", "--control-plane-workload-session-ttl", "24h0m0s",
 			},
