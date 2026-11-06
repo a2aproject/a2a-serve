@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -134,12 +135,7 @@ func find(err error, match func(error) bool) error {
 
 // wraps reports whether err directly wraps target.
 func wraps(err, target error) bool {
-	for _, e := range unwrap(err) {
-		if e == target {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(unwrap(err), target)
 }
 
 func unwrap(err error) []error {
