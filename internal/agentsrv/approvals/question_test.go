@@ -48,6 +48,11 @@ func permissionMessage(t *testing.T) *a2a.Message {
 	return questionMessage(t, "tool1", "git push", nil, [2]string{"once", "Allow"}, [2]string{"always", "Always allow"}, [2]string{"reject", ""})
 }
 
+func withToolCall(msg *a2a.Message, kind string) *a2a.Message {
+	msg.Parts = append(msg.Parts, a2a.NewDataPart(map[string]any{"toolCall": map[string]any{"id": "tool1", "kind": kind}}))
+	return msg
+}
+
 func TestFromStatus(t *testing.T) {
 	t.Parallel()
 	inputRequired := func(msg *a2a.Message) a2a.TaskStatus {
@@ -66,6 +71,12 @@ func TestFromStatus(t *testing.T) {
 			name:   "permission",
 			status: inputRequired(permissionMessage(t)),
 			want: &Question{ID: "tool1", Type: TypePermission, Title: "git push", Text: "Run git push?",
+				Options: []Option{{ID: "once", Label: "Allow"}, {ID: "always", Label: "Always allow"}, {ID: "reject", Label: "reject"}}},
+		},
+		{
+			name:   "permission with its tool call",
+			status: inputRequired(withToolCall(permissionMessage(t), "execute")),
+			want: &Question{ID: "tool1", Type: TypePermission, Title: "git push", Text: "Run git push?", Kind: "execute",
 				Options: []Option{{ID: "once", Label: "Allow"}, {ID: "always", Label: "Always allow"}, {ID: "reject", Label: "reject"}}},
 		},
 		{

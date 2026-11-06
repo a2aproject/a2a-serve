@@ -176,13 +176,7 @@ func TestScheduleChatVocabulary(t *testing.T) {
 	}
 	coder.mustFail("owner has no chat on telegram", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--chat", "telegram:owner")
 	coder.mustFail("unknown flag: --deliver", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--deliver", "telegram")
-	var set struct {
-		Applied []string `json:"applied"`
-	}
-	coder.serveJSON(&set, "config", "set", "--owner-chat", "discord")
-	if diff := cmp.Diff([]string{"owner-chat"}, set.Applied); diff != "" {
-		t.Fatalf("a2a-serve config set --owner-chat -o json applied wrong result (-want +got) diff = %s", diff)
-	}
+	coder.mustFail("--owner-chat discord needs the discord channel", "config", "set", "--owner-chat", "discord")
 }
 
 // TestAccessSettings covers the access settings: a running agent applies

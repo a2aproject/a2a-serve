@@ -126,13 +126,13 @@ func TestHandler(t *testing.T) {
 		},
 		{
 			name:   "reload config",
-			deps:   Deps{ReloadConfig: func() error { return nil }},
+			deps:   Deps{ReloadConfig: func(context.Context) error { return nil }},
 			method: http.MethodPost, path: "/config/reload", wantStatus: http.StatusOK,
 			want: map[string]any{"applied": []any{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}},
 		},
 		{
 			name:   "reload config error",
-			deps:   Deps{ReloadConfig: func() error { return errors.New("bad yaml") }},
+			deps:   Deps{ReloadConfig: func(context.Context) error { return errors.New("bad yaml") }},
 			method: http.MethodPost, path: "/config/reload", wantStatus: http.StatusInternalServerError,
 			want: map[string]any{"error": "bad yaml"},
 		},

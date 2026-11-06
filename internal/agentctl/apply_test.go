@@ -184,6 +184,22 @@ func TestSetStopped(t *testing.T) {
 	}
 }
 
+func TestSetOwnerChatWithItsMessenger(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{
+		Name: "coder", Harness: "opencode",
+		Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}},
+	}, agentdir.Secrets{agentdir.SecretTelegram: "token"})
+
+	if _, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{OwnerChat: "telegram:anna"}, false); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	if got := loadConfig(t, d).Approvals.OwnerChat; got != "telegram:anna" {
+		t.Fatalf("saved owner chat = %q, want %q", got, "telegram:anna")
+	}
+}
+
 func TestSetRejectsWithoutSaving(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -195,6 +211,7 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 		{name: "invalid", s: agentdir.Settings{Private: "tailscal"}, wantErr: true},
 		{name: "missing mount", s: agentdir.Settings{Mounts: []string{"/nonexistent-a2a"}}, wantErr: true},
 		{name: "secret with a line break", s: agentdir.Settings{Secrets: []string{"MULTI"}, SecretValues: agentdir.Secrets{"MULTI": "line1\nline2"}}, wantErr: true},
+		{name: "owner chat without its messenger", s: agentdir.Settings{OwnerChat: "telegram:anna"}, wantErr: true},
 		{name: "dry run", s: agentdir.Settings{Sandbox: "local"}, dryRun: true},
 	}
 	for _, tc := range tests {

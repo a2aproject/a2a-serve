@@ -152,6 +152,11 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	if err := d.CheckConfig(next, all); err != nil {
 		return nil, &agentdir.SettingsError{Err: err}
 	}
+	if next.Approvals.OwnerChat != old.Approvals.OwnerChat {
+		if err := next.CheckOwnerChat(); err != nil {
+			return nil, &agentdir.SettingsError{Err: err}
+		}
+	}
 	res := &Result{
 		Name: next.Name, Path: d.ConfigPath(), Changes: agentdir.Diff(old, next),
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,

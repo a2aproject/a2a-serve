@@ -42,7 +42,7 @@ type Deps struct {
 	Config func() *agentdir.Config
 	// ReloadConfig applies the live settings of config.yaml, which the CLI
 	// has validated and saved.
-	ReloadConfig func() error
+	ReloadConfig func(ctx context.Context) error
 	// Peers lists the agents on the private network.
 	Peers func(ctx context.Context) ([]network.PeerInfo, error)
 	// Ads are the advertised pairings of the private network.
@@ -237,7 +237,7 @@ func (a *api) config(w http.ResponseWriter, _ *http.Request) {
 	jsonhttp.Write(w, http.StatusOK, a.deps.Config())
 }
 
-func (a *api) reloadConfig(w http.ResponseWriter, _ *http.Request) {
-	err := a.deps.ReloadConfig()
+func (a *api) reloadConfig(w http.ResponseWriter, r *http.Request) {
+	err := a.deps.ReloadConfig(r.Context())
 	reply(w, controlapi.ReloadResponse{Applied: agentdir.LiveSettings()}, err)
 }
