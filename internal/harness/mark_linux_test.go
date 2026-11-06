@@ -32,7 +32,18 @@ func TestEnvironOfProcessThatIsStarting(t *testing.T) {
 			t.Fatalf("starting the process: %v", err)
 		}
 
-		got, err := environ(cmd.Process.Pid, time.Now().Add(5*time.Second))
+		// Until the kernel switches the process to the new program, it can
+		// show the environment of its parent.
+		deadline := time.Now().Add(5 * time.Second)
+		var got []byte
+		var err error
+		for {
+			got, err = environ(cmd.Process.Pid, deadline)
+			if err != nil || bytes.Contains(got, []byte(want+"\x00")) || time.Now().After(deadline) {
+				break
+			}
+			time.Sleep(time.Millisecond)
+		}
 
 		if err := cmd.Process.Kill(); err != nil {
 			t.Fatalf("killing process %d: %v", cmd.Process.Pid, err)
