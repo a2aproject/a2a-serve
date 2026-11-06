@@ -14,16 +14,23 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── secrets        # tokens and API keys, mode 0600
         ├── tsnet/         # Tailscale identity, so the URL survives restarts
         ├── agentmesh/     # Agent Mesh identity, and the relay sign-in's refresh token
+        ├── ads.json       # pairings that agents on the private network advertise
         ├── home/          # the agent's home directory
         ├── homes/         # a home for the agent process of each authenticated user
         ├── home-anonymous/ # the home of the agent process for anonymous callers
         ├── mcp-mask.json  # the .mcp.json with no servers that the sandbox shows the agent
         ├── server.log     # rotated at 10 MB; the previous log is server.log.1
         ├── server.pid     # PID of the running server, so that stop works while it starts
-        └── server.sock    # control socket for a2a-serve commands
+        ├── server.lock    # held by the running server
+        ├── server.sock    # control socket for a2a-serve commands
+        └── harness/       # a socket per agent process, through which it reaches the server
 ```
 
 `a2a-serve` commands talk to the running agent over `server.sock`.
+
+A Unix socket path can't be longer than about 100 bytes. When the agent directory is deep enough that `server.sock` or a socket in `harness/` would pass that limit, the socket moves to `$XDG_RUNTIME_DIR`, or to `/tmp/a2a-<uid>` when it isn't set. The file name there is derived from the agent directory.
+
+The files ending in `.lock` coordinate the server and `a2a-serve` commands that write the same files. `server.db-wal` and `server.db-shm` belong to the SQLite database. A backup in progress stages its files in a `backup-*` directory. These files need no attention.
 
 `recipe.lock` records the [recipe](../guide/recipes.md) the agent was created from: the repository, ref, path and commit, or the local directory, with a hash of each of the recipe's files and the recipe's `config.yaml`. It holds no secrets. The sandbox hides `.a2a`, so the agent can't edit it.
 
