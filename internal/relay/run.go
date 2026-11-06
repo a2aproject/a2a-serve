@@ -53,6 +53,10 @@ var ErrRestart = errors.New("the relay restarts")
 // start on PostgreSQL migrates the database.
 const readyTimeout = 2 * time.Minute
 
+// readyProbeTimeout bounds one readiness probe. A process that took the port
+// of agentmesh-one may accept connections and never answer.
+const readyProbeTimeout = time.Second
+
 // Options configure a [Relay].
 type Options struct {
 	Dir relaydir.Dir
@@ -362,7 +366,10 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess, 
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for {
-		if admin.Ready(ctx) == nil {
+		probeCtx, cancelProbe := context.WithTimeout(ctx, readyProbeTimeout)
+		err := admin.Ready(probeCtx)
+		cancelProbe()
+		if err == nil {
 			return nil
 		}
 		select {
