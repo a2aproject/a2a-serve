@@ -88,7 +88,7 @@ func testTelegramJourney(t *testing.T, api *telegramtest.Server, token string, m
 	c.say("hello", "Hello from fakeacp.")
 
 	asked := c.sayAndWait("ask", func(m telegramtest.Message) bool { return len(m.Buttons) > 0 })
-	c.press(asked, "Allow", "Pushed (allow).")
+	c.press(asked, "Always allow git push *", "Pushed (allow).")
 
 	md := c.sayAndWait("markdown", func(m telegramtest.Message) bool { return strings.Contains(m.Plain(), "Done.") })
 	if md.ParseMode != "MarkdownV2" {
