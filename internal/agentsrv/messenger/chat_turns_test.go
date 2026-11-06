@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -174,7 +175,7 @@ func sentMessageOf(m *a2a.Message) sentMessage {
 // of the channel fake.
 type turnsFixture struct {
 	*chatFixture
-	ch         *fakeChannel
+	ch         *channeltest.Channel
 	sender     *fakeTurnSender
 	unattended *ContextSet
 	turns      *ChatTurns
@@ -194,7 +195,7 @@ func (b fakeBudget) CheckRate(auth.Principal) error { return b.err }
 // of anonymous callers.
 func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turnsFixture {
 	t.Helper()
-	ch := newFakeChannel("fake")
+	ch := channeltest.NewChannel("fake")
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
 	unattended := &ContextSet{}
@@ -263,7 +264,7 @@ func (fx *turnsFixture) askInDM1(t *testing.T, taskID a2a.TaskID, contextID stri
 	fx.putTask(t, taskID, contextID, a2a.TaskStateInputRequired)
 	rec := fx.newQuestion(t, taskID, contextID, auth.OwnerID)
 	fx.chat.Ask(fx.ctx, approvals.Chat{Channel: "fake", Conv: "dm1"}, "coder asks", rec)
-	ref, _ := fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Question != nil && m.Question.ID == rec.ID })
+	ref, _ := fx.ch.WaitFor(t, "dm1", func(m channel.Outbound) bool { return m.Question != nil && m.Question.ID == rec.ID })
 	return rec, ref
 }
 
@@ -295,10 +296,10 @@ func partsJSON(t *testing.T, m *a2a.Message) string {
 func TestChatTurnsStreamsMessageOfLinkedSender(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
-	in := fx.ch.message("telegram:1", "dm1", "hello")
+	in := fx.ch.Message("telegram:1", "dm1", "hello")
 	in.Name = "Anna"
 
-	fx.ch.deliver(in)
+	fx.ch.Deliver(in)
 
 	call := fx.sender.nextStream(t)
 	want := sentMessage{
@@ -319,7 +320,7 @@ func TestChatTurnsStreamsMessageOfLinkedSender(t *testing.T) {
 	if !call.caller.IsOwner() || !call.inProcess {
 		t.Errorf("SendStreamingMessage() caller = %+v, in process = %v, want the owner in process", call.caller, call.inProcess)
 	}
-	fx.ch.waitFor(t, "dm1", hasText(agentReply))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText(agentReply))
 }
 
 func TestChatTurnsKeepsContextUntilNewConversation(t *testing.T) {
@@ -327,14 +328,14 @@ func TestChatTurnsKeepsContextUntilNewConversation(t *testing.T) {
 	fx := newTurnsFixture(t)
 	var contexts []string
 	hello := func() {
-		fx.ch.write("telegram:1", "dm1", "hello")
+		fx.ch.Write("telegram:1", "dm1", "hello")
 		contexts = append(contexts, fx.sender.nextStream(t).req.Message.ContextID)
 	}
 
 	hello()
 	hello()
-	fx.ch.write("telegram:1", "dm1", "/new")
-	fx.ch.waitFor(t, "dm1", hasText("Started a new conversation."))
+	fx.ch.Write("telegram:1", "dm1", "/new")
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("Started a new conversation."))
 	hello()
 
 	if contexts[0] == "" || contexts[0] != contexts[1] {
@@ -388,9 +389,9 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 			t.Parallel()
 			fx := newTurnsFixture(t)
 
-			fx.ch.write(tc.identity, tc.conv, tc.text)
+			fx.ch.Write(tc.identity, tc.conv, tc.text)
 
-			_, got := fx.ch.waitFor(t, tc.conv, hasText(tc.want))
+			_, got := fx.ch.WaitFor(t, tc.conv, channeltest.HasText(tc.want))
 			if got.Text != tc.want {
 				t.Fatalf("reply = %q, want %q", got.Text, tc.want)
 			}
@@ -407,9 +408,9 @@ func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 		t.Fatalf("MintCode() error = %v", err)
 	}
 
-	fx.ch.write("telegram:9", "dm9", "join "+code)
-	fx.ch.waitFor(t, "dm9", hasText("Linked as owner. Write to talk to coder."))
-	fx.ch.write("telegram:9", "dm9", "hello")
+	fx.ch.Write("telegram:9", "dm9", "join "+code)
+	fx.ch.WaitFor(t, "dm9", channeltest.HasText("Linked as owner. Write to talk to coder."))
+	fx.ch.Write("telegram:9", "dm9", "hello")
 
 	call := fx.sender.nextStream(t)
 	if got := sentMessageOf(call.req.Message).Text; got != "hello" {
@@ -424,9 +425,9 @@ func TestChatTurnsLinkCodeLimitsFailures(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
 	for range 11 {
-		fx.ch.write("telegram:9", "dm9", "join WRNG-C0DE")
+		fx.ch.Write("telegram:9", "dm9", "join WRNG-C0DE")
 	}
-	fx.ch.waitFor(t, "dm9", hasText("Too many invalid codes."))
+	fx.ch.WaitFor(t, "dm9", channeltest.HasText("Too many invalid codes."))
 }
 
 func TestChatTurnsStop(t *testing.T) {
@@ -460,9 +461,9 @@ func TestChatTurnsStop(t *testing.T) {
 				fx.putTask(t, "t1", "c1", tc.state)
 			}
 
-			fx.ch.write("telegram:1", "dm1", tc.text)
+			fx.ch.Write("telegram:1", "dm1", tc.text)
 
-			fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == tc.wantReply })
+			fx.ch.WaitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == tc.wantReply })
 			if tc.wantCancel {
 				if got := fx.sender.nextCancel(t).ID; got != "t1" {
 					t.Fatalf("CancelTask() task = %q, want %q", got, "t1")
@@ -479,17 +480,17 @@ func TestChatTurnsStopDoesNotWaitForRunningTurn(t *testing.T) {
 	fx.sender.hold = make(chan struct{})
 	fx.setContext(t, "dm1", "c1")
 	fx.putTask(t, "t1", "c1", a2a.TaskStateWorking)
-	fx.ch.write("telegram:1", "dm1", "slow")
+	fx.ch.Write("telegram:1", "dm1", "slow")
 	fx.sender.nextStream(t)
 
-	fx.ch.write("telegram:1", "dm1", "/stop")
+	fx.ch.Write("telegram:1", "dm1", "/stop")
 
-	fx.ch.waitFor(t, "dm1", hasText("Stopped."))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("Stopped."))
 	if got := fx.sender.nextCancel(t).ID; got != "t1" {
 		t.Fatalf("CancelTask() task = %q, want %q", got, "t1")
 	}
 	close(fx.sender.hold)
-	fx.ch.waitFor(t, "dm1", hasText(agentReply))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText(agentReply))
 }
 
 func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing.T) {
@@ -555,7 +556,7 @@ func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	if diff := cmp.Diff(want, sentMessageOf(call.req.Message), cmpopts.IgnoreFields(sentMessage{}, "ID")); diff != "" {
 		t.Fatalf("SendStreamingMessage() message wrong result (-want +got) diff = %s", diff)
 	}
-	fx.ch.waitFor(t, "dm1", hasText(agentReply))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText(agentReply))
 	if fx.unattended.Has("c1") {
 		t.Error("unattended.Has(c1) = true, want false for a conversation in a chat")
 	}
@@ -713,7 +714,7 @@ func TestChatTurnsTypedAnswer(t *testing.T) {
 			fx := newTurnsFixture(t)
 			rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
 
-			fx.ch.write("telegram:1", "dm1", tc.text)
+			fx.ch.Write("telegram:1", "dm1", tc.text)
 
 			call := fx.sender.nextStream(t)
 			wantMsg, err := approvals.AnswerMessage("t1", "c1", "tool1", tc.wantOption)
@@ -728,7 +729,7 @@ func TestChatTurnsTypedAnswer(t *testing.T) {
 				t.Errorf("question answered by %q with %q, want %q with %q", got.AnsweredBy, got.Answer, auth.OwnerID, tc.wantOption)
 			}
 			fx.wantNoPendingQuestion(t, "dm1")
-			fx.ch.waitFor(t, "dm1", hasText("✓ "+tc.wantLabel+" by telegram:1"))
+			fx.ch.WaitFor(t, "dm1", channeltest.HasText("✓ "+tc.wantLabel+" by telegram:1"))
 		})
 	}
 }
@@ -751,7 +752,7 @@ func TestChatTurnsTypedAnswerWithSeveralOpenQuestions(t *testing.T) {
 			fx := newTurnsFixture(t)
 			first, firstRef := fx.askInDM1(t, "t1", "c1")
 			second, secondRef := fx.askInDM1(t, "t2", "c2")
-			in := fx.ch.message("telegram:1", "dm1", "approve")
+			in := fx.ch.Message("telegram:1", "dm1", "approve")
 			switch tc.replyTo {
 			case 1:
 				in.ReplyTo = channel.Ref{Conv: "dm1", ID: firstRef}
@@ -759,10 +760,10 @@ func TestChatTurnsTypedAnswerWithSeveralOpenQuestions(t *testing.T) {
 				in.ReplyTo = channel.Ref{Conv: "dm1", ID: secondRef}
 			}
 
-			fx.ch.deliver(in)
+			fx.ch.Deliver(in)
 
 			if tc.wantReply != "" {
-				fx.ch.waitFor(t, "dm1", hasText(tc.wantReply))
+				fx.ch.WaitFor(t, "dm1", channeltest.HasText(tc.wantReply))
 				fx.sender.wantIdle(t)
 			} else if got := fx.sender.nextSend(t).req.Message.TaskID; got != tc.wantTask {
 				t.Fatalf("SendMessage() task = %q, want %q", got, tc.wantTask)
@@ -790,11 +791,11 @@ func TestChatTurnsTypedAnswerAfterButtonAnswersTheOtherQuestion(t *testing.T) {
 	first, firstRef := fx.askInDM1(t, "t1", "c1")
 	second, _ := fx.askInDM1(t, "t2", "c2")
 
-	fx.ch.click("telegram:1", "dm1", firstRef, &channel.Question{ID: first.ID}, 0)
+	fx.ch.Click("telegram:1", "dm1", firstRef, &channel.Question{ID: first.ID}, 0)
 	if got := fx.sender.nextSend(t).req.Message.TaskID; got != "t1" {
 		t.Fatalf("SendMessage() task = %q, want t1", got)
 	}
-	fx.ch.write("telegram:1", "dm1", "deny")
+	fx.ch.Write("telegram:1", "dm1", "deny")
 
 	if got := fx.sender.nextSend(t).req.Message.TaskID; got != "t2" {
 		t.Fatalf("SendMessage() task = %q, want t2", got)
@@ -809,7 +810,7 @@ func TestChatTurnsReplyToQuestionOfOtherTextContinuesWaitingTask(t *testing.T) {
 	fx := newTurnsFixture(t)
 	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
 
-	fx.ch.write("telegram:1", "dm1", "what would it push?")
+	fx.ch.Write("telegram:1", "dm1", "what would it push?")
 
 	call := fx.sender.nextStream(t)
 	want := sentMessage{ContextID: "c1", TaskID: "t1", Text: "what would it push?"}
@@ -827,7 +828,7 @@ func TestChatTurnsTypedAnswerToClosedQuestionIsAMessage(t *testing.T) {
 	fx := newTurnsFixture(t)
 	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateCompleted)
 
-	fx.ch.write("telegram:1", "dm1", "deny")
+	fx.ch.Write("telegram:1", "dm1", "deny")
 
 	call := fx.sender.nextStream(t)
 	want := sentMessage{ContextID: "c1", Text: "deny"}
@@ -835,7 +836,7 @@ func TestChatTurnsTypedAnswerToClosedQuestionIsAMessage(t *testing.T) {
 		t.Fatalf("SendStreamingMessage() message wrong result (-want +got) diff = %s", diff)
 	}
 	fx.wantNoPendingQuestion(t, "dm1")
-	fx.ch.waitFor(t, "dm1", hasText("✗ The task no longer waits for an answer."))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("✗ The task no longer waits for an answer."))
 	if by := fx.question(t, rec.ID).AnsweredBy; by != "" {
 		t.Fatalf("question answered by %q, want nobody", by)
 	}
@@ -847,9 +848,9 @@ func TestChatTurnsMemberCantAnswerPermissionOfOthers(t *testing.T) {
 	fx.link(t, linkSpec{pairing: "anna", role: auth.RoleAuthenticated, channel: "fake", identity: "telegram:2", conv: "dm2"})
 	rec := fx.askPendingQuestion(t, "dm2", a2a.TaskStateInputRequired)
 
-	fx.ch.write("telegram:2", "dm2", "approve")
+	fx.ch.Write("telegram:2", "dm2", "approve")
 
-	fx.ch.waitFor(t, "dm2", hasText("Only the person who started the task or an owner can answer this."))
+	fx.ch.WaitFor(t, "dm2", channeltest.HasText("Only the person who started the task or an owner can answer this."))
 	if by := fx.question(t, rec.ID).AnsweredBy; by != "" {
 		t.Fatalf("question answered by %q, want nobody", by)
 	}
@@ -860,9 +861,9 @@ func TestChatTurnsButtonAnswersQuestionOnce(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
 	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
-	ref, q := fx.ch.waitFor(t, "dm1", hasQuestion)
+	ref, q := fx.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
 
-	fx.ch.click("telegram:1", "dm1", ref, q.Question, 2)
+	fx.ch.Click("telegram:1", "dm1", ref, q.Question, 2)
 
 	call := fx.sender.nextStream(t)
 	wantMsg, err := approvals.AnswerMessage("t1", "c1", "tool1", "reject")
@@ -876,24 +877,24 @@ func TestChatTurnsButtonAnswersQuestionOnce(t *testing.T) {
 		t.Errorf("question answer = %q, want %q", got, "reject")
 	}
 
-	fx.ch.click("telegram:1", "dm1", ref, q.Question, 0)
+	fx.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
 
-	fx.ch.waitFor(t, "dm1", hasText("Already answered."))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("Already answered."))
 	fx.sender.wantIdle(t)
 }
 
 func TestChatTurnsDropsRedeliveredMessages(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
-	first := fx.ch.message("telegram:1", "dm1", "hello")
-	second := fx.ch.message("telegram:1", "dm1", "again")
+	first := fx.ch.Message("telegram:1", "dm1", "hello")
+	second := fx.ch.Message("telegram:1", "dm1", "again")
 
 	fx.sender.hold = make(chan struct{})
 
-	fx.ch.deliver(first)
+	fx.ch.Deliver(first)
 	ids := []string{fx.sender.nextStream(t).req.Message.ID}
-	fx.ch.deliver(first)
-	fx.ch.deliver(second)
+	fx.ch.Deliver(first)
+	fx.ch.Deliver(second)
 	waitFor(t, "the second message to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 1 })
 	close(fx.sender.hold)
 
@@ -909,14 +910,14 @@ func TestChatTurnsHandlesConversationInArrivalOrder(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
 	gate := make(chan struct{})
-	slow := fx.ch.message("telegram:1", "dm1", "first")
+	slow := fx.ch.Message("telegram:1", "dm1", "first")
 	slow.Prepare = func(context.Context, *channel.Inbound) error {
 		<-gate
 		return nil
 	}
 
-	fx.ch.deliver(slow)
-	fx.ch.write("telegram:1", "dm1", "second")
+	fx.ch.Deliver(slow)
+	fx.ch.Write("telegram:1", "dm1", "second")
 	waitFor(t, "the second message to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 1 })
 	fx.sender.wantIdle(t)
 	close(gate)
@@ -931,15 +932,15 @@ func TestChatTurnsSendsMessagesThatWaitedForATurnTogether(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
 	fx.sender.hold = make(chan struct{})
-	fx.ch.write("telegram:1", "dm1", "first")
+	fx.ch.Write("telegram:1", "dm1", "first")
 	fx.sender.nextStream(t)
-	second := fx.ch.message("telegram:1", "dm1", "second")
+	second := fx.ch.Message("telegram:1", "dm1", "second")
 	second.Name = "Anna"
-	third := fx.ch.message("telegram:1", "dm1", "third")
+	third := fx.ch.Message("telegram:1", "dm1", "third")
 	third.Name = "Anna"
 
-	fx.ch.deliver(second)
-	fx.ch.deliver(third)
+	fx.ch.Deliver(second)
+	fx.ch.Deliver(third)
 	waitFor(t, "the messages to wait", func() bool { return waitingMessages(fx.queue, "fake", "dm1") == 2 })
 	close(fx.sender.hold)
 
@@ -963,7 +964,7 @@ func TestChatTurnsLimitsConcurrentDownloads(t *testing.T) {
 	var mu sync.Mutex
 	running, most := 0, 0
 	for i := range maxDownloads + 2 {
-		in := fx.ch.message("telegram:1", "dm"+strconv.Itoa(i), "look")
+		in := fx.ch.Message("telegram:1", "dm"+strconv.Itoa(i), "look")
 		in.Prepare = func(context.Context, *channel.Inbound) error {
 			mu.Lock()
 			running++
@@ -975,7 +976,7 @@ func TestChatTurnsLimitsConcurrentDownloads(t *testing.T) {
 			mu.Unlock()
 			return nil
 		}
-		fx.ch.deliver(in)
+		fx.ch.Deliver(in)
 	}
 	current := func() int {
 		mu.Lock()
@@ -1001,16 +1002,16 @@ func TestChatTurnsChecksAnonymousBudgetBeforeDownloading(t *testing.T) {
 	t.Parallel()
 	used := errors.New("this agent took all the anonymous tasks it takes in an hour")
 	fx := newTurnsFixtureWith(t, auth.Policy{Anonymous: []string{auth.MemberAnyone}}, fakeBudget{err: used})
-	in := fx.ch.message("telegram:9", "dm9", "look")
+	in := fx.ch.Message("telegram:9", "dm9", "look")
 	prepared := make(chan struct{}, 1)
 	in.Prepare = func(context.Context, *channel.Inbound) error {
 		prepared <- struct{}{}
 		return nil
 	}
 
-	fx.ch.deliver(in)
+	fx.ch.Deliver(in)
 
-	fx.ch.waitFor(t, "dm9", hasText(used.Error()))
+	fx.ch.WaitFor(t, "dm9", channeltest.HasText(used.Error()))
 	select {
 	case <-prepared:
 		t.Fatal("Inbound.Prepare() called, want the message refused before downloading")
@@ -1063,13 +1064,13 @@ func TestChatTurnsTellsSenderWhenPreparingTheMessageFails(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			fx := newTurnsFixture(t)
-			in := fx.ch.message("telegram:1", "dm1", tc.text)
+			in := fx.ch.Message("telegram:1", "dm1", tc.text)
 			in.Prepare = func(context.Context, *channel.Inbound) error { return tc.prepareErr }
 
-			fx.ch.deliver(in)
+			fx.ch.Deliver(in)
 
 			if tc.wantNotice != "" {
-				fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == tc.wantNotice })
+				fx.ch.WaitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == tc.wantNotice })
 			}
 			if tc.wantTurn {
 				fx.sender.nextStream(t)
@@ -1085,9 +1086,9 @@ func TestChatTurnsShowsStreamError(t *testing.T) {
 	fx := newTurnsFixture(t)
 	fx.sender.streamErr = errors.New("agent unreachable")
 
-	fx.ch.write("telegram:1", "dm1", "hello")
+	fx.ch.Write("telegram:1", "dm1", "hello")
 
-	fx.ch.waitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == "⚠ agent unreachable" })
+	fx.ch.WaitFor(t, "dm1", func(m channel.Outbound) bool { return m.Text == "⚠ agent unreachable" })
 }
 
 func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
@@ -1103,7 +1104,7 @@ func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
 
 	fx.turns.answerIn(fx.ctx, fx.ch, in, auth.Owner(), rec, q, q.Options[0])
 
-	fx.ch.waitFor(t, "dm1", hasText("Couldn't record the answer. Try again."))
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("Couldn't record the answer. Try again."))
 	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1"); err != nil || !slices.Contains(ids, rec.ID) {
 		t.Fatalf("PendingQuestions() = %q, %v, want %q among them", ids, err, rec.ID)
 	}

@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -98,15 +99,15 @@ func blockUntilDone(ctx context.Context, _ chan<- channel.Inbound, _ func(error)
 	return nil
 }
 
-// tweakedChannel is a fakeChannel that can't edit or fails to send.
+// tweakedChannel is a channeltest.Channel that can't edit or fails to send.
 type tweakedChannel struct {
-	*fakeChannel
+	*channeltest.Channel
 	noEdit  bool
 	sendErr error
 }
 
 func (c *tweakedChannel) Caps() channel.Caps {
-	caps := c.fakeChannel.Caps()
+	caps := c.Channel.Caps()
 	if c.noEdit {
 		caps.Edit = false
 	}
@@ -117,22 +118,10 @@ func (c *tweakedChannel) Send(ctx context.Context, m channel.Outbound) (channel.
 	if c.sendErr != nil {
 		return channel.Ref{}, c.sendErr
 	}
-	return c.fakeChannel.Send(ctx, m)
+	return c.Channel.Send(ctx, m)
 }
 
-// transcript returns the messages sent in the order they were sent, as
-// edits left them.
-func (f *fakeChannel) transcript() []channel.Outbound {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]channel.Outbound, len(f.order))
-	for i, id := range f.order {
-		out[i] = f.msgs[id]
-	}
-	return out
-}
-
-type readyWaiter interface{ waitReady(t *testing.T) }
+type readyWaiter interface{ WaitReady(t testing.TB) }
 
 // chatFixture is the parts the chat code works with, over a temporary store.
 type chatFixture struct {
@@ -187,7 +176,7 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 	for _, ch := range chs {
 		fx.supervisor.Add(ch)
 		if w, ok := ch.(readyWaiter); ok {
-			w.waitReady(t)
+			w.WaitReady(t)
 		}
 	}
 	return fx

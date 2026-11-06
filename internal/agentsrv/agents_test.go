@@ -46,6 +46,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -131,17 +132,17 @@ func waitFile(t *testing.T, path string) string {
 func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
+	assistant := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 
-	assistant.ch.write("telegram:1", "dm1", "call coder ask")
-	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
+	assistant.ch.Write("telegram:1", "dm1", "call coder ask")
+	ref, q := assistant.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
-	assistant.ch.click("telegram:1", "dm1", ref, q.Question, 0)
-	assistant.ch.waitFor(t, "dm1", hasText("✓ Allow by owner"))
+	assistant.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
+	assistant.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow by owner"))
 
 	ctx := context.Background()
 	contextID, err := assistant.srv.store.ContextOf(ctx, "fake", "dm1")
@@ -167,26 +168,26 @@ func TestRemoteApprovalIsRelayedToCallerChat(t *testing.T) {
 func TestRelayedApprovalSurvivesRestart(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	ch := newFakeChannel("fake")
-	ch.sendDelay = 200 * time.Millisecond
+	ch := channeltest.NewChannel("fake")
+	ch.SendDelay = 200 * time.Millisecond
 	assistant := startServer(t, serverOpts{name: "assistant", channel: ch})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 
-	assistant.ch.write("telegram:1", "dm1", "call coder ask")
-	ref, q := assistant.ch.waitFor(t, "dm1", hasQuestion)
+	assistant.ch.Write("telegram:1", "dm1", "call coder ask")
+	ref, q := assistant.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
 	waitQuestionMessage(t, assistant, q.Question.ID)
 	root := assistant.dir.Root
 	assistant.stop()
 
-	restarted := startServer(t, serverOpts{name: "assistant", dir: root, channel: newFakeChannel("fake")})
-	restarted.ch.waitReady(t)
+	restarted := startServer(t, serverOpts{name: "assistant", dir: root, channel: channeltest.NewChannel("fake")})
+	restarted.ch.WaitReady(t)
 	time.Sleep(3 * testTimings.WatchMaxInterval)
-	if n := restarted.ch.questions(); n != 0 {
+	if n := restarted.ch.Questions(); n != 0 {
 		t.Fatalf("questions asked again after the restart = %d, want 0", n)
 	}
-	restarted.ch.click("telegram:1", "dm1", ref, q.Question, 0)
-	restarted.ch.waitEdited(t, ref, "✓ Allow by owner")
+	restarted.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
+	restarted.ch.WaitEdited(t, ref, "✓ Allow by owner")
 }
 
 func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
@@ -737,18 +738,18 @@ func TestHarnessCannotAnswerRemoteApproval(t *testing.T) {
 func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
-	assistant := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
+	assistant := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
 	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 
-	assistant.ch.write("telegram:2", "dm2", "call coder ask")
-	ref, q := assistant.ch.waitFor(t, "dm2", hasQuestion)
+	assistant.ch.Write("telegram:2", "dm2", "call coder ask")
+	ref, q := assistant.ch.WaitFor(t, "dm2", channeltest.HasQuestion)
 	if !strings.Contains(q.Text, "coder wants to run git push") {
 		t.Fatalf("question text = %q, want it to name coder and the tool", q.Text)
 	}
-	assistant.ch.click("telegram:2", "dm2", ref, q.Question, 0)
-	assistant.ch.waitEdited(t, ref, "✓ Allow by")
+	assistant.ch.Click("telegram:2", "dm2", ref, q.Question, 0)
+	assistant.ch.WaitEdited(t, ref, "✓ Allow by")
 }
 
 func TestContactNameTakenByNode(t *testing.T) {

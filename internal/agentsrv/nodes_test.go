@@ -32,6 +32,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -165,7 +166,7 @@ func TestNodeTokenCallsAgent(t *testing.T) {
 
 func TestNodeAnswersOwnApproval(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("telegram")})
+	ts := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("telegram")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	node := addNode(t, ts, "grok", 0)
 	node.mu.Lock()
@@ -180,7 +181,7 @@ func TestNodeAnswersOwnApproval(t *testing.T) {
 	answer := send(t, c, userText("approve", string(task.ID), task.ContextID))
 
 	wantResult(t, answer, a2a.TaskStateCompleted, "Pushed (allow).")
-	if got := ts.ch.questions(); got != 0 {
+	if got := ts.ch.Questions(); got != 0 {
 		t.Fatalf("questions sent to messengers = %d, want none: the node answers its own task", got)
 	}
 }
@@ -300,13 +301,13 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 
 func TestLongCallIsWatchedAndPostedBack(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{name: "assistant", channel: newFakeChannel("fake")})
+	ts := startServer(t, serverOpts{name: "assistant", channel: channeltest.NewChannel("fake")})
 	addNode(t, ts, "grok", 200*time.Millisecond)
 	linkOwner(t, ts, "telegram:1", "dm1")
 
-	ts.ch.write("telegram:1", "dm1", "acall grok what's new?")
-	ts.ch.waitFor(t, "dm1", hasText("tool result: task"))
-	ts.ch.waitFor(t, "dm1", hasText("Hello from fakeacp."))
+	ts.ch.Write("telegram:1", "dm1", "acall grok what's new?")
+	ts.ch.WaitFor(t, "dm1", channeltest.HasText("tool result: task"))
+	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Hello from fakeacp."))
 
 	contextID, err := ts.srv.store.ContextOf(context.Background(), "fake", "dm1")
 	if err != nil {

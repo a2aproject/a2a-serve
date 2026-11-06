@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -85,8 +86,8 @@ func TestChatApprovalsAsk(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ch := newFakeChannel("fake")
-			ch.buttons = tc.buttons
+			ch := channeltest.NewChannel("fake")
+			ch.Buttons = tc.buttons
 			fx := newChatFixture(t, "", ch)
 			if tc.member {
 				fx.link(t, linkSpec{pairing: "anna", role: auth.RoleAuthenticated, channel: "fake", identity: "telegram:2", conv: "dm2"})
@@ -95,7 +96,7 @@ func TestChatApprovalsAsk(t *testing.T) {
 
 			fx.chat.Ask(fx.ctx, tc.to, header, rec)
 
-			got := ch.transcript()
+			got := ch.Transcript()
 			if !tc.wantSent {
 				if len(got) != 0 {
 					t.Fatalf("chat.Ask() sent %+v, want nothing", got)
@@ -136,7 +137,7 @@ func TestChatApprovalsAsk(t *testing.T) {
 
 func TestChatApprovalsAskForgetsQuestionWhenSendFails(t *testing.T) {
 	t.Parallel()
-	ch := &tweakedChannel{fakeChannel: newFakeChannel("fake"), sendErr: errors.New("messenger unreachable")}
+	ch := &tweakedChannel{Channel: channeltest.NewChannel("fake"), sendErr: errors.New("messenger unreachable")}
 	fx := newChatFixture(t, "", ch)
 	rec := fx.newQuestion(t, "t1", "c1", auth.OwnerID)
 
@@ -172,7 +173,7 @@ func TestChatApprovalsEndQuestion(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ch := &tweakedChannel{fakeChannel: newFakeChannel("fake"), noEdit: tc.noEdit}
+			ch := &tweakedChannel{Channel: channeltest.NewChannel("fake"), noEdit: tc.noEdit}
 			fx := newChatFixture(t, "", ch)
 			rec := fx.newQuestion(t, "t1", "c1", auth.OwnerID)
 			fx.chat.Ask(fx.ctx, approvals.Chat{Channel: "fake", Conv: "dm1"}, "coder asks", rec)
@@ -181,7 +182,7 @@ func TestChatApprovalsEndQuestion(t *testing.T) {
 			tc.mark(fx.chat, fx.ctx, rec.ID)
 
 			var got []string
-			for _, m := range ch.transcript() {
+			for _, m := range ch.Transcript() {
 				got = append(got, m.Text)
 			}
 			if diff := cmp.Diff([]string{tc.want}, got); diff != "" {
@@ -228,7 +229,7 @@ func TestChatApprovalsOwnerChat(t *testing.T) {
 			t.Parallel()
 			var chs []channel.Channel
 			for _, name := range tc.running {
-				chs = append(chs, newFakeChannel(name))
+				chs = append(chs, channeltest.NewChannel(name))
 			}
 			fx := newChatFixture(t, tc.ownerChat, chs...)
 			for _, l := range tc.links {
@@ -269,7 +270,7 @@ func TestChatApprovalsFollowDelivers(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ch := newFakeChannel("fake")
+			ch := channeltest.NewChannel("fake")
 			var chs []channel.Channel
 			if tc.runs {
 				chs = append(chs, ch)
@@ -302,7 +303,7 @@ func TestChatApprovalsFollowDelivers(t *testing.T) {
 
 func TestChatApprovalsFollowRendersTaskInConversation(t *testing.T) {
 	t.Parallel()
-	ch := newFakeChannel("fake")
+	ch := channeltest.NewChannel("fake")
 	fx := newChatFixture(t, "", ch)
 	if err := fx.store.SetContext(fx.ctx, "fake", "dm1", "c1"); err != nil {
 		t.Fatalf("SetContext() error = %v", err)
@@ -319,5 +320,5 @@ func TestChatApprovalsFollowRendersTaskInConversation(t *testing.T) {
 		t.Fatalf("chat.Follow() error = %v", err)
 	}
 
-	ch.waitFor(t, "dm1", hasText("Pushed."))
+	ch.WaitFor(t, "dm1", channeltest.HasText("Pushed."))
 }

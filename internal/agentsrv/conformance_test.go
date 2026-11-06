@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 )
 
 // The conformance suite runs every scenario a harness profile must pass
@@ -253,11 +254,11 @@ func TestUnauthenticatedCallerIsRejected(t *testing.T) {
 
 func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	t.Parallel()
-	ch := newFakeChannel("telegram")
+	ch := channeltest.NewChannel("telegram")
 	ts := startServer(t, serverOpts{channel: ch})
 	ctx := context.Background()
-	ch.write("telegram:1", "dm1", "/start "+ownerCode(t, ts))
-	ch.waitFor(t, "dm1", hasText("Linked as owner"))
+	ch.Write("telegram:1", "dm1", "/start "+ownerCode(t, ts))
+	ch.WaitFor(t, "dm1", channeltest.HasText("Linked as owner"))
 
 	member := ts.client(ts.pair("grok", auth.RoleAuthenticated))
 	other := ts.client(ts.pair("bob", auth.RoleAuthenticated))
@@ -271,7 +272,7 @@ func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	answer := send(t, member, userText("approve", string(task.ID), task.ContextID))
 
 	wantResult(t, answer, a2a.TaskStateCompleted, "Pushed (allow).")
-	if got := ch.questions(); got != 0 {
+	if got := ch.Questions(); got != 0 {
 		t.Fatalf("questions sent to messengers = %d, want none: the caller answers inline", got)
 	}
 }

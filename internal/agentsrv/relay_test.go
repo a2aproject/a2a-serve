@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -63,7 +64,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	})
 	coder := startServer(t, serverOpts{
 		name:     "coder",
-		channel:  newFakeChannel("fake"),
+		channel:  channeltest.NewChannel("fake"),
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
@@ -123,13 +124,13 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	linkOwner(t, coder, "telegram:1", "dm1")
-	coder.ch.write("telegram:1", "dm1", "call reviewer ask")
-	ref, q := coder.ch.waitFor(t, "dm1", hasQuestion)
+	coder.ch.Write("telegram:1", "dm1", "call reviewer ask")
+	ref, q := coder.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
 	if !strings.Contains(q.Text, "reviewer wants to run git push") {
 		t.Fatalf("relayed question = %q, want reviewer and git push", q.Text)
 	}
-	coder.ch.click("telegram:1", "dm1", ref, q.Question, 0)
-	coder.ch.waitFor(t, "dm1", hasText("✓ Allow by owner"))
+	coder.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
+	coder.ch.WaitFor(t, "dm1", channeltest.HasText("✓ Allow by owner"))
 
 	contextID, err := coder.srv.store.ContextOf(ctx, "fake", "dm1")
 	if err != nil {

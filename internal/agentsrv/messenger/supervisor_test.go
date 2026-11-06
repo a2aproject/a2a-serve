@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -68,12 +69,12 @@ func plain(name string) *stubChannel { return &stubChannel{name: name, run: bloc
 func TestChannelSupervisorDeliversInbound(t *testing.T) {
 	t.Parallel()
 	sv := newTestSupervisor(t, time.Millisecond, nil)
-	ch := newFakeChannel("fake")
+	ch := channeltest.NewChannel("fake")
 	sv.Add(ch)
-	ch.waitReady(t)
-	want := ch.message("telegram:1", "dm1", "hello")
+	ch.WaitReady(t)
+	want := ch.Message("telegram:1", "dm1", "hello")
 
-	ch.deliver(want)
+	ch.Deliver(want)
 
 	select {
 	case got := <-sv.inbound():

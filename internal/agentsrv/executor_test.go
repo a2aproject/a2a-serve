@@ -39,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -158,7 +159,7 @@ func (statusExecutor) Cancel(context.Context, *a2asrv.ExecutorContext) iter.Seq2
 
 func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: newFakeChannel("telegram")})
+	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("telegram")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := auth.WithPrincipal(context.Background(), auth.Owner())
 	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
@@ -180,14 +181,14 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 			t.Fatalf("Execute() error = %v", err)
 		}
 		time.Sleep(200 * time.Millisecond)
-		if got := ts.ch.questions(); got != 0 {
-			t.Fatalf("questions sent while the execution handles the event = %d, want 0; messages:\n%s", got, ts.ch.dump())
+		if got := ts.ch.Questions(); got != 0 {
+			t.Fatalf("questions sent while the execution handles the event = %d, want 0; messages:\n%s", got, ts.ch.Dump())
 		}
 		u := ev.(*a2a.TaskStatusUpdateEvent)
 		result = &a2a.Task{ID: u.TaskID, ContextID: u.ContextID, Status: u.Status}
 	}
 	exec.Cleanup(ctx, execCtx, result, nil)
-	ts.ch.waitFor(t, "dm1", hasQuestion)
+	ts.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
 }
 
 func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {

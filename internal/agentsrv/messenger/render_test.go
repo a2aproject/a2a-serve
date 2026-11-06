@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 )
 
 func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
@@ -46,8 +47,8 @@ func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ch := newFakeChannel("fake")
-			ch.maxText = tc.maxText
+			ch := channeltest.NewChannel("fake")
+			ch.MaxText = tc.maxText
 			rd := newRenderer(&ChatApprovals{}, ch, "conv", channel.Ref{}, auth.Principal{})
 			done := make(chan struct{})
 			go func() {
@@ -61,8 +62,8 @@ func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
 				t.Fatalf("flush() did not return")
 			}
 			var got strings.Builder
-			for _, id := range ch.order {
-				text := ch.msgs[id].Text
+			for _, m := range ch.Transcript() {
+				text := m.Text
 				if len(text) > tc.maxText {
 					t.Fatalf("flush() sent %d bytes, want at most %d", len(text), tc.maxText)
 				}
@@ -78,7 +79,8 @@ func TestRendererSplitsStreamToChannelLimit(t *testing.T) {
 // flakyChannel fails edits, the first rateLimited sends with a rate limit and
 // then the next brokenSends with a network error.
 type flakyChannel struct {
-	*fakeChannel
+	*channeltest.Channel
+	mu          sync.Mutex
 	editErr     error
 	rateLimited int
 	brokenSends int
@@ -102,7 +104,7 @@ func (f *flakyChannel) Send(ctx context.Context, m channel.Outbound) (channel.Re
 	if broken {
 		return channel.Ref{}, errors.New("connection reset")
 	}
-	return f.fakeChannel.Send(ctx, m)
+	return f.Channel.Send(ctx, m)
 }
 
 func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
@@ -126,7 +128,7 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
-			ch := &flakyChannel{fakeChannel: newFakeChannel("fake")}
+			ch := &flakyChannel{Channel: channeltest.NewChannel("fake")}
 			a := &ChatApprovals{config: func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }, timings: Timings{SendRetry: time.Millisecond}}
 			rd := newRenderer(a, ch, "conv", channel.Ref{}, auth.Principal{})
 			rd.onArtifact(&a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart("partial")}}, false)
@@ -135,8 +137,8 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 			rd.onArtifact(&a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart(" and the end")}}, true)
 			rd.final(ctx, a2a.TaskStatus{State: a2a.TaskStateCompleted})
 			var got []string
-			for _, id := range ch.order {
-				got = append(got, ch.msgs[id].Text)
+			for _, m := range ch.Transcript() {
+				got = append(got, m.Text)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("renderer.final() sent wrong messages (-want +got) diff = %s", diff)
@@ -148,7 +150,7 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 // editLimitedChannel answers the first edit with a rate limit and records
 // when edits happen.
 type editLimitedChannel struct {
-	*fakeChannel
+	*channeltest.Channel
 	retryAfter time.Duration
 
 	editMu sync.Mutex
@@ -163,7 +165,7 @@ func (c *editLimitedChannel) Edit(ctx context.Context, ref channel.Ref, m channe
 	if first {
 		return &channel.RateLimitError{RetryAfter: c.retryAfter, Err: errors.New("too many requests")}
 	}
-	return c.fakeChannel.Edit(ctx, ref, m)
+	return c.Channel.Edit(ctx, ref, m)
 }
 
 func (c *editLimitedChannel) editTimes() []time.Time {
@@ -176,7 +178,7 @@ func TestRendererHoldsEditsUntilRateLimitEnds(t *testing.T) {
 	t.Parallel()
 	const retryAfter = 300 * time.Millisecond
 	ctx := t.Context()
-	ch := &editLimitedChannel{fakeChannel: newFakeChannel("fake"), retryAfter: retryAfter}
+	ch := &editLimitedChannel{Channel: channeltest.NewChannel("fake"), retryAfter: retryAfter}
 	a := &ChatApprovals{timings: Timings{EditInterval: time.Millisecond}}
 	rd := newRenderer(a, ch, "conv", channel.Ref{}, auth.Principal{})
 	write := func(text string) {
@@ -205,7 +207,7 @@ func TestRendererHoldsEditsUntilRateLimitEnds(t *testing.T) {
 
 // gatedChannel blocks edits until release is closed.
 type gatedChannel struct {
-	*fakeChannel
+	*channeltest.Channel
 	entered chan struct{}
 	release chan struct{}
 	once    sync.Once
@@ -218,13 +220,13 @@ func (c *gatedChannel) Edit(ctx context.Context, ref channel.Ref, m channel.Outb
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return c.fakeChannel.Edit(ctx, ref, m)
+	return c.Channel.Edit(ctx, ref, m)
 }
 
 func TestRendererConsumesEventsWhileMessengerCallIsPending(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
-	ch := &gatedChannel{fakeChannel: newFakeChannel("fake"), entered: make(chan struct{}), release: make(chan struct{})}
+	ch := &gatedChannel{Channel: channeltest.NewChannel("fake"), entered: make(chan struct{}), release: make(chan struct{})}
 	t.Cleanup(func() { close(ch.release) })
 	a := &ChatApprovals{timings: Timings{EditInterval: time.Millisecond}}
 	rd := newRenderer(a, ch, "conv", channel.Ref{}, auth.Principal{})
@@ -273,7 +275,7 @@ func TestRendererShowsApprovalTextLiterally(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ch := newFakeChannel("fake")
+			ch := channeltest.NewChannel("fake")
 			fx := newChatFixture(t, "", ch)
 			fx.putTask(t, "t1", "c1", a2a.TaskStateWorking)
 			rd := newRenderer(fx.chat, ch, "dm1", channel.Ref{}, auth.Owner())
@@ -283,7 +285,7 @@ func TestRendererShowsApprovalTextLiterally(t *testing.T) {
 
 			rd.onStatus(fx.ctx, a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg})
 
-			got := ch.transcript()
+			got := ch.Transcript()
 			if len(got) != 1 {
 				t.Fatalf("renderer.onStatus() sent %d messages, want 1", len(got))
 			}
@@ -296,7 +298,7 @@ func TestRendererShowsApprovalTextLiterally(t *testing.T) {
 
 func TestRendererRetriesQuestion(t *testing.T) {
 	t.Parallel()
-	ch := &flakyChannel{fakeChannel: newFakeChannel("fake"), rateLimited: 1, brokenSends: 1}
+	ch := &flakyChannel{Channel: channeltest.NewChannel("fake"), rateLimited: 1, brokenSends: 1}
 	fx := newChatFixture(t, "", ch)
 	fx.putTask(t, "t1", "c1", a2a.TaskStateWorking)
 	rd := newRenderer(fx.chat, ch, "dm1", channel.Ref{}, auth.Owner())
@@ -304,7 +306,7 @@ func TestRendererRetriesQuestion(t *testing.T) {
 
 	rd.onStatus(fx.ctx, a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage(t)})
 
-	got := ch.transcript()
+	got := ch.Transcript()
 	if len(got) != 1 || got[0].Question == nil {
 		t.Fatalf("renderer.onStatus() sent %+v, want the question once", got)
 	}
