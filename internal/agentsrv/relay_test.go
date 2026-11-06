@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
@@ -98,7 +99,7 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 	wantPeers := []controlapi.Peer{{
 		Name:        "reviewer",
 		URL:         "http://agentmesh.local/mesh/peer-reviewer/a2a/reviewer",
-		Description: "reviewer is a fake coding agent reached through `a2a-serve`.",
+		Description: "reviewer is a fake coding agent reached through `a2a-serve`. Tool calls may pause a task in input-required until whoever started it answers.",
 		Online:      true,
 	}}
 	if diff := cmp.Diff(wantPeers, peers); diff != "" {
@@ -114,6 +115,9 @@ func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
 		URL:      "http://agentmesh.local/mesh/peer-reviewer/a2a/reviewer",
 		Via:      contacts.ViaPrivate,
 		HasToken: false,
+		// The card text is plain: the backticks of the description are left out.
+		Description: "reviewer is a fake coding agent reached through a2a-serve. Tool calls may pause a task in input-required until whoever started it answers.",
+		Skills:      []cardinfo.Skill{{ID: "coding", Name: "Coding agent", Description: "Works in its project workspace with fake."}},
 	}
 	if diff := cmp.Diff(wantContact, contact); diff != "" {
 		t.Fatalf("coderCtl.AddContact() wrong result (-want +got) diff = %s", diff)

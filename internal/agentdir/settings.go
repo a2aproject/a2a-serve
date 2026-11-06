@@ -92,7 +92,8 @@ type Settings struct {
 	BackupInterval  string
 	BackupRetention string
 
-	TaskTTL string
+	TaskTTL        string
+	ContactRefresh string
 }
 
 // EmailSettings configure the email channel. Password, OAuthClientSecret

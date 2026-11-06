@@ -19,10 +19,13 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
+
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 )
 
 // SessionStore implements the a2aacp session store: A2A context → ACP session.
@@ -133,34 +136,85 @@ type Contact struct {
 	// private network, which recognize the caller by its network identity.
 	Token string
 	// Via is private (the network provider's HTTP client) or direct.
-	Via     string
+	Via string
+	// Card is what the contact's agent card said when it was last fetched.
+	Card    cardinfo.Summary
 	Created time.Time
 }
 
 // PutContact creates or replaces a contact.
 func (s *Store) PutContact(ctx context.Context, c Contact) error {
-	_, err := s.exec(ctx, `INSERT INTO contacts (name, url, token, via, created) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (name) DO UPDATE SET url = excluded.url, token = excluded.token, via = excluded.via`,
-		c.Name, c.URL, c.Token, c.Via, s.now().UnixNano())
+	card, err := marshalCard(c.Card)
+	if err != nil {
+		return err
+	}
+	_, err = s.exec(ctx, `INSERT INTO contacts (name, url, token, via, card, created) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (name) DO UPDATE SET url = excluded.url, token = excluded.token, via = excluded.via, card = excluded.card`,
+		c.Name, c.URL, c.Token, c.Via, card, s.now().UnixNano())
 	return err
+}
+
+// SetContactCard replaces the card of the contact name while it is still
+// reached at url. It returns [ErrNotFound] once the contact was removed or
+// moved to another URL.
+func (s *Store) SetContactCard(ctx context.Context, name, url string, card cardinfo.Summary) error {
+	data, err := marshalCard(card)
+	if err != nil {
+		return err
+	}
+	res, err := s.exec(ctx, `UPDATE contacts SET card = ? WHERE name = ? AND url = ?`, data, name, url)
+	if err != nil {
+		return err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if n == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func marshalCard(card cardinfo.Summary) (string, error) {
+	if card.IsZero() {
+		return "", nil
+	}
+	data, err := json.Marshal(card)
+	return string(data), err
+}
+
+func unmarshalCard(data string) cardinfo.Summary {
+	var card cardinfo.Summary
+	if data == "" {
+		return card
+	}
+	if err := json.Unmarshal([]byte(data), &card); err != nil {
+		slog.Warn("reading the stored card of a contact", "error", err)
+	}
+	return card
 }
 
 // Contact returns a contact by name.
 func (s *Store) Contact(ctx context.Context, name string) (Contact, error) {
 	c := Contact{Name: name}
-	var created int64
-	err := s.reads.QueryRowContext(ctx, `SELECT url, token, via, created FROM contacts WHERE name = ?`, name).
-		Scan(&c.URL, &c.Token, &c.Via, &created)
+	var (
+		created int64
+		card    string
+	)
+	err := s.reads.QueryRowContext(ctx, `SELECT url, token, via, card, created FROM contacts WHERE name = ?`, name).
+		Scan(&c.URL, &c.Token, &c.Via, &card, &created)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Contact{}, ErrNotFound
 	}
+	c.Card = unmarshalCard(card)
 	c.Created = unixTime(created)
 	return c, err
 }
 
 // Contacts lists contacts.
 func (s *Store) Contacts(ctx context.Context) ([]Contact, error) {
-	rows, err := s.reads.QueryContext(ctx, `SELECT name, url, token, via, created FROM contacts ORDER BY name`)
+	rows, err := s.reads.QueryContext(ctx, `SELECT name, url, token, via, card, created FROM contacts ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -170,10 +224,12 @@ func (s *Store) Contacts(ctx context.Context) ([]Contact, error) {
 		var (
 			c       Contact
 			created int64
+			card    string
 		)
-		if err := rows.Scan(&c.Name, &c.URL, &c.Token, &c.Via, &created); err != nil {
+		if err := rows.Scan(&c.Name, &c.URL, &c.Token, &c.Via, &card, &created); err != nil {
 			return nil, err
 		}
+		c.Card = unmarshalCard(card)
 		c.Created = unixTime(created)
 		out = append(out, c)
 	}

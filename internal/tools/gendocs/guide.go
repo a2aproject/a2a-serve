@@ -40,10 +40,19 @@ var generatedParts = []generatedPart{
 
 // liveSettingsText says which settings a running agent applies at once.
 func liveSettingsText() string {
+	fileKeys := map[string]string{}
+	for _, s := range agentdir.SettingDocs() {
+		if s.FileOnly {
+			fileKeys[s.Flag] = s.Key
+		}
+	}
 	names := agentdir.LiveSettings()
 	flags := make([]string, len(names))
 	for i, name := range names {
 		flags[i] = "`--" + name + "`"
+		if key, ok := fileKeys[name]; ok {
+			flags[i] = "`" + key + "`"
+		}
 	}
 	list := strings.Join(flags[:len(flags)-1], ", ") + " and " + flags[len(flags)-1]
 	return "A running agent applies " + list + " at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set` or `config unset`."
@@ -62,7 +71,11 @@ func settingsTable() string {
 		for i, c := range s.Commands {
 			commands[i] = "`" + c + "`"
 		}
-		fmt.Fprintf(&sb, "| `--%s` | %s | %s |\n", s.Flag, key, strings.Join(commands, ", "))
+		flag := "`--" + s.Flag + "`"
+		if s.FileOnly {
+			flag = ""
+		}
+		fmt.Fprintf(&sb, "| %s | %s | %s |\n", flag, key, strings.Join(commands, ", "))
 	}
 	return strings.TrimSuffix(sb.String(), "\n")
 }

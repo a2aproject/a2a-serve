@@ -19,6 +19,7 @@ git finds a repository, or take --dir.
 
 | Command | Description |
 |---|---|
+| [`card`](card.md) | Print the agent card as callers see it |
 | [`inspect`](inspect.md) | Open the web inspector of the agent |
 | [`logs`](logs.md) | Print the agent's log |
 | [`restart`](restart.md) | Stop the agent and start it again in the same mode, detached or as a service |

@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"net/http"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -51,7 +52,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReloadConfig() error = %v", err)
 	}
-	if diff := cmp.Diff([]string{"description", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}, res.Applied); diff != "" {
+	if diff := cmp.Diff(agentdir.LiveSettings(), res.Applied); diff != "" {
 		t.Fatalf("ReloadConfig() wrong result (-want +got) diff = %s", diff)
 	}
 	running, err := client.Config(ctx)
@@ -215,4 +216,42 @@ func TestAllowToolsAnswersPendingApprovals(t *testing.T) {
 	}
 
 	wantResult(t, waitState(t, c, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
+}
+
+func TestControlCardServesReloadedSkills(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	ctx := context.Background()
+	client := controlapi.NewClient(ts.dir)
+	saved, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	saved.Card.Skills = []agentdir.CardSkill{{ID: "release-notes", Name: "Release notes", Description: "Writes release notes.", Tags: []string{"git"}}}
+	if err := ts.dir.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if _, err := client.ReloadConfig(ctx); err != nil {
+		t.Fatalf("ReloadConfig() error = %v", err)
+	}
+
+	got, err := client.Card(ctx, network.ListenerLocal)
+	if err != nil {
+		t.Fatalf("Card() error = %v", err)
+	}
+	local, _, _ := ts.srv.URLs()
+	served, err := network.FetchCard(ctx, http.DefaultClient, local)
+	if err != nil {
+		t.Fatalf("FetchCard() error = %v", err)
+	}
+	if diff := cmp.Diff(served, got); diff != "" {
+		t.Fatalf("Card() differs from the served card (-served +got) diff = %s", diff)
+	}
+	want := []a2a.AgentSkill{{ID: "release-notes", Name: "Release notes", Description: "Writes release notes.", Tags: []string{"git"}}}
+	if diff := cmp.Diff(want, got.Skills); diff != "" {
+		t.Fatalf("Card() wrong skills (-want +got) diff = %s", diff)
+	}
+	if _, err := client.Card(ctx, network.ListenerPrivate); err == nil {
+		t.Fatalf("Card(%q) error = nil, want an error for an agent without a private URL", network.ListenerPrivate)
+	}
 }

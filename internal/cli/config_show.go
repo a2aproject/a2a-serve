@@ -123,6 +123,11 @@ func renderConfig(v *agentctl.View, all bool) string {
 		return d + " (default)"
 	}
 	line("description", c.Description)
+	var skills []string
+	for _, sk := range c.Card.Skills {
+		skills = append(skills, sk.ID)
+	}
+	line("card skills", strings.Join(skills, ", "))
 	line("command", agentdir.ShellJoin(c.Command))
 	line("workspace", withDefault(formatMount(c.Workspace), def.Workspace))
 	var mounts []string

@@ -63,6 +63,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Stop:           s.Stop,
 		Config:         s.rt.Config,
 		ReloadConfig:   s.reloadConfig,
+		Card:           s.listenerCard,
 		Peers:          s.clients.Discover,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
@@ -155,6 +156,12 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 	}
 	if before.Policy.PrivateAllowOutgoing != s.rt.Config().Policy.PrivateAllowOutgoing {
 		s.refreshInstructions(ctx)
+	}
+	if before.ContactRefresh != s.rt.Config().ContactRefresh {
+		select {
+		case s.cardRefreshChanged <- struct{}{}:
+		default:
+		}
 	}
 	return s.answerWaiting(ctx, nil)
 }

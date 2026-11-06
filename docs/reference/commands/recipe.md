@@ -49,6 +49,7 @@ a2a-serve recipe --dry-run
 | `--backup-interval duration` |  | Time between snapshots, a duration such as 30m or 1h (default 24h) |
 | `--backup-key string` |  | Passphrase the snapshots are encrypted with; keep a copy away from the backups (secret value: env:VAR, -, or the value) |
 | `--backup-retention duration` |  | How long snapshots are kept, a duration in hours or days such as 48h or 7d; the latest is always kept (default 7d) |
+| `--contact-refresh duration` |  | How often the server fetches the agent cards of contacts and peers again, a duration such as 30m or 1h (default 1h) |
 | `--description string` |  | Agent description for its card |
 | `--dir string` |  | Agent directory: a new agent's, or the agent to update (default: the agent here, or ./&lt;name&gt; for a new one) |
 | `--dry-run` |  | Fetch the recipe and print the review without saving |

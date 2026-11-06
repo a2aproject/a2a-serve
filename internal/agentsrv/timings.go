@@ -62,6 +62,9 @@ type Timings struct {
 	// StateCheckInterval is how often the server checks that its state
 	// directory still exists.
 	StateCheckInterval time.Duration
+	// CardRefresh replaces --contact-refresh, the time between refreshes
+	// of the cards of contacts and peers, when set.
+	CardRefresh time.Duration
 }
 
 func (t Timings) messenger() messenger.Timings {

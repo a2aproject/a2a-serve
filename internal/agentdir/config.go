@@ -68,7 +68,11 @@ type Config struct {
 	// TaskTTL is how long tasks are kept after their last update, such as
 	// 30d. Default 30d.
 	TaskTTL string `yaml:"taskTTL,omitempty" json:"taskTTL,omitempty"`
+	// ContactRefresh is how often the server fetches the cards of contacts
+	// and peers again, such as 1h. Default 1h.
+	ContactRefresh string `yaml:"contactRefresh,omitempty" json:"contactRefresh,omitempty"`
 
+	Card      CardConfig      `yaml:"card,omitempty" json:"card,omitzero"`
 	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
 	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
 	Policy    PolicyConfig    `yaml:"policy,omitempty" json:"policy,omitzero"`
@@ -77,6 +81,36 @@ type Config struct {
 	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
 	MCP       MCPConfig       `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+}
+
+// CardConfig is what the agent card tells callers about the agent besides
+// its description.
+type CardConfig struct {
+	// Skills replace the card's default skill.
+	Skills []CardSkill `yaml:"skills,omitempty" json:"skills,omitempty"`
+}
+
+// CardSkill is a skill of the agent card.
+type CardSkill struct {
+	ID string `yaml:"id" json:"id"`
+	// Name defaults to the ID.
+	Name        string   `yaml:"name,omitempty" json:"name,omitempty"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Tags        []string `yaml:"tags,omitempty" json:"tags,omitempty"`
+}
+
+// Bounds of the card skills.
+const (
+	MaxCardSkills           = 20
+	MaxCardSkillDescription = 1000
+)
+
+func (c CardConfig) clone() CardConfig {
+	c.Skills = slices.Clone(c.Skills)
+	for i := range c.Skills {
+		c.Skills[i].Tags = slices.Clone(c.Skills[i].Tags)
+	}
+	return c
 }
 
 // MCPConfig decides which MCP servers of the project's .mcp.json the agent
@@ -173,6 +207,22 @@ func (c *Config) TaskTTLDuration() time.Duration {
 		return d
 	}
 	return DefaultTaskTTL
+}
+
+// DefaultContactRefresh is how often the server fetches the cards of
+// contacts and peers again.
+const DefaultContactRefresh = time.Hour
+
+// MinContactRefresh is the shortest period between refreshes of the cards.
+const MinContactRefresh = time.Minute
+
+// ContactRefreshDuration returns how often the server fetches the cards of
+// contacts and peers again.
+func (c *Config) ContactRefreshDuration() time.Duration {
+	if d, err := ParseDays(c.ContactRefresh); err == nil {
+		return d
+	}
+	return DefaultContactRefresh
 }
 
 // ParseDays parses a Go duration, or a number of days such as 7d.
@@ -755,6 +805,7 @@ func (c *Config) Clone() *Config {
 	out.Approvals.Deny = slices.Clone(c.Approvals.Deny)
 	out.Policy = c.Policy.clone()
 	out.MCP.Disabled = slices.Clone(c.MCP.Disabled)
+	out.Card = c.Card.clone()
 	if t := c.Channels.Telegram; t != nil {
 		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
 	}

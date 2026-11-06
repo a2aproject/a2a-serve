@@ -31,6 +31,7 @@ const (
 var commandGroups = map[string]string{
 	"start":      groupRun,
 	"status":     groupRun,
+	"card":       groupRun,
 	"logs":       groupRun,
 	"stop":       groupRun,
 	"restart":    groupRun,

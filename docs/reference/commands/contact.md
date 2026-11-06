@@ -59,6 +59,24 @@ a2a-serve contact list
 
 Aliases: `ls`
 
+## a2a-serve contact refresh
+
+Fetch the agent card of a contact, or of every contact, and keep its
+description and skills, which the agent's instructions list. The running
+server also does this every --contact-refresh (default 1h). While the agent
+is stopped, only contacts reached directly can be refreshed.
+
+```
+a2a-serve contact refresh [name]
+```
+
+**Examples**
+
+```bash
+a2a-serve contact refresh
+a2a-serve contact refresh coder
+```
+
 ## a2a-serve contact rm
 
 Remove a contact

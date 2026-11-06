@@ -29,19 +29,16 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
-	"github.com/a2aproject/a2a-serve/internal/access"
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentcard"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
-	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/skills"
@@ -202,65 +199,27 @@ func unauthorizedHint(kind string) string {
 	return "this agent needs a token: " + remote + "; " + local
 }
 
-// card builds the agent card served at baseURL.
-func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
-	cfg := s.rt.Config()
-	desc := cfg.Description
-	if desc == "" {
-		desc = cfg.Name + " is " + output.WithArticle(cfg.Harness) + " coding agent reached through `a2a-serve`."
+// listenerCard returns the agent card the listener kind serves.
+func (s *Server) listenerCard(kind string) (*a2a.AgentCard, error) {
+	switch kind {
+	case network.ListenerLocal, network.ListenerPrivate, network.ListenerPublic:
+	default:
+		return nil, agenterr.Invalidf("unknown listener %q: want local, private or public", kind)
 	}
-	card := &a2a.AgentCard{
-		Name:        cfg.Name,
-		Description: desc,
-		Version:     "1.0.0",
-		SupportedInterfaces: []*a2a.AgentInterface{
-			a2a.NewAgentInterface(baseURL, a2a.TransportProtocolJSONRPC),
-			a2a.NewAgentInterface(baseURL, a2a.TransportProtocolHTTPJSON),
-		},
-		Capabilities: a2a.AgentCapabilities{
-			Streaming:  true,
-			Extensions: []a2a.AgentExtension{structuredinput.NewExtension(structuredinput.Draft202012)},
-		},
-		DefaultInputModes:  []string{"text/plain", "application/octet-stream"},
-		DefaultOutputModes: []string{"text/plain", "application/json"},
-		Skills: []a2a.AgentSkill{{
-			ID:          "coding",
-			Name:        "Coding agent",
-			Description: "Works in its project workspace with " + cfg.Harness + ". Tool calls may pause the task in input-required until whoever started it answers.",
-			Tags:        []string{"coding", cfg.Harness},
-		}},
+	u := s.listenerURL(kind)
+	if u == "" {
+		return nil, agenterr.Invalidf("the agent has no %s URL", kind)
 	}
-	if !s.needsPairing(kind) {
-		return card
-	}
-	card.SecuritySchemes = a2a.NamedSecuritySchemes{
-		"pairing": a2a.HTTPAuthSecurityScheme{Scheme: "Bearer", Description: "A token from pairing: `a2a-serve pair join <agent-url> <code>`, with a code from the owner."},
-	}
-	card.SecurityRequirements = a2a.SecurityRequirementsOptions{{"pairing": {}}}
-	if kind != network.ListenerPublic {
-		return card
-	}
-	// The sign-in schemes are alternatives to pairing.
-	if scheme := s.oauth.CardScheme(baseURL); scheme != nil {
-		card.SecuritySchemes["google"] = scheme
-		card.SecurityRequirements = append(card.SecurityRequirements, a2a.SecurityRequirements{"google": {}})
-	}
-	return card
+	return s.card(kind, u), nil
 }
 
-// needsPairing reports whether callers at the listener kind need a pairing
-// token, which the agent card then advertises: the local listener always,
-// the private one with --private-allow-incoming paired, and the public one unless
-// --public-allow-incoming anyone.
-func (s *Server) needsPairing(kind string) bool {
-	p := s.rt.Config().Policy
-	switch kind {
-	case network.ListenerPrivate:
-		return access.PrivateAllowIncoming(p) == agentdir.AccessPaired
-	case network.ListenerPublic:
-		return p.PublicAllowIncoming != agentdir.AccessAnyone
+// card builds the agent card served at baseURL on the listener kind.
+func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
+	l := agentcard.Listener{Kind: kind, URL: baseURL}
+	if kind == network.ListenerPublic {
+		l.SignIn = s.oauth.CardScheme(baseURL)
 	}
-	return true
+	return agentcard.Build(s.rt.Config(), l)
 }
 
 // handlePair exchanges a pair code for a caller token, or a node code for a

@@ -38,6 +38,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 )
 
 // ErrUnsupported is returned by providers for capabilities they don't have.
@@ -67,6 +69,8 @@ type PeerInfo struct {
 	Online      bool   `json:"online"`
 	// Node identifies the machine of the agent, as [Peer.Node] does.
 	Node string `json:"-"`
+	// Card is what the agent's card says about it.
+	Card cardinfo.Summary `json:"-"`
 }
 
 // Provider is one way of reaching the agent server. It implements what it
@@ -136,6 +140,7 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 				return
 			}
 			c.Description = card.Description
+			c.Card = cardinfo.Of(card)
 			mu.Lock()
 			agents = append(agents, probedAgent{PeerInfo: c, card: card.Name})
 			mu.Unlock()

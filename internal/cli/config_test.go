@@ -21,6 +21,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -479,7 +480,13 @@ func TestSettingsFlagsMatchSettings(t *testing.T) {
 			got = append(got, f.Name)
 		}
 	})
-	if diff := cmp.Diff(agentdir.SettingNames(), got); diff != "" {
+	var want []string
+	for _, name := range agentdir.SettingNames() {
+		if !slices.ContainsFunc(agentdir.SettingDocs(), func(d agentdir.SettingDoc) bool { return d.Flag == name && d.FileOnly }) {
+			want = append(want, name)
+		}
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("a2a-serve config set flags wrong result (-want +got) diff = %s", diff)
 	}
 	start, _, err := root.Find([]string{"start", "opencode"})

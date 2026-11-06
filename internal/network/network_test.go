@@ -27,6 +27,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"tailscale.com/ipn"
+
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 )
 
 // testHTTP has a transport of its own: httptest.Server.Close closes the idle
@@ -41,7 +43,7 @@ func TestProbeAgents(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if err := json.NewEncoder(w).Encode(map[string]any{"name": "coder", "description": "opencode agent"}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]any{"name": "coder", "description": "opencode agent", "skills": []map[string]any{{"id": "review", "name": "Code review"}}}); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -53,7 +55,7 @@ func TestProbeAgents(t *testing.T) {
 		{Name: "laptop", URL: agent.URL, Online: true},
 		{Name: "printer", URL: other.URL, Online: true},
 	}, nil)
-	want := []PeerInfo{{Name: "coder", URL: agent.URL, Description: "opencode agent", Online: true}}
+	want := []PeerInfo{{Name: "coder", URL: agent.URL, Description: "opencode agent", Online: true, Card: cardinfo.Summary{Description: "opencode agent", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
 	}

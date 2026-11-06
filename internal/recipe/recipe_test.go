@@ -142,8 +142,8 @@ func TestLoadErrors(t *testing.T) {
 		},
 		{
 			name:    "unknown settings",
-			config:  "agent: opencode\ncard: {}\nnetwork:\n  allowlist: [x]\n",
-			wantErr: "the recipe uses settings this a2a-serve doesn't know: card, network.allowlist; upgrade a2a-serve",
+			config:  "agent: opencode\nbadge: {}\nnetwork:\n  allowlist: [x]\n",
+			wantErr: "the recipe uses settings this a2a-serve doesn't know: badge, network.allowlist; upgrade a2a-serve",
 		},
 		{
 			name:    "config symlinked out of the recipe",

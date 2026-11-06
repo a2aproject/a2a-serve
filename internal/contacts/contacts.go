@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
@@ -46,6 +47,10 @@ const (
 // private network of a running agent. It matches [agenterr.ErrNotRunning].
 var ErrNeedsNetwork error = &agenterr.NotRunningError{Msg: "finding an agent by name needs its private network", Hint: agenterr.HintStartOrURL}
 
+// errRefreshNeedsNetwork is returned for a contact on the private network
+// whose card is refreshed while the agent is stopped.
+var errRefreshNeedsNetwork error = &agenterr.NotRunningError{Msg: "fetching the card of a contact on the private network needs the agent's private network", Hint: agenterr.HintStart}
+
 // Service adds, lists and removes the agents an agent may call.
 type Service struct {
 	Store *store.Store
@@ -54,9 +59,11 @@ type Service struct {
 	// with a URL, directly.
 	Locate func(ctx context.Context, name, url string) (string, string, error)
 	// HTTPClient returns the client which reaches a contact. Nil sends the
-	// contact's token over the default client.
+	// contact's token over the default client, and reaches no contacts on
+	// the private network.
 	HTTPClient func(c store.Contact) *http.Client
-	// Changed is called after a contact is added or removed. Optional.
+	// Changed is called after a contact is added or removed, or its card
+	// changed. Optional.
 	Changed func(ctx context.Context)
 }
 
@@ -108,9 +115,11 @@ func (m Service) Add(ctx context.Context, req Request) (store.Contact, error) {
 		}
 		c.Token = resp.Token
 	}
-	if _, err := network.FetchCard(ctx, m.client(c), c.URL); err != nil {
+	card, err := network.FetchCard(ctx, m.client(c), c.URL)
+	if err != nil {
 		return store.Contact{}, fmt.Errorf("can't reach %s: %w", c.URL, err)
 	}
+	c.Card = cardinfo.Of(card)
 	if err := m.Store.PutContact(ctx, c); err != nil {
 		return store.Contact{}, err
 	}
@@ -129,6 +138,69 @@ func (m Service) changed(ctx context.Context) {
 	if m.Changed != nil {
 		m.Changed(ctx)
 	}
+}
+
+// Refresh fetches the cards of the contacts names, or of all contacts
+// without names, and stores those that changed. It returns the contacts it
+// refreshed, and an error naming each contact it couldn't.
+func (m Service) Refresh(ctx context.Context, names ...string) ([]store.Contact, error) {
+	var all []store.Contact
+	if len(names) == 0 {
+		var err error
+		if all, err = m.Store.Contacts(ctx); err != nil {
+			return nil, err
+		}
+	}
+	for _, name := range names {
+		c, err := m.Store.Contact(ctx, name)
+		if errors.Is(err, store.ErrNotFound) {
+			return nil, &agenterr.NotFoundError{Kind: "contact", Name: name}
+		}
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, c)
+	}
+	var (
+		out     []store.Contact
+		errs    []error
+		changed bool
+	)
+	for _, c := range all {
+		card, err := m.fetchCard(ctx, c)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("refreshing the card of %s: %w", c.Name, err))
+			continue
+		}
+		if !card.Equal(c.Card) {
+			err := m.Store.SetContactCard(ctx, c.Name, c.URL, card)
+			if errors.Is(err, store.ErrNotFound) {
+				// The contact was removed or replaced meanwhile.
+				continue
+			}
+			if err != nil {
+				return out, err
+			}
+			changed = true
+		}
+		c.Card = card
+		out = append(out, c)
+	}
+	if changed {
+		m.changed(ctx)
+	}
+	return out, errors.Join(errs...)
+}
+
+func (m Service) fetchCard(ctx context.Context, c store.Contact) (cardinfo.Summary, error) {
+	if c.Via == ViaPrivate && m.HTTPClient == nil {
+		return cardinfo.Summary{}, errRefreshNeedsNetwork
+	}
+	card, err := network.FetchCard(ctx, m.client(c), c.URL)
+	if err != nil {
+		return cardinfo.Summary{}, err
+	}
+	return cardinfo.Of(card), nil
 }
 
 // List returns the contacts.

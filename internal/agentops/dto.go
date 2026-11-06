@@ -91,7 +91,7 @@ func removalPreview(p *pairings.RemovalPreview) *controlapi.RemovalPreview {
 }
 
 func contactInfo(c store.Contact) controlapi.ContactInfo {
-	return controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != ""}
+	return controlapi.ContactInfo{Name: c.Name, URL: c.URL, Via: c.Via, HasToken: c.Token != "", Description: c.Card.Description, Skills: c.Card.Skills}
 }
 
 func scheduleInfo(s store.Schedule) controlapi.ScheduleInfo {

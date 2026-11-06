@@ -31,6 +31,7 @@ func newContactCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd.AddCommand(
 		newContactAddCmd(cfg, sf),
 		newContactListCmd(cfg, sf),
+		newContactRefreshCmd(cfg, sf),
 		newContactRmCmd(cfg, sf),
 	)
 	return cmd

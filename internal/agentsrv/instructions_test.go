@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
@@ -262,7 +263,8 @@ func TestWriteInstructionsMentionsPeers(t *testing.T) {
 			st := openTestStore(t)
 			rt := agentdir.NewRuntime(dir, cfg, agentdir.Secrets{})
 			clients := agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: st, Private: struct{ network.Provider }{}, Config: rt.Config})
-			s := &Server{dir: dir, pins: pins, rt: rt, store: st, clients: clients}
+			s := &Server{dir: dir, pins: pins, rt: rt, store: st, clients: clients, peerCards: newPeerCards()}
+			s.peerCards.replace([]network.PeerInfo{{Name: "ben", Card: cardinfo.Summary{Description: "Reviews Go."}}})
 
 			if err := s.writeInstructions(context.Background()); err != nil {
 				t.Fatalf("Server.writeInstructions() error = %v", err)
@@ -272,8 +274,38 @@ func TestWriteInstructionsMentionsPeers(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if got := strings.Contains(string(data), "any agent on the private network"); got != tc.wantPeers {
-				t.Fatalf("Server.writeInstructions() mentions the private network = %v, want %v:\n%s", got, tc.wantPeers, data)
+			for _, line := range []string{"- other agents on the private network (by name)", `- ben (private network), says of itself: "Reviews Go."`} {
+				if got := strings.Contains(string(data), line); got != tc.wantPeers {
+					t.Fatalf("Server.writeInstructions() lists %q = %v, want %v:\n%s", line, got, tc.wantPeers, data)
+				}
+			}
+		})
+	}
+}
+
+func TestAgentRefString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		ref  AgentRef
+		want string
+	}{
+		{name: "name only", ref: AgentRef{Name: "ben", Kind: "contact"}, want: "ben (contact)"},
+		{name: "description", ref: AgentRef{Name: "grok", Kind: "webhook node", Description: "answers questions"}, want: "grok (webhook node): answers questions"},
+		{
+			name: "card",
+			ref: AgentRef{Name: "coder", Kind: "contact", Card: cardinfo.Summary{
+				Description: "Writes Go.",
+				Skills:      []cardinfo.Skill{{ID: "release-notes", Name: "Release notes", Description: "Writes release notes."}, {ID: "review"}},
+			}},
+			want: `coder (contact), says of itself: "Writes Go." Skills: release-notes (Release notes) "Writes release notes."; review`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.ref.String(); got != tc.want {
+				t.Fatalf("AgentRef.String() = %q, want %q", got, tc.want)
 			}
 		})
 	}

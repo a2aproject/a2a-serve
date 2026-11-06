@@ -217,6 +217,25 @@ func (s *Service) AddContact(ctx context.Context, req controlapi.ContactRequest)
 	return &info, nil
 }
 
+// RefreshContacts fetches the card of the contact req names, or of every
+// contact, and returns the contacts refreshed. A contact that can't be
+// reached fails the call, after the others are refreshed.
+func (s *Service) RefreshContacts(ctx context.Context, req controlapi.ContactRefreshRequest) ([]controlapi.ContactInfo, error) {
+	var names []string
+	if req.Name != "" {
+		names = []string{req.Name}
+	}
+	refreshed, err := s.deps.Contacts.Refresh(ctx, names...)
+	if err != nil {
+		return nil, err
+	}
+	out := []controlapi.ContactInfo{}
+	for _, c := range refreshed {
+		out = append(out, contactInfo(c))
+	}
+	return out, nil
+}
+
 // DeleteContact removes a contact.
 func (s *Service) DeleteContact(ctx context.Context, name string) error {
 	return s.deps.Contacts.Remove(ctx, name)

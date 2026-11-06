@@ -147,14 +147,20 @@ type Server struct {
 	chatTurns     *messenger.ChatTurns
 	claims        *CallClaims
 	clients       *agentproxy.ContactClients
-	watches       *agentproxy.Watches
-	proxy         *agentproxy.HarnessProxy
-	schedules     *schedules.Runner
-	nodes         *nodes.Host
-	pairings      *pairings.Service
-	ops           *agentops.Service
-	approvals     *approvals.Service
-	oauth         *oauth.Server
+	contacts      contacts.Service
+	// peerCards are the cards of the agents on the private network, and
+	// cardRefreshChanged starts the wait for the next refresh of the cards
+	// over when --contact-refresh changes.
+	peerCards          *peerCards
+	cardRefreshChanged chan struct{}
+	watches            *agentproxy.Watches
+	proxy              *agentproxy.HarnessProxy
+	schedules          *schedules.Runner
+	nodes              *nodes.Host
+	pairings           *pairings.Service
+	ops                *agentops.Service
+	approvals          *approvals.Service
+	oauth              *oauth.Server
 	// ads are the advertised pairings of the private network.
 	ads       *gossip.Table
 	backups   backups
@@ -251,6 +257,9 @@ func Run(ctx context.Context, opts Options) error {
 		newRelay:          opts.NewRelay,
 
 		timings: opts.Timings.withDefaults(),
+
+		peerCards:          newPeerCards(),
+		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
 	var closers stack
@@ -395,6 +404,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
 	closers.push(s.clients.Close)
+	s.contacts = contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions}
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.notes = newToolNotes()
 	s.allowed = newAllowedAnswers()
@@ -408,7 +418,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Chain:    s.chain,
 		AgentKey: s.keys.of,
 		Sessions: s.sessions,
-		Peers:    s.clients.CallablePeers,
+		Peers:    s.callablePeers,
 	})
 	s.refreshInstructions(ctx)
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
@@ -497,7 +507,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	s.ops = agentops.New(agentops.Deps{
 		Store:     s.store,
 		Pairings:  s.pairings,
-		Contacts:  contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions},
+		Contacts:  s.contacts,
 		Schedules: s.schedules.Service(),
 		Runtime:   s.rt,
 		Network:   s.networks,
@@ -600,6 +610,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.background.Go(func() { s.allowed.run(ctx, s.answerWaiting) })
+	s.background.Go(func() { s.refreshCardsLoop(ctx) })
 	s.startBackups(ctx)
 	return errc, s.printSummary(ctx, ownerErr)
 }

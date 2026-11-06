@@ -42,6 +42,10 @@ func fullConfig() *Config {
 		Approvals: ApprovalsConfig{Allow: []string{"read", "search"}, OwnerChat: "telegram"},
 		Limits:    LimitsConfig{Memory: "8g"},
 		MCP:       MCPConfig{Disabled: []string{"github", "kubernetes"}},
+		Card: CardConfig{Skills: []CardSkill{
+			{ID: "release-notes", Name: "Release notes", Description: "Writes release notes.", Tags: []string{"git"}},
+			{ID: "review"},
+		}},
 	}
 }
 
@@ -69,6 +73,8 @@ func TestUnset(t *testing.T) {
 		{setting: "allow-tools", entries: []string{"search"}, modify: func(c *Config) { c.Approvals.Allow = []string{"read"} }},
 		{setting: "disable-mcp", entries: []string{"github"}, modify: func(c *Config) { c.MCP.Disabled = []string{"kubernetes"} }},
 		{setting: "disable-mcp", modify: func(c *Config) { c.MCP.Disabled = nil }},
+		{setting: "card-skills", entries: []string{"review"}, modify: func(c *Config) { c.Card.Skills = c.Card.Skills[:1] }},
+		{setting: "card-skills", modify: func(c *Config) { c.Card.Skills = nil }},
 		{setting: "secret", entries: []string{"KEY"}, modify: func(c *Config) { c.Secrets = []string{"OTHER"} }, wantDeleted: []string{"KEY"}},
 		{setting: "telegram", wantErr: true},
 		{setting: "email", wantErr: true},
@@ -112,9 +118,11 @@ func TestDiff(t *testing.T) {
 	next.Approvals.Allow = []string{"read", "edit"}
 	next.Channels.Telegram = nil
 	next.Policy.AllowEmails = append(next.Policy.AllowEmails, "ben@example.org")
+	next.Card.Skills[1].Description = "Reviews code."
 	got := Diff(old, next)
 	want := []Change{
 		{Setting: "description", Old: "writes code", New: "reviews code", Live: true},
+		{Setting: "card-skills", Added: []string{"review"}, Removed: []string{"review"}, Live: true},
 		{Setting: "sandbox", New: "local"},
 		{Setting: "allow-email", Added: []string{"ben@example.org"}, Live: true},
 		{Setting: "telegram", Old: "secret:TELEGRAM_BOT_TOKEN", Live: true},
@@ -215,7 +223,7 @@ func TestDeleteSecrets(t *testing.T) {
 
 func TestLiveSettings(t *testing.T) {
 	t.Parallel()
-	want := []string{"description", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}
+	want := []string{"description", "card-skills", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat", "contact-refresh"}
 	got := LiveSettings()
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("LiveSettings() wrong result (-want +got) diff = %s", diff)
@@ -274,6 +282,7 @@ func TestAgentSettings(t *testing.T) {
 		Env:         []string{"DEBUG=1", "MODE=fast"},
 		Approvals:   ApprovalsConfig{Allow: []string{"read", "search"}, Deny: []string{"execute"}},
 		Limits:      LimitsConfig{Memory: "8g"},
+		Card:        fullConfig().Card,
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Config.AgentSettings() wrong result (-want +got) diff = %s", diff)
