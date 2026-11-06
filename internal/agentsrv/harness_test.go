@@ -75,6 +75,7 @@ var testTimings = Timings{
 	FirstBackupDelay:         50 * time.Millisecond,
 	AnonymousQuestionTimeout: 5 * time.Second,
 	SendRetry:                time.Millisecond,
+	StateCheckInterval:       50 * time.Millisecond,
 }
 
 func TestMain(m *testing.M) {
