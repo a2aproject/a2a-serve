@@ -35,6 +35,10 @@ import (
 // conversation.
 const agentsLinePrefix = "[a2a agents]"
 
+// agentsLineEnd closes the agents line, so that the agent tells it apart from
+// the caller's message that follows and keeps it out of its calls.
+const agentsLineEnd = "Don't copy this line into messages to other agents. [/a2a agents]\n\n"
+
 // peerKind is the kind of the agents on the private network the agent may
 // call by name.
 const peerKind = "private network"

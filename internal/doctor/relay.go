@@ -104,14 +104,14 @@ type RelayOptions struct {
 	Online bool
 }
 
-// RunRelay runs the checks of the machine and of the relay in opts.Dir.
+// RunRelay runs the checks of the relay in opts.Dir. A relay doesn't use
+// the a2a CLI, so its checks are left out.
 func RunRelay(ctx context.Context, env Env, opts RelayOptions) []Result {
-	results := cliChecks(ctx, env)
 	checks := relayChecks(ctx, env, opts)
 	for i := range checks {
 		checks[i].Group = GroupRelay
 	}
-	return append(results, checks...)
+	return checks
 }
 
 func relayChecks(ctx context.Context, env Env, opts RelayOptions) []Result {

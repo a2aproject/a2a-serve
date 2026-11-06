@@ -40,7 +40,16 @@ var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no .a2a directory fo
 // NotFoundIn returns an error, matching [ErrNotFound], for a root without
 // an agent.
 func NotFoundIn(root string) error {
+	if (Dir{Root: root}).HasRelay() {
+		return relayNotAgent(root)
+	}
 	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"})
+}
+
+// relayNotAgent returns an error, matching [ErrNotFound], for a root that
+// holds a relay.
+func relayNotAgent(root string) error {
+	return clierr.NoAgent(&notFoundError{msg: root + " has a relay (.a2a/relay.yaml) and no agent; manage the relay with `a2a-serve relay` commands, or pass --dir with an agent directory"})
 }
 
 type notFoundError struct{ msg string }
@@ -69,7 +78,7 @@ func Open(root string) (Dir, error) {
 }
 
 // Find walks up from start to the first directory holding .a2a/config.yaml,
-// the way git finds a repository.
+// the way git finds a repository. The walk stops at a relay directory.
 func Find(start string) (Dir, error) {
 	return find(start, Dir.Exists)
 }
@@ -87,8 +96,12 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 		return Dir{}, err
 	}
 	for {
-		if match(Dir{Root: dir}) {
-			return Dir{Root: dir}, nil
+		d := Dir{Root: dir}
+		if match(d) {
+			return d, nil
+		}
+		if d.HasRelay() {
+			return Dir{}, relayNotAgent(dir)
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -107,6 +120,12 @@ const RelayConfigFile = "relay.yaml"
 
 // ErrRelayDir is returned when an agent would be created in a relay directory.
 var ErrRelayDir = agenterr.Invalid(errors.New("this directory has a relay (.a2a/relay.yaml); start the agent in another directory"))
+
+// HasRelay reports whether the directory holds a relay.
+func (d Dir) HasRelay() bool {
+	_, err := os.Stat(filepath.Join(d.Path(), RelayConfigFile))
+	return err == nil
+}
 
 // Path returns the .a2a directory.
 func (d Dir) Path() string { return filepath.Join(d.Root, Name) }
@@ -249,7 +268,7 @@ func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 // must be real directories, since a cloned repository could ship them as
 // symlinks.
 func (d Dir) Init() error {
-	if _, err := os.Stat(filepath.Join(d.Path(), RelayConfigFile)); err == nil {
+	if d.HasRelay() {
 		return ErrRelayDir
 	}
 	if err := os.MkdirAll(d.Path(), 0o700); err != nil {

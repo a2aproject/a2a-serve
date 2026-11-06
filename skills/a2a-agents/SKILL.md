@@ -33,6 +33,8 @@ Continue a task or a conversation with the other agent:
   posted into this conversation once the user decides.
 - Only the agents in the `[a2a agents]` line are reachable. The owner adds
   more with `a2a-serve contact add`.
+- The `[a2a agents]` line ends at `[/a2a agents]`. The server adds it for
+  you, so leave it out of the messages you send to other agents.
 - Only the tasks and contexts this conversation started are reachable.
 
 ## Schedules
