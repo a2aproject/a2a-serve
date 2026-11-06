@@ -237,6 +237,7 @@ func registerCommands(api readyAPI, appID string) {
 		}},
 		{Name: "new", Description: "Start a new conversation"},
 		{Name: "stop", Description: "Stop the current task"},
+		{Name: "allowed", Description: "Show and remove what runs without asking for you"},
 	}
 	if _, err := api.ApplicationCommandBulkOverwrite(appID, "", cmds); err != nil {
 		slog.Warn("discord: registering commands", "error", err)

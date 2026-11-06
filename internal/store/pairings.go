@@ -102,10 +102,10 @@ func (s *Store) UpdatePairing(ctx context.Context, p Pairing) error {
 
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
 // its webhook node and the node's watches. principals are the users the
-// pairing acts as. Their schedules, watches, tasks and questions go with
-// it, and so do the channel conversations, agent sessions and handles of
-// the contexts left without tasks, so a new pairing with the same name
-// starts with none of them.
+// pairing acts as. Their schedules, watches, tasks, questions and allowed
+// tool calls go with it, and so do the channel conversations, agent
+// sessions and handles of the contexts left without tasks, so a new
+// pairing with the same name starts with none of them.
 func (s *Store) DeletePairing(ctx context.Context, name string, principals ...string) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?)`, name); err != nil {
@@ -116,6 +116,10 @@ func (s *Store) DeletePairing(ctx context.Context, name string, principals ...st
 				`DELETE FROM schedules WHERE user_id = ?`,
 				`DELETE FROM watches WHERE on_behalf_of = ?`,
 				`DELETE FROM questions WHERE user_id = ?`,
+				`DELETE FROM tool_grants WHERE user_id = ?`,
+				`DELETE FROM tool_preferences WHERE user_id = ?`,
+				`DELETE FROM tool_taps WHERE user_id = ?`,
+				`DELETE FROM tool_suggestions WHERE user_id = ?`,
 			} {
 				if _, err := tx.ExecContext(ctx, del, p); err != nil {
 					return err
@@ -152,6 +156,9 @@ type PairingRemoval struct {
 	// Conversations are the channel conversations of contexts left without
 	// tasks.
 	Conversations int
+	// Preferences are the tool calls the users allowed in all their
+	// conversations.
+	Preferences int
 }
 
 // PairingRemoval counts what DeletePairing(name, principals...) would
@@ -175,6 +182,7 @@ func (s *Store) PairingRemoval(ctx context.Context, name string, principals ...s
 		{&r.Watches, `SELECT COUNT(*) FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?) OR on_behalf_of IN ` + in, append([]any{name}, users...)},
 		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE owner IN ` + in + `))`, slices.Concat(users, users)},
 		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in, users},
+		{&r.Preferences, `SELECT COUNT(*) FROM tool_preferences WHERE user_id IN ` + in, users},
 		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(users),
 			string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))},
 		{&r.Conversations, `SELECT COUNT(*) FROM convs WHERE context_id IN (SELECT context_id FROM tasks WHERE owner IN ` + in + `)

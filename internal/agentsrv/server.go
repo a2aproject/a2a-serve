@@ -169,6 +169,8 @@ type Server struct {
 	notes *toolNotes
 	// decider answers tool permissions without asking.
 	decider *toolDecider
+	// prefs are the tool calls people allowed in all their conversations.
+	prefs *approvals.Preferences
 	// sessions are the ACP sessions of the conversations in the current
 	// workspace. The agent keys of conversations come from all sessions.
 	sessions store.SessionStore
@@ -393,6 +395,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.notes = newToolNotes()
+	s.prefs = approvals.NewPreferences(s.store, nil)
 	records := approvals.NewRecords(approvals.RecordsDeps{Store: s.store, Tasks: s.tasks, Chain: s.chain, BaseURL: s.bestURL})
 	s.decider = &toolDecider{config: s.rt.Config, servers: s.mcpServerNames, notes: s.notes, store: s.store, taskUser: records.TaskUser}
 	s.sessions = s.store.Sessions().In(s.workspace)
@@ -446,20 +449,21 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Homes:     userHomes{s},
 		})
 		s.chatTurns = messenger.NewChatTurns(messenger.ChatTurnsDeps{
-			Store:      s.store,
-			Tasks:      s.tasks,
-			Chain:      s.chain,
-			Pairings:   s.pairings,
-			Approvals:  s.approvals,
-			Chat:       s.chatApprovals,
-			Supervisor: s.supervisor,
-			Queue:      messenger.NewConversationQueue(),
-			Sender:     sender,
-			Bus:        s.bus,
-			Unattended: s.unattended,
-			Budget:     s.budget,
-			Posted:     posted,
-			Config:     s.rt.Config,
+			Store:       s.store,
+			Tasks:       s.tasks,
+			Chain:       s.chain,
+			Pairings:    s.pairings,
+			Approvals:   s.approvals,
+			Preferences: s.prefs,
+			Chat:        s.chatApprovals,
+			Supervisor:  s.supervisor,
+			Queue:       messenger.NewConversationQueue(),
+			Sender:      sender,
+			Bus:         s.bus,
+			Unattended:  s.unattended,
+			Budget:      s.budget,
+			Posted:      posted,
+			Config:      s.rt.Config,
 		})
 		s.watches = agentproxy.NewWatches(ctx, agentproxy.WatchesDeps{
 			Store:   s.store,

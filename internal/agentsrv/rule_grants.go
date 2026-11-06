@@ -30,7 +30,10 @@ import (
 // ruleAnswers saves what an answer to a permission question with the
 // server's options allows, before the answer reaches the task: "always"
 // saves the grant of the conversation for the person whose task asked. A
-// failed save refuses the answer, so the question keeps waiting.
+// failed save refuses the answer, so the question keeps waiting. That
+// person's own answers count toward the offer to allow the rule in all
+// their conversations: "always" counts the conversation, and a rejection
+// starts the count over.
 type ruleAnswers struct {
 	store *store.Store
 	tasks *store.TaskStore
@@ -50,7 +53,17 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, msg *a2a.Mes
 		return nil
 	}
 	opt, ok := replyOption(msg, q)
-	if !ok || opt.ID != a2aacp.OptionAlways {
+	if !ok {
+		return nil
+	}
+	own := p.ID == stored.User
+	if isRejection(opt.ID) && own {
+		if err := r.store.ResetToolTaps(ctx, stored.User, q.Rule); err != nil {
+			slog.Warn("resetting the taps on always allow", "task", msg.TaskID, "error", err)
+		}
+		return nil
+	}
+	if opt.ID != a2aacp.OptionAlways {
 		return nil
 	}
 	if err := r.store.AddToolGrant(ctx, stored.Task.ContextID, stored.User, q.Rule); err != nil {
@@ -58,5 +71,11 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, msg *a2a.Mes
 		return fmt.Errorf("%w: couldn't save the answer, so the question still waits for an answer; try again", a2a.ErrServerError)
 	}
 	slog.Info("tool calls allowed for the conversation", "task", msg.TaskID, "context", stored.Task.ContextID, "rule", q.Rule, "user", stored.User, "by", p.ID)
+	if !own {
+		return nil
+	}
+	if _, err := r.store.CountToolTap(ctx, stored.User, q.Rule, stored.Task.ContextID); err != nil {
+		slog.Warn("counting a tap on always allow", "task", msg.TaskID, "error", err)
+	}
 	return nil
 }

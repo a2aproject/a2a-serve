@@ -163,6 +163,7 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound, report fun
 	if _, err := c.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
 		{Command: "new", Description: "Start a new conversation"},
 		{Command: "stop", Description: "Stop the current task"},
+		{Command: "allowed", Description: "Show and remove what runs without asking for you"},
 	}}); err != nil {
 		slog.Warn("telegram: setting commands", "error", err)
 	}

@@ -32,8 +32,9 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // when their last code expires; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; questions of remote agents
 // as old whose task nobody watches; the channel conversations, agent
-// sessions, handles and call tasks of contexts left without tasks; and the
-// dedup keys of messages older than the retention.
+// sessions, handles, call tasks, grants and suggestions of contexts left
+// without tasks; the counts of taps on "Always allow" older than their
+// retention; and the dedup keys of messages older than the retention.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
@@ -50,6 +51,9 @@ func (s *Store) Prune(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tool_taps WHERE updated < ?`, now.Add(-ToolTapRetention).UnixNano()); err != nil {
 			return err
 		}
 		pruned, err := deleteTasks(ctx, tx, `updated < ?`, cutoff)
@@ -98,7 +102,7 @@ func deleteTasks(ctx context.Context, tx *sql.Tx, where string, args ...any) ([]
 }
 
 // contextTables keep the state of a context, which goes with its last task.
-var contextTables = []string{"convs", "sessions", "handles", "call_tasks", "tool_grants"}
+var contextTables = []string{"convs", "sessions", "handles", "call_tasks", "tool_grants", "tool_suggestions"}
 
 // forgetTasks deletes the attachment references and questions of deleted
 // tasks, and the rows of contextTables for the contexts left without tasks.

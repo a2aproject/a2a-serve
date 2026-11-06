@@ -361,12 +361,12 @@ func TestChatTurnsReplyWithoutAskingAgent(t *testing.T) {
 		{
 			name:     "start greets",
 			identity: "telegram:1", conv: "dm1", text: "/start",
-			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task.",
+			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.",
 		},
 		{
 			name:     "start addressed to the bot greets",
 			identity: "telegram:1", conv: "dm1", text: "/START@coder_bot",
-			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task.",
+			want: "Hi! I'm coder. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.",
 		},
 		{
 			name:     "new tells it started a conversation",

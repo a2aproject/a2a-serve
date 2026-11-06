@@ -32,8 +32,9 @@ import (
 
 // toolDecider answers tool permissions with the allow and deny rules of the
 // current config, so that changing them doesn't need a restart, and then
-// with the grants of the conversation for the person who started the task.
-// It logs each answer by what decided it, and notes the denied calls.
+// with the preferences of the person who started the task and the grants
+// of the conversation for that person. It logs each answer by what decided
+// it, and notes the denied calls.
 type toolDecider struct {
 	config func() *agentdir.Config
 	// servers returns the names of the MCP servers of the project, which
@@ -96,8 +97,8 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	return ans, true
 }
 
-// granted allows a call that a grant of the conversation covers, for the
-// person who started the task.
+// granted allows a call that a preference of the person who started the
+// task covers, or a grant of the conversation for that person.
 func (d *toolDecider) granted(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question, call toolrules.Call) (a2aacp.Answer, bool) {
 	if execCtx == nil || d.store == nil {
 		return a2aacp.Answer{}, false
@@ -107,20 +108,40 @@ func (d *toolDecider) granted(ctx context.Context, execCtx *a2asrv.ExecutorConte
 		slog.Warn("looking up who started a task, asking", "task", execCtx.TaskID, "error", err)
 		return a2aacp.Answer{}, false
 	}
-	grants, err := d.store.ToolGrants(ctx, execCtx.ContextID, user)
+	rule, by, err := d.allowedFor(ctx, execCtx.ContextID, user, call)
 	if err != nil {
-		slog.Warn("reading the grants of a conversation, asking", "task", execCtx.TaskID, "error", err)
+		slog.Warn("reading what a person allowed, asking", "task", execCtx.TaskID, "error", err)
 		return a2aacp.Answer{}, false
 	}
-	rule, ok := toolrules.Match(grants, call)
-	if !ok {
+	if rule == "" {
 		return a2aacp.Answer{}, false
 	}
 	ans, ok := ruleAnswer(q.Options, true)
 	if ok {
-		slog.Info("approval answered by a grant of the conversation", "task", execCtx.TaskID, "rule", rule, "kind", q.Tool.Kind, "user", user, "option", ans.Option)
+		slog.Info("approval answered by a "+by, "task", execCtx.TaskID, "rule", rule, "kind", q.Tool.Kind, "user", user, "option", ans.Option)
 	}
 	return ans, ok
+}
+
+// allowedFor returns the preference of user, or else the grant of the
+// conversation for user, that allows call, and what it is; or "" if none
+// does.
+func (d *toolDecider) allowedFor(ctx context.Context, contextID, user string, call toolrules.Call) (rule, by string, err error) {
+	prefs, err := d.store.ToolPreferences(ctx, user)
+	if err != nil {
+		return "", "", err
+	}
+	if rule, ok := toolrules.Match(prefs, call); ok {
+		return rule, "preference", nil
+	}
+	grants, err := d.store.ToolGrants(ctx, contextID, user)
+	if err != nil {
+		return "", "", err
+	}
+	if rule, ok := toolrules.Match(grants, call); ok {
+		return rule, "grant of the conversation", nil
+	}
+	return "", "", nil
 }
 
 // ruleAnswer returns the option that allows a tool call once, or always if

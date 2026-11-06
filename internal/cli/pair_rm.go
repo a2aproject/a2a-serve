@@ -197,6 +197,7 @@ func removalPreviewText(name string, p *controlapi.RemovalPreview) string {
 		fmt.Fprintf(&sb, "    %d of them running, canceled first\n", p.RunningTasks)
 	}
 	line(p.Conversations, "conversation", "conversations")
+	line(p.Allowed, "tool call allowed in all its conversations", "tool calls allowed in all its conversations")
 	for _, dir := range p.AgentHomes {
 		fmt.Fprintf(&sb, "  the agent home directory %s\n", dir)
 	}

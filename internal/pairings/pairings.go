@@ -508,6 +508,7 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 	resp.Tokens, resp.Codes, resp.Node = counts.Tokens, counts.Codes, p.Kind == pairapi.PairingWebhook
 	resp.Schedules, resp.Watches, resp.Approvals = counts.Schedules, counts.Watches, counts.Questions
 	resp.Tasks, resp.RunningTasks, resp.Conversations = counts.Tasks, counts.Unfinished, counts.Conversations
+	resp.Allowed = counts.Preferences
 	if s.deps.Homes == nil {
 		return resp, nil
 	}
@@ -626,6 +627,10 @@ func (s *Service) List(ctx context.Context) ([]Pairing, error) {
 	for _, n := range nodeList {
 		nodesByID[n.ID] = n
 	}
+	allowed, err := s.deps.Store.AllToolPreferences(ctx)
+	if err != nil {
+		return nil, err
+	}
 	base := s.deps.BaseURL()
 	out := make([]Pairing, 0, len(all))
 	for _, p := range all {
@@ -633,6 +638,7 @@ func (s *Service) List(ctx context.Context) ([]Pairing, error) {
 			Name: p.Name, Kind: p.Kind, Role: p.Role, Principal: auth.PairingPrincipal(p.Name), Created: p.Created,
 			Tokens: []Token{}, Accounts: []Account{}, PendingCodes: []time.Time{},
 		}
+		cp.Allowed = allowed[cp.Principal]
 		for _, t := range toks {
 			if t.Pairing != p.Name {
 				continue

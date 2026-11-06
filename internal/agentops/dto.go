@@ -63,7 +63,7 @@ func pairingInfo(p pairings.Pairing) controlapi.Pairing {
 	info := controlapi.Pairing{
 		Name: p.Name, Kind: p.Kind, Role: p.Role, Principal: p.Principal, Created: p.Created, LastUsed: p.LastUsed,
 		Tokens: make([]controlapi.PairingToken, len(p.Tokens)), Accounts: make([]controlapi.LinkedAccount, len(p.Accounts)),
-		PendingCodes: p.PendingCodes,
+		PendingCodes: p.PendingCodes, Allowed: p.Allowed,
 	}
 	for i, t := range p.Tokens {
 		info.Tokens[i] = controlapi.PairingToken(t)
@@ -82,7 +82,7 @@ func removalPreview(p *pairings.RemovalPreview) *controlapi.RemovalPreview {
 	info := &controlapi.RemovalPreview{
 		Kind: p.Kind, Kept: p.Kept, Tokens: p.Tokens, Accounts: make([]controlapi.LinkedAccount, len(p.Accounts)), Codes: p.Codes,
 		Node: p.Node, Schedules: p.Schedules, Watches: p.Watches, Approvals: p.Approvals, Tasks: p.Tasks,
-		RunningTasks: p.RunningTasks, Conversations: p.Conversations, AgentHomes: p.AgentHomes,
+		RunningTasks: p.RunningTasks, Conversations: p.Conversations, Allowed: p.Allowed, AgentHomes: p.AgentHomes,
 	}
 	for i, a := range p.Accounts {
 		info.Accounts[i] = controlapi.LinkedAccount(a)

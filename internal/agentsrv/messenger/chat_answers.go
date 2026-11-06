@@ -31,6 +31,22 @@ import (
 
 // handleAction answers a question from a button click.
 func (c *ChatTurns) handleAction(ctx context.Context, ch channel.Channel, in channel.Inbound) {
+	if id := in.Action.QuestionID; c.prefs != nil && (strings.HasPrefix(id, suggestionPrefix) || strings.HasPrefix(id, allowedPrefix)) {
+		p, err := c.chain.Authenticate(ctx, auth.Request{Channel: &in})
+		if auth.Refused(err) {
+			return
+		}
+		if err != nil {
+			slog.Error("authenticating channel action", "error", err)
+			return
+		}
+		if strings.HasPrefix(id, suggestionPrefix) {
+			c.handleSuggestion(ctx, ch, in, p)
+		} else {
+			c.handleRemove(ctx, ch, in, p)
+		}
+		return
+	}
 	rec, err := c.store.QuestionByID(ctx, in.Action.QuestionID)
 	if err != nil {
 		if !errors.Is(err, store.ErrNotFound) {
@@ -238,10 +254,16 @@ func (c *ChatTurns) answerIn(ctx context.Context, ch channel.Channel, in channel
 		})
 		if !answered {
 			c.restorePending(ctx, in, rec)
+			return
 		}
+		c.offerPreference(ctx, ch, in, p, rec, q, opt)
 		return
 	}
-	c.answered(ctx, ch, in, rec, opt, who, c.approvals.Answer(ctx, rec, p, opt))
+	err = c.approvals.Answer(ctx, rec, p, opt)
+	c.answered(ctx, ch, in, rec, opt, who, err)
+	if err == nil {
+		c.offerPreference(ctx, ch, in, p, rec, q, opt)
+	}
 }
 
 // answered reports the result of answering a question in a conversation.

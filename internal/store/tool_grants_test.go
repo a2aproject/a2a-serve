@@ -68,3 +68,27 @@ func TestToolGrantsKeepTheLatest(t *testing.T) {
 		t.Fatalf("ToolGrants() = %d grants ending with %q, want %d ending with %q", len(got), got[len(got)-1], MaxToolGrants, "command:cmd1 *")
 	}
 }
+
+func TestDeletePairingDeletesItsGrants(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "authenticated"})
+	ts := s.Tasks("", testViewer)
+	for user, id := range map[string]string{"pair:anna": "anna-1", "pair:bob": "bob-1"} {
+		if _, err := ts.Create(asUser(user), newTask(id, "c-group")); err != nil {
+			t.Fatalf("Create(%s) error = %v", id, err)
+		}
+	}
+	if err := s.AddToolGrant(ctx, "c-group", "pair:bob", "edit"); err != nil {
+		t.Fatalf("AddToolGrant() error = %v", err)
+	}
+
+	if err := s.DeletePairing(ctx, "bob", "pair:bob"); err != nil {
+		t.Fatalf("DeletePairing() error = %v", err)
+	}
+
+	if rules, err := s.ToolGrants(ctx, "c-group", "pair:bob"); err != nil || len(rules) != 0 {
+		t.Fatalf("ToolGrants() of the removed user in a conversation with other tasks = %q, %v, want none", rules, err)
+	}
+}

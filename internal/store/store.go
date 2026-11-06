@@ -285,7 +285,24 @@ var migrations = []func(ctx context.Context, tx *sql.Tx) error{
 	PRIMARY KEY (context_id, user_id, rule))`)
 		return err
 	},
+	// 18: tool calls that people allowed in all their conversations, how
+	// often in a row they allowed them in a conversation, and the offers to
+	// allow them in all conversations.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, schemaV18)
+		return err
+	},
 }
+
+const schemaV18 = `
+CREATE TABLE tool_preferences (user_id TEXT NOT NULL, rule TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY (user_id, rule));
+CREATE TABLE tool_taps (
+	user_id TEXT NOT NULL, rule TEXT NOT NULL, contexts TEXT NOT NULL, updated INTEGER NOT NULL,
+	PRIMARY KEY (user_id, rule));
+CREATE TABLE tool_suggestions (
+	id TEXT PRIMARY KEY, user_id TEXT NOT NULL, rule TEXT NOT NULL, context_id TEXT NOT NULL, created INTEGER NOT NULL,
+	UNIQUE (user_id, rule));
+`
 
 const schemaV1 = `
 CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL);
