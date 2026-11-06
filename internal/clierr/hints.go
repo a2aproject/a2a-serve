@@ -35,6 +35,18 @@ var agentHints = map[agenterr.Hint]string{
 	agenterr.HintPairInviteWebhook: "webhook nodes come from `a2a-serve pair invite --webhook`",
 }
 
+// Text returns the message of err followed by its worded hint, for
+// places that keep only text, such as a schedule's last error.
+func Text(err error) string {
+	if err == nil {
+		return ""
+	}
+	if hint := hintText(err); hint != "" {
+		return err.Error() + ": " + hint
+	}
+	return err.Error()
+}
+
 // hintText words the [agenterr.Hint] of err, or returns "" if it has none
 // the CLI knows.
 func hintText(err error) string {
