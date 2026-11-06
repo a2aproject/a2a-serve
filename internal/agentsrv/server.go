@@ -491,6 +491,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Records: records,
 			Chat:    s.chatApprovals,
 			Turns:   s.chatTurns,
+			Asked:   &questionTasks{store: s.store, tasks: s.tasks, bus: s.bus},
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})

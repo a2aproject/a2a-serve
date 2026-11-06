@@ -71,7 +71,7 @@ func (ws *Watches) Attend(contextID string) func(ask bool) *CallerQuestion {
 			q = cw.question
 			ws.mu.Unlock()
 			if q != nil && !ask {
-				ws.askInChat(ws.ctx, q.Rec.User, q.Rec.Contact, q.Rec, q.Header)
+				ws.askInChat(ws.ctx, contextID, q)
 				q = nil
 			}
 		})
@@ -96,23 +96,32 @@ func (ws *Watches) Await(contextID string) (<-chan CallerOutcome, func()) {
 		ws.mu.Unlock()
 		select {
 		case o := <-cw.outcomes:
-			ws.redirect(o)
+			ws.redirect(contextID, o)
 		default:
 		}
 	}
 }
 
-// redirect sends an outcome no caller read to the user's chats, or posts a
-// result into its conversation.
-func (ws *Watches) redirect(o CallerOutcome) {
+// redirect sends an outcome no caller read in contextID to the user's
+// chats, or posts a result into its conversation.
+func (ws *Watches) redirect(contextID string, o CallerOutcome) {
 	if o.Question != nil {
-		ws.askInChat(ws.ctx, o.Question.Rec.User, o.Question.Rec.Contact, o.Question.Rec, o.Question.Header)
+		ws.askInChat(ws.ctx, contextID, o.Question)
 		return
 	}
 	if err := ws.turns.InjectTurn(ws.ctx, *o.Result); err != nil {
 		slog.Error("posting a watched result", "context", o.Result.ContextID, "error", err)
 		o.Result.Accept(err)
 	}
+}
+
+// awaited reports whether a task in contextID waits for another agent
+// after its caller answered that agent's question.
+func (ws *Watches) awaited(contextID string) bool {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	cw := ws.callers[contextID]
+	return cw != nil && cw.outcomes != nil
 }
 
 // toCaller hands a question to the A2A caller waiting in contextID, and

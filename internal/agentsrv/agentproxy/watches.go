@@ -46,6 +46,7 @@ type Watches struct {
 	records *approvals.Records
 	chat    questionChat
 	turns   TurnInjector
+	asked   QuestionTasks
 	// chain gives principals stored to act later their role.
 	chain   *auth.Chain
 	timings Timings
@@ -66,6 +67,7 @@ type WatchesDeps struct {
 	Records *approvals.Records
 	Chat    questionChat
 	Turns   TurnInjector
+	Asked   QuestionTasks
 	Chain   *auth.Chain
 	Timings Timings
 }
@@ -82,6 +84,16 @@ type TurnInjector interface {
 	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
 }
 
+// QuestionTasks ask relayed questions in the conversations they come from,
+// each on a task of its own that the A2A caller answers.
+type QuestionTasks interface {
+	// Ask asks q on a new task in contextID.
+	Ask(ctx context.Context, contextID string, q *CallerQuestion) error
+	// End ends the tasks in contextID that ask a question of agent's task,
+	// once that task no longer waits for an answer.
+	End(ctx context.Context, contextID, agent, taskID string)
+}
+
 // NewWatches returns the watches of deps, which poll until ctx ends.
 func NewWatches(ctx context.Context, deps WatchesDeps) *Watches {
 	return &Watches{
@@ -90,6 +102,7 @@ func NewWatches(ctx context.Context, deps WatchesDeps) *Watches {
 		records:  deps.Records,
 		chat:     deps.Chat,
 		turns:    deps.Turns,
+		asked:    deps.Asked,
 		chain:    deps.Chain,
 		timings:  deps.Timings,
 		ctx:      ctx,
@@ -102,7 +115,8 @@ func NewWatches(ctx context.Context, deps WatchesDeps) *Watches {
 // permission question, once per question, also across restarts: in the
 // conversation the call came from, or else on the task of the A2A caller
 // who waits for the turn that called the agent, or else in the user's
-// direct chat, or else in the owner chat.
+// direct chat, or else in the owner chat, or else on a new task in the
+// conversation.
 func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task *a2a.Task, q *approvals.Question) {
 	user := claims.User.ID
 	if user == "" {
@@ -128,25 +142,33 @@ func (ws *Watches) relay(ctx context.Context, claims Claims, agent string, task 
 		ws.chat.Ask(ctx, approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, header, rec)
 		return
 	}
-	if ws.toCaller(claims.ContextID, &CallerQuestion{Rec: rec, Header: header, Msg: task.Status.Message}) {
+	cq := &CallerQuestion{Rec: rec, Header: header, Msg: task.Status.Message}
+	if ws.toCaller(claims.ContextID, cq) {
 		return
 	}
-	ws.askInChat(ctx, user, agent, rec, header)
+	ws.askInChat(ctx, claims.ContextID, cq)
 }
 
 // askInChat asks the question of a remote task in the direct chat of the
-// user on whose behalf it runs, or else in the owner chat.
-func (ws *Watches) askInChat(ctx context.Context, user, agent string, rec store.Question, header string) {
+// user on whose behalf it runs, or else in the owner chat, or else on a new
+// task in contextID, the conversation without a chat it comes from.
+func (ws *Watches) askInChat(ctx context.Context, contextID string, q *CallerQuestion) {
+	user, rec := q.Rec.User, q.Rec
 	if to, ok := ws.directChat(ctx, user); ok {
-		ws.chat.Ask(ctx, to, header, rec)
+		ws.chat.Ask(ctx, to, q.Header, rec)
 		return
 	}
-	to, ok := ws.chat.OwnerChat(ctx)
-	if !ok {
-		slog.Info("remote approval waits in the inspector: no chat", "agent", agent, "user", user, "question", rec.ID)
+	if to, ok := ws.chat.OwnerChat(ctx); ok {
+		ws.chat.Ask(ctx, to, q.Header+fmt.Sprintf(" for %s", auth.DisplayPrincipal(user)), rec)
 		return
 	}
-	ws.chat.Ask(ctx, to, header+fmt.Sprintf(" for %s", auth.DisplayPrincipal(user)), rec)
+	if contextID == "" {
+		slog.Info("remote approval waits in the inspector: no chat", "agent", rec.Contact, "user", user, "question", rec.ID)
+		return
+	}
+	if err := ws.asked.Ask(ctx, contextID, q); err != nil {
+		slog.Warn("remote approval waits in the inspector: asking it in the conversation", "agent", rec.Contact, "user", user, "question", rec.ID, "context", contextID, "error", err)
+	}
 }
 
 // directChat returns the first direct chat of user in a messenger.
@@ -236,6 +258,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		case watchContinues:
 			continue
 		case watchDropped:
+			ws.endQuestions(ctx, w)
 			ws.deleteWatch(ctx, w)
 			return
 		}
@@ -245,9 +268,11 @@ func (ws *Watches) follow(w store.Watch, key string) {
 				continue
 			}
 			slog.Error("dropped a watched result: its user can't be resolved", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf, "error", err)
+			ws.endQuestions(ctx, w)
 			ws.deleteWatch(ctx, w)
 			return
 		}
+		ws.endQuestions(ctx, w)
 		posting = ws.finishWatch(ctx, w, key, user, text)
 		return
 	}
@@ -291,6 +316,9 @@ func (ws *Watches) check(ctx context.Context, w *store.Watch, claims Claims) (st
 		ws.setWatchFailing(ctx, *w, w.FailingSince)
 	}
 	state := task.Status.State
+	if w.State == string(a2a.TaskStateInputRequired) && state != a2a.TaskStateInputRequired {
+		ws.endQuestions(ctx, *w)
+	}
 	ws.noteState(ctx, w, state)
 	if state == a2a.TaskStateInputRequired {
 		if q := approvals.FromStatus(task.Status); q != nil && q.Type == approvals.TypePermission {
@@ -310,6 +338,16 @@ func (ws *Watches) check(ctx context.Context, w *store.Watch, claims Claims) (st
 			w.Contact, w.TaskID, a2atext.Message(task.Status.Message), w.Contact, w.TaskID)
 	}
 	return text, watchFinished
+}
+
+// endQuestions ends the tasks that ask a question of the watched task in
+// its conversation. A task whose caller answered the question waits for the
+// outcome, and runs on.
+func (ws *Watches) endQuestions(ctx context.Context, w store.Watch) {
+	if ws.awaited(w.OriginContextID) {
+		return
+	}
+	ws.asked.End(ctx, w.OriginContextID, w.Contact, w.TaskID)
 }
 
 // checkAge ends a watch older than the longest a task is watched.
