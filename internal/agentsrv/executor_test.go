@@ -355,6 +355,43 @@ func TestUserApprovalTimesOut(t *testing.T) {
 	wantResult(t, waitState(t, anna, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
 }
 
+func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+	}
+
+	if got := send(t, c, userText("crash", "", "")); got.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("crash task state = %s, want %s", got.Status.State, a2a.TaskStateFailed)
+	}
+
+	failed := waitState(t, c, task.ID, a2a.TaskStateFailed)
+	if text := a2atext.Message(failed.Status.Message); !strings.Contains(text, "exited") {
+		t.Fatalf("task status message = %q, want it to say the agent exited", text)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		qs, err := ts.srv.store.UnansweredQuestions(context.Background())
+		if err != nil {
+			t.Fatalf("UnansweredQuestions() error = %v", err)
+		}
+		if len(qs) == 0 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("UnansweredQuestions() = %d questions, want none", len(qs))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
+	if err == nil || !strings.Contains(err.Error(), "terminal state") {
+		t.Fatalf("SendMessage() answering the failed task error = %v, want a terminal state error", err)
+	}
+}
+
 func TestCallerLimitCountsTasksWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
