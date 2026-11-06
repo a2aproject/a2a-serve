@@ -22,6 +22,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,12 +76,20 @@ func newServiceAllowing(t *testing.T, m *meshtest.Mesh, allow ...string) *contro
 }
 
 // newServiceIn returns the service of a relay that remembers removed agents
-// in the file removed.
+// in the file removed, and invite names next to it.
 func newServiceIn(m *meshtest.Mesh, removed string, allow ...string) *control.Service {
-	return control.NewService(meshadmin.New(m.URL, adminToken, testHTTP), control.NewRemovedAgents(removed), policy, func() control.Status {
-		return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
-	}, func(m control.Member) bool {
-		return googleauth.Allowed(allow, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
+	return control.NewService(control.Options{
+		Mesh:        meshadmin.New(m.URL, adminToken, testHTTP),
+		Removed:     control.NewRemovedAgents(removed),
+		InviteNames: control.NewInviteNames(filepath.Join(filepath.Dir(removed), "invite-names.json")),
+		Policy:      policy,
+		Status: func() control.Status {
+			return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
+		},
+		Admits: func(m control.Member) bool {
+			return googleauth.Allowed(allow, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
+		},
+		Now: func() time.Time { return meshtest.Issued },
 	})
 }
 
@@ -149,7 +158,7 @@ func TestOperationsOverEachTransport(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Client.Invite() error = %v", err)
 			}
-			wantInvite := &control.Invite{Name: "ci-bot", Token: "mesh-bt-1", Expires: meshtest.Issued.Add(48 * time.Hour), URL: relayURL}
+			wantInvite := &control.Invite{ID: "1", Name: "ci-bot", Token: "mesh-bt-1", Expires: meshtest.Issued.Add(48 * time.Hour), URL: relayURL}
 			if diff := cmp.Diff(wantInvite, inv); diff != "" {
 				t.Fatalf("Client.Invite() wrong result (-want +got) diff = %s", diff)
 			}
@@ -162,6 +171,7 @@ func TestOperationsOverEachTransport(t *testing.T) {
 				{Agent: "coder", Email: "anna@example.com", Domain: "example.com", Joined: joined, Seen: seen, Peer: "12D3coder"},
 				{Agent: "reviewer", Email: "anna@example.com", Domain: "example.com", Joined: joined.Add(time.Minute), Seen: seen, Peer: "12D3reviewer"},
 				{Agent: "ci-bot", Invite: true, Joined: joined.Add(time.Hour), Seen: seen, Peer: "12D3bot"},
+				{Invite: true, InviteName: "ci-bot", Unused: true, InviteID: "1", Expires: meshtest.Issued.Add(48 * time.Hour)},
 			}
 			if diff := cmp.Diff(wantMembers, members); diff != "" {
 				t.Fatalf("Client.Members() wrong result (-want +got) diff = %s", diff)
@@ -180,8 +190,11 @@ func TestOperationsOverEachTransport(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Client.Remove() error = %v", err)
 			}
-			if diff := cmp.Diff([]string{"12D3bot", "12D3gone"}, m.Banned()); diff != "" || len(res.Removed) != 1 {
+			if diff := cmp.Diff([]string{"12D3bot", "12D3gone"}, m.Banned()); diff != "" || len(res.Removed) != 2 {
 				t.Fatalf("Client.Remove() banned wrong nodes (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff([]string{"1"}, m.Revoked()); diff != "" {
+				t.Fatalf("Client.Remove() revoked wrong invites (-want +got) diff = %s", diff)
 			}
 		})
 	}
@@ -255,7 +268,10 @@ func TestInvite(t *testing.T) {
 			want: []meshadmin.BootstrapTokenRequest{{Role: meshadmin.RoleNode, TTLHours: 168, MaxUsages: 1, Description: "a2a-serve invite: ci-bot", AutonomousRecovery: true}},
 		},
 		{name: "longer than a week", req: control.InviteRequest{Name: "ci-bot", Hours: 169}, wantErr: true},
-		{name: "no name", req: control.InviteRequest{Name: " "}, wantErr: true},
+		{name: "no name", req: control.InviteRequest{Name: ""}, wantErr: true},
+		{name: "space in the name", req: control.InviteRequest{Name: "bad name!"}, wantErr: true},
+		{name: "name starting with a dot", req: control.InviteRequest{Name: ".bot"}, wantErr: true},
+		{name: "name too long", req: control.InviteRequest{Name: strings.Repeat("a", 65)}, wantErr: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -375,6 +391,75 @@ func TestMembersNamesRemovedAgents(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"12D3gone=", "12D3bot=ci-bot"}, got); diff != "" {
 		t.Fatalf("Service.Members() wrong removed agents (-want +got) diff = %s", diff)
+	}
+}
+
+func TestMembersNameTheInviteAgentsJoinedWith(t *testing.T) {
+	t.Parallel()
+	m := newMesh(t)
+	svc := newService(t, m)
+	inv, err := svc.Invite(t.Context(), control.InviteRequest{Name: "build-box"})
+	if err != nil {
+		t.Fatalf("Service.Invite() error = %v", err)
+	}
+	m.Enroll(inv.ID, meshadmin.Node{PeerID: "12D3box", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: joined.Add(2 * time.Hour)}, seen, "ci-bot")
+	want := []control.Member{
+		{Agent: "coder", Email: "anna@example.com", Domain: "example.com", Joined: joined, Seen: seen, Peer: "12D3coder"},
+		{Agent: "reviewer", Email: "anna@example.com", Domain: "example.com", Joined: joined.Add(time.Minute), Seen: seen, Peer: "12D3reviewer"},
+		{Agent: "ci-bot", Invite: true, Joined: joined.Add(time.Hour), Seen: seen, Peer: "12D3bot"},
+		{Agent: "ci-bot", Invite: true, InviteName: "build-box", Joined: joined.Add(2 * time.Hour), Seen: seen, Peer: "12D3box"},
+	}
+
+	for _, step := range []string{"enrolled", "enrollment forgotten"} {
+		ms, err := svc.Members(t.Context(), false)
+		if err != nil {
+			t.Fatalf("Service.Members() %s error = %v", step, err)
+		}
+		if diff := cmp.Diff(want, ms); diff != "" {
+			t.Fatalf("Service.Members() %s wrong result (-want +got) diff = %s", step, diff)
+		}
+		m.ForgetEnrollments()
+	}
+}
+
+func TestRemoveRevokesUnusedInvites(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		target      string
+		wantRevoked []string
+		wantBanned  []string
+		wantErr     error
+	}{
+		{name: "by name", target: "build-box", wantRevoked: []string{"1", "2"}, wantBanned: []string{"12D3gone"}},
+		{name: "by ID", target: "2", wantRevoked: []string{"2"}, wantBanned: []string{"12D3gone"}},
+		{name: "with the agent of that name", target: "ci-bot", wantRevoked: []string{"3"}, wantBanned: []string{"12D3bot", "12D3gone"}},
+		{name: "used invite", target: "worker", wantBanned: []string{"12D3gone"}, wantErr: &agenterr.NotFoundError{Kind: "member", Name: "worker"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+			svc := newService(t, m)
+			for _, name := range []string{"build-box", "build-box", "ci-bot", "worker"} {
+				if _, err := svc.Invite(t.Context(), control.InviteRequest{Name: name}); err != nil {
+					t.Fatalf("Service.Invite() error = %v", err)
+				}
+			}
+			m.Enroll("4", meshadmin.Node{PeerID: "12D3worker", Role: meshadmin.RoleNode, Enrolled: joined}, seen, "builder")
+
+			_, err := svc.Remove(t.Context(), control.RemoveRequest{Target: tt.target})
+
+			if diff := cmp.Diff(tt.wantErr, err, cmp.Comparer(func(a, b error) bool { return a.Error() == b.Error() })); diff != "" {
+				t.Fatalf("Service.Remove() wrong error (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantRevoked, m.Revoked()); diff != "" {
+				t.Fatalf("Service.Remove() revoked wrong invites (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantBanned, m.Banned(), cmp.Transformer("sort", sorted)); diff != "" {
+				t.Fatalf("Service.Remove() banned wrong nodes (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 

@@ -51,6 +51,42 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestFindInRelayDir(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, Name), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, Name, RelayConfigFile), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	nested := filepath.Join(root, "a")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	want := root + " has a relay (.a2a/relay.yaml) and no agent; manage the relay with `a2a-serve relay` commands, or pass --dir with an agent directory"
+	tests := []struct {
+		name string
+		find func() error
+	}{
+		{name: "Find", find: func() error { _, err := Find(nested); return err }},
+		{name: "FindWithState", find: func() error { _, err := FindWithState(root); return err }},
+		{name: "NotFoundIn", find: func() error { return NotFoundIn(root) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.find()
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("%s() error = %v, want %v", tc.name, err, ErrNotFound)
+			}
+			if err.Error() != want {
+				t.Fatalf("%s() error = %q, want %q", tc.name, err, want)
+			}
+		})
+	}
+}
+
 func TestFindWithState(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

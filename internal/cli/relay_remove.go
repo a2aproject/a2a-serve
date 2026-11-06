@@ -25,13 +25,16 @@ import (
 
 func newRelayRemoveCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "remove <agent|email|peer-id>",
+		Use:     "remove <agent|invite|email|peer-id>",
 		Aliases: []string{"rm"},
-		Short:   "Remove agents from the relay",
+		Short:   "Remove agents and unused invites from the relay",
 		Long: `Remove agents from the relay at once: the agent with that name or peer ID,
 or every agent of a person, given their email. The relay refuses their next
 request, and the other agents drop them. Removing an agent that signed in
 bans the Google account behind it, so the person can't sign in again either.
+
+A name or invite ID also revokes the unused invites it names, so a leaked
+invite can't join an agent. ` + "`a2a-serve relay members`" + ` lists them.
 
 To let a removed invited agent back, invite its name again with
 ` + "`a2a-serve relay invite`" + `. It joins again with its identity.
@@ -56,7 +59,11 @@ removed people it admits. To keep someone out, also drop them from
 				return cfg.PrintJSON(res)
 			}
 			for _, m := range res.Removed {
-				if _, err := fmt.Fprintf(cfg.Out, "✓ removed %s (%s, %s)\n", orDash(m.Agent), m.Who(), m.Peer); err != nil {
+				line := fmt.Sprintf("✓ removed %s (%s, %s)\n", orDash(m.Agent), m.Who(), m.Peer)
+				if m.Unused {
+					line = fmt.Sprintf("✓ revoked the unused invite %s (%s)\n", m.InviteName, m.InviteID)
+				}
+				if _, err := fmt.Fprint(cfg.Out, line); err != nil {
 					return err
 				}
 			}

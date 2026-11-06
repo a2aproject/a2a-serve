@@ -52,7 +52,7 @@ a2a-serve pair set anna --rotate                  # revoke her tokens and print 
 a2a-serve pair rm grok                            # delete the pairing, its tokens, messenger links, schedules and tasks
 ```
 
-A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot. `a2a-serve pair list` also lists the agents you joined, and `--joined` lists only those from any directory, and `pair rm <agent-url>` forgets one.
+A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair join <agent-url> <code>`, or sends `join <code>` to the agent's bot. `a2a-serve pair list` also lists the agents you joined, and `--joined` lists only those from any directory, and `pair rm <agent-url>` forgets one. A second `pair join` to the same agent replaces your saved token, so it needs `--replace`.
 
 - The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
 - A change of role applies to the next request of every token and messenger account of the pairing.

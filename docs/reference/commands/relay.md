@@ -19,7 +19,12 @@ a2a-serve relay <command>
 
 Create an invite: a single-use token that joins one agent to the relay
 without a sign-in, such as an agent on a server. The token is printed once.
-An unused invite expires.
+The name has up to 64 letters, digits, dots, hyphens or underscores, and
+starts with a letter or digit.
+
+An unused invite expires. `a2a-serve relay members` lists the unused invites
+and the invite each agent joined with. `a2a-serve relay remove <name>`
+revokes the unused invites of that name.
 
 An invited agent keeps renewing its membership, even after it slept for days,
 until it is removed with `a2a-serve relay remove`. One that stays away
@@ -58,8 +63,10 @@ a2a-serve relay invite ci-bot --url https://relay.example.com --admin-token env:
 ## a2a-serve relay members
 
 List the agents on the relay: the agents they serve, who they joined as (an
-email for a signed-in agent, or an invite), when they joined, when they last
-reported to the relay, and their peer ID.
+email for a signed-in agent, or the name of its invite), when they joined,
+when they last reported to the relay, and their peer ID. Then list the
+unused invites and when they expire. `a2a-serve relay remove <name>` revokes
+an unused invite.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -89,6 +96,9 @@ or every agent of a person, given their email. The relay refuses their next
 request, and the other agents drop them. Removing an agent that signed in
 bans the Google account behind it, so the person can't sign in again either.
 
+A name or invite ID also revokes the unused invites it names, so a leaked
+invite can't join an agent. `a2a-serve relay members` lists them.
+
 To let a removed invited agent back, invite its name again with
 `a2a-serve relay invite`. It joins again with its identity.
 
@@ -103,7 +113,7 @@ reads it from a prompt without echo, or from stdin when it isn't a terminal
 settings, secret:NAME reuses a value stored in .a2a/state/secrets.
 
 ```
-a2a-serve relay remove <agent|email|peer-id> [flags]
+a2a-serve relay remove <agent|invite|email|peer-id> [flags]
 ```
 
 Aliases: `rm`

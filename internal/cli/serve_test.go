@@ -253,11 +253,34 @@ func TestServerPairAndSend(t *testing.T) {
 	if out, err := runCMDWithCreds(t, creds, "pair", "get", "me", "--dir", dir); err != nil || !strings.Contains(out, "me (person, owner)") || !strings.Contains(out, "tokens       1") {
 		t.Fatalf("a2a-serve pair get me = %q, %v, want an owner person with one token", out, err)
 	}
-	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--dir", dir); err != nil {
+	out, err = runCMDWithCreds(t, creds, "pair", "invite", "anna", "--dir", dir)
+	if err != nil {
 		t.Fatalf("a2a-serve pair invite anna error = %v", err)
+	}
+	annaCode := regexp.MustCompile(`code ([A-Z0-9]{4}-[A-Z0-9]{4})`).FindStringSubmatch(out)
+	if annaCode == nil {
+		t.Fatalf("a2a-serve pair invite anna = %q, want a code", out)
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--owner", "--dir", dir); err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve pair set anna --owner") {
 		t.Fatalf("a2a-serve pair invite --owner of an authenticated pairing error = %v, want a hint to pair set", err)
+	}
+	annaCreds := &credstore.Store{Path: filepath.Join(t.TempDir(), "anna.json")}
+	if _, err := runCMDWithCreds(t, annaCreds, "pair", "join", status.Local, annaCode[1]); err != nil {
+		t.Fatalf("a2a-serve pair join as anna error = %v", err)
+	}
+	out, err = runCMDWithCreds(t, creds, "pair", "invite", "ben", "--dir", dir)
+	if err != nil {
+		t.Fatalf("a2a-serve pair invite ben error = %v", err)
+	}
+	benCode := regexp.MustCompile(`code ([A-Z0-9]{4}-[A-Z0-9]{4})`).FindStringSubmatch(out)
+	if benCode == nil {
+		t.Fatalf("a2a-serve pair invite ben = %q, want a code", out)
+	}
+	if _, err := runCMDWithCreds(t, annaCreds, "pair", "join", status.Local, benCode[1]); err == nil || !strings.Contains(err.Error(), "already joined") || !strings.Contains(classify(err, nil).Hint, "--replace") {
+		t.Fatalf("a2a-serve pair join of an agent joined before error = %v, want a refusal that suggests --replace", err)
+	}
+	if out, err := runCMDWithCreds(t, annaCreds, "pair", "join", status.Local, benCode[1], "--replace"); err != nil || !strings.Contains(out, "as pair:ben") {
+		t.Fatalf("a2a-serve pair join --replace = %q, %v, want it joined as ben", out, err)
 	}
 	out, err = send(t, creds, status.Local, "hello")
 	if err != nil {
@@ -278,7 +301,7 @@ func TestServerPairAndSend(t *testing.T) {
 	if code == nil {
 		t.Fatalf("a2a-serve pair invite --webhook = %q, want the node's instructions", out)
 	}
-	if out, err := runCMDWithCreds(t, creds, "pair", "join", code[1], code[2]); err != nil || !strings.Contains(out, "node grok") {
+	if out, err := runCMDWithCreds(t, creds, "pair", "join", code[1], code[2], "--replace"); err != nil || !strings.Contains(out, "node grok") {
 		t.Fatalf("a2a-serve pair join with a node code = %q, %v, want the node token", out, err)
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "grok", "--webhook", "https://example.com/new", "--dir", dir); err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve pair set grok") {

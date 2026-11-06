@@ -402,8 +402,8 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 	for i, a := range agents {
 		descs[i] = a.String()
 	}
-	line := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s. %s",
-		agentsLinePrefix, u, u, strings.Join(descs, " | "), cardNote)
+	line := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s. %s %s",
+		agentsLinePrefix, u, u, strings.Join(descs, " | "), cardNote, agentsLineEnd)
 	ec := *execCtx
 	msg := *execCtx.Message
 	msg.Parts = append([]*a2a.Part{a2a.NewTextPart(line)}, msg.Parts...)

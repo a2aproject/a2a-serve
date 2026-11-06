@@ -181,6 +181,20 @@ func (s *Store) Has(u string) (bool, error) {
 	return slices.ContainsFunc(creds, func(x Credential) bool { return x.URL == Normalize(u) }), nil
 }
 
+// Joined returns the caller token that `pair join` saved for the agent at
+// u, if there is one. Owner tokens saved by a local server don't count.
+func (s *Store) Joined(u string) (Credential, bool, error) {
+	creds, err := s.List()
+	if err != nil {
+		return Credential{}, false, err
+	}
+	i := slices.IndexFunc(creds, func(c Credential) bool { return c.Kind == "" && c.Dir == "" && c.URL == Normalize(u) })
+	if i < 0 {
+		return Credential{}, false, nil
+	}
+	return creds[i], true, nil
+}
+
 // Lookup returns the caller credential whose URL is target or the longest
 // prefix of it, so a token for an agent also covers its card and endpoints.
 // Without one, it returns a node token of the agent at target, so a webhook

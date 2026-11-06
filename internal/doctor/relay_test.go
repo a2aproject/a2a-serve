@@ -209,6 +209,19 @@ func TestRunRelay(t *testing.T) {
 	}
 }
 
+func TestRunRelaySkipsCLIChecks(t *testing.T) {
+	t.Parallel()
+	d := newTestRelayDir(t, "https://relay.example.com")
+	env := newFakeMachine(t).Env()
+
+	got := RunRelay(context.Background(), env, RelayOptions{Dir: d, Binary: filepath.Join(t.TempDir(), "agentmesh-one")})
+
+	want := []check{{"relay-config", StatusOK}, {"agentmesh-one", StatusOK}, {"relay-data", StatusOK}}
+	if diff := cmp.Diff(want, checks(got)); diff != "" {
+		t.Fatalf("RunRelay() wrong result (-want +got) diff = %s\n%+v", diff, got)
+	}
+}
+
 func TestRelayStatePermissionsFix(t *testing.T) {
 	t.Parallel()
 	d := newTestRelayDir(t, "https://relay.example.com")
