@@ -111,6 +111,9 @@ type_keys() {
     c="${text:i:1}"
     if [[ "$c" == $'\n' ]]; then
       t send-keys -t "$id" Enter
+    elif [[ "$c" == ";" ]]; then
+      # tmux takes a lone ; as the end of its command.
+      t send-keys -t "$id" -l -- '\;'
     else
       t send-keys -t "$id" -l -- "$c"
     fi
@@ -123,6 +126,18 @@ run() {
   focus "$1"
   type_keys "$1" "$2"
   sleep 0.3
+  t send-keys -t "$(pane_id "$1")" Enter
+  wait_ready "$1" "${3:-$DEMO_TIMEOUT}"
+  pause 1
+}
+
+# paste_run <pane> <command> [timeout] pastes a long command at once, runs it and
+# waits for the prompt.
+paste_run() {
+  focus "$1"
+  printf '%s' "$2" | t load-buffer -b demo-paste -
+  t paste-buffer -d -b demo-paste -t "$(pane_id "$1")"
+  pause 2
   t send-keys -t "$(pane_id "$1")" Enter
   wait_ready "$1" "${3:-$DEMO_TIMEOUT}"
   pause 1

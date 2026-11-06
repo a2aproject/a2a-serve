@@ -34,6 +34,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
@@ -174,9 +175,14 @@ func serveAgent(t *testing.T, cfg network.RelayConfig) *joinedAgent {
 		}
 	})
 	a := &joinedAgent{name: name, provider: p}
-	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		if _, err := fmt.Fprintf(w, `{"name":%q}`, name); err != nil {
+		body := fmt.Sprintf(`{"name":%q}`, name)
+		if r.URL.Path == a2asrv.WellKnownAgentCardPath {
+			// The relay passes on only cards with an interface it can carry.
+			body = fmt.Sprintf(`{"name":%q,"supportedInterfaces":[{"url":"http://%s","protocolBinding":"JSONRPC","protocolVersion":"1.0"}]}`, name, r.Host)
+		}
+		if _, err := io.WriteString(w, body); err != nil {
 			t.Errorf("writing: %v", err)
 		}
 	})
@@ -273,6 +279,20 @@ func TestRelayRunsAgentMesh(t *testing.T) {
 			return fmt.Errorf("got %q", got)
 		}
 		return err
+	})
+	eventually(t, "coder finds reviewer on the relay", func() error {
+		peers, err := coder.provider.Peers(t.Context())
+		if err != nil {
+			return err
+		}
+		var names []string
+		for _, p := range peers {
+			names = append(names, p.Name)
+		}
+		if diff := cmp.Diff([]string{"reviewer"}, names); diff != "" {
+			return fmt.Errorf("Peers() wrong names (-want +got) diff = %s", diff)
+		}
+		return nil
 	})
 	if !strings.HasPrefix(reviewer.publicURL, relayURL+"/ingress/") {
 		t.Fatalf("reviewer's public URL = %s, want one under %s/ingress/", reviewer.publicURL, relayURL)
