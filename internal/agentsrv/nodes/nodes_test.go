@@ -55,7 +55,7 @@ func newHost(t *testing.T) *Host {
 			t.Errorf("Close() error = %v", err)
 		}
 	})
-	return New(t.Context(), Config{
+	h := New(t.Context(), Config{
 		Store:          st,
 		Viewer:         viewer,
 		AgentName:      func() string { return "assistant" },
@@ -63,6 +63,8 @@ func newHost(t *testing.T) *Host {
 		WebhookRetries: []time.Duration{0},
 		Advertised:     func(string) bool { return true },
 	})
+	t.Cleanup(h.Stop)
+	return h
 }
 
 func openTask(t *testing.T, h *Host, id a2a.TaskID) *nodeWaiter {
@@ -472,6 +474,7 @@ func TestWakeLastErrorIsGeneric(t *testing.T) {
 				t.Fatalf("store.PutNode() error = %v", err)
 			}
 			h := New(t.Context(), Config{Store: st, WebhookRetries: []time.Duration{0}, BaseURL: func() string { return "http://agent.example" }})
+			t.Cleanup(h.Stop)
 
 			entry := h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing})
 
@@ -492,5 +495,47 @@ func TestWakeLastErrorIsGeneric(t *testing.T) {
 				time.Sleep(10 * time.Millisecond)
 			}
 		})
+	}
+}
+
+func TestStopWaitsForWakeDeliveries(t *testing.T) {
+	t.Parallel()
+	arrived := make(chan struct{})
+	hook := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, err := io.Copy(io.Discard, r.Body); err != nil {
+			t.Errorf("reading the wake error = %v", err)
+		}
+		close(arrived)
+		<-r.Context().Done()
+	}))
+	defer hook.Close()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := st.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+	})
+	if err := st.PutNode(t.Context(), store.Node{ID: "grok", Name: "grok", Webhook: hook.URL, Secret: "s"}); err != nil {
+		t.Fatalf("store.PutNode() error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	h := New(ctx, Config{Store: st, WebhookRetries: []time.Duration{0}, BaseURL: func() string { return "http://agent.example" }})
+	entry := h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing})
+	<-arrived
+
+	cancel()
+	h.Stop()
+
+	h.mu.Lock()
+	attempts := entry.Attempts
+	h.mu.Unlock()
+	if attempts != 1 {
+		t.Fatalf("wake attempts after Stop() = %d, want 1", attempts)
+	}
+	if got := h.wake("grok", mailboxapi.Envelope{Kind: mailboxapi.KindPing}); got.Attempts != 0 {
+		t.Fatalf("wake after Stop() attempts = %d, want 0", got.Attempts)
 	}
 }
