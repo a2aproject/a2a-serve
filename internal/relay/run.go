@@ -359,10 +359,11 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess) 
 }
 
 // Ports from freePortMin up to freePortMax lie below the ephemeral ranges of
-// Linux, macOS and Windows.
+// Linux, macOS and Windows, and below the ports the agentsrv tests give their
+// agents, which run next to the relay tests.
 const (
-	freePortMin = 20000
-	freePortMax = 32768
+	freePortMin = 10000
+	freePortMax = 20000
 )
 
 // freePort returns a free loopback port for agentmesh-one, which listens on it
