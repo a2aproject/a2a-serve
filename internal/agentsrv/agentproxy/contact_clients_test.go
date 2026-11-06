@@ -335,10 +335,10 @@ func TestContactClientsContactClientOfUnknownName(t *testing.T) {
 
 func TestContactClientsContactClientOffline(t *testing.T) {
 	t.Parallel()
-	dead := httptest.NewServer(http.NotFoundHandler())
-	dead.Close()
 	st := openTestStore(t)
-	putContact(t, st, store.Contact{Name: "coder", URL: dead.URL})
+	// The port of a closed server can go to a listener of another test;
+	// nothing listens on port 1.
+	putContact(t, st, store.Contact{Name: "coder", URL: "http://127.0.0.1:1"})
 	cc := newTestContactClients(t, st, nil)
 
 	_, err := cc.contactClient(context.Background(), "coder")
