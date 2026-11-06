@@ -208,7 +208,8 @@ func (c *ChatTurns) InjectTurn(ctx context.Context, t PostedTurn) error {
 		return nil
 	}
 	if isNew {
-		go c.post(ctx, t.ContextID, line, chName, channel.ConvKey(conv))
+		held := c.holdsTurns(ctx, t.ContextID, false)
+		go c.post(ctx, t.ContextID, line, chName, channel.ConvKey(conv), held)
 	}
 	return nil
 }
@@ -218,9 +219,11 @@ func (c *ChatTurns) InjectTurn(ctx context.Context, t PostedTurn) error {
 func (c *ChatTurns) DropPosted(key string) { c.posted.drop(key) }
 
 // post sends the turns of a context's line until it is empty or ctx ends.
-func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) {
+// held tells whether the first turn was posted while the context's latest
+// task waited for input.
+func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey, held bool) {
 	for {
-		unlock, ok := c.awaitTurn(ctx, contextID, line, chName, conv)
+		unlock, ok := c.awaitTurn(ctx, contextID, line, chName, conv, held)
 		if !ok {
 			return
 		}
@@ -231,20 +234,22 @@ func (c *ChatTurns) post(ctx context.Context, contextID string, line *postLine, 
 		}
 		c.send(ctx, t, chName, conv)
 		unlock()
+		held = false
 	}
 }
 
-// awaitTurn waits until the context's latest task doesn't wait for input,
+// awaitTurn waits until the context's latest task holds turns no longer,
 // holding the conversation if the context has one. It reports false when
 // ctx ends.
-func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey) (func(), bool) {
+func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postLine, chName string, conv channel.ConvKey, held bool) (func(), bool) {
 	for {
 		changed, unsubscribe := c.bus.SubscribeContext(contextID)
 		unlock := func() {}
 		if chName != "" {
 			unlock = c.queue.lock(chName, conv)
 		}
-		if !c.waitingForInput(ctx, contextID) || c.posted.empty(contextID) {
+		held = c.holdsTurns(ctx, contextID, held)
+		if !held || c.posted.empty(contextID) {
 			unsubscribe()
 			return unlock, true
 		}
@@ -276,7 +281,21 @@ func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv c
 	c.streamThen(ctx, ch, conv, channel.Ref{}, t.User, &a2a.SendMessageRequest{Message: msg}, t.accept)
 }
 
-func (c *ChatTurns) waitingForInput(ctx context.Context, contextID string) bool {
+// holdsTurns reports whether the context's latest task holds back posted
+// turns: while it waits for input, and, for turns it held already, while it
+// runs. The execution that left the task waiting for input may have resumed
+// by the time its end wakes the turns.
+func (c *ChatTurns) holdsTurns(ctx context.Context, contextID string, held bool) bool {
 	_, state, err := c.tasks.LatestStateInContext(ctx, contextID)
-	return err == nil && state == a2a.TaskStateInputRequired
+	if err != nil {
+		return false
+	}
+	switch state {
+	case a2a.TaskStateInputRequired:
+		return true
+	case a2a.TaskStateSubmitted, a2a.TaskStateWorking:
+		return held
+	default:
+		return false
+	}
 }
