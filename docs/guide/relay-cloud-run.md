@@ -2,7 +2,7 @@
 
 This guide runs a [relay](relays.md) on Google Cloud Run, with its data in Cloud SQL for PostgreSQL and its secrets in Secret Manager.
 
-![Deploying a relay to Cloud Run with Cloud SQL, and two invited agents calling each other through it](./relay-cloud-run.gif)
+![Deploying a relay to Cloud Run, inviting two agents, and letting one call the other through the relay](./relay-cloud-run.gif)
 
 Cloud Run gives the relay an HTTPS address that doesn't change, so it needs no reverse proxy or tunnel. The service runs the published image `ghcr.io/a2aproject/a2a-serve-relay` as one instance. You manage the relay from your machine with its URL and admin token.
 
@@ -106,7 +106,7 @@ An organization policy that restricts sharing to your domain refuses `--allow-un
 
 ## Check the relay
 
-The relay reports its versions and whether people may sign in:
+The relay reports its versions and whether people may sign in. Right after the first deploy, Cloud Run can answer `401 Unauthorized` for a minute while it applies `--allow-unauthenticated`:
 
 ```bash
 curl -s "$URL/.well-known/a2a-serve-relay"

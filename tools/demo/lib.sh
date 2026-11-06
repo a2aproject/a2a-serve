@@ -131,6 +131,18 @@ run() {
   pause 1
 }
 
+# paste_run <pane> <command> [timeout] pastes a long command at once, runs it and
+# waits for the prompt.
+paste_run() {
+  focus "$1"
+  printf '%s' "$2" | t load-buffer -b demo-paste -
+  t paste-buffer -d -b demo-paste -t "$(pane_id "$1")"
+  pause 2
+  t send-keys -t "$(pane_id "$1")" Enter
+  wait_ready "$1" "${3:-$DEMO_TIMEOUT}"
+  pause 1
+}
+
 # start <pane> <command> types and runs a command that keeps running.
 start() {
   focus "$1"

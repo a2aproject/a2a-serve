@@ -62,7 +62,7 @@ tools/demo/record.sh 01-agent-server --build --gif # real agents, local build, p
 | `03-agentmesh-relay` | `--build` (Agent Mesh support), free port 8443. Installs `agentmesh-one` if missing. `--fake` works. |
 | `04-observability-agent` | Docker, a model key, `jq`, and free ports 3000, 4317 and 4318. Runs `grafana/otel-lgtm` with generated telemetry off camera, and fetches the recipe from GitHub with your git credentials. No `--fake`. |
 | `inspector` | Docker and a model key, plus the browser setup. `--fake` works. |
-| `relay-cloud-run` | `--build`, `gcloud` signed in, and `DEMO_PROJECT`, a project where Cloud Run may serve the public and Cloud SQL may have a public IP. Creates billed resources named as in the guide, which you delete afterwards. A Cloud SQL instance name can't be reused for a week after deletion. Before a release, set `DEMO_RELAY_IMAGE` to an image repository you pushed the relay image to, tagged `v0.1.0`. `--fake` works. |
+| `relay-cloud-run` | `--build`, `gcloud` signed in, and `DEMO_PROJECT`, a project where Cloud Run may serve the public and Cloud SQL may have a public IP. `relay-cloud-run/setup.sh` runs steps 1-3 of the guide off camera first, so a new Cloud SQL instance's 10 minutes stay out of the recording. It creates billed resources named as in the guide, which you delete afterwards. A Cloud SQL instance name can't be reused for a week after deletion; `DEMO_SQL_INSTANCE` picks another. Before a release, set `DEMO_RELAY_IMAGE` to an image repository you pushed the relay image to, tagged `v0.1.0`. `--fake` works. |
 
 Output goes to `tools/demo/out/`: `<scenario>.cast`, and
 `<scenario>-browser-<n>.webm` for each browser step. Other flags:
@@ -126,6 +126,7 @@ Helpers from `lib.sh`, where `<pane>` is a pane name:
 | `split_pane <new> <from> above\|below\|left\|right <pct>` | Adds a pane next to another. |
 | `title <pane> <text>` | Sets the label on the pane border. |
 | `run <pane> <cmd> [timeout]` | Types the command, runs it and waits for the prompt. |
+| `paste_run <pane> <cmd> [timeout]` | Pastes a long command at once, runs it and waits for the prompt. |
 | `start <pane> <cmd>` | Types and runs a command that keeps running, such as `a2a-serve start`. |
 | `answer <pane> <ERE> <reply>` | Waits for a command's question and types the reply; an empty reply takes the default. |
 | `reply_pending <pane> <reply> [flags]`, `approve_pending <pane> [flags]` | Answers the approvals the last `a2a send` left open, such as with `reject`. Flags such as `-a <url>` are repeated on each send. |
