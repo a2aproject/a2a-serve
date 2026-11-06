@@ -12,7 +12,8 @@ only while it runs. Its `access` object says who may call: `privateAccess`
 and `publicAccess` as in force, the members of the `owner`, `authenticated`
 and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
-prints. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
+prints. `status` and `stop` add `configError` when `.a2a/config.yaml` is
+invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
 networks. Removals (`channel rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
@@ -27,7 +28,7 @@ again at login. `restart` prints the object of `status -o json` for the running
 agent, without `pending`. `channel add` prints the channel's `name` and
 `account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
 that makes you its owner, until you link an account. Progress lines of `restart` and `config set --restart` go to stderr with
-`-o json`. Commands that
+`-o json`. `config show` prints an invalid config with the reason in `invalid`, and exits 1. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 
 Commands that call the running agent take `--timeout`, the timeout of each

@@ -51,6 +51,39 @@ func TestFind(t *testing.T) {
 	}
 }
 
+func TestFindWithState(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	d, err := Open(root)
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	nested := filepath.Join(root, "a")
+	if err := os.MkdirAll(nested, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := FindWithState(nested); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("FindWithState() without a server lock error = %v, want %v", err, ErrNotFound)
+	}
+	if err := os.WriteFile(d.LockPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := FindWithState(nested)
+	if err != nil {
+		t.Fatalf("FindWithState() error = %v", err)
+	}
+	if got.Root != root {
+		t.Fatalf("FindWithState() = %v, want %v", got.Root, root)
+	}
+	if _, err := Find(nested); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Find() error = %v, want %v", err, ErrNotFound)
+	}
+}
+
 func TestRemoveUserHome(t *testing.T) {
 	t.Parallel()
 	d, err := Open(t.TempDir())

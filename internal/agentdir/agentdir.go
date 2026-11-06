@@ -71,12 +71,23 @@ func Open(root string) (Dir, error) {
 // Find walks up from start to the first directory holding .a2a/config.yaml,
 // the way git finds a repository.
 func Find(start string) (Dir, error) {
+	return find(start, Dir.Exists)
+}
+
+// FindWithState is [Find] that also stops at an agent whose config.yaml is
+// gone but whose server left its state, so that the server can still be
+// found and stopped.
+func FindWithState(start string) (Dir, error) {
+	return find(start, func(d Dir) bool { return d.Exists() || d.HasServerState() })
+}
+
+func find(start string, match func(Dir) bool) (Dir, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return Dir{}, err
 	}
 	for {
-		if _, err := os.Stat(filepath.Join(dir, Name, configFile)); err == nil {
+		if match(Dir{Root: dir}) {
 			return Dir{Root: dir}, nil
 		}
 		parent := filepath.Dir(dir)
@@ -262,6 +273,22 @@ func (d Dir) Init() error {
 func (d Dir) Exists() bool {
 	_, err := os.Stat(d.ConfigPath())
 	return err == nil
+}
+
+// HasServerState reports whether a server ran in d, which leaves the file
+// of its lock behind.
+func (d Dir) HasServerState() bool {
+	_, err := os.Stat(d.LockPath())
+	return err == nil
+}
+
+// NameOrDefault returns the name in config.yaml, or [Dir.DefaultName] if
+// config.yaml has none or doesn't parse.
+func (d Dir) NameOrDefault() string {
+	if cfg, err := d.ReadConfig(); err == nil && cfg.Name != "" {
+		return cfg.Name
+	}
+	return d.DefaultName()
 }
 
 // DefaultName derives an agent name from the root directory name.

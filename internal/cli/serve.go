@@ -112,12 +112,23 @@ git finds a repository, or take --dir.`,
 
 // agentDir returns the agent of --dir, or the nearest one up from the cwd.
 func (f *serverFlags) agentDir() (agentdir.Dir, error) {
+	return f.lookupDir(agentdir.Dir.Exists, agentdir.Find)
+}
+
+// serverDir is [serverFlags.agentDir] that also finds an agent whose
+// config.yaml is gone, from the state its server left, so that the server
+// can still be found and stopped.
+func (f *serverFlags) serverDir() (agentdir.Dir, error) {
+	return f.lookupDir(func(d agentdir.Dir) bool { return d.Exists() || d.HasServerState() }, agentdir.FindWithState)
+}
+
+func (f *serverFlags) lookupDir(exists func(agentdir.Dir) bool, find func(string) (agentdir.Dir, error)) (agentdir.Dir, error) {
 	if f.dir != "" {
 		d, err := agentdir.Open(f.dir)
 		if err != nil {
 			return agentdir.Dir{}, err
 		}
-		if !d.Exists() {
+		if !exists(d) {
 			return agentdir.Dir{}, agentdir.NotFoundIn(d.Root)
 		}
 		return d, nil
@@ -126,7 +137,7 @@ func (f *serverFlags) agentDir() (agentdir.Dir, error) {
 	if err != nil {
 		return agentdir.Dir{}, err
 	}
-	return agentdir.Find(wd)
+	return find(wd)
 }
 
 // control returns a client for the running agent.

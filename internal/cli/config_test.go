@@ -158,8 +158,8 @@ func TestConfigShowMachineReadable(t *testing.T) {
 		t.Run(tc.format, func(t *testing.T) {
 			t.Parallel()
 			out, err := runCMD(t, "-o", tc.format, "config", "show", "--defaults", "--dir", d.Root)
-			if err != nil {
-				t.Fatalf("a2a-serve config show -o %s error = %v", tc.format, err)
+			if err == nil || clierr.Classify(err).Exit != 1 {
+				t.Fatalf("a2a-serve config show -o %s error = %v, want exit 1 for the invalid config", tc.format, err)
 			}
 			var got agentctl.View
 			if err := tc.unmarshal([]byte(out), &got); err != nil {

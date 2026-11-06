@@ -48,6 +48,8 @@ type StopOptions struct {
 
 // StopResult is what [Stop] did.
 type StopResult struct {
+	// Name is the name the running server reported, if it answered.
+	Name string
 	// Running is whether the agent was running.
 	Running bool
 	// ServiceInstalled is whether a user service was installed.
@@ -60,11 +62,14 @@ type StopResult struct {
 // once the server has shut everything down.
 func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts StopOptions) (StopResult, error) {
 	var res StopResult
-	_, err := client.Status(ctx)
+	st, err := client.Status(ctx)
 	if err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
 		return res, err
 	}
 	res.Running = err == nil
+	if res.Running {
+		res.Name = st.Name
+	}
 	pid, starting := 0, false
 	if !res.Running {
 		pid, starting = findStarting(dir)
