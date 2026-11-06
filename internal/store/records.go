@@ -662,13 +662,34 @@ type CallTask struct {
 	Agent           string
 	TaskID          string
 	RemoteContextID string
+	// OriginTaskID is the task of the conversation whose turn started it.
+	OriginTaskID string
 }
 
 // PutCallTask records a call task; recording it again does nothing.
 func (s *Store) PutCallTask(ctx context.Context, t CallTask) error {
-	_, err := s.exec(ctx, `INSERT INTO call_tasks (context_id, agent, task_id, remote_context_id) VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
-		t.ContextID, t.Agent, t.TaskID, t.RemoteContextID)
+	_, err := s.exec(ctx, `INSERT INTO call_tasks (context_id, agent, task_id, remote_context_id, origin_task_id) VALUES (?, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
+		t.ContextID, t.Agent, t.TaskID, t.RemoteContextID, t.OriginTaskID)
 	return err
+}
+
+// CallTasksOf returns the call tasks that the turn of the task originTaskID
+// of a conversation started.
+func (s *Store) CallTasksOf(ctx context.Context, contextID, originTaskID string) ([]CallTask, error) {
+	rows, err := s.reads.QueryContext(ctx, `SELECT agent, task_id, remote_context_id FROM call_tasks WHERE context_id = ? AND origin_task_id = ?
+		ORDER BY rowid`, contextID, originTaskID)
+	if err != nil {
+		return nil, err
+	}
+	var out []CallTask
+	for rows.Next() {
+		t := CallTask{ContextID: contextID, OriginTaskID: originTaskID}
+		if err := rows.Scan(&t.Agent, &t.TaskID, &t.RemoteContextID); err != nil {
+			return nil, errors.Join(err, rows.Close())
+		}
+		out = append(out, t)
+	}
+	return out, errors.Join(rows.Err(), rows.Close())
 }
 
 // HasCallTask reports whether a conversation started a task at an agent.

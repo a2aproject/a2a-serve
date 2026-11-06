@@ -81,7 +81,10 @@ func NewHarnessProxy(deps HarnessProxyDeps) *HarnessProxy {
 // harness in the conversation's running turn, for the user who started it.
 type Claims struct {
 	ContextID string
-	User      auth.Principal
+	// TaskID is the task of the running turn, which the calls it starts
+	// are recorded for.
+	TaskID string
+	User   auth.Principal
 }
 
 // Errors of [ClaimsSource.ClaimsOf].
@@ -226,6 +229,9 @@ func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 	if err := g.checkMessage(ctx, req); err != nil {
 		return nil, err
 	}
+	if req.Config == nil || !req.Config.ReturnImmediately {
+		return g.sendStreamed(ctx, req)
+	}
 	res, err := g.RequestHandler.SendMessage(ctx, req)
 	if task, ok := res.(*a2a.Task); ok && err == nil {
 		g.record(ctx, task.ID, task.ContextID)
@@ -234,10 +240,42 @@ func (g *guardedHandler) SendMessage(ctx context.Context, req *a2a.SendMessageRe
 	return res, err
 }
 
+// sendStreamed sends a message that waits for the task to settle as a
+// stream, so that the task is recorded once the agent starts it, and
+// canceling the turn that sent it cancels it too.
+func (g *guardedHandler) sendStreamed(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	var last a2a.Event
+	for ev, err := range g.stream(ctx, req) {
+		if err != nil {
+			return nil, err
+		}
+		last = ev
+	}
+	switch ev := last.(type) {
+	case nil:
+		return nil, fmt.Errorf("%s sent no result", g.agent)
+	case *a2a.Message:
+		return ev, nil
+	case *a2a.Task:
+		return ev, nil
+	}
+	var history *int
+	if req.Config != nil {
+		history = req.Config.HistoryLength
+	}
+	return g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: last.TaskInfo().TaskID, HistoryLength: history})
+}
+
 func (g *guardedHandler) SendStreamingMessage(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	if err := g.checkMessage(ctx, req); err != nil {
 		return func(yield func(a2a.Event, error) bool) { yield(nil, err) }
 	}
+	return g.stream(ctx, req)
+}
+
+// stream sends a checked message as a stream, records the task it starts
+// and watches it if the stream ends before the task does.
+func (g *guardedHandler) stream(ctx context.Context, req *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		var last *a2a.Task
 		recorded := false
@@ -400,7 +438,7 @@ func (g *guardedHandler) DeleteTaskPushConfig(ctx context.Context, req *a2a.Dele
 
 // record notes that this conversation started a task.
 func (g *guardedHandler) record(ctx context.Context, id a2a.TaskID, contextID string) {
-	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID}
+	t := store.CallTask{ContextID: g.claims.ContextID, Agent: g.agent, TaskID: string(id), RemoteContextID: contextID, OriginTaskID: g.claims.TaskID}
 	if err := g.proxy.store.PutCallTask(context.WithoutCancel(ctx), t); err != nil {
 		slog.Error("recording a call task", "agent", g.agent, "task", id, "error", err)
 	}

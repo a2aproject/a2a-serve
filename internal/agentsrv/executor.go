@@ -743,7 +743,29 @@ func withOriginalMessage(t *a2a.Task, withLine, original *a2a.Message) *a2a.Task
 func (e *observedExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	// a2asrv cancels ctx once it has the canceled event, which comes before
 	// the inner Cancel runs, but the turn must still stop.
-	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.inner.Cancel(context.WithoutCancel(ctx), execCtx)))
+	return e.observe(ctx, execCtx, canceledFirst(execCtx, e.cancelingCalls(ctx, execCtx, e.inner.Cancel(context.WithoutCancel(ctx), execCtx))))
+}
+
+// cancelingCalls cancels the tasks that the task started at other agents,
+// once the inner Cancel stopped its turn and with it new calls.
+func (e *observedExecutor) cancelingCalls(ctx context.Context, execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		defer e.cancelCalls(context.WithoutCancel(ctx), execCtx)
+		for ev, err := range events {
+			if !yield(ev, err) {
+				return
+			}
+		}
+	}
+}
+
+func (e *observedExecutor) cancelCalls(ctx context.Context, execCtx *a2asrv.ExecutorContext) {
+	if e.watches == nil || e.claims == nil {
+		return
+	}
+	if err := e.watches.CancelCalls(ctx, e.claims.claimsOf(ctx, execCtx)); err != nil {
+		slog.Warn("canceling the calls of a canceled task", "task", execCtx.TaskID, "error", err)
+	}
 }
 
 // canceledFirst yields the canceled event before the inner Cancel runs.
