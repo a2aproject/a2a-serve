@@ -8,7 +8,7 @@ Run opencode, Claude Code, or any ACP coding agent in a Docker sandbox that peop
 ## What you can do with it
 
 - **Work with your agent from your phone.** Connect [Telegram, Discord, or email](guide/messengers.md) to message the agent in your repository and approve file edits or shell commands from chat.
-- **Share a project or operations agent with your team.** Put an agent on [Tailscale, an Agent Mesh relay, or a public URL](guide/networks.md) with [one-time pairing codes](guide/identities.md) or [Google sign-in](guide/email-sign-in.md). Each caller gets a separate container.
+- **Share a project or operations agent with your team.** Put an agent on [Tailscale, an Agent Mesh relay, or a public URL](guide/networks.md) with [one-time pairing codes](guide/identities.md) or [Google sign-in](guide/email-sign-in.md). Each paired or signed-in caller gets their own container.
 - **Let agents call other agents.** The agent delegates tasks to [contacts, peers](guide/agent2agent.md), and [webhook nodes](guide/webhook-nodes.md) through the server with the `a2a` CLI. Outbound tokens stay outside the sandbox, and approvals return to the person who started the task.
 - **Reuse agent setups as recipes.** Package instructions, skills, [MCP servers](guide/mcp-and-skills.md), and [schedules](guide/schedules.md) into a [recipe](guide/recipes.md) anyone can start in one command, such as a read-only [observability agent](../examples/04-observability-agent/README.md) connected to Grafana.
 
@@ -41,7 +41,7 @@ go install github.com/a2aproject/a2a-cli@latest && mv "$(command -v a2a-cli)" "$
 a2a-serve doctor --fix
 ```
 
-Homebrew and the install script install published releases (`v0.1.0` and later). Before the first release, or to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which callers use to send tasks.
+Homebrew and the install script are planned for the first release, `v0.1.0`. Until then, and to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which callers use to send tasks.
 
 ## Quickstart
 
@@ -130,7 +130,7 @@ See [Getting Started](getting-started.md) to approve tool calls, set up Telegram
 
 ## Known Limitations
 
-- **API keys are readable inside the sandbox.** Values passed with `--secret` are environment variables in the agent container and in every authenticated caller's container. A tricked agent or any caller allowed to run and approve commands can read them ([#16](https://github.com/a2aproject/a2a-serve/issues/16), [#235](https://github.com/a2aproject/a2a-serve/issues/235), and [Security](advanced/security.md)).
+- **API keys are readable inside the sandbox.** Values passed with `--secret` are environment variables in every agent container, including the containers of callers and the shared container of anonymous callers. A tricked agent or any caller allowed to run and approve commands can read them ([#16](https://github.com/a2aproject/a2a-serve/issues/16), [#235](https://github.com/a2aproject/a2a-serve/issues/235), and [Security](advanced/security.md)).
 - **The sandbox can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
 - **A cloned repository can configure the agent you start in it.** `a2a-serve start` takes the command, image, mounts, environment variables and MCP servers from the project's `.a2a/config.yaml` and `.mcp.json`. Read both before you start an agent in a repository you didn't write.
 - **Agent images follow the latest agent releases** at the time they were published, so the same tag can carry different agent versions over time.

@@ -26,7 +26,7 @@ go install github.com/a2aproject/a2a-cli@latest && mv "$(command -v a2a-cli)" "$
 a2a-serve doctor --fix
 ```
 
-Homebrew and the install script install published releases (`v0.1.0` and later). Before the first release, or to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
+Homebrew and the install script are planned for the first release, `v0.1.0`. Until then, and to run `main`, install from source with Go 1.26+. Every method installs `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 
 ## Start an agent
 
