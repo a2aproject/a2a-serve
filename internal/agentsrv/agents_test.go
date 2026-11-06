@@ -51,6 +51,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // addContact pairs caller with callee as a contact named name.
@@ -879,5 +880,125 @@ func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 				t.Fatalf("claimsOf() after the turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 			}
 		})
+	}
+}
+
+func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
+	t.Parallel()
+	const interrupted = "The server restarted before this task finished. Send the message again."
+	tests := []struct {
+		name       string
+		prompt     string
+		relay      bool
+		killed     bool
+		wantState  a2a.TaskState
+		wantStatus string
+		answer     string
+		wantErr    string
+		wantResult string
+	}{
+		{
+			name:       "working when the server stops",
+			prompt:     "slow",
+			wantState:  a2a.TaskStateFailed,
+			wantStatus: "The server stopped before this task finished. Send the message again.",
+			answer:     "approve",
+			wantErr:    "the server stopped or restarted",
+		},
+		{
+			name:       "working when the server is killed",
+			killed:     true,
+			wantState:  a2a.TaskStateFailed,
+			wantStatus: interrupted,
+			answer:     "approve",
+			wantErr:    "the server stopped or restarted",
+		},
+		{
+			name:       "input required by the agent itself",
+			prompt:     "ask",
+			wantState:  a2a.TaskStateFailed,
+			wantStatus: interrupted,
+			answer:     "approve",
+			wantErr:    "the server stopped or restarted",
+		},
+		{
+			name:       "input required relaying another agent's question",
+			prompt:     "call coder ask",
+			relay:      true,
+			wantState:  a2a.TaskStateInputRequired,
+			wantStatus: "coder wants to run git push",
+			answer:     "approve",
+			wantResult: "Pushed (allow).",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			assistant := startServer(t, serverOpts{name: "assistant"})
+			if tc.relay {
+				coder := startServer(t, serverOpts{name: "coder"})
+				addContact(t, assistant, coder, "coder", auth.RoleOwner)
+			}
+			token := assistant.pair("me", auth.RoleOwner)
+			task := &a2a.Task{ID: "killed", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}}
+			if !tc.killed {
+				c := assistant.client(token)
+				task = sendAsync(t, c, userText(tc.prompt, "", ""))
+				if tc.prompt == "slow" {
+					waitState(t, c, task.ID, a2a.TaskStateWorking)
+				} else {
+					task = waitState(t, c, task.ID, a2a.TaskStateInputRequired)
+				}
+			}
+			root := assistant.dir.Root
+			assistant.stop()
+			if tc.killed {
+				seedTask(t, assistant.dir.DBPath(), task)
+			}
+
+			restarted := startServer(t, serverOpts{name: "assistant", dir: root})
+			c := restarted.client(token)
+			got, err := c.GetTask(ctx, &a2a.GetTaskRequest{ID: task.ID})
+			if err != nil {
+				t.Fatalf("GetTask() error = %v", err)
+			}
+			if got.Status.State != tc.wantState || !strings.Contains(a2atext.Message(got.Status.Message), tc.wantStatus) {
+				t.Fatalf("GetTask() status = %s (%s), want %s (%s)", got.Status.State, a2atext.Message(got.Status.Message), tc.wantState, tc.wantStatus)
+			}
+
+			res, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText(tc.answer, string(task.ID), task.ContextID)})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("SendMessage() = %v, %v, want error containing %q", res, err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SendMessage() error = %v", err)
+			}
+			answered, ok := res.(*a2a.Task)
+			if !ok || answered.Status.State != a2a.TaskStateCompleted {
+				t.Fatalf("SendMessage() = %v, want a completed task", res)
+			}
+			if !slices.ContainsFunc(answered.History, func(m *a2a.Message) bool { return strings.Contains(a2atext.Message(m), tc.wantResult) }) {
+				t.Fatalf("task history = %v, want %q", historyTexts(answered), tc.wantResult)
+			}
+		})
+	}
+}
+
+func seedTask(t *testing.T, dbPath string, task *a2a.Task) {
+	t.Helper()
+	st, err := store.Open(dbPath)
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	viewer := func(context.Context) (string, bool, error) { return "pair:me", true, nil }
+	if _, err := st.Tasks("", viewer).Create(context.Background(), task); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("store.Close() error = %v", err)
 	}
 }

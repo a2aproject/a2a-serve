@@ -28,15 +28,19 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // fakeNode is a webhook node which answers every task after delay.
@@ -379,4 +383,74 @@ func TestNodeCardIsServedToCallersWhoMayCallTheNode(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestAnswerAfterRestartOfNodeTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		state string
+	}{
+		{name: "working", state: "working"},
+		{name: "input required", state: "input-required"},
+		{name: "waiting for auth", state: "auth-required"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			ts := startServer(t, serverOpts{name: "assistant"})
+			node := addNode(t, ts, "grok", 0)
+			node.mu.Lock()
+			node.silent = true
+			nodeAPI := node.client
+			node.mu.Unlock()
+			token := ts.pair("me", auth.RoleOwner)
+			task := sendAsync(t, nodeClient(t, ts, "grok", token), userText("what's new?", "", ""))
+			ev := mailboxapi.Event{State: tc.state, Text: "Not yet."}
+			ev.IdempotencyKey = mailboxapi.ContentKey(string(task.ID), ev)
+			if _, err := nodeAPI.PostEvent(ctx, string(task.ID), ev); err != nil {
+				t.Fatalf("PostEvent() error = %v", err)
+			}
+			root := ts.dir.Root
+			ts.stop()
+
+			restarted := startServer(t, serverOpts{name: "assistant", dir: root})
+			c := nodeClient(t, restarted, "grok", token)
+			got, err := c.GetTask(ctx, &a2a.GetTaskRequest{ID: task.ID})
+			if err != nil {
+				t.Fatalf("GetTask() error = %v", err)
+			}
+			wantStatus := "The server restarted before the node answered."
+			if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), wantStatus) {
+				t.Fatalf("GetTask() status = %s (%s), want %s (%s)", got.Status.State, a2atext.Message(got.Status.Message), a2a.TaskStateFailed, wantStatus)
+			}
+
+			_, err = c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("signed in", string(task.ID), task.ContextID)})
+			if err == nil || !strings.Contains(err.Error(), "the server stopped or restarted") {
+				t.Fatalf("SendMessage() error = %v, want an error that names the restart", err)
+			}
+		})
+	}
+}
+
+func nodeClient(t *testing.T, ts *testServer, id, token string) *a2aclient.Client {
+	t.Helper()
+	ctx := context.Background()
+	u := ts.localURL() + "/n/" + id
+	hc := contacts.TokenClient(testHTTP, store.Contact{URL: u, Token: token})
+	card, err := agentcard.NewResolver(hc).Resolve(ctx, u)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
+	if err != nil {
+		t.Fatalf("NewFromCard() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.Destroy(); err != nil {
+			t.Errorf("Destroy() error = %v", err)
+		}
+	})
+	return c
 }

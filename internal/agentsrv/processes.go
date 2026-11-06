@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Pools of agent processes besides the main one.
@@ -240,7 +241,9 @@ func failStopped(execCtx *a2asrv.ExecutorContext, sent bool) iter.Seq2[a2a.Event
 		if !sent && execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
 			return
 		}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(stoppedMessage))), nil)
+		msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(stoppedMessage))
+		msg.Metadata = map[string]any{store.InterruptedKey: true}
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
 	}
 }
 
