@@ -21,6 +21,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 type clock struct{ t time.Time }
@@ -59,14 +61,17 @@ func hostsOf(entries []Entry) map[string]int {
 	return out
 }
 
+// peerOf returns the agent of tb, on the machine named node-<name>.
+func peerOf(tb *Table) Peer { return Peer{Name: tb.self, Node: "node-" + tb.self} }
+
 // round swaps the tables of a and b the way the agents do over HTTP.
 func round(t *testing.T, a, b *Table) {
 	t.Helper()
 	newer, want := b.Compare(a.self, a.Digest())
-	if err := a.Merge(b.self, newer); err != nil {
+	if err := a.Merge(peerOf(b), newer); err != nil {
 		t.Fatalf("Merge() error = %v", err)
 	}
-	if err := b.Merge(a.self, a.Get(want)); err != nil {
+	if err := b.Merge(peerOf(a), a.Get(want)); err != nil {
 		t.Fatalf("Merge() error = %v", err)
 	}
 }
@@ -106,6 +111,55 @@ func TestSpreadThroughAnotherAgent(t *testing.T) {
 	}
 }
 
+func TestListNamesHostsAsListed(t *testing.T) {
+	t.Parallel()
+	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
+	ben, mid, anna := openTable(t, "reviewer", c), openTable(t, "mid", c), openTable(t, "anna", c)
+	if err := ben.Advertise("grok", "Grok"); err != nil {
+		t.Fatal(err)
+	}
+	if err := anna.Merge(Peer{Name: "old", Node: "node-old"}, []Entry{{Name: "legacy", Host: "carl", Version: 1, Expires: c.t.Add(time.Hour)}}); err != nil {
+		t.Fatal(err)
+	}
+	round(t, mid, ben)
+	round(t, anna, mid)
+	tests := []struct {
+		name  string
+		peers []network.PeerInfo
+		want  map[string]string
+	}{
+		{
+			name: "hosts found",
+			peers: []network.PeerInfo{
+				{Name: "reviewer-060d92a9", Node: "node-dave"},
+				{Name: "carl", Node: "node-carl"},
+				{Name: "reviewer-24a74ba3", Node: peerOf(ben).Node},
+			},
+			want: map[string]string{"grok@reviewer-24a74ba3": "reviewer-24a74ba3", "legacy@carl": "carl"},
+		},
+		{
+			name:  "hosts offline",
+			peers: []network.PeerInfo{{Name: "reviewer", Node: "node-dave"}},
+			want:  map[string]string{"grok@reviewer": "", "legacy@carl": ""},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := map[string]string{}
+			for _, l := range anna.List(tc.peers) {
+				got[l.Key] = ""
+				if l.Agent != nil {
+					got[l.Key] = l.Agent.Name
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestEntriesExpireWithoutRefresh(t *testing.T) {
 	t.Parallel()
 	c := &clock{t: time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)}
@@ -140,7 +194,7 @@ func TestMergeRefuses(t *testing.T) {
 		t.Fatal(err)
 	}
 	future := c.t.Add(time.Hour)
-	err := anna.Merge("ben", []Entry{
+	err := anna.Merge(Peer{Name: "ben"}, []Entry{
 		{Name: "helper", Host: "anna", Description: "forged", Version: future.UnixNano(), Expires: future},
 		{Name: "bad name", Host: "ben", Version: 1, Expires: future},
 		{Name: "old", Host: "ben", Version: 1, Expires: c.t.Add(-time.Minute)},
@@ -185,7 +239,7 @@ func TestRelayCantHideEntriesFromTheirHost(t *testing.T) {
 			}
 			round(t, anna, ben)
 
-			if err := anna.Merge("mallory", []Entry{tc.entry}); err != nil {
+			if err := anna.Merge(Peer{Name: "mallory"}, []Entry{tc.entry}); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 
@@ -207,7 +261,7 @@ func TestHostReplacesRelayedEntries(t *testing.T) {
 				t.Fatal(err)
 			}
 			forged := Entry{Name: "grok", Host: "ben", Version: c.t.Add(30 * time.Minute).UnixNano(), Expires: c.t.Add(time.Hour), Removed: true}
-			if err := anna.Merge("mallory", []Entry{forged}); err != nil {
+			if err := anna.Merge(Peer{Name: "mallory"}, []Entry{forged}); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 			if _, ok := anna.Lookup("grok@ben"); ok {
@@ -237,7 +291,7 @@ func TestTableKeepsEntriesFromTheirHostAfterReopening(t *testing.T) {
 		t.Fatal(err)
 	}
 	tb.SetClock(c.now)
-	if err := tb.Merge("ben", []Entry{{Name: "grok", Host: "ben", Description: "Grok", Version: 1, Expires: expires}}); err != nil {
+	if err := tb.Merge(Peer{Name: "ben"}, []Entry{{Name: "grok", Host: "ben", Description: "Grok", Version: 1, Expires: expires}}); err != nil {
 		t.Fatal(err)
 	}
 	if err := tb.Close(); err != nil {
@@ -249,7 +303,7 @@ func TestTableKeepsEntriesFromTheirHostAfterReopening(t *testing.T) {
 		t.Fatal(err)
 	}
 	again.SetClock(c.now)
-	if err := again.Merge("mallory", []Entry{{Name: "grok", Host: "ben", Version: 2, Expires: expires, Removed: true}}); err != nil {
+	if err := again.Merge(Peer{Name: "mallory"}, []Entry{{Name: "grok", Host: "ben", Version: 2, Expires: expires, Removed: true}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -295,7 +349,7 @@ func TestMergeSavesWhenClosed(t *testing.T) {
 		again.SetClock(c.now)
 		return again.Live()
 	}
-	if err := tb.Merge("ben", []Entry{{Name: "grok", Host: "ben", Version: 1, Expires: c.t.Add(time.Hour)}}); err != nil {
+	if err := tb.Merge(Peer{Name: "ben"}, []Entry{{Name: "grok", Host: "ben", Version: 1, Expires: c.t.Add(time.Hour)}}); err != nil {
 		t.Fatalf("Merge() error = %v", err)
 	}
 	if got := reopen(); len(got) != 0 {
@@ -326,7 +380,7 @@ func TestMergeCapsEntriesPerHost(t *testing.T) {
 			t.Parallel()
 			anna := openTable(t, "anna", c)
 
-			if err := anna.Merge(tc.peer, entriesOf(c, "mallory", MaxPerHost+50)); err != nil {
+			if err := anna.Merge(Peer{Name: tc.peer}, entriesOf(c, "mallory", MaxPerHost+50)); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 
@@ -343,7 +397,7 @@ func TestEntriesFromTheirHostEvictRelayedOnes(t *testing.T) {
 	full := func(anna *Table) {
 		t.Helper()
 		for i := range MaxEntries / MaxPerHost {
-			if err := anna.Merge("mallory", entriesOf(c, fmt.Sprintf("h%d", i), MaxPerHost)); err != nil {
+			if err := anna.Merge(Peer{Name: "mallory"}, entriesOf(c, fmt.Sprintf("h%d", i), MaxPerHost)); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 		}
@@ -354,7 +408,7 @@ func TestEntriesFromTheirHostEvictRelayedOnes(t *testing.T) {
 	}{
 		{name: "table full", setup: full},
 		{name: "host full", setup: func(anna *Table) {
-			if err := anna.Merge("mallory", entriesOf(c, "ben", MaxPerHost)); err != nil {
+			if err := anna.Merge(Peer{Name: "mallory"}, entriesOf(c, "ben", MaxPerHost)); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 		}},
@@ -366,10 +420,10 @@ func TestEntriesFromTheirHostEvictRelayedOnes(t *testing.T) {
 			tc.setup(anna)
 			grok := Entry{Name: "grok", Host: "ben", Version: 1, Expires: c.t.Add(time.Hour)}
 
-			if err := anna.Merge("mallory", []Entry{{Name: "relayed", Host: "dora", Version: 1, Expires: grok.Expires}, {Name: "relayed", Host: "ben", Version: 1, Expires: grok.Expires}}); err != nil {
+			if err := anna.Merge(Peer{Name: "mallory"}, []Entry{{Name: "relayed", Host: "dora", Version: 1, Expires: grok.Expires}, {Name: "relayed", Host: "ben", Version: 1, Expires: grok.Expires}}); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
-			if err := anna.Merge("ben", []Entry{grok}); err != nil {
+			if err := anna.Merge(Peer{Name: "ben"}, []Entry{grok}); err != nil {
 				t.Fatalf("Merge() error = %v", err)
 			}
 

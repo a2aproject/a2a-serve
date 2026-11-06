@@ -55,7 +55,7 @@ func TestProbeAgents(t *testing.T) {
 		{Name: "laptop", URL: agent.URL, Online: true},
 		{Name: "printer", URL: other.URL, Online: true},
 	}, nil)
-	want := []PeerInfo{{Name: "coder", URL: agent.URL, Description: "opencode agent", Online: true, Card: cardinfo.Summary{Description: "opencode agent", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
+	want := []PeerInfo{{Name: "coder", CardName: "coder", URL: agent.URL, Description: "opencode agent", Online: true, Card: cardinfo.Summary{Description: "opencode agent", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
 	}

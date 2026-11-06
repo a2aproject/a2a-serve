@@ -241,10 +241,19 @@ func (a *api) deleteSchedule(w http.ResponseWriter, r *http.Request) {
 	reply(w, map[string]string{"deleted": name}, err)
 }
 
-func (a *api) ads(w http.ResponseWriter, _ *http.Request) {
+func (a *api) ads(w http.ResponseWriter, r *http.Request) {
+	peers, err := a.deps.Peers(r.Context())
+	if err != nil {
+		controlapi.WriteError(w, err)
+		return
+	}
 	out := []controlapi.Advertisement{}
-	for _, e := range a.deps.Ads.Live() {
-		out = append(out, controlapi.Advertisement{Key: e.Key(), Name: e.Name, Host: e.Host, Description: e.Description, Expires: e.Expires})
+	for _, l := range a.deps.Ads.List(peers) {
+		host := l.Host
+		if l.Agent != nil {
+			host = l.Agent.Name
+		}
+		out = append(out, controlapi.Advertisement{Key: l.Key, Name: l.Name, Host: host, Description: l.Description, Expires: l.Expires})
 	}
 	jsonhttp.Write(w, http.StatusOK, out)
 }

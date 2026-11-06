@@ -41,6 +41,9 @@ type fakeNet struct {
 	agents map[string]string
 	// callers are the agents by the local address of their connections.
 	callers map[string]string
+	// cards and listed are the card names and listed names of the agents
+	// that have other names than their machines.
+	cards, listed map[string]string
 }
 
 type fakeProvider struct {
@@ -115,10 +118,17 @@ func (p *fakeProvider) Peers(context.Context) ([]network.PeerInfo, error) {
 	var out []network.PeerInfo
 	for name, u := range p.net.agents {
 		if name != p.name {
-			out = append(out, network.PeerInfo{Name: name, URL: u, Node: name, Online: true})
+			out = append(out, network.PeerInfo{Name: orName(p.net.listed[name], name), CardName: orName(p.net.cards[name], name), URL: u, Node: name, Online: true})
 		}
 	}
 	return out, nil
+}
+
+func orName(name, fallback string) string {
+	if name == "" {
+		return fallback
+	}
+	return name
 }
 
 // HTTPClient returns a client whose connections WhoIs identifies as p.
@@ -191,6 +201,45 @@ func TestAdvertisedPairing(t *testing.T) {
 	}
 	if _, err := controlapi.NewClient(anna.dir).AddContact(ctx, controlapi.ContactRequest{Name: "other@ben"}); err == nil {
 		t.Fatalf("AddContact() of a pairing nobody advertises error = nil, want error")
+	}
+}
+
+func TestAdvertisedPairingOfAgentWithSharedName(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{
+		agents: map[string]string{},
+		cards:  map[string]string{"ben": "reviewer", "dave": "reviewer"},
+		listed: map[string]string{"ben": "reviewer-24a74ba3", "dave": "reviewer-060d92a9"},
+	}
+	ben := startServer(t, serverOpts{name: "reviewer", private: fnet.provider("ben")})
+	startServer(t, serverOpts{name: "reviewer", private: fnet.provider("dave")})
+	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
+	ctx := context.Background()
+	addNode(t, ben, "grok", 0)
+	on := true
+	if _, err := controlapi.NewClient(ben.dir).UpdatePairing(ctx, "grok", controlapi.PairingUpdate{Advertised: &on}); err != nil {
+		t.Fatalf("UpdatePairing(advertised) error = %v", err)
+	}
+
+	anna.srv.gossipRound(ctx)
+
+	ads, err := controlapi.NewClient(anna.dir).Advertisements(ctx)
+	if err != nil {
+		t.Fatalf("Advertisements() error = %v", err)
+	}
+	var keys []string
+	for _, a := range ads {
+		keys = append(keys, a.Key)
+	}
+	if diff := cmp.Diff([]string{"grok@reviewer-24a74ba3"}, keys); diff != "" {
+		t.Fatalf("Advertisements() wrong result (-want +got) diff = %s", diff)
+	}
+	contact, err := controlapi.NewClient(anna.dir).AddContact(ctx, controlapi.ContactRequest{Name: "grok@reviewer-24a74ba3"})
+	if err != nil {
+		t.Fatalf("AddContact(grok@reviewer-24a74ba3) error = %v", err)
+	}
+	if contact.URL != ben.srv.privateURL+"/n/grok" {
+		t.Fatalf("AddContact(grok@reviewer-24a74ba3).URL = %q, want ben's node on the private network", contact.URL)
 	}
 }
 
