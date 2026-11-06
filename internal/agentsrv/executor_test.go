@@ -370,6 +370,23 @@ func TestCallerLimitCountsTasksWaitingForApproval(t *testing.T) {
 	send(t, owner, userText("hello", "", ""))
 }
 
+func TestMessageToConversationWaitingForApprovalIsRefused(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", asked.ContextID)})
+	if err == nil || !strings.Contains(err.Error(), string(asked.ID)) || !strings.Contains(err.Error(), "git push") {
+		t.Fatalf("SendMessage() into a conversation waiting for approval error = %v, want a refusal that names task %s and its approval", err, asked.ID)
+	}
+
+	wantResult(t, send(t, c, userText("approve", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+	wantResult(t, send(t, c, userText("hello", "", asked.ContextID)), a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
 func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
