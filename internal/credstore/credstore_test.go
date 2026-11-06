@@ -295,3 +295,71 @@ func TestNodeTokensAreKeptApart(t *testing.T) {
 		t.Fatalf("Node() with two node tokens error = nil, want error")
 	}
 }
+
+func TestDeleteDir(t *testing.T) {
+	t.Parallel()
+	s := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	a, b := t.TempDir(), t.TempDir()
+	for _, c := range []Credential{
+		{URL: "http://127.0.0.1:9001", Token: "a2p_a", Agent: "proj", Dir: a},
+		{URL: "http://127.0.0.1:9002", Token: "a2p_b", Agent: "proj", Dir: b},
+		{URL: "https://example.com", Token: "a2p_joined"},
+	} {
+		if err := s.Put(c); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+	}
+
+	if err := s.DeleteDir(a); err != nil {
+		t.Fatalf("DeleteDir() error = %v", err)
+	}
+
+	got, err := s.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var tokens []string
+	for _, c := range got {
+		tokens = append(tokens, c.Token)
+	}
+	if diff := cmp.Diff([]string{"a2p_b", "a2p_joined"}, tokens); diff != "" {
+		t.Fatalf("List() after DeleteDir() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestEntriesOfRemovedAgentsAreDropped(t *testing.T) {
+	t.Parallel()
+	s := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	live := t.TempDir()
+	gone := filepath.Join(t.TempDir(), "gone")
+	for _, c := range []Credential{
+		{URL: "http://127.0.0.1:9001", Token: "a2p_gone", Dir: gone},
+		{URL: "http://127.0.0.1:9002", Token: "a2p_live", Dir: live},
+	} {
+		if err := s.Put(c); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+	}
+
+	if c, ok, err := s.Lookup("http://127.0.0.1:9001"); err != nil || ok {
+		t.Fatalf("Lookup() of a removed agent's URL = %+v, %v, %v, want no credential", c, ok, err)
+	}
+	if err := s.Prune(); err != nil {
+		t.Fatalf("Prune() error = %v", err)
+	}
+	data, err := os.ReadFile(s.Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved []Credential
+	if err := json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	var tokens []string
+	for _, c := range saved {
+		tokens = append(tokens, c.Token)
+	}
+	if diff := cmp.Diff([]string{"a2p_live"}, tokens); diff != "" {
+		t.Fatalf("saved tokens after Prune() wrong result (-want +got) diff = %s", diff)
+	}
+}

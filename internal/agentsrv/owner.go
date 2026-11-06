@@ -34,12 +34,15 @@ const localOwnerName = pairings.LocalOwner
 // pairing. Loopback connections aren't trusted instead, because tunnels
 // and proxies reach the server from loopback too.
 func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
+	if err := s.credentials.Prune(); err != nil {
+		return err
+	}
 	local, _, _ := s.URLs()
 	saved, ok, err := s.credentials.Lookup(local)
 	if err != nil {
 		return err
 	}
-	if ok && saved.Kind != credstore.KindNode {
+	if ok && saved.Kind != credstore.KindNode && s.ownsSaved(saved) {
 		t, err := s.store.LookupToken(ctx, saved.Token)
 		if err == nil && t.Pairing == localOwnerName {
 			return s.renameSavedOwnerToken(saved)
@@ -59,7 +62,7 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.rt.Config().Name, Principal: principal, Created: time.Now().UTC()}); err != nil {
+	if err := s.credentials.Put(credstore.Credential{URL: local, Token: token, Agent: s.rt.Config().Name, Principal: principal, Created: time.Now().UTC(), Dir: s.dir.Path()}); err != nil {
 		return err
 	}
 	for _, u := range stale {
@@ -68,6 +71,21 @@ func (s *Server) saveLocalOwnerToken(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+// forgetLocalOwnerToken removes the owner tokens of this agent from the
+// credentials, so that no token is offered to whatever listens on its
+// local URL after it stops.
+func (s *Server) forgetLocalOwnerToken(context.Context) error {
+	return s.credentials.DeleteDir(s.dir.Path())
+}
+
+// ownsSaved reports whether this agent may have saved c. A copy of the
+// agent restored from a backup has the same tokens in its database, so
+// entries saved by an agent in another directory belong to that agent.
+// Entries without a directory predate it being recorded.
+func (s *Server) ownsSaved(c credstore.Credential) bool {
+	return c.Dir == "" || c.Dir == s.dir.Path()
 }
 
 // renameSavedOwnerToken keeps the name of the agent in the saved credential
@@ -91,7 +109,7 @@ func (s *Server) staleOwnerURLs(ctx context.Context, local string) ([]string, er
 	}
 	var urls []string
 	for _, c := range saved {
-		if c.Kind == credstore.KindNode || c.URL == credstore.Normalize(local) {
+		if c.Kind == credstore.KindNode || c.URL == credstore.Normalize(local) || !s.ownsSaved(c) {
 			continue
 		}
 		t, err := s.store.LookupToken(ctx, c.Token)

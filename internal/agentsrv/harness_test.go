@@ -172,17 +172,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		o.name = "coder"
 	}
 	if o.dir == "" {
-		// Unix socket paths are short, so the agent lives in a short temp dir.
-		d, err := os.MkdirTemp("", "a2a")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := os.RemoveAll(d); err != nil {
-				t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
-			}
-		})
-		o.dir = d
+		o.dir = shortTempDir(t)
 	}
 	dir, err := agentdir.Open(o.dir)
 	if err != nil {
@@ -235,6 +225,22 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 
 // leftFiles lists the files under dir, which a writer that outlived the
 // server left there.
+// shortTempDir returns a temp dir for an agent, removed when the test ends.
+// Unix socket paths are short, so the agent lives in a short temp dir.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "a2a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(d); err != nil {
+			t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
+		}
+	})
+	return d
+}
+
 func leftFiles(dir string) []string {
 	var left []string
 	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
