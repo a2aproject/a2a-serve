@@ -1263,30 +1263,37 @@ func TestCallTasksListsNewestFirst(t *testing.T) {
 	}
 }
 
-func TestHasOthersTasks(t *testing.T) {
+func TestContextStarter(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
 	anna := s.Tasks("", func(context.Context) (string, bool, error) { return "pair:anna", false, nil })
-	if _, err := anna.Create(ctx, &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}); err != nil {
-		t.Fatalf("Create() error = %v", err)
+	owner := s.Tasks("", func(context.Context) (string, bool, error) { return "owner", true, nil })
+	for _, task := range []struct {
+		ts *TaskStore
+		id a2a.TaskID
+	}{{anna, "t1"}, {owner, "t2"}, {anna, "t3"}} {
+		if _, err := task.ts.Create(ctx, &a2a.Task{ID: task.id, ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
 	}
 	tests := []struct {
-		user string
-		want bool
+		contextID string
+		want      string
+		wantErr   error
 	}{
-		{user: "pair:anna"},
-		{user: "pair:ben", want: true},
+		{contextID: "c1", want: "pair:anna"},
+		{contextID: "c2", wantErr: ErrNotFound},
 	}
 	for _, tc := range tests {
-		t.Run(tc.user, func(t *testing.T) {
+		t.Run(tc.contextID, func(t *testing.T) {
 			t.Parallel()
-			got, err := anna.HasOthersTasks(ctx, "c1", tc.user)
-			if err != nil {
-				t.Fatalf("HasOthersTasks() error = %v", err)
+			got, err := owner.ContextStarter(ctx, tc.contextID)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ContextStarter() error = %v, want %v", err, tc.wantErr)
 			}
 			if got != tc.want {
-				t.Fatalf("HasOthersTasks(%q) = %v, want %v", tc.user, got, tc.want)
+				t.Fatalf("ContextStarter(%q) = %q, want %q", tc.contextID, got, tc.want)
 			}
 		})
 	}

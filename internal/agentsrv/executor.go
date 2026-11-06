@@ -634,18 +634,21 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	return ctx, nil, nil
 }
 
-// checkConversation refuses a message into a conversation that holds
-// another user's tasks, unless an owner sends it or the server picked the
+// checkConversation refuses a message into a conversation that another
+// user started, unless an owner sends it or the server picked the
 // conversation, as for a group chat.
 func (i *callerInterceptor) checkConversation(ctx context.Context, p auth.Principal, contextID string) error {
 	if contextID == "" || p.IsOwner() || auth.IsInProcess(ctx) {
 		return nil
 	}
-	others, err := i.tasks.HasOthersTasks(ctx, contextID, p.ID)
+	starter, err := i.tasks.ContextStarter(ctx, contextID)
+	if errors.Is(err, store.ErrNotFound) {
+		return nil
+	}
 	if err != nil {
 		return fmt.Errorf("checking conversation %s: %w", contextID, err)
 	}
-	if others {
+	if starter != p.ID {
 		return fmt.Errorf("%w: conversation %s belongs to someone else; leave out the context ID to start a new one", a2a.ErrUnauthorized, contextID)
 	}
 	return nil
