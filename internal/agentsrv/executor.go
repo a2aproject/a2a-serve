@@ -62,18 +62,12 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	}
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
 
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
-		AutoAnswer:   liveToolRules(s.rt.Config),
-		SessionStore: s.store.Sessions(),
-		Session:      s.sessionParams,
-		Settings:     s.sessionSettings,
-		Turn:         s.claims.turn,
-	})
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("starting %s: %w", h.profile.Name(), err), h.stop(ctx))
 	}
 	s.logf("✓ %s is running (ACP)", h.profile.Name())
-	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
+	return s.guardACP(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 // pruneContainers removes the containers of this agent directory that an
@@ -102,24 +96,19 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 	if err != nil {
 		return nil, nil, err
 	}
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), &a2aacp.Config{
-		Pool: &a2aacp.PoolConfig{
-			Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
-		},
-		AutoAnswer:   liveToolRules(s.rt.Config),
-		SessionStore: s.store.Sessions(),
-		Session:      s.sessionParams,
-		Settings:     s.sessionSettings,
-		Turn:         s.claims.turn,
-		// Approvals reject questions after AnonymousQuestionTimeout; this
-		// stops the turn if that answer doesn't arrive.
-		QuestionTimeout: s.timings.AnonymousQuestionTimeout + time.Minute,
-	})
+	cfg := s.acpConfig()
+	cfg.Pool = &a2aacp.PoolConfig{
+		Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
+	}
+	// Approvals reject questions after AnonymousQuestionTimeout; this stops
+	// the turn if that answer doesn't arrive.
+	cfg.QuestionTimeout = s.timings.AnonymousQuestionTimeout + time.Minute
+	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), cfg)
 	if err != nil {
 		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.stop(ctx))
 	}
 	slog.Info("prepared the agent of anonymous callers", "sandbox", h.prepared.Summary)
-	return acp, func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
+	return s.guardACP(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
 }
 
 // maxUserAgents limits the agent processes of authenticated users that run
@@ -133,21 +122,16 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
 		return s.startUserAgent(ctx, key, harnessLog)
 	})
-	acp, err := a2aacp.NewExecutor(ctx, start, &a2aacp.Config{
-		Pool:         &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents},
-		AutoAnswer:   liveToolRules(s.rt.Config),
-		SessionStore: s.store.Sessions(),
-		Session:      s.sessionParams,
-		Settings:     s.sessionSettings,
-		Turn:         s.claims.turn,
-		// Approvals reject questions after UserQuestionTimeout; this stops
-		// the turn if that answer doesn't arrive.
-		QuestionTimeout: s.timings.UserQuestionTimeout + time.Minute,
-	})
+	cfg := s.acpConfig()
+	cfg.Pool = &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents}
+	// Approvals reject questions after UserQuestionTimeout; this stops the
+	// turn if that answer doesn't arrive.
+	cfg.QuestionTimeout = s.timings.UserQuestionTimeout + time.Minute
+	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
 	}
-	return acp, func(context.Context) error { return acp.Close() }, nil
+	return s.guardACP(acp), func(context.Context) error { return acp.Close() }, nil
 }
 
 // startUserAgent starts the agent process of a user's agent key, unless
@@ -340,6 +324,66 @@ func (s *Server) localCLI() string {
 		return ""
 	}
 	return cli
+}
+
+// acpConfig is the config of every ACP executor of the server.
+func (s *Server) acpConfig() *a2aacp.Config {
+	return &a2aacp.Config{
+		AutoAnswer:   liveToolRules(s.rt.Config),
+		SessionStore: s.store.Sessions(),
+		Session:      s.sessionParams,
+		Settings:     s.sessionSettings,
+		Turn:         s.stalls.turn(s.claims.turn),
+		Converter:    s.stalls,
+	}
+}
+
+// guardACP fails the stalled turns of an executor made with acpConfig, and
+// explains its model errors.
+func (s *Server) guardACP(acp a2asrv.AgentExecutor) a2asrv.AgentExecutor {
+	return &modelKeyHint{inner: s.stalls.guard(acp), config: s.rt.Config}
+}
+
+// modelKeyHint tells which key is missing when a turn fails because the
+// agent doesn't know the configured model. opencode lists no models of a
+// provider without a key, so it reports only that the model isn't found.
+type modelKeyHint struct {
+	inner  a2asrv.AgentExecutor
+	config func() *agentdir.Config
+}
+
+var _ a2asrv.AgentExecutor = (*modelKeyHint)(nil)
+
+func (e *modelKeyHint) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		for ev, err := range e.inner.Execute(ctx, execCtx) {
+			if !yield(e.explain(execCtx, ev), err) {
+				return
+			}
+		}
+	}
+}
+
+func (e *modelKeyHint) explain(execCtx *a2asrv.ExecutorContext, ev a2a.Event) a2a.Event {
+	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	if !ok || up.Status.State != a2a.TaskStateFailed {
+		return ev
+	}
+	text := a2atext.Message(up.Status.Message)
+	if !strings.Contains(text, "model not found") {
+		return ev
+	}
+	hint := harness.MissingKey(e.config())
+	if hint == "" {
+		return ev
+	}
+	out := *up
+	out.Status.Message = a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(hint+"; the agent reported: "+text))
+	return &out
+}
+
+func (e *modelKeyHint) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return e.inner.Cancel(ctx, execCtx)
 }
 
 // sessionSettings selects the model of the config in every session, so that

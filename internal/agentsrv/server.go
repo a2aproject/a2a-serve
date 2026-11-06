@@ -173,6 +173,9 @@ type Server struct {
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
 	timings        Timings
+	// stalls fails the turns of the ACP executors in which the agent stopped
+	// sending updates.
+	stalls *stallGuard
 }
 
 // maxExecutions bounds the tasks running at once, and
@@ -233,6 +236,7 @@ func Run(ctx context.Context, opts Options) error {
 
 		timings: opts.Timings.withDefaults(),
 	}
+	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
 	var closers stack
 	defer func() {
 		cancel()

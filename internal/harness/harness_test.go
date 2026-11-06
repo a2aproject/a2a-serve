@@ -323,6 +323,39 @@ func TestWarnings(t *testing.T) {
 	}
 }
 
+func TestMissingKey(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		cfg  agentdir.Config
+		want string
+	}{
+		{
+			name: "google model without a key",
+			cfg:  agentdir.Config{Harness: "opencode", Model: "google/gemini-3-flash-preview", Secrets: []string{"GITHUB_TOKEN"}},
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`",
+		},
+		{
+			name: "openrouter model without a key",
+			cfg:  agentdir.Config{Harness: "opencode", Model: "openrouter/~google/gemini-flash-latest"},
+			want: "no key for provider openrouter: set one with `a2a-serve config set --secret OPENROUTER_API_KEY`",
+		},
+		{name: "google model with another google key", cfg: agentdir.Config{Harness: "opencode", Model: "google/gemini-3-flash-preview", Secrets: []string{"GEMINI_API_KEY"}}},
+		{name: "key in env", cfg: agentdir.Config{Harness: "opencode", Model: "anthropic/claude-sonnet-4-5", Env: []string{"ANTHROPIC_API_KEY=sk"}}},
+		{name: "unknown provider", cfg: agentdir.Config{Harness: "opencode", Model: "acme/model"}},
+		{name: "no model", cfg: agentdir.Config{Harness: "opencode"}},
+		{name: "claude", cfg: agentdir.Config{Harness: "claude", Model: "anthropic/claude-sonnet-4-5"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := MissingKey(&tc.cfg); got != tc.want {
+				t.Fatalf("MissingKey() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestBootstrap(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

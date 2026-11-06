@@ -19,7 +19,10 @@
 //	tool             a tool call with progress
 //	ask              a permission request; the answer decides the reply
 //	ask twice        two permission requests in one turn
-//	slow             chunks until canceled
+//	slow [<d>]       chunks for duration d, or until canceled
+//	stall            nothing until canceled, like opencode retrying a model
+//	                 that refuses requests
+//	build <d>        a tool call that runs for duration d without updates
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
 //	crash            exits mid-turn
@@ -447,15 +450,43 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		}
 		end("end_turn")
 	case "slow":
-		for i := 0; ; i++ {
+		var done <-chan time.Time
+		if d, err := time.ParseDuration(arg); err == nil {
+			done = time.After(d)
+		}
+		for {
 			select {
 			case <-canceled:
 				end("cancelled")
+				return
+			case <-done:
+				a.chunk(sid, "Done.")
+				end("end_turn")
 				return
 			case <-time.After(50 * time.Millisecond):
 				a.chunk(sid, ".")
 			}
 		}
+	case "stall":
+		<-canceled
+		end("cancelled")
+	case "build":
+		d, err := time.ParseDuration(arg)
+		if err != nil {
+			a.fail(m.ID, err.Error())
+			return
+		}
+		a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "b1", "title": "make", "kind": "execute", "status": "pending"})
+		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "b1", "status": "in_progress"})
+		select {
+		case <-canceled:
+			end("cancelled")
+			return
+		case <-time.After(d):
+		}
+		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "b1", "status": "completed"})
+		a.chunk(sid, "Built.")
+		end("end_turn")
 	case "remember":
 		s.Memory = arg
 		if err := a.save(sid, s); err != nil {

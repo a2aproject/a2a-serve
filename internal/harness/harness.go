@@ -24,6 +24,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
@@ -102,6 +103,41 @@ func Warnings(cfg *agentdir.Config) []string {
 		out = append(out, "opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/~google/gemini-flash-latest")
 	}
 	return out
+}
+
+// providerKeys are the environment variables that opencode reads the key of
+// a provider from, the one to suggest first.
+var providerKeys = map[string][]string{
+	"anthropic":  {"ANTHROPIC_API_KEY"},
+	"deepseek":   {"DEEPSEEK_API_KEY"},
+	"google":     {"GOOGLE_GENERATIVE_AI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY"},
+	"groq":       {"GROQ_API_KEY"},
+	"mistral":    {"MISTRAL_API_KEY"},
+	"openai":     {"OPENAI_API_KEY"},
+	"openrouter": {"OPENROUTER_API_KEY"},
+	"xai":        {"XAI_API_KEY"},
+}
+
+// MissingKey returns how to set the key of the provider of cfg's opencode
+// model when cfg passes none of its keys to the agent, or "".
+func MissingKey(cfg *agentdir.Config) string {
+	provider, _, ok := strings.Cut(cfg.Model, "/")
+	keys := providerKeys[provider]
+	if cfg.Harness != "opencode" || !ok || len(keys) == 0 {
+		return ""
+	}
+	for _, kv := range cfg.Env {
+		name, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(keys, name) {
+			return ""
+		}
+	}
+	for _, name := range cfg.Secrets {
+		if slices.Contains(keys, name) {
+			return ""
+		}
+	}
+	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, keys[0])
 }
 
 // ImageRepo is where harness images are published.
