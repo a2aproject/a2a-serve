@@ -598,6 +598,27 @@ func TestChatTurnsInjectTurnWaitsForExecutionToEnd(t *testing.T) {
 	fx.sender.nextStream(t)
 }
 
+func TestChatTurnsInjectTurnWaitsForExecutionThatResumedBeforeTheTurnWoke(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.putTask(t, "t1", "c1", a2a.TaskStateInputRequired)
+	if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it"}); err != nil {
+		t.Fatalf("turns.InjectTurn() error = %v", err)
+	}
+
+	// Holding the conversation keeps the turn from checking the task until
+	// the next execution started.
+	unlock := fx.queue.lock("fake", "dm1")
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateInputRequired)
+	fx.setTaskState(t, "t1", "c1", a2a.TaskStateWorking)
+	unlock()
+	fx.sender.wantIdle(t)
+	fx.endExecution(t, "t1", "c1", a2a.TaskStateCompleted)
+
+	fx.sender.nextStream(t)
+}
+
 func TestChatTurnsInjectTurnMergesRunsOfAScheduleWhileHeld(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
