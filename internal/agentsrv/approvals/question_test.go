@@ -147,6 +147,9 @@ func TestMatch(t *testing.T) {
 		{reply: "approve.", want: "once", wantOK: true},
 		{reply: " Deny! ", want: "reject", wantOK: true},
 		{reply: "reject", want: "reject", wantOK: true},
+		{reply: "lgtm", want: "once", wantOK: true},
+		{reply: "allow always", want: "always", wantOK: true},
+		{reply: "decline", want: "reject", wantOK: true},
 		{reply: "maybe"},
 	}
 	for _, tc := range tests {

@@ -114,6 +114,29 @@ func TestConformanceApprovals(t *testing.T) {
 	}
 }
 
+func TestUnknownApprovalReplyKeepsQuestionPending(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("ask", "", ""))
+	asked := approvals.FromStatus(task.Status)
+	if asked == nil {
+		t.Fatalf("task status = %+v, want a question", task.Status)
+	}
+
+	for range 2 {
+		got := send(t, c, userText("aprove", string(task.ID), task.ContextID))
+		q := approvals.FromStatus(got.Status)
+		if q == nil || q.ID != asked.ID {
+			t.Fatalf("send(aprove) status = %+v, want question %s asked again", got.Status, asked.ID)
+		}
+		if text := a2atext.Message(got.Status.Message); strings.Count(text, `"aprove"`) != 1 || !strings.Contains(text, "once, always, reject") {
+			t.Fatalf("send(aprove) status text = %q, want one refusal of \"aprove\" that lists the options", text)
+		}
+	}
+	wantResult(t, send(t, c, userText("approve", string(task.ID), task.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+}
+
 func TestConformanceCancelMidTool(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
