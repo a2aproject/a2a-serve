@@ -226,6 +226,7 @@ func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
+	seedDB(t, dir.DBPath())
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
@@ -249,6 +250,7 @@ func TestOwnerTokenSavedBeforeStatusReportsLocalURL(t *testing.T) {
 		if time.Now().After(deadline) {
 			t.Fatalf("Status() = %v, %v, want the local URL", status, err)
 		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 

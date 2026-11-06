@@ -66,6 +66,7 @@ func TestRunCanceledDuringStartup(t *testing.T) {
 	if err := dir.SaveConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
+	seedDB(t, dir.DBPath())
 	private := &loginProvider{started: make(chan struct{})}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
