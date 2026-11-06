@@ -140,6 +140,9 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		Session:      s.sessionParams,
 		Settings:     s.sessionSettings,
 		Turn:         s.claims.turn,
+		// Approvals reject questions after UserQuestionTimeout; this stops
+		// the turn if that answer doesn't arrive.
+		QuestionTimeout: s.timings.UserQuestionTimeout + time.Minute,
 	})
 	if err != nil {
 		return nil, nil, fmt.Errorf("preparing the agent processes of users: %w", err)
@@ -621,6 +624,11 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	if err := i.checkConversation(ctx, p, msg.Message.ContextID); err != nil {
 		return ctx, nil, err
 	}
+	if !p.IsOwner() && msg.Message.TaskID == "" {
+		if err := i.checkUnfinished(ctx, p); err != nil {
+			return ctx, nil, err
+		}
+	}
 	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
 		if err := i.budget.admit(budgetListener(p)); err != nil {
 			return ctx, nil, fmt.Errorf("%w: %w", a2a.ErrUnauthorized, err)
@@ -632,6 +640,20 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		}
 	}
 	return ctx, nil, nil
+}
+
+// checkUnfinished refuses a new task of a caller who has
+// maxCallerExecutions unfinished tasks. The execution limit counts only
+// running tasks, and tasks waiting for an answer hold resources too.
+func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principal) error {
+	ids, err := i.tasks.UnfinishedOf(ctx, p.ID)
+	if err != nil {
+		return fmt.Errorf("counting unfinished tasks: %w", err)
+	}
+	if len(ids) >= maxCallerExecutions {
+		return fmt.Errorf("%w: %w", a2a.ErrUnauthorized, errCallerBusy)
+	}
+	return nil
 }
 
 // checkConversation refuses a message into a conversation that another

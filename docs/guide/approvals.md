@@ -29,4 +29,5 @@ The person who started a task answers its approvals, in the place the task start
 - A message that isn't an answer doesn't reach the agent while a question waits for you in that chat. Answer the question first, or send `/stop`.
 - A typed answer such as `approve` answers the question whose message it replies to. When several questions wait in one chat, reply to the message of the one you answer. A typed answer that replies to none of them gets a prompt to do so.
 - Authenticated callers approve their own tasks, so use `--deny-tools` to limit what they can run.
+- An approval in a conversation of an authenticated caller is rejected after 4 hours without an answer. Until then, it keeps the caller's agent process running.
 - Email approvals link to a web page where the person who started the task answers. Approvals that only an owner can answer have no link.

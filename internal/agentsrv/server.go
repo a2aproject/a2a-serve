@@ -182,6 +182,8 @@ const (
 	maxCallerExecutions = 8
 )
 
+var errCallerBusy = fmt.Errorf("you have %d unfinished tasks; answer or cancel one, or try again later", maxCallerExecutions)
+
 // maxExecutionsOf is the execution limit of a scope, which only callers
 // other than owners get.
 func maxExecutionsOf(string) int { return maxCallerExecutions }
@@ -405,6 +407,8 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Unattended:       s.unattended.Has,
 			Anonymous:        s.keys.anonymous,
 			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
+			User:             s.keys.user,
+			UserTimeout:      s.timings.UserQuestionTimeout,
 			Config:           s.rt.Config,
 		})
 		s.pairings = pairings.New(pairings.Deps{
