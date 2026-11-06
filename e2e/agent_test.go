@@ -44,6 +44,20 @@ func TestOwnerServesAndCallsAgent(t *testing.T) {
 	}
 }
 
+func TestRestartStartsStoppedAgent(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	coder.stop()
+
+	coder.serve("restart")
+	coder.stopped = false
+
+	if !coder.running() {
+		t.Fatalf("a2a-serve status running = false after restart, want true")
+	}
+}
+
 func TestOwnerAnswersApproval(t *testing.T) {
 	t.Parallel()
 	dependsOnSandbox(t)

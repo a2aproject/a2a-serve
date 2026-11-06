@@ -3,10 +3,11 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Stop the agent and start it again in the same mode, detached or as a
-user service, to apply settings which wait for a restart. The settings are
-checked first, so an agent which couldn't start again isn't stopped. An
-agent running in the foreground of a terminal is restarted there: press
-Ctrl-C and run `a2a-serve start` again.
+user service, to apply settings which wait for a restart. A stopped agent
+is started as a user service if one is installed, and detached otherwise.
+The settings are checked first, so an agent which couldn't start again
+isn't stopped. An agent running in the foreground of a terminal is
+restarted there: press Ctrl-C and run `a2a-serve start` again.
 
 ```
 a2a-serve restart [flags]
