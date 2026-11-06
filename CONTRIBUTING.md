@@ -91,6 +91,10 @@ bash examples/03-agentmesh-relay/demo.sh --tunnel cloudflare
 
 [`tools/demo/`](tools/demo/SKILL.md) records the examples as asciinema casts, with browser steps as Playwright videos. `tools/demo/record.sh list` shows the scenarios, and `--fake` dry-runs one with `fakeacp`. Its `SKILL.md` covers setup on macOS and works as an agent skill.
 
+### User-simulation testing
+
+[`tools/sim/`](tools/sim/SKILL.md) runs a round of hands-on testing. Parallel agents start real agents from `origin/main` and act as an owner and other users. They report bugs in the server, the `a2aacp` bridge and the `a2a` CLI, and poor UX. `tools/sim/setup.sh --smoke` builds the run, and its `SKILL.md` covers the lanes, consolidating findings and filing issues. It works as an agent skill.
+
 ### End-to-end tests
 
 `./e2e` drives the core user journeys the same way: serving and calling an agent, approvals, restarts, pairing callers, user isolation, agent contacts, webhook nodes, schedules, backups, the inspector, and creating and updating an agent from a recipe. Each test user gets its own `HOME`, set up with `a2a-serve doctor --fix`. The tests build `a2a-serve` and `fakeacp` and install the `a2a` CLI at `a2acli.MinVersion`; set `E2E_A2A_CLI` to the path of an `a2a` binary to skip the install:
