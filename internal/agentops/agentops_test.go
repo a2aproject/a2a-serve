@@ -135,6 +135,101 @@ func TestRevoke(t *testing.T) {
 	}
 }
 
+func pairAnnaWithTelegram(t *testing.T, s *Service, st *store.Store) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "anna"}); err != nil {
+		t.Fatalf("Pair(anna) error = %v", err)
+	}
+	if err := st.PutLink(ctx, store.Link{Channel: agentdir.ChannelTelegram, Identity: "telegram:1", Pairing: "anna", Conv: "dm1"}, pairapi.PairingPerson); err != nil {
+		t.Fatalf("PutLink() error = %v", err)
+	}
+}
+
+func TestPairings(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, st := newService(t)
+	pairAnnaWithTelegram(t, s, st)
+
+	all, err := s.Pairings(ctx)
+	if err != nil {
+		t.Fatalf("Pairings() error = %v", err)
+	}
+	anna, err := s.Pairing(ctx, "anna")
+	if err != nil {
+		t.Fatalf("Pairing(anna) error = %v", err)
+	}
+
+	want := controlapi.Pairing{
+		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated, Principal: auth.PairingPrincipal("anna"),
+		Created: anna.Created, Tokens: []controlapi.PairingToken{},
+		Accounts:     []controlapi.LinkedAccount{{Channel: agentdir.ChannelTelegram, Account: "telegram:1"}},
+		PendingCodes: anna.PendingCodes,
+	}
+	if diff := cmp.Diff(want, *anna); diff != "" {
+		t.Fatalf("Pairing(anna) wrong result (-want +got) diff = %s", diff)
+	}
+	if len(anna.PendingCodes) != 1 {
+		t.Fatalf("Pairing(anna).PendingCodes = %v, want one code", anna.PendingCodes)
+	}
+	var names []string
+	for _, p := range all {
+		names = append(names, p.Name)
+	}
+	if diff := cmp.Diff([]string{"anna", pairings.LocalOwner}, names); diff != "" {
+		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestUpdatePairing(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, st := newService(t)
+	pairAnnaWithTelegram(t, s, st)
+	owner := true
+
+	got, err := s.UpdatePairing(ctx, "anna", controlapi.PairingUpdate{Owner: &owner, Rotate: true})
+	if err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+
+	gotSummary := struct {
+		Role, PairCommand string
+		Access            bool
+	}{got.Pairing.Role, got.Code.PairCommand, got.Access != nil}
+	want := struct {
+		Role, PairCommand string
+		Access            bool
+	}{auth.RoleOwner, "a2a-serve pair join " + baseURL + " " + got.Code.Code, true}
+	if diff := cmp.Diff(want, gotSummary); diff != "" {
+		t.Fatalf("UpdatePairing() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPreviewRevoke(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, st := newService(t)
+	pairAnnaWithTelegram(t, s, st)
+
+	got, err := s.PreviewRevoke(ctx, "anna")
+	if err != nil {
+		t.Fatalf("PreviewRevoke() error = %v", err)
+	}
+
+	want := &controlapi.RemovalPreview{
+		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{},
+		Accounts: []controlapi.LinkedAccount{{Channel: agentdir.ChannelTelegram, Account: "telegram:1"}},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("PreviewRevoke() wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := s.Pairing(ctx, "anna"); err != nil {
+		t.Fatalf("Pairing(anna) after PreviewRevoke() error = %v, want the pairing kept", err)
+	}
+}
+
 func TestSchedulesActAsOwner(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -206,12 +301,16 @@ func newAgentRuntime(t *testing.T, cfg *agentdir.Config) (*agentdir.Runtime, age
 func TestAddChannel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		checkErr  error
-		wantSaved bool
-		wantErr   bool
+		name        string
+		stopped     bool
+		checkErr    error
+		wantSaved   bool
+		wantErr     bool
+		wantStatus  *controlapi.ChannelStatus
+		wantStarted []string
 	}{
-		{name: "valid credentials", wantSaved: true},
+		{name: "valid credentials", wantSaved: true, wantStatus: &controlapi.ChannelStatus{Name: agentdir.ChannelTelegram, Account: "@bot"}, wantStarted: []string{agentdir.ChannelTelegram}},
+		{name: "stopped agent", stopped: true, wantSaved: true, wantStatus: &controlapi.ChannelStatus{Name: agentdir.ChannelTelegram}},
 		{name: "invalid credentials", checkErr: errors.New("unauthorized"), wantErr: true},
 	}
 	for _, tc := range tests {
@@ -219,18 +318,21 @@ func TestAddChannel(t *testing.T) {
 			t.Parallel()
 			rt, d := newAgentRuntime(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
 			var started []string
-			s, _ := newServiceWith(t, rt, Hooks{
+			hooks := Hooks{
 				NewChannel: func(_ *agentdir.Config, secrets agentdir.Secrets, kind string) (channel.Channel, error) {
 					if secrets["TELEGRAM_TOKEN"] != "tok" {
 						return nil, errors.New("the new secret is missing")
 					}
 					return &fakeChannel{kind: kind, err: tc.checkErr}, nil
 				},
-				ChannelAdded: func(_ context.Context, ch channel.Channel) *controlapi.ChannelStatus {
+			}
+			if !tc.stopped {
+				hooks.ChannelAdded = func(_ context.Context, ch channel.Channel) *controlapi.ChannelStatus {
 					started = append(started, ch.Name())
 					return &controlapi.ChannelStatus{Name: ch.Name(), Account: "@bot"}
-				},
-			})
+				}
+			}
+			s, _ := newServiceWith(t, rt, hooks)
 			req := controlapi.ChannelRequest{Kind: agentdir.ChannelTelegram, Token: "secret:TELEGRAM_TOKEN", Secrets: agentdir.Secrets{"TELEGRAM_TOKEN": "tok"}}
 
 			got, err := s.AddChannel(context.Background(), req)
@@ -253,10 +355,10 @@ func TestAddChannel(t *testing.T) {
 			if tc.wantErr {
 				return
 			}
-			if diff := cmp.Diff(&controlapi.ChannelStatus{Name: agentdir.ChannelTelegram, Account: "@bot"}, got); diff != "" {
+			if diff := cmp.Diff(tc.wantStatus, got); diff != "" {
 				t.Fatalf("AddChannel() wrong result (-want +got) diff = %s", diff)
 			}
-			if diff := cmp.Diff([]string{agentdir.ChannelTelegram}, started); diff != "" {
+			if diff := cmp.Diff(tc.wantStarted, started); diff != "" {
 				t.Fatalf("AddChannel() started wrong channels (-want +got) diff = %s", diff)
 			}
 		})
