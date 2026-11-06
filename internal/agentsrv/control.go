@@ -150,11 +150,14 @@ func (s *Server) startChannel(ctx context.Context, ch channel.Channel) *controla
 // callers allowed always. Otherwise the new rules answer the approvals that
 // wait.
 func (s *Server) reloadConfig(ctx context.Context) error {
-	before := s.rt.Config().Approvals.Deny
+	before := s.rt.Config()
 	if err := s.rt.Reload(); err != nil {
 		return err
 	}
-	if !tightened(before, s.rt.Config().Approvals.Deny) {
+	if before.Policy.PrivateAllowOutgoing != s.rt.Config().Policy.PrivateAllowOutgoing {
+		s.refreshInstructions(ctx)
+	}
+	if !tightened(before.Approvals.Deny, s.rt.Config().Approvals.Deny) {
 		return s.answerWaiting(ctx)
 	}
 	n, err := s.procs.restart()

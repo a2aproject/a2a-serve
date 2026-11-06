@@ -18,9 +18,10 @@ network:
   private: tailscale
   public: tailscale
 policy:
-  privateAccess: paired          # default everyone
-  publicAccess: paired           # or anyone
+  privateAllowIncoming: paired   # default everyone
+  publicAllowIncoming: paired    # or anyone
   allowEmails: [mom@example.com, "*@example.com"]
+  privateAllowOutgoing: everyone # default contacts
 channels:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:
@@ -43,8 +44,10 @@ backup:
 ## Keys
 
 The table lists the key each flag sets. Keys are camelCase and nest at each
-dot. Files with the snake_case keys of older versions still load, and
-`a2a-serve doctor --fix` renames their keys.
+dot. Files with the keys of older versions still load: snake_case keys, and
+`policy.privateAccess` and `policy.publicAccess`, which are
+`policy.privateAllowIncoming` and `policy.publicAllowIncoming` now.
+`a2a-serve doctor --fix` renames them.
 
 <!-- generated:settings -->
 | Flag | Key | Commands |
@@ -64,8 +67,9 @@ dot. Files with the snake_case keys of older versions still load, and
 | `--port` | `port` | `start <agent>`, `config set` |
 | `--private` | `network.private` | `start <agent>`, `config set` |
 | `--public` | `network.public` | `start <agent>`, `config set` |
-| `--private-access` | `policy.privateAccess` | `start <agent>`, `config set` |
-| `--public-access` | `policy.publicAccess` | `start <agent>`, `config set` |
+| `--private-allow-incoming` | `policy.privateAllowIncoming` | `start <agent>`, `config set` |
+| `--public-allow-incoming` | `policy.publicAllowIncoming` | `start <agent>`, `config set` |
+| `--private-allow-outgoing` | `policy.privateAllowOutgoing` | `start <agent>`, `config set` |
 | `--allow-email` | `policy.allowEmails` | `start <agent>`, `config set` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |

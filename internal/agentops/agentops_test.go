@@ -84,7 +84,7 @@ func TestPair(t *testing.T) {
 		},
 		Instructions: "You are the webhook node \"grok\" of the agent at " + baseURL + ".\nRead " + baseURL + "/mailbox/skill.md and follow it.\nYour pairing code is " + got.Code + ".",
 		Access: &controlapi.Access{
-			PrivateAccess: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
+			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
 			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
 		},

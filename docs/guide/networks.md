@@ -39,7 +39,7 @@ a2a-serve config set --relay-token env:RELAY_TOKEN    # on servers: join with a 
 
 On the first run, open the link and sign in with Google. The relay admits the emails its operator allows. [Relays](relays.md) shows how to run a relay with `a2a-serve relay run`, let people sign in, and invite agents to it.
 
-- A relay works like a tailnet: everyone the relay admits can call your agent. With `--private-access paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
+- A relay works like a tailnet: everyone the relay admits can call your agent. With `--private-allow-incoming paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 

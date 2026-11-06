@@ -88,8 +88,8 @@ func TestManageStoppedAgent(t *testing.T) {
 		!strings.Contains(out, "who may call:\n  you: this machine and your tailnet devices\n  everyone on the tailnet, emails matching *@example.com\n") {
 		t.Fatalf("a2a-serve pair rm on an open tailnet = %q, want a note that bob may still call, and who may call afterwards", out)
 	}
-	if out := run("config", "set", "--private-access", "paired"); !strings.Contains(out, "  the tailnet needs a pairing\n") {
-		t.Fatalf("a2a-serve config set --private-access paired = %q, want the tailnet closed", out)
+	if out := run("config", "set", "--private-allow-incoming", "paired"); !strings.Contains(out, "  the tailnet needs a pairing\n") {
+		t.Fatalf("a2a-serve config set --private-allow-incoming paired = %q, want the tailnet closed", out)
 	}
 
 	if out := run("schedule", "add", "brief", "--cron", "@daily", "--prompt", "hello"); !strings.Contains(out, "added schedule brief") {
@@ -104,6 +104,10 @@ func TestManageStoppedAgent(t *testing.T) {
 
 	if out := run("contact", "list"); !strings.Contains(out, "no contacts") {
 		t.Fatalf("a2a-serve contact list of a stopped agent = %q, want none", out)
+	}
+	run("config", "set", "--private-allow-outgoing", "everyone")
+	if out := run("contact", "list"); !strings.Contains(out, "the agent may also call every agent on the private network") {
+		t.Fatalf("a2a-serve contact list with --private-allow-outgoing everyone = %q, want a note that it may call everyone there", out)
 	}
 	if _, err := runCMD(t, "contact", "rm", "grok", "--dir", d.Root); err == nil || !strings.Contains(err.Error(), "no contact grok") {
 		t.Fatalf("a2a-serve contact rm of an unknown contact error = %v, want no contact", err)

@@ -401,6 +401,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Chain:    s.chain,
 		AgentKey: s.keys.of,
 		Sessions: s.sessions,
+		Peers:    s.clients.CallablePeers,
 	})
 	s.refreshInstructions(ctx)
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {

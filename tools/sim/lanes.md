@@ -53,7 +53,7 @@ Several people on one agent. Read `docs/advanced/access-model.md`,
 - `pair invite` and `pair join`: valid, reused, expired and garbled codes,
   and two people racing for one code. Revoke a pairing during a task and
   during an approval.
-- `--private-access` and `--public-access` values, and what an unpaired
+- `--private-allow-incoming` and `--public-allow-incoming` values, and what an unpaired
   caller sees.
 - Can one user get, list, cancel, continue or approve another user's task
   or conversation? Can the owner join a user's conversation, and can the

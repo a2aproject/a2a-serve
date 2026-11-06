@@ -97,8 +97,8 @@ func checkConfig(cfg *agentdir.Config) []Result {
 	return results
 }
 
-// checkConfigKeys warns about the snake_case keys of older versions in
-// config.yaml, which the fix renames to camelCase.
+// checkConfigKeys warns about the keys of older versions in config.yaml,
+// which the fix renames.
 func checkConfigKeys(d agentdir.Dir) (Result, bool) {
 	data, err := os.ReadFile(d.ConfigPath())
 	if err != nil {
@@ -111,13 +111,13 @@ func checkConfigKeys(d agentdir.Dir) (Result, bool) {
 	return Result{
 		ID:      "config-keys",
 		Status:  StatusWarn,
-		Message: "config.yaml uses old snake_case keys: " + strings.Join(keys, ", "),
+		Message: "config.yaml uses old keys: " + strings.Join(keys, ", "),
 		Fix:     fixCommand,
 		apply: func() (string, error) {
 			if err := d.UpdateConfig(func(*agentdir.Config) error { return nil }); err != nil {
 				return "", err
 			}
-			return "renamed the keys of " + d.ConfigPath() + " to camelCase", nil
+			return "renamed the old keys of " + d.ConfigPath(), nil
 		},
 	}, true
 }

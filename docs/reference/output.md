@@ -8,8 +8,8 @@ lists the field behind each column. `pair list` gives each entry
 a `side`: `invited` for a pairing of the agent, `joined` for an agent you joined. `status -o json` is one
 object with the same schema whether the agent runs or not: `running` is
 always set, and the fields of the running server, such as `pid` and `local`,
-only while it runs. Its `access` object says who may call: `privateAccess`
-and `publicAccess` as in force, the members of the `owner`, `authenticated`
+only while it runs. Its `access` object says who may call: `privateAllowIncoming`
+and `publicAllowIncoming` as in force, the members of the `owner`, `authenticated`
 and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
 prints. `status` and `stop` add `configError` when `.a2a/config.yaml` is

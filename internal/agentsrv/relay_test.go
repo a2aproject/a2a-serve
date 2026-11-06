@@ -170,7 +170,7 @@ func TestRelaySignInAdmitsEveryoneOnTheRelay(t *testing.T) {
 		newRelay: fabric.newRelay,
 		configure: func(c *agentdir.Config) {
 			c.Network.Private = fabric.url()
-			c.Policy.PrivateAccess = agentdir.AccessPaired
+			c.Policy.PrivateAllowIncoming = agentdir.AccessPaired
 		},
 	})
 	anna := startServer(t, serverOpts{

@@ -52,9 +52,9 @@ Every request passes three steps:
 2. **a2a-serve resolves.** It builds the caller's identity from `WhoIs`, or from a pairing token or sign-in on the public URL, and gives it a role: `owner`, `authenticated` or `anonymous`.
 3. **a2a-serve acts.** The role decides what the caller may do with tasks and approvals.
 
-`--private-access paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, with `a2a-serve relay remove`, which bans their nodes.
+`--private-allow-incoming paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, with `a2a-serve relay remove`, which bans their nodes.
 
-A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-access` defaults to `everyone` on every relay. The relay decides who it admits: people who sign in with an email on its allowlist, and agents it invites.
+A relay admits like a tailnet: everyone it admits can call everyone else it admits, so `--private-allow-incoming` defaults to `everyone` on every relay. The relay decides who it admits: people who sign in with an email on its allowlist, and agents it invites.
 
 ## Calls between agents
 

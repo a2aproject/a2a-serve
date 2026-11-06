@@ -27,8 +27,10 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
 func TestWriteSection(t *testing.T) {
@@ -224,6 +226,54 @@ func TestWriteInstructionsSkipsHomeThatFailsTheSandboxCheck(t *testing.T) {
 			_, err = os.Stat(filepath.Join(home, instructionFiles[0]))
 			if gotWrite := err == nil; gotWrite != tc.wantWrite {
 				t.Fatalf("Server.writeInstructions() wrote into %s = %v, want %v (stat error = %v)", home, gotWrite, tc.wantWrite, err)
+			}
+		})
+	}
+}
+
+func TestWriteInstructionsMentionsPeers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		outgoing  string
+		wantPeers bool
+	}{
+		{name: "everyone on the private network", outgoing: agentdir.AccessEveryone, wantPeers: true},
+		{name: "contacts only", outgoing: agentdir.AccessContacts},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.Init(); err != nil {
+				t.Fatal(err)
+			}
+			pins, err := harness.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			if err != nil {
+				t.Fatalf("harness.NewPins() error = %v", err)
+			}
+			cfg := &agentdir.Config{
+				Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker,
+				Policy: agentdir.PolicyConfig{PrivateAllowOutgoing: tc.outgoing},
+			}
+			st := openTestStore(t)
+			rt := agentdir.NewRuntime(dir, cfg, agentdir.Secrets{})
+			clients := agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: st, Private: struct{ network.Provider }{}, Config: rt.Config})
+			s := &Server{dir: dir, pins: pins, rt: rt, store: st, clients: clients}
+
+			if err := s.writeInstructions(context.Background()); err != nil {
+				t.Fatalf("Server.writeInstructions() error = %v", err)
+			}
+
+			data, err := os.ReadFile(filepath.Join(dir.HomeDir(), instructionFiles[0]))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := strings.Contains(string(data), "any agent on the private network"); got != tc.wantPeers {
+				t.Fatalf("Server.writeInstructions() mentions the private network = %v, want %v:\n%s", got, tc.wantPeers, data)
 			}
 		})
 	}

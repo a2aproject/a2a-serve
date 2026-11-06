@@ -34,7 +34,7 @@ func fullConfig() *Config {
 		Env:         []string{"DEBUG=1", "MODE=fast"},
 		Port:        4000,
 		Network:     NetworkConfig{Private: "tailscale"},
-		Policy:      PolicyConfig{PrivateAccess: AccessPaired, AllowEmails: []string{"mom@example.com", "*@example.com"}},
+		Policy:      PolicyConfig{PrivateAllowIncoming: AccessPaired, AllowEmails: []string{"mom@example.com", "*@example.com"}},
 		Channels: ChannelsConfig{
 			Telegram: &TelegramConfig{Token: "secret:TELEGRAM_BOT_TOKEN"},
 			Email:    &EmailConfig{Address: "a@x", IMAP: "i:993", SMTP: "s:465", Password: "secret:EMAIL_PASSWORD", TrustedAuthServ: "mx"},
@@ -58,7 +58,7 @@ func TestUnset(t *testing.T) {
 		{setting: "name", modify: func(c *Config) { c.Name = "app" }},
 		{setting: "port", modify: func(c *Config) { c.Port = 0 }},
 		{setting: "private", modify: func(c *Config) { c.Network.Private = "" }},
-		{setting: "private-access", modify: func(c *Config) { c.Policy.PrivateAccess = "" }},
+		{setting: "private-allow-incoming", modify: func(c *Config) { c.Policy.PrivateAllowIncoming = "" }},
 		{setting: "allow-email", entries: []string{"Mom@example.com"}, modify: func(c *Config) { c.Policy.AllowEmails = []string{"*@example.com"} }},
 		{setting: "ngrok-authtoken", wantErr: true},
 		{setting: "memory", modify: func(c *Config) { c.Limits.Memory = "" }},
@@ -136,7 +136,7 @@ func TestCommands(t *testing.T) {
 		Command:  []string{"gemini", "--experimental-acp"},
 		Secrets:  []string{"KEY"},
 		Network:  NetworkConfig{Public: "tailscale"},
-		Policy:   PolicyConfig{PublicAccess: AccessAnyone, AllowEmails: []string{"*@example.com"}},
+		Policy:   PolicyConfig{PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"*@example.com"}},
 		Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:BOT"}},
 		Backup:   BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY", Interval: "1h"},
 	}
@@ -145,7 +145,7 @@ func TestCommands(t *testing.T) {
 		got = append(got, ShellJoin(args))
 	}
 	want := []string{
-		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-access anyone --allow-email '*@example.com'",
+		"a2a-serve start acp --name coder --command 'gemini --experimental-acp' --secret KEY --public tailscale --public-allow-incoming anyone --allow-email '*@example.com'",
 		"a2a-serve config set --tailscale-authkey env:TS_AUTHKEY --backup gs://bucket/coder --backup-key env:BACKUP_KEY --backup-interval 1h",
 		"a2a-serve channel add telegram --token env:BOT",
 	}
@@ -177,7 +177,7 @@ func TestDeleteSecrets(t *testing.T) {
 
 func TestLiveSettings(t *testing.T) {
 	t.Parallel()
-	want := []string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}
+	want := []string{"description", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}
 	got := LiveSettings()
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("LiveSettings() wrong result (-want +got) diff = %s", diff)
@@ -193,7 +193,7 @@ func TestCopyLive(t *testing.T) {
 	t.Parallel()
 	src := fullConfig()
 	src.Description = "reviews code"
-	src.Policy.PublicAccess = AccessAnyone
+	src.Policy.PublicAllowIncoming = AccessAnyone
 	src.Approvals.Deny = []string{"execute"}
 	dst := &Config{Name: "other", Harness: "claude"}
 	CopyLive(dst, src)
@@ -249,7 +249,7 @@ func TestAgentSettings(t *testing.T) {
 func TestOwnerSettings(t *testing.T) {
 	t.Parallel()
 	got := fullConfig().OwnerSettings()
-	want := []string{"name", "workspace", "port", "private", "private-access", "allow-email", "telegram", "email-address", "email-imap", "email-smtp", "email-password", "email-trusted-authserv", "disable-mcp", "owner-chat"}
+	want := []string{"name", "workspace", "port", "private", "private-allow-incoming", "allow-email", "telegram", "email-address", "email-imap", "email-smtp", "email-password", "email-trusted-authserv", "disable-mcp", "owner-chat"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Config.OwnerSettings() wrong result (-want +got) diff = %s", diff)
 	}
@@ -266,7 +266,7 @@ func TestIsAgentSetting(t *testing.T) {
 		{setting: "deny-tools", want: true},
 		{setting: "pids", want: true},
 		{setting: "name", want: false},
-		{setting: "public-access", want: false},
+		{setting: "public-allow-incoming", want: false},
 		{setting: "backup", want: false},
 		{setting: "telegram", want: false},
 		{setting: "nope", want: false},

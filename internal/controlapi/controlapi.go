@@ -69,10 +69,10 @@ type Status struct {
 
 // Access describes who may call the agent.
 type Access struct {
-	// PrivateAccess is everyone or paired, set with a private network;
-	// PublicAccess is paired or anyone, set with a public URL.
-	PrivateAccess string `json:"privateAccess,omitempty"`
-	PublicAccess  string `json:"publicAccess,omitempty"`
+	// PrivateAllowIncoming is everyone or paired, set with a private network;
+	// PublicAllowIncoming is paired or anyone, set with a public URL.
+	PrivateAllowIncoming string `json:"privateAllowIncoming,omitempty"`
+	PublicAllowIncoming  string `json:"publicAllowIncoming,omitempty"`
 	// Owner, Authenticated and Anonymous are the members of each role.
 	Owner         []string `json:"owner"`
 	Authenticated []string `json:"authenticated"`

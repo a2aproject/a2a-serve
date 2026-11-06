@@ -233,7 +233,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		slog.Error("authenticating channel message", "error", err)
 		return
 	}
-	// --public-access anyone admits unlinked senders in direct chats only;
+	// --public-allow-incoming anyone admits unlinked senders in direct chats only;
 	// groups keep ignoring them.
 	if p.Role == auth.RoleAnonymous && !in.Direct {
 		return

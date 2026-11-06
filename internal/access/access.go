@@ -49,18 +49,18 @@ func NetworkOf(cfg *agentdir.Config) Network {
 	return n
 }
 
-// PrivateAccess is the --private-access in force: the setting, or
+// PrivateAllowIncoming is the --private-allow-incoming in force: the setting, or
 // everyone by default.
-func PrivateAccess(p agentdir.PolicyConfig) string {
-	return cmp.Or(p.PrivateAccess, agentdir.AccessEveryone)
+func PrivateAllowIncoming(p agentdir.PolicyConfig) string {
+	return cmp.Or(p.PrivateAllowIncoming, agentdir.AccessEveryone)
 }
 
 // Policy is the policy of the settings p: the private network with
-// --private-access everyone and --allow-email are authenticated; with
-// --public-access anyone, anyone is anonymous.
+// --private-allow-incoming everyone and --allow-email are authenticated; with
+// --public-allow-incoming anyone, anyone is anonymous.
 func Policy(p agentdir.PolicyConfig) auth.Policy {
 	var out auth.Policy
-	if PrivateAccess(p) == agentdir.AccessEveryone {
+	if PrivateAllowIncoming(p) == agentdir.AccessEveryone {
 		out.Authenticated = append(out.Authenticated, auth.MemberPrivate)
 	}
 	for _, e := range p.AllowEmails {
@@ -68,7 +68,7 @@ func Policy(p agentdir.PolicyConfig) auth.Policy {
 			out.Authenticated = append(out.Authenticated, auth.MemberEmailPrefix+e)
 		}
 	}
-	if p.PublicAccess == agentdir.AccessAnyone {
+	if p.PublicAllowIncoming == agentdir.AccessAnyone {
 		out.Anonymous = []string{auth.MemberAnyone}
 	}
 	return out
@@ -96,10 +96,10 @@ func CountPairings(ps []store.Pairing) Pairings {
 
 // Description says who may call an agent.
 type Description struct {
-	// PrivateAccess is everyone or paired, set with a private network;
-	// PublicAccess is paired or anyone, set with a public URL.
-	PrivateAccess string
-	PublicAccess  string
+	// PrivateAllowIncoming is everyone or paired, set with a private network;
+	// PublicAllowIncoming is paired or anyone, set with a public URL.
+	PrivateAllowIncoming string
+	PublicAllowIncoming  string
 	// Owner, Authenticated and Anonymous are the members of each role.
 	Owner         []string
 	Authenticated []string
@@ -125,18 +125,18 @@ func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private),
 	}
 	if net.Private != "" {
-		a.PrivateAccess = PrivateAccess(p)
+		a.PrivateAllowIncoming = PrivateAllowIncoming(p)
 	}
 	if net.Public {
-		a.PublicAccess = cmp.Or(p.PublicAccess, agentdir.AccessPaired)
+		a.PublicAllowIncoming = cmp.Or(p.PublicAllowIncoming, agentdir.AccessPaired)
 	}
 	a.Summary = []string{"you: " + yourDevices(net.Private), others(a.Others, n)}
-	if a.PrivateAccess == agentdir.AccessPaired {
+	if a.PrivateAllowIncoming == agentdir.AccessPaired {
 		a.Summary = append(a.Summary, networkName(net.Private)+" needs a pairing")
 	}
 	switch {
 	case !net.Public:
-	case a.PublicAccess == agentdir.AccessAnyone:
+	case a.PublicAllowIncoming == agentdir.AccessAnyone:
 		a.Summary = append(a.Summary, "the public URL is open to anyone")
 	case len(p.AllowEmails) > 0:
 		a.Summary = append(a.Summary, "the public URL needs a pairing or Google sign-in")

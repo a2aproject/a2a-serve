@@ -19,7 +19,7 @@ An agent is reachable from your machine, a private network, a public URL and mes
 | **Private network** | Where your machines and team reach the agent: a tailnet or an Agent Mesh relay. Everyone on it is trusted | `--private tailscale\|<relay-url>\|none` |
 | **Public network** | A URL on the internet: Tailscale Funnel or the relay's public URL | `--public tailscale\|<relay-url>\|none` |
 | **Pairing** | Someone you trust to call this agent: a person, a device, another agent or a webhook node. Created with a one-time code; the credential works on every network | `pair invite\|join\|list\|get\|set\|rm` |
-| **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm` |
+| **Contact** | An agent this agent may call. A contact gets nothing on this agent, and its answers are treated as content | `contact add\|list\|rm`; `--private-allow-outgoing everyone` |
 | **Channel** | A messenger the agent answers in: Telegram, Discord or email. Anyone can write to it, so chat accounts reach the agent once linked to a pairing | `channel add\|list\|rm`; `join <code>` in the chat |
 
 A pairing and a contact point in opposite directions. When agent `coder` should call agent `reviewer`, `reviewer` pairs `coder` (who may call me) and `coder` adds `reviewer` as a contact (whom I may call):
@@ -33,12 +33,20 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 
 | Flag | Values | Default |
 |---|---|---|
-| `--private-access` | `everyone`: everyone on the private network. `paired`: only you and your pairings | `everyone` |
-| `--public-access` | `paired`: only you and your pairings. `anyone`: open to the internet | `paired` |
+| `--private-allow-incoming` | `everyone`: everyone on the private network. `paired`: only you and your pairings | `everyone` |
+| `--public-allow-incoming` | `paired`: only you and your pairings. `anyone`: open to the internet | `paired` |
 | `--allow-email <pattern>` | People who sign in with a matching email, such as `*@example.com`, on any network. Turns on Google sign-in at the public URL | none |
 | `pair invite <name> --owner` | The pairing can also see every task and answer every approval | off |
 
 You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
+
+## Whom the agent may call
+
+| Flag | Values | Default |
+|---|---|---|
+| `--private-allow-outgoing` | `contacts`: only its contacts. `everyone`: also every agent on the private network, by name | `contacts` |
+
+With `everyone`, the agent calls agents on the private network without `contact add`, with its network identity. The agents line at the start of each conversation lists them. A contact by the same name wins. Everyone who may call the agent can make it call these agents, as with contacts.
 
 The network decides who belongs to it: the tailnet's admin console and access controls, or the relay's enrollment. To remove someone from the private network, remove them there.
 
@@ -50,9 +58,10 @@ The network decides who belongs to it: the tailnet's admin console and access co
 | Call from my phone | On the tailnet: nothing. Elsewhere: `a2a-serve pair invite phone --owner` |
 | Let another agent call this one | `pair invite` here, `contact add --code` there (see above) |
 | Team on a relay | `--private <relay-url>`: everyone the relay admits can call |
+| Let agents on the private network call each other | `--private-allow-outgoing everyone` on each agent |
 | Only company emails | `--allow-email '*@example.com'` |
-| Close the private network | `--private-access paired` |
-| Public bot | `--public tailscale --public-access anyone` |
+| Close the private network | `--private-allow-incoming paired` |
+| Public bot | `--public tailscale --public-allow-incoming anyone` |
 | Revoke a pairing | `a2a-serve pair rm anna` |
 
 ### What you see
@@ -80,7 +89,7 @@ coder (opencode) running for 2h, pid 41233
 |---|---|
 | **You**, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
 | **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, and let their conversations call this agent's contacts |
-| **Anyone**, with `--public-access anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
+| **Anyone**, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
 
 ### Channels
 
@@ -88,7 +97,7 @@ coder (opencode) running for 2h, pid 41233
 |---|---|
 | Chat account linked to a pairing (`join <code>`, or the link printed at start) | the pairing. The link printed at start links you |
 | Email sender whose address passes DMARC at your trusted mail server (`--email-trusted-authserv`) | that email address, so `--allow-email anna@example.com` lets Anna email the agent without linking. DMARC proves the domain only, so anyone who can send authenticated mail for it counts as any of its addresses |
-| Unlinked sender in a direct chat | anyone, with `--public-access anyone`; otherwise rejected with a hint on how to pair |
+| Unlinked sender in a direct chat | anyone, with `--public-allow-incoming anyone`; otherwise rejected with a hint on how to pair |
 | Unlinked sender in a group | ignored |
 
 Each chat is one conversation. Approvals appear in the chat where the task started, and only the person who started the task, or you, can answer them. Approvals of anonymous senders and of tasks nobody watches go to your owner chat.
@@ -143,8 +152,8 @@ policy:
 | Flag | Policy |
 |---|---|
 | defaults | `owner: [self]`, `authenticated: [private]`; the built-in `local` pairing is owner |
-| `--private-access paired` | removes `private` from `authenticated` |
-| `--public-access anyone` | `anonymous: [anyone]`, on the public URL and in direct chats |
+| `--private-allow-incoming paired` | removes `private` from `authenticated` |
+| `--public-allow-incoming anyone` | `anonymous: [anyone]`, on the public URL and in direct chats |
 | `--allow-email P` | adds `email:P` to `authenticated` |
 | `pair invite --owner` | the pairing's role is `owner` |
 
@@ -178,6 +187,6 @@ On an [Agent Mesh](agent-mesh.md) relay, the relay provides the private network,
 - An agents-URL handle works only for its conversation, while one of its turns runs, and only for the tasks its conversation created.
 - The sandbox reaches the network only through the server, which refuses private, tailnet, link-local and host addresses.
 - A message joins an existing conversation only if its sender owns it or is an owner.
-- Each authenticated user has their own agent process. Callers allowed by `--public-access anyone` share one agent process, with a budget per listener and approvals that time out.
+- Each authenticated user has their own agent process. Callers allowed by `--public-allow-incoming anyone` share one agent process, with a budget per listener and approvals that time out.
 - Requests that change state need a JSON content type or the `A2A-Version` header, and cross-site requests are refused. The question and inspector forms rely on the cross-site check and the inspector's CSRF token.
 - The local credential works only on the local listener. Loopback alone is never trusted.

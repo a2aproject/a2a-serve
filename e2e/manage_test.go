@@ -194,14 +194,14 @@ func TestAccessSettings(t *testing.T) {
 		Applied []string `json:"applied"`
 		Access  access   `json:"access"`
 	}
-	coder.serveJSON(&set, "config", "set", "--private-access", "paired", "--allow-email", "*@example.com")
+	coder.serveJSON(&set, "config", "set", "--private-allow-incoming", "paired", "--allow-email", "*@example.com")
 	var status struct {
 		Access access `json:"access"`
 	}
 	coder.serveJSON(&status, "status")
 
 	wantAccess := access{Owner: []string{"self"}, Authenticated: []string{"email:*@example.com"}}
-	if diff := cmp.Diff([]string{"private-access", "allow-email"}, set.Applied); diff != "" {
+	if diff := cmp.Diff([]string{"private-allow-incoming", "allow-email"}, set.Applied); diff != "" {
 		t.Fatalf("a2a-serve config set -o json applied wrong result (-want +got) diff = %s", diff)
 	}
 	if diff := cmp.Diff(wantAccess, set.Access); diff != "" {

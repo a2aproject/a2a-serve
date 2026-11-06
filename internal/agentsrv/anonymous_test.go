@@ -34,7 +34,7 @@ import (
 func startPublicServer(t *testing.T, configure func(*agentdir.Config)) *testServer {
 	t.Helper()
 	return startServer(t, serverOpts{public: publicNet(), channel: channeltest.NewChannel("fake"), configure: func(c *agentdir.Config) {
-		c.Policy.PublicAccess = agentdir.AccessAnyone
+		c.Policy.PublicAllowIncoming = agentdir.AccessAnyone
 		if configure != nil {
 			configure(c)
 		}
@@ -124,7 +124,7 @@ func TestAnonymousApprovalTimesOut(t *testing.T) {
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
 		channel:   channeltest.NewChannel("fake"),
-		configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone },
+		configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone },
 		timings:   func(tm *Timings) { tm.AnonymousQuestionTimeout = time.Second },
 	})
 	anon := anonymousClient(t, ts)
