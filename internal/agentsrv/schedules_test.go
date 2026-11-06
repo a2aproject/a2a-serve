@@ -293,19 +293,15 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	for {
+	// The run records LastRun once it queued its turn, which starts the task
+	// later.
+	waitFor(t, "the task of the run", func() bool {
 		tasks, err := ts.srv.tasks.TaskCounts(context.Background())
 		if err != nil {
-			t.Fatal(err)
+			t.Fatalf("TaskCounts() error = %v", err)
 		}
-		if len(tasks) > 0 {
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("TaskCounts() = %v, want the run's task", tasks)
-		}
-		time.Sleep(20 * time.Millisecond)
-	}
+		return len(tasks) > 0
+	})
 }
 
 func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
