@@ -100,18 +100,50 @@ func (s *Store) UpdatePairing(ctx context.Context, p Pairing) error {
 	})
 }
 
+// PairingUser is a user that a pairing acts as.
+type PairingUser struct {
+	Principal string
+	// AgentKey is the key of the user's agent process, stored with the
+	// session of each conversation that runs in it.
+	AgentKey string
+}
+
+// removedTasks selects the tasks that go with u: its own, and every task of
+// the conversations that run in its agent process, which are routed by the
+// agent key alone and would reach a new pairing with the same name.
+func removedTasks(u PairingUser) (string, []any) {
+	return `(owner = ? OR context_id IN (SELECT context_id FROM sessions WHERE agent_key = ? AND agent_key != ''))`, []any{u.Principal, u.AgentKey}
+}
+
+// removedTasksOf is removedTasks for all of users.
+func removedTasksOf(users []PairingUser) (string, []any) {
+	if len(users) == 0 {
+		return "0", nil
+	}
+	var (
+		where []string
+		args  []any
+	)
+	for _, u := range users {
+		w, a := removedTasks(u)
+		where, args = append(where, w), append(args, a...)
+	}
+	return "(" + strings.Join(where, " OR ") + ")", args
+}
+
 // DeletePairing deletes a pairing with its tokens, chat links, codes, and
-// its webhook node and the node's watches. principals are the users the
-// pairing acts as. Their schedules, watches, tasks, questions and allowed
-// tool calls go with it, and so do the channel conversations, agent
-// sessions and handles of the contexts left without tasks, so a new
-// pairing with the same name starts with none of them.
-func (s *Store) DeletePairing(ctx context.Context, name string, principals ...string) error {
+// its webhook node and the node's watches. users are the users the pairing
+// acts as. Their schedules, watches, questions and allowed tool calls go
+// with it, and so do their tasks and every task of the conversations that
+// run in their agent processes. The channel conversations, agent sessions
+// and handles of the contexts left without tasks go too, so a new pairing
+// with the same name starts with none of them.
+func (s *Store) DeletePairing(ctx context.Context, name string, users ...PairingUser) error {
 	return s.inTx(ctx, func(tx *sql.Tx) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?)`, name); err != nil {
 			return err
 		}
-		for _, p := range principals {
+		for _, u := range users {
 			for _, del := range []string{
 				`DELETE FROM schedules WHERE user_id = ?`,
 				`DELETE FROM watches WHERE on_behalf_of = ?`,
@@ -121,11 +153,12 @@ func (s *Store) DeletePairing(ctx context.Context, name string, principals ...st
 				`DELETE FROM tool_taps WHERE user_id = ?`,
 				`DELETE FROM tool_suggestions WHERE user_id = ?`,
 			} {
-				if _, err := tx.ExecContext(ctx, del, p); err != nil {
+				if _, err := tx.ExecContext(ctx, del, u.Principal); err != nil {
 					return err
 				}
 			}
-			deleted, err := deleteTasks(ctx, tx, `owner = ?`, p)
+			where, args := removedTasks(u)
+			deleted, err := deleteTasks(ctx, tx, where, args...)
 			if err != nil {
 				return err
 			}
@@ -150,7 +183,9 @@ type PairingRemoval struct {
 	Watches   int
 	// Questions are the approvals of the users.
 	Questions int
-	Tasks     int
+	// Tasks are the tasks of the users, and the tasks of others in the
+	// conversations that run in the users' agent processes.
+	Tasks int
 	// Unfinished is the number of Tasks that are canceled first.
 	Unfinished int
 	// Conversations are the channel conversations of contexts left without
@@ -161,14 +196,15 @@ type PairingRemoval struct {
 	Preferences int
 }
 
-// PairingRemoval counts what DeletePairing(name, principals...) would
-// delete, and changes nothing.
-func (s *Store) PairingRemoval(ctx context.Context, name string, principals ...string) (PairingRemoval, error) {
-	in := "(" + strings.TrimSuffix(strings.Repeat("?,", len(principals)), ",") + ")"
-	var users []any
-	for _, p := range principals {
-		users = append(users, p)
+// PairingRemoval counts what DeletePairing(name, users...) would delete,
+// and changes nothing.
+func (s *Store) PairingRemoval(ctx context.Context, name string, users ...PairingUser) (PairingRemoval, error) {
+	in := "(" + strings.TrimSuffix(strings.Repeat("?,", len(users)), ",") + ")"
+	var principals []any
+	for _, u := range users {
+		principals = append(principals, u.Principal)
 	}
+	removed, removedArgs := removedTasksOf(users)
 	var r PairingRemoval
 	for _, c := range []struct {
 		dst   *int
@@ -178,15 +214,15 @@ func (s *Store) PairingRemoval(ctx context.Context, name string, principals ...s
 		{&r.Tokens, `SELECT COUNT(*) FROM tokens WHERE pairing = ?`, []any{name}},
 		{&r.Links, `SELECT COUNT(*) FROM links WHERE pairing = ?`, []any{name}},
 		{&r.Codes, `SELECT COUNT(*) FROM codes WHERE pairing = ?`, []any{name}},
-		{&r.Schedules, `SELECT COUNT(*) FROM schedules WHERE user_id IN ` + in, users},
-		{&r.Watches, `SELECT COUNT(*) FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?) OR on_behalf_of IN ` + in, append([]any{name}, users...)},
-		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE owner IN ` + in + `))`, slices.Concat(users, users)},
-		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in, users},
-		{&r.Preferences, `SELECT COUNT(*) FROM tool_preferences WHERE user_id IN ` + in, users},
-		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE owner IN ` + in + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(users),
+		{&r.Schedules, `SELECT COUNT(*) FROM schedules WHERE user_id IN ` + in, principals},
+		{&r.Watches, `SELECT COUNT(*) FROM watches WHERE contact IN (SELECT id FROM nodes WHERE id = ?) OR on_behalf_of IN ` + in, append([]any{name}, principals...)},
+		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE ` + removed + `))`, slices.Concat(principals, removedArgs)},
+		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE ` + removed, removedArgs},
+		{&r.Preferences, `SELECT COUNT(*) FROM tool_preferences WHERE user_id IN ` + in, principals},
+		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE ` + removed + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(removedArgs),
 			string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))},
-		{&r.Conversations, `SELECT COUNT(*) FROM convs WHERE context_id IN (SELECT context_id FROM tasks WHERE owner IN ` + in + `)
-			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = convs.context_id AND tasks.owner NOT IN ` + in + `)`, slices.Concat(users, users)},
+		{&r.Conversations, `SELECT COUNT(*) FROM convs WHERE context_id IN (SELECT context_id FROM tasks WHERE ` + removed + `)
+			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = convs.context_id AND NOT ` + removed + `)`, slices.Concat(removedArgs, removedArgs)},
 	} {
 		if err := s.reads.QueryRowContext(ctx, c.query, c.args...).Scan(c.dst); err != nil {
 			return PairingRemoval{}, err
