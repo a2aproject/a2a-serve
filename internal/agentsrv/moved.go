@@ -119,8 +119,8 @@ func lastBytes(s string, n int) string {
 		return s
 	}
 	s = s[len(s)-n:]
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		return strings.TrimLeft(s[i+1:], "\n")
+	if _, rest, ok := strings.Cut(s, "\n"); ok {
+		return strings.TrimLeft(rest, "\n")
 	}
 	return strings.ToValidUTF8(s, "")
 }
