@@ -38,6 +38,9 @@ An invited agent keeps renewing its membership, even after it slept for days,
 until it is removed with ` + "`a2a-serve relay remove`" + `. One that stays away
 longer than 30 days needs a new invite.
 
+Inviting the name of an invited agent the relay removed lets that agent
+back. It joins again with its identity, so it keeps its URLs.
+
 ` + flagparse.SecretHelp,
 		Example: `  a2a-serve relay invite ci-bot
   a2a-serve relay invite ci-bot --expires 72h
@@ -59,8 +62,13 @@ longer than 30 days needs a new invite.
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(inv)
 			}
-			_, err = fmt.Fprintf(cfg.Out, "invite %s for %s, one agent, until %s:\n  %s\non that agent: a2a-serve config set --private %s --public %s --relay-token -\n",
-				inv.Name, inv.URL, inv.Expires.UTC().Format("2006-01-02 15:04 MST"), inv.Token, inv.URL, inv.URL)
+			if _, err := fmt.Fprintf(cfg.Out, "invite %s for %s, one agent, until %s:\n  %s\non that agent: a2a-serve config set --private %s --public %s --relay-token -\n",
+				inv.Name, inv.URL, inv.Expires.UTC().Format("2006-01-02 15:04 MST"), inv.Token, inv.URL, inv.URL); err != nil {
+				return err
+			}
+			if inv.LetBack != nil {
+				_, err = fmt.Fprintf(cfg.Out, "✓ let back %s (%s): it joins again with its identity when it restarts\n", inv.LetBack.Agent, inv.LetBack.Peer)
+			}
 			return err
 		},
 	}

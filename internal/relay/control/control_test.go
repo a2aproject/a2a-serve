@@ -50,6 +50,8 @@ var (
 	seen   = time.Date(2026, 11, 5, 8, 0, 0, 0, time.UTC)
 )
 
+var policy = meshadmin.Policy{Roles: []meshadmin.Role{{Name: meshadmin.RoleNode, AllowedTargets: []string{"*"}}}}
+
 func newMesh(t *testing.T) *meshtest.Mesh {
 	t.Helper()
 	m := meshtest.New(t, adminToken)
@@ -61,13 +63,21 @@ func newMesh(t *testing.T) *meshtest.Mesh {
 	return m
 }
 
-func newService(m *meshtest.Mesh) *control.Service {
-	return newServiceAllowing(m, "*@example.com")
+func newService(t *testing.T, m *meshtest.Mesh) *control.Service {
+	t.Helper()
+	return newServiceAllowing(t, m, "*@example.com")
 }
 
 // newServiceAllowing returns the service of a relay whose allowlist is allow.
-func newServiceAllowing(m *meshtest.Mesh, allow ...string) *control.Service {
-	return control.NewService(meshadmin.New(m.URL, adminToken, testHTTP), func() control.Status {
+func newServiceAllowing(t *testing.T, m *meshtest.Mesh, allow ...string) *control.Service {
+	t.Helper()
+	return newServiceIn(m, filepath.Join(t.TempDir(), "removed.json"), allow...)
+}
+
+// newServiceIn returns the service of a relay that remembers removed agents
+// in the file removed.
+func newServiceIn(m *meshtest.Mesh, removed string, allow ...string) *control.Service {
+	return control.NewService(meshadmin.New(m.URL, adminToken, testHTTP), control.NewRemovedAgents(removed), policy, func() control.Status {
 		return control.Status{URL: relayURL, PID: 42, Started: joined, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
 	}, func(m control.Member) bool {
 		return googleauth.Allowed(allow, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
@@ -132,7 +142,7 @@ func TestOperationsOverEachTransport(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			m := newMesh(t)
-			c := newClient(t, newService(m))
+			c := newClient(t, newService(t, m))
 			ctx := t.Context()
 
 			inv, err := c.Invite(ctx, control.InviteRequest{Name: "ci-bot", Hours: 48})
@@ -196,12 +206,12 @@ func TestReconcile(t *testing.T) {
 			t.Parallel()
 			m := newMesh(t)
 			for _, peer := range tt.before {
-				if _, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: peer}); err != nil {
+				if _, err := newService(t, m).Remove(t.Context(), control.RemoveRequest{Target: peer}); err != nil {
 					t.Fatal(err)
 				}
 			}
 
-			if _, _, err := newServiceAllowing(m, tt.allow...).Reconcile(t.Context()); err != nil {
+			if _, _, err := newServiceAllowing(t, m, tt.allow...).Reconcile(t.Context()); err != nil {
 				t.Fatalf("Service.Reconcile() error = %v", err)
 			}
 
@@ -216,7 +226,7 @@ func TestRemoveReportsPeopleTheRelayLetsBack(t *testing.T) {
 	t.Parallel()
 	m := newMesh(t)
 
-	res, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: "anna@example.com"})
+	res, err := newService(t, m).Remove(t.Context(), control.RemoveRequest{Target: "anna@example.com"})
 
 	if err != nil {
 		t.Fatalf("Service.Remove() error = %v", err)
@@ -252,7 +262,7 @@ func TestInvite(t *testing.T) {
 			t.Parallel()
 			m := newMesh(t)
 
-			_, err := newService(m).Invite(t.Context(), tt.req)
+			_, err := newService(t, m).Invite(t.Context(), tt.req)
 
 			if tt.wantErr {
 				if !agenterr.IsRequest(err) {
@@ -267,6 +277,104 @@ func TestInvite(t *testing.T) {
 				t.Fatalf("Service.Invite() wrong token request (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestInviteLetsBackARemovedAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		remove     []string
+		invite     string
+		wantBack   *control.Member
+		wantBanned []string
+	}{
+		{
+			name:       "invited agent",
+			remove:     []string{"ci-bot"},
+			invite:     "ci-bot",
+			wantBack:   &control.Member{Agent: "ci-bot", Invite: true, Joined: joined.Add(time.Hour), Peer: "12D3bot"},
+			wantBanned: []string{"12D3gone"},
+		},
+		{name: "another name", remove: []string{"ci-bot"}, invite: "coder", wantBanned: []string{"12D3bot", "12D3gone"}},
+		{name: "agent that signed in", remove: []string{"reviewer"}, invite: "reviewer", wantBanned: []string{"12D3reviewer", "12D3gone"}},
+		{name: "removed before the relay remembered names", invite: "old", wantBanned: []string{"12D3gone"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			m := newMesh(t)
+			removed := filepath.Join(t.TempDir(), "removed.json")
+			for _, target := range tt.remove {
+				if _, err := newServiceIn(m, removed).Remove(t.Context(), control.RemoveRequest{Target: target}); err != nil {
+					t.Fatalf("Service.Remove() error = %v", err)
+				}
+			}
+
+			inv, err := newServiceIn(m, removed).Invite(t.Context(), control.InviteRequest{Name: tt.invite})
+
+			if err != nil {
+				t.Fatalf("Service.Invite() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.wantBack, inv.LetBack); diff != "" {
+				t.Fatalf("Service.Invite() wrong agent let back (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantBanned, m.Banned(), cmp.Transformer("sort", sorted)); diff != "" {
+				t.Fatalf("Service.Invite() left wrong nodes banned (-want +got) diff = %s", diff)
+			}
+			var wantPolicies []meshadmin.Policy
+			if tt.wantBack != nil {
+				wantPolicies = []meshadmin.Policy{policy}
+			}
+			if diff := cmp.Diff(wantPolicies, m.Policies()); diff != "" {
+				t.Fatalf("Service.Invite() wrong policies applied (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestInviteLetsBackARemovedAgentOnce(t *testing.T) {
+	t.Parallel()
+	m := newMesh(t)
+	svc := newService(t, m)
+	if _, err := svc.Remove(t.Context(), control.RemoveRequest{Target: "ci-bot"}); err != nil {
+		t.Fatalf("Service.Remove() error = %v", err)
+	}
+	if _, err := svc.Invite(t.Context(), control.InviteRequest{Name: "ci-bot"}); err != nil {
+		t.Fatalf("Service.Invite() error = %v", err)
+	}
+
+	inv, err := svc.Invite(t.Context(), control.InviteRequest{Name: "ci-bot"})
+
+	if err != nil {
+		t.Fatalf("Service.Invite() error = %v", err)
+	}
+	if inv.LetBack != nil {
+		t.Fatalf("Service.Invite() let back %+v again, want nothing", inv.LetBack)
+	}
+}
+
+func TestMembersNamesRemovedAgents(t *testing.T) {
+	t.Parallel()
+	m := newMesh(t)
+	svc := newService(t, m)
+	if _, err := svc.Remove(t.Context(), control.RemoveRequest{Target: "ci-bot"}); err != nil {
+		t.Fatalf("Service.Remove() error = %v", err)
+	}
+
+	ms, err := svc.Members(t.Context(), true)
+
+	if err != nil {
+		t.Fatalf("Service.Members() error = %v", err)
+	}
+	var got []string
+	for _, mem := range ms {
+		if mem.Banned {
+			got = append(got, mem.Peer+"="+mem.Agent)
+		}
+	}
+	if diff := cmp.Diff([]string{"12D3gone=", "12D3bot=ci-bot"}, got); diff != "" {
+		t.Fatalf("Service.Members() wrong removed agents (-want +got) diff = %s", diff)
 	}
 }
 
@@ -289,7 +397,7 @@ func TestRemove(t *testing.T) {
 			t.Parallel()
 			m := newMesh(t)
 
-			_, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: tt.target})
+			_, err := newService(t, m).Remove(t.Context(), control.RemoveRequest{Target: tt.target})
 
 			if diff := cmp.Diff(tt.wantErr, err, cmp.Comparer(func(a, b error) bool { return a.Error() == b.Error() })); diff != "" {
 				t.Fatalf("Service.Remove() wrong error (-want +got) diff = %s", diff)
@@ -308,7 +416,7 @@ func TestRemoveRefusesAnAmbiguousAgent(t *testing.T) {
 	m := newMesh(t)
 	m.AddNode(meshadmin.Node{PeerID: "12D3coder2", Role: meshadmin.RoleNode, Enrolled: joined}, seen, "coder")
 
-	_, err := newService(m).Remove(t.Context(), control.RemoveRequest{Target: "coder"})
+	_, err := newService(t, m).Remove(t.Context(), control.RemoveRequest{Target: "coder"})
 
 	var conflict *agenterr.ConflictError
 	if !errors.As(err, &conflict) {
@@ -321,7 +429,7 @@ func TestRemoveRefusesAnAmbiguousAgent(t *testing.T) {
 
 func TestRemoteNeedsTheAdminToken(t *testing.T) {
 	t.Parallel()
-	svc := newService(newMesh(t))
+	svc := newService(t, newMesh(t))
 
 	_, err := remoteClient(t, svc, "wrong").Status(t.Context())
 
@@ -379,7 +487,7 @@ func TestSocketClient(t *testing.T) {
 	t.Run("restart", func(t *testing.T) {
 		t.Parallel()
 		restarted := make(chan struct{})
-		c := socketClient(t, newService(newMesh(t)), func() { close(restarted) })
+		c := socketClient(t, newService(t, newMesh(t)), func() { close(restarted) })
 		if err := c.Restart(t.Context()); err != nil {
 			t.Fatalf("Client.Restart() error = %v", err)
 		}
@@ -391,7 +499,7 @@ func TestSocketClient(t *testing.T) {
 	})
 	t.Run("restart is local only", func(t *testing.T) {
 		t.Parallel()
-		if err := remoteClient(t, newService(newMesh(t)), adminToken).Restart(t.Context()); err == nil {
+		if err := remoteClient(t, newService(t, newMesh(t)), adminToken).Restart(t.Context()); err == nil {
 			t.Fatal("Client.Restart() over the relay's URL error = nil, want an error")
 		}
 	})

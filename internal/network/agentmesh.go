@@ -31,6 +31,8 @@ import (
 
 	"github.com/google/agentmesh/api"
 	"github.com/google/agentmesh/sdk/meshnet"
+	"github.com/libp2p/go-libp2p/core/crypto"
+	"github.com/libp2p/go-libp2p/core/peer"
 )
 
 // AgentMeshBuilt reports whether this a2a-serve can join Agent Mesh relays.
@@ -105,6 +107,23 @@ func hasMeshIdentity(stateDir string) bool {
 	return err == nil && len(cred.GetBiscuit()) > 0
 }
 
+// savedPeerID returns the peer ID of the mesh identity in stateDir, or "".
+func savedPeerID(stateDir string) string {
+	key, _, err := meshnet.ReadStateDir(stateDir)
+	if err != nil {
+		return ""
+	}
+	priv, err := crypto.UnmarshalPrivateKey(key)
+	if err != nil {
+		return ""
+	}
+	id, err := peer.IDFromPrivateKey(priv)
+	if err != nil {
+		return ""
+	}
+	return id.String()
+}
+
 func (a *agentMesh) start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
@@ -136,6 +155,11 @@ func (a *agentMesh) start(ctx context.Context) error {
 	}
 	st, err := srv.Up(ctx)
 	if err != nil {
+		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
+			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {
+				err = rerr
+			}
+		}
 		return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err), srv.Close())
 	}
 	opts := meshnet.A2AOptions{Name: a.cfg.AgentName, Description: a.cfg.Description, Public: a.cfg.Public}
