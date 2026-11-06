@@ -44,7 +44,7 @@ import (
 
 func newTestContactClients(t *testing.T, st *store.Store, private network.Provider) *ContactClients {
 	t.Helper()
-	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Runtime: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil)})
+	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Config: func() *agentdir.Config { return &agentdir.Config{Name: "assistant"} }})
 	t.Cleanup(func() {
 		if err := cc.Close(context.Background()); err != nil {
 			t.Errorf("ContactClients.close() error = %v", err)

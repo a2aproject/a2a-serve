@@ -76,7 +76,7 @@ func startInspector(t *testing.T) *testInspector {
 			return []pairings.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
 		},
 		Sender:  fakeSender{},
-		Runtime: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil),
+		Config:  func() *agentdir.Config { return &agentdir.Config{Name: "coder"} },
 		BaseURL: func() string { return "https://coder.example.com" },
 		Status: func(context.Context) (*controlapi.Status, error) {
 			return &controlapi.Status{Name: "coder", Harness: "opencode"}, nil

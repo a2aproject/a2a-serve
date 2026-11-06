@@ -198,7 +198,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 	fx := newChatFixture(t, "", ch)
 	sender := newFakeTurnSender()
 	unattended := &ContextSet{}
-	rt := agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil)
+	config := func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }
 	svc := approvals.New(approvals.Deps{
 		Records:          fx.records,
 		Sender:           sender,
@@ -206,7 +206,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 		Unattended:       unattended.Has,
 		Anonymous:        func(context.Context, string) bool { return false },
 		AnonymousTimeout: fx.timings.AnonymousQuestionTimeout,
-		Runtime:          rt,
+		Config:           config,
 	})
 	turns := NewChatTurns(ChatTurnsDeps{
 		Store:      fx.store,
@@ -222,7 +222,7 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 		Unattended: unattended,
 		Budget:     budget,
 		Posted:     &PostedTurns{},
-		Runtime:    rt,
+		Config:     config,
 	})
 	turns.Start(fx.ctx)
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, channel: "fake", identity: "telegram:1", conv: "dm1"})

@@ -111,8 +111,8 @@ type Deps struct {
 	// rejected after AnonymousTimeout.
 	Anonymous        func(ctx context.Context, contextID string) bool
 	AnonymousTimeout time.Duration
-	// Runtime has the config of the agent.
-	Runtime *agentdir.Runtime
+	// Config returns the current config of the agent.
+	Config func() *agentdir.Config
 }
 
 // Service handles the questions of the agent and of agents it calls.
@@ -124,7 +124,7 @@ type Service struct {
 	unattended       func(contextID string) bool
 	anonymous        func(ctx context.Context, contextID string) bool
 	anonymousTimeout time.Duration
-	rt               *agentdir.Runtime
+	config           func() *agentdir.Config
 }
 
 // New returns the approvals service of deps.
@@ -137,7 +137,7 @@ func New(deps Deps) *Service {
 		unattended:       deps.Unattended,
 		anonymous:        deps.Anonymous,
 		anonymousTimeout: deps.AnonymousTimeout,
-		rt:               deps.Runtime,
+		config:           deps.Config,
 	}
 }
 
@@ -506,7 +506,7 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	if err := hitlPage.Execute(w, map[string]any{
-		"Agent": s.rt.Config().Name, "Text": q.Display(), "Options": q.Options,
+		"Agent": s.config().Name, "Text": q.Display(), "Options": q.Options,
 		"Answered": rec.Answer, "By": auth.DisplayPrincipal(rec.AnsweredBy),
 	}); err != nil {
 		slog.Warn("rendering hitl page", "error", err)

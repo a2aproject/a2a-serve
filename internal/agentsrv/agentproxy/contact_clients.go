@@ -50,7 +50,7 @@ type ContactClients struct {
 	private network.Provider
 	nodes   *nodes.Host
 	ads     *gossip.Table
-	rt      *agentdir.Runtime
+	config  func() *agentdir.Config
 
 	// builds joins the concurrent builds of one contact's client, so that
 	// two calls don't build one each and destroy the other's.
@@ -70,8 +70,8 @@ type ContactClientsDeps struct {
 	Private network.Provider
 	Nodes   *nodes.Host
 	Ads     *gossip.Table
-	// Runtime has the config of the agent.
-	Runtime *agentdir.Runtime
+	// Config returns the current config of the agent.
+	Config func() *agentdir.Config
 }
 
 var _ approvals.RemoteAnswerer = (*ContactClients)(nil)
@@ -83,7 +83,7 @@ func NewContactClients(deps ContactClientsDeps) *ContactClients {
 		private: deps.Private,
 		nodes:   deps.Nodes,
 		ads:     deps.Ads,
-		rt:      deps.Runtime,
+		config:  deps.Config,
 		clients: map[string]*contactClient{},
 	}
 }
@@ -294,7 +294,7 @@ func (cc *ContactClients) isNode(ctx context.Context, name string) (bool, error)
 // at authenticated; the node admits the agent hosting it explicitly.
 func (cc *ContactClients) nodeCaller(user auth.Principal, hops int) auth.Principal {
 	return auth.Principal{
-		ID: "agent:" + cc.rt.Config().Name, Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
+		ID: "agent:" + cc.config().Name, Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
 		Identity: auth.Identity{Network: network.ListenerHarness, Hops: hops + 1},
 	}
 }

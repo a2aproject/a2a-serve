@@ -65,8 +65,8 @@ type Deps struct {
 	Tasks     *store.TaskStore
 	Approvals *approvals.Service
 	Sender    Sender
-	// Runtime has the config of the agent.
-	Runtime *agentdir.Runtime
+	// Config returns the current config of the agent.
+	Config  func() *agentdir.Config
 	BaseURL func() string
 	// ListPairings describes the agent's pairings.
 	ListPairings func(ctx context.Context) ([]pairings.Pairing, error)
@@ -403,7 +403,7 @@ func (in *Inspector) handleConversation(w http.ResponseWriter, r *http.Request, 
 		http.Error(w, "No such conversation.", http.StatusNotFound)
 		return
 	}
-	page := conversationPage{Agent: in.deps.Runtime.Config().Name, ContextID: id}
+	page := conversationPage{Agent: in.deps.Config().Name, ContextID: id}
 	if ch, conv, err := in.deps.Store.ConvOf(ctx, id); err == nil {
 		page.Chat = ch + " " + conv
 	}

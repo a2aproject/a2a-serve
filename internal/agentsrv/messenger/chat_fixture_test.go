@@ -178,9 +178,11 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...channel.Channel) *cha
 		Records:    fx.records,
 		Supervisor: fx.supervisor,
 		Bus:        fx.bus,
-		Runtime:    agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder", Approvals: agentdir.ApprovalsConfig{OwnerChat: ownerChat}}, nil),
-		Anonymous:  func(context.Context, string) bool { return false },
-		Timings:    fx.timings,
+		Config: func() *agentdir.Config {
+			return &agentdir.Config{Name: "coder", Approvals: agentdir.ApprovalsConfig{OwnerChat: ownerChat}}
+		},
+		Anonymous: func(context.Context, string) bool { return false },
+		Timings:   fx.timings,
 	})
 	for _, ch := range chs {
 		fx.supervisor.Add(ch)

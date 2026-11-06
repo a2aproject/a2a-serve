@@ -127,7 +127,7 @@ func TestRendererSendsFinalTextWhenFinalEditFails(t *testing.T) {
 			t.Parallel()
 			ctx := context.Background()
 			ch := &flakyChannel{fakeChannel: newFakeChannel("fake")}
-			a := &ChatApprovals{rt: agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil), timings: Timings{SendRetry: time.Millisecond}}
+			a := &ChatApprovals{config: func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }, timings: Timings{SendRetry: time.Millisecond}}
 			rd := newRenderer(a, ch, "conv", channel.Ref{}, auth.Principal{})
 			rd.onArtifact(&a2a.Artifact{ID: "a", Parts: a2a.ContentParts{a2a.NewTextPart("partial")}}, false)
 			rd.flush(ctx, true)

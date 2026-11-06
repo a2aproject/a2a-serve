@@ -368,7 +368,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return nil
 	})
 	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
-	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Runtime: s.rt})
+	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
 	closers.push(s.clients.Close)
 	s.keys = newAgentKeys(s.store.Sessions())
 	s.claims = newCallClaims(CallClaimsDeps{
@@ -390,7 +390,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Records:    records,
 		Supervisor: s.supervisor,
 		Bus:        s.bus,
-		Runtime:    s.rt,
+		Config:     s.rt.Config,
 		Anonymous:  s.keys.anonymous,
 		Timings:    s.timings.messenger(),
 	})
@@ -405,7 +405,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Unattended:       s.unattended.Has,
 			Anonymous:        s.keys.anonymous,
 			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
-			Runtime:          s.rt,
+			Config:           s.rt.Config,
 		})
 		s.pairings = pairings.New(pairings.Deps{
 			Store:     s.store,
@@ -432,7 +432,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Unattended: s.unattended,
 			Budget:     s.budget,
 			Posted:     posted,
-			Runtime:    s.rt,
+			Config:     s.rt.Config,
 		})
 		s.watches = agentproxy.NewWatches(ctx, agentproxy.WatchesDeps{
 			Store:   s.store,
@@ -481,7 +481,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Approvals:    s.approvals,
 		ListPairings: s.pairings.List,
 		Sender:       s.sender,
-		Runtime:      s.rt,
+		Config:       s.rt.Config,
 		BaseURL:      s.bestURL,
 		Status:       s.status,
 		MarkAnswered: s.chatApprovals.MarkAnswered,

@@ -328,7 +328,7 @@ func (rd *renderer) send(ctx context.Context, text string) channel.Ref {
 	return ref
 }
 
-func (rd *renderer) subject() string { return rd.a.rt.Config().Name }
+func (rd *renderer) subject() string { return rd.a.config().Name }
 
 func (rd *renderer) final(ctx context.Context, st a2a.TaskStatus) {
 	rd.showMu.Lock()

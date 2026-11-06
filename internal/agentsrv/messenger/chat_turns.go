@@ -54,7 +54,7 @@ type ChatTurns struct {
 	budget     Budget
 	// downloads holds a place for each message being prepared.
 	downloads chan struct{}
-	rt        *agentdir.Runtime
+	config    func() *agentdir.Config
 }
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
@@ -75,8 +75,8 @@ type ChatTurnsDeps struct {
 	Budget Budget
 	// Posted are the turns posted into contexts, waiting to be sent.
 	Posted *PostedTurns
-	// Runtime has the config of the agent.
-	Runtime *agentdir.Runtime
+	// Config returns the current config of the agent.
+	Config func() *agentdir.Config
 }
 
 // maxDownloads bounds the messages whose attachments are downloaded at once,
@@ -114,7 +114,7 @@ func NewChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		budget:     deps.Budget,
 		downloads:  make(chan struct{}, maxDownloads),
 		posted:     deps.Posted,
-		rt:         deps.Runtime,
+		config:     deps.Config,
 	}
 }
 
@@ -219,7 +219,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 			c.reply(ctx, ch, in, "Couldn't link your account. Try again.")
 			return
 		}
-		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.rt.Config().Name))
+		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.config().Name))
 		return
 	}
 	p, err := c.chain.Authenticate(ctx, auth.Request{Channel: &in})
@@ -277,7 +277,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		return
 	case isCommand(in.Text, "start"):
 		<-t.turn
-		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.rt.Config().Name))
+		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.config().Name))
 		return
 	}
 

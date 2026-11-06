@@ -69,7 +69,7 @@ func newService(t *testing.T, h a2asrv.RequestHandler, opts ...func(*Deps)) *Ser
 		}),
 		Sender:   h,
 		Notifier: &fakeNotifier{},
-		Runtime:  agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "assistant"}, nil),
+		Config:   func() *agentdir.Config { return &agentdir.Config{Name: "assistant"} },
 	}
 	for _, opt := range opts {
 		opt(&deps)
