@@ -113,6 +113,17 @@ type Request struct {
 // themselves, such as a request without a token on the public URL.
 var ErrNoCredential = errors.New("this agent needs a credential")
 
+// ErrUnknownToken is returned for a caller whose token the agent doesn't
+// know, such as one that was revoked or replaced. It matches
+// [ErrNoCredential].
+var ErrUnknownToken error = unknownTokenError{}
+
+type unknownTokenError struct{}
+
+func (unknownTokenError) Error() string { return "the token is no longer valid" }
+
+func (unknownTokenError) Is(target error) bool { return target == ErrNoCredential }
+
 // RefusedError is returned for a known caller the policy refuses.
 type RefusedError struct {
 	Identity Identity
@@ -140,7 +151,8 @@ type Chain struct {
 }
 
 // Authenticate returns the principal of r: [ErrNoCredential] when r proves
-// nothing, or a [RefusedError] when the policy refuses who it proves.
+// nothing, [ErrUnknownToken] when it carries a token that proves nothing,
+// or a [RefusedError] when the policy refuses who it proves.
 func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) {
 	var (
 		id  Identity
@@ -154,7 +166,11 @@ func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) 
 	if err != nil {
 		return Principal{}, err
 	}
-	return a.Resolve(id)
+	p, err := a.Resolve(id)
+	if _, hasToken := BearerToken(r.Header.Get("Authorization")); hasToken && r.Channel == nil && errors.Is(err, ErrNoCredential) {
+		return Principal{}, ErrUnknownToken
+	}
+	return p, err
 }
 
 // Resolve gives an identity its role with the policy in force.

@@ -121,9 +121,16 @@ func (s *Server) routes(l listener) http.Handler {
 		s.inspector.Register(mux)
 	}
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
-	mux.Handle("POST /{$}", jsonhttp.RequireJSON(jsonhttp.LimitBody(s.authenticate(l.kind, jsonrpc))))
-	mux.Handle("/", jsonhttp.RequireJSON(jsonhttp.LimitBody(s.authenticate(l.kind, rest))))
+	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, jsonrpc))
+	mux.Handle("/", s.a2aRoute(l.kind, protocolREST, rest))
 	return http.NewCrossOriginProtection().Handler(mux)
+}
+
+// a2aRoute serves an A2A transport to authenticated callers, and answers
+// a body over the limit as an error of p.
+func (s *Server) a2aRoute(kind string, p a2aProtocol, h http.Handler) http.Handler {
+	limit := jsonhttp.Limit{Max: jsonhttp.MaxBody, Idle: jsonhttp.ReadIdleTimeout, TooLarge: p.tooLarge}
+	return jsonhttp.RequireJSON(limit.Handler(s.authenticate(kind, p.readBody(h))))
 }
 
 // base returns the configured base URL or derives it from the request.
@@ -158,19 +165,24 @@ func (s *Server) listenerURL(kind string) string {
 func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.chain.Authenticate(r.Context(), auth.Request{Listener: kind, RemoteAddr: r.RemoteAddr, Header: r.Header})
+		proto := protocolOf(r)
 		var refused *auth.RefusedError
 		switch {
 		case errors.As(err, &refused):
 			slog.Info("refused a caller", "caller", refused.Identity.Describe())
-			jsonhttp.Error(w, http.StatusForbidden, refused.Error()+"; "+pairHint)
+			proto.writeError(w, http.StatusForbidden, a2a.ErrUnauthorized, refused.Error()+"; "+pairHint)
+			return
+		case errors.Is(err, auth.ErrUnknownToken):
+			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
+			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, err.Error()+": it was revoked or replaced; "+pairHint)
 			return
 		case errors.Is(err, auth.ErrNoCredential):
 			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
-			jsonhttp.Error(w, http.StatusUnauthorized, unauthorizedHint(kind))
+			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, unauthorizedHint(kind))
 			return
 		case err != nil:
 			slog.Error("authentication failed", "error", err)
-			jsonhttp.Error(w, http.StatusInternalServerError, "authentication failed")
+			proto.writeError(w, http.StatusInternalServerError, a2a.ErrInternalError, "authentication failed")
 			return
 		}
 		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))

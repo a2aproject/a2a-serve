@@ -116,6 +116,8 @@ type Limit struct {
 	Total time.Duration
 	// Idle bounds the time between reads that return data.
 	Idle time.Duration
+	// TooLarge answers a body over Max; nil answers with [Error].
+	TooLarge func(http.ResponseWriter)
 }
 
 // Handler refuses bodies larger than l.Max and sets the connection's read
@@ -126,6 +128,10 @@ type Limit struct {
 func (l Limit) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > l.Max {
+			if l.TooLarge != nil {
+				l.TooLarge(w)
+				return
+			}
 			Error(w, http.StatusRequestEntityTooLarge, "request body too large")
 			return
 		}
