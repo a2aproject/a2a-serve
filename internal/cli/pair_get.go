@@ -109,6 +109,9 @@ func renderPairing(p *controlapi.Pairing) string {
 		codes = append(codes, "expires "+e.Format(time.TimeOnly))
 	}
 	line("codes", orNone(strings.Join(codes, ", ")))
+	if len(p.Allowed) > 0 {
+		line("allowed", strings.Join(p.Allowed, ", "))
+	}
 	return sb.String()
 }
 

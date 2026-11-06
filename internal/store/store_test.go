@@ -416,13 +416,18 @@ func TestPairingRemoval(t *testing.T) {
 			t.Fatalf("SetContext(%s) error = %v", conv, err)
 		}
 	}
+	for user, rule := range map[string]string{"pair:anna": "edit", "pair:bob": "read"} {
+		if err := s.AddToolPreference(ctx, user, rule); err != nil {
+			t.Fatalf("AddToolPreference(%s) error = %v", user, err)
+		}
+	}
 
 	got, err := s.PairingRemoval(ctx, "anna", "pair:anna", "node:anna")
 	if err != nil {
 		t.Fatalf("Store.PairingRemoval() error = %v", err)
 	}
 
-	want := PairingRemoval{Tokens: 1, Links: 1, Codes: 1, Schedules: 1, Watches: 1, Questions: 1, Tasks: 3, Unfinished: 2, Conversations: 1}
+	want := PairingRemoval{Tokens: 1, Links: 1, Codes: 1, Schedules: 1, Watches: 1, Questions: 1, Tasks: 3, Unfinished: 2, Conversations: 1, Preferences: 1}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Store.PairingRemoval() wrong result (-want +got) diff = %s", diff)
 	}
@@ -479,6 +484,17 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	if err := s.PutCallTask(ctx, CallTask{ContextID: "c-anna", Agent: "ben", TaskID: "r1", RemoteContextID: "rc"}); err != nil {
 		t.Fatalf("PutCallTask() error = %v", err)
 	}
+	for _, contextID := range []string{"c-anna", "c-shared"} {
+		if err := s.AddToolGrant(ctx, contextID, "pair:bob", "edit"); err != nil {
+			t.Fatalf("AddToolGrant(%s) error = %v", contextID, err)
+		}
+	}
+	if err := s.AddToolPreference(ctx, "pair:anna", "edit"); err != nil {
+		t.Fatalf("AddToolPreference() error = %v", err)
+	}
+	if _, err := s.CountToolTap(ctx, "pair:anna", "edit", "c-anna"); err != nil {
+		t.Fatalf("CountToolTap() error = %v", err)
+	}
 
 	if err := s.DeletePairing(ctx, "anna", "pair:anna", "node:anna"); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
@@ -524,6 +540,18 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	}
 	if ok, err := s.HasCallTask(ctx, "c-anna", "ben", "r1"); err != nil || ok {
 		t.Fatalf("HasCallTask() after DeletePairing() = %v, %v, want false, nil", ok, err)
+	}
+	if rules, err := s.ToolPreferences(ctx, "pair:anna"); err != nil || len(rules) != 0 {
+		t.Fatalf("ToolPreferences() of the removed user = %q, %v, want none", rules, err)
+	}
+	if n, err := s.ToolTaps(ctx, "pair:anna", "edit"); err != nil || n != 0 {
+		t.Fatalf("ToolTaps() of the removed user = %d, %v, want 0", n, err)
+	}
+	if rules, err := s.ToolGrants(ctx, "c-anna", "pair:bob"); err != nil || len(rules) != 0 {
+		t.Fatalf("ToolGrants() of the removed user's conversation = %q, %v, want none", rules, err)
+	}
+	if rules, err := s.ToolGrants(ctx, "c-shared", "pair:bob"); err != nil || len(rules) != 1 {
+		t.Fatalf("ToolGrants() of a conversation with other tasks = %q, %v, want one", rules, err)
 	}
 	var blobs int
 	if err := s.db.QueryRow(`SELECT COUNT(*) FROM blobs`).Scan(&blobs); err != nil {

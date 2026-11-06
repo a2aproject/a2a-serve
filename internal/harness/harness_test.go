@@ -365,7 +365,7 @@ func TestBootstrap(t *testing.T) {
 		want     string
 		wantKept string
 	}{
-		{harness: "opencode", file: ".config/opencode/opencode.json", want: `"bash": "ask"`, wantKept: `{"theme": "dark"}`},
+		{harness: "opencode", file: ".config/opencode/opencode.json", want: `"*": "ask"`, wantKept: `{"theme": "dark"}`},
 		{
 			harness: "claude", file: ".claude/settings.json", want: `"defaultMode": "default"`,
 			wantKept: "{\n  \"enableAllProjectMcpServers\": false,\n  \"theme\": \"dark\"\n}\n",
@@ -456,5 +456,24 @@ func TestProfileNamesAreNotReserved(t *testing.T) {
 		if slices.Contains(agentdir.ReservedHarnesses, name) {
 			t.Fatalf("ProfileNames() = %v, want none of the reserved %v", ProfileNames(), agentdir.ReservedHarnesses)
 		}
+	}
+}
+
+func TestOpencodeAsksBeforeToolsThatChangeThings(t *testing.T) {
+	t.Parallel()
+	var got map[string]any
+	if err := json.Unmarshal([]byte(opencodePermission), &got); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	want := map[string]any{
+		"*": "ask", "glob": "allow", "grep": "allow", "list": "allow", "lsp": "allow", "question": "allow",
+		"read":  map[string]any{"*": "allow", "*.env": "ask", "*.env.*": "ask", "*.env.example": "allow"},
+		"skill": "allow", "task": "allow", "todowrite": "allow", "websearch": "allow",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("opencode permission wrong result (-want +got) diff = %s", diff)
+	}
+	if !strings.HasPrefix(opencodePermission, `{"*":"ask",`) {
+		t.Fatalf("opencode permission = %s, want \"*\" first, since opencode applies the last rule that matches", opencodePermission)
 	}
 }

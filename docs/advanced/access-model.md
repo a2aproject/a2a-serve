@@ -88,7 +88,7 @@ coder (opencode) running for 2h, pid 41233
 | Caller | Can |
 |---|---|
 | **You**, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
-| **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, and let their conversations call this agent's contacts |
+| **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, allow tool calls in their own tasks without asking, and let their conversations call this agent's contacts |
 | **Anyone**, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
 
 ### Channels
@@ -135,7 +135,7 @@ Every request yields one identity: verified claims, and where each came from.
 | Role | Rights |
 |---|---|
 | `owner` | Sees every task, answers any approval, uses the inspector |
-| `authenticated` | Starts tasks, sees and approves its own tasks; its conversations may call contacts |
+| `authenticated` | Starts tasks, sees and approves its own tasks, and allows tool calls in them without asking; its conversations may call contacts |
 | `anonymous` | Starts tasks in its own conversation; never answers approvals, calls agents or uses the schedules agent |
 
 ### Policy

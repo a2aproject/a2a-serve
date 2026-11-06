@@ -19,12 +19,13 @@ import (
 	"fmt"
 	"net/url"
 	"os"
-	"path"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // HarnessACP is the harness which runs any ACP agent given as a command.
@@ -175,10 +176,13 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Policy.validate()...)
-	for flag, patterns := range map[string][]string{"allow-tools": c.Approvals.Allow, "deny-tools": c.Approvals.Deny} {
-		for _, p := range patterns {
-			if !matchesToolKind(p) {
-				invalid(flag, p, "want ACP tool kinds (%s), or a glob such as *", strings.Join(ToolKinds, ", "))
+	for _, l := range []struct {
+		flag     string
+		patterns []string
+	}{{"allow-tools", c.Approvals.Allow}, {"deny-tools", c.Approvals.Deny}} {
+		for _, p := range l.patterns {
+			if err := toolrules.Validate(p); err != nil {
+				invalid(l.flag, p, "%v", err)
 			}
 		}
 	}
@@ -202,15 +206,7 @@ func (c *Config) Validate() error {
 
 // ToolKinds are the ACP tool kinds which --allow-tools and --deny-tools
 // match.
-var ToolKinds = []string{"read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"}
-
-// matchesToolKind reports whether the glob p matches an ACP tool kind.
-func matchesToolKind(p string) bool {
-	return slices.ContainsFunc(ToolKinds, func(kind string) bool {
-		ok, err := path.Match(p, kind)
-		return err == nil && ok
-	})
-}
+var ToolKinds = toolrules.Kinds
 
 func (p PolicyConfig) validate() []error {
 	var errs []error

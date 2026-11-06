@@ -74,6 +74,9 @@ type Pairing struct {
 	// are stored hashed, so they can't be shown again.
 	PendingCodes []time.Time
 	Node         *NodeDetails
+	// Allowed are the tool calls the pairing allowed in all its
+	// conversations.
+	Allowed []string
 }
 
 // Token describes a token issued to a pairing.
@@ -154,6 +157,8 @@ type RemovalPreview struct {
 	// RunningTasks is the number of Tasks that would be canceled first.
 	RunningTasks  int
 	Conversations int
+	// Allowed is the number of tool calls allowed in all conversations.
+	Allowed int
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string
 }

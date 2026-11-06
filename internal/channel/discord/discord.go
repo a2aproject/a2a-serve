@@ -237,6 +237,7 @@ func registerCommands(api readyAPI, appID string) {
 		}},
 		{Name: "new", Description: "Start a new conversation"},
 		{Name: "stop", Description: "Stop the current task"},
+		{Name: "allowed", Description: "Show and remove what runs without asking for you"},
 	}
 	if _, err := api.ApplicationCommandBulkOverwrite(appID, "", cmds); err != nil {
 		slog.Warn("discord: registering commands", "error", err)
@@ -614,6 +615,9 @@ func respond(s *discordgo.Session, i *discordgo.InteractionCreate, r *discordgo.
 	}
 }
 
+// maxButtonLabel is the longest label Discord takes for a button.
+const maxButtonLabel = 80
+
 func components(q *channel.Question) []discordgo.MessageComponent {
 	if q == nil {
 		return []discordgo.MessageComponent{}
@@ -627,6 +631,9 @@ func components(q *channel.Question) []discordgo.MessageComponent {
 			style = discordgo.PrimaryButton
 		case len(q.Options) - 1:
 			style = discordgo.DangerButton
+		}
+		if r := []rune(label); len(r) > maxButtonLabel {
+			label = string(r[:maxButtonLabel-1]) + "…"
 		}
 		row = append(row, discordgo.Button{Label: label, Style: style, CustomID: channel.ActionData(q.ID, i)})
 		if len(row) == 5 {

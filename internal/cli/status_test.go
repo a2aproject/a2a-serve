@@ -118,6 +118,24 @@ func TestPrintStatusAccess(t *testing.T) {
 	}
 }
 
+func TestPrintStatusTools(t *testing.T) {
+	t.Parallel()
+	var out strings.Builder
+	cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+	st := &controlapi.Status{
+		Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000",
+		AllowTools: []string{"read", "tool:grafana.*", "command:kubectl get *"}, DenyTools: []string{"command:git push *"},
+	}
+	if err := printStatus(cfg, st, nil, "", ""); err != nil {
+		t.Fatalf("printStatus() error = %v", err)
+	}
+	want := "  tools    allow read, tool:grafana.*, command:kubectl get *\n" +
+		"           deny command:git push *\n"
+	if !strings.Contains(out.String(), want) {
+		t.Fatalf("printStatus() = %q, want the tools block %q", out.String(), want)
+	}
+}
+
 func TestStatusJSONNamesAgentOnce(t *testing.T) {
 	t.Parallel()
 	st := &controlapi.Status{Name: "coder", Harness: "opencode", Dir: "/work"}

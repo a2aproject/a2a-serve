@@ -121,7 +121,7 @@ func TestStatusAccess(t *testing.T) {
 	}
 }
 
-func TestDenyToolsEndAlwaysApprovals(t *testing.T) {
+func TestDenyToolsEndGrants(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -129,7 +129,7 @@ func TestDenyToolsEndAlwaysApprovals(t *testing.T) {
 		want      string
 	}{
 		{name: "more denied tools", approvals: agentdir.ApprovalsConfig{Deny: []string{"execute"}}, want: "whoami denied."},
-		{name: "more allowed tools", approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}, want: "Ran whoami (remembered)."},
+		{name: "more allowed tools", approvals: agentdir.ApprovalsConfig{Allow: []string{"read"}}, want: "Ran whoami (allow)."},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -137,8 +137,8 @@ func TestDenyToolsEndAlwaysApprovals(t *testing.T) {
 			ts := startServer(t, serverOpts{})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
 			asked := send(t, c, userText("whoami", "", ""))
-			wantResult(t, send(t, c, userText("always", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Ran whoami (always).")
-			wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "Ran whoami (remembered).")
+			wantResult(t, send(t, c, userText("always", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Ran whoami (allow).")
+			wantResult(t, send(t, c, userText("whoami", "", asked.ContextID)), a2a.TaskStateCompleted, "Ran whoami (allow).")
 			saved, err := ts.dir.ReadConfig()
 			if err != nil {
 				t.Fatalf("ReadConfig() error = %v", err)
@@ -152,9 +152,48 @@ func TestDenyToolsEndAlwaysApprovals(t *testing.T) {
 				t.Fatalf("ReloadConfig() error = %v", err)
 			}
 
-			wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, tc.want)
+			wantResult(t, send(t, c, userText("whoami", "", asked.ContextID)), a2a.TaskStateCompleted, tc.want)
 		})
 	}
+}
+
+func TestDenyToolsAnswersPendingApprovalsAndEndsPreferences(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	waiting := send(t, c, userText("ask", "", ""))
+	if err := ts.srv.prefs.Allow(context.Background(), "pair:me", "command:whoami *"); err != nil {
+		t.Fatalf("Preferences.Allow() error = %v", err)
+	}
+	wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "Ran whoami (allow).")
+	saved, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	saved.Approvals.Deny = []string{"execute"}
+	if err := ts.dir.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	if _, err := controlapi.NewClient(ts.dir).ReloadConfig(context.Background()); err != nil {
+		t.Fatalf("ReloadConfig() error = %v", err)
+	}
+
+	wantResult(t, waitState(t, c, waiting.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
+	wantResult(t, send(t, c, userText("whoami", "", "")), a2a.TaskStateCompleted, "whoami denied.")
+}
+
+func TestPreferenceAnswersPendingApprovals(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	waiting := send(t, bob, userText("ask", "", ""))
+
+	if err := ts.srv.prefs.Allow(context.Background(), "pair:bob", "command:git push *"); err != nil {
+		t.Fatalf("Preferences.Allow() error = %v", err)
+	}
+
+	wantResult(t, waitState(t, bob, waiting.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
 }
 
 func TestAllowToolsAnswersPendingApprovals(t *testing.T) {

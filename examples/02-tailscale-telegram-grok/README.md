@@ -112,7 +112,10 @@ Now write to it like to any chat:
   and `/stop` cancels the running task.
 - Answers stream in by editing one message.
 - When the agent wants to run something, you get the request with buttons:
-  allow once, always allow, or reject. Only you, the owner, can answer.
+  allow once, always allow calls like it in this conversation, or deny. Only
+  you, the owner, can answer. After you always allow the same calls in three
+  conversations, the chat offers to remember it; `/allowed` lists and
+  removes what you allowed.
 
 Try: `Create a file notes.md with three ideas for a weekend project.`
 

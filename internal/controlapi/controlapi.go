@@ -62,9 +62,13 @@ type Status struct {
 	MCPServers []MCPServerStatus `json:"mcpServers,omitempty"`
 	Skills     []project.Skill   `json:"skills,omitempty"`
 	// ProjectError is why the project's MCP servers or skills couldn't be read.
-	ProjectError string        `json:"projectError,omitempty"`
-	Backup       *BackupStatus `json:"backup,omitempty"`
-	Access       *Access       `json:"access,omitempty"`
+	ProjectError string `json:"projectError,omitempty"`
+	// AllowTools and DenyTools are the rules that decide tool calls without
+	// asking.
+	AllowTools []string      `json:"allowTools,omitempty"`
+	DenyTools  []string      `json:"denyTools,omitempty"`
+	Backup     *BackupStatus `json:"backup,omitempty"`
+	Access     *Access       `json:"access,omitempty"`
 }
 
 // Access describes who may call the agent.
@@ -192,6 +196,9 @@ type Pairing struct {
 	// are stored hashed, so they can't be shown again.
 	PendingCodes []time.Time  `json:"pendingCodes"`
 	Node         *NodeDetails `json:"node,omitempty"`
+	// Allowed are the tool calls the pairing allowed in all its
+	// conversations.
+	Allowed []string `json:"allowed,omitempty"`
 }
 
 // PairingToken describes a token issued to a pairing.
@@ -281,6 +288,8 @@ type RemovalPreview struct {
 	// RunningTasks is the number of Tasks that would be canceled first.
 	RunningTasks  int `json:"runningTasks"`
 	Conversations int `json:"conversations"`
+	// Allowed is the number of tool calls allowed in all conversations.
+	Allowed int `json:"allowed"`
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string `json:"agentHomes"`
 }

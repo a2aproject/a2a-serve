@@ -217,10 +217,10 @@ func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	}
 }
 
-func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
+func TestToolDeciderReadsCurrentConfig(t *testing.T) {
 	t.Parallel()
 	cfg := &agentdir.Config{}
-	rules := liveToolRules{config: func() *agentdir.Config { return cfg }, notes: newToolNotes()}
+	rules := &toolDecider{config: func() *agentdir.Config { return cfg }, notes: newToolNotes()}
 	q := a2aacp.Question{Options: []string{a2aacp.OptionOnce, a2aacp.OptionReject}, Tool: &a2aacp.ToolCall{Kind: "read"}}
 
 	if _, ok := rules.AutoAnswer(context.Background(), nil, q); ok {
@@ -230,6 +230,49 @@ func TestLiveToolRulesReadCurrentConfig(t *testing.T) {
 	got, ok := rules.AutoAnswer(context.Background(), nil, q)
 	if !ok || got.Option != a2aacp.OptionOnce {
 		t.Fatalf("AutoAnswer() after allowing read = %+v, %v, want %q", got, ok, a2aacp.OptionOnce)
+	}
+}
+
+func TestToolDeciderAnswers(t *testing.T) {
+	t.Parallel()
+	rules := agentdir.ApprovalsConfig{
+		Allow: []string{"tool:grafana.*", "command:kubectl get *"},
+		Deny:  []string{"execute", "other"},
+	}
+	decider := &toolDecider{
+		config:  func() *agentdir.Config { return &agentdir.Config{Approvals: rules} },
+		servers: func() []string { return []string{"grafana"} },
+		notes:   newToolNotes(),
+	}
+	options := []string{a2aacp.OptionAlways, a2aacp.OptionOnce, a2aacp.OptionReject}
+	tests := []struct {
+		name    string
+		options []string
+		tool    a2aacp.ToolCall
+		want    string
+		wantOK  bool
+	}{
+		{name: "allowed MCP tool of claude", tool: a2aacp.ToolCall{Kind: "other", Title: "mcp__grafana__query"}, want: a2aacp.OptionOnce, wantOK: true},
+		{name: "allowed MCP tool of opencode", tool: a2aacp.ToolCall{Kind: "other", Title: "grafana_query"}, want: a2aacp.OptionOnce, wantOK: true},
+		{name: "denied MCP tool", tool: a2aacp.ToolCall{Kind: "other", Title: "mcp__gmail__send"}, want: a2aacp.OptionReject, wantOK: true},
+		{name: "allowed command", tool: a2aacp.ToolCall{Kind: "execute", Title: "kubectl get pods", Input: map[string]any{"command": "kubectl get pods"}}, want: a2aacp.OptionOnce, wantOK: true},
+		{name: "denied command", tool: a2aacp.ToolCall{Kind: "execute", Title: "kubectl get pods; rm -rf /", Input: map[string]any{"command": "kubectl get pods; rm -rf /"}}, want: a2aacp.OptionReject, wantOK: true},
+		{name: "allowed without once", options: []string{a2aacp.OptionAlways, a2aacp.OptionReject}, tool: a2aacp.ToolCall{Kind: "other", Title: "grafana_query"}, want: a2aacp.OptionAlways, wantOK: true},
+		{name: "denied without reject", options: []string{a2aacp.OptionOnce}, tool: a2aacp.ToolCall{Kind: "execute"}, want: a2aacp.OptionCancel, wantOK: true},
+		{name: "no rule", tool: a2aacp.ToolCall{Kind: "edit"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			opts := tc.options
+			if opts == nil {
+				opts = options
+			}
+			got, ok := decider.AutoAnswer(context.Background(), nil, a2aacp.Question{Options: opts, Tool: &tc.tool})
+			if ok != tc.wantOK || got.Option != tc.want {
+				t.Fatalf("AutoAnswer() = %q, %v, want %q, %v", got.Option, ok, tc.want, tc.wantOK)
+			}
+		})
 	}
 }
 
@@ -570,6 +613,25 @@ func TestRejectedToolCallIsNotedInTheResult(t *testing.T) {
 	}
 }
 
+func TestAlwaysAllowsTheRuleInTheConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+	q := approvals.FromStatus(asked.Status)
+	want := []approvals.Option{{ID: "once", Label: "Allow once"}, {ID: "always", Label: "Always allow git push *"}, {ID: "reject", Label: "Deny"}}
+	if q == nil || !cmp.Equal(want, q.Options) {
+		t.Fatalf("question = %+v, want the options %v", q, want)
+	}
+
+	wantResult(t, send(t, c, userText("always", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+
+	wantResult(t, send(t, c, userText("ask", "", asked.ContextID)), a2a.TaskStateCompleted, "Pushed (allow).")
+	if other := send(t, c, userText("ask", "", "")); other.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task in another conversation state = %s, want %s", other.Status.State, a2a.TaskStateInputRequired)
+	}
+}
+
 // Not parallel: it replaces the default logger, which the server logs to.
 func TestApprovalAnswersAreLogged(t *testing.T) {
 	var logs lockedBuffer
@@ -580,15 +642,18 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 
 	answered := send(t, c, userText("ask", "", ""))
-	send(t, c, userText("approve", string(answered.ID), answered.ContextID))
+	send(t, c, userText("always", string(answered.ID), answered.ContextID))
+	granted := send(t, c, userText("ask", "", answered.ContextID))
 	if err := ts.srv.rt.Update(func(c *agentdir.Config) error { c.Approvals.Deny = []string{"execute"}; return nil }); err != nil {
 		t.Fatalf("Runtime.Update() error = %v", err)
 	}
 	denied := send(t, c, userText("ask", "", ""))
 
 	for _, want := range []string{
-		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me tool="git push" option=once`, answered.ID),
-		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=deny-tools tool="git push" option=reject`, denied.ID),
+		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me kind=execute option=always`, answered.ID),
+		fmt.Sprintf(`msg="tool calls allowed for the conversation" task=%s context=%s rule="command:git push *" user=pair:me by=pair:me`, answered.ID, answered.ContextID),
+		fmt.Sprintf(`msg="approval answered by a grant of the conversation" task=%s rule="command:git push *" kind=execute user=pair:me option=once`, granted.ID),
+		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=execute kind=execute option=reject`, denied.ID),
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("logs have no line with %q; logs:\n%s", want, logs.String())

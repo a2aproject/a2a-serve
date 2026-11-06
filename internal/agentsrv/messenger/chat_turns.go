@@ -42,6 +42,7 @@ type ChatTurns struct {
 	chain      *auth.Chain
 	pairings   *pairings.Service
 	approvals  *approvals.Service
+	prefs      *approvals.Preferences
 	chat       *ChatApprovals
 	supervisor *ChannelSupervisor
 	queue      *ConversationQueue
@@ -59,17 +60,20 @@ type ChatTurns struct {
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
 type ChatTurnsDeps struct {
-	Store      *store.Store
-	Tasks      *store.TaskStore
-	Chain      *auth.Chain
-	Pairings   *pairings.Service
-	Approvals  *approvals.Service
-	Chat       *ChatApprovals
-	Supervisor *ChannelSupervisor
-	Queue      *ConversationQueue
-	Sender     turnSender
-	Bus        *Bus
-	Unattended *ContextSet
+	Store     *store.Store
+	Tasks     *store.TaskStore
+	Chain     *auth.Chain
+	Pairings  *pairings.Service
+	Approvals *approvals.Service
+	// Preferences are what people allowed in all their conversations,
+	// which /allowed lists and offers add to.
+	Preferences *approvals.Preferences
+	Chat        *ChatApprovals
+	Supervisor  *ChannelSupervisor
+	Queue       *ConversationQueue
+	Sender      turnSender
+	Bus         *Bus
+	Unattended  *ContextSet
 	// Budget is the budget of anonymous callers, which is checked before
 	// their attachments are downloaded.
 	Budget Budget
@@ -105,6 +109,7 @@ func NewChatTurns(deps ChatTurnsDeps) *ChatTurns {
 		chain:      deps.Chain,
 		pairings:   deps.Pairings,
 		approvals:  deps.Approvals,
+		prefs:      deps.Preferences,
 		chat:       deps.Chat,
 		supervisor: deps.Supervisor,
 		queue:      deps.Queue,
@@ -251,6 +256,11 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		c.stop(ctx, ch, in, p)
 		return
 	}
+	if first, _, _ := strings.Cut(strings.TrimSpace(in.Text), " "); isCommand(first, "allowed") && c.prefs != nil {
+		c.queue.release(t)
+		c.handleAllowed(ctx, ch, in, p)
+		return
+	}
 	switch rec, q, opt, kind := c.typedAnswer(ctx, in, ch.Caps().Buttons); kind {
 	case answer:
 		c.queue.release(t)
@@ -277,7 +287,7 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 		return
 	case isCommand(in.Text, "start"):
 		<-t.turn
-		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task.", c.config().Name))
+		c.reply(ctx, ch, in, fmt.Sprintf("Hi! I'm %s. Write what you need; /new starts a new conversation, /stop stops the current task, /allowed shows what runs without asking for you.", c.config().Name))
 		return
 	}
 

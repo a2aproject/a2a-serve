@@ -69,10 +69,10 @@ func registerSettingFlag(cmd *cobra.Command, fl agentdir.Flag) {
 	case *int:
 		f.Var(&intFlag{name: fl.Name, unsetTo: fl.UnsetTo, p: v}, fl.Name, usage)
 	case *[]string:
-		if fl.Split {
+		if fl.Split && !fl.KeepCommas {
 			f.StringSliceVar(v, fl.Name, nil, listUsage(usage, true))
 		} else {
-			f.StringArrayVar(v, fl.Name, nil, listUsage(usage, false))
+			f.StringArrayVar(v, fl.Name, nil, listUsage(usage, fl.Split))
 		}
 	default:
 		panic(fmt.Sprintf("flag --%s has an unsupported value %T", fl.Name, v))

@@ -125,6 +125,18 @@ func TestReviewWarnings(t *testing.T) {
 			label: "approvals",
 			want:  Item{Text: "approved without asking: read, search, think"},
 		},
+		{
+			name:  "approvals of MCP tools",
+			edit:  func(cfg *agentdir.Config) { cfg.Approvals.Allow = []string{"read", "tool:grafana.*"} },
+			label: "approvals",
+			want:  Item{Text: "approved without asking: read, tool:grafana.*", Warn: true},
+		},
+		{
+			name:  "approvals of commands",
+			edit:  func(cfg *agentdir.Config) { cfg.Approvals.Allow = []string{"command:kubectl get *"} },
+			label: "approvals",
+			want:  Item{Text: "approved without asking: command:kubectl get *", Warn: true},
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

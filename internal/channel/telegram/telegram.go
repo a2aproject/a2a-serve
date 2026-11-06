@@ -29,6 +29,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -162,6 +163,7 @@ func (c *Channel) Run(ctx context.Context, in chan<- channel.Inbound, report fun
 	if _, err := c.bot.SetMyCommands(ctx, &bot.SetMyCommandsParams{Commands: []models.BotCommand{
 		{Command: "new", Description: "Start a new conversation"},
 		{Command: "stop", Description: "Stop the current task"},
+		{Command: "allowed", Description: "Show and remove what runs without asking for you"},
 	}}); err != nil {
 		slog.Warn("telegram: setting commands", "error", err)
 	}
@@ -419,12 +421,27 @@ func keyboard(q *channel.Question) models.ReplyMarkup {
 	if q == nil {
 		return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{}}
 	}
-	row := make([]models.InlineKeyboardButton, 0, len(q.Options))
+	// Buttons with short labels share the first row, and each long label
+	// gets a row of its own below them, so that Telegram doesn't cut it.
+	var short []models.InlineKeyboardButton
+	var long [][]models.InlineKeyboardButton
 	for i, label := range q.Options {
-		row = append(row, models.InlineKeyboardButton{Text: label, CallbackData: channel.ActionData(q.ID, i)})
+		b := models.InlineKeyboardButton{Text: label, CallbackData: channel.ActionData(q.ID, i)}
+		if utf8.RuneCountInString(label) > maxSharedLabel {
+			long = append(long, []models.InlineKeyboardButton{b})
+			continue
+		}
+		short = append(short, b)
 	}
-	return &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{row}}
+	rows := long
+	if len(short) > 0 {
+		rows = append([][]models.InlineKeyboardButton{short}, long...)
+	}
+	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
+
+// maxSharedLabel is the longest label of a button that shares a row.
+const maxSharedLabel = 16
 
 // isFormatError reports whether Telegram rejected the MarkdownV2 text: its
 // entities don't parse or the escaped text is too long. The same text sent

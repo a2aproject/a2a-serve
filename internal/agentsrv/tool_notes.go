@@ -25,7 +25,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
-	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
@@ -117,7 +116,7 @@ func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.Execu
 	return func(yield func(a2a.Event, error) bool) {
 		if opt, ok := replyOption(execCtx.Message, q); ok {
 			p, _ := auth.Caller(ctx)
-			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "tool", q.Title, "option", opt.ID)
+			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "kind", q.Kind, "option", opt.ID)
 			if isRejection(opt.ID) {
 				e.notes.add(execCtx.TaskID, "Tool call rejected: "+q.Title+".")
 			}
@@ -128,27 +127,4 @@ func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.Execu
 			}
 		}
 	}
-}
-
-// liveToolRules answers tool permissions with the allow and deny rules of
-// the current config, so that changing them doesn't need a restart. It
-// logs each answer, and notes the denied calls.
-type liveToolRules struct {
-	config func() *agentdir.Config
-	notes  *toolNotes
-}
-
-func (r liveToolRules) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q a2aacp.Question) (a2aacp.Answer, bool) {
-	cfg := r.config()
-	ans, ok := a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}.AutoAnswer(ctx, execCtx, q)
-	if !ok || execCtx == nil {
-		return ans, ok
-	}
-	rule := "allow-tools"
-	if isRejection(ans.Option) {
-		rule = "deny-tools"
-		r.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
-	}
-	slog.Info("approval answered by a rule", "task", execCtx.TaskID, "rule", rule, "tool", q.Title, "option", ans.Option)
-	return ans, ok
 }

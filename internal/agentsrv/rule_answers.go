@@ -18,39 +18,56 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
+	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// rulesPrincipal answers the approvals that waited when the allow and deny
-// rules changed and that the new rules answer.
-var rulesPrincipal = auth.Principal{ID: "allow-tools", Role: auth.RoleOwner}
+// Principals that answer the approvals that waited when a rule,
+// preference or grant that decides them was added.
+var (
+	rulesPrincipal   = auth.Principal{ID: "allow-tools", Role: auth.RoleOwner}
+	allowedPrincipal = auth.Principal{ID: "always-allow", Role: auth.RoleOwner}
+)
 
-// answerWaiting answers the approvals that wait and that the allow and
-// deny rules of the current config answer, as if they had been asked now.
-func (s *Server) answerWaiting(ctx context.Context) error {
-	cfg := s.rt.Config()
-	rules := a2aacp.ToolRules{Allow: cfg.Approvals.Allow, Deny: cfg.Approvals.Deny}
-	if len(rules.Allow) == 0 && len(rules.Deny) == 0 {
-		return nil
-	}
+// answerWaiting answers the approvals that wait and that the rules, or the
+// preferences and grants of the people who started their tasks, decide
+// now, as if they had been asked now. It leaves the approvals of the tasks
+// in except, which are being answered.
+func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) error {
 	waiting, err := s.waitingApprovals(ctx)
 	if err != nil {
 		return err
 	}
 	var errs []error
 	for _, t := range waiting {
+		if except[t.ID] {
+			continue
+		}
 		q := pendingApproval(t)
+		user, err := s.approvals.TaskUser(ctx, t.ID)
+		if err != nil {
+			errs = append(errs, fmt.Errorf("looking up who started task %s: %w", t.ID, err))
+			continue
+		}
+		dec, ok, err := s.decider.decide(ctx, t.ContextID, user, s.decider.call(q.Kind, q.ToolTitle, q.ToolInput))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("deciding the approval of task %s: %w", t.ID, err))
+			continue
+		}
+		if !ok {
+			continue
+		}
 		ids := make([]string, len(q.Options))
 		for i, o := range q.Options {
 			ids[i] = o.ID
 		}
-		ans, ok := rules.AutoAnswer(ctx, nil, a2aacp.Question{Options: ids, Tool: &a2aacp.ToolCall{Kind: q.Kind}})
+		ans, ok := ruleAnswer(ids, dec.allow)
 		if !ok {
 			continue
 		}
@@ -58,11 +75,66 @@ func (s *Server) answerWaiting(ctx context.Context) error {
 		if !ok {
 			continue
 		}
-		if err := s.answerByRules(ctx, t, q, opt); err != nil {
+		by, who := rulesPrincipal, rulesPrincipal.ID
+		if dec.by != byRule {
+			by, who = allowedPrincipal, approvals.AlwaysLabel(dec.entry)
+		}
+		if err := s.answerByRules(ctx, t, q, opt, by, who); err != nil {
 			errs = append(errs, fmt.Errorf("answering the approval of task %s: %w", t.ID, err))
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// answerAllowed asks for the approvals that wait and that a new
+// preference or grant decides to be answered in the background, leaving
+// the approval of task except.
+func (s *Server) answerAllowed(_ context.Context, except a2a.TaskID) {
+	s.allowed.request(except)
+}
+
+// allowedAnswers runs answerWaiting for new preferences and grants in one
+// loop of the server, so that runs don't overlap and stop with it. A
+// request during a run starts one more run after it.
+type allowedAnswers struct {
+	wake   chan struct{}
+	mu     sync.Mutex
+	except map[a2a.TaskID]bool
+}
+
+func newAllowedAnswers() *allowedAnswers {
+	return &allowedAnswers{wake: make(chan struct{}, 1), except: map[a2a.TaskID]bool{}}
+}
+
+// request asks for a run that leaves the approval of task except, if set.
+func (a *allowedAnswers) request(except a2a.TaskID) {
+	a.mu.Lock()
+	if except != "" {
+		a.except[except] = true
+	}
+	a.mu.Unlock()
+	select {
+	case a.wake <- struct{}{}:
+	default:
+	}
+}
+
+// run answers the approvals for each request until ctx is done.
+func (a *allowedAnswers) run(ctx context.Context, answer func(ctx context.Context, except map[a2a.TaskID]bool) error) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-a.wake:
+		}
+		a.mu.Lock()
+		except := a.except
+		a.except = map[a2a.TaskID]bool{}
+		a.mu.Unlock()
+		if err := answer(ctx, except); err != nil {
+			slog.Warn("answering the approvals that a new preference or grant allows", "error", err)
+		}
+	}
 }
 
 // waitingApprovals lists the tasks that wait for an approval of a tool
@@ -90,10 +162,10 @@ func (s *Server) waitingApprovals(ctx context.Context) ([]*a2a.Task, error) {
 	}
 }
 
-// answerByRules answers the approval q of task t with opt. A question
-// shown in a chat or in the inspector is answered there, so that it shows
-// who answered. The executor logs the answer.
-func (s *Server) answerByRules(ctx context.Context, t *a2a.Task, q *approvals.Question, opt approvals.Option) error {
+// answerByRules answers the approval q of task t with opt as by. A
+// question shown in a chat or in the inspector is answered there, so that
+// it shows who answered. The executor logs the answer.
+func (s *Server) answerByRules(ctx context.Context, t *a2a.Task, q *approvals.Question, opt approvals.Option, by auth.Principal, who string) error {
 	ids, err := s.store.UnansweredQuestionsOf(ctx, string(t.ID))
 	if err != nil {
 		return err
@@ -106,21 +178,21 @@ func (s *Server) answerByRules(ctx context.Context, t *a2a.Task, q *approvals.Qu
 		if rec.HitlID != q.ID {
 			continue
 		}
-		err = s.approvals.Answer(ctx, rec, rulesPrincipal, opt)
+		err = s.approvals.Answer(ctx, rec, by, opt)
 		if errors.Is(err, store.ErrAnswered) || errors.Is(err, approvals.ErrClosed) {
 			return nil
 		}
 		if err != nil {
 			return err
 		}
-		s.chatApprovals.MarkAnswered(ctx, rec.ID, opt.Label, rulesPrincipal.ID)
+		s.chatApprovals.MarkAnswered(ctx, rec.ID, opt.Label, who)
 		return nil
 	}
 	msg, err := approvals.AnswerMessage(t.ID, t.ContextID, q.ID, opt.ID)
 	if err != nil {
 		return err
 	}
-	_, err = s.sender.SendMessage(auth.InProcess(ctx, rulesPrincipal), &a2a.SendMessageRequest{
+	_, err = s.sender.SendMessage(auth.InProcess(ctx, by), &a2a.SendMessageRequest{
 		Message: msg,
 		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
 	})

@@ -44,10 +44,18 @@ type Question struct {
 	Type    string
 	Title   string
 	Options []Option
-	// Kind is the ACP tool kind of a permission, if its message tells.
-	Kind string
+	// Kind is the ACP tool kind of a permission, if its message tells, and
+	// ToolTitle and ToolInput the title and raw input of its tool call.
+	Kind      string
+	ToolTitle string
+	ToolInput any
 	// Text is the text of the status message.
 	Text string
+	// Rule is what the always option of a permission allows, when the
+	// server wrote its options.
+	Rule string
+	// AgentOptions map the server's options to the agent's.
+	AgentOptions map[string]string
 	// Data is the question as stored in records: id, type, title and options.
 	Data map[string]any
 }
@@ -90,7 +98,19 @@ func FromMessage(msg *a2a.Message) *Question {
 			options = append(options, map[string]any{"id": id, "label": o.Title})
 		}
 	}
-	q := fromData(map[string]any{"id": req.ID, "type": typ, "title": req.Schema.Title, "options": options})
+	data := map[string]any{"id": req.ID, "type": typ, "title": req.Schema.Title, "options": options}
+	if rule, ok := msg.Metadata[ruleKey].(string); ok && rule != "" {
+		data["rule"] = rule
+	}
+	q := fromData(data)
+	if m, ok := msg.Metadata[agentOptionsKey].(map[string]any); ok {
+		q.AgentOptions = map[string]string{}
+		for k, v := range m {
+			if id, ok := v.(string); ok {
+				q.AgentOptions[k] = id
+			}
+		}
+	}
 	var texts []string
 	for _, p := range msg.Parts {
 		if t := p.Text(); t != "" {
@@ -100,6 +120,8 @@ func FromMessage(msg *a2a.Message) *Question {
 			tool, _ := data["toolCall"].(map[string]any)
 			if kind, ok := tool["kind"].(string); ok {
 				q.Kind = kind
+				q.ToolTitle, _ = tool["title"].(string)
+				q.ToolInput = tool["input"]
 			}
 		}
 	}
@@ -119,6 +141,7 @@ func fromData(data map[string]any) *Question {
 	q.ID, _ = data["id"].(string)
 	q.Type, _ = data["type"].(string)
 	q.Title, _ = data["title"].(string)
+	q.Rule, _ = data["rule"].(string)
 	opts, _ := data["options"].([]any)
 	for _, o := range opts {
 		m, _ := o.(map[string]any)
@@ -215,7 +238,11 @@ func (q *Question) Words() string {
 		case a2aacp.OptionOnce:
 			words = append(words, "approve")
 		case a2aacp.OptionAlways:
-			words = append(words, "always")
+			if q.Rule == "" {
+				words = append(words, "always")
+			} else {
+				words = append(words, alwaysReply("always", q.Rule))
+			}
 		case a2aacp.OptionReject:
 			words = append(words, "deny")
 		default:

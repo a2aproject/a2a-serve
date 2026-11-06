@@ -257,6 +257,17 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fro
 	if st.ProjectError != "" {
 		fmt.Fprintf(&sb, "  project  ! %s\n", st.ProjectError)
 	}
+	label := "tools"
+	for _, l := range []struct {
+		name    string
+		entries []string
+	}{{"allow", st.AllowTools}, {"deny", st.DenyTools}} {
+		if len(l.entries) == 0 {
+			continue
+		}
+		fmt.Fprintf(&sb, "  %-8s %s %s\n", label, l.name, strings.Join(l.entries, ", "))
+		label = ""
+	}
 	if b := st.Backup; b != nil {
 		last := "none yet"
 		if !b.Last.IsZero() {

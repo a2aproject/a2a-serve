@@ -71,7 +71,9 @@ func TestOpen(t *testing.T) {
 				holdLock(t, d)
 			}
 
-			ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
+			// Open waits for the lock until the deadline, which leaves time
+			// for the status call under the load of a parallel test run.
+			ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 			defer cancel()
 
 			m, closer, err := Open(ctx, d, controlapi.NewClient(d))
