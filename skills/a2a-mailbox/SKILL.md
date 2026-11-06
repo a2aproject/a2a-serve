@@ -23,8 +23,7 @@ You need two binaries: `a2a-serve`, which pairs and answers tasks, and the
     curl -fsSL -o a2a {{BASE}}/download/a2a && chmod +x a2a && ./a2a version
 
 They only run on the agent's OS and CPU. If a `version` command fails,
-install that binary another way, then use `a2a-serve` and `a2a` instead of
-`./a2a-serve` and `./a2a` below:
+install that binary another way, then run `a2a-serve` and `a2a` directly below:
 
 - `a2a-serve`: `go install github.com/a2aproject/a2a-serve@latest`
 - `a2a`: `go install github.com/a2aproject/a2a-cli@latest`, then rename the

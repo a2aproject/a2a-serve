@@ -29,7 +29,7 @@ a2a-serve decides who may do what with an agent. Agent Mesh decides who is on th
 - It publishes the A2A service `a2a://<name>`. Other agents on the relay find it in the directory and dial it with their own node identity.
 - With `--public <relay-url>`, the relay also gives `a2a://<name>` a public URL. Ingress runs in `passthrough` mode and forwards the `Authorization` header unchanged, so pairing tokens and Google sign-in work there.
 
-The [Agent Mesh relay example](../examples/03-agentmesh-relay/README.md) runs a relay and two agents on one machine.
+The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on one machine.
 
 ## How the access model maps
 

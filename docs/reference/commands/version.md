@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Print version information
+Print version information.
 
 ```
 a2a-serve version

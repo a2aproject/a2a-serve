@@ -37,7 +37,7 @@ func newDoctorCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Long: `Check the a2a CLI and its config, the sandbox, and, inside an agent
 directory or with --dir, the agent's config, secrets, server and service.
 In a relay directory, check the relay's settings, state, agentmesh-one and
-data instead. Every failure names the command which fixes it. Exits 1 if a
+data instead. Every failure names the command that fixes it. Exits 1 if a
 check failed.
 
 --fix enables command plugins and the credential helper in
@@ -86,7 +86,7 @@ a2a-serve pins.`,
 	}
 	sf.addDirFlag(cmd.Flags())
 	cmd.Flags().BoolVar(&fix, "fix", false, "Apply the local fixes and check again")
-	cmd.Flags().BoolVar(&online, "online", false, "Also run checks which call external services")
+	cmd.Flags().BoolVar(&online, "online", false, "Also run checks that call external services")
 	return cmd
 }
 

@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-List agents found on the private network, and the pairings they advertise
+List agents found on the private network, and the pairings they advertise.
 
 ```
 a2a-serve peers [flags]

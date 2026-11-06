@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Manage the agents this agent may call
+Manage the agents this agent may call.
 
 ```
 a2a-serve contact <command>

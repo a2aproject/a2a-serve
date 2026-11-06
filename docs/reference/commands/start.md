@@ -212,7 +212,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 ## a2a-serve start echo
 
-Run a test server which replies with the message
+Run a test server that replies with the message
 
 ```
 a2a-serve start echo [flags]
@@ -370,7 +370,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 ## a2a-serve start proxy
 
-Run a test server which forwards each request to the agent with the agent card URL &lt;agent-url&gt;, logging the traffic.
+Run a test server that forwards each request to the agent with the agent card URL &lt;agent-url&gt;, logging the traffic.
 
 --auth takes a header value, which may end in a secret value: env:VAR reads the environment variable VAR, and - a prompt without echo or stdin.
 

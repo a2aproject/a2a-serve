@@ -11,20 +11,21 @@ digraph readme_overview {
   { rank=same;
     Client   [label="A2A clients", shape=ellipse, fillcolor="#dbe8ff"];
     Telegram [label="Telegram", shape=ellipse, fillcolor="#dbe8ff"];
+    Discord  [label="Discord", shape=ellipse, fillcolor="#dbe8ff"];
     Email    [label="Email", shape=ellipse, fillcolor="#dbe8ff"];
   }
 
   subgraph cluster_server {
     label="a2a-serve"; labeljust=l; style="rounded,filled"; fillcolor="#f0f9f0"; color="#9ccc9c";
     // Pad keeps the incoming edges clear of the cluster label.
-    { rank=same; Pad [label="", style=invis, width=0.6]; Net [label="Network"]; Channels [label="Channels"]; }
-    { rank=same; Core [label="A2A server"]; Proxy [label="Peers proxy"]; }
+    { rank=same; Pad [label="", style=invis, width=0.6]; Net [label="Listeners"]; Messengers [label="Messengers"]; }
+    { rank=same; Core [label="A2A server"]; Proxy [label="Agents proxy"]; }
   }
 
   Agent [fillcolor="#f3eefb", color="#b9a4dd", margin="0.15,0.08", label=<
     <table border="0" cellspacing="0" cellpadding="2">
       <tr><td align="left">Sandbox</td></tr>
-      <tr><td cellpadding="6">Agent<br/>(OpenCode, Claude Code, etc.)</td></tr>
+      <tr><td cellpadding="6">Agent<br/>(opencode, Claude Code, ACP)</td></tr>
     </table>>];
 
   { rank=same;
@@ -33,11 +34,12 @@ digraph readme_overview {
   }
 
   Client -> Net;
-  Telegram -> Channels;
-  Email -> Channels;
+  Telegram -> Messengers;
+  Discord -> Messengers;
+  Email -> Messengers;
   Net -> Core;
   Pad -> Core [style=invis];
-  Channels -> Core [tailport=s];
+  Messengers -> Core [tailport=s];
   Core -> Agent [label=" ACP"];
   Agent -> Proxy [label=" a2a CLI"];
   Proxy -> Remote;

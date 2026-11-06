@@ -138,7 +138,7 @@ Other people get a code from you, as in [Serve a Coding Agent](../01-agent-serve
 
 ## 6. Add the Grok bot as a webhook node
 
-A webhook node is an agent that only runs when woken. The agent server gives
+A webhook node is an agent that only runs when woken. The server gives
 it an A2A address and holds its tasks; when a task arrives, it POSTs a signed
 wake to the webhook. The bot answers later with the `a2a` CLI or plain HTTPS.
 

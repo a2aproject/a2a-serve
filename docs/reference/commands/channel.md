@@ -2,7 +2,7 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Manage the messengers the agent is reachable from
+Manage the messengers the agent is reachable from.
 
 ```
 a2a-serve channel <command>

@@ -52,9 +52,11 @@ person, or agent for a contact. Inviting an existing name issues another
 code, for another device or account; its tokens keep working. A new name has
 up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
 or digit, and differs from the existing names by more than case.
-`a2a-serve pair set` changes a pairing, and rotates its credentials.
+`a2a-serve pair set` changes a pairing, and rotates its credentials. A paired
+caller can approve commands in their own tasks, which lets them read and
+change the workspace and read the agent's --secret environment variables.
 
-With --webhook, &lt;name&gt; is a webhook node: an agent which only runs when woken,
+With --webhook, &lt;name&gt; is a webhook node: an agent that only runs when woken,
 such as a Grok Bot routine. The agent hosts it at &lt;agent-url&gt;/n/&lt;name&gt;, calls
 it as &lt;name&gt; with the a2a CLI, and wakes it with a signed POST to the
 webhook. The node pairs with the code the same way, answers with

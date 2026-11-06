@@ -25,6 +25,7 @@ func newPeersCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "peers",
 		Short: "List agents found on the private network, and the pairings they advertise",
+		Long:  "List agents found on the private network, and the pairings they advertise.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c, err := sf.control()
