@@ -57,6 +57,9 @@ var (
 func (c *Config) Validate() error {
 	var errs []error
 	add := func(format string, args ...any) { errs = append(errs, fmt.Errorf(format, args...)) }
+	invalid := func(flag, entry, format string, args ...any) {
+		errs = append(errs, &FieldError{Flag: flag, Entry: entry, Reason: fmt.Sprintf(format, args...)})
+	}
 	switch {
 	case c.Harness == "":
 		add("no agent: run `a2a-serve start <agent>`")
@@ -68,22 +71,22 @@ func (c *Config) Validate() error {
 		add("unknown agent %q: want %s, or acp with --command", c.Harness, strings.Join(Harnesses, ", "))
 	}
 	if c.Model != "" && !slices.Contains(Harnesses, c.Harness) {
-		add("--model needs the agent %s; set the model of agent %s in its --command", strings.Join(Harnesses, " or "), c.Harness)
+		invalid("model", c.Model, "needs the agent %s; set the model of agent %s in its --command", strings.Join(Harnesses, " or "), c.Harness)
 	}
 	if c.Name == "" {
 		add("no name: set one with --name")
 	}
 	checkEnum := func(flag, v string, want ...string) {
 		if v != "" && !slices.Contains(want, v) {
-			add("invalid --%s %q: want %s or none", flag, v, strings.Join(want, ", "))
+			invalid(flag, v, "want %s or none", strings.Join(want, ", "))
 		}
 	}
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
-		add("invalid --sandbox %q: want docker or local", c.Sandbox)
+		invalid("sandbox", c.Sandbox, "want docker or local")
 	}
 	switch {
 	case c.Network.Private == "lan":
-		add("--private lan was removed: want tailscale, a relay URL or none")
+		invalid("private", c.Network.Private, "lan was removed; want tailscale, a relay URL or none")
 	case !isRelayURL(c.Network.Private):
 		checkEnum("private", c.Network.Private, NetworkTailscale)
 	}
@@ -95,7 +98,7 @@ func (c *Config) Validate() error {
 			continue
 		}
 		if u, err := url.Parse(v); err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
-			add("invalid --%s %q: want a relay URL such as https://relay.example.com", flag, v)
+			invalid(flag, v, "want a relay URL such as https://relay.example.com")
 		}
 	}
 	if isRelayURL(c.Network.Private) && isRelayURL(c.Network.Public) && strings.TrimSuffix(c.Network.Private, "/") != strings.TrimSuffix(c.Network.Public, "/") {
@@ -103,52 +106,49 @@ func (c *Config) Validate() error {
 	}
 	if c.Workspace != "" {
 		if _, err := parseMount(c.Workspace, "/"); err != nil {
-			add("--workspace: %w", err)
+			invalid("workspace", c.Workspace, "%s", reasonOf(err))
 		}
 	}
 	for _, spec := range c.Mounts {
 		if _, err := parseMount(spec, "/"); err != nil {
-			add("--mount: %w", err)
+			invalid("mount", spec, "%s", reasonOf(err))
 		}
 	}
 	for _, name := range c.Secrets {
 		if !secretName.MatchString(name) {
-			add("invalid --secret %q: want an environment variable name", name)
+			invalid("secret", name, "want an environment variable name")
 		}
 	}
 	for _, kv := range c.Env {
 		if name, _, ok := strings.Cut(kv, "="); !ok || !secretName.MatchString(name) {
-			add("invalid --env %q: want NAME=value", kv)
+			invalid("env", kv, "want NAME=value")
 		}
 	}
 	for _, name := range c.MCP.Disabled {
 		if strings.TrimSpace(name) == "" {
-			add("invalid --disable-mcp %q: want the name of an MCP server in .mcp.json", name)
+			invalid("disable-mcp", name, "want the name of an MCP server in .mcp.json")
 		}
 	}
-	checkPort := func(flag string, p int) {
-		if p < 0 || p > 65535 {
-			add("invalid %s %d: want 1-65535", flag, p)
-		}
+	if c.Port < 0 || c.Port > 65535 {
+		invalid("port", strconv.Itoa(c.Port), "want 1-65535")
 	}
-	checkPort("--port", c.Port)
 	if m := c.Limits.Memory; m != "" && !memory.MatchString(m) {
-		add("invalid --memory %q: want a size such as 4g or 512m", m)
+		invalid("memory", m, "want a size such as 4g or 512m")
 	}
 	if v := c.Limits.CPUs; v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err != nil || n <= 0 {
-			add("invalid --cpus %q: want a positive number such as 2 or 1.5", v)
+			invalid("cpus", v, "want a positive number such as 2 or 1.5")
 		}
 	}
 	if c.TaskTTL != "" {
 		if d, err := ParseDays(c.TaskTTL); err != nil {
-			add("--task-ttl: %v", err)
+			invalid("task-ttl", c.TaskTTL, "%s", reasonOf(err))
 		} else if d < MinTaskTTL {
-			add("--task-ttl %s: want at least %s", c.TaskTTL, MinTaskTTL)
+			invalid("task-ttl", c.TaskTTL, "want at least %s", MinTaskTTL)
 		}
 	}
 	if c.Limits.PIDs < 0 {
-		add("invalid --pids %d: want a positive number", c.Limits.PIDs)
+		invalid("pids", strconv.Itoa(c.Limits.PIDs), "want a positive number")
 	}
 	if t := c.Channels.Telegram; t != nil && t.Token == "" {
 		add("the telegram channel needs a token: a2a-serve channel add telegram --token <token>")
@@ -178,7 +178,7 @@ func (c *Config) Validate() error {
 	for flag, patterns := range map[string][]string{"allow-tools": c.Approvals.Allow, "deny-tools": c.Approvals.Deny} {
 		for _, p := range patterns {
 			if !matchesToolKind(p) {
-				add("invalid --%s %q: want ACP tool kinds (%s), or a glob such as *", flag, p, strings.Join(ToolKinds, ", "))
+				invalid(flag, p, "want ACP tool kinds (%s), or a glob such as *", strings.Join(ToolKinds, ", "))
 			}
 		}
 	}
@@ -187,7 +187,7 @@ func (c *Config) Validate() error {
 	}
 	if v := c.Approvals.OwnerChat; v != "" {
 		if kind, who, hasWho := strings.Cut(v, ":"); !slices.Contains(ChannelKinds, kind) || (hasWho && who == "") {
-			add("invalid --owner-chat %q: want channel[:who], such as telegram or telegram:anna, with channel one of %s", v, strings.Join(ChannelKinds, ", "))
+			invalid("owner-chat", v, "want channel[:who], such as telegram or telegram:anna, with channel one of %s", strings.Join(ChannelKinds, ", "))
 		}
 	}
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
@@ -215,17 +215,17 @@ func matchesToolKind(p string) bool {
 func (p PolicyConfig) validate() []error {
 	var errs []error
 	if v := p.PrivateAllowIncoming; v != "" && v != AccessEveryone && v != AccessPaired {
-		errs = append(errs, fmt.Errorf("invalid --private-allow-incoming %q: want everyone or paired", v))
+		errs = append(errs, &FieldError{Flag: "private-allow-incoming", Entry: v, Reason: "want everyone or paired"})
 	}
 	if v := p.PublicAllowIncoming; v != "" && v != AccessPaired && v != AccessAnyone {
-		errs = append(errs, fmt.Errorf("invalid --public-allow-incoming %q: want paired or anyone", v))
+		errs = append(errs, &FieldError{Flag: "public-allow-incoming", Entry: v, Reason: "want paired or anyone"})
 	}
 	if v := p.PrivateAllowOutgoing; v != "" && v != AccessEveryone && v != AccessContacts {
-		errs = append(errs, fmt.Errorf("invalid --private-allow-outgoing %q: want everyone or contacts", v))
+		errs = append(errs, &FieldError{Flag: "private-allow-outgoing", Entry: v, Reason: "want everyone or contacts"})
 	}
 	for _, e := range p.AllowEmails {
 		if !ValidEmailPattern(e) {
-			errs = append(errs, fmt.Errorf("invalid --allow-email %q: want an email, or *@domain", e))
+			errs = append(errs, &FieldError{Flag: "allow-email", Entry: e, Reason: "want an email, or *@domain"})
 		}
 	}
 	return errs
@@ -250,18 +250,18 @@ func (b BackupConfig) validate() []error {
 		errs = append(errs, errors.New("--backup needs --backup-key: snapshots are always encrypted"))
 	}
 	if b.To != "" && strings.Contains(b.To, "://") && !strings.HasPrefix(b.To, "gs://") && !strings.HasPrefix(b.To, "s3://") && !strings.HasPrefix(b.To, "file://") {
-		errs = append(errs, fmt.Errorf("invalid --backup %q: want a directory, gs://bucket/prefix or s3://bucket/prefix", b.To))
+		errs = append(errs, &FieldError{Flag: "backup", Entry: b.To, Reason: "want a directory, gs://bucket/prefix or s3://bucket/prefix"})
 	}
 	if b.Interval != "" {
 		if d, err := ParseDays(b.Interval); err != nil {
-			errs = append(errs, fmt.Errorf("--backup-interval: %w", err))
+			errs = append(errs, &FieldError{Flag: "backup-interval", Entry: b.Interval, Reason: reasonOf(err)})
 		} else if d < time.Minute {
-			errs = append(errs, fmt.Errorf("--backup-interval %s: want at least 1m", b.Interval))
+			errs = append(errs, &FieldError{Flag: "backup-interval", Entry: b.Interval, Reason: "want at least 1m"})
 		}
 	}
 	if b.Retention != "" {
 		if _, err := ParseDays(b.Retention); err != nil {
-			errs = append(errs, fmt.Errorf("--backup-retention: %w", err))
+			errs = append(errs, &FieldError{Flag: "backup-retention", Entry: b.Retention, Reason: reasonOf(err)})
 		}
 	}
 	return errs

@@ -21,6 +21,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
@@ -93,7 +94,7 @@ func configProblem(d agentdir.Dir) string {
 		return d.ConfigPath() + " does not exist"
 	}
 	if _, err := d.LoadConfig(); err != nil {
-		return strings.ReplaceAll(err.Error(), "\n", "; ")
+		return strings.ReplaceAll(agenterr.Text(err), "\n", "; ")
 	}
 	return ""
 }

@@ -17,6 +17,7 @@ package cli
 import (
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -58,6 +59,7 @@ func TestUsageHints(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name string
+		file string
 		args []string
 		want string
 	}{
@@ -70,11 +72,29 @@ func TestUsageHints(t *testing.T) {
 		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve contact list` to see the contacts"},
 		{name: "unknown channel", args: []string{"channel", "rm", "telegram", "--dir", "{dir}"}, want: "run `a2a-serve channel list` to see the channels"},
 		{name: "invalid setting", args: []string{"config", "unset", "nope", "--dir", "{dir}"}, want: "run `a2a-serve config unset --help` for its flags"},
+		{name: "invalid flag value", args: []string{"config", "set", "--deny-tools", "exec", "--dir", "{dir}"}, want: "run `a2a-serve config set --help` for its flags"},
+		{
+			name: "invalid entry in the file",
+			file: "name: coder\nagent: opencode\napprovals:\n    deny: [exec]\n",
+			args: []string{"config", "set", "--deny-tools", "execute", "--dir", "{dir}"},
+			want: "fix it with `a2a-serve config unset deny-tools exec`",
+		},
+		{
+			name: "invalid file on start",
+			file: "name: coder\nagent: opencode\nsandbox: vm\n",
+			args: []string{"start", "--dir", "{dir}"},
+			want: "fix it with `a2a-serve config unset sandbox`",
+		},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			if tc.file != "" {
+				if err := os.WriteFile(d.ConfigPath(), []byte(tc.file), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			}
 			args := slices.Clone(tc.args)
 			for i, a := range args {
 				if a == "{dir}" {

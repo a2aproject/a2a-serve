@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -99,10 +100,6 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 	if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
 		return nil, err
 	}
-	cfg, err := d.LoadConfig()
-	if err != nil {
-		return nil, err
-	}
 	if err := d.Init(); err != nil {
 		return nil, err
 	}
@@ -112,7 +109,7 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 	}
 	busy := func(err error) error {
 		if err != nil && errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			return &agenterr.BusyError{Name: cfg.Name}
+			return busyError(d)
 		}
 		return err
 	}
@@ -126,7 +123,7 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 			return nil, busy(err)
 		}
 		if time.Now().After(deadline) {
-			return nil, &agenterr.BusyError{Name: cfg.Name}
+			return nil, busyError(d)
 		}
 		select {
 		case <-ctx.Done():
@@ -134,6 +131,17 @@ func connect(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (re
 		case <-time.After(min(100*time.Millisecond, time.Until(deadline))):
 		}
 	}
+}
+
+// busyError names the agent in d by its config, which may not parse while
+// the agent is being repaired.
+func busyError(d agentdir.Dir) error {
+	cfg, err := d.ReadConfig()
+	if err != nil {
+		slog.Debug("reading the agent's name", "error", err)
+		return &agenterr.BusyError{Name: d.DefaultName()}
+	}
+	return &agenterr.BusyError{Name: cfg.Name}
 }
 
 // online manages a running agent through its control socket.

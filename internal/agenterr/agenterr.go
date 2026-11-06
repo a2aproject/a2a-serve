@@ -136,6 +136,11 @@ const (
 	HintDamagedDB Hint = "damaged-db"
 	// HintPortInUse picks another port for the agent.
 	HintPortInUse Hint = "port-in-use"
+	// HintConfigUnset removes the entry Arg, a setting and its entry, from
+	// config.yaml.
+	HintConfigUnset Hint = "config-unset"
+	// HintConfigEdit fixes config.yaml in the editor.
+	HintConfigEdit Hint = "config-edit"
 )
 
 // HintedError is an error with a hint at how to fix it.

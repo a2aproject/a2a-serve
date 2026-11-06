@@ -32,6 +32,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -536,6 +537,98 @@ func TestApplyThen(t *testing.T) {
 			}
 			if !errors.Is(lockErr, fsutil.ErrLocked) {
 				t.Fatalf("fsutil.TryLock() during the step error = %v, want %v", lockErr, fsutil.ErrLocked)
+			}
+		})
+	}
+}
+
+func TestApplyToInvalidFile(t *testing.T) {
+	t.Parallel()
+	const file = "name: coder\nagent: opencode\napprovals:\n    deny:\n        - exec\n"
+	tests := []struct {
+		name     string
+		file     string
+		apply    func(d agentdir.Dir) error
+		wantErr  string
+		wantHint string
+		wantDeny []string
+	}{
+		{
+			name: "unset repairs the file",
+			file: file,
+			apply: func(d agentdir.Dir) error {
+				_, err := Unset(t.Context(), d, controlapi.NewClient(d), "deny-tools", []string{"exec"}, false)
+				return err
+			},
+		},
+		{
+			name: "set names the entry in the file",
+			file: file,
+			apply: func(d agentdir.Dir) error {
+				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"execute"}}, false)
+				return err
+			},
+			wantErr:  `config.yaml: approvals.deny has "exec"`,
+			wantHint: "fix it with `a2a-serve config unset deny-tools exec`",
+			wantDeny: []string{"exec"},
+		},
+		{
+			name: "set names the flag",
+			file: "name: coder\nagent: opencode\n",
+			apply: func(d agentdir.Dir) error {
+				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DenyTools: []string{"exec"}}, false)
+				return err
+			},
+			wantErr: `invalid --deny-tools "exec"`,
+		},
+		{
+			name: "a file that doesn't parse",
+			file: "name: coder\nsandbox: [\n",
+			apply: func(d agentdir.Dir) error {
+				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+				return err
+			},
+			wantErr:  "config.yaml: yaml: line 2",
+			wantHint: "fix it with `a2a-serve config edit`",
+		},
+		{
+			name: "a problem without a key in the file",
+			file: "name: coder\nagent: opencode\nbackup:\n    to: /backups\n",
+			apply: func(d agentdir.Dir) error {
+				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+				return err
+			},
+			wantErr:  "config.yaml: --backup needs --backup-key",
+			wantHint: "fix it with `a2a-serve config edit`",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.file), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			err := tc.apply(d)
+
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("apply() error = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("apply() error = %v, want %q", err, tc.wantErr)
+			}
+			if got := agenterr.HintText(err); got != tc.wantHint {
+				t.Fatalf("agenterr.HintText() = %q, want %q", got, tc.wantHint)
+			}
+			if got, err := os.ReadFile(d.ConfigPath()); err != nil || (tc.wantErr != "" && string(got) != tc.file) {
+				t.Fatalf("config.yaml = %q, %v, want it unchanged", got, err)
+			}
+			if tc.wantErr != "" {
+				return
+			}
+			if diff := cmp.Diff(tc.wantDeny, loadConfig(t, d).Approvals.Deny); diff != "" {
+				t.Fatalf("saved deny-tools wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

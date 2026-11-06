@@ -180,13 +180,13 @@ func ParseDays(v string) (time.Duration, error) {
 	if days, ok := strings.CutSuffix(v, "d"); ok {
 		n, err := strconv.Atoi(days)
 		if err != nil || n <= 0 {
-			return 0, fmt.Errorf("invalid duration %q: want a number of days such as 7d, or a duration such as 12h", v)
+			return 0, &valueError{what: "duration", value: v, reason: "want a number of days such as 7d, or a duration such as 12h"}
 		}
 		return time.Duration(n) * 24 * time.Hour, nil
 	}
 	d, err := time.ParseDuration(v)
 	if err != nil || d <= 0 {
-		return 0, fmt.Errorf("invalid duration %q: want a number of days such as 7d, or a duration such as 12h", v)
+		return 0, &valueError{what: "duration", value: v, reason: "want a number of days such as 7d, or a duration such as 12h"}
 	}
 	return d, nil
 }
@@ -357,7 +357,7 @@ func (d Dir) LoadConfig() (*Config, error) {
 		return nil, err
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, &SettingsError{Err: fmt.Errorf("%s: %w; fix it with `a2a-serve config set` or `a2a-serve config edit`", d.ConfigPath(), err)}
+		return nil, &SettingsError{Err: FileProblems(err)}
 	}
 	return cfg, nil
 }
@@ -374,7 +374,7 @@ func (d Dir) ReadConfig() (*Config, error) {
 	}
 	cfg, err := ParseConfig(data)
 	if err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", d.ConfigPath(), err)
+		return nil, &SettingsError{Err: FileProblems(err)}
 	}
 	return cfg, nil
 }
@@ -791,10 +791,10 @@ func parseMount(spec, base string) (Mount, error) {
 	case 2:
 		m.Src, m.Dst = parts[0], parts[1]
 	default:
-		return Mount{}, fmt.Errorf("invalid mount %q: want src[:dst][:ro]", spec)
+		return Mount{}, &valueError{what: "mount", value: spec, reason: "want src[:dst][:ro]"}
 	}
 	if m.Src == "" {
-		return Mount{}, fmt.Errorf("invalid mount %q: empty source", spec)
+		return Mount{}, &valueError{what: "mount", value: spec, reason: "empty source"}
 	}
 	src, err := expandHome(m.Src)
 	if err != nil {
@@ -810,7 +810,7 @@ func parseMount(spec, base string) (Mount, error) {
 		m.Dst = m.Src
 	}
 	if !filepath.IsAbs(m.Dst) {
-		return Mount{}, fmt.Errorf("invalid mount %q: destination must be absolute", spec)
+		return Mount{}, &valueError{what: "mount", value: spec, reason: "destination must be absolute"}
 	}
 	m.Dst = filepath.Clean(m.Dst)
 	return m, nil
