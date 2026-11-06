@@ -50,9 +50,11 @@ type Settings struct {
 	Env              []string
 	Private          string
 	Public           string
-	// PrivateAccess is everyone or paired, and PublicAccess paired or anyone.
-	PrivateAccess string
-	PublicAccess  string
+	// PrivateAllowIncoming is everyone or paired, PublicAllowIncoming paired
+	// or anyone, and PrivateAllowOutgoing everyone or contacts.
+	PrivateAllowIncoming string
+	PublicAllowIncoming  string
+	PrivateAllowOutgoing string
 	// AllowEmails are added to the people who may call by a verified email.
 	AllowEmails []string
 	// Telegram and Discord are bot tokens: env:VAR, secret:NAME or the value.

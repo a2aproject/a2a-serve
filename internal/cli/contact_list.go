@@ -15,9 +15,16 @@
 package cli
 
 import (
+	"fmt"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/spf13/cobra"
 )
+
+// peersNote says that the agent may call everyone on its private network
+// besides its contacts.
+const peersNote = "the agent may also call every agent on the private network (--private-allow-outgoing everyone); `a2a-serve peers` lists them"
 
 func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	return &cobra.Command{
@@ -38,6 +45,14 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 			if cfg.IsJSON() {
 				return output.PrintList(cfg.Printer, cs)
 			}
+			peers, err := callsPeers(sf)
+			if err != nil {
+				return err
+			}
+			if len(cs) == 0 && peers {
+				_, err := fmt.Fprintln(cfg.Out, peersNote)
+				return err
+			}
 			rows := make([][]string, 0, len(cs))
 			for _, x := range cs {
 				auth := "network identity"
@@ -46,7 +61,26 @@ func newContactListCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				}
 				rows = append(rows, []string{x.Name, x.URL, x.Via, auth})
 			}
-			return cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`")
+			if err := cfg.PrintTableOrEmpty([]string{"NAME", "URL", "VIA", "AUTH"}, rows, "no contacts; add one with `a2a-serve contact add <name>`"); err != nil || !peers {
+				return err
+			}
+			_, err = fmt.Fprintln(cfg.Out, "\n"+peersNote)
+			return err
 		},
 	}
+}
+
+// callsPeers reports whether the saved settings let the agent call everyone
+// on its private network.
+func callsPeers(sf *serverFlags) (bool, error) {
+	d, err := sf.agentDir()
+	if err != nil {
+		return false, err
+	}
+	saved, err := d.ReadConfig()
+	if err != nil {
+		return false, err
+	}
+	private := saved.Network.Private != "" && saved.Network.Private != agentdir.NetworkNone
+	return private && saved.Policy.PrivateAllowOutgoing == agentdir.AccessEveryone, nil
 }

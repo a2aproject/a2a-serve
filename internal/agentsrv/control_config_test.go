@@ -40,7 +40,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	}
 	saved.Description = "reviews code"
 	saved.Approvals.OwnerChat = "telegram"
-	saved.Policy.PrivateAccess = agentdir.AccessPaired
+	saved.Policy.PrivateAllowIncoming = agentdir.AccessPaired
 	saved.MCP.Disabled = []string{"github"}
 	saved.Sandbox = harness.SandboxDocker
 	if err := ts.dir.SaveConfig(saved); err != nil {
@@ -51,7 +51,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReloadConfig() error = %v", err)
 	}
-	if diff := cmp.Diff([]string{"description", "private-access", "public-access", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}, res.Applied); diff != "" {
+	if diff := cmp.Diff([]string{"description", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "allow-tools", "deny-tools", "disable-mcp", "owner-chat"}, res.Applied); diff != "" {
 		t.Fatalf("ReloadConfig() wrong result (-want +got) diff = %s", diff)
 	}
 	running, err := client.Config(ctx)
@@ -93,7 +93,7 @@ func TestStatusAccess(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ReadConfig() error = %v", err)
 	}
-	saved.Policy = agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone, AllowEmails: []string{"*@example.com"}}
+	saved.Policy = agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone, AllowEmails: []string{"*@example.com"}}
 	if err := ts.dir.SaveConfig(saved); err != nil {
 		t.Fatalf("SaveConfig() error = %v", err)
 	}
@@ -106,7 +106,7 @@ func TestStatusAccess(t *testing.T) {
 		t.Fatalf("Status() error = %v", err)
 	}
 	want := &controlapi.Access{
-		PrivateAccess: agentdir.AccessEveryone, PublicAccess: agentdir.AccessAnyone,
+		PrivateAllowIncoming: agentdir.AccessEveryone, PublicAllowIncoming: agentdir.AccessAnyone,
 		Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{"anyone"},
 		Pairings: 1, OwnerPairings: 1,
 		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL or in a direct chat"},

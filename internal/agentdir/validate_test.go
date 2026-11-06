@@ -71,10 +71,11 @@ func TestValidate(t *testing.T) {
 		{name: "allow-email domain without star", modify: func(c *Config) { c.Policy.AllowEmails = []string{"example.com"} }, wantErr: `invalid --allow-email "example.com"`},
 		{name: "allow-email wildcard domain", modify: func(c *Config) { c.Policy.AllowEmails = []string{"*@*.com"} }, wantErr: `invalid --allow-email "*@*.com"`},
 		{name: "access", modify: func(c *Config) {
-			c.Policy = PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}
+			c.Policy = PolicyConfig{PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone, PrivateAllowOutgoing: AccessContacts}
 		}},
-		{name: "private-access", modify: func(c *Config) { c.Policy.PrivateAccess = AccessAnyone }, wantErr: `invalid --private-access "anyone": want everyone or paired`},
-		{name: "public-access", modify: func(c *Config) { c.Policy.PublicAccess = AccessEveryone }, wantErr: `invalid --public-access "everyone": want paired or anyone`},
+		{name: "private-allow-incoming", modify: func(c *Config) { c.Policy.PrivateAllowIncoming = AccessAnyone }, wantErr: `invalid --private-allow-incoming "anyone": want everyone or paired`},
+		{name: "public-allow-incoming", modify: func(c *Config) { c.Policy.PublicAllowIncoming = AccessEveryone }, wantErr: `invalid --public-allow-incoming "everyone": want paired or anyone`},
+		{name: "private-allow-outgoing", modify: func(c *Config) { c.Policy.PrivateAllowOutgoing = AccessPaired }, wantErr: `invalid --private-allow-outgoing "paired": want everyone or contacts`},
 		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale or none`},
 		{name: "google client without secret", modify: func(c *Config) {
 			c.Policy.AllowEmails = []string{"mom@example.org"}
@@ -449,7 +450,7 @@ agent: opencode
 sandbx: local
 # who may call
 policy:
-    privateAccess: paired
+    privateAllowIncoming: paired
     future: true
 approvals:
     allow: [read] # safe
@@ -459,7 +460,7 @@ approvals:
 	}
 	err = d.UpdateConfig(func(c *Config) error {
 		c.Name = "writer"
-		c.Policy.PrivateAccess = ""
+		c.Policy.PrivateAllowIncoming = ""
 		c.Model = "m"
 		return nil
 	})
@@ -514,8 +515,8 @@ taskTTL: 7d
 network:
   tailscaleControlURL: https://headscale.example.com
 policy:
-  privateAccess: paired
-  publicAccess: anyone
+  privateAllowIncoming: paired
+  publicAllowIncoming: anyone
   allowEmails: [a@example.com]
 approvals:
   ownerChat: telegram
@@ -564,6 +565,34 @@ channels:
 	}
 	if legacy, err := LegacyKeys(saved); err != nil || len(legacy) > 0 {
 		t.Fatalf("LegacyKeys(MarshalConfig()) = %v, %v, want no snake_case keys", legacy, err)
+	}
+}
+
+func TestParseConfigRenamedKeys(t *testing.T) {
+	t.Parallel()
+	data := "name: coder\nagent: opencode\npolicy:\n  privateAccess: paired\n  publicAccess: anyone\n"
+	got, err := ParseConfig([]byte(data))
+	if err != nil {
+		t.Fatalf("ParseConfig() error = %v", err)
+	}
+	want := PolicyConfig{PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone}
+	if diff := cmp.Diff(want, got.Policy); diff != "" {
+		t.Fatalf("ParseConfig() wrong policy (-want +got) diff = %s", diff)
+	}
+	legacy, err := LegacyKeys([]byte(data))
+	if err != nil {
+		t.Fatalf("LegacyKeys() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"policy.privateAccess", "policy.publicAccess"}, legacy); diff != "" {
+		t.Fatalf("LegacyKeys() wrong result (-want +got) diff = %s", diff)
+	}
+	merged, err := mergeConfig([]byte(data), got)
+	if err != nil {
+		t.Fatalf("mergeConfig() error = %v", err)
+	}
+	wantSaved := "name: coder\nagent: opencode\npolicy:\n    privateAllowIncoming: paired\n    publicAllowIncoming: anyone\n"
+	if diff := cmp.Diff(wantSaved, string(merged)); diff != "" {
+		t.Fatalf("mergeConfig() wrong file (-want +got) diff = %s", diff)
 	}
 }
 
@@ -630,15 +659,16 @@ func TestAccessWordAliases(t *testing.T) {
 		in   PolicyConfig
 		want PolicyConfig
 	}{
-		{name: "anyone for the private network", in: PolicyConfig{PrivateAccess: "anyone"}, want: PolicyConfig{PrivateAccess: AccessEveryone}},
-		{name: "everyone for the public URL", in: PolicyConfig{PublicAccess: "everyone"}, want: PolicyConfig{PublicAccess: AccessAnyone}},
-		{name: "canonical words", in: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}, want: PolicyConfig{PrivateAccess: AccessPaired, PublicAccess: AccessAnyone}},
+		{name: "anyone for the private network", in: PolicyConfig{PrivateAllowIncoming: "anyone"}, want: PolicyConfig{PrivateAllowIncoming: AccessEveryone}},
+		{name: "everyone for the public URL", in: PolicyConfig{PublicAllowIncoming: "everyone"}, want: PolicyConfig{PublicAllowIncoming: AccessAnyone}},
+		{name: "anyone for calls on the private network", in: PolicyConfig{PrivateAllowOutgoing: "anyone"}, want: PolicyConfig{PrivateAllowOutgoing: AccessEveryone}},
+		{name: "canonical words", in: PolicyConfig{PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone}, want: PolicyConfig{PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			cfg := &Config{}
-			s := Settings{Harness: "opencode", PrivateAccess: tc.in.PrivateAccess, PublicAccess: tc.in.PublicAccess}
+			s := Settings{Harness: "opencode", PrivateAllowIncoming: tc.in.PrivateAllowIncoming, PublicAllowIncoming: tc.in.PublicAllowIncoming, PrivateAllowOutgoing: tc.in.PrivateAllowOutgoing}
 			if _, err := s.Apply(cfg, Dir{Root: "/x"}); err != nil {
 				t.Fatalf("Settings.Apply() error = %v", err)
 			}
@@ -646,7 +676,7 @@ func TestAccessWordAliases(t *testing.T) {
 				t.Fatalf("Settings.Apply() wrong policy (-want +got) diff = %s", diff)
 			}
 
-			parsed, err := ParseConfig([]byte("agent: opencode\npolicy:\n  private_access: " + tc.in.PrivateAccess + "\n  public_access: " + tc.in.PublicAccess + "\n"))
+			parsed, err := ParseConfig([]byte("agent: opencode\npolicy:\n  private_access: " + tc.in.PrivateAllowIncoming + "\n  public_access: " + tc.in.PublicAllowIncoming + "\n  privateAllowOutgoing: " + tc.in.PrivateAllowOutgoing + "\n"))
 			if err != nil {
 				t.Fatalf("ParseConfig() error = %v", err)
 			}

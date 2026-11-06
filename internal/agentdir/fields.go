@@ -345,16 +345,22 @@ var fields = []field{
 		values: []string{NetworkTailscale, NetworkNone},
 	},
 	{
-		access: str(func(c *Config) *string { return &c.Policy.PrivateAccess }, func(s *Settings) *string { return &s.PrivateAccess }),
-		flag:   "private-access", path: "policy.privateAccess", scope: scopeOwner, live: true, section: SectionAccess,
+		access: str(func(c *Config) *string { return &c.Policy.PrivateAllowIncoming }, func(s *Settings) *string { return &s.PrivateAllowIncoming }),
+		flag:   "private-allow-incoming", path: "policy.privateAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
 		usage:  "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)",
 		values: []string{AccessEveryone, AccessPaired},
 	},
 	{
-		access: str(func(c *Config) *string { return &c.Policy.PublicAccess }, func(s *Settings) *string { return &s.PublicAccess }),
-		flag:   "public-access", path: "policy.publicAccess", scope: scopeOwner, live: true, section: SectionAccess,
+		access: str(func(c *Config) *string { return &c.Policy.PublicAllowIncoming }, func(s *Settings) *string { return &s.PublicAllowIncoming }),
+		flag:   "public-allow-incoming", path: "policy.publicAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
 		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)",
 		values: []string{AccessPaired, AccessAnyone},
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Policy.PrivateAllowOutgoing }, func(s *Settings) *string { return &s.PrivateAllowOutgoing }),
+		flag:   "private-allow-outgoing", path: "policy.privateAllowOutgoing", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts)",
+		values: []string{AccessEveryone, AccessContacts},
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Policy.AllowEmails }, func(s *Settings) *[]string { return &s.AllowEmails }),
@@ -788,7 +794,7 @@ func CopyLive(dst, src *Config) {
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-access", "public-access", "allow-email"}, setting)
+	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email"}, setting)
 }
 
 // label names the flag of f in errors.

@@ -250,15 +250,15 @@ func (s *Server) card(kind, baseURL string) *a2a.AgentCard {
 
 // needsPairing reports whether callers at the listener kind need a pairing
 // token, which the agent card then advertises: the local listener always,
-// the private one with --private-access paired, and the public one unless
-// --public-access anyone.
+// the private one with --private-allow-incoming paired, and the public one unless
+// --public-allow-incoming anyone.
 func (s *Server) needsPairing(kind string) bool {
 	p := s.rt.Config().Policy
 	switch kind {
 	case network.ListenerPrivate:
-		return access.PrivateAccess(p) == agentdir.AccessPaired
+		return access.PrivateAllowIncoming(p) == agentdir.AccessPaired
 	case network.ListenerPublic:
-		return p.PublicAccess != agentdir.AccessAnyone
+		return p.PublicAllowIncoming != agentdir.AccessAnyone
 	}
 	return true
 }

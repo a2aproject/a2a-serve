@@ -4,7 +4,7 @@ An a2a-serve agent serves these routes on every listener, and a relay serves the
 
 | Route | |
 | --- | --- |
-| `GET /`, `GET /.well-known/agent-card.json` | the agent card, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-access paired`, and on the public URL unless `--public-access anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
+| `GET /`, `GET /.well-known/agent-card.json` | the agent card, which names the `pairing` bearer scheme where callers need a pairing: on the local URL, on the private URL with `--private-allow-incoming paired`, and on the public URL unless `--public-allow-incoming anyone`. On the public URL it also names the [sign-in scheme](#sign-in-schemes) |
 | `POST /` | A2A JSON-RPC |
 | other paths | A2A HTTP+JSON (REST) |
 | `POST /pair` | exchange a pairing code for a caller or node token |

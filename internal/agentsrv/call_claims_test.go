@@ -425,6 +425,31 @@ func TestCallClaimsAgentsURL(t *testing.T) {
 	}
 }
 
+func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := openTestStore(t)
+	if err := st.PutContact(ctx, store.Contact{Name: "coder", URL: "http://coder.test", Via: contacts.ViaHTTPS}); err != nil {
+		t.Fatalf("store.PutContact() error = %v", err)
+	}
+	cl := newCallClaims(CallClaimsDeps{
+		Store: st, Bridge: harnessBridge{socket: "/tmp/h.sock"}, Sessions: st.Sessions(),
+		Peers: func(context.Context) []string { return []string{"Coder", "ben"} },
+	})
+	execCtx := &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello"))}
+
+	_, got := cl.withAgentsLine(auth.WithPrincipal(ctx, auth.Owner()), execCtx)
+
+	u, err := cl.agentsURL(ctx, "ctx1")
+	if err != nil {
+		t.Fatalf("CallClaims.agentsURL() error = %v", err)
+	}
+	want := fmt.Sprintf("%s Agents URL for this conversation: %s (agents: %s, coder, ben; call one with a2a send -a %s/<name>)", agentsLinePrefix, u, pairings.SchedulesAgent, u)
+	if got.Message.Parts[0].Text() != want {
+		t.Fatalf("CallClaims.withAgentsLine() line = %q, want %q", got.Message.Parts[0].Text(), want)
+	}
+}
+
 func TestCallClaimsWithAgentsLine(t *testing.T) {
 	t.Parallel()
 	prompt := func() *a2a.Message { return a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("hello")) }

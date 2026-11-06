@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -53,9 +54,10 @@ type AgentRef struct {
 	Description string
 }
 
-// callableAgents returns the built-in schedules agent, the contacts and the
-// hosted nodes.
-func callableAgents(ctx context.Context, st *store.Store) ([]AgentRef, error) {
+// callableAgents returns the built-in schedules agent, the contacts, the
+// hosted nodes and peers, the agents on the private network the agent may
+// call by name. A peer named like a contact or a node isn't listed again.
+func callableAgents(ctx context.Context, st *store.Store, peers []string) ([]AgentRef, error) {
 	contacts, err := st.Contacts(ctx)
 	if err != nil {
 		return nil, err
@@ -71,6 +73,11 @@ func callableAgents(ctx context.Context, st *store.Store) ([]AgentRef, error) {
 	}
 	for _, n := range nodes {
 		out = append(out, AgentRef{Name: n.ID, Kind: "webhook node", Description: n.Description})
+	}
+	for _, p := range peers {
+		if !slices.ContainsFunc(out, func(a AgentRef) bool { return strings.EqualFold(a.Name, p) }) {
+			out = append(out, AgentRef{Name: p, Kind: "private network"})
+		}
 	}
 	return out, nil
 }
@@ -106,9 +113,13 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	}
 	s.instructionsMu.Lock()
 	defer s.instructionsMu.Unlock()
-	agents, err := callableAgents(ctx, s.store)
+	agents, err := callableAgents(ctx, s.store, nil)
 	if err != nil {
 		return err
+	}
+	if s.clients != nil && s.clients.CallsPeers() {
+		// Peers come and go, so the agents line of each conversation lists them.
+		agents = append(agents, AgentRef{Name: "any agent on the private network", Kind: "by name", Description: "the agents line of each conversation lists them"})
 	}
 	var sb strings.Builder
 	sb.WriteString(strings.TrimSpace(skills.A2AAgents))

@@ -127,7 +127,7 @@ a2a send -a https://coder.your-tailnet.ts.net "What's in notes.md?"
 
 Other people on your tailnet can call it too. They see and approve only their
 own tasks. `a2a-serve status` lists who can call, and
-`a2a-serve config set --private-access paired` limits the tailnet to you and
+`a2a-serve config set --private-allow-incoming paired` limits the tailnet to you and
 your pairings.
 
 Other people get a code from you, as in [Serve a Coding Agent](../01-agent-server/README.md):

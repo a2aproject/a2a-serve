@@ -5,7 +5,7 @@
 > [!NOTE]
 > Experimental. Agents join relays in builds with `-tags agentmesh` (see [Networks](networks.md#agent-mesh-relays-experimental)). The relay commands work in every build.
 
-A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs on the relay. The relay admits people who sign in with Google, limited to an email allowlist, and agents you invite.
+A relay admits like a tailnet: everyone it admits can call everyone else it admits. Agents on it find each other by name, call each other from behind NAT, and get public URLs on the relay. An agent with `--private-allow-outgoing everyone` calls the others by name without `contact add`. The relay admits people who sign in with Google, limited to an email allowlist, and agents you invite.
 
 ## Run a relay
 

@@ -196,7 +196,7 @@ func TestPrivateNetworkAccess(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			tc.provider.net, tc.provider.name = &fakeNet{agents: map[string]string{}}, "coder"
-			ts := startServer(t, serverOpts{private: tc.provider, configure: func(c *agentdir.Config) { c.Policy.PrivateAccess = tc.access }})
+			ts := startServer(t, serverOpts{private: tc.provider, configure: func(c *agentdir.Config) { c.Policy.PrivateAllowIncoming = tc.access }})
 			_, private, _ := ts.srv.URLs()
 			resp, err := testHTTP.Post(private+"/", "application/json", strings.NewReader(listTasksRPC))
 			if err != nil {
@@ -294,9 +294,9 @@ func TestCardPairingScheme(t *testing.T) {
 	}{
 		{name: "local", kind: network.ListenerLocal, want: true},
 		{name: "private open to everyone", kind: network.ListenerPrivate},
-		{name: "private for pairings", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{PrivateAccess: agentdir.AccessPaired}, want: true},
+		{name: "private for pairings", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{PrivateAllowIncoming: agentdir.AccessPaired}, want: true},
 		{name: "public for pairings", kind: network.ListenerPublic, want: true},
-		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{PublicAccess: agentdir.AccessAnyone}},
+		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -324,8 +324,8 @@ func TestCardSignInScheme(t *testing.T) {
 	}{
 		{name: "public with allowed emails", kind: network.ListenerPublic, policy: allowEmail, want: true},
 		{name: "no allowed emails", kind: network.ListenerPublic},
-		{name: "private listener", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PrivateAccess: agentdir.AccessPaired}},
-		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PublicAccess: agentdir.AccessAnyone}},
+		{name: "private listener", kind: network.ListenerPrivate, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PrivateAllowIncoming: agentdir.AccessPaired}},
+		{name: "public open to anyone", kind: network.ListenerPublic, policy: agentdir.PolicyConfig{AllowEmails: allowEmail.AllowEmails, PublicAllowIncoming: agentdir.AccessAnyone}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

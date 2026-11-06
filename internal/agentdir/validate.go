@@ -214,11 +214,14 @@ func matchesToolKind(p string) bool {
 
 func (p PolicyConfig) validate() []error {
 	var errs []error
-	if v := p.PrivateAccess; v != "" && v != AccessEveryone && v != AccessPaired {
-		errs = append(errs, fmt.Errorf("invalid --private-access %q: want everyone or paired", v))
+	if v := p.PrivateAllowIncoming; v != "" && v != AccessEveryone && v != AccessPaired {
+		errs = append(errs, fmt.Errorf("invalid --private-allow-incoming %q: want everyone or paired", v))
 	}
-	if v := p.PublicAccess; v != "" && v != AccessPaired && v != AccessAnyone {
-		errs = append(errs, fmt.Errorf("invalid --public-access %q: want paired or anyone", v))
+	if v := p.PublicAllowIncoming; v != "" && v != AccessPaired && v != AccessAnyone {
+		errs = append(errs, fmt.Errorf("invalid --public-allow-incoming %q: want paired or anyone", v))
+	}
+	if v := p.PrivateAllowOutgoing; v != "" && v != AccessEveryone && v != AccessContacts {
+		errs = append(errs, fmt.Errorf("invalid --private-allow-outgoing %q: want everyone or contacts", v))
 	}
 	for _, e := range p.AllowEmails {
 		if !ValidEmailPattern(e) {

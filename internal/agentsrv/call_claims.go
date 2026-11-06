@@ -46,6 +46,7 @@ type CallClaims struct {
 	chain    *auth.Chain
 	agentKey func(ctx context.Context, contextID string) (string, error)
 	sessions a2aacp.SessionStore
+	peers    func(context.Context) []string
 
 	handleMu sync.Mutex
 
@@ -76,6 +77,9 @@ type CallClaimsDeps struct {
 	// Sessions are the ACP sessions of conversations, which tell when the
 	// agents line is due again.
 	Sessions a2aacp.SessionStore
+	// Peers returns the agents on the private network the agent may call by
+	// name. If nil, it calls only its contacts and nodes.
+	Peers func(context.Context) []string
 }
 
 func newCallClaims(deps CallClaimsDeps) *CallClaims {
@@ -85,6 +89,7 @@ func newCallClaims(deps CallClaimsDeps) *CallClaims {
 		chain:     deps.Chain,
 		agentKey:  deps.AgentKey,
 		sessions:  deps.Sessions,
+		peers:     deps.Peers,
 		turns:     map[string]*agentproxy.Claims{},
 		lined:     map[string]*linedSession{},
 		lineEvery: agentsLineEvery,
@@ -369,7 +374,11 @@ func (cl *CallClaims) withAgentsLine(ctx context.Context, execCtx *a2asrv.Execut
 	if !user.MayCallAgents() || !cl.needsAgentsLine(ctx, execCtx.ContextID) {
 		return ctx, execCtx
 	}
-	agents, err := callableAgents(ctx, cl.store)
+	var peers []string
+	if cl.peers != nil {
+		peers = cl.peers(ctx)
+	}
+	agents, err := callableAgents(ctx, cl.store, peers)
 	if err != nil {
 		slog.Warn("listing callable agents", "error", err)
 		return ctx, execCtx

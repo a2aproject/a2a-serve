@@ -400,9 +400,9 @@ func TestSetAccess(t *testing.T) {
 	}{
 		{name: "other setting", s: agentdir.Settings{Sandbox: "local"}},
 		{
-			name: "stopped agent", s: agentdir.Settings{Private: "tailscale", PrivateAccess: agentdir.AccessPaired},
+			name: "stopped agent", s: agentdir.Settings{Private: "tailscale", PrivateAllowIncoming: agentdir.AccessPaired},
 			want: &controlapi.Access{
-				PrivateAccess: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
+				PrivateAllowIncoming: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
 				Summary: []string{"you: this machine and your tailnet devices", "nobody else", "the tailnet needs a pairing"},
 			},
 		},

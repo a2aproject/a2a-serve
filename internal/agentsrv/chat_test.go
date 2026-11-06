@@ -61,9 +61,9 @@ func TestRouterUnknownSenderGetsPairingHint(t *testing.T) {
 	ts.ch.WaitFor(t, "dm9", channeltest.HasText("invalid or has expired"))
 }
 
-func TestRouterPublicAccessAnyone(t *testing.T) {
+func TestRouterPublicAllowIncomingAnyone(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake"), configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
+	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake"), configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone }})
 	ts.ch.Write("telegram:9", "dm9", "hello")
 	ts.ch.WaitFor(t, "dm9", channeltest.HasText("Hello from fakeacp."))
 
@@ -266,7 +266,7 @@ func TestRouterAnonymousApprovalGoesToOwnerChat(t *testing.T) {
 	ch := channeltest.NewChannel(agentdir.ChannelEmail)
 	ch.Buttons = false
 	ch.SendDelay = 200 * time.Millisecond
-	ts := startServer(t, serverOpts{channel: ch, configure: func(c *agentdir.Config) { c.Policy.PublicAccess = agentdir.AccessAnyone }})
+	ts := startServer(t, serverOpts{channel: ch, configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone }})
 	linkOwner(t, ts, "me@example.com", "owner-thread")
 
 	ts.ch.Write("stranger@example.org", "thread9", "ask")

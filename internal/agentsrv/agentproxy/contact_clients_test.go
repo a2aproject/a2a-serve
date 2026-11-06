@@ -44,7 +44,15 @@ import (
 
 func newTestContactClients(t *testing.T, st *store.Store, private network.Provider) *ContactClients {
 	t.Helper()
-	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Config: func() *agentdir.Config { return &agentdir.Config{Name: "assistant"} }})
+	return newTestContactClientsOutgoing(t, st, private, "")
+}
+
+// newTestContactClientsOutgoing returns contact clients of an agent with
+// --private-allow-outgoing outgoing.
+func newTestContactClientsOutgoing(t *testing.T, st *store.Store, private network.Provider, outgoing string) *ContactClients {
+	t.Helper()
+	cfg := &agentdir.Config{Name: "assistant", Policy: agentdir.PolicyConfig{PrivateAllowOutgoing: outgoing}}
+	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Config: func() *agentdir.Config { return cfg }})
 	t.Cleanup(func() {
 		if err := cc.Close(context.Background()); err != nil {
 			t.Errorf("ContactClients.close() error = %v", err)
@@ -101,6 +109,75 @@ func TestContactClientsCallable(t *testing.T) {
 				t.Fatalf("ContactClients.callable(%q) = %v, %v, want %v", tc.agent, callable, err, tc.wantCallable)
 			}
 		})
+	}
+}
+
+func TestContactClientsCallablePeers(t *testing.T) {
+	t.Parallel()
+	peers := &staticPeers{peers: []network.PeerInfo{{Name: "ben", URL: "http://ben.test", Online: true}}}
+	tests := []struct {
+		name         string
+		private      network.Provider
+		outgoing     string
+		agent        string
+		wantCallable bool
+		wantPeers    []string
+	}{
+		{name: "everyone on the private network", private: peers, outgoing: agentdir.AccessEveryone, agent: "ben", wantCallable: true, wantPeers: []string{"ben"}},
+		{name: "peer in other case", private: peers, outgoing: agentdir.AccessEveryone, agent: "BEN", wantCallable: true, wantPeers: []string{"ben"}},
+		{name: "unknown peer", private: peers, outgoing: agentdir.AccessEveryone, agent: "nobody", wantPeers: []string{"ben"}},
+		{name: "contacts only", private: peers, outgoing: agentdir.AccessContacts, agent: "ben"},
+		{name: "default", private: peers, agent: "ben"},
+		{name: "no private network", outgoing: agentdir.AccessEveryone, agent: "ben"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			cc := newTestContactClientsOutgoing(t, openTestStore(t), tc.private, tc.outgoing)
+
+			callable, err := cc.callable(ctx, tc.agent)
+			if err != nil || callable != tc.wantCallable {
+				t.Fatalf("ContactClients.callable(%q) = %v, %v, want %v", tc.agent, callable, err, tc.wantCallable)
+			}
+			if diff := cmp.Diff(tc.wantPeers, cc.CallablePeers(ctx)); diff != "" {
+				t.Fatalf("ContactClients.CallablePeers() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestContactClientsCallsPeer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	remote := newFakeContact(t)
+	peers := &staticPeers{peers: []network.PeerInfo{{Name: "ben", URL: remote.URL, Online: true}}}
+	cc := newTestContactClientsOutgoing(t, openTestStore(t), peers, agentdir.AccessEveryone)
+
+	if _, err := cc.contactClient(ctx, "ben"); err != nil {
+		t.Fatalf("ContactClients.contactClient() error = %v", err)
+	}
+
+	if len(remote.received()) == 0 {
+		t.Fatalf("the peer got no requests, want its agent card fetched")
+	}
+}
+
+func TestContactClientsContactWinsOverPeer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	contact, peer := newFakeContact(t), newFakeContact(t)
+	st := openTestStore(t)
+	putContact(t, st, store.Contact{Name: "ben", URL: contact.URL})
+	peers := &staticPeers{peers: []network.PeerInfo{{Name: "ben", URL: peer.URL, Online: true}}}
+	cc := newTestContactClientsOutgoing(t, st, peers, agentdir.AccessEveryone)
+
+	if _, err := cc.contactClient(ctx, "ben"); err != nil {
+		t.Fatalf("ContactClients.contactClient() error = %v", err)
+	}
+
+	if len(contact.received()) == 0 || len(peer.received()) != 0 {
+		t.Fatalf("requests to the contact = %d, to the peer = %d, want the contact's URL used", len(contact.received()), len(peer.received()))
 	}
 }
 

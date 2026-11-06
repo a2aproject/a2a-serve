@@ -94,30 +94,38 @@ func (c *Config) MCPDisabled(name string) bool {
 // PolicyConfig decides who may call the agent besides the user running it,
 // who is always an owner.
 type PolicyConfig struct {
-	// PrivateAccess is everyone or paired. Empty is everyone.
-	PrivateAccess string `yaml:"privateAccess,omitempty" json:"privateAccess,omitempty"`
-	// PublicAccess is paired or anyone. Empty is paired.
-	PublicAccess string `yaml:"publicAccess,omitempty" json:"publicAccess,omitempty"`
+	// PrivateAllowIncoming is everyone or paired. Empty is everyone.
+	PrivateAllowIncoming string `yaml:"privateAllowIncoming,omitempty" json:"privateAllowIncoming,omitempty"`
+	// PublicAllowIncoming is paired or anyone. Empty is paired.
+	PublicAllowIncoming string `yaml:"publicAllowIncoming,omitempty" json:"publicAllowIncoming,omitempty"`
 	// AllowEmails are the emails, or *@domain, of people who may call.
 	AllowEmails []string `yaml:"allowEmails,omitempty" json:"allowEmails,omitempty"`
+	// PrivateAllowOutgoing is whom on the private network the agent may
+	// call: everyone or contacts. Empty is contacts.
+	PrivateAllowOutgoing string `yaml:"privateAllowOutgoing,omitempty" json:"privateAllowOutgoing,omitempty"`
 }
 
-// Values of --private-access and --public-access.
+// Values of --private-allow-incoming, --public-allow-incoming and
+// --private-allow-outgoing.
 const (
 	AccessEveryone = "everyone"
 	AccessPaired   = "paired"
 	AccessAnyone   = "anyone"
+	AccessContacts = "contacts"
 )
 
 // normalize replaces the access word of the other network with the one the
-// setting uses, so that --private-access anyone and --public-access everyone
-// work. everyone and anyone mean the same.
+// setting uses, so that --private-allow-incoming anyone and
+// --public-allow-incoming everyone work. everyone and anyone mean the same.
 func (p *PolicyConfig) normalize() {
-	if p.PrivateAccess == AccessAnyone {
-		p.PrivateAccess = AccessEveryone
+	if p.PrivateAllowIncoming == AccessAnyone {
+		p.PrivateAllowIncoming = AccessEveryone
 	}
-	if p.PublicAccess == AccessEveryone {
-		p.PublicAccess = AccessAnyone
+	if p.PrivateAllowOutgoing == AccessAnyone {
+		p.PrivateAllowOutgoing = AccessEveryone
+	}
+	if p.PublicAllowIncoming == AccessEveryone {
+		p.PublicAllowIncoming = AccessAnyone
 	}
 }
 
@@ -440,7 +448,7 @@ func (d Dir) UnknownConfigKeys() ([]UnknownKey, error) {
 	return UnknownKeys(data)
 }
 
-// LegacyKeys returns the snake_case keys of older versions in the
+// LegacyKeys returns the keys of older versions, snake_case or renamed, in the
 // config.yaml content data, as dotted paths, sorted. Saving the config
 // renames them.
 func LegacyKeys(data []byte) ([]string, error) {
@@ -534,10 +542,11 @@ func editDistance(a, b string) int {
 	return prev[len(b)]
 }
 
-// renameLegacyKeys renames the snake_case keys in n, a node of type t, to
-// the camelCase keys they match, such as task_ttl to taskTTL, and appends
-// their dotted paths to renamed if it is set. A key whose camelCase key is
-// also set is left alone.
+// renameLegacyKeys renames the keys of older versions in n, a node of type
+// t: snake_case keys to the camelCase keys they match, such as task_ttl to
+// taskTTL, and the [renamedKeys] to their new names. It appends
+// their dotted paths to renamed if it is set. A key whose new key is also
+// set is left alone.
 func renameLegacyKeys(n *yaml.Node, t reflect.Type, prefix string, renamed *[]string) {
 	known := yamlFields(t)
 	if known == nil || n.Kind != yaml.MappingNode {
@@ -549,21 +558,42 @@ func renameLegacyKeys(n *yaml.Node, t reflect.Type, prefix string, renamed *[]st
 	}
 	for i := 0; i+1 < len(n.Content); i += 2 {
 		key := n.Content[i]
-		if _, ok := known[key.Value]; !ok && strings.Contains(key.Value, "_") {
-			for name := range known {
-				if foldKey(name) == foldKey(key.Value) && !set[name] {
-					if renamed != nil {
-						*renamed = append(*renamed, prefix+key.Value)
-					}
-					key.Value, set[name] = name, true
-					break
+		if _, ok := known[key.Value]; !ok {
+			if name := legacyKeyName(known, prefix, key.Value); name != "" && !set[name] {
+				if renamed != nil {
+					*renamed = append(*renamed, prefix+key.Value)
 				}
+				key.Value, set[name] = name, true
 			}
 		}
 		if ft, ok := known[key.Value]; ok {
 			renameLegacyKeys(n.Content[i+1], ft, prefix+key.Value+".", renamed)
 		}
 	}
+}
+
+// renamedKeys are the keys of older versions that have another name now, by
+// their dotted path with the key folded.
+var renamedKeys = map[string]string{
+	"policy.privateaccess": "privateAllowIncoming",
+	"policy.publicaccess":  "publicAllowIncoming",
+}
+
+// legacyKeyName returns the key of known, the keys at prefix, that the
+// legacy key stands for, or "".
+func legacyKeyName(known map[string]reflect.Type, prefix, key string) string {
+	if name, ok := renamedKeys[prefix+foldKey(key)]; ok {
+		return name
+	}
+	if !strings.Contains(key, "_") {
+		return ""
+	}
+	for name := range known {
+		if foldKey(name) == foldKey(key) {
+			return name
+		}
+	}
+	return ""
 }
 
 func foldKey(k string) string { return strings.ToLower(strings.ReplaceAll(k, "_", "")) }

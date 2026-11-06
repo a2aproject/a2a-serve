@@ -299,16 +299,63 @@ func (cc *ContactClients) nodeCaller(user auth.Principal, hops int) auth.Princip
 	}
 }
 
-// callable reports whether name is a contact or a hosted node.
+// callable reports whether name is a contact, a hosted node, or an agent
+// on the private network the agent may call.
 func (cc *ContactClients) callable(ctx context.Context, name string) (bool, error) {
 	if node, err := cc.isNode(ctx, name); err != nil || node {
 		return node, err
 	}
-	_, err := cc.store.Contact(ctx, name)
+	_, err := cc.contact(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		return false, nil
 	}
 	return err == nil, err
+}
+
+// CallablePeers returns the names of the agents on the private network the
+// agent may call by name: all of them with --private-allow-outgoing
+// everyone, and none otherwise.
+func (cc *ContactClients) CallablePeers(ctx context.Context) []string {
+	if !cc.CallsPeers() {
+		return nil
+	}
+	peers, err := cc.Discover(ctx)
+	if err != nil {
+		slog.Warn("listing the agents on the private network", "error", err)
+		return nil
+	}
+	names := make([]string, 0, len(peers))
+	for _, p := range peers {
+		names = append(names, p.Name)
+	}
+	return names
+}
+
+// CallsPeers reports whether the agent may call everyone on its private
+// network.
+func (cc *ContactClients) CallsPeers() bool {
+	return cc.private != nil && cc.config().Policy.PrivateAllowOutgoing == agentdir.AccessEveryone
+}
+
+// contact returns the contact name, or, when the agent may call everyone
+// on its private network, the agent found there by that name, which the
+// network's identity authenticates. It returns [store.ErrNotFound] for
+// another name.
+func (cc *ContactClients) contact(ctx context.Context, name string) (store.Contact, error) {
+	c, err := cc.store.Contact(ctx, name)
+	if !errors.Is(err, store.ErrNotFound) || !cc.CallsPeers() {
+		return c, err
+	}
+	peers, derr := cc.Discover(ctx)
+	if derr != nil {
+		return store.Contact{}, derr
+	}
+	for _, p := range peers {
+		if strings.EqualFold(p.Name, name) {
+			return store.Contact{Name: p.Name, URL: p.URL, Via: ViaPrivate}, nil
+		}
+	}
+	return store.Contact{}, err
 }
 
 // agentHandler returns the A2A handler of a node or a contact. A node is
@@ -331,12 +378,13 @@ func (cc *ContactClients) agentHandler(ctx context.Context, c Claims, name strin
 	}}, nil, nil
 }
 
-// contactClient returns the client of a contact, one per contact: the user
-// and hop count go with each request. A client is rebuilt when the contact
-// changed, and dropped with the contact. It returns [store.ErrNotFound] for
-// a name which isn't a contact.
+// contactClient returns the client of a contact, or of an agent on the
+// private network the agent may call, one per name: the user and hop count
+// go with each request. A client is rebuilt when the contact changed, and
+// dropped with the contact. It returns [store.ErrNotFound] for a name it
+// can't call.
 func (cc *ContactClients) contactClient(ctx context.Context, name string) (*a2aclient.Client, error) {
-	c, err := cc.store.Contact(ctx, name)
+	c, err := cc.contact(ctx, name)
 	if errors.Is(err, store.ErrNotFound) {
 		cc.forgetClient(name)
 		return nil, err

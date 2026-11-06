@@ -438,15 +438,15 @@ func TestSettingsApplyNetworkSecrets(t *testing.T) {
 
 func TestSettingsApplyAccess(t *testing.T) {
 	t.Parallel()
-	cfg := &Config{Policy: PolicyConfig{PrivateAccess: AccessEveryone, AllowEmails: []string{"Mom@example.com"}}}
+	cfg := &Config{Policy: PolicyConfig{PrivateAllowIncoming: AccessEveryone, AllowEmails: []string{"Mom@example.com"}}}
 	s := Settings{
-		PrivateAccess: AccessPaired, PublicAccess: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
+		PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
 	}
 	if _, err := s.Apply(cfg, Dir{Root: "/x"}); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	want := PolicyConfig{
-		PrivateAccess: AccessPaired, PublicAccess: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
+		PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone, AllowEmails: []string{"mom@example.com", "*@example.com"},
 	}
 	if diff := cmp.Diff(want, cfg.Policy); diff != "" {
 		t.Fatalf("Apply() wrong policy (-want +got) diff = %s", diff)
