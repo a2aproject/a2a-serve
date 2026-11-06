@@ -30,6 +30,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -58,6 +59,28 @@ import (
 // connections of http.DefaultTransport, which breaks requests that parallel
 // tests send through it at the same time.
 var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+
+// expectContinueHTTP sends a request with "Expect: 100-continue" only once
+// the server asks for the body. A server that refuses a body by its length
+// then answers before the client writes it, and doesn't close the
+// connection under a write in progress.
+var expectContinueHTTP = func() *http.Client {
+	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr.ExpectContinueTimeout = time.Minute
+	return &http.Client{Transport: tr}
+}()
+
+// countingReader counts the bytes read from r.
+type countingReader struct {
+	r io.Reader
+	n atomic.Int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n.Add(int64(n))
+	return n, err
+}
 
 var fakeACP string
 
