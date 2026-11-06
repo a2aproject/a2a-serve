@@ -52,7 +52,11 @@ func Load(dir string) (*Recipe, error) {
 		return nil, fmt.Errorf("parsing the recipe's config.yaml: %w", err)
 	}
 	if len(unknown) > 0 {
-		return nil, fmt.Errorf("the recipe uses settings this a2a-serve doesn't know: %s; upgrade a2a-serve", strings.Join(unknown, ", "))
+		paths := make([]string, len(unknown))
+		for i, k := range unknown {
+			paths[i] = k.Path
+		}
+		return nil, fmt.Errorf("the recipe uses settings this a2a-serve doesn't know: %s; upgrade a2a-serve", strings.Join(paths, ", "))
 	}
 	cfg, err := agentdir.ParseConfig(data)
 	if err != nil {

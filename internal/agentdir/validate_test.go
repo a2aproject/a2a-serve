@@ -321,7 +321,7 @@ func TestUnknownKeys(t *testing.T) {
 	tests := []struct {
 		name string
 		data string
-		want []string
+		want []UnknownKey
 	}{
 		{
 			name: "known keys",
@@ -329,8 +329,18 @@ func TestUnknownKeys(t *testing.T) {
 		},
 		{
 			name: "unknown keys at any depth",
-			data: "name: coder\ncard: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    token: secret:T\n    chat: x\n",
-			want: []string{"card", "channels.telegram.chat", "network.allowlist"},
+			data: "name: coder\ncard: {}\nnetwork:\n  allowlist: [example.com]\nchannels:\n  telegram:\n    chat: x\n",
+			want: []UnknownKey{{Path: "card"}, {Path: "channels.telegram.chat"}, {Path: "network.allowlist"}},
+		},
+		{
+			name: "typos",
+			data: "sandbx: local\nTaskTTL: 7d\nnetwork:\n  privat: tailscale\n",
+			want: []UnknownKey{{Path: "TaskTTL", Suggestion: "taskTTL"}, {Path: "network.privat", Suggestion: "network.private"}, {Path: "sandbx", Suggestion: "sandbox"}},
+		},
+		{
+			name: "removed keys are not suggested",
+			data: "harnes: opencode\n",
+			want: []UnknownKey{{Path: "harnes"}},
 		},
 		{
 			name: "legacy keys",
@@ -343,7 +353,7 @@ func TestUnknownKeys(t *testing.T) {
 		{
 			name: "snake_case key besides its camelCase key",
 			data: "taskTTL: 7d\ntask_ttl: 1d\n",
-			want: []string{"task_ttl"},
+			want: []UnknownKey{{Path: "task_ttl", Suggestion: "taskTTL"}},
 		},
 		{
 			name: "empty",
@@ -361,6 +371,74 @@ func TestUnknownKeys(t *testing.T) {
 				t.Fatalf("UnknownKeys() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestUnknownKeyString(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		key  UnknownKey
+		want string
+	}{
+		{key: UnknownKey{Path: "sandbx", Suggestion: "sandbox"}, want: "config.yaml has an unknown key sandbx: did you mean sandbox?"},
+		{key: UnknownKey{Path: "card"}, want: "config.yaml has an unknown key card, which the server ignores"},
+	}
+	for _, tc := range tests {
+		if got := tc.key.String(); got != tc.want {
+			t.Fatalf("UnknownKey.String() = %q, want %q", got, tc.want)
+		}
+	}
+}
+
+func TestUpdateConfigKeepsCommentsAndUnknownKeys(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatal(err)
+	}
+	const orig = `# my agent
+name: coder # the name
+agent: opencode
+sandbx: local
+# who may call
+policy:
+    privateAccess: paired
+    future: true
+approvals:
+    allow: [read] # safe
+`
+	if err := os.WriteFile(d.ConfigPath(), []byte(orig), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	err = d.UpdateConfig(func(c *Config) error {
+		c.Name = "writer"
+		c.Policy.PrivateAccess = ""
+		c.Model = "m"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateConfig() error = %v", err)
+	}
+	got, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const want = `# my agent
+name: writer # the name
+agent: opencode
+sandbx: local
+# who may call
+policy:
+    future: true
+approvals:
+    allow: [read] # safe
+model: m
+`
+	if diff := cmp.Diff(want, string(got)); diff != "" {
+		t.Fatalf("UpdateConfig() wrong file (-want +got) diff = %s", diff)
 	}
 }
 

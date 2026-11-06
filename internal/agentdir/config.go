@@ -15,6 +15,7 @@
 package agentdir
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"net"
@@ -394,9 +395,24 @@ func ParseConfig(data []byte) (*Config, error) {
 	return &cfg, nil
 }
 
+// UnknownKey is a key of config.yaml that Config doesn't have.
+type UnknownKey struct {
+	// Path is the dotted path of the key, such as network.allowlist.
+	Path string
+	// Suggestion is the dotted path of the known key closest to it, or "".
+	Suggestion string
+}
+
+func (k UnknownKey) String() string {
+	if k.Suggestion == "" {
+		return fmt.Sprintf("config.yaml has an unknown key %s, which the server ignores", k.Path)
+	}
+	return fmt.Sprintf("config.yaml has an unknown key %s: did you mean %s?", k.Path, k.Suggestion)
+}
+
 // UnknownKeys returns the keys of the config.yaml content data that Config
-// doesn't have, as dotted paths such as network.allowlist, sorted.
-func UnknownKeys(data []byte) ([]string, error) {
+// doesn't have, sorted by path.
+func UnknownKeys(data []byte) ([]UnknownKey, error) {
 	var doc yaml.Node
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, err
@@ -404,11 +420,21 @@ func UnknownKeys(data []byte) ([]string, error) {
 	if len(doc.Content) == 0 {
 		return nil, nil
 	}
-	var out []string
+	var out []UnknownKey
 	renameLegacyKeys(doc.Content[0], reflect.TypeFor[Config](), "", nil)
 	unknownKeys(doc.Content[0], reflect.TypeFor[Config](), "", &out)
-	slices.Sort(out)
+	slices.SortFunc(out, func(a, b UnknownKey) int { return strings.Compare(a.Path, b.Path) })
 	return out, nil
+}
+
+// UnknownConfigKeys returns the keys of config.yaml that Config doesn't
+// have, sorted by path.
+func (d Dir) UnknownConfigKeys() ([]UnknownKey, error) {
+	data, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		return nil, err
+	}
+	return UnknownKeys(data)
 }
 
 // LegacyKeys returns the snake_case keys of older versions in the
@@ -445,7 +471,7 @@ func yamlFields(t reflect.Type) map[string]reflect.Type {
 	return out
 }
 
-func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
+func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]UnknownKey) {
 	known := yamlFields(t)
 	if known == nil || n.Kind != yaml.MappingNode {
 		return
@@ -454,11 +480,55 @@ func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]string) {
 		key := n.Content[i].Value
 		ft, ok := known[key]
 		if !ok {
-			*out = append(*out, prefix+key)
+			k := UnknownKey{Path: prefix + key}
+			if s := closestKey(key, t); s != "" {
+				k.Suggestion = prefix + s
+			}
+			*out = append(*out, k)
 			continue
 		}
 		unknownKeys(n.Content[i+1], ft, prefix+key+".", out)
 	}
+}
+
+// closestKey returns the key of the struct t which key most likely
+// misspells, or "". Removed keys, hidden from JSON, aren't suggested.
+func closestKey(key string, t reflect.Type) string {
+	for t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	best, bestDist := "", max(1, len(key)/3)+1
+	for f := range t.Fields() {
+		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
+		if name == "" || name == "-" || f.Tag.Get("json") == "-" {
+			continue
+		}
+		if d := editDistance(foldKey(key), foldKey(name)); d < bestDist {
+			best, bestDist = name, d
+		}
+	}
+	return best
+}
+
+// editDistance returns the Levenshtein distance between a and b.
+func editDistance(a, b string) int {
+	prev := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur := make([]int, len(b)+1)
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+		}
+		prev = cur
+	}
+	return prev[len(b)]
 }
 
 // renameLegacyKeys renames the snake_case keys in n, a node of type t, to
@@ -506,16 +576,103 @@ func MarshalConfig(cfg *Config) ([]byte, error) {
 
 const configHeader = "# Agent definition for `a2a-serve`. Secrets are kept in state/secrets, never here.\n"
 
-// SaveConfig writes config.yaml.
+// SaveConfig writes config.yaml. The comments of the saved file and the keys
+// Config doesn't have are kept.
 func (d Dir) SaveConfig(cfg *Config) error {
 	if err := d.Init(); err != nil {
 		return err
 	}
-	data, err := MarshalConfig(cfg)
+	old, err := os.ReadFile(d.ConfigPath())
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	data, err := mergeConfig(old, cfg)
 	if err != nil {
 		return err
 	}
 	return fsutil.WriteAtomic(d.ConfigPath(), data, 0o644)
+}
+
+// mergeConfig returns the content of config.yaml for cfg, editing the node
+// tree of old, the saved content, so that its comments and unknown keys
+// stay. Without a saved mapping, it returns [MarshalConfig].
+func mergeConfig(old []byte, cfg *Config) ([]byte, error) {
+	var doc yaml.Node
+	if err := yaml.Unmarshal(old, &doc); err != nil || len(doc.Content) == 0 || doc.Content[0].Kind != yaml.MappingNode {
+		return MarshalConfig(cfg)
+	}
+	var next yaml.Node
+	if err := next.Encode(cfg); err != nil {
+		return nil, err
+	}
+	t := reflect.TypeFor[Config]()
+	renameLegacyKeys(doc.Content[0], t, "", nil)
+	mergeMapping(doc.Content[0], &next, t)
+	var buf bytes.Buffer
+	enc := yaml.NewEncoder(&buf)
+	if err := enc.Encode(&doc); err != nil {
+		return nil, err
+	}
+	if err := enc.Close(); err != nil {
+		return nil, err
+	}
+	return buf.Bytes(), nil
+}
+
+// mergeMapping sets the keys of the mapping dst, a node of the struct t, to
+// the values in src. Keys t doesn't have stay, and known keys missing from
+// src are removed, unless they hold unknown keys.
+func mergeMapping(dst, src *yaml.Node, t reflect.Type) {
+	known := yamlFields(t)
+	values := map[string]*yaml.Node{}
+	for i := 0; i+1 < len(src.Content); i += 2 {
+		values[src.Content[i].Value] = src.Content[i+1]
+	}
+	var content []*yaml.Node
+	kept := map[string]bool{}
+	for i := 0; i+1 < len(dst.Content); i += 2 {
+		k, v := dst.Content[i], dst.Content[i+1]
+		ft, ok := known[k.Value]
+		if !ok {
+			content = append(content, k, v)
+			continue
+		}
+		if kept[k.Value] {
+			continue
+		}
+		next, set := values[k.Value]
+		if !set {
+			// An empty struct is omitted, but its unknown keys stay.
+			next = &yaml.Node{Kind: yaml.MappingNode}
+		}
+		v = mergeValue(v, next, ft)
+		if !set && (v.Kind != yaml.MappingNode || len(v.Content) == 0) {
+			continue
+		}
+		kept[k.Value] = true
+		content = append(content, k, v)
+	}
+	for i := 0; i+1 < len(src.Content); i += 2 {
+		if !kept[src.Content[i].Value] {
+			content = append(content, src.Content[i], src.Content[i+1])
+		}
+	}
+	dst.Content = content
+}
+
+// mergeValue returns the node for next, a value of type t, in place of
+// old. An unchanged value keeps old, with its style and comments.
+func mergeValue(old, next *yaml.Node, t reflect.Type) *yaml.Node {
+	if old.Kind == yaml.MappingNode && next.Kind == yaml.MappingNode && yamlFields(t) != nil {
+		mergeMapping(old, next, t)
+		return old
+	}
+	a, b := reflect.New(t), reflect.New(t)
+	if old.Decode(a.Interface()) == nil && next.Decode(b.Interface()) == nil && reflect.DeepEqual(a.Interface(), b.Interface()) {
+		return old
+	}
+	next.HeadComment, next.LineComment, next.FootComment = old.HeadComment, old.LineComment, old.FootComment
+	return next
 }
 
 // LockConfig runs fn holding the advisory lock of config.yaml, so that

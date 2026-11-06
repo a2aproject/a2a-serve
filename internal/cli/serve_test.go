@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -415,5 +416,27 @@ func TestPluginInfo(t *testing.T) {
 	}
 	if got.Name != "serve" || got.Description != serveShort {
 		t.Fatalf("printPluginInfo() = %+v, want name serve and the command description", got)
+	}
+}
+
+func TestPrintAgentLineReportsUnknownKeys(t *testing.T) {
+	t.Parallel()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nsandbx: local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	if err := printAgentLine(&out, d, false); err != nil {
+		t.Fatalf("printAgentLine() error = %v", err)
+	}
+	want := "agent coder (opencode) in " + d.Path() + "\n! config.yaml has an unknown key sandbx: did you mean sandbox?\n"
+	if diff := cmp.Diff(want, out.String()); diff != "" {
+		t.Fatalf("printAgentLine() wrong result (-want +got) diff = %s", diff)
 	}
 }

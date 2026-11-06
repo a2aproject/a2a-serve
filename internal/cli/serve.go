@@ -257,9 +257,10 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 }
 
 // printAgentLine names the agent and the directory it runs from, since a
-// run finds the nearest agent up from the current directory. A detached or
-// service child writes to the log, which its parent relays: there the line
-// would repeat the parent's.
+// run finds the nearest agent up from the current directory, and warns
+// about keys of config.yaml that the server ignores. A detached or service
+// child writes to the log, which its parent relays: there the lines would
+// repeat the parent's.
 func printAgentLine(out io.Writer, d agentdir.Dir, created bool) error {
 	if writesTo(out, d.LogPath()) {
 		return nil
@@ -272,7 +273,16 @@ func printAgentLine(out io.Writer, d agentdir.Dir, created bool) error {
 	if created {
 		line += " (created)"
 	}
-	_, err = fmt.Fprintln(out, line)
+	keys, err := d.UnknownConfigKeys()
+	if err != nil {
+		return err
+	}
+	var sb strings.Builder
+	sb.WriteString(line + "\n")
+	for _, k := range keys {
+		writeWarnings(&sb, []string{k.String()})
+	}
+	_, err = fmt.Fprint(out, sb.String())
 	return err
 }
 
