@@ -24,6 +24,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -428,5 +431,292 @@ func TestConformanceCallerErrorsWithoutWrapping(t *testing.T) {
 				t.Fatalf("call error = %v, want %q", err, tc.want)
 			}
 		})
+	}
+}
+
+var conformanceTransports = []a2a.TransportProtocol{a2a.TransportProtocolJSONRPC, a2a.TransportProtocolHTTPJSON}
+
+func messageIDs(msgs []*a2a.Message) []string {
+	ids := []string{}
+	for _, m := range msgs {
+		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+func TestConformanceHistoryLength(t *testing.T) {
+	t.Parallel()
+	const answered = 4
+	// call returns the history the method answers with, and the whole history
+	// of the task at that point.
+	tests := []struct {
+		name     string
+		wantFull int
+		call     func(t *testing.T, c *a2aclient.Client, length *int) (got, full []string)
+	}{
+		{
+			name:     "SendMessage",
+			wantFull: answered,
+			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
+				task := send(t, c, userText("ask", "", ""))
+				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{
+					Message: userText("approve", string(task.ID), task.ContextID),
+					Config:  &a2a.SendMessageConfig{HistoryLength: length},
+				})
+				if err != nil {
+					t.Fatalf("SendMessage() error = %v", err)
+				}
+				return messageIDs(res.(*a2a.Task).History), storedHistory(t, c, task.ID)
+			},
+		},
+		{
+			name:     "SendMessage returning immediately",
+			wantFull: 1,
+			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
+				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{
+					Message: userText("ask", "", ""),
+					Config:  &a2a.SendMessageConfig{HistoryLength: length, ReturnImmediately: true},
+				})
+				if err != nil {
+					t.Fatalf("SendMessage() error = %v", err)
+				}
+				task := res.(*a2a.Task)
+				return messageIDs(task.History), storedHistory(t, c, task.ID)[:1]
+			},
+		},
+		{
+			name:     "SendStreamingMessage",
+			wantFull: 1,
+			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
+				msg := userText("ask", "", "")
+				var got []string
+				for ev, err := range c.SendStreamingMessage(context.Background(), &a2a.SendMessageRequest{
+					Message: msg,
+					Config:  &a2a.SendMessageConfig{HistoryLength: length},
+				}) {
+					if err != nil {
+						t.Fatalf("SendStreamingMessage() error = %v", err)
+					}
+					if task, ok := ev.(*a2a.Task); ok {
+						got = messageIDs(task.History)
+					}
+				}
+				return got, []string{msg.ID}
+			},
+		},
+		{
+			name:     "GetTask",
+			wantFull: answered,
+			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
+				asked := send(t, c, userText("ask", "", ""))
+				done := send(t, c, userText("approve", string(asked.ID), asked.ContextID))
+				task, err := c.GetTask(context.Background(), &a2a.GetTaskRequest{ID: done.ID, HistoryLength: length})
+				if err != nil {
+					t.Fatalf("GetTask() error = %v", err)
+				}
+				return messageIDs(task.History), storedHistory(t, c, done.ID)
+			},
+		},
+	}
+	lengths := []struct {
+		name   string
+		length *int
+		keep   func(full int) int
+	}{
+		{name: "unset", keep: func(full int) int { return full }},
+		{name: "zero", length: new(0), keep: func(int) int { return 0 }},
+		{name: "one", length: new(1), keep: func(int) int { return 1 }},
+		{name: "two", length: new(2), keep: func(full int) int { return min(2, full) }},
+		{name: "more than there are", length: new(100), keep: func(full int) int { return full }},
+	}
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	for _, transport := range conformanceTransports {
+		c := ts.clientOver(token, transport)
+		for _, tc := range tests {
+			for _, l := range lengths {
+				t.Run(string(transport)+"/"+tc.name+"/"+l.name, func(t *testing.T) {
+					t.Parallel()
+					got, full := tc.call(t, c, l.length)
+					if len(full) != tc.wantFull {
+						t.Fatalf("%s whole history = %d messages, want %d", tc.name, len(full), tc.wantFull)
+					}
+					want := full[len(full)-l.keep(len(full)):]
+					if diff := cmp.Diff(want, got); diff != "" {
+						t.Fatalf("%s history wrong result (-want +got) diff = %s", tc.name, diff)
+					}
+				})
+			}
+		}
+	}
+}
+
+func storedHistory(t *testing.T, c *a2aclient.Client, id a2a.TaskID) []string {
+	t.Helper()
+	task, err := c.GetTask(context.Background(), &a2a.GetTaskRequest{ID: id})
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	return messageIDs(task.History)
+}
+
+func TestConformanceReturnImmediately(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		prompt    string
+		immediate bool
+		want      func(a2a.TaskState) bool
+		wantDesc  string
+	}{
+		{name: "waits for the turn by default", prompt: "hello", want: a2a.TaskState.Terminal, wantDesc: "terminal"},
+		{name: "waits for input by default", prompt: "ask", want: func(s a2a.TaskState) bool { return s == a2a.TaskStateInputRequired }, wantDesc: "input-required"},
+		{name: "returns before the turn ends", prompt: "slow", immediate: true, want: func(s a2a.TaskState) bool { return !s.Terminal() }, wantDesc: "not terminal"},
+	}
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	for _, transport := range conformanceTransports {
+		c := ts.clientOver(token, transport)
+		for _, tc := range tests {
+			t.Run(string(transport)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{
+					Message: userText(tc.prompt, "", ""),
+					Config:  &a2a.SendMessageConfig{ReturnImmediately: tc.immediate},
+				})
+				if err != nil {
+					t.Fatalf("SendMessage() error = %v", err)
+				}
+				task := res.(*a2a.Task)
+				if !tc.want(task.Status.State) {
+					t.Fatalf("SendMessage() task state = %s, want %s", task.Status.State, tc.wantDesc)
+				}
+				if tc.prompt == "slow" {
+					if _, err := c.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID}); err != nil {
+						t.Fatalf("CancelTask() error = %v", err)
+					}
+				}
+			})
+		}
+	}
+}
+
+func TestConformanceSubscribeToTask(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	for _, transport := range conformanceTransports {
+		c := ts.clientOver(token, transport)
+		t.Run(string(transport)+"/first event is the task", func(t *testing.T) {
+			t.Parallel()
+			task := sendAsync(t, c, userText("slow", "", ""))
+			waitState(t, c, task.ID, a2a.TaskStateWorking)
+			t.Cleanup(func() {
+				if _, err := c.CancelTask(context.Background(), &a2a.CancelTaskRequest{ID: task.ID}); err != nil {
+					t.Errorf("CancelTask() error = %v", err)
+				}
+			})
+
+			for ev, err := range c.SubscribeToTask(context.Background(), &a2a.SubscribeToTaskRequest{ID: task.ID}) {
+				if err != nil {
+					t.Fatalf("SubscribeToTask() error = %v", err)
+				}
+				got, ok := ev.(*a2a.Task)
+				if !ok || got.ID != task.ID {
+					t.Fatalf("SubscribeToTask() first event = %#v, want task %s", ev, task.ID)
+				}
+				return
+			}
+			t.Fatalf("SubscribeToTask() ended without an event")
+		})
+		t.Run(string(transport)+"/finished task", func(t *testing.T) {
+			t.Parallel()
+			done := send(t, c, userText("hello", "", ""))
+
+			for _, err := range c.SubscribeToTask(context.Background(), &a2a.SubscribeToTaskRequest{ID: done.ID}) {
+				if !errors.Is(err, a2a.ErrUnsupportedOperation) {
+					t.Fatalf("SubscribeToTask() error = %v, want %v", err, a2a.ErrUnsupportedOperation)
+				}
+				return
+			}
+			t.Fatalf("SubscribeToTask() ended without an error, want %v", a2a.ErrUnsupportedOperation)
+		})
+	}
+}
+
+func TestConformancePushNotificationsAreRefused(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	card, err := agentcard.NewResolver(testHTTP).Resolve(context.Background(), ts.localURL())
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	if card.Capabilities.PushNotifications {
+		t.Fatalf("agent card pushNotifications = true, want false")
+	}
+	hook := func() *a2a.PushConfig { return &a2a.PushConfig{URL: "https://example.com/hook"} }
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func(c *a2aclient.Client, task a2a.TaskID) error
+	}{
+		{
+			name: "SendMessage with a push config",
+			call: func(c *a2aclient.Client, _ a2a.TaskID) error {
+				_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", ""), Config: &a2a.SendMessageConfig{PushConfig: hook()}})
+				return err
+			},
+		},
+		{
+			name: "SendStreamingMessage with a push config",
+			call: func(c *a2aclient.Client, _ a2a.TaskID) error {
+				for _, err := range c.SendStreamingMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", ""), Config: &a2a.SendMessageConfig{PushConfig: hook()}}) {
+					return err
+				}
+				return nil
+			},
+		},
+		{
+			name: "CreateTaskPushConfig",
+			call: func(c *a2aclient.Client, task a2a.TaskID) error {
+				cfg := hook()
+				cfg.TaskID = task
+				_, err := c.CreateTaskPushConfig(ctx, cfg)
+				return err
+			},
+		},
+		{
+			name: "GetTaskPushConfig",
+			call: func(c *a2aclient.Client, task a2a.TaskID) error {
+				_, err := c.GetTaskPushConfig(ctx, &a2a.GetTaskPushConfigRequest{TaskID: task, ID: "x"})
+				return err
+			},
+		},
+		{
+			name: "ListTaskPushConfigs",
+			call: func(c *a2aclient.Client, task a2a.TaskID) error {
+				_, err := c.ListTaskPushConfigs(ctx, &a2a.ListTaskPushConfigRequest{TaskID: task})
+				return err
+			},
+		},
+		{
+			name: "DeleteTaskPushConfig",
+			call: func(c *a2aclient.Client, task a2a.TaskID) error {
+				return c.DeleteTaskPushConfig(ctx, &a2a.DeleteTaskPushConfigRequest{TaskID: task, ID: "x"})
+			},
+		},
+	}
+	for _, transport := range conformanceTransports {
+		c := ts.clientOver(token, transport)
+		task := send(t, c, userText("hello", "", ""))
+		for _, tc := range tests {
+			t.Run(string(transport)+"/"+tc.name, func(t *testing.T) {
+				t.Parallel()
+				if err := tc.call(c, task.ID); !errors.Is(err, a2a.ErrPushNotificationNotSupported) {
+					t.Fatalf("%s error = %v, want %v", tc.name, err, a2a.ErrPushNotificationNotSupported)
+				}
+			})
+		}
 	}
 }

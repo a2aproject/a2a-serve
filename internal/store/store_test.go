@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
@@ -179,11 +180,18 @@ func TestFailUnfinished(t *testing.T) {
 	s := openStore(t)
 	ts := s.Tasks("", testViewer)
 	owner := asUser("owner")
-	done := newTask("done", "c")
-	done.Status.State = a2a.TaskStateCompleted
-	kept := newTask("kept", "c")
-	kept.Status.State = a2a.TaskStateInputRequired
-	for _, task := range []*a2a.Task{newTask("running", "c"), done, kept} {
+	withState := func(id string, state a2a.TaskState) *a2a.Task {
+		task := newTask(id, "c")
+		task.Status.State = state
+		return task
+	}
+	for _, task := range []*a2a.Task{
+		withState("working", a2a.TaskStateWorking),
+		withState("asking", a2a.TaskStateInputRequired),
+		withState("auth", a2a.TaskStateAuthRequired),
+		withState("done", a2a.TaskStateCompleted),
+		withState("kept", a2a.TaskStateInputRequired),
+	} {
 		if _, err := ts.Create(owner, task); err != nil {
 			t.Fatal(err)
 		}
@@ -193,20 +201,70 @@ func TestFailUnfinished(t *testing.T) {
 	if err != nil {
 		t.Fatalf("FailUnfinished() error = %v", err)
 	}
-	if n != 1 {
-		t.Fatalf("FailUnfinished() = %d, want 1", n)
+	if n != 3 {
+		t.Fatalf("FailUnfinished() = %d, want 3", n)
 	}
-	got := map[a2a.TaskID]a2a.TaskState{}
-	for _, id := range []a2a.TaskID{"running", "done", "kept"} {
+	type outcome struct {
+		State       a2a.TaskState
+		Text        string
+		Interrupted bool
+	}
+	got := map[a2a.TaskID]outcome{}
+	for _, id := range []a2a.TaskID{"working", "asking", "auth", "done", "kept"} {
 		stored, err := ts.Get(owner, id)
 		if err != nil {
 			t.Fatal(err)
 		}
-		got[id] = stored.Task.Status.State
+		got[id] = outcome{State: stored.Task.Status.State, Text: a2atext.Message(stored.Task.Status.Message), Interrupted: Interrupted(stored.Task)}
 	}
-	want := map[a2a.TaskID]a2a.TaskState{"running": a2a.TaskStateFailed, "done": a2a.TaskStateCompleted, "kept": a2a.TaskStateInputRequired}
+	want := map[a2a.TaskID]outcome{
+		"working": {State: a2a.TaskStateFailed, Text: "restarted", Interrupted: true},
+		"asking":  {State: a2a.TaskStateFailed, Text: "restarted", Interrupted: true},
+		"auth":    {State: a2a.TaskStateFailed, Text: "restarted", Interrupted: true},
+		"done":    {State: a2a.TaskStateCompleted},
+		"kept":    {State: a2a.TaskStateInputRequired},
+	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("TaskStore.FailUnfinished() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCheckNotInterrupted(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	owner := asUser("owner")
+	for _, id := range []string{"interrupted", "running"} {
+		if _, err := ts.Create(owner, newTask(id, "c")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	keep := func(task *a2a.Task) bool { return task.ID == "running" }
+	if _, err := ts.FailUnfinished(context.Background(), "restarted", keep); err != nil {
+		t.Fatalf("FailUnfinished() error = %v", err)
+	}
+	tests := []struct {
+		name    string
+		user    context.Context
+		id      a2a.TaskID
+		wantErr error
+	}{
+		{name: "interrupted task", user: owner, id: "interrupted", wantErr: a2a.ErrUnsupportedOperation},
+		{name: "running task", user: owner, id: "running"},
+		{name: "unknown task", user: owner, id: "nope"},
+		{name: "interrupted task of someone else", user: asUser("bob"), id: "interrupted"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := ts.CheckNotInterrupted(tc.user, tc.id)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("TaskStore.CheckNotInterrupted() error = %v, want %v", err, tc.wantErr)
+			}
+			if tc.wantErr != nil && !strings.Contains(err.Error(), "stopped or restarted") {
+				t.Fatalf("TaskStore.CheckNotInterrupted() error = %v, want it to name the restart", err)
+			}
+		})
 	}
 }
 

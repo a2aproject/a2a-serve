@@ -364,13 +364,20 @@ func (ts *testServer) pair(name, role string) string {
 // client returns an A2A client authenticated with token.
 func (ts *testServer) client(token string) *a2aclient.Client {
 	ts.t.Helper()
+	return ts.clientOver(token)
+}
+
+// clientOver returns an A2A client authenticated with token that picks the
+// first of transports the agent card offers, or the card's order when none is given.
+func (ts *testServer) clientOver(token string, transports ...a2a.TransportProtocol) *a2aclient.Client {
+	ts.t.Helper()
 	hc := contacts.TokenClient(testHTTP, store.Contact{URL: ts.localURL(), Token: token})
 	ctx := context.Background()
 	card, err := agentcard.NewResolver(hc).Resolve(ctx, ts.localURL())
 	if err != nil {
 		ts.t.Fatalf("Resolve() error = %v", err)
 	}
-	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
+	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithConfig(a2aclient.Config{PreferredTransports: transports}), a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
 	if err != nil {
 		ts.t.Fatalf("NewFromCard() error = %v", err)
 	}

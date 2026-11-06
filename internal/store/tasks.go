@@ -546,6 +546,38 @@ func decodePageToken(tok string) (int64, string, error) {
 	return updated, id, nil
 }
 
+// InterruptedKey is the status message metadata that marks a task which
+// failed because the server stopped or restarted before it finished.
+const InterruptedKey = "a2a-serve/interrupted"
+
+// Interrupted reports whether the server stopped or restarted before task
+// finished.
+func Interrupted(task *a2a.Task) bool {
+	if task == nil || task.Status.State != a2a.TaskStateFailed || task.Status.Message == nil {
+		return false
+	}
+	v, _ := task.Status.Message.Metadata[InterruptedKey].(bool)
+	return v
+}
+
+// CheckNotInterrupted refuses a message to a task that failed because the
+// server stopped or restarted, and says why, since a2a-go reports only that
+// the task is in a terminal state. Tasks the caller can't see pass, for
+// the handler to report.
+func (ts *TaskStore) CheckNotInterrupted(ctx context.Context, id a2a.TaskID) error {
+	stored, err := ts.Get(ctx, id)
+	if errors.Is(err, a2a.ErrTaskNotFound) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("checking task %s: %w", id, err)
+	}
+	if !Interrupted(stored.Task) {
+		return nil
+	}
+	return fmt.Errorf("%w: task %s failed because the server stopped or restarted before it finished; send the message again without the task ID", a2a.ErrUnsupportedOperation, id)
+}
+
 // FailUnfinished marks every task of the scope which isn't in a terminal
 // state as failed with reason, except the ones keep keeps. Executions don't
 // survive a restart, so such tasks would otherwise never finish.
@@ -572,6 +604,7 @@ func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string, keep fun
 	now := ts.s.now()
 	for _, h := range pending {
 		msg := a2a.NewMessageForTask(a2a.MessageRoleAgent, h.task, a2a.NewTextPart(reason))
+		msg.Metadata = map[string]any{InterruptedKey: true}
 		ev, err := encodeEvent(&a2a.TaskStatusUpdateEvent{
 			TaskID:    h.task.ID,
 			ContextID: h.task.ContextID,

@@ -419,24 +419,49 @@ func TestPluginInfo(t *testing.T) {
 	}
 }
 
-func TestPrintAgentLineReportsUnknownKeys(t *testing.T) {
+func TestPrintAgentLineWarns(t *testing.T) {
 	t.Parallel()
-	d, err := agentdir.Open(t.TempDir())
-	if err != nil {
-		t.Fatalf("agentdir.Open() error = %v", err)
+	tests := []struct {
+		name   string
+		config string
+		want   string
+	}{
+		{
+			name:   "unknown key",
+			config: "name: coder\nagent: opencode\nsandbx: local\n",
+			want:   "! config.yaml has an unknown key sandbx: did you mean sandbox?\n",
+		},
+		{
+			name:   "OpenRouter key without a model",
+			config: "name: coder\nagent: opencode\nsecrets: [OPENROUTER_API_KEY]\n",
+			want:   "! opencode doesn't use OPENROUTER_API_KEY without an OpenRouter model; pick one with `a2a-serve config set --model openrouter/<model>`, such as openrouter/~google/gemini-flash-latest\n",
+		},
+		{
+			name:   "nothing to warn about",
+			config: "name: coder\nagent: opencode\n",
+		},
 	}
-	if err := d.Init(); err != nil {
-		t.Fatalf("Init() error = %v", err)
-	}
-	if err := os.WriteFile(d.ConfigPath(), []byte("name: coder\nagent: opencode\nsandbx: local\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	var out bytes.Buffer
-	if err := printAgentLine(&out, d, false); err != nil {
-		t.Fatalf("printAgentLine() error = %v", err)
-	}
-	want := "agent coder (opencode) in " + d.Path() + "\n! config.yaml has an unknown key sandbx: did you mean sandbox?\n"
-	if diff := cmp.Diff(want, out.String()); diff != "" {
-		t.Fatalf("printAgentLine() wrong result (-want +got) diff = %s", diff)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := agentdir.Open(t.TempDir())
+			if err != nil {
+				t.Fatalf("agentdir.Open() error = %v", err)
+			}
+			if err := d.Init(); err != nil {
+				t.Fatalf("Init() error = %v", err)
+			}
+			if err := os.WriteFile(d.ConfigPath(), []byte(tc.config), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			var out bytes.Buffer
+			if err := printAgentLine(&out, d, false); err != nil {
+				t.Fatalf("printAgentLine() error = %v", err)
+			}
+			want := "agent coder (opencode) in " + d.Path() + "\n" + tc.want
+			if diff := cmp.Diff(want, out.String()); diff != "" {
+				t.Fatalf("printAgentLine() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }

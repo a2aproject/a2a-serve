@@ -56,8 +56,11 @@ A few checks run on every pull request. Follow these tips to pass them:
   go mod tidy -diff
   go build ./...
   go test -race ./...
-  golangci-lint run
+  GOTOOLCHAIN=go$(go list -m -f '{{.GoVersion}}') \
+    go run github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.11.4 run
   ```
+
+  This runs the linter version of `.github/workflows/go.yaml` with the Go version of `go.mod`, as CI does. A linter built with an older Go refuses the module, and one run with a newer Go can't read its standard library.
 
 ### Trying changes end to end
 
@@ -104,6 +107,12 @@ go test -tags e2e ./e2e/...
 ```
 
 The agents run with `--sandbox local`. Set `E2E_SANDBOX=docker` to run them in Docker, in an image the tests build from `fakeacp`. In Docker, only the tests marked with `dependsOnSandbox` run: those of how the agent process starts, crashes and restarts, what it sees, and how it reaches the server. Mark a new test of that kind. CI runs the suite both ways.
+
+With `E2E_HARNESS=opencode`, the `TestHarness` tests run the real opencode image in Docker against a scripted model that the tests serve, with no API key. Set `E2E_HARNESS_IMAGE` to test a local build of `internal/harness/images/opencode`. The nightly workflow runs them:
+
+```sh
+E2E_HARNESS=opencode go test -tags e2e -run '^TestHarness' -v ./e2e/...
+```
 
 Add a test there when a change affects a journey across commands or processes.
 

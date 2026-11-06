@@ -636,6 +636,25 @@ func TestAgentChecks(t *testing.T) {
 			want: []check{{"harness-command", StatusOK}, {"config", StatusFail}, {"config", StatusFail}, {"running", StatusWarn}},
 		},
 		{
+			name: "OpenRouter key without a model",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Secrets: []string{"OPENROUTER_API_KEY"}},
+			setup: func(t *testing.T, m *fakeMachine, d agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+				if err := d.SaveSecrets(agentdir.Secrets{"OPENROUTER_API_KEY": "x"}); err != nil {
+					t.Fatalf("SaveSecrets() error = %v", err)
+				}
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"model", StatusWarn}, {"secrets", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "model without its provider key",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Model: "google/gemini-3-flash-preview"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.paths["opencode"] = "/usr/bin/opencode"
+			},
+			want: []check{{"harness-command", StatusOK}, {"config", StatusOK}, {"model", StatusWarn}, {"running", StatusWarn}},
+		},
+		{
 			name: "missing secrets and mounts",
 			cfg: agentdir.Config{
 				Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal,

@@ -15,9 +15,9 @@ a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret
 2. It stores the value in `state/secrets` (mode 0600) and adds the name to `secrets:` in `config.yaml`.
 3. On every start, the server sets `OPENROUTER_API_KEY` in the agent's environment, inside the sandbox.
 
-opencode uses `OPENROUTER_API_KEY` only with an OpenRouter model, so pass `--model` too. Without one, `start` and `config set` print a warning.
+opencode uses `OPENROUTER_API_KEY` only with an OpenRouter model, so pass `--model` too. Without one, `start`, `config set` and `doctor` print a warning.
 
-When no secret holds the key of the model's provider, each task fails with the name of the key to set. Without `--model`, opencode uses its free default model. When that model refuses requests, the agent sends nothing, and the server fails the task after 10 minutes.
+When no secret holds the key of the model's provider, the same commands warn, and each task fails with the name of the key to set. Without `--model`, opencode uses its free default model. When that model refuses requests, the agent sends nothing, and the server fails the task after 10 minutes.
 
 Your shell needs the variable only when you run the command. Later starts, restarts and services use the stored value.
 

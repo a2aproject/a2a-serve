@@ -799,6 +799,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		}
 	}
 	if msg.Message.TaskID != "" {
+		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
+			return ctx, nil, err
+		}
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
