@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net"
@@ -167,11 +168,11 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 		switch {
 		case errors.As(err, &refused):
 			slog.Info("refused a caller", "caller", refused.Identity.Describe())
-			proto.writeError(w, http.StatusForbidden, a2a.ErrUnauthorized, refused.Error()+"; "+pairHint)
+			proto.writeError(w, http.StatusForbidden, a2a.ErrUnauthorized, s.refusal(r.Context(), refused, base(s.listenerURL(kind), r)))
 			return
 		case errors.Is(err, auth.ErrUnknownToken):
 			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
-			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, err.Error()+": it was revoked or replaced; "+pairHint)
+			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, err.Error()+", which may be mistyped, revoked or replaced; "+pairHint)
 			return
 		case errors.Is(err, auth.ErrNoCredential):
 			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
@@ -187,6 +188,45 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 }
 
 const pairHint = "ask the agent's owner for a pairing code and run `a2a-serve pair join <agent-url> <code>`"
+
+// refusal explains a 403 to a known caller. A person pairs with a code; an
+// agent becomes a contact with one, which its owner adds.
+func (s *Server) refusal(ctx context.Context, refused *auth.RefusedError, agentURL string) string {
+	id := refused.Identity
+	if id.Hops == 0 {
+		return refused.Error() + "; " + pairHint
+	}
+	who, invitee := id.Describe(), "<name>"
+	if name := s.peerName(ctx, id.Node); name != "" {
+		who, invitee = name+", "+who, name
+	}
+	return fmt.Sprintf("this agent doesn't accept %s; to pair, this agent's owner runs `a2a-serve pair invite %s`, and the calling agent's owner adds the code with `a2a-serve contact add %s --url %s --code <code>`",
+		who, invitee, s.rt.Config().Name, agentURL)
+}
+
+// peerNameTimeout bounds looking up the name of a refused agent.
+const peerNameTimeout = 5 * time.Second
+
+// peerName returns the name of the agent on the private network's machine
+// node, or "" when it isn't found.
+func (s *Server) peerName(ctx context.Context, node string) string {
+	if node == "" || s.private == nil {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(ctx, peerNameTimeout)
+	defer cancel()
+	peers, err := s.clients.Discover(ctx)
+	if err != nil {
+		slog.Debug("looking up a refused agent", "error", err)
+		return ""
+	}
+	for _, p := range peers {
+		if p.Node == node {
+			return p.Name
+		}
+	}
+	return ""
+}
 
 // unauthorizedHint explains a 401. On the machine running the agent the
 // caller is usually the owner whose a2a CLI doesn't attach the owner token.

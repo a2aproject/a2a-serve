@@ -135,6 +135,10 @@ func (a *agentMesh) start(ctx context.Context) error {
 		}
 	}
 	st, err := srv.Up(ctx)
+	err = explainJoin(err)
+	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
+		slog.Warn("recording the relay join", "error", rerr)
+	}
 	if err != nil {
 		return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err), srv.Close())
 	}
@@ -159,6 +163,10 @@ func (a *agentMesh) start(ctx context.Context) error {
 	a.started.Store(true)
 	return nil
 }
+
+// Join joins the relay, so that a refused invite fails before the agent
+// starts.
+func (a *agentMesh) Join(ctx context.Context) error { return a.start(ctx) }
 
 func (a *agentMesh) attach(privLn net.Listener, privURL *url.URL, pubLn net.Listener, pubURL *url.URL) {
 	attach := func(want bool, ln net.Listener, u *url.URL) (*splitListener, *url.URL) {
@@ -274,7 +282,7 @@ func (a *agentMesh) HTTPClient() *http.Client {
 		if srv == nil {
 			return nil, errors.New("not connected to the relay")
 		}
-		return srv.HTTPClient().Transport.RoundTrip(r)
+		return checkPeerResponse(srv.HTTPClient().Transport.RoundTrip(r))
 	})}
 }
 

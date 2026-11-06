@@ -96,6 +96,13 @@ type Provider interface {
 	Close() error
 }
 
+// Joiner is a [Provider] which joins its network before it listens, such
+// as with an invite. The server joins before it starts the agent, so a
+// refused join stops the start early.
+type Joiner interface {
+	Join(ctx context.Context) error
+}
+
 // Provider names.
 const (
 	ProviderTailscale = "tailscale"

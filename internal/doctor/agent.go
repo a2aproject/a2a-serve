@@ -63,6 +63,9 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 		}
 		results = append(results, checkMounts(d, cfg)...)
 		results = append(results, checkRelay(ctx, env, cfg, online)...)
+		if r, ok := checkRelayInvite(d, cfg); ok {
+			results = append(results, r)
+		}
 		if r, ok := checkBackupCLI(env, cfg); ok {
 			results = append(results, r)
 		}
@@ -310,6 +313,22 @@ func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 		return []Result{version}
 	}
 	return relayOnline(ctx, env.HTTP, relay)
+}
+
+// checkRelayInvite reports the invite the relay refused at the agent's
+// last join, which the server recorded.
+func checkRelayInvite(d agentdir.Dir, cfg *agentdir.Config) (Result, bool) {
+	if !network.IsRelayURL(cfg.Network.Private) && !network.IsRelayURL(cfg.Network.Public) {
+		return Result{}, false
+	}
+	problem, err := network.InviteProblem(d.AgentMeshDir())
+	if err != nil {
+		return Result{ID: "relay-invite", Status: StatusFail, Message: err.Error()}, true
+	}
+	if problem == "" {
+		return Result{}, false
+	}
+	return Result{ID: "relay-invite", Status: StatusFail, Message: "the relay refused the agent's invite at the last start: " + problem, Fix: network.InviteFix}, true
 }
 
 // checkBackupCLI checks that the CLI the backup destination needs is

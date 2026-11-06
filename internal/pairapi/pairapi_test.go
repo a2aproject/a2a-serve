@@ -19,6 +19,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -87,6 +88,55 @@ func TestPair(t *testing.T) {
 				t.Fatalf("Pair() error = %v, want nil", err)
 			}
 			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Pair() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPairWaitsOutShortBackoffOnce(t *testing.T) {
+	t.Parallel()
+	ok := Response{Kind: KindCaller, Token: "a2a_tok", Principal: "pair:anna", Agent: "coder", URL: "http://agent"}
+	tests := []struct {
+		name       string
+		retryAfter string
+		limited    int
+		wantCalls  int
+		wantErr    string
+	}{
+		{name: "backoff once", retryAfter: "0", limited: 1, wantCalls: 2},
+		{name: "backoff twice", retryAfter: "0", limited: 2, wantCalls: 2, wantErr: "try again in"},
+		{name: "long backoff", retryAfter: "3600", limited: 1, wantCalls: 1, wantErr: "try again in"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var calls atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if int(calls.Add(1)) <= tc.limited {
+					w.Header().Set("Retry-After", tc.retryAfter)
+					jsonhttp.Error(w, http.StatusTooManyRequests, "too many invalid pairing codes; try again in "+tc.retryAfter+" seconds")
+					return
+				}
+				jsonhttp.Write(w, http.StatusOK, ok)
+			}))
+			t.Cleanup(srv.Close)
+
+			got, err := Pair(t.Context(), srv.Client(), srv.URL, "K7Q2-9XF4", PairingPerson)
+
+			if n := int(calls.Load()); n != tc.wantCalls {
+				t.Fatalf("Pair() requests = %d, want %d", n, tc.wantCalls)
+			}
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Pair() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Pair() error = %v, want nil", err)
+			}
+			if diff := cmp.Diff(ok, got); diff != "" {
 				t.Fatalf("Pair() wrong result (-want +got) diff = %s", diff)
 			}
 		})

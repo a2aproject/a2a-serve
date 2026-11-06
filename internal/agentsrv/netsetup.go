@@ -95,6 +95,19 @@ func (s *Server) setupNetwork(closers *stack) error {
 	return nil
 }
 
+// joinNetwork joins the networks of the providers which join before they
+// listen.
+func (s *Server) joinNetwork(ctx context.Context) error {
+	for _, p := range []network.Provider{s.private, s.public} {
+		if j, ok := p.(network.Joiner); ok {
+			if err := j.Join(ctx); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 // listenNetwork opens the private and public listeners.
 func (s *Server) listenNetwork(ctx context.Context, closers *stack, errc chan<- error) error {
 	if s.private != nil {

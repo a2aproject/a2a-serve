@@ -81,6 +81,8 @@ on that agent: a2a-serve config set --private https://relay.example.com --public
 
 The token is printed once. An unused invite expires after a day, or after `--expires`, up to a week. An invited agent keeps its place on the relay while it is away, even for days, until you remove it. An agent that stays away longer than 30 days needs a new invite.
 
+The agent joins the relay before it starts. When the relay refuses the invite, such as one that is truncated, used, expired or revoked, the start fails with the reason and the next step. `a2a-serve doctor` reports the refused invite until a join succeeds.
+
 ## Members and removal
 
 ```bash

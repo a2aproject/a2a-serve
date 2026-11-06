@@ -55,7 +55,10 @@ type RateLimitError struct {
 func (e *RateLimitError) Seconds() int { return int(math.Ceil(e.Wait.Seconds())) }
 
 func (e *RateLimitError) Error() string {
-	return fmt.Sprintf("too many invalid pairing codes; try again in %d seconds", e.Seconds())
+	if n := e.Seconds(); n != 1 {
+		return fmt.Sprintf("too many invalid pairing codes; try again in %d seconds", n)
+	}
+	return "too many invalid pairing codes; try again in 1 second"
 }
 
 // Via is how a code is redeemed: for a token at an agent URL, or for a

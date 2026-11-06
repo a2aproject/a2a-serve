@@ -64,7 +64,7 @@ func (s *Server) serveControl(ctx context.Context, closers *stack, errc chan<- e
 		Config:         s.rt.Config,
 		ReloadConfig:   s.reloadConfig,
 		Card:           s.listenerCard,
-		Peers:          s.clients.Discover,
+		Peers:          s.listPeers,
 		Ads:            s.ads,
 		InspectorLogin: func() string { return inspector.Path + "/login?code=" + s.inspector.LoginCode() },
 	})
@@ -164,4 +164,12 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 		}
 	}
 	return s.answerWaiting(ctx, nil)
+}
+
+// peersRediscoverEvery bounds how often `a2a-serve peers` discovers the
+// agents on the private network, so it stops listing a stopped agent soon.
+const peersRediscoverEvery = time.Second
+
+func (s *Server) listPeers(ctx context.Context) ([]network.PeerInfo, error) {
+	return s.clients.Rediscover(ctx, peersRediscoverEvery)
 }

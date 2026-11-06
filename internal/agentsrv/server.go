@@ -359,6 +359,9 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if err := s.setupNetwork(closers); err != nil {
 		return err
 	}
+	if err := s.joinNetwork(ctx); err != nil {
+		return err
+	}
 	hl, err := s.listenHarness(sandboxed)
 	if err != nil {
 		return err
