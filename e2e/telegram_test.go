@@ -24,8 +24,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/channel/telegram"
-	"github.com/a2aproject/a2a-serve/internal/channel/telegram/telegramtest"
+	"github.com/a2aproject/a2a-serve/internal/messenger/telegram"
+	"github.com/a2aproject/a2a-serve/internal/messenger/telegram/telegramtest"
 )
 
 // Live Telegram runs need a bot token and the ID of a private chat with the
@@ -55,7 +55,7 @@ func TestTelegramLive(t *testing.T) {
 	}
 	api := telegramtest.NewServer(t, telegramtest.Options{Upstream: "https://api.telegram.org"})
 	testTelegramJourney(t, api, token, telegramtest.User{ID: id, FirstName: "a2a-serve e2e"}, 2*time.Minute)
-	// The channel ignores unchanged edits, and the server retries rate
+	// The messenger ignores unchanged edits, and the server retries rate
 	// limited calls.
 	var errs []string
 	for _, e := range api.UpstreamErrors() {
@@ -78,9 +78,9 @@ func testTelegramJourney(t *testing.T, api *telegramtest.Server, token string, m
 			Code string `json:"code"`
 		} `json:"ownerLink"`
 	}
-	coder.serveJSON(&added, "channel", "add", "telegram", "--token", "env:E2E_BOT_TOKEN")
+	coder.serveJSON(&added, "messenger", "add", "telegram", "--token", "env:E2E_BOT_TOKEN")
 	if added.OwnerLink == nil {
-		t.Fatalf("a2a-serve channel add telegram printed no owner link")
+		t.Fatalf("a2a-serve messenger add telegram printed no owner link")
 	}
 	c := &telegramChat{t: t, api: api, me: me, timeout: timeout}
 

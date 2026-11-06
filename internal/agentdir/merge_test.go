@@ -142,7 +142,7 @@ func TestMerge3(t *testing.T) {
 
 func TestUnusedSecrets(t *testing.T) {
 	t.Parallel()
-	old := &Config{Secrets: []string{"A", "B"}, Channels: ChannelsConfig{Telegram: &TelegramConfig{Token: "secret:TG"}}}
+	old := &Config{Secrets: []string{"A", "B"}, Messengers: MessengersConfig{Telegram: &TelegramConfig{Token: "secret:TG"}}}
 	next := &Config{Secrets: []string{"B", "C"}}
 	if diff := cmp.Diff([]string{"A", "TG"}, UnusedSecrets(old, next)); diff != "" {
 		t.Fatalf("UnusedSecrets() wrong result (-want +got) diff = %s", diff)

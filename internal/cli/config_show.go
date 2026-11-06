@@ -158,7 +158,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 	}
 	line("network", strings.Join(network, ", "))
 	line("access", formatPolicy(c.Policy))
-	var channels []string
+	var messengers []string
 	secretState := func(ref string) string {
 		name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix)
 		if !ok {
@@ -166,20 +166,20 @@ func renderConfig(v *agentctl.View, all bool) string {
 		}
 		return v.Secrets[name]
 	}
-	if t := c.Channels.Telegram; t != nil {
-		channels = append(channels, "telegram token "+secretState(t.Token))
+	if t := c.Messengers.Telegram; t != nil {
+		messengers = append(messengers, "telegram token "+secretState(t.Token))
 	}
-	if dc := c.Channels.Discord; dc != nil {
-		channels = append(channels, "discord token "+secretState(dc.Token))
+	if dc := c.Messengers.Discord; dc != nil {
+		messengers = append(messengers, "discord token "+secretState(dc.Token))
 	}
-	if e := c.Channels.Email; e != nil {
+	if e := c.Messengers.Email; e != nil {
 		login := "password " + secretState(e.Password)
 		if e.OAuthRefreshToken != "" {
 			login = "OAuth refresh token " + secretState(e.OAuthRefreshToken)
 		}
-		channels = append(channels, fmt.Sprintf("email %s via %s, %s, %s", e.Address, e.IMAP, e.SMTP, login))
+		messengers = append(messengers, fmt.Sprintf("email %s via %s, %s, %s", e.Address, e.IMAP, e.SMTP, login))
 	}
-	line("channels", strings.Join(channels, "; "))
+	line("messengers", strings.Join(messengers, "; "))
 	var approvals []string
 	for _, a := range []struct {
 		label  string

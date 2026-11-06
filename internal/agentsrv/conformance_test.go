@@ -32,7 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 )
 
 // The conformance suite runs every scenario a harness profile must pass
@@ -348,11 +348,11 @@ func TestUnauthenticatedCallerIsRejected(t *testing.T) {
 
 func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	t.Parallel()
-	ch := channeltest.NewChannel("telegram")
-	ts := startServer(t, serverOpts{channel: ch})
+	ch := messengertest.NewMessenger("telegram")
+	ts := startServer(t, serverOpts{messenger: ch})
 	ctx := context.Background()
 	ch.Write("telegram:1", "dm1", "/start "+ownerCode(t, ts))
-	ch.WaitFor(t, "dm1", channeltest.HasText("Linked as owner"))
+	ch.WaitFor(t, "dm1", messengertest.HasText("Linked as owner"))
 
 	member := ts.client(ts.pair("grok", auth.RoleAuthenticated))
 	other := ts.client(ts.pair("bob", auth.RoleAuthenticated))

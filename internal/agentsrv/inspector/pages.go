@@ -79,9 +79,9 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 {{end}}</table>{{else}}<p class="muted">No conversations yet.</p>{{end}}
 
 <h2>Messengers</h2>
-{{if .Status.Channels}}<table><tr><th>Channel</th><th>Account</th><th></th></tr>
-{{range .Status.Channels}}<tr><td>{{.Name}}</td><td>{{.Account}}</td><td>{{if .Error}}<span class="err">failing: {{.Error}}</span>{{end}}</td></tr>{{end}}
-</table>{{else}}<p class="muted">None; add one with <code>a2a-serve channel add</code>.</p>{{end}}
+{{if .Status.Messengers}}<table><tr><th>Messenger</th><th>Account</th><th></th></tr>
+{{range .Status.Messengers}}<tr><td>{{.Name}}</td><td>{{.Account}}</td><td>{{if .Error}}<span class="err">failing: {{.Error}}</span>{{end}}</td></tr>{{end}}
+</table>{{else}}<p class="muted">None; add one with <code>a2a-serve messenger add</code>.</p>{{end}}
 
 <h2>MCP servers and skills</h2>
 {{if .Status.ProjectError}}<p class="err">{{.Status.ProjectError}}</p>{{end}}

@@ -29,16 +29,16 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/webpage"
 )
 
-// Chat is a conversation on a channel.
+// Chat is a conversation on a messenger.
 type Chat struct {
-	Channel string
-	Conv    channel.ConvKey
+	Messenger string
+	Conv      messenger.ConvKey
 }
 
 // Notifier shows questions to people and updates them once answered.
@@ -246,7 +246,7 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 			slog.Info("approval waits in the inspector: no owner chat", "task", execCtx.TaskID, "question", rec.ID)
 			return
 		}
-		slog.Info("approval sent to the owner chat", "task", execCtx.TaskID, "from", starter, "question", rec.ID, "channel", to.Channel)
+		slog.Info("approval sent to the owner chat", "task", execCtx.TaskID, "from", starter, "question", rec.ID, "messenger", to.Messenger)
 		s.notifier.Ask(ctx, to, header, rec)
 	}()
 }

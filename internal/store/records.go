@@ -100,32 +100,32 @@ func (ss SessionStore) Put(ctx context.Context, contextID string, sess a2aacp.Se
 	return err
 }
 
-// ContextOf returns the A2A context of a channel conversation.
-func (s *Store) ContextOf(ctx context.Context, channel, conv string) (string, error) {
+// ContextOf returns the A2A context of a messenger conversation.
+func (s *Store) ContextOf(ctx context.Context, messenger, conv string) (string, error) {
 	var id string
-	err := s.reads.QueryRowContext(ctx, `SELECT context_id FROM convs WHERE channel = ? AND conv = ?`, channel, conv).Scan(&id)
+	err := s.reads.QueryRowContext(ctx, `SELECT context_id FROM convs WHERE messenger = ? AND conv = ?`, messenger, conv).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
 	return id, err
 }
 
-// SetContext binds a channel conversation to an A2A context.
-func (s *Store) SetContext(ctx context.Context, channel, conv, contextID string) error {
-	_, err := s.exec(ctx, `INSERT INTO convs (channel, conv, context_id, updated) VALUES (?, ?, ?, ?)
-		ON CONFLICT (channel, conv) DO UPDATE SET context_id = excluded.context_id, updated = excluded.updated`,
-		channel, conv, contextID, s.now().UnixNano())
+// SetContext binds a messenger conversation to an A2A context.
+func (s *Store) SetContext(ctx context.Context, messenger, conv, contextID string) error {
+	_, err := s.exec(ctx, `INSERT INTO convs (messenger, conv, context_id, updated) VALUES (?, ?, ?, ?)
+		ON CONFLICT (messenger, conv) DO UPDATE SET context_id = excluded.context_id, updated = excluded.updated`,
+		messenger, conv, contextID, s.now().UnixNano())
 	return err
 }
 
-// ConvOf returns the channel conversation bound to an A2A context.
-func (s *Store) ConvOf(ctx context.Context, contextID string) (channel, conv string, err error) {
-	err = s.reads.QueryRowContext(ctx, `SELECT channel, conv FROM convs WHERE context_id = ? ORDER BY updated DESC LIMIT 1`,
-		contextID).Scan(&channel, &conv)
+// ConvOf returns the messenger conversation bound to an A2A context.
+func (s *Store) ConvOf(ctx context.Context, contextID string) (messenger, conv string, err error) {
+	err = s.reads.QueryRowContext(ctx, `SELECT messenger, conv FROM convs WHERE context_id = ? ORDER BY updated DESC LIMIT 1`,
+		contextID).Scan(&messenger, &conv)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", "", ErrNotFound
 	}
-	return channel, conv, err
+	return messenger, conv, err
 }
 
 // Contact is another agent this agent may call.
@@ -362,10 +362,10 @@ func (s *Store) Nodes(ctx context.Context) ([]Node, error) {
 	return out, nil
 }
 
-// Question is a pending agent question relayed to a channel or a web page.
+// Question is a pending agent question relayed to a messenger or a web page.
 // Contact is set for questions of a remote agent's task.
 type Question struct {
-	// ID is short, for channel button payloads.
+	// ID is short, for messenger button payloads.
 	ID string
 	// Token is long and unguessable, for /hitl/<token> pages.
 	Token     string
@@ -506,11 +506,11 @@ func (s *Store) UnanswerQuestion(ctx context.Context, id, by string) error {
 	return err
 }
 
-// QuestionMessage is a channel message which shows a question, kept so that
+// QuestionMessage is a messenger message which shows a question, kept so that
 // it can be updated once the question is answered.
 type QuestionMessage struct {
 	QuestionID string
-	Channel    string
+	Messenger  string
 	Conv       string
 	MessageID  string
 	Text       string
@@ -518,17 +518,17 @@ type QuestionMessage struct {
 
 // AddQuestionMessage records a message which shows a question.
 func (s *Store) AddQuestionMessage(ctx context.Context, m QuestionMessage) error {
-	_, err := s.exec(ctx, `INSERT INTO question_messages (question_id, channel, conv, message_id, text) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT DO UPDATE SET text = excluded.text`, m.QuestionID, m.Channel, m.Conv, m.MessageID, m.Text)
+	_, err := s.exec(ctx, `INSERT INTO question_messages (question_id, messenger, conv, message_id, text) VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT DO UPDATE SET text = excluded.text`, m.QuestionID, m.Messenger, m.Conv, m.MessageID, m.Text)
 	return err
 }
 
 // QuestionOfMessage returns the ID of the question a message in a
 // conversation shows.
-func (s *Store) QuestionOfMessage(ctx context.Context, channel, conv, messageID string) (string, error) {
+func (s *Store) QuestionOfMessage(ctx context.Context, messenger, conv, messageID string) (string, error) {
 	var id string
-	err := s.reads.QueryRowContext(ctx, `SELECT question_id FROM question_messages WHERE channel = ? AND conv = ? AND message_id = ?`,
-		channel, conv, messageID).Scan(&id)
+	err := s.reads.QueryRowContext(ctx, `SELECT question_id FROM question_messages WHERE messenger = ? AND conv = ? AND message_id = ?`,
+		messenger, conv, messageID).Scan(&id)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -543,7 +543,7 @@ func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]
 	}
 	defer done()
 	rows, err := s.db.QueryContext(ctx, `DELETE FROM question_messages WHERE question_id = ?
-		RETURNING question_id, channel, conv, message_id, text`, questionID)
+		RETURNING question_id, messenger, conv, message_id, text`, questionID)
 	if err != nil {
 		return nil, err
 	}
@@ -551,7 +551,7 @@ func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]
 	var out []QuestionMessage
 	for rows.Next() {
 		var m QuestionMessage
-		if err := rows.Scan(&m.QuestionID, &m.Channel, &m.Conv, &m.MessageID, &m.Text); err != nil {
+		if err := rows.Scan(&m.QuestionID, &m.Messenger, &m.Conv, &m.MessageID, &m.Text); err != nil {
 			return nil, err
 		}
 		out = append(out, m)
@@ -561,16 +561,16 @@ func (s *Store) TakeQuestionMessages(ctx context.Context, questionID string) ([]
 
 // AddPendingQuestion makes a question one that typed replies in a
 // conversation may answer.
-func (s *Store) AddPendingQuestion(ctx context.Context, channel, conv, questionID string) error {
-	_, err := s.exec(ctx, `INSERT INTO pending_questions (channel, conv, question_id) VALUES (?, ?, ?)
-		ON CONFLICT DO NOTHING`, channel, conv, questionID)
+func (s *Store) AddPendingQuestion(ctx context.Context, messenger, conv, questionID string) error {
+	_, err := s.exec(ctx, `INSERT INTO pending_questions (messenger, conv, question_id) VALUES (?, ?, ?)
+		ON CONFLICT DO NOTHING`, messenger, conv, questionID)
 	return err
 }
 
 // PendingQuestions returns the IDs of the questions pending in a
 // conversation, oldest first.
-func (s *Store) PendingQuestions(ctx context.Context, channel, conv string) ([]string, error) {
-	return s.questionIDs(ctx, `SELECT question_id FROM pending_questions WHERE channel = ? AND conv = ? ORDER BY rowid`, channel, conv)
+func (s *Store) PendingQuestions(ctx context.Context, messenger, conv string) ([]string, error) {
+	return s.questionIDs(ctx, `SELECT question_id FROM pending_questions WHERE messenger = ? AND conv = ? ORDER BY rowid`, messenger, conv)
 }
 
 // ForgetPendingQuestion stops a question from being pending in any

@@ -187,11 +187,11 @@ func printPluginInfo(w io.Writer) int {
 
 // listCommands names the command which lists what a not-found error names.
 var listCommands = map[string]string{
-	"pairing":  "pair list",
-	"contact":  "contact list",
-	"schedule": "schedule list",
-	"channel":  "channel list",
-	"member":   "relay members",
+	"pairing":   "pair list",
+	"contact":   "contact list",
+	"schedule":  "schedule list",
+	"messenger": "messenger list",
+	"member":    "relay members",
 }
 
 // classify classifies err of cmd, pointing the hint of a usage error at the

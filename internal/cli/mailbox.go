@@ -24,11 +24,11 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 )
 
 func newMailboxCmd(cfg *globalConfig) *cobra.Command {
@@ -105,7 +105,7 @@ func nodeContext(cmd *cobra.Command, cfg *globalConfig) (context.Context, contex
 func oneLine(s string, limit int) string {
 	s = strings.Join(strings.Fields(s), " ")
 	if len(s) > limit {
-		s = channel.Truncate(s, limit) + "…"
+		s = messenger.Truncate(s, limit) + "…"
 	}
 	return s
 }

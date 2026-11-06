@@ -122,17 +122,17 @@ func (m Service) Add(ctx context.Context, req schedule.Request, by auth.Principa
 	}
 	if req.Chat != "" {
 		ch, who, _ := strings.Cut(req.Chat, ":")
-		s.DeliverChannel, s.DeliverUser = ch, s.UserID
+		s.DeliverMessenger, s.DeliverUser = ch, s.UserID
 		if who != "" {
 			if s.DeliverUser, err = ResolveUser(ctx, m.Store, who); err != nil {
 				return store.Schedule{}, err
 			}
 		}
-		if _, err := pairings.DirectConv(ctx, m.Store, s.DeliverChannel, s.DeliverUser); err != nil {
+		if _, err := pairings.DirectConv(ctx, m.Store, s.DeliverMessenger, s.DeliverUser); err != nil {
 			return store.Schedule{}, err
 		}
 	}
-	if s.Conversation == schedule.ThreadSame && s.ContextID == "" && s.DeliverChannel == "" {
+	if s.Conversation == schedule.ThreadSame && s.ContextID == "" && s.DeliverMessenger == "" {
 		s.ContextID = a2a.NewContextID()
 	}
 	if err := m.Store.AddScheduleCapped(ctx, s, m.Limits.PerUser); err != nil {

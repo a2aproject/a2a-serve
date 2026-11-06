@@ -312,7 +312,7 @@ func TestDeletePairing(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
-	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
+	if err := s.PutLink(ctx, Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
@@ -393,7 +393,7 @@ func TestPairingRemoval(t *testing.T) {
 	if err := s.PutToken(ctx, "a2p_anna", Token{Pairing: "anna", URL: "http://x"}, "person"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
-	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
+	if err := s.PutLink(ctx, Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 	if err := s.PutCode(ctx, "CODE", Code{Pairing: "anna", Expires: time.Now().Add(time.Minute)}); err != nil {
@@ -702,7 +702,7 @@ func TestRedeemCode(t *testing.T) {
 		{
 			name: "chat link",
 			grant: func(c Code) (Grant, error) {
-				return Grant{Link: &Link{Channel: "telegram", Identity: "telegram:1", Pairing: c.Pairing}, Kind: "person"}, nil
+				return Grant{Link: &Link{Messenger: "telegram", Identity: "telegram:1", Pairing: c.Pairing}, Kind: "person"}, nil
 			},
 			wantKind:  "person",
 			wantLinks: 1,
@@ -806,7 +806,7 @@ func TestTokens(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
-	if err := s.PutLink(ctx, Link{Channel: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
+	if err := s.PutLink(ctx, Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
@@ -1072,23 +1072,23 @@ func TestOpenPathWithURLCharacters(t *testing.T) {
 	}
 }
 
-func TestChannelStateDelete(t *testing.T) {
+func TestMessengerStateDelete(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	cs := s.ChannelState()
+	cs := s.MessengerState()
 	if err := cs.Set(ctx, "k", "v"); err != nil {
-		t.Fatalf("ChannelState().Set() error = %v", err)
+		t.Fatalf("MessengerState().Set() error = %v", err)
 	}
 
 	for range 2 {
 		if err := cs.Delete(ctx, "k"); err != nil {
-			t.Fatalf("ChannelState().Delete() error = %v", err)
+			t.Fatalf("MessengerState().Delete() error = %v", err)
 		}
 	}
 
 	if v, ok, err := cs.Get(ctx, "k"); err != nil || ok {
-		t.Fatalf("ChannelState().Get() after Delete() = %q, %v, %v, want not set", v, ok, err)
+		t.Fatalf("MessengerState().Get() after Delete() = %q, %v, %v, want not set", v, ok, err)
 	}
 }
 
@@ -1105,7 +1105,7 @@ func TestCloseWaitsForWrites(t *testing.T) {
 		written <- s.inTx(ctx, func(tx *sql.Tx) error {
 			close(started)
 			<-release
-			_, err := tx.ExecContext(ctx, `INSERT INTO channel_state (key, value) VALUES ('k', 'v')`)
+			_, err := tx.ExecContext(ctx, `INSERT INTO messenger_state (key, value) VALUES ('k', 'v')`)
 			return err
 		})
 	}()
@@ -1124,13 +1124,13 @@ func TestCloseWaitsForWrites(t *testing.T) {
 	if err := <-closed; err != nil {
 		t.Fatalf("Close() error = %v", err)
 	}
-	if err := s.ChannelState().Set(ctx, "k2", "v2"); !errors.Is(err, ErrClosed) {
-		t.Fatalf("ChannelState().Set() after Close() error = %v, want %v", err, ErrClosed)
+	if err := s.MessengerState().Set(ctx, "k2", "v2"); !errors.Is(err, ErrClosed) {
+		t.Fatalf("MessengerState().Set() after Close() error = %v, want %v", err, ErrClosed)
 	}
 
 	reopened := openStoreAt(t, path)
-	if v, ok, err := reopened.ChannelState().Get(ctx, "k"); err != nil || !ok || v != "v" {
-		t.Fatalf("ChannelState().Get() = %q, %v, %v, want the write made before Close()", v, ok, err)
+	if v, ok, err := reopened.MessengerState().Get(ctx, "k"); err != nil || !ok || v != "v" {
+		t.Fatalf("MessengerState().Get() = %q, %v, %v, want the write made before Close()", v, ok, err)
 	}
 }
 
@@ -1291,8 +1291,8 @@ func TestQuestionMessages(t *testing.T) {
 		t.Fatalf("PutQuestion() error = %v", err)
 	}
 	want := []QuestionMessage{
-		{QuestionID: "q1", Channel: "telegram", Conv: "1", MessageID: "10", Text: "approve?"},
-		{QuestionID: "q1", Channel: "discord", Conv: "2", MessageID: "20", Text: "approve?"},
+		{QuestionID: "q1", Messenger: "telegram", Conv: "1", MessageID: "10", Text: "approve?"},
+		{QuestionID: "q1", Messenger: "discord", Conv: "2", MessageID: "20", Text: "approve?"},
 	}
 	for _, m := range want {
 		if err := s.AddQuestionMessage(ctx, m); err != nil {
@@ -1303,7 +1303,7 @@ func TestQuestionMessages(t *testing.T) {
 	if err != nil {
 		t.Fatalf("TakeQuestionMessages() error = %v", err)
 	}
-	if diff := cmp.Diff(want, got, cmpopts.SortSlices(func(a, b QuestionMessage) bool { return a.Channel < b.Channel })); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.SortSlices(func(a, b QuestionMessage) bool { return a.Messenger < b.Messenger })); diff != "" {
 		t.Fatalf("TakeQuestionMessages() wrong result (-want +got) diff = %s", diff)
 	}
 	if got, err := s.TakeQuestionMessages(ctx, "q1"); err != nil || len(got) != 0 {
@@ -1348,25 +1348,25 @@ func TestQuestionOfMessage(t *testing.T) {
 	if err := s.PutQuestion(ctx, Question{ID: "q1", Token: "t1", TaskID: "task"}); err != nil {
 		t.Fatalf("PutQuestion() error = %v", err)
 	}
-	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q1", Channel: "telegram", Conv: "1", MessageID: "10", Text: "approve?"}); err != nil {
+	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q1", Messenger: "telegram", Conv: "1", MessageID: "10", Text: "approve?"}); err != nil {
 		t.Fatalf("AddQuestionMessage() error = %v", err)
 	}
 	tests := []struct {
-		channel, conv, messageID string
-		wantErr                  error
+		messenger, conv, messageID string
+		wantErr                    error
 	}{
-		{channel: "telegram", conv: "1", messageID: "10"},
-		{channel: "telegram", conv: "2", messageID: "10", wantErr: ErrNotFound},
-		{channel: "discord", conv: "1", messageID: "10", wantErr: ErrNotFound},
-		{channel: "telegram", conv: "1", messageID: "11", wantErr: ErrNotFound},
+		{messenger: "telegram", conv: "1", messageID: "10"},
+		{messenger: "telegram", conv: "2", messageID: "10", wantErr: ErrNotFound},
+		{messenger: "discord", conv: "1", messageID: "10", wantErr: ErrNotFound},
+		{messenger: "telegram", conv: "1", messageID: "11", wantErr: ErrNotFound},
 	}
 	for _, tc := range tests {
-		id, err := s.QuestionOfMessage(ctx, tc.channel, tc.conv, tc.messageID)
+		id, err := s.QuestionOfMessage(ctx, tc.messenger, tc.conv, tc.messageID)
 		if !errors.Is(err, tc.wantErr) {
-			t.Fatalf("QuestionOfMessage(%s, %s, %s) error = %v, want %v", tc.channel, tc.conv, tc.messageID, err, tc.wantErr)
+			t.Fatalf("QuestionOfMessage(%s, %s, %s) error = %v, want %v", tc.messenger, tc.conv, tc.messageID, err, tc.wantErr)
 		}
 		if tc.wantErr == nil && id != "q1" {
-			t.Fatalf("QuestionOfMessage(%s, %s, %s) = %q, want q1", tc.channel, tc.conv, tc.messageID, id)
+			t.Fatalf("QuestionOfMessage(%s, %s, %s) = %q, want q1", tc.messenger, tc.conv, tc.messageID, id)
 		}
 	}
 }
@@ -1817,7 +1817,7 @@ func TestStaleQuestions(t *testing.T) {
 			t.Fatalf("AddPendingQuestion() error = %v", err)
 		}
 	}
-	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q-shown", Channel: "telegram", Conv: "6", MessageID: "m1", Text: "git push?"}); err != nil {
+	if err := s.AddQuestionMessage(ctx, QuestionMessage{QuestionID: "q-shown", Messenger: "telegram", Conv: "6", MessageID: "m1", Text: "git push?"}); err != nil {
 		t.Fatalf("AddQuestionMessage() error = %v", err)
 	}
 	if err := s.AnswerQuestion(ctx, "q-answered", "owner", "once"); err != nil {

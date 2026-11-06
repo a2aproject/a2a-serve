@@ -37,7 +37,7 @@ func AccessInfo(a *access.Description) *controlapi.Access {
 func (s *Service) codeInfo(c *pairings.Code) *controlapi.PairCodeResponse {
 	resp := &controlapi.PairCodeResponse{
 		Code: c.Code, Expires: c.Expires, URL: c.URL, PairCommand: pairCommand(c.URL, c.Code),
-		Advertised: c.Advertised, Hints: c.Hints, Messenger: s.deps.Runtime.Config().HasMessenger(),
+		Advertised: c.Advertised, Hints: c.Hints, Messenger: s.deps.Runtime.Config().HasMessengers(),
 	}
 	if c.Node != nil {
 		node := controlapi.NodeInfo(*c.Node)
@@ -99,8 +99,8 @@ func scheduleInfo(s store.Schedule) controlapi.ScheduleInfo {
 		Name: s.Name, Cron: s.Cron, At: s.At, TZ: s.TZ, Prompt: s.Prompt, User: s.UserID,
 		Thread: s.Conversation, CreatedBy: s.CreatedBy, NextRun: s.NextRun, LastRun: s.LastRun, LastError: s.LastError,
 	}
-	if s.DeliverChannel != "" {
-		info.Chat = s.DeliverChannel + ":" + auth.DisplayPrincipal(s.DeliverUser)
+	if s.DeliverMessenger != "" {
+		info.Chat = s.DeliverMessenger + ":" + auth.DisplayPrincipal(s.DeliverUser)
 	}
 	return info
 }

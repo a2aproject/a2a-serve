@@ -210,8 +210,8 @@ type Request struct {
 	Prompt string `json:"prompt"`
 	// As is who the runs are for: owner or a pairing name. Default owner.
 	As string `json:"as,omitempty"`
-	// Chat is <channel>[:<who>]: the runs are rendered in who's direct
-	// chat on the channel. who defaults to As.
+	// Chat is <messenger>[:<who>]: the runs are rendered in who's direct
+	// chat on the messenger. who defaults to As.
 	Chat string `json:"chat,omitempty"`
 	// Thread is ThreadNew (the default) or ThreadSame.
 	Thread string `json:"thread,omitempty"`
@@ -228,7 +228,7 @@ func (r *Request) RegisterFlags(fs *pflag.FlagSet, owner bool) {
 		return
 	}
 	fs.StringVar(&r.As, "as", "", "Run as the owner or a pairing name (default: owner)")
-	fs.StringVar(&r.Chat, "chat", "", "Show the runs, and ask their approvals, in a chat: `channel[:who]`, such as telegram:owner (default: no chat; approvals go to the owner chat)")
+	fs.StringVar(&r.Chat, "chat", "", "Show the runs, and ask their approvals, in a chat: `messenger[:who]`, such as telegram:owner (default: no chat; approvals go to the owner chat)")
 	fs.StringVar(&r.Thread, "thread", ThreadNew, "Run in a new conversation each time, or continue the same one: `new|same`")
 }
 

@@ -112,8 +112,8 @@ func TestConfigCommands(t *testing.T) {
 		{name: "unset unknown setting", args: []string{"config", "unset", "nope"}, wantUsage: true},
 		{name: "unset agent", args: []string{"config", "unset", "agent"}, wantUsage: true},
 		{name: "show", args: []string{"config"}, wantOut: []string{"coder (opencode)", "sandbox      docker (default)", "approvals    allow read", "limits       memory 4g, cpus 2, pids 512 (defaults)"}},
-		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
-		{name: "config defaults", args: []string{"config", "--defaults"}, wantOut: []string{"description  none", "channels     none"}},
+		{name: "show defaults", args: []string{"config", "show", "--defaults"}, wantOut: []string{"description  none", "messengers   none"}},
+		{name: "config defaults", args: []string{"config", "--defaults"}, wantOut: []string{"description  none", "messengers   none"}},
 		{name: "config as command", args: []string{"config", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "show as command", args: []string{"config", "show", "--as-command"}, wantOut: []string{"a2a-serve start opencode --name coder --env DEBUG=1 --allow-tools read\n"}},
 		{name: "yaml only for show", args: []string{"-o", "yaml", "config", "set", "--sandbox", "local"}, wantUsage: true},
@@ -414,11 +414,11 @@ func TestSettingsFlagPlacement(t *testing.T) {
 		wantErr string
 	}{
 		{name: "operational on run", args: []string{"start", "opencode", "--memory", "8g"}, wantErr: "unknown flag: --memory"},
-		{name: "channel on run", args: []string{"start", "opencode", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
-		{name: "channel on config set", args: []string{"config", "set", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
+		{name: "messenger on run", args: []string{"start", "opencode", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
+		{name: "messenger on config set", args: []string{"config", "set", "--telegram", "x"}, wantErr: "unknown flag: --telegram"},
 		{name: "email on config set", args: []string{"config", "set", "--email-address", "a@example.com"}, wantErr: "unknown flag: --email-address"},
 		{name: "quiet on config set", args: []string{"config", "set", "--quiet"}, wantErr: "unknown flag: --quiet"},
-		{name: "unset a channel", args: []string{"config", "unset", "telegram"}, wantErr: "a2a-serve channel rm telegram"},
+		{name: "unset a messenger", args: []string{"config", "unset", "telegram"}, wantErr: "a2a-serve messenger rm telegram"},
 		{name: "unknown tool kind", args: []string{"config", "set", "--allow-tools", "reed"}, wantErr: `invalid --allow-tools "reed"`},
 	}
 	for _, tc := range tests {
@@ -509,7 +509,7 @@ func TestConfigUnsetValidatesSettingBeforeDirectory(t *testing.T) {
 	}{
 		{setting: "nope", wantErr: `unknown setting "nope"`},
 		{setting: "agent", wantErr: "the agent can't be unset"},
-		{setting: "telegram", wantErr: "a2a-serve channel rm telegram"},
+		{setting: "telegram", wantErr: "a2a-serve messenger rm telegram"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.setting, func(t *testing.T) {

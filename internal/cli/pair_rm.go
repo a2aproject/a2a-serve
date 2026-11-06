@@ -182,7 +182,7 @@ func removalPreviewText(name string, p *controlapi.RemovalPreview) string {
 	if n := len(p.Accounts); n > 0 {
 		accounts := make([]string, n)
 		for i, a := range p.Accounts {
-			accounts[i] = a.Channel + " " + a.Account
+			accounts[i] = a.Messenger + " " + a.Account
 		}
 		fmt.Fprintf(&sb, "  %d %s: %s\n", n, plural(n, "linked chat account", "linked chat accounts"), strings.Join(accounts, ", "))
 	}

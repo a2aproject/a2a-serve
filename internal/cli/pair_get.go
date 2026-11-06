@@ -100,7 +100,7 @@ func renderPairing(p *controlapi.Pairing) string {
 		}
 		accounts := make([]string, 0, len(p.Accounts))
 		for _, a := range p.Accounts {
-			accounts = append(accounts, a.Channel+" "+a.Account)
+			accounts = append(accounts, a.Messenger+" "+a.Account)
 		}
 		line("accounts", orNone(strings.Join(accounts, ", ")))
 	}

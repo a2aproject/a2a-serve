@@ -101,11 +101,11 @@ func TestMigrateFromPrototype(t *testing.T) {
 	if _, err := s.QuestionByID(ctx, "q2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("QuestionByID() of a duplicate remote question error = %v, want %v", err, ErrNotFound)
 	}
-	if v, ok, err := s.ChannelState().Get(ctx, "email:lastuid"); err != nil || !ok || v != "17" {
-		t.Fatalf("ChannelState().Get() = %q, %v, %v, want 17", v, ok, err)
+	if v, ok, err := s.MessengerState().Get(ctx, "email:lastuid"); err != nil || !ok || v != "17" {
+		t.Fatalf("MessengerState().Get() = %q, %v, %v, want 17", v, ok, err)
 	}
-	if _, ok, err := s.ChannelState().Get(ctx, "handle:k3"); err != nil || ok {
-		t.Fatalf("ChannelState().Get() of a moved handle = %v, %v, want not set", ok, err)
+	if _, ok, err := s.MessengerState().Get(ctx, "handle:k3"); err != nil || ok {
+		t.Fatalf("MessengerState().Get() of a moved handle = %v, %v, want not set", ok, err)
 	}
 }
 

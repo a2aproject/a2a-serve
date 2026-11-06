@@ -43,13 +43,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/nodes"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/oauth"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/schedules"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
@@ -57,6 +56,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/gossip"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -81,8 +81,8 @@ type Options struct {
 	ImageProgress io.Writer
 	// Executor replaces the ACP executor, for tests.
 	Executor a2asrv.AgentExecutor
-	// Channels replace the channels from the config, for tests.
-	Channels []channel.Channel
+	// Messengers replace the messengers from the config, for tests.
+	Messengers []messenger.Messenger
 	// Credentials, if set, receive an owner token for the local URL, so the
 	// user running the server can call it from this machine.
 	Credentials *credstore.Store
@@ -119,7 +119,7 @@ type Server struct {
 	handler a2asrv.RequestHandler
 	sender  *handlerSender
 	chain   *auth.Chain
-	bus     *messenger.Bus
+	bus     *chat.Bus
 
 	private  network.Provider
 	public   network.Provider
@@ -142,9 +142,9 @@ type Server struct {
 	privateURL string
 	publicURL  string
 
-	supervisor    *messenger.ChannelSupervisor
-	chatApprovals *messenger.ChatApprovals
-	chatTurns     *messenger.ChatTurns
+	supervisor    *chat.MessengerSupervisor
+	chatApprovals *chat.ChatApprovals
+	chatTurns     *chat.ChatTurns
 	claims        *CallClaims
 	clients       *agentproxy.ContactClients
 	contacts      contacts.Service
@@ -184,7 +184,7 @@ type Server struct {
 	sessions store.SessionStore
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
-	unattended *messenger.ContextSet
+	unattended *chat.ContextSet
 	// users are the agent processes of users that run now.
 	users userAgents
 	// background runs the server's loops, which Run waits for.
@@ -254,7 +254,7 @@ func Run(ctx context.Context, opts Options) error {
 		out:     opts.Out,
 		started: time.Now(),
 		cancel:  cancel,
-		bus:     messenger.NewBus(),
+		bus:     chat.NewBus(),
 
 		credentials:       opts.Credentials,
 		telegramServerURL: opts.TelegramServerURL,
@@ -281,10 +281,10 @@ func Run(ctx context.Context, opts Options) error {
 	if err := s.build(ctx, &closers, opts); err != nil {
 		return startupError(ctx, err)
 	}
-	chans := opts.Channels
+	chans := opts.Messengers
 	if chans == nil {
 		var err error
-		if chans, err = s.buildChannels(); err != nil {
+		if chans, err = s.buildMessengers(); err != nil {
 			return err
 		}
 	}
@@ -411,7 +411,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		s.nodes.Stop()
 		return nil
 	})
-	s.supervisor = messenger.NewChannelSupervisor(ctx, messenger.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.ChannelRetryMin})
+	s.supervisor = chat.NewMessengerSupervisor(ctx, chat.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.MessengerRetryMin})
 	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
 	closers.push(s.clients.Close)
 	s.contacts = contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions}
@@ -435,7 +435,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return err
 	}
 
-	s.chatApprovals = messenger.NewChatApprovals(ctx, messenger.ChatApprovalsDeps{
+	s.chatApprovals = chat.NewChatApprovals(ctx, chat.ChatApprovalsDeps{
 		Store:      s.store,
 		Tasks:      s.tasks,
 		Records:    records,
@@ -443,10 +443,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Bus:        s.bus,
 		Config:     s.rt.Config,
 		Anonymous:  s.keys.anonymous,
-		Timings:    s.timings.messenger(),
+		Timings:    s.timings.chat(),
 	})
-	s.unattended = &messenger.ContextSet{}
-	posted := &messenger.PostedTurns{}
+	s.unattended = &chat.ContextSet{}
+	posted := &chat.PostedTurns{}
 	s.sender, s.handler = bindHandler(func(sender *handlerSender) a2asrv.RequestHandler {
 		s.approvals = approvals.New(approvals.Deps{
 			Records:          records,
@@ -471,7 +471,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
 			Homes:     userHomes{s},
 		})
-		s.chatTurns = messenger.NewChatTurns(messenger.ChatTurnsDeps{
+		s.chatTurns = chat.NewChatTurns(chat.ChatTurnsDeps{
 			Store:       s.store,
 			Tasks:       s.tasks,
 			Chain:       s.chain,
@@ -480,7 +480,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Preferences: s.prefs,
 			Chat:        s.chatApprovals,
 			Supervisor:  s.supervisor,
-			Queue:       messenger.NewConversationQueue(),
+			Queue:       chat.NewConversationQueue(),
 			Sender:      sender,
 			Bus:         s.bus,
 			Unattended:  s.unattended,
@@ -523,10 +523,10 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Runtime:   s.rt,
 		Network:   s.networks,
 		Hooks: agentops.Hooks{
-			NewChannel:     s.buildChannel,
-			ChannelAdded:   s.startChannel,
-			ChannelRemoved: s.supervisor.Remove,
-			RunSchedule:    s.schedules.RunNow,
+			NewMessenger:     s.buildMessenger,
+			MessengerAdded:   s.startMessenger,
+			MessengerRemoved: s.supervisor.Remove,
+			RunSchedule:      s.schedules.RunNow,
 		},
 	})
 	s.proxy = agentproxy.NewHarnessProxy(agentproxy.HarnessProxyDeps{Store: s.store, Claims: s.claims, Clients: s.clients, Watches: s.watches, Schedules: s.schedules})
@@ -582,9 +582,9 @@ func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 }
 
 // serve starts the chat turns, serves every listener and the control socket,
-// starts the channels and resumes watches. Errors of listeners after the
-// start arrive on the returned channel.
-func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Channel) (<-chan error, error) {
+// starts the messengers and resumes watches. Errors of listeners after the
+// start arrive on the returned messenger.
+func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Messenger) (<-chan error, error) {
 	errc := make(chan error, 1)
 	s.chatTurns.Start(ctx)
 	closers.push(s.supervisor.StopAll)
@@ -849,7 +849,7 @@ func (s *Server) policy() auth.Policy {
 
 // networks are the networks the agent is on.
 func (s *Server) networks() access.Network {
-	n := access.Network{Public: s.public != nil, Messenger: s.rt.Config().HasMessenger()}
+	n := access.Network{Public: s.public != nil, Messenger: s.rt.Config().HasMessengers()}
 	if s.private != nil {
 		n.Private = s.private.Name()
 	}

@@ -196,7 +196,7 @@ func inSecretDiff(changes []agentdir.Change, name string) bool {
 func formatChange(c agentdir.Change, secrets map[string]string) string {
 	if c.Added == nil && c.Removed == nil {
 		empty := "(default)"
-		if kind, _, _ := strings.Cut(c.Setting, "-"); slices.Contains([]string{agentdir.ChannelTelegram, agentdir.ChannelDiscord, agentdir.ChannelEmail}, kind) {
+		if kind, _, _ := strings.Cut(c.Setting, "-"); slices.Contains([]string{agentdir.MessengerTelegram, agentdir.MessengerDiscord, agentdir.MessengerEmail}, kind) {
 			empty = "(none)"
 		}
 		out := or(c.Old, empty) + " → " + or(c.New, empty)

@@ -28,8 +28,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -37,7 +37,7 @@ import (
 
 func TestScheduleRunIsShownInChat(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
@@ -52,7 +52,7 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 	if _, err := ctl.RunSchedule(ctx, "brief"); err != nil {
 		t.Fatalf("RunSchedule() error = %v", err)
 	}
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText(`ran Scheduled run of "brief"`))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText(`ran Scheduled run of "brief"`))
 
 	contextID, err := ts.srv.store.ContextOf(ctx, "fake", "dm1")
 	if err != nil {
@@ -69,7 +69,7 @@ func TestScheduleRunIsShownInChat(t *testing.T) {
 
 func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
@@ -82,17 +82,17 @@ func TestScheduleApprovalGoesToItsChat(t *testing.T) {
 		t.Fatalf("RunSchedule() error = %v", err)
 	}
 
-	ref, q := ts.ch.WaitFor(t, "dm2", channeltest.HasQuestion)
+	ref, q := ts.ch.WaitFor(t, "dm2", messengertest.HasQuestion)
 	if got := ts.ch.Questions(); got != 1 {
 		t.Fatalf("questions sent = %d, want only the one in anna's chat: she is the schedule's user", got)
 	}
 	ts.ch.Click("telegram:2", "dm2", ref, q.Question, 0)
-	ts.ch.WaitFor(t, "dm2", channeltest.HasText("Pushed (allow)."))
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("Pushed (allow)."))
 }
 
 func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
@@ -100,7 +100,7 @@ func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
 	ts.ch.Write("telegram:1", "dm1", "ask")
-	ref, q := ts.ch.WaitFor(t, "dm1", channeltest.HasQuestion)
+	ref, q := ts.ch.WaitFor(t, "dm1", messengertest.HasQuestion)
 
 	for range 3 {
 		if _, err := ctl.RunSchedule(ctx, "brief"); err != nil {
@@ -109,8 +109,8 @@ func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
 	}
 	ts.ch.Click("telegram:1", "dm1", ref, q.Question, 0)
 
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Pushed (allow)."))
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Runs skipped while this one waited for an answer in this conversation: 2."))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Pushed (allow)."))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Runs skipped while this one waited for an answer in this conversation: 2."))
 	time.Sleep(200 * time.Millisecond)
 	runs := 0
 	for _, m := range ts.ch.Transcript() {
@@ -125,7 +125,7 @@ func TestScheduleRunsWaitingForAnApprovalAreMerged(t *testing.T) {
 
 func TestAddScheduleErrors(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	ctl := controlapi.NewClient(ts.dir)
@@ -139,7 +139,7 @@ func TestAddScheduleErrors(t *testing.T) {
 		{name: "existing name", req: schedule.Request{Name: "taken", Cron: "@daily", Prompt: "x"}},
 		{name: "time passed", req: schedule.Request{Name: "late", At: "2020-01-01 10:00", Prompt: "x"}},
 		{name: "unknown user", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", As: "nobody"}},
-		{name: "no chat on the channel", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", Chat: "telegram"}},
+		{name: "no chat on the messenger", req: schedule.Request{Name: "x", Cron: "@daily", Prompt: "x", Chat: "telegram"}},
 		{name: "invalid cron", req: schedule.Request{Name: "x", Cron: "every day", Prompt: "x"}},
 	}
 	for _, tc := range tests {
@@ -155,17 +155,17 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 	t.Parallel()
 	var skew atomic.Int64
 	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake"), now: now})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake"), now: now})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	at := time.Now().Add(time.Hour).Format(time.RFC3339Nano)
 
 	ts.ch.Write("telegram:1", "dm1", fmt.Sprintf(`call schedules add soon --at %s --prompt "check the build"`, at))
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("Scheduled soon"))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Scheduled soon"))
 	ts.ch.Write("telegram:1", "dm1", "call schedules list")
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("- soon (once"))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("- soon (once"))
 	skew.Store(int64(time.Hour))
 	ts.srv.schedules.Wake()
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText(`ran Scheduled run of "soon"`))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText(`ran Scheduled run of "soon"`))
 
 	deadline := time.Now().Add(10 * time.Second)
 	for {
@@ -182,17 +182,17 @@ func TestHarnessSchedulesInConversation(t *testing.T) {
 
 func TestHarnessScheduleIsAnnouncedInChat(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 
 	ts.ch.Write("telegram:1", "dm1", `call schedules add triage --cron "@every 2h" --prompt "triage new issues"`)
 
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText(`The agent added the schedule triage (@every 2h): "triage new issues". The next run is`))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText(`The agent added the schedule triage (@every 2h): "triage new issues". The next run is`))
 }
 
 func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
 	ctx := context.Background()
 	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "brief", Cron: "@daily", Prompt: "x"}); err != nil {
@@ -200,11 +200,11 @@ func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 	}
 
 	ts.ch.Write("telegram:2", "dm2", "call schedules list")
-	ts.ch.WaitFor(t, "dm2", channeltest.HasText("No schedules."))
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("No schedules."))
 	ts.ch.Write("telegram:2", "dm2", "call schedules rm brief")
-	ts.ch.WaitFor(t, "dm2", channeltest.HasText("no schedule brief"))
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("no schedule brief"))
 	ts.ch.Write("telegram:2", "dm2", `call schedules add mine --cron @daily --prompt "x"`)
-	ts.ch.WaitFor(t, "dm2", channeltest.HasText("Scheduled mine"))
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("Scheduled mine"))
 
 	mine, err := ts.srv.store.Schedule(ctx, "mine")
 	if err != nil {
@@ -220,12 +220,12 @@ func TestHarnessSchedulesOfOthersAreHidden(t *testing.T) {
 
 func TestHarnessSchedulesAreLimited(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake")})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 
 	ts.ch.Write("telegram:1", "dm1", `call schedules add fast --cron "@every 1s" --prompt "x"`)
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("at least 5 minutes apart"))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("at least 5 minutes apart"))
 	for i := range schedulesvc.AgentLimits.PerUser {
 		if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
 			Name: fmt.Sprintf("s%d", i), Cron: "@daily", Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew, CreatedBy: auth.OwnerID,
@@ -234,7 +234,7 @@ func TestHarnessSchedulesAreLimited(t *testing.T) {
 		}
 	}
 	ts.ch.Write("telegram:1", "dm1", `call schedules add one-more --cron @daily --prompt "x"`)
-	ts.ch.WaitFor(t, "dm1", channeltest.HasText("at most 50 schedules"))
+	ts.ch.WaitFor(t, "dm1", messengertest.HasText("at most 50 schedules"))
 
 	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "fast", Cron: "@every 1s", Prompt: "x"}); err != nil {
 		t.Fatalf("AddSchedule() by the owner past the agent limits error = %v", err)
@@ -311,16 +311,16 @@ func TestMissedScheduleRunsOnStart(t *testing.T) {
 func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	t.Parallel()
 	var skew atomic.Int64
-	// The server's own scheduler must not run the schedule before the channel is removed.
+	// The server's own scheduler must not run the schedule before the messenger is removed.
 	skew.Store(int64(-time.Hour))
 	now := func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
-	ts := startServer(t, serverOpts{channel: channeltest.NewChannel("fake"), now: now})
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake"), now: now})
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 	due := time.Now().Add(-time.Minute)
 	if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
 		Name: "once", At: due, Prompt: "x", UserID: auth.OwnerID, Conversation: schedule.ThreadNew,
-		DeliverChannel: "fake", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
+		DeliverMessenger: "fake", DeliverUser: auth.OwnerID, CreatedBy: auth.OwnerID, NextRun: due,
 	}); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
 	}
@@ -333,11 +333,11 @@ func TestFailedOneTimeScheduleIsRetried(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Schedule() after a failed run error = %v, want the schedule kept", err)
 	}
-	if !strings.Contains(got.LastError, "channel fake is not running") || got.NextRun.IsZero() || got.LastRun.IsZero() {
+	if !strings.Contains(got.LastError, "messenger fake is not running") || got.NextRun.IsZero() || got.LastRun.IsZero() {
 		t.Fatalf("Schedule() = %+v, want the error recorded and the run still due", got)
 	}
 
-	restarted := channeltest.NewChannel("fake")
+	restarted := messengertest.NewMessenger("fake")
 	ts.srv.supervisor.Add(restarted)
 	restarted.WaitReady(t)
 	ts.srv.schedules.RunDue(ctx)

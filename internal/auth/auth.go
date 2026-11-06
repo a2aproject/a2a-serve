@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package auth turns requests to an agent server into principals: it
-// identifies the caller from channel links, network identity and tokens,
+// identifies the caller from messenger links, network identity and tokens,
 // and gives the identity one role with the policy.
 package auth
 
@@ -28,9 +28,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -105,8 +105,8 @@ type Request struct {
 	Listener   string
 	RemoteAddr string
 	Header     http.Header
-	// Channel is set for channel messages.
-	Channel *channel.Inbound
+	// Messenger is set for messenger messages.
+	Messenger *messenger.Inbound
 }
 
 // ErrNoCredential is returned for a caller who proved nothing about
@@ -140,7 +140,7 @@ func Refused(err error) bool {
 	return errors.As(err, &re) || errors.Is(err, ErrNoCredential)
 }
 
-// Chain turns requests into identities, from channel links, the private
+// Chain turns requests into identities, from messenger links, the private
 // network's identity and tokens, and gives each one role with the policy.
 type Chain struct {
 	Store *store.Store
@@ -158,8 +158,8 @@ func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) 
 		id  Identity
 		err error
 	)
-	if r.Channel != nil {
-		id, err = a.channelIdentity(ctx, r.Channel)
+	if r.Messenger != nil {
+		id, err = a.messengerIdentity(ctx, r.Messenger)
 	} else {
 		id, err = a.requestIdentity(ctx, r)
 	}
@@ -167,7 +167,7 @@ func (a *Chain) Authenticate(ctx context.Context, r Request) (Principal, error) 
 		return Principal{}, err
 	}
 	p, err := a.Resolve(id)
-	if _, hasToken := BearerToken(r.Header.Get("Authorization")); hasToken && r.Channel == nil && errors.Is(err, ErrNoCredential) {
+	if _, hasToken := BearerToken(r.Header.Get("Authorization")); hasToken && r.Messenger == nil && errors.Is(err, ErrNoCredential) {
 		return Principal{}, ErrUnknownToken
 	}
 	return p, err
@@ -371,18 +371,18 @@ func NodeOfToken(ctx context.Context, s *store.Store, token string) (store.Node,
 	return node, true, nil
 }
 
-// channelIdentity identifies the sender of a channel message: the pairing
+// messengerIdentity identifies the sender of a messenger message: the pairing
 // their account is linked to, which is the user running the agent for the
 // local pairing, and the email of mail which passed DMARC.
-func (a *Chain) channelIdentity(ctx context.Context, in *channel.Inbound) (Identity, error) {
+func (a *Chain) messengerIdentity(ctx context.Context, in *messenger.Inbound) (Identity, error) {
 	if !in.Authentic {
 		return Identity{}, ErrNoCredential
 	}
-	id := Identity{Network: NetworkChat, Provider: in.Channel, ChatAccount: in.Identity, Direct: in.Direct}
+	id := Identity{Network: NetworkChat, Provider: in.Messenger, ChatAccount: in.Identity, Direct: in.Direct}
 	if network.IsEmail(in.Identity) {
 		id.Email, id.EmailSource, id.Domain = in.Identity, EmailFromMail, DomainOf(in.Identity)
 	}
-	l, err := a.Store.LinkOf(ctx, in.Channel, in.Identity)
+	l, err := a.Store.LinkOf(ctx, in.Messenger, in.Identity)
 	if errors.Is(err, store.ErrNotFound) {
 		return id, nil
 	}

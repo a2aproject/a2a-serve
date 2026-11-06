@@ -72,15 +72,15 @@ type Config struct {
 	// and peers again, such as 1h. Default 1h.
 	ContactRefresh string `yaml:"contactRefresh,omitempty" json:"contactRefresh,omitempty"`
 
-	Card      CardConfig      `yaml:"card,omitempty" json:"card,omitzero"`
-	Network   NetworkConfig   `yaml:"network,omitempty" json:"network,omitzero"`
-	Channels  ChannelsConfig  `yaml:"channels,omitempty" json:"channels,omitzero"`
-	Policy    PolicyConfig    `yaml:"policy,omitempty" json:"policy,omitzero"`
-	Approvals ApprovalsConfig `yaml:"approvals,omitempty" json:"approvals,omitzero"`
-	Limits    LimitsConfig    `yaml:"limits,omitempty" json:"limits,omitzero"`
-	Auth      AuthConfig      `yaml:"auth,omitempty" json:"auth,omitzero"`
-	Backup    BackupConfig    `yaml:"backup,omitempty" json:"backup,omitzero"`
-	MCP       MCPConfig       `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+	Card       CardConfig       `yaml:"card,omitempty" json:"card,omitzero"`
+	Network    NetworkConfig    `yaml:"network,omitempty" json:"network,omitzero"`
+	Messengers MessengersConfig `yaml:"messengers,omitempty" json:"messengers,omitzero"`
+	Policy     PolicyConfig     `yaml:"policy,omitempty" json:"policy,omitzero"`
+	Approvals  ApprovalsConfig  `yaml:"approvals,omitempty" json:"approvals,omitzero"`
+	Limits     LimitsConfig     `yaml:"limits,omitempty" json:"limits,omitzero"`
+	Auth       AuthConfig       `yaml:"auth,omitempty" json:"auth,omitzero"`
+	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitzero"`
+	MCP        MCPConfig        `yaml:"mcp,omitempty" json:"mcp,omitzero"`
 }
 
 // CardConfig is what the agent card tells callers about the agent besides
@@ -268,8 +268,8 @@ type NetworkConfig struct {
 	TailscaleControlURL string `yaml:"tailscaleControlURL,omitempty" json:"tailscaleControlURL,omitempty"`
 }
 
-// ChannelsConfig configures the messengers the agent is reachable from.
-type ChannelsConfig struct {
+// MessengersConfig configures the messengers the agent is reachable from.
+type MessengersConfig struct {
 	Telegram *TelegramConfig `yaml:"telegram,omitempty" json:"telegram,omitempty"`
 	Discord  *DiscordConfig  `yaml:"discord,omitempty" json:"discord,omitempty"`
 	Email    *EmailConfig    `yaml:"email,omitempty" json:"email,omitempty"`
@@ -307,64 +307,64 @@ type EmailConfig struct {
 	OAuthRefreshToken string `yaml:"oauthRefreshToken,omitempty" json:"oauthRefreshToken,omitempty"`
 }
 
-// Channel kinds.
+// Messenger kinds.
 const (
-	ChannelTelegram = "telegram"
-	ChannelDiscord  = "discord"
-	ChannelEmail    = "email"
+	MessengerTelegram = "telegram"
+	MessengerDiscord  = "discord"
+	MessengerEmail    = "email"
 )
 
-// ChannelKinds are the messengers an agent can be reached from.
-var ChannelKinds = []string{ChannelTelegram, ChannelDiscord, ChannelEmail}
+// MessengerKinds are the messengers an agent can be reached from.
+var MessengerKinds = []string{MessengerTelegram, MessengerDiscord, MessengerEmail}
 
-// SetChannel configures the channel of kind. A bot token is a secret
-// reference; an empty token or nil email removes the channel.
-func (c *Config) SetChannel(kind, token string, email *EmailConfig) error {
+// SetMessenger configures the messenger of kind. A bot token is a secret
+// reference; an empty token or nil email removes the messenger.
+func (c *Config) SetMessenger(kind, token string, email *EmailConfig) error {
 	switch kind {
-	case ChannelTelegram:
-		c.Channels.Telegram = nil
+	case MessengerTelegram:
+		c.Messengers.Telegram = nil
 		if token != "" {
-			c.Channels.Telegram = &TelegramConfig{Token: token}
+			c.Messengers.Telegram = &TelegramConfig{Token: token}
 		}
-	case ChannelDiscord:
-		c.Channels.Discord = nil
+	case MessengerDiscord:
+		c.Messengers.Discord = nil
 		if token != "" {
-			c.Channels.Discord = &DiscordConfig{Token: token}
+			c.Messengers.Discord = &DiscordConfig{Token: token}
 		}
-	case ChannelEmail:
-		c.Channels.Email = email
+	case MessengerEmail:
+		c.Messengers.Email = email
 	default:
-		return fmt.Errorf("unknown channel %q: want telegram, discord or email", kind)
+		return fmt.Errorf("unknown messenger %q: want telegram, discord or email", kind)
 	}
 	return nil
 }
 
-// HasChannel reports whether the channel of kind is configured.
-func (c *Config) HasChannel(kind string) bool {
+// HasMessenger reports whether the messenger of kind is configured.
+func (c *Config) HasMessenger(kind string) bool {
 	switch kind {
-	case ChannelTelegram:
-		return c.Channels.Telegram != nil
-	case ChannelDiscord:
-		return c.Channels.Discord != nil
-	case ChannelEmail:
-		return c.Channels.Email != nil
+	case MessengerTelegram:
+		return c.Messengers.Telegram != nil
+	case MessengerDiscord:
+		return c.Messengers.Discord != nil
+	case MessengerEmail:
+		return c.Messengers.Email != nil
 	}
 	return false
 }
 
-// HasMessenger reports whether any channel is configured.
-func (c *Config) HasMessenger() bool {
-	return slices.ContainsFunc(ChannelKinds, c.HasChannel)
+// HasMessengers reports whether any messenger is configured.
+func (c *Config) HasMessengers() bool {
+	return slices.ContainsFunc(MessengerKinds, c.HasMessenger)
 }
 
-// ChannelToken returns the bot token reference of a telegram or discord
-// channel, or "" if it isn't configured.
-func (c *Config) ChannelToken(kind string) string {
+// MessengerToken returns the bot token reference of a telegram or discord
+// messenger, or "" if it isn't configured.
+func (c *Config) MessengerToken(kind string) string {
 	switch {
-	case kind == ChannelTelegram && c.Channels.Telegram != nil:
-		return c.Channels.Telegram.Token
-	case kind == ChannelDiscord && c.Channels.Discord != nil:
-		return c.Channels.Discord.Token
+	case kind == MessengerTelegram && c.Messengers.Telegram != nil:
+		return c.Messengers.Telegram.Token
+	case kind == MessengerDiscord && c.Messengers.Discord != nil:
+		return c.Messengers.Discord.Token
 	}
 	return ""
 }
@@ -374,7 +374,7 @@ type ApprovalsConfig struct {
 	// Allow and Deny are ACP tool kind globs answered without asking.
 	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
 	Deny  []string `yaml:"deny,omitempty" json:"deny,omitempty"`
-	// OwnerChat is the chat, <channel>[:<who>], where an owner answers the
+	// OwnerChat is the chat, <messenger>[:<who>], where an owner answers the
 	// questions of tasks nobody watches. Empty picks the first messenger
 	// with a linked owner.
 	OwnerChat string `yaml:"ownerChat,omitempty" json:"ownerChat,omitempty"`
@@ -806,15 +806,15 @@ func (c *Config) Clone() *Config {
 	out.Policy = c.Policy.clone()
 	out.MCP.Disabled = slices.Clone(c.MCP.Disabled)
 	out.Card = c.Card.clone()
-	if t := c.Channels.Telegram; t != nil {
-		out.Channels.Telegram = &TelegramConfig{Token: t.Token}
+	if t := c.Messengers.Telegram; t != nil {
+		out.Messengers.Telegram = &TelegramConfig{Token: t.Token}
 	}
-	if dc := c.Channels.Discord; dc != nil {
-		out.Channels.Discord = &DiscordConfig{Token: dc.Token}
+	if dc := c.Messengers.Discord; dc != nil {
+		out.Messengers.Discord = &DiscordConfig{Token: dc.Token}
 	}
-	if e := c.Channels.Email; e != nil {
+	if e := c.Messengers.Email; e != nil {
 		email := *e
-		out.Channels.Email = &email
+		out.Messengers.Email = &email
 	}
 	return &out
 }

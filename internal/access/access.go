@@ -40,7 +40,7 @@ type Network struct {
 
 // NetworkOf returns the networks cfg configures.
 func NetworkOf(cfg *agentdir.Config) Network {
-	n := Network{Public: cfg.Network.Public != "", Messenger: cfg.HasMessenger()}
+	n := Network{Public: cfg.Network.Public != "", Messenger: cfg.HasMessengers()}
 	switch p := cfg.Network.Private; p {
 	case "":
 	case agentdir.NetworkTailscale:

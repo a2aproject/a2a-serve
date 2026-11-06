@@ -8,7 +8,7 @@ digraph concepts {
 
   { rank=same;
     Network [label="Network\n(private, public)", fillcolor="#dbe8ff", color="#9bb7e0"];
-    Channel [label="Channel\n(Telegram, Discord, email)", fillcolor="#dbe8ff", color="#9bb7e0"];
+    Messenger [label="Messenger\n(Telegram, Discord, email)", fillcolor="#dbe8ff", color="#9bb7e0"];
     Pairing [label="Pairing\n(trusted)", fillcolor="#fdf1e6", color="#e0b48a"];
   }
   Identity [fillcolor="#f4f4f4"];
@@ -17,11 +17,11 @@ digraph concepts {
   Contact  [label="Contact\n(untrusted)", shape=ellipse, fillcolor="#e3f4e3"];
 
   Network -> Identity [label="contributes"];
-  Channel -> Identity [label="contributes"];
+  Messenger -> Identity [label="contributes"];
   Pairing -> Identity [label="attests"];
   Identity -> Policy  [dir=back, label="authorizes"];
   Policy  -> Agent    [label="protects"];
   Agent   -> Contact  [label="calls"];
   Network -> Agent    [dir=back, style=dashed, label="listens on"];
-  Channel -> Agent    [dir=back, style=dashed, label="answers in"];
+  Messenger -> Agent    [dir=back, style=dashed, label="answers in"];
 }

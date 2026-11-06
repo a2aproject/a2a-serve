@@ -88,7 +88,7 @@ func TestPairRmDryRun(t *testing.T) {
 	if err := st.PutToken(ctx, "a2p_laptop", store.Token{Pairing: "anna", URL: "https://coder.example.com"}, "person"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
-	if err := st.PutLink(ctx, store.Link{Channel: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
+	if err := st.PutLink(ctx, store.Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "anna"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
 	if err := st.AddSchedule(ctx, store.Schedule{Name: "daily", Cron: "@daily", Prompt: "p", UserID: "pair:anna"}); err != nil {

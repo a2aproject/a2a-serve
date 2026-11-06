@@ -105,7 +105,7 @@ func buildBinaries(dir string) error {
 	if err != nil {
 		return err
 	}
-	// The e2e tag lets the tests point the channels at fake services.
+	// The e2e tag lets the tests point the messengers at fake services.
 	if err := goCmd(root, nil, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
 		return err
 	}

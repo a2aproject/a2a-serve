@@ -111,7 +111,7 @@ nav:
           - inspect: reference/commands/inspect.md
           - config: reference/commands/config.md
           - recipe: reference/commands/recipe.md
-          - channel: reference/commands/channel.md
+          - messenger: reference/commands/messenger.md
           - schedule: reference/commands/schedule.md
           - backup: reference/commands/backup.md
           - pair: reference/commands/pair.md

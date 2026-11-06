@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 )
 
 // Timings are the delays and timeouts of the server. Zero fields take their
@@ -44,8 +44,8 @@ type Timings struct {
 	// WebhookRetries are the delays before each wake delivery attempt to a
 	// webhook node; nil uses the defaults of the nodes package.
 	WebhookRetries []time.Duration
-	// ChannelRetryMin is the first delay before a failed channel restarts.
-	ChannelRetryMin time.Duration
+	// MessengerRetryMin is the first delay before a failed messenger restarts.
+	MessengerRetryMin time.Duration
 	// FirstBackupDelay keeps the first snapshot of a run, when one is due,
 	// from slowing down the start.
 	FirstBackupDelay time.Duration
@@ -67,8 +67,8 @@ type Timings struct {
 	CardRefresh time.Duration
 }
 
-func (t Timings) messenger() messenger.Timings {
-	return messenger.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, AnonymousQuestionTimeout: t.AnonymousQuestionTimeout}
+func (t Timings) chat() chat.Timings {
+	return chat.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, AnonymousQuestionTimeout: t.AnonymousQuestionTimeout}
 }
 
 func (t Timings) agentproxy() agentproxy.Timings {
@@ -83,7 +83,7 @@ func (t Timings) withDefaults() Timings {
 	t.EditInterval = cmp.Or(t.EditInterval, time.Second)
 	t.SendRetry = cmp.Or(t.SendRetry, time.Second)
 	t.ScheduleMinWait = cmp.Or(t.ScheduleMinWait, time.Second)
-	t.ChannelRetryMin = cmp.Or(t.ChannelRetryMin, 5*time.Second)
+	t.MessengerRetryMin = cmp.Or(t.MessengerRetryMin, 5*time.Second)
 	t.FirstBackupDelay = cmp.Or(t.FirstBackupDelay, time.Minute)
 	t.AnonymousQuestionTimeout = cmp.Or(t.AnonymousQuestionTimeout, 10*time.Minute)
 	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)

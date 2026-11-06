@@ -120,7 +120,7 @@ The person who started a task answers its approvals, in the place the task start
 | A schedule without `--chat` | an owner | the owner chat |
 | An [anonymous caller](identities.md#anonymous-callers) | an owner, within 10 minutes | the owner chat |
 
-- Set the **owner chat** with `--owner-chat <channel>[:<who>]`, on a messenger the agent has. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
+- Set the **owner chat** with `--owner-chat <messenger>[:<who>]`, on a messenger the agent has. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
 - In a group chat, only the person who started the task, or an owner, can answer.
 - A message that isn't an answer doesn't reach the agent while a question waits for you in that chat. Answer the question first, or send `/stop`.
 - A typed answer such as `approve` answers the question whose message it replies to. When several questions wait in one chat, reply to the message of the one you answer. A typed answer that replies to none of them gets a prompt to do so.

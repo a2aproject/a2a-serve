@@ -53,7 +53,7 @@ var (
 )
 
 // Validate checks the settings which don't depend on the machine: enums,
-// mount specs, the command of an acp agent and the completeness of channels.
+// mount specs, the command of an acp agent and the completeness of messengers.
 // Each problem names its setting by its flag.
 func (c *Config) Validate() error {
 	var errs []error
@@ -159,13 +159,13 @@ func (c *Config) Validate() error {
 	if c.Limits.PIDs < 0 {
 		invalid("pids", strconv.Itoa(c.Limits.PIDs), "want a positive number")
 	}
-	if t := c.Channels.Telegram; t != nil && t.Token == "" {
-		add("the telegram channel needs a token: a2a-serve channel add telegram --token <token>")
+	if t := c.Messengers.Telegram; t != nil && t.Token == "" {
+		add("the telegram messenger needs a token: a2a-serve messenger add telegram --token <token>")
 	}
-	if dc := c.Channels.Discord; dc != nil && dc.Token == "" {
-		add("the discord channel needs a token: a2a-serve channel add discord --token <token>")
+	if dc := c.Messengers.Discord; dc != nil && dc.Token == "" {
+		add("the discord messenger needs a token: a2a-serve messenger add discord --token <token>")
 	}
-	if e := c.Channels.Email; e != nil {
+	if e := c.Messengers.Email; e != nil {
 		var missing []string
 		required := map[string]string{"email-address": e.Address, "email-imap": e.IMAP, "email-smtp": e.SMTP, "email-password": e.Password, "email-trusted-authserv": e.TrustedAuthServ}
 		if e.OAuthRefreshToken != "" {
@@ -180,7 +180,7 @@ func (c *Config) Validate() error {
 		}
 		if len(missing) > 0 {
 			slices.Sort(missing)
-			add("the email channel needs %s", strings.Join(missing, ", "))
+			add("the email messenger needs %s", strings.Join(missing, ", "))
 		}
 	}
 	errs = append(errs, c.Policy.validate()...)
@@ -198,8 +198,8 @@ func (c *Config) Validate() error {
 		add("approvals.approvers was removed: whoever starts a task answers its approvals, and owners can answer any; delete it from config.yaml")
 	}
 	if v := c.Approvals.OwnerChat; v != "" {
-		if kind, who, hasWho := strings.Cut(v, ":"); !slices.Contains(ChannelKinds, kind) || (hasWho && who == "") {
-			invalid("owner-chat", v, "want channel[:who], such as telegram or telegram:anna, with channel one of %s", strings.Join(ChannelKinds, ", "))
+		if kind, who, hasWho := strings.Cut(v, ":"); !slices.Contains(MessengerKinds, kind) || (hasWho && who == "") {
+			invalid("owner-chat", v, "want messenger[:who], such as telegram or telegram:anna, with messenger one of %s", strings.Join(MessengerKinds, ", "))
 		}
 	}
 	if (c.Auth.GoogleClientID == "") != (c.Auth.GoogleClientSecret == "") {
@@ -339,8 +339,8 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 	for _, ref := range cfg.secretRefs() {
 		if _, err := secrets.Resolve(ref.value); err != nil {
 			label := "--" + ref.flag
-			if ref.flag == ChannelTelegram || ref.flag == ChannelDiscord {
-				label = ref.flag + " token (a2a-serve channel add " + ref.flag + " --token)"
+			if ref.flag == MessengerTelegram || ref.flag == MessengerDiscord {
+				label = ref.flag + " token (a2a-serve messenger add " + ref.flag + " --token)"
 			}
 			errs = append(errs, fmt.Errorf("%s: %w", label, err))
 		}
@@ -437,13 +437,13 @@ func (c *Config) CheckHarness(name string) error {
 	return &SettingsError{Err: fmt.Errorf("this agent runs %s; switch with `a2a-serve config set --agent %s`", c.Harness, name)}
 }
 
-// CheckOwnerChat refuses an owner chat on a channel the agent doesn't have.
-// Only a change of the owner chat checks it, so that removing the channel
+// CheckOwnerChat refuses an owner chat on a messenger the agent doesn't have.
+// Only a change of the owner chat checks it, so that removing the messenger
 // later doesn't make the config invalid.
 func (c *Config) CheckOwnerChat() error {
 	kind, _, _ := strings.Cut(c.Approvals.OwnerChat, ":")
-	if kind == "" || c.HasChannel(kind) {
+	if kind == "" || c.HasMessenger(kind) {
 		return nil
 	}
-	return fmt.Errorf("--owner-chat %s needs the %s channel: add it first with a2a-serve channel add %s", c.Approvals.OwnerChat, kind, kind)
+	return fmt.Errorf("--owner-chat %s needs the %s messenger: add it first with a2a-serve messenger add %s", c.Approvals.OwnerChat, kind, kind)
 }

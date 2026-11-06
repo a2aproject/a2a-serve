@@ -176,7 +176,7 @@ func TestScheduleChatVocabulary(t *testing.T) {
 	}
 	coder.mustFail("owner has no chat on telegram", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--chat", "telegram:owner")
 	coder.mustFail("unknown flag: --deliver", "schedule", "add", "x", "--cron", "@daily", "--prompt", "p", "--deliver", "telegram")
-	coder.mustFail("--owner-chat discord needs the discord channel", "config", "set", "--owner-chat", "discord")
+	coder.mustFail("--owner-chat discord needs the discord messenger", "config", "set", "--owner-chat", "discord")
 }
 
 // TestAccessSettings covers the access settings: a running agent applies

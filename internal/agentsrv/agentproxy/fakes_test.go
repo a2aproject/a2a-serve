@@ -38,10 +38,10 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -442,7 +442,7 @@ type injectedTurn struct {
 	ContextID string
 	User      auth.Principal
 	Text      string
-	Files     []channel.File
+	Files     []messenger.File
 }
 
 // fakeTurnInjector records the turns injected. The agent accepts them at
@@ -458,7 +458,7 @@ func newFakeTurnInjector() *fakeTurnInjector {
 	return &fakeTurnInjector{turns: make(chan injectedTurn, 16), accepted: make(chan func(error), 16)}
 }
 
-func (f *fakeTurnInjector) InjectTurn(_ context.Context, t messenger.PostedTurn) error {
+func (f *fakeTurnInjector) InjectTurn(_ context.Context, t chat.PostedTurn) error {
 	accept := t.Accepted
 	if accept == nil {
 		accept = func(error) {}

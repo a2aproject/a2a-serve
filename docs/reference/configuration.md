@@ -1,7 +1,7 @@
 # Configuration File
 
 `config.yaml` holds what the flags set. Change it with `a2a-serve config set`,
-`a2a-serve channel add` or `a2a-serve config edit`. Secret values are
+`a2a-serve messenger add` or `a2a-serve config edit`. Secret values are
 references such as `secret:TELEGRAM_BOT_TOKEN`. [Config](../guide/config.md#which-command-to-use) says which command to use.
 
 ```yaml
@@ -23,7 +23,7 @@ policy:
   publicAllowIncoming: paired    # or anyone
   allowEmails: [mom@example.com, "*@example.com"]
   privateAllowOutgoing: everyone # default contacts
-channels:
+messengers:
   telegram: {token: secret:CODER_BOT_TOKEN}
 approvals:
   allow: [read, search, "tool:grafana.*", "command:kubectl get *"]
@@ -88,19 +88,19 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |
 | `--relay-token` | the secret `RELAY_TOKEN` in `state/secrets` | `config set` |
-| `--token` | `channels.telegram.token` | `channel add telegram` |
-| `--token` | `channels.discord.token` | `channel add discord` |
-| `--email-address` | `channels.email.address` | `channel add email` |
-| `--email-imap` | `channels.email.imap` | `channel add email` |
-| `--email-smtp` | `channels.email.smtp` | `channel add email` |
-| `--email-username` | `channels.email.username` | `channel add email` |
-| `--email-password` | `channels.email.password` | `channel add email` |
-| `--email-mailbox` | `channels.email.mailbox` | `channel add email` |
-| `--email-trusted-authserv` | `channels.email.trustedAuthServ` | `channel add email` |
-| `--email-oauth-token-url` | `channels.email.oauthTokenURL` | `channel add email` |
-| `--email-oauth-client-id` | `channels.email.oauthClientID` | `channel add email` |
-| `--email-oauth-client-secret` | `channels.email.oauthClientSecret` | `channel add email` |
-| `--email-oauth-refresh-token` | `channels.email.oauthRefreshToken` | `channel add email` |
+| `--token` | `messengers.telegram.token` | `messenger add telegram` |
+| `--token` | `messengers.discord.token` | `messenger add discord` |
+| `--email-address` | `messengers.email.address` | `messenger add email` |
+| `--email-imap` | `messengers.email.imap` | `messenger add email` |
+| `--email-smtp` | `messengers.email.smtp` | `messenger add email` |
+| `--email-username` | `messengers.email.username` | `messenger add email` |
+| `--email-password` | `messengers.email.password` | `messenger add email` |
+| `--email-mailbox` | `messengers.email.mailbox` | `messenger add email` |
+| `--email-trusted-authserv` | `messengers.email.trustedAuthServ` | `messenger add email` |
+| `--email-oauth-token-url` | `messengers.email.oauthTokenURL` | `messenger add email` |
+| `--email-oauth-client-id` | `messengers.email.oauthClientID` | `messenger add email` |
+| `--email-oauth-client-secret` | `messengers.email.oauthClientSecret` | `messenger add email` |
+| `--email-oauth-refresh-token` | `messengers.email.oauthRefreshToken` | `messenger add email` |
 | `--allow-tools` | `approvals.allow` | `start <agent>`, `config set` |
 | `--deny-tools` | `approvals.deny` | `start <agent>`, `config set` |
 | `--disable-mcp` | `mcp.disabled` | `start <agent>`, `config set` |

@@ -25,9 +25,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -35,10 +35,10 @@ import (
 // fakeTurns records the turns schedules post, which tests accept or refuse.
 type fakeTurns struct {
 	mu     sync.Mutex
-	posted []messenger.PostedTurn
+	posted []chat.PostedTurn
 }
 
-func (f *fakeTurns) InjectTurn(_ context.Context, t messenger.PostedTurn) error {
+func (f *fakeTurns) InjectTurn(_ context.Context, t chat.PostedTurn) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.posted = append(f.posted, t)
@@ -47,21 +47,21 @@ func (f *fakeTurns) InjectTurn(_ context.Context, t messenger.PostedTurn) error 
 
 func (f *fakeTurns) DropPosted(string) {}
 
-func (f *fakeTurns) ContextOf(context.Context, string, channel.ConvKey) (string, error) {
+func (f *fakeTurns) ContextOf(context.Context, string, messenger.ConvKey) (string, error) {
 	return "", errors.New("no chats")
 }
 
 // turns returns the turns posted so far.
-func (f *fakeTurns) turns() []messenger.PostedTurn {
+func (f *fakeTurns) turns() []chat.PostedTurn {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.posted)
 }
 
-// noChannels is a server without running channels.
-type noChannels struct{}
+// noMessengers is a server without running messengers.
+type noMessengers struct{}
 
-func (noChannels) Channel(string) channel.Channel { return nil }
+func (noMessengers) Messenger(string) messenger.Messenger { return nil }
 
 type schedulesFixture struct {
 	ctx   context.Context
@@ -83,7 +83,7 @@ func newSchedulesFixture(t *testing.T) *schedulesFixture {
 	})
 	chain := &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
 	turns := &fakeTurns{}
-	sc := New(t.Context(), Deps{Store: st, Turns: turns, Supervisor: noChannels{}, Chain: chain, Now: time.Now})
+	sc := New(t.Context(), Deps{Store: st, Turns: turns, Supervisor: noMessengers{}, Chain: chain, Now: time.Now})
 	return &schedulesFixture{ctx: t.Context(), store: st, turns: turns, sc: sc}
 }
 

@@ -113,7 +113,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
 | `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
-| `--owner-chat channel[:who]` |  | Where an owner answers the approvals of tasks nobody watches: channel[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
+| `--owner-chat messenger[:who]` |  | Where an owner answers the approvals of tasks nobody watches: messenger[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
 
 **Run flags (not saved)**
 
@@ -199,7 +199,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
 | `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
-| `--owner-chat channel[:who]` |  | Where an owner answers the approvals of tasks nobody watches: channel[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
+| `--owner-chat messenger[:who]` |  | Where an owner answers the approvals of tasks nobody watches: messenger[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
 
 **Run flags (not saved)**
 
@@ -357,7 +357,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 |---|---|---|
 | `--allow-tools entries` |  | Tool entries approved without asking: ACP tool kinds (read, edit, delete, move, search, execute, think, fetch, switch_mode, other), tool:&lt;server&gt;.&lt;tool&gt; for MCP tools, or command:&lt;command&gt; for shell commands; \* matches any text, and the most specific entry of --allow-tools and --deny-tools decides (repeatable; commas also separate values) |
 | `--deny-tools entries` |  | Tool entries denied without asking, in the forms of --allow-tools (repeatable; commas also separate values) |
-| `--owner-chat channel[:who]` |  | Where an owner answers the approvals of tasks nobody watches: channel[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
+| `--owner-chat messenger[:who]` |  | Where an owner answers the approvals of tasks nobody watches: messenger[:who], with who an owner pairing, such as telegram or telegram:anna (default: the first of telegram, discord, email with a linked owner) |
 
 **Run flags (not saved)**
 

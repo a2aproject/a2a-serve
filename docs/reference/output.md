@@ -1,7 +1,7 @@
 # Output and Exit Codes
 
 Management commands take `-o json` or `-o jsonl`, and `config show` also takes `-o yaml`. List commands (`pair list`,
-`channel list`, `contact list`, `schedule list`, `peers`, `backup list`,
+`messenger list`, `contact list`, `schedule list`, `peers`, `backup list`,
 `mailbox list`, `doctor`) print a JSON array of objects with `-o json`, and
 one object per line with `-o jsonl`. [Text columns and JSON fields](#text-columns-and-json-fields)
 lists the field behind each column. `pair list` gives each entry
@@ -15,7 +15,7 @@ and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 prints. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
-networks. Removals (`channel rm`, `contact rm`, `pair rm`,
+networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
 `schedule rm`, each also called `delete`) print
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
@@ -25,7 +25,7 @@ pairing, which stays. `pair rm --dry-run` removes nothing and prints the same
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`, where `stopped` is
 false if the agent wasn't running and `serviceInstalled` is true if it starts
 again at login. `restart` prints the object of `status -o json` for the running
-agent, without `pending`. `channel add` prints the channel's `name` and
+agent, without `pending`. `messenger add` prints the messenger's `name` and
 `account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
 that makes you its owner, until you link an account. Progress lines of `restart`, `config set --restart` and `config unset --restart` go to stderr with
 `-o json`. `config show` prints an invalid config with the reason in `invalid`, and exits 1. Commands that
@@ -60,7 +60,7 @@ the text output doesn't show are listed after it.
 | Command | Column | JSON field |
 | --- | --- | --- |
 | `pair list` (invited) | `NAME`, `KIND`, `ROLE` | `name`, `kind`, `role` |
-| | `LINKED` | `accounts`, objects with `channel` and `account`; the text lists the channels |
+| | `LINKED` | `accounts`, objects with `messenger` and `account`; the text lists the messengers |
 | | `LAST USED` | `lastUsed`; the text shows `never`, `not paired`, `code pending` or `no credentials` when it is unset |
 | `pair list` (joined) | `URL`, `AGENT`, `JOINED` | `url`, `agent`, `joined` |
 | | `AS` | `principal` |
@@ -72,7 +72,7 @@ the text output doesn't show are listed after it.
 | | `AS` | `user`, the principal the runs are for; the text shows its display name |
 | | `LAST` | `lastRun`, with `lastError` |
 | | `PROMPT` | `prompt`, in full; the text cuts it |
-| `channel list` | `CHANNEL`, `ACCOUNT` | `name`, `account` |
+| `messenger list` | `MESSENGER`, `ACCOUNT` | `name`, `account` |
 | | `STATE` | `state`, with `error`; the text joins them as `state: error` |
 | `peers` | `NAME`, `URL`, `DESCRIPTION` | `name`, `url`, `description` |
 | | `STATE` | `online`; the text shows `online` or `offline` |

@@ -55,13 +55,13 @@ type Status struct {
 	Public      string `json:"public,omitempty"`
 	// PrivateProblem and PublicProblem say why the private or public URL
 	// doesn't work now. A URL that won't work again is left out.
-	PrivateProblem *NetworkProblem `json:"privateProblem,omitempty"`
-	PublicProblem  *NetworkProblem `json:"publicProblem,omitempty"`
-	Channels       []ChannelStatus `json:"channels,omitempty"`
-	Tasks          map[string]int  `json:"tasks"`
-	Owners         []string        `json:"owners,omitempty"`
-	Contacts       int             `json:"contacts"`
-	Nodes          int             `json:"nodes"`
+	PrivateProblem *NetworkProblem   `json:"privateProblem,omitempty"`
+	PublicProblem  *NetworkProblem   `json:"publicProblem,omitempty"`
+	Messengers     []MessengerStatus `json:"messengers,omitempty"`
+	Tasks          map[string]int    `json:"tasks"`
+	Owners         []string          `json:"owners,omitempty"`
+	Contacts       int               `json:"contacts"`
+	Nodes          int               `json:"nodes"`
 	// Approvals counts the approvals waiting for an answer, which owners can
 	// give in the inspector.
 	Approvals int `json:"approvals"`
@@ -137,14 +137,14 @@ type BackupStatus struct {
 	Next      time.Time `json:"next,omitzero"`
 }
 
-// ChannelStatus describes a channel of the agent.
-type ChannelStatus struct {
+// MessengerStatus describes a messenger of the agent.
+type MessengerStatus struct {
 	Name    string `json:"name"`
 	Account string `json:"account,omitempty"`
-	// Error is set while the channel can't reach its messenger: it waits
+	// Error is set while the messenger can't reach its messenger: it waits
 	// to restart, or it reported a lost connection.
 	Error string `json:"error,omitempty"`
-	// OwnerLink is set when a channel is added and nobody is linked on it
+	// OwnerLink is set when a messenger is added and nobody is linked on it
 	// as owner yet.
 	OwnerLink *OwnerLink `json:"ownerLink,omitempty"`
 }
@@ -191,7 +191,7 @@ type PairCodeResponse struct {
 	// Messenger is set when the agent has a messenger a person can link
 	// with the code.
 	Messenger bool `json:"messenger,omitempty"`
-	// Hints tell a person how to link a channel identity with the code.
+	// Hints tell a person how to link a messenger identity with the code.
 	Hints []string `json:"hints,omitempty"`
 	// Node is set for node codes.
 	Node *NodeInfo `json:"node,omitempty"`
@@ -234,8 +234,8 @@ type PairingToken struct {
 
 // LinkedAccount is a messenger account linked to a pairing.
 type LinkedAccount struct {
-	Channel string `json:"channel"`
-	Account string `json:"account"`
+	Messenger string `json:"messenger"`
+	Account   string `json:"account"`
 }
 
 // NodeDetails describe the webhook of a node pairing and its mailbox.
@@ -365,14 +365,14 @@ type ContactRefreshRequest struct {
 	Name string `json:"name,omitempty"`
 }
 
-// ChannelRequest adds or replaces a channel. Token is a secret reference
+// MessengerRequest adds or replaces a messenger. Token is a secret reference
 // already stored in the secrets file.
-type ChannelRequest struct {
+type MessengerRequest struct {
 	Kind  string                `json:"kind"`
 	Token string                `json:"token,omitempty"`
 	Email *agentdir.EmailConfig `json:"email,omitempty"`
-	// Secrets are new secret values the channel refers to. They are saved
-	// with the channel once it is validated.
+	// Secrets are new secret values the messenger refers to. They are saved
+	// with the messenger once it is validated.
 	Secrets agentdir.Secrets `json:"secrets,omitempty"`
 }
 
@@ -386,10 +386,10 @@ type NodeInfo struct {
 	Created time.Time `json:"created"`
 }
 
-// ChannelRequestFromConfig is the request which starts the channel of kind
+// MessengerRequestFromConfig is the request which starts the messenger of kind
 // as configured in conf.
-func ChannelRequestFromConfig(conf *agentdir.Config, kind string) ChannelRequest {
-	return ChannelRequest{Kind: kind, Token: conf.ChannelToken(kind), Email: conf.Channels.Email}
+func MessengerRequestFromConfig(conf *agentdir.Config, kind string) MessengerRequest {
+	return MessengerRequest{Kind: kind, Token: conf.MessengerToken(kind), Email: conf.Messengers.Email}
 }
 
 // WriteError writes err as the response of a failed control call, with the
@@ -504,7 +504,7 @@ func (c *Client) Config(ctx context.Context) (*agentdir.Config, error) {
 }
 
 // ReloadConfig makes the server apply the settings of config.yaml it can
-// apply without a restart, other than channels.
+// apply without a restart, other than messengers.
 func (c *Client) ReloadConfig(ctx context.Context) (*ReloadResponse, error) {
 	var out ReloadResponse
 	return &out, c.do(ctx, http.MethodPost, "/config/reload", nil, &out)
@@ -589,15 +589,15 @@ func (c *Client) DeleteContact(ctx context.Context, name string) error {
 	return c.do(ctx, http.MethodDelete, "/contacts/"+url.PathEscape(name), nil, nil)
 }
 
-// AddChannel adds or replaces a channel.
-func (c *Client) AddChannel(ctx context.Context, req ChannelRequest) (*ChannelStatus, error) {
-	var out ChannelStatus
-	return &out, c.do(ctx, http.MethodPost, "/channels", req, &out)
+// AddMessenger adds or replaces a messenger.
+func (c *Client) AddMessenger(ctx context.Context, req MessengerRequest) (*MessengerStatus, error) {
+	var out MessengerStatus
+	return &out, c.do(ctx, http.MethodPost, "/messengers", req, &out)
 }
 
-// DeleteChannel removes a channel.
-func (c *Client) DeleteChannel(ctx context.Context, kind string) error {
-	return c.do(ctx, http.MethodDelete, "/channels/"+url.PathEscape(kind), nil, nil)
+// DeleteMessenger removes a messenger.
+func (c *Client) DeleteMessenger(ctx context.Context, kind string) error {
+	return c.do(ctx, http.MethodDelete, "/messengers/"+url.PathEscape(kind), nil, nil)
 }
 
 // ScheduleInfo describes a schedule.
@@ -609,7 +609,7 @@ type ScheduleInfo struct {
 	Prompt string    `json:"prompt"`
 	// User is the principal the runs are for.
 	User string `json:"user"`
-	// Chat is the chat the runs are shown in, <channel>:<who>.
+	// Chat is the chat the runs are shown in, <messenger>:<who>.
 	Chat      string    `json:"chat,omitempty"`
 	Thread    string    `json:"thread"`
 	CreatedBy string    `json:"createdBy"`

@@ -62,7 +62,7 @@ a2a send -a "$(a2a-serve status --url=local)" --task-id <task-id> approve
 Create a Telegram bot with [@BotFather](https://t.me/BotFather) and connect it:
 
 ```bash
-a2a-serve channel add telegram --token env:BOT_TOKEN
+a2a-serve messenger add telegram --token env:BOT_TOKEN
 ```
 
 Open the `t.me` link it prints and press **Start**. Now you can chat with the agent from your phone and approve its commands with a button.

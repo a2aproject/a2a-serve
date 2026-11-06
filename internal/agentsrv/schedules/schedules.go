@@ -28,9 +28,9 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
-	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/channel"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
@@ -40,17 +40,17 @@ import (
 // Turns are the turns schedules post into conversations.
 type Turns interface {
 	// InjectTurn posts a turn into its context.
-	InjectTurn(ctx context.Context, t messenger.PostedTurn) error
+	InjectTurn(ctx context.Context, t chat.PostedTurn) error
 	// DropPosted drops the posted turns with key that wait to be sent.
 	DropPosted(key string)
 	// ContextOf returns the context of a chat.
-	ContextOf(ctx context.Context, ch string, conv channel.ConvKey) (string, error)
+	ContextOf(ctx context.Context, ch string, conv messenger.ConvKey) (string, error)
 }
 
-// ChannelLookup finds a running channel by name.
-type ChannelLookup interface {
-	// Channel returns the running channel name, or nil.
-	Channel(name string) channel.Channel
+// MessengerLookup finds a running messenger by name.
+type MessengerLookup interface {
+	// Messenger returns the running messenger name, or nil.
+	Messenger(name string) messenger.Messenger
 }
 
 // maxScheduleWait is the longest the scheduler sleeps between checks.
@@ -63,7 +63,7 @@ type Runner struct {
 	ctx        context.Context
 	store      *store.Store
 	turns      Turns
-	supervisor ChannelLookup
+	supervisor MessengerLookup
 	// chain gives the user a schedule runs as its role at each run.
 	chain *auth.Chain
 	now   func() time.Time
@@ -82,7 +82,7 @@ type Runner struct {
 type Deps struct {
 	Store      *store.Store
 	Turns      Turns
-	Supervisor ChannelLookup
+	Supervisor MessengerLookup
 	Chain      *auth.Chain
 	Now        func() time.Time
 	MinWait    time.Duration
@@ -248,7 +248,7 @@ func (sc *Runner) start(ctx context.Context, s store.Schedule, accepted func(err
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.InjectTurn(sc.ctx, messenger.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
+	if err := sc.turns.InjectTurn(sc.ctx, chat.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
@@ -262,24 +262,24 @@ func scheduleTurnKey(name string) string { return "schedule:" + name }
 // contextFor returns the context a run of s happens in. A run delivered to
 // a chat becomes the chat's conversation, so replying there continues it.
 func (sc *Runner) contextFor(ctx context.Context, s store.Schedule) (string, error) {
-	if s.DeliverChannel == "" {
+	if s.DeliverMessenger == "" {
 		if s.Conversation == schedule.ThreadSame && s.ContextID != "" {
 			return s.ContextID, nil
 		}
 		return a2a.NewContextID(), nil
 	}
-	if sc.supervisor.Channel(s.DeliverChannel) == nil {
-		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
+	if sc.supervisor.Messenger(s.DeliverMessenger) == nil {
+		return "", fmt.Errorf("messenger %s is not running", s.DeliverMessenger)
 	}
-	conv, err := pairings.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
+	conv, err := pairings.DirectConv(ctx, sc.store, s.DeliverMessenger, s.DeliverUser)
 	if err != nil {
 		return "", err
 	}
 	if s.Conversation == schedule.ThreadSame {
-		return sc.turns.ContextOf(ctx, s.DeliverChannel, channel.ConvKey(conv))
+		return sc.turns.ContextOf(ctx, s.DeliverMessenger, messenger.ConvKey(conv))
 	}
 	id := a2a.NewContextID()
-	return id, sc.store.SetContext(ctx, s.DeliverChannel, conv, id)
+	return id, sc.store.SetContext(ctx, s.DeliverMessenger, conv, id)
 }
 
 // announce posts text into the chat conversation of a context, if it has
@@ -293,12 +293,12 @@ func (sc *Runner) announce(ctx context.Context, contextID, text string) {
 		slog.Warn("finding the conversation of a schedule", "context", contextID, "error", err)
 		return
 	}
-	ch := sc.supervisor.Channel(chName)
+	ch := sc.supervisor.Messenger(chName)
 	if ch == nil {
 		return
 	}
-	if _, err := ch.Send(ctx, channel.Outbound{Conv: channel.ConvKey(conv), Text: text}); err != nil {
-		slog.Warn("announcing a schedule", "channel", chName, "error", err)
+	if _, err := ch.Send(ctx, messenger.Outbound{Conv: messenger.ConvKey(conv), Text: text}); err != nil {
+		slog.Warn("announcing a schedule", "messenger", chName, "error", err)
 	}
 }
 

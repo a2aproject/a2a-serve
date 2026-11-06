@@ -32,9 +32,9 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/channel/configured"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/messenger/configured"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 	"github.com/a2aproject/a2a-serve/internal/service"
@@ -53,10 +53,10 @@ const (
 
 // Groups of checks.
 const (
-	GroupCLI      = "a2a CLI"
-	GroupSandbox  = "Sandbox"
-	GroupNetwork  = "Network"
-	GroupChannels = "Channels"
+	GroupCLI        = "a2a CLI"
+	GroupSandbox    = "Sandbox"
+	GroupNetwork    = "Network"
+	GroupMessengers = "Messengers"
 )
 
 // Result is the outcome of one check.
@@ -108,8 +108,8 @@ type Env struct {
 	// ServiceUnit returns the path of the agent's installed service unit,
 	// or "" if none is installed. Optional.
 	ServiceUnit func(agentdir.Dir) (string, error)
-	// ValidateChannel checks the credentials of a channel. Optional.
-	ValidateChannel func(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error
+	// ValidateMessenger checks the credentials of a messenger. Optional.
+	ValidateMessenger func(ctx context.Context, cfg *agentdir.Config, secrets agentdir.Secrets, kind string) error
 	// RelayStatus returns the status of the running relay, or
 	// [control.ErrNotRunning]. Optional.
 	RelayStatus func(context.Context, relaydir.Dir) (*control.Status, error)
@@ -132,9 +132,9 @@ func System() (Env, error) {
 		Status: func(ctx context.Context, d agentdir.Dir) (*controlapi.Status, error) {
 			return controlapi.NewClient(d).Status(ctx)
 		},
-		PortFree:        portFree,
-		ServiceUnit:     serviceUnit,
-		ValidateChannel: configured.Validate,
+		PortFree:          portFree,
+		ServiceUnit:       serviceUnit,
+		ValidateMessenger: configured.Validate,
 		RelayStatus: func(ctx context.Context, d relaydir.Dir) (*control.Status, error) {
 			return control.NewSocketClient(d.SocketPath(), 5*time.Second).Status(ctx)
 		},
@@ -197,7 +197,7 @@ func Run(ctx context.Context, env Env, opts Options) []Result {
 	if cfg != nil {
 		results = append(results, networkChecks(*opts.Dir, cfg)...)
 		if opts.Online {
-			results = append(results, channelChecks(ctx, env, *opts.Dir, cfg)...)
+			results = append(results, messengerChecks(ctx, env, *opts.Dir, cfg)...)
 		}
 	}
 	return results
