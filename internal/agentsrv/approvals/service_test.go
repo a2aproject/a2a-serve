@@ -491,3 +491,20 @@ func TestHandlePageSetsSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckAnswerHidesOthersTasks(t *testing.T) {
+	t.Parallel()
+	svc := newService(t, &sendingHandler{})
+	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
+	ctx := context.Background()
+
+	if err := svc.CheckAnswer(ctx, auth.Owner(), "t1"); err != nil {
+		t.Fatalf("CheckAnswer(owner) error = %v, want nil", err)
+	}
+	random := svc.CheckAnswer(ctx, anna, "random")
+	others := svc.CheckAnswer(ctx, anna, "t1")
+	if random != nil || !errors.Is(others, a2a.ErrTaskNotFound) {
+		t.Fatalf("CheckAnswer(anna, owner's task) error = %v, want %v as for a random ID", others, a2a.ErrTaskNotFound)
+	}
+}

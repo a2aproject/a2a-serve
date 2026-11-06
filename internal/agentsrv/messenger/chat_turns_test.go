@@ -424,7 +424,7 @@ func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 func TestChatTurnsLinkCodeLimitsFailures(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
-	for range 11 {
+	for range 15 {
 		fx.ch.Write("telegram:9", "dm9", "join WRNG-C0DE")
 	}
 	fx.ch.WaitFor(t, "dm9", channeltest.HasText("Too many invalid codes."))

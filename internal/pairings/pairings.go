@@ -25,6 +25,7 @@ import (
 	"io/fs"
 	"maps"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -123,12 +124,33 @@ func notFound(name string) error {
 	return &agenterr.NotFoundError{Kind: "pairing", Name: name}
 }
 
+// maxNameLen bounds the names of new pairings, which appear in URLs,
+// principals and chat messages.
+const maxNameLen = 64
+
+var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
+
 func validateName(name string) error {
-	if name == "" || strings.ContainsAny(name, " /:") {
-		return invalid("the name must be non-empty, without spaces, slashes or colons")
+	if len(name) > maxNameLen || !namePattern.MatchString(name) {
+		return invalid("the name must have up to %d letters, digits, dots, hyphens or underscores, and start with a letter or digit", maxNameLen)
 	}
-	if name == LocalOwner || name == auth.OwnerName {
+	if strings.EqualFold(name, LocalOwner) || strings.EqualFold(name, auth.OwnerName) {
 		return invalid("%q names the user running the agent; pick another name", name)
+	}
+	return nil
+}
+
+// checkCaseClash refuses a new pairing whose name differs from an existing
+// one only by case, which people would take for the same pairing.
+func (s *Service) checkCaseClash(ctx context.Context, name string) error {
+	all, err := s.deps.Store.Pairings(ctx)
+	if err != nil {
+		return err
+	}
+	for _, p := range all {
+		if strings.EqualFold(p.Name, name) {
+			return agenterr.Conflictf("%s differs from the pairing %s only by case; use %s or pick another name", name, p.Name, p.Name)
+		}
 	}
 	return nil
 }
@@ -152,6 +174,11 @@ func (s *Service) Invite(ctx context.Context, req InviteRequest) (*Code, error) 
 	p, exists, err := s.pairing(ctx, req.Name)
 	if err != nil {
 		return nil, err
+	}
+	if !exists {
+		if err := s.checkCaseClash(ctx, req.Name); err != nil {
+			return nil, err
+		}
 	}
 	isWebhook := exists && p.Kind == pairapi.PairingWebhook
 	nodeFlags := req.Webhook != "" || len(req.Headers) > 0 || req.Description != "" || req.Advertised != nil

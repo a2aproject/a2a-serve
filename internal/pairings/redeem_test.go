@@ -229,10 +229,19 @@ func TestRedeemLimitsFailuresPerClient(t *testing.T) {
 				t.Fatalf("Redeem(wrong code) error = %v, want %v", err, ErrInvalidCode)
 			}
 
-			code := invite(t, s, InviteRequest{Name: "ben"}).Code
+			if _, err := s.Redeem(ctx, invite(t, s, InviteRequest{Name: "ben"}).Code, tc.via); err != nil {
+				t.Fatalf("Redeem() of a valid code over the limit error = %v", err)
+			}
+			if _, err := s.Redeem(ctx, "WRONG-CODE", tc.via); !errors.Is(err, ErrInvalidCode) {
+				t.Fatalf("Redeem(wrong code) over the limit error = %v, want %v", err, ErrInvalidCode)
+			}
+			code := invite(t, s, InviteRequest{Name: "dora"}).Code
 			var limited *RateLimitError
 			if _, err := s.Redeem(ctx, code, tc.via); !errors.As(err, &limited) {
-				t.Fatalf("Redeem() over the limit error = %v, want a rate limit", err)
+				t.Fatalf("Redeem() over the limit during the backoff error = %v, want a rate limit", err)
+			}
+			if limited.Wait > backoffMax {
+				t.Fatalf("RateLimitError.Wait over the limit = %v, want at most %v", limited.Wait, backoffMax)
 			}
 			if !pending(t, s, code) {
 				t.Fatalf("code pending after a rate-limited Redeem() = false, want true")
@@ -285,8 +294,9 @@ func TestRedeemCountsConcurrentAttempts(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if attempts != maxFailures {
-		t.Fatalf("Redeem() tried %d codes at once, want %d", attempts, maxFailures)
+	// One attempt over the client's limit goes through the shared backoff.
+	if want := maxFailures + 1; attempts != want {
+		t.Fatalf("Redeem() tried %d codes at once, want %d", attempts, want)
 	}
 }
 

@@ -32,8 +32,10 @@ const (
 
 // Limiter slows down guessing of pairing codes. Each client may fail
 // maxFailures times in a window. Clients that can't be told apart, such
-// as anonymous callers through a relay, share one backoff: it bounds their
-// guessing rate while a caller with a valid code waits at most backoffMax.
+// as anonymous callers through a relay, and clients over their limit share
+// one backoff: it bounds their guessing rate while a caller with a valid
+// code waits at most backoffMax, even behind an address that someone else
+// used up.
 //
 // An attempt counts as a failure from its start, so concurrent attempts
 // can't exceed the limit, and a successful one is refunded.
@@ -48,26 +50,25 @@ func NewLimiter(now func() time.Time) *Limiter {
 }
 
 // attempt starts an attempt of client, or returns how long the client
-// must wait first. An empty client shares the backoff. done ends the
+// must wait first. An empty client, and a client over its limit, share the
+// backoff. done ends the
 // attempt and refunds it if it succeeded.
 func (l *Limiter) attempt(client string) (wait time.Duration, done func(ok bool)) {
-	if client == "" {
-		if wait := l.shared.reserve(); wait > 0 {
-			return wait, nil
-		}
-		return 0, func(ok bool) {
-			if ok {
-				l.shared.reset()
+	if client != "" {
+		if wait, refund := l.clients.reserve(client); wait == 0 {
+			return 0, func(ok bool) {
+				if ok {
+					refund()
+				}
 			}
 		}
 	}
-	wait, refund := l.clients.reserve(client)
-	if wait > 0 {
+	if wait := l.shared.reserve(); wait > 0 {
 		return wait, nil
 	}
 	return 0, func(ok bool) {
 		if ok {
-			refund()
+			l.shared.reset()
 		}
 	}
 }
