@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -471,7 +472,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(&callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),
