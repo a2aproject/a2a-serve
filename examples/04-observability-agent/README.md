@@ -93,9 +93,15 @@ It answers with a proposed `ENVIRONMENT.md`. Review it, then save it to the file
 
 ## 4. Approvals
 
-The agent runs its MCP tools, such as a Prometheus query, without asking. Each MCP server here is read-only on its own side: mcp-grafana runs with `--disable-write`, GitHub's endpoint is read-only, and the Kubernetes identity has the `view` role.
+The agent runs its MCP tools, such as a Prometheus query, without asking. The recipe allows them with `tool:grafana.*`, `tool:github.*` and `tool:kubernetes.*` in `--allow-tools`. Each MCP server here is read-only on its own side: mcp-grafana runs with `--disable-write`, GitHub's endpoint is read-only, and the Kubernetes identity has the `view` role.
 
-The recipe's approval rules cover the agent's own tools. It reads and searches its workspace without asking. It can't edit files, run commands or fetch URLs: such a call is denied, and the agent answers another way. Approving single MCP tools is planned.
+The agent reads and searches its workspace without asking. It can't edit files, run commands or fetch URLs: such a call is denied, and the agent answers another way. `a2a-serve status` lists these rules. To allow one more call for everyone, such as a read-only command, add an entry:
+
+```sh
+a2a-serve config set --allow-tools 'command:git log *'
+```
+
+The most specific entry decides, so this command runs while other commands stay denied. See [Approvals](../../docs/guide/approvals.md#rules).
 
 ## 5. Share it with your team
 

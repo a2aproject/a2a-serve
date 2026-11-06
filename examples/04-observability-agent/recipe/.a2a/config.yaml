@@ -4,5 +4,5 @@ description: Answers questions about production and investigates incidents with 
 mounts:
   - ~/.kube/a2a-o11y:/kube:ro
 approvals:
-  allow: [read, search, think]
+  allow: [read, search, think, "tool:grafana.*", "tool:github.*", "tool:kubernetes.*"]
   deny: [edit, delete, move, execute, fetch]

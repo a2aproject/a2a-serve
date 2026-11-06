@@ -146,9 +146,13 @@ const ImageRepo = "ghcr.io/a2aproject/harness-"
 // ImageTag is the tag of the harness images this build uses.
 const ImageTag = "latest"
 
-// opencodePermission makes opencode ask before tools that change things,
-// instead of its default of approving them.
-const opencodePermission = `{"bash":"ask","edit":"ask","webfetch":"ask"}`
+// opencodePermission makes opencode ask before every tool, MCP tools
+// included, so that the server's rules decide them, except the tools that
+// change nothing. Reads still ask for .env files, as opencode's default
+// does. opencode applies the last rule that matches, so "*" comes first.
+const opencodePermission = `{"*":"ask","glob":"allow","grep":"allow","list":"allow","lsp":"allow","question":"allow",` +
+	`"read":{"*":"allow","*.env":"ask","*.env.*":"ask","*.env.example":"allow"},` +
+	`"skill":"allow","task":"allow","todowrite":"allow","websearch":"allow"}`
 
 // opencodeConfigEnv is opencode's inline config, which it reads on every
 // start, also in agent homes bootstrapped before a setting existed. It keeps
