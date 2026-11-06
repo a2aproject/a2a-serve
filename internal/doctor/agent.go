@@ -169,6 +169,14 @@ func checkSecrets(cfg *agentdir.Config, secrets agentdir.Secrets) []Result {
 			})
 		}
 	}
+	for _, err := range cfg.ContainerEnvErrors(secrets) {
+		fix := fixEdit
+		var lb *agentdir.LineBreakError
+		if errors.As(err, &lb) && slices.Contains(cfg.Secrets, lb.Name) {
+			fix = "a2a-serve config set --secret " + lb.Name
+		}
+		results = append(results, Result{ID: "secrets", Status: StatusFail, Message: err.Error(), Fix: fix})
+	}
 	for _, ref := range secretRefs(cfg) {
 		name := strings.TrimPrefix(ref.value, agentdir.SecretPrefix)
 		if secrets[name] == "" {

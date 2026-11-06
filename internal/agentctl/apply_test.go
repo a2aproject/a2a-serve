@@ -192,6 +192,7 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 	}{
 		{name: "invalid", s: agentdir.Settings{Private: "tailscal"}, wantErr: true},
 		{name: "missing mount", s: agentdir.Settings{Mounts: []string{"/nonexistent-a2a"}}, wantErr: true},
+		{name: "secret with a line break", s: agentdir.Settings{Secrets: []string{"MULTI"}, SecretValues: agentdir.Secrets{"MULTI": "line1\nline2"}}, wantErr: true},
 		{name: "dry run", s: agentdir.Settings{Sandbox: "local"}, dryRun: true},
 	}
 	for _, tc := range tests {
@@ -206,6 +207,13 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 			}
 			if diff := cmp.Diff(want, loadConfig(t, d)); diff != "" {
 				t.Fatalf("Set() saved the config (-want +got) diff = %s", diff)
+			}
+			secrets, err := d.LoadSecrets()
+			if err != nil {
+				t.Fatalf("LoadSecrets() error = %v", err)
+			}
+			if diff := cmp.Diff(agentdir.Secrets{}, secrets); diff != "" {
+				t.Fatalf("Set() saved secrets (-want +got) diff = %s", diff)
 			}
 		})
 	}

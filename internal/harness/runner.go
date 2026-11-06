@@ -118,8 +118,8 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 		if !ok || name == "" {
 			continue
 		}
-		if strings.ContainsAny(value, "\r\n") {
-			return "", fmt.Errorf("the value of %s has a line break, which docker can't pass to the container", name)
+		if err := agentdir.CheckEnvValue(name, value); err != nil {
+			return "", err
 		}
 		buf.WriteString(name + "=" + value + "\n")
 	}

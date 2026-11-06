@@ -295,6 +295,7 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 			errs = append(errs, fmt.Errorf("secret %s is not stored: run `a2a-serve config set --secret %s` with the variable set", name, name))
 		}
 	}
+	errs = append(errs, cfg.ContainerEnvErrors(secrets)...)
 	for _, ref := range cfg.secretRefs() {
 		if _, err := secrets.Resolve(ref.value); err != nil {
 			label := "--" + ref.flag
@@ -305,6 +306,45 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// LineBreakError reports an environment variable of the agent whose value
+// has a line break.
+type LineBreakError struct{ Name string }
+
+func (e *LineBreakError) Error() string {
+	return fmt.Sprintf("the value of %s has a line break, which docker can't pass to the container", e.Name)
+}
+
+// CheckEnvValue returns a [*LineBreakError] if docker can't pass value as
+// the environment variable name, since its env file holds one per line.
+func CheckEnvValue(name, value string) error {
+	if strings.ContainsAny(value, "\r\n") {
+		return &LineBreakError{Name: name}
+	}
+	return nil
+}
+
+// ContainerEnvErrors returns an error for each --env and --secret value
+// which the docker sandbox can't pass to the container. Other sandboxes
+// take any value.
+func (c *Config) ContainerEnvErrors(secrets Secrets) []error {
+	if c.Sandbox != "" && c.Sandbox != SandboxDocker {
+		return nil
+	}
+	var errs []error
+	for _, kv := range c.Env {
+		name, value, _ := strings.Cut(kv, "=")
+		if err := CheckEnvValue(name, value); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	for _, name := range c.Secrets {
+		if err := CheckEnvValue(name, secrets[name]); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errs
 }
 
 type secretRef struct{ flag, value string }
