@@ -147,3 +147,23 @@ func (l *KeyedLimiter) release(key string) {
 		delete(l.keys, key)
 	}
 }
+
+// PublicCORS lets pages of any origin read the public resource that next
+// serves, and answers CORS preflights for it. It allows no credentials.
+func PublicCORS(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		if r.Method == http.MethodOptions {
+			w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+			w.Header().Set("Access-Control-Allow-Headers", "*")
+			w.Header().Set("Access-Control-Max-Age", "86400")
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		// a2a-go answers a request with an Origin by allowing that origin
+		// with credentials, and one without it by allowing any origin.
+		r = r.Clone(r.Context())
+		r.Header.Del("Origin")
+		next.ServeHTTP(w, r)
+	})
+}

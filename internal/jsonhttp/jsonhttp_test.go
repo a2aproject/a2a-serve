@@ -15,6 +15,7 @@
 package jsonhttp
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
 	"io"
@@ -185,6 +186,55 @@ func TestLimitDeadline(t *testing.T) {
 				}
 			case <-time.After(20 * timeout):
 				t.Fatalf("Limit.Handler() body read didn't end in %v", 20*timeout)
+			}
+		})
+	}
+}
+
+func TestLimitClosesStalledConnection(t *testing.T) {
+	t.Parallel()
+	const timeout = 100 * time.Millisecond
+	for _, limit := range []Limit{{Max: 1 << 10, Total: timeout}, {Max: 1 << 10, Idle: timeout}} {
+		t.Run(fmt.Sprintf("total %v idle %v", limit.Total, limit.Idle), func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(limit.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if _, err := io.Copy(io.Discard, r.Body); err != nil {
+					Error(w, http.StatusBadRequest, err.Error())
+				}
+			})))
+			t.Cleanup(srv.Close)
+			conn, err := net.Dial("tcp", srv.Listener.Addr().String())
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() {
+				if err := conn.Close(); err != nil {
+					t.Errorf("closing the connection: %v", err)
+				}
+			})
+			if _, err := io.WriteString(conn, "POST / HTTP/1.1\r\nHost: test\r\nContent-Length: 100\r\n\r\n{"); err != nil {
+				t.Fatal(err)
+			}
+			if err := conn.SetReadDeadline(time.Now().Add(20 * timeout)); err != nil {
+				t.Fatal(err)
+			}
+
+			br := bufio.NewReader(conn)
+			resp, err := http.ReadResponse(br, nil)
+			if err != nil {
+				t.Fatalf("reading the response error = %v", err)
+			}
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				t.Fatalf("reading the response body error = %v", err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if resp.StatusCode != http.StatusBadRequest {
+				t.Fatalf("Limit.Handler() status = %d, want %d", resp.StatusCode, http.StatusBadRequest)
+			}
+			if _, err := br.ReadByte(); !errors.Is(err, io.EOF) {
+				t.Fatalf("reading after the response error = %v, want %v", err, io.EOF)
 			}
 		})
 	}

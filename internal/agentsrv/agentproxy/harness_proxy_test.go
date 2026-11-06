@@ -1011,6 +1011,25 @@ func TestGuardedHandlerListTasksGetsOnlyThePage(t *testing.T) {
 	}
 }
 
+func TestGuardedHandlerListTasksAsksForNoHistoryByDefault(t *testing.T) {
+	t.Parallel()
+	f := newProxyFixture(t)
+	f.recordStarted(t, "c1", "t1", "r1")
+	agent := &recordingAgent{listed: []*a2a.Task{completedTask("t1", "r1")}}
+	g := f.guarded(agent, "c1", auth.Owner())
+
+	if _, err := g.ListTasks(context.Background(), &a2a.ListTasksRequest{}); err != nil {
+		t.Fatalf("guardedHandler.ListTasks() error = %v", err)
+	}
+
+	agent.mu.Lock()
+	gotLengths := agent.historyLengths
+	agent.mu.Unlock()
+	if diff := cmp.Diff([]int{0}, gotLengths); diff != "" {
+		t.Fatalf("GetTask() history lengths wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestGuardedHandlerListTasksRejectsBadPaging(t *testing.T) {
 	t.Parallel()
 	f := newProxyFixture(t)

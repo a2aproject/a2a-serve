@@ -326,11 +326,12 @@ func (g *guardedHandler) ListTasks(ctx context.Context, req *a2a.ListTasksReques
 }
 
 // getTasks gets the tasks with ids from the agent, with the history length
-// of req, and leaves out the ones the agent no longer has.
+// of req or no history, and leaves out the ones the agent no longer has.
 func (g *guardedHandler) getTasks(ctx context.Context, ids []string, req *a2a.ListTasksRequest) ([]*a2a.Task, error) {
+	history := cmp.Or(req.HistoryLength, new(int))
 	tasks := []*a2a.Task{}
 	for _, id := range ids {
-		t, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(id), HistoryLength: req.HistoryLength})
+		t, err := g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: a2a.TaskID(id), HistoryLength: history})
 		if errors.Is(err, a2a.ErrTaskNotFound) {
 			continue
 		}

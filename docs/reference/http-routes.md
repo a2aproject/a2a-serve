@@ -36,6 +36,8 @@ The shared app is planned: until it is registered, the card names no scheme with
 
 State-changing requests (any method except `GET`, `HEAD` and `OPTIONS`) to the A2A routes, `/pair`, `/n/…` and `/mailbox/api/…` need `Content-Type: application/json` or `application/a2a+json`, or the `A2A-Version` header. Others get 415. A browser sends such a request to another site only after a CORS preflight, and the server allows CORS only for the agent card.
 
+The agent card and the cards of nodes allow pages of any origin to read them. Their responses carry `Access-Control-Allow-Origin: *` and allow no credentials. The server answers a CORS preflight (`OPTIONS`) for them with `204`, so a page can send headers such as `A2A-Version` with the request.
+
 On every route, the server refuses state-changing requests that a browser marks as cross-site, with `Sec-Fetch-Site` or an `Origin` that doesn't match the host. They get 403. The forms of `/hitl/<token>` and the inspector rely on this check, and the inspector's forms also carry a CSRF token.
 
 ## Request limits

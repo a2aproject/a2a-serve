@@ -120,7 +120,9 @@ type Limit struct {
 
 // Handler refuses bodies larger than l.Max and sets the connection's read
 // deadline while the body is read. The deadline is cleared once the body
-// ends, so it doesn't cut a response streamed after it.
+// ends, so it doesn't cut a response streamed after it. A read that fails
+// leaves the deadline in the past, so the server doesn't wait for the rest
+// of the body after the handler and closes the connection.
 func (l Limit) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.ContentLength > l.Max {
@@ -161,9 +163,12 @@ func (b *deadlineBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	switch {
 	case b.done:
-	case err != nil:
+	case errors.Is(err, io.EOF):
 		b.done = true
 		b.setDeadline(time.Time{})
+	case err != nil:
+		b.done = true
+		b.setDeadline(time.Now())
 	case n > 0 && b.idle > 0:
 		b.setDeadline(time.Now().Add(b.idle))
 	}

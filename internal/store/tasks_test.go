@@ -123,7 +123,7 @@ func TestListMaterializesOnlyWhenNeeded(t *testing.T) {
 	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("hi"))}
 	artifact := &a2a.TaskArtifactUpdateEvent{TaskID: "t1", ContextID: "c1", Artifact: &a2a.Artifact{ID: "a1", Parts: []*a2a.Part{a2a.NewTextPart("result")}}}
 	applyEvents(t, ts, "owner", task, artifact)
-	noHistory := 0
+	noHistory, history := 0, 10
 
 	tests := []struct {
 		name string
@@ -136,8 +136,18 @@ func TestListMaterializesOnlyWhenNeeded(t *testing.T) {
 			want: &a2a.Task{ID: "t1", ContextID: "c1", Status: task.Status, History: []*a2a.Message{}},
 		},
 		{
-			name: "full",
+			name: "default",
+			req:  &a2a.ListTasksRequest{},
+			want: &a2a.Task{ID: "t1", ContextID: "c1", Status: task.Status, History: []*a2a.Message{}},
+		},
+		{
+			name: "artifacts without history by default",
 			req:  &a2a.ListTasksRequest{IncludeArtifacts: true},
+			want: &a2a.Task{ID: "t1", ContextID: "c1", Status: task.Status, History: []*a2a.Message{}, Artifacts: []*a2a.Artifact{artifact.Artifact}},
+		},
+		{
+			name: "full",
+			req:  &a2a.ListTasksRequest{HistoryLength: &history, IncludeArtifacts: true},
 			want: &a2a.Task{ID: "t1", ContextID: "c1", Status: task.Status, History: task.History, Artifacts: []*a2a.Artifact{artifact.Artifact}},
 		},
 	}

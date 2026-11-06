@@ -39,6 +39,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/network"
@@ -262,8 +263,8 @@ func (n *Host) Register(mux *http.ServeMux, kind string, base func(*http.Request
 	serveNode := func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("node")
 		rest := "/" + r.PathValue("rest")
-		if r.Method == http.MethodGet && (rest == "/" || rest == a2asrv.WellKnownAgentCardPath || rest == "/.well-known/agent.json") {
-			n.serveCard(w, r, kind, base, id)
+		if (r.Method == http.MethodGet || r.Method == http.MethodOptions) && (rest == "/" || rest == a2asrv.WellKnownAgentCardPath || rest == "/.well-known/agent.json") {
+			httpserver.PublicCORS(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { n.serveCard(w, r, kind, base, id) })).ServeHTTP(w, r)
 			return
 		}
 		if _, err := n.cfg.Store.Node(r.Context(), id); err != nil {

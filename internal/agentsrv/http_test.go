@@ -112,6 +112,73 @@ func TestBrowserRequestChecks(t *testing.T) {
 	}
 }
 
+func TestCardCORS(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	addNode(t, ts, "grok", 0)
+	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
+	preflight := http.Header{"Access-Control-Request-Method": {"GET"}, "Access-Control-Request-Headers": {"a2a-version"}}
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		header     http.Header
+		wantStatus int
+		want       http.Header
+	}{
+		{name: "card", method: http.MethodGet, path: "/.well-known/agent-card.json", wantStatus: http.StatusOK, want: http.Header{"Access-Control-Allow-Origin": {"*"}}},
+		{name: "card at the root", method: http.MethodGet, path: "/", wantStatus: http.StatusOK, want: http.Header{"Access-Control-Allow-Origin": {"*"}}},
+		{name: "node card", method: http.MethodGet, path: "/n/grok/.well-known/agent-card.json", header: http.Header{"Authorization": {bearer}}, wantStatus: http.StatusOK, want: http.Header{"Access-Control-Allow-Origin": {"*"}}},
+		{
+			name: "card preflight", method: http.MethodOptions, path: "/.well-known/agent-card.json", header: preflight, wantStatus: http.StatusNoContent,
+			want: http.Header{"Access-Control-Allow-Origin": {"*"}, "Access-Control-Allow-Methods": {"GET, OPTIONS"}, "Access-Control-Allow-Headers": {"*"}, "Access-Control-Max-Age": {"86400"}},
+		},
+		{
+			name: "legacy card preflight", method: http.MethodOptions, path: "/.well-known/agent.json", header: preflight, wantStatus: http.StatusNoContent,
+			want: http.Header{"Access-Control-Allow-Origin": {"*"}, "Access-Control-Allow-Methods": {"GET, OPTIONS"}, "Access-Control-Allow-Headers": {"*"}, "Access-Control-Max-Age": {"86400"}},
+		},
+		{
+			name: "node card preflight", method: http.MethodOptions, path: "/n/grok/.well-known/agent-card.json", header: preflight, wantStatus: http.StatusNoContent,
+			want: http.Header{"Access-Control-Allow-Origin": {"*"}, "Access-Control-Allow-Methods": {"GET, OPTIONS"}, "Access-Control-Allow-Headers": {"*"}, "Access-Control-Max-Age": {"86400"}},
+		},
+	}
+	corsHeaders := []string{"Access-Control-Allow-Origin", "Access-Control-Allow-Credentials", "Access-Control-Allow-Methods", "Access-Control-Allow-Headers", "Access-Control-Max-Age"}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			req, err := http.NewRequest(tc.method, ts.localURL()+tc.path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			maps.Copy(req.Header, tc.header)
+			req.Header.Set("Origin", "https://inspector.example")
+			resp, err := testHTTP.Do(req)
+			if err != nil {
+				t.Fatalf("%s %s error = %v", tc.method, tc.path, err)
+			}
+			if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+				t.Fatal(err)
+			}
+			if err := resp.Body.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			if resp.StatusCode != tc.wantStatus {
+				t.Fatalf("%s %s status = %d, want %d", tc.method, tc.path, resp.StatusCode, tc.wantStatus)
+			}
+			got := http.Header{}
+			for _, k := range corsHeaders {
+				if v := resp.Header.Values(k); v != nil {
+					got[k] = v
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("%s %s CORS headers wrong result (-want +got) diff = %s", tc.method, tc.path, diff)
+			}
+		})
+	}
+}
+
 func TestPrivateNetworkAccess(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
