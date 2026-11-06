@@ -184,6 +184,22 @@ func TestSetStopped(t *testing.T) {
 	}
 }
 
+func TestSetOwnerChatWithItsMessenger(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{
+		Name: "coder", Harness: "opencode",
+		Channels: agentdir.ChannelsConfig{Telegram: &agentdir.TelegramConfig{Token: "secret:" + agentdir.SecretTelegram}},
+	}, agentdir.Secrets{agentdir.SecretTelegram: "token"})
+
+	if _, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{OwnerChat: "telegram:anna"}, false); err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	if got := loadConfig(t, d).Approvals.OwnerChat; got != "telegram:anna" {
+		t.Fatalf("saved owner chat = %q, want %q", got, "telegram:anna")
+	}
+}
+
 func TestSetRejectsWithoutSaving(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
