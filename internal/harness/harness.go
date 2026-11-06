@@ -62,6 +62,11 @@ type Profile interface {
 	// ModelEnv returns the NAME=value pairs which select model, or nil for
 	// a harness without a known way to select one.
 	ModelEnv(model string) []string
+	// SessionSettings returns the ACP session settings which select model,
+	// or nil for none. Setting the model per session makes an unknown model
+	// fail the turn; opencode falls back to its default model when the model
+	// of ModelEnv is unknown.
+	SessionSettings(model string) map[string]any
 }
 
 // ProfileNames lists the known harness profiles.
@@ -150,6 +155,13 @@ func (opencode) Command(ws Workspace) Command {
 // model of opencode.json in the harness home.
 func (opencode) ModelEnv(model string) []string { return opencodeConfigEnv(model) }
 
+func (opencode) SessionSettings(model string) map[string]any {
+	if model == "" {
+		return nil
+	}
+	return map[string]any{"model": model}
+}
+
 func (opencode) Bootstrap(ws Workspace) error {
 	var permission map[string]any
 	if err := json.Unmarshal([]byte(opencodePermission), &permission); err != nil {
@@ -172,6 +184,8 @@ func (claude) Command(ws Workspace) Command {
 }
 
 func (claude) ModelEnv(model string) []string { return []string{"ANTHROPIC_MODEL=" + model} }
+
+func (claude) SessionSettings(string) map[string]any { return nil }
 
 func (claude) Bootstrap(ws Workspace) error {
 	settings := filepath.Join(".claude", "settings.json")
@@ -214,6 +228,13 @@ func (c custom) Command(ws Workspace) Command {
 func (c custom) ModelEnv(model string) []string {
 	if c.base != nil {
 		return c.base.ModelEnv(model)
+	}
+	return nil
+}
+
+func (c custom) SessionSettings(model string) map[string]any {
+	if c.base != nil {
+		return c.base.SessionSettings(model)
 	}
 	return nil
 }

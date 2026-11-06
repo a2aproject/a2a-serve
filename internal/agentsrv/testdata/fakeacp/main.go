@@ -25,6 +25,7 @@
 //	crash            exits mid-turn
 //	mcp              replies with the MCP servers of session/new
 //	pid              replies with the host name and process ID
+//	model            replies with the model of the session
 //	agents           replies with the agents URL and the socket that
 //	                 reaches it
 //	ls <dir>         replies with the entries of dir
@@ -38,7 +39,8 @@
 //	                 <dir>/result
 //
 // Sessions are kept in .fakeacp in the working directory, so session/load
-// works after a restart.
+// works after a restart. Like opencode, sessions have a model config option
+// that refuses models other than fakeModels.
 package main
 
 import (
@@ -51,6 +53,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"syscall"
@@ -74,6 +77,9 @@ const markdownSample = "# Release v1.2.3\n\n" +
 // prompt of a session.
 const agentsLinePrefix = "[a2a agents]"
 
+// fakeModels are the models of the model config option; the first is the default.
+var fakeModels = []string{"fake/default", "fake/other"}
+
 type message struct {
 	JSONRPC string          `json:"jsonrpc"`
 	ID      json.RawMessage `json:"id,omitempty"`
@@ -91,6 +97,19 @@ type session struct {
 	// AgentsURL is from the last agents line of the session, which a real
 	// agent keeps in its history.
 	AgentsURL string `json:"agentsURL"`
+	Model     string `json:"model"`
+}
+
+func (s *session) configOptions() []map[string]any {
+	model := s.Model
+	if model == "" {
+		model = fakeModels[0]
+	}
+	var options []map[string]any
+	for _, m := range fakeModels {
+		options = append(options, map[string]any{"value": m, "name": m})
+	}
+	return []map[string]any{{"id": "model", "name": "Model", "type": "select", "currentValue": model, "options": options}}
 }
 
 type agent struct {
@@ -267,11 +286,12 @@ func (a *agent) handle(m message) {
 		}
 		a.dir = p.Cwd
 		id := fmt.Sprintf("s%d", time.Now().UnixNano())
-		if err := a.save(id, &session{MCPServers: p.MCPServers}); err != nil {
+		s := &session{MCPServers: p.MCPServers}
+		if err := a.save(id, s); err != nil {
 			a.fail(m.ID, err.Error())
 			return
 		}
-		a.respond(m.ID, map[string]any{"sessionId": id})
+		a.respond(m.ID, map[string]any{"sessionId": id, "configOptions": s.configOptions()})
 	case "session/load":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -282,11 +302,14 @@ func (a *agent) handle(m message) {
 			return
 		}
 		a.dir = p.Cwd
-		if _, err := a.load(p.SessionID); err != nil {
+		s, err := a.load(p.SessionID)
+		if err != nil {
 			a.fail(m.ID, "unknown session")
 			return
 		}
-		a.respond(m.ID, map[string]any{})
+		a.respond(m.ID, map[string]any{"configOptions": s.configOptions()})
+	case "session/set_config_option":
+		a.setConfigOption(m)
 	case "session/cancel":
 		var p struct {
 			SessionID string `json:"sessionId"`
@@ -304,6 +327,37 @@ func (a *agent) handle(m message) {
 			a.fail(m.ID, "method not found: "+m.Method)
 		}
 	}
+}
+
+func (a *agent) setConfigOption(m message) {
+	var p struct {
+		SessionID string `json:"sessionId"`
+		ConfigID  string `json:"configId"`
+		Value     string `json:"value"`
+	}
+	if err := json.Unmarshal(m.Params, &p); err != nil {
+		a.fail(m.ID, err.Error())
+		return
+	}
+	s, err := a.load(p.SessionID)
+	if err != nil {
+		a.fail(m.ID, "unknown session")
+		return
+	}
+	if p.ConfigID != "model" {
+		a.fail(m.ID, "unknown config option: "+p.ConfigID)
+		return
+	}
+	if !slices.Contains(fakeModels, p.Value) {
+		a.fail(m.ID, "Invalid params: model not found: "+p.Value)
+		return
+	}
+	s.Model = p.Value
+	if err := a.save(p.SessionID, s); err != nil {
+		a.fail(m.ID, err.Error())
+		return
+	}
+	a.respond(m.ID, map[string]any{"configOptions": s.configOptions()})
 }
 
 func (a *agent) prompt(m message, canceled chan struct{}) {
@@ -354,6 +408,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		cmd = prompt
 	}
 	switch strings.ToLower(cmd) {
+	case "model":
+		a.chunk(sid, "model: "+s.configOptions()[0]["currentValue"].(string))
+		end("end_turn")
 	case "tool":
 		a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "t1", "title": "list files", "kind": "read", "status": "pending"})
 		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "t1", "status": "in_progress"})

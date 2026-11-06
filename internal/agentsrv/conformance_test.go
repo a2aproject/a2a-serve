@@ -180,6 +180,36 @@ func TestConformanceCrashRestartsAgent(t *testing.T) {
 	wantResult(t, send(t, c, userText("hello", "", "")), a2a.TaskStateCompleted, "Hello from fakeacp.")
 }
 
+func TestConformanceSessionModel(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		model     string
+		wantState a2a.TaskState
+		wantText  string
+	}{
+		{name: "known model", model: "fake/other", wantState: a2a.TaskStateCompleted, wantText: "model: fake/other"},
+		{name: "unknown model", model: "fake/missing", wantState: a2a.TaskStateFailed, wantText: "model not found: fake/missing"},
+		{name: "no model", wantState: a2a.TaskStateCompleted, wantText: "model: fake/default"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{configure: func(cfg *agentdir.Config) {
+				cfg.Harness, cfg.Model = "opencode", tc.model
+			}})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			task := send(t, c, userText("model", "", ""))
+			if task.Status.State != tc.wantState {
+				t.Fatalf("task state = %s (%s), want %s", task.Status.State, a2atext.Message(task.Status.Message), tc.wantState)
+			}
+			if got := resultText(task) + a2atext.Message(task.Status.Message); !strings.Contains(got, tc.wantText) {
+				t.Fatalf("task result = %q, want it to contain %q", got, tc.wantText)
+			}
+		})
+	}
+}
+
 func TestConformanceQueuedConcurrentTask(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
