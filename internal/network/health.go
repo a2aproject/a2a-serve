@@ -54,6 +54,7 @@ func (h Health) Err() error {
 // HealthReporter is a [Provider] that can lose the network after it
 // started listening.
 type HealthReporter interface {
+	// Health says whether the network reaches the agent now.
 	Health() Health
 }
 
