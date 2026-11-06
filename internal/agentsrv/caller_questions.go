@@ -19,12 +19,14 @@ import (
 	"errors"
 	"fmt"
 	"iter"
+	"log/slog"
 	"slices"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
+	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
@@ -42,16 +44,95 @@ const callerQuestionKey = "a2a-serve/remote-question"
 // for it stopped first.
 var errCallerGone = errors.New("the task waiting for the result stopped")
 
-// callerQuestionEvent asks q on the task of execCtx.
-func callerQuestionEvent(execCtx *a2asrv.ExecutorContext, q *agentproxy.CallerQuestion) *a2a.TaskStatusUpdateEvent {
+// callerQuestionEvent asks q on task.
+func callerQuestionEvent(task a2a.TaskInfoProvider, q *agentproxy.CallerQuestion) *a2a.TaskStatusUpdateEvent {
 	parts := []*a2a.Part{a2a.NewTextPart(q.Header + "\n")}
 	if q.Msg != nil {
 		parts = append(parts, q.Msg.Parts...)
 	}
 	msg := a2a.NewMessage(a2a.MessageRoleAgent, parts...)
-	msg.TaskID, msg.ContextID = execCtx.TaskID, execCtx.ContextID
+	info := task.TaskInfo()
+	msg.TaskID, msg.ContextID = info.TaskID, info.ContextID
 	msg.Metadata = map[string]any{callerQuestionKey: q.Rec.ID}
-	return a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, msg)
+	return a2a.NewStatusUpdateEvent(task, a2a.TaskStateInputRequired, msg)
+}
+
+// questionTasks ask the questions of other agents, relayed with nobody to
+// ask them, on tasks of their own in the conversations they come from. An
+// answer on such a task goes through [observedExecutor.answerCallerQuestion].
+type questionTasks struct {
+	store *store.Store
+	tasks *store.TaskStore
+	bus   *messenger.Bus
+}
+
+var _ agentproxy.QuestionTasks = (*questionTasks)(nil)
+
+// Ask implements [agentproxy.QuestionTasks]. The task belongs to whoever
+// started the conversation.
+func (qt *questionTasks) Ask(ctx context.Context, contextID string, q *agentproxy.CallerQuestion) error {
+	ctx = auth.WithPrincipal(ctx, auth.Owner())
+	starter, err := qt.tasks.ContextStarter(ctx, contextID)
+	if err != nil {
+		return err
+	}
+	task := &a2a.Task{ID: a2a.NewTaskID(), ContextID: contextID}
+	task.Status = callerQuestionEvent(task, q).Status
+	if _, err := qt.tasks.Create(auth.WithPrincipal(ctx, auth.Principal{ID: starter}), task); err != nil {
+		return err
+	}
+	qt.bus.ExecutionEnded(contextID)
+	return nil
+}
+
+// End implements [agentproxy.QuestionTasks]. A task that its caller
+// answered meanwhile has moved on, and is left alone.
+func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID string) {
+	ctx = auth.WithPrincipal(ctx, auth.Owner())
+	res, err := qt.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: contextID, Status: a2a.TaskStateInputRequired})
+	if err != nil {
+		slog.Warn("listing the question tasks of a conversation", "context", contextID, "error", err)
+		return
+	}
+	ended := false
+	for _, t := range res.Tasks {
+		recID, ok := callerQuestionOf(t)
+		if !ok {
+			continue
+		}
+		rec, err := qt.store.QuestionByID(ctx, recID)
+		if err != nil || rec.Contact != agent || rec.TaskID != taskID {
+			continue
+		}
+		if err := qt.end(ctx, t.ID, rec); err != nil {
+			slog.Warn("ending a question task", "task", t.ID, "error", err)
+			continue
+		}
+		ended = true
+	}
+	if ended {
+		qt.bus.ExecutionEnded(contextID)
+	}
+}
+
+func (qt *questionTasks) end(ctx context.Context, id a2a.TaskID, rec store.Question) error {
+	stored, err := qt.tasks.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if cur, ok := callerQuestionOf(stored.Task); !ok || cur != rec.ID {
+		return nil
+	}
+	msg := a2a.NewMessageForTask(a2a.MessageRoleAgent, stored.Task, a2a.NewTextPart(fmt.Sprintf("%s no longer waits for this approval; its result comes into this conversation.", rec.Contact)))
+	_, err = qt.tasks.Update(ctx, &taskstore.UpdateRequest{
+		Task:        stored.Task,
+		Event:       a2a.NewStatusUpdateEvent(stored.Task, a2a.TaskStateCompleted, msg),
+		PrevVersion: stored.Version,
+	})
+	if errors.Is(err, taskstore.ErrConcurrentModification) {
+		return nil
+	}
+	return err
 }
 
 // callerQuestionOf returns the record ID of another agent's question which

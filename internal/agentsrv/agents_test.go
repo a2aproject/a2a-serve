@@ -281,6 +281,89 @@ func TestRemoteApprovalOnTheCallersTaskSurvivesRestart(t *testing.T) {
 	}
 }
 
+func TestRemoteApprovalOfAsyncCallIsAskedInTheConversation(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+
+	first := send(t, c, userText("acall coder ask", "", ""))
+	asking := waitQuestionTask(t, c, first.ContextID, "coder wants to run git push")
+
+	done := send(t, c, userText("approve", string(asking.ID), asking.ContextID))
+	if done.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("task state = %s (%s), want completed", done.Status.State, a2atext.Message(done.Status.Message))
+	}
+	if !slices.ContainsFunc(done.History, func(m *a2a.Message) bool { return strings.Contains(a2atext.Message(m), "Pushed (allow).") }) {
+		t.Fatalf("task history = %v, want coder's result", historyTexts(done))
+	}
+}
+
+func TestRemoteApprovalOfAsyncCallAnsweredElsewhereEndsItsQuestionTask(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+
+	first := send(t, c, userText("acall coder ask", "", ""))
+	asking := waitQuestionTask(t, c, first.ContextID, "coder wants to run git push")
+	recID, ok := callerQuestionOf(asking)
+	if !ok {
+		t.Fatalf("task %s asks no relayed question", asking.ID)
+	}
+	ctx := context.Background()
+	rec, err := assistant.srv.store.QuestionByID(ctx, recID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := assistant.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0]); err != nil {
+		t.Fatalf("Answer() error = %v", err)
+	}
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		got, err := c.GetTask(ctx, &a2a.GetTaskRequest{ID: asking.ID})
+		if err != nil {
+			t.Fatalf("GetTask() error = %v", err)
+		}
+		last, err := assistant.srv.tasks.LatestInContext(ctx, first.ContextID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Status.State.Terminal() && len(last.History) > 0 && strings.Contains(a2atext.Message(last.History[0]), "Pushed (allow).") {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("question task state = %s, latest turn history = %v, want the question task ended and coder's result posted", got.Status.State, historyTexts(last))
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
+// waitQuestionTask waits until a task of contextID asks a relayed question
+// whose text contains want.
+func waitQuestionTask(t *testing.T, c *a2aclient.Client, contextID, want string) *a2a.Task {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		res, err := c.ListTasks(context.Background(), &a2a.ListTasksRequest{ContextID: contextID})
+		if err != nil {
+			t.Fatalf("ListTasks() error = %v", err)
+		}
+		for _, task := range res.Tasks {
+			if q := approvals.FromStatus(task.Status); q != nil && asksCallerQuestion(task) && strings.Contains(q.Text, want) {
+				return task
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("tasks of context %s = %d, want one that asks %q", contextID, len(res.Tasks), want)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func historyTexts(task *a2a.Task) []string {
 	var out []string
 	for _, m := range task.History {

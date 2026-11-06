@@ -17,7 +17,7 @@ To let the agent call every agent on the private network without adding each one
 - With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. A result over 16 KiB arrives as the file `result.txt`, with its first lines in the message. The server watches the task for at most 7 days. It also stops when the task keeps the same state for 24 hours, not counting the time the task waits for your approval. Either way, the agent gets a message that says so.
 - A response from a contact can be at most 32 MiB. Streams have no limit.
 - A contact on a public URL can't point the server into your private network (see [Security](../advanced/security.md#calls-to-other-agents-and-webhooks)).
-- When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it.
+- When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it. If you talk to the agent with `a2a send` and no messenger chat can take the question, it arrives in your conversation as a new task in `input-required`. Answer it with `a2a send --task-id`. If the question is answered elsewhere, such as in the inspector, that task completes.
 - A chain of calls stops after 3 hops, so agents can't call each other in a loop.
 
 ## Your agent's card
