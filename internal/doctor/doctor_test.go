@@ -912,3 +912,18 @@ func TestCheckSecretsFixes(t *testing.T) {
 		t.Fatalf("checkSecrets() wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestCheckSecretsLineBreak(t *testing.T) {
+	t.Parallel()
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"MULTI"}}
+	var got []string
+	for _, r := range checkSecrets(cfg, agentdir.Secrets{"MULTI": "line1\nline2"}) {
+		got = append(got, string(r.Status)+" | "+r.Message+" | "+r.Fix)
+	}
+	want := []string{
+		string(StatusFail) + " | the value of MULTI has a line break, which docker can't pass to the container | a2a-serve config set --secret MULTI",
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("checkSecrets() wrong result (-want +got) diff = %s", diff)
+	}
+}

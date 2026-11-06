@@ -23,6 +23,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -55,6 +56,31 @@ func TestRestart(t *testing.T) {
 				t.Fatalf("Restart() stopped the agent")
 			}
 		})
+	}
+}
+
+func TestRestartChecksSecretsBeforeStopping(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	if err := dir.SaveConfig(&agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"MULTI"}}); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if err := dir.SaveSecrets(agentdir.Secrets{"MULTI": "line1\nline2"}); err != nil {
+		t.Fatalf("SaveSecrets() error = %v", err)
+	}
+	f := &fakeControl{pid: os.Getpid()}
+	serveControl(t, dir, f)
+
+	err := Restart(t.Context(), dir, controlapi.NewClient(dir), false, io.Discard)
+	const want = "the value of MULTI has a line break"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Restart() error = %v, want %q", err, want)
+	}
+	if slices.Contains(f.Calls(), "POST /stop") {
+		t.Fatalf("Restart() stopped the agent")
 	}
 }
 

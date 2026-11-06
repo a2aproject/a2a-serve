@@ -171,6 +171,22 @@ func TestCheckConfig(t *testing.T) {
 		{name: "duplicate destination", cfg: Config{Name: "coder", Harness: "opencode", Mounts: []string{docs + ":" + root}}, wantErr: "already uses the destination"},
 		{name: "missing secret", cfg: Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}}, wantErr: "secret KEY is not stored"},
 		{
+			name:    "secret with a line break",
+			cfg:     Config{Name: "coder", Harness: "opencode", Secrets: []string{"MULTI"}},
+			secrets: Secrets{"MULTI": "line1\nline2"},
+			wantErr: "the value of MULTI has a line break, which docker can't pass to the container",
+		},
+		{
+			name:    "env with a line break",
+			cfg:     Config{Name: "coder", Harness: "opencode", Sandbox: SandboxDocker, Env: []string{"MULTI=line1\r\nline2"}},
+			wantErr: "the value of MULTI has a line break, which docker can't pass to the container",
+		},
+		{
+			name:    "secret with a line break without docker",
+			cfg:     Config{Name: "coder", Harness: "opencode", Sandbox: SandboxLocal, Secrets: []string{"MULTI"}, Env: []string{"E=a\nb"}},
+			secrets: Secrets{"MULTI": "line1\nline2"},
+		},
+		{
 			name:    "missing channel secret",
 			cfg:     Config{Name: "coder", Harness: "opencode", Channels: ChannelsConfig{Discord: &DiscordConfig{Token: "secret:BOT"}}},
 			wantErr: "discord token (a2a-serve channel add discord --token): secret BOT is not set",
