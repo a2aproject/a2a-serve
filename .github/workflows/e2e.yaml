@@ -44,3 +44,29 @@ jobs:
       env:
         E2E_SANDBOX: docker
       run: go test -tags e2e -mod=readonly -v -count=1 -shuffle=on ./e2e/...
+
+  # Runs the example READMEs as demo scenarios with fakeacp, so that a change
+  # to a command or its output that the examples show fails here.
+  demo:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        scenario: [ 01-agent-server, 03-agentmesh-relay ]
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Install tools
+      run: |
+        sudo apt-get update -q
+        sudo apt-get install -y -q tmux asciinema
+        version="$(sed -n 's/^const MinVersion = "\(.*\)"$/\1/p' internal/a2acli/a2acli.go)"
+        GOBIN="$RUNNER_TEMP/bin" go install "github.com/a2aproject/a2a-cli@$version"
+        mv "$RUNNER_TEMP/bin/a2a-cli" "$RUNNER_TEMP/bin/a2a"
+        echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+    - name: Run ${{ matrix.scenario }}
+      run: tools/demo/record.sh ${{ matrix.scenario }} --fake --speed 20 --out "$RUNNER_TEMP/demo"

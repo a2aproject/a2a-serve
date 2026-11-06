@@ -114,7 +114,9 @@ the macOS default. It defines:
   directory is removed, to keep state for the next run.
 
 Type the commands of the example README as written, in its order, so the
-demo matches the docs. When a README changes, update its scenario. Use
+demo matches the docs. When a README changes, update its scenario. The E2E
+workflow runs the `--fake` scenarios 01 and 03 on every pull request, so a
+scenario that no longer matches its README fails there. Use
 `$AGENT` and `$AGENT_FLAGS` in start commands, so `--fake` can swap in
 fakeacp. Check the key results with `expect_status` and `expect_log`; a
 step that stops in `input-required` doesn't fail the run on its own.

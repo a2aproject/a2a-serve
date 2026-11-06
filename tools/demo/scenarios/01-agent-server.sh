@@ -47,6 +47,7 @@ EOF'
   clear_pane B
   say B "4. Ask a question"
   run B "a2a send \"$(fake 'In one sentence, what can you do?' hello)\""
+  expect_status B completed
   pause 3
 
   clear_pane B
@@ -56,7 +57,12 @@ EOF'
   local task
   task="$(last_match B 'a2a send --task-id [^ ]+')"
   run B "${task% *} ${task##* } approve"
-  [[ -n "$DEMO_FAKE" ]] || run B "cat system.txt"
+  expect_status B completed
+  if [[ -n "$DEMO_FAKE" ]]; then
+    wait_text B 'Pushed \(allow\)' 10
+  else
+    run B "cat system.txt"
+  fi
   pause 2
 
   local context
@@ -64,6 +70,7 @@ EOF'
   clear_pane B
   say B "6. Continue the conversation"
   run B "a2a send --context-id ${context##* } \"$(fake 'Which file did you just create?' hello)\""
+  expect_status B completed
   pause 3
 
   clear_pane B
@@ -82,6 +89,7 @@ EOF'
   run B "a2a send \"$(fake 'Ask the reviewer agent what files it sees in its workspace, and tell me.' 'call reviewer hello')\""
   approve_pending B
   expect_status B completed
+  [[ -z "$DEMO_FAKE" ]] || wait_text B 'COMPLETED: Hello from fakeacp' 10
   expect_log "$HOME/a2a-example1/reviewer" 'task completed'
   pause 4
 }
