@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -125,6 +126,15 @@ func TestInvite(t *testing.T) {
 		{name: "local pairing", req: InviteRequest{Name: LocalOwner}, wantKind: Invalid},
 		{name: "owner", req: InviteRequest{Name: auth.OwnerName}, wantKind: Invalid},
 		{name: "invalid name", req: InviteRequest{Name: "a b"}, wantKind: Invalid},
+		{name: "local pairing in capitals", req: InviteRequest{Name: "LOCAL"}, wantKind: Invalid},
+		{name: "owner capitalized", req: InviteRequest{Name: "Owner"}, wantKind: Invalid},
+		{name: "name differing only by case", req: InviteRequest{Name: "Anna"}, wantKind: Conflict},
+		{name: "node name differing only by case", req: InviteRequest{Name: "GROK", Webhook: "https://example.com/hook"}, wantKind: Conflict},
+		{name: "leading hyphen", req: InviteRequest{Name: "-x"}, wantKind: Invalid},
+		{name: "at sign", req: InviteRequest{Name: "bob@coder"}, wantKind: Invalid},
+		{name: "too long", req: InviteRequest{Name: strings.Repeat("a", 65)}, wantKind: Invalid},
+		{name: "longest name", req: InviteRequest{Name: strings.Repeat("a", 64)}},
+		{name: "dots, hyphens and underscores", req: InviteRequest{Name: "ci_bot-2.prod"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

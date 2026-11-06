@@ -42,7 +42,9 @@ for 15 minutes. The caller redeems it for a token with
 sending "join <code>" to the agent's bot. Another agent redeems it with
 ` + "`a2a-serve contact add --code`" + `. The first redemption sets the pairing's kind:
 person, or agent for a contact. Inviting an existing name issues another
-code, for another device or account; its tokens keep working.
+code, for another device or account; its tokens keep working. A new name has
+up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
+or digit, and differs from the existing names by more than case.
 ` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials.
 
 With --webhook, <name> is a webhook node: an agent which only runs when woken,

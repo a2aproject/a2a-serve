@@ -491,3 +491,42 @@ func TestHandlePageSetsSecurityHeaders(t *testing.T) {
 		}
 	}
 }
+
+func TestCheckAnswer(t *testing.T) {
+	t.Parallel()
+	anonymous := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
+	starterScope := func(ctx context.Context) (string, bool, error) {
+		p, _ := auth.Caller(ctx)
+		return p.ID, false, nil
+	}
+	tests := []struct {
+		name    string
+		starter auth.Principal
+		caller  auth.Principal
+		taskID  a2a.TaskID
+		want    error
+	}{
+		{name: "owner", starter: anonymous, caller: auth.Owner(), taskID: "t1"},
+		{name: "starter", starter: anna, caller: anna, taskID: "t1"},
+		{name: "another user's task", starter: anonymous, caller: anna, taskID: "t1", want: a2a.ErrTaskNotFound},
+		{name: "anonymous starter", starter: anonymous, caller: anonymous, taskID: "t1", want: a2a.ErrUnauthorized},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			svc := newService(t, &sendingHandler{})
+			ctx := auth.WithPrincipal(context.Background(), tc.starter)
+			task := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage(t)}}
+			if _, err := svc.store.Tasks("", starterScope).Create(ctx, task); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+
+			err := svc.CheckAnswer(context.Background(), tc.caller, tc.taskID)
+
+			if !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+				t.Fatalf("CheckAnswer(%s, %s) error = %v, want %v", tc.caller.ID, tc.taskID, err, tc.want)
+			}
+		})
+	}
+}

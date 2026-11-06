@@ -404,7 +404,9 @@ func (s *Service) Close(ctx context.Context, ids ...string) {
 }
 
 // CheckAnswer rejects a reply to the agent's pending permission question
-// from a caller other than the task's starter or an owner.
+// from a caller other than the task's starter or an owner. A caller who
+// can't see the task gets [a2a.ErrTaskNotFound], as for an unknown task, so
+// that callers can't tell which IDs wait for approval.
 func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.TaskID) error {
 	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
@@ -423,6 +425,9 @@ func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 	}
 	if MayAnswer(p, stored.User) {
 		return nil
+	}
+	if stored.User != p.ID {
+		return a2a.ErrTaskNotFound
 	}
 	return fmt.Errorf("%w: only the person who started the task or an owner can answer this approval", a2a.ErrUnauthorized)
 }

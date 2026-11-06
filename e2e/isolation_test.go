@@ -47,8 +47,11 @@ func TestPairedUserCantReachOwnerTasks(t *testing.T) {
 	if _, err := anna.getTask(coder.url, id); err == nil || !strings.Contains(err.Error(), "task not found") {
 		t.Fatalf("a2a task get of the owner's task by anna error = %v, want task not found", err)
 	}
-	if _, err := anna.send(coder.url, "--task-id", id, "once"); err == nil || !strings.Contains(err.Error(), "only the person who started the task or an owner") {
-		t.Fatalf("a2a send --task-id of the owner's approval by anna error = %v, want it refused", err)
+	if _, err := anna.send(coder.url, "--task-id", id, "once"); err == nil || !strings.Contains(err.Error(), "task not found") {
+		t.Fatalf("a2a send --task-id of the owner's approval by anna error = %v, want task not found", err)
+	}
+	if _, err := anna.send(coder.url, "--task-id", "01a1b049-0000-7000-8000-000000000000", "once"); err == nil || !strings.Contains(err.Error(), "task not found") {
+		t.Fatalf("a2a send --task-id of an unknown task by anna error = %v, want task not found", err)
 	}
 	if got := owner.mustGetTask(coder.url, id); got.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("a2a task get after anna's answer state = %v, want %v", got.Status.State, a2a.TaskStateInputRequired)

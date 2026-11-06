@@ -30,7 +30,7 @@ What the sandbox doesn't protect yet:
 
 Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
 
-The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay share one short backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
+The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay, and callers over their limit, share one short backoff. A valid code from an address over its limit goes through after that backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
 The public routes also limit the open requests of each caller and the size and send time of their bodies. This keeps capacity free for callers who authenticate ([request limits](../reference/http-routes.md#request-limits)).
 
