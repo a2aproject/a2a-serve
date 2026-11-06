@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"slices"
 	"strings"
@@ -384,5 +385,45 @@ func TestConformanceAnswerFollowsQuestionInHistory(t *testing.T) {
 	}
 	if n := len(slices.Compact(slices.Clone(got))); n != len(got) {
 		t.Fatalf("task history = %q, want no repeated messages", got)
+	}
+}
+
+func TestConformanceCallerErrorsWithoutWrapping(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	done := send(t, c, userText("hello", "", ""))
+	ctx := context.Background()
+	tests := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{
+			name: "message to a completed task",
+			call: func() error {
+				_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("again", string(done.ID), done.ContextID)})
+				return err
+			},
+			want: `task in a terminal state "TASK_STATE_COMPLETED": this operation is not supported`,
+		},
+		{
+			name: "cancel of an unknown task",
+			call: func() error {
+				_, err := c.CancelTask(ctx, &a2a.CancelTaskRequest{ID: "nope"})
+				return err
+			},
+			want: "task not found",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.call()
+			var a2aErr *a2a.Error
+			if !errors.As(err, &a2aErr) || a2aErr.Message != tc.want {
+				t.Fatalf("call error = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
