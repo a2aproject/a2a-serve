@@ -138,18 +138,22 @@ func TestNewTaskRefusedWhileAllUserAgentsAreBusy(t *testing.T) {
 	if _, err := late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")}); !errors.Is(err, a2a.ErrServerError) {
 		t.Fatalf("SendMessage() while all agents are busy error = %v, want %v", err, a2a.ErrServerError)
 	}
-	res, err := late.ListTasks(ctx, &a2a.ListTasksRequest{})
+	list, err := late.ListTasks(ctx, &a2a.ListTasksRequest{})
 	if err != nil {
 		t.Fatalf("ListTasks() error = %v", err)
 	}
-	if len(res.Tasks) != 0 {
-		t.Fatalf("ListTasks() = %d tasks, want none stored for a refused message", len(res.Tasks))
+	if len(list.Tasks) != 0 {
+		t.Fatalf("ListTasks() = %d tasks, want none stored for a refused message", len(list.Tasks))
 	}
 	if _, err := first.CancelTask(ctx, &a2a.CancelTaskRequest{ID: asked.ID}); err != nil {
 		t.Fatalf("CancelTask() error = %v", err)
 	}
-	waitState(t, first, asked.ID, a2a.TaskStateCanceled)
-	if task := send(t, late, userText("hello", "", "")); task.Status.State != a2a.TaskStateCompleted {
-		t.Fatalf("task state after a process became idle = %s, want %s", task.Status.State, a2a.TaskStateCompleted)
+	var res a2a.SendMessageResult
+	waitFor(t, "a message accepted after a process became idle", func() bool {
+		res, err = late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+		return err == nil
+	})
+	if task, ok := res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("SendMessage() after a process became idle = %v, want a completed task", res)
 	}
 }
