@@ -683,7 +683,7 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
 	t.Parallel()
 	turns := &turnCount{}
-	e := &observedExecutor{bus: messenger.NewBus(), unattended: &messenger.ContextSet{}, notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})}), turns: turns}
+	e := &observedExecutor{bus: chat.NewBus(), unattended: &chat.ContextSet{}, notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})}), turns: turns}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	completed := func(yield func(a2a.Event, error) bool) {
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
