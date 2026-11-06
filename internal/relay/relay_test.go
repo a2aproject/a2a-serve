@@ -101,9 +101,12 @@ func TestPolicyLetsNodesServeA2AOnly(t *testing.T) {
 		if r.Name != "mesh:role:node" {
 			continue
 		}
-		for _, list := range [][]string{r.AllowedServices, r.AllowedPublish, r.AllowedIngress[0].Services} {
+		if diff := cmp.Diff([]string{"a2a://*", "system://mesh.catalog"}, r.AllowedServices); diff != "" {
+			t.Fatalf("Policy() node role wrong services (-want +got) diff = %s", diff)
+		}
+		for _, list := range [][]string{r.AllowedPublish, r.AllowedIngress[0].Services} {
 			if diff := cmp.Diff([]string{"a2a://*"}, list); diff != "" {
-				t.Fatalf("Policy() node role wrong services (-want +got) diff = %s", diff)
+				t.Fatalf("Policy() node role wrong published services (-want +got) diff = %s", diff)
 			}
 		}
 		if diff := cmp.Diff([]string{"INGRESS_AUTH_MODE_PASSTHROUGH"}, r.AllowedIngress[0].AllowedAuthModes); diff != "" {

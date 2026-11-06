@@ -91,6 +91,10 @@ func MeshEnv(c MeshConfig, base []string) []string {
 	return env
 }
 
+// catalogService is the service of a node that lists its services, which
+// discovery calls on every provider it finds.
+const catalogService = "system://mesh.catalog"
+
 // Policy returns the mesh policy. Every node may call, publish and expose
 // A2A services, the one kind an agent serves. Public URLs forward requests
 // unchanged, so the agent's own auth applies there. With signIn, everyone
@@ -101,7 +105,7 @@ func Policy(signIn bool) meshadmin.Policy {
 		{Name: meshadmin.RoleRouter, AllowedServices: []string{"*"}, AllowedTargets: []string{"*"}},
 		{
 			Name:            meshadmin.RoleNode,
-			AllowedServices: []string{"a2a://*"},
+			AllowedServices: []string{"a2a://*", catalogService},
 			AllowedTargets:  []string{"*"},
 			AllowedPublish:  []string{"a2a://*"},
 			AllowedIngress: []meshadmin.IngressGrant{{
