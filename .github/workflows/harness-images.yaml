@@ -9,6 +9,10 @@ on:
     paths:
       - 'internal/harness/images/**'
       - '.github/workflows/harness-images.yaml'
+  pull_request:
+    paths:
+      - 'internal/harness/images/**'
+      - '.github/workflows/harness-images.yaml'
   schedule:
     # Weekly, to pick up new harness and a2a CLI releases installed at build time.
     - cron: '0 6 * * 1'
@@ -27,7 +31,20 @@ jobs:
     steps:
     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+    - name: Build
+      if: github.event_name == 'pull_request'
+      run: docker build -t harness internal/harness/images/${{ matrix.harness }}
+
+    - name: Check git reads reftable repositories
+      if: github.event_name == 'pull_request'
+      run: |
+        docker run --rm harness sh -euc '
+          git --version
+          git init -q --ref-format=reftable /tmp/r
+          git -C /tmp/r status'
+
     - name: Build and push
+      if: github.event_name != 'pull_request'
       env:
         IMAGE: ghcr.io/${{ github.repository_owner }}/harness-${{ matrix.harness }}
         CONTEXT: internal/harness/images/${{ matrix.harness }}

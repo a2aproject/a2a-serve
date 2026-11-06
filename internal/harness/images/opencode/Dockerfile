@@ -4,7 +4,7 @@ FROM golang:1.26-bookworm AS a2a
 ARG A2A_CLI_VERSION=latest
 RUN CGO_ENABLED=0 GOBIN=/out go install -trimpath github.com/a2aproject/a2a-cli@${A2A_CLI_VERSION}
 
-FROM node:22-bookworm-slim
+FROM node:22-trixie-slim
 COPY --from=a2a /out/a2a-cli /usr/local/bin/a2a
 # Many MCP servers of a project's .mcp.json start with uvx.
 COPY --from=ghcr.io/astral-sh/uv:0.13 /uv /uvx /usr/local/bin/
