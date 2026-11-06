@@ -505,6 +505,12 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 	case "stall":
 		<-canceled
 		end("cancelled")
+	case "apierror":
+		a.write(map[string]any{"jsonrpc": "2.0", "id": m.ID, "error": map[string]any{
+			"code":    -32603,
+			"message": "Internal error: models/gemini-2.5-flash is not found for API version v1beta",
+			"data":    map[string]any{"service": "session", "errorName": "APIError"},
+		}})
 	case "build":
 		d, err := time.ParseDuration(arg)
 		if err != nil {

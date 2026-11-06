@@ -21,6 +21,7 @@ import (
 	"io"
 	"iter"
 	"log/slog"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -379,22 +380,24 @@ func (s *Server) acpConfig() *a2aacp.Config {
 }
 
 // guardACP fails the stalled turns of an executor made with acpConfig, and
-// explains its model errors.
+// explains its failures.
 func (s *Server) guardACP(acp a2asrv.AgentExecutor) a2asrv.AgentExecutor {
-	return &modelKeyHint{inner: s.stalls.guard(acp), config: s.rt.Config}
+	return &agentFailure{inner: s.stalls.guard(acp), config: s.rt.Config}
 }
 
-// modelKeyHint tells which key is missing when a turn fails because the
-// agent doesn't know the configured model. opencode lists no models of a
-// provider without a key, so it reports only that the model isn't found.
-type modelKeyHint struct {
+// agentFailure rewrites the failure of a turn for callers. It drops the
+// JSON-RPC code and data of the agent's error, which it logs in full, and
+// tells which key is missing when the agent doesn't know the configured
+// model: opencode lists no models of a provider without a key, so it
+// reports only that the model isn't found.
+type agentFailure struct {
 	inner  a2asrv.AgentExecutor
 	config func() *agentdir.Config
 }
 
-var _ a2asrv.AgentExecutor = (*modelKeyHint)(nil)
+var _ a2asrv.AgentExecutor = (*agentFailure)(nil)
 
-func (e *modelKeyHint) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+func (e *agentFailure) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		for ev, err := range e.inner.Execute(ctx, execCtx) {
 			if !yield(e.explain(execCtx, ev), err) {
@@ -404,25 +407,55 @@ func (e *modelKeyHint) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	}
 }
 
-func (e *modelKeyHint) explain(execCtx *a2asrv.ExecutorContext, ev a2a.Event) a2a.Event {
+func (e *agentFailure) explain(execCtx *a2asrv.ExecutorContext, ev a2a.Event) a2a.Event {
 	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
 	if !ok || up.Status.State != a2a.TaskStateFailed {
 		return ev
 	}
-	text := a2atext.Message(up.Status.Message)
-	if !strings.Contains(text, "model not found") {
-		return ev
+	reported := a2atext.Message(up.Status.Message)
+	text := agentErrorText(reported)
+	if text != reported {
+		slog.Info("the agent failed the turn", "task", execCtx.TaskID, "error", reported)
 	}
-	hint := harness.MissingKey(e.config())
-	if hint == "" {
+	if strings.Contains(text, "model not found") {
+		if hint := harness.MissingKey(e.config()); hint != "" {
+			text = hint + "; the agent reported: " + text
+		}
+	}
+	if text == reported {
 		return ev
 	}
 	out := *up
-	out.Status.Message = a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(hint+"; the agent reported: "+text))
+	out.Status.Message = a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(text))
 	return &out
 }
 
-func (e *modelKeyHint) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+// acpError matches a failure that a2aacp reports for an error response of
+// the agent: its message, then its JSON-RPC code and data.
+var acpError = regexp.MustCompile(`(?s)^(?:acp agent error: |configuring acp session: )?(.*?) \(code -?\d+\)(?:: .*)?$`)
+
+// jsonrpcErrorNames start the messages of agents that report a standard
+// JSON-RPC error with details.
+var jsonrpcErrorNames = []string{"Parse error: ", "Invalid request: ", "Method not found: ", "Invalid params: ", "Internal error: "}
+
+// agentErrorText returns the failure text of a turn without the protocol
+// details of the agent's error.
+func agentErrorText(text string) string {
+	m := acpError.FindStringSubmatch(text)
+	if m == nil {
+		return text
+	}
+	msg := m[1]
+	for _, name := range jsonrpcErrorNames {
+		if i := strings.Index(msg, name); i >= 0 {
+			msg = msg[:i] + msg[i+len(name):]
+			break
+		}
+	}
+	return "the agent failed: " + msg
+}
+
+func (e *agentFailure) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	return e.inner.Cancel(ctx, execCtx)
 }
 

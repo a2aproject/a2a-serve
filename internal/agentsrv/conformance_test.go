@@ -216,7 +216,7 @@ func TestConformanceSessionModel(t *testing.T) {
 		notText   string
 	}{
 		{name: "known model", model: "fake/other", wantState: a2a.TaskStateCompleted, wantText: "model: fake/other"},
-		{name: "unknown model", model: "fake/missing", wantState: a2a.TaskStateFailed, wantText: "model not found: fake/missing"},
+		{name: "unknown model", model: "fake/missing", wantState: a2a.TaskStateFailed, wantText: "the agent failed: setting \"model\": model not found: fake/missing", notText: "code -32603"},
 		{name: "no model", wantState: a2a.TaskStateCompleted, wantText: "model: fake/default"},
 		{
 			name: "model of a provider without a key", model: "google/gemini-3-flash-preview", wantState: a2a.TaskStateFailed,
@@ -253,6 +253,19 @@ func TestConformanceSessionModel(t *testing.T) {
 				t.Fatalf("task result = %q, want it without %q", got, tc.notText)
 			}
 		})
+	}
+}
+
+func TestConformanceAgentErrorWithoutProtocolDetails(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+
+	task := send(t, c, userText("apierror", "", ""))
+
+	want := "the agent failed: models/gemini-2.5-flash is not found for API version v1beta"
+	if got := a2atext.Message(task.Status.Message); task.Status.State != a2a.TaskStateFailed || got != want {
+		t.Fatalf("task = %s %q, want %s %q", task.Status.State, got, a2a.TaskStateFailed, want)
 	}
 }
 
