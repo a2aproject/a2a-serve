@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Steps 1-3 of docs/guide/relay-cloud-run.md as one script: the database, the
+# Steps 1-3 of examples/05-relay-cloud-run/README.md as one script: the database, the
 # secrets and the service account. Source it with CLOUDSDK_CORE_PROJECT set.
-# It skips what exists, so the relay-cloud-run demo runs it off camera first
+# It skips what exists, so the 05-relay-cloud-run demo runs it off camera first
 # and again on camera. DEMO_SQL_INSTANCE names another Cloud SQL instance,
 # since a deleted instance's name can't be reused for a week.
 

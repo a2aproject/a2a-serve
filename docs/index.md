@@ -49,7 +49,6 @@ Both install `a2a-serve` and the `a2a` CLI, which you use to talk to agents.
 | [Email Sign-In](guide/email-sign-in.md) | Let people on an email allowlist call the agent |
 | [Networks](guide/networks.md) | Tailscale, Agent Mesh relays and public URLs |
 | [Relays](guide/relays.md) | Run an Agent Mesh relay that agents join from anywhere |
-| [Relay on Cloud Run](guide/relay-cloud-run.md) | Run a relay on Google Cloud Run with Cloud SQL |
 | [Messengers](guide/messengers.md) | Telegram, Discord and email |
 | [Agent2Agent](guide/agent2agent.md) | Contacts, peers and calls between agents |
 | [Schedules](guide/schedules.md) | Run prompts at set times |

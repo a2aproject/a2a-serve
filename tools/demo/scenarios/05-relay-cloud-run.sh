@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# summary: docs/guide/relay-cloud-run.md: a relay on Cloud Run, joined by two invited agents (needs --build, gcloud, DEMO_PROJECT)
+# summary: examples/05-relay-cloud-run/README.md: a relay on Cloud Run, joined by two invited agents (needs --build, gcloud, DEMO_PROJECT)
 
 PROMPT='Ask reviewer for one tip on writing a good commit message, and tell me what it said.'
 
@@ -22,7 +22,7 @@ prepare() {
   # gcloud keeps its sign-in under the real HOME.
   export CLOUDSDK_CONFIG="${CLOUDSDK_CONFIG:-$DEMO_REAL_HOME/.config/gcloud}"
   export CLOUDSDK_CORE_PROJECT="$DEMO_PROJECT" CLOUDSDK_CORE_DISABLE_PROMPTS=1
-  cp "$DEMO_TOOLS/scenarios/relay-cloud-run/setup.sh" "$HOME/setup.sh"
+  cp "$DEMO_TOOLS/scenarios/05-relay-cloud-run/setup.sh" "$HOME/setup.sh"
   # A rerun starts from a new service and an empty database, so the relay
   # has no members of earlier runs.
   gcloud run services delete a2a-serve-relay --region us-central1 --quiet >/dev/null 2>&1 || true
@@ -30,7 +30,7 @@ prepare() {
   # The slow part of setup.sh, creating the Cloud SQL instance, runs here.
   # It also exports what the agents' panes need: URL and RELAY_ADMIN_TOKEN.
   log "running setup.sh (off camera; a new Cloud SQL instance takes about 10 minutes)"
-  # shellcheck source=relay-cloud-run/setup.sh
+  # shellcheck source=05-relay-cloud-run/setup.sh
   source "$HOME/setup.sh" >/dev/null || die "setup.sh failed"
   if [[ -n "${DEMO_RELAY_IMAGE:-}" ]]; then
     # Deploys DEMO_RELAY_IMAGE where the guide names the published image, for
