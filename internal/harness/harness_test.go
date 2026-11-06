@@ -312,6 +312,7 @@ func TestWarnings(t *testing.T) {
 		{name: "opencode with OpenRouter and a model", cfg: agentdir.Config{Harness: "opencode", Secrets: openrouter, Model: "openrouter/a/b"}},
 		{name: "opencode with another key", cfg: agentdir.Config{Harness: "opencode", Secrets: []string{"ANTHROPIC_API_KEY"}}},
 		{name: "claude with OpenRouter", cfg: agentdir.Config{Harness: "claude", Secrets: openrouter}},
+		{name: "opencode model without its key", cfg: agentdir.Config{Harness: "opencode", Model: "google/gemini-3-flash-preview"}, want: 1},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

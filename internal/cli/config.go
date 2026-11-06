@@ -161,17 +161,6 @@ func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
 	return err
 }
 
-// printWarnings prints the warnings about the saved settings.
-func printWarnings(cfg *globalConfig, warnings []string) error {
-	if cfg.IsJSON() {
-		return nil
-	}
-	var sb strings.Builder
-	writeWarnings(&sb, warnings)
-	_, err := fmt.Fprint(cfg.Out, sb.String())
-	return err
-}
-
 func writeWarnings(sb *strings.Builder, warnings []string) {
 	for _, w := range warnings {
 		fmt.Fprintf(sb, "! %s\n", w)

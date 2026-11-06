@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -48,6 +49,7 @@ func agentChecks(ctx context.Context, env Env, d agentdir.Dir, online bool) ([]R
 	} else {
 		group = fmt.Sprintf("Agent %s (%s)", cfg.Name, d.Root)
 		results = append(results, checkConfig(cfg)...)
+		results = append(results, checkModel(cfg)...)
 		if r, ok := checkConfigKeys(d); ok {
 			results = append(results, r)
 		}
@@ -93,6 +95,17 @@ func checkConfig(cfg *agentdir.Config) []Result {
 	var results []Result
 	for _, e := range unjoin(err) {
 		results = append(results, Result{ID: "config", Status: StatusFail, Message: e.Error(), Fix: fixEdit})
+	}
+	return results
+}
+
+// checkModel warns about a model setting that leaves the agent working with
+// another model or without the provider's key, such as in an agent created
+// before the server warned about it.
+func checkModel(cfg *agentdir.Config) []Result {
+	var results []Result
+	for _, w := range harness.Warnings(cfg) {
+		results = append(results, Result{ID: "model", Status: StatusWarn, Message: w})
 	}
 	return results
 }

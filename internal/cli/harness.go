@@ -82,13 +82,15 @@ workspace unless --allow-broad-mount names it.
 			if res.Running {
 				return printStartRunning(cfg, res)
 			}
-			if res.Created {
-				err = printWarnings(cfg, res.Warnings)
-			} else {
-				err = printConfigResult(cfg, res)
-			}
-			if err != nil {
-				return err
+			if !res.Created {
+				// runAgent prints the warnings with the agent line.
+				shown := *res
+				if !cfg.IsJSON() {
+					shown.Warnings = nil
+				}
+				if err := printConfigResult(cfg, &shown); err != nil {
+					return err
+				}
 			}
 			mode.created = res.Created
 			return runAgent(cmd.Context(), cfg, d, mode)
