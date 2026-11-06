@@ -31,7 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/channel/channeltest"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
-	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
+	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 

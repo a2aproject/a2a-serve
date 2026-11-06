@@ -35,7 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/schedules"
+	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -44,7 +44,7 @@ type Deps struct {
 	Store     *store.Store
 	Pairings  *pairings.Service
 	Contacts  contacts.Service
-	Schedules schedules.Service
+	Schedules schedulesvc.Service
 	// Runtime has the config and secrets the agent runs with.
 	Runtime *agentdir.Runtime
 	// Network returns the networks the agent is on. Nil derives them from

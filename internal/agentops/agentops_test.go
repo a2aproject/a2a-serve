@@ -33,7 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
-	"github.com/a2aproject/a2a-serve/internal/schedules"
+	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -59,7 +59,7 @@ func newServiceWith(t *testing.T, rt *agentdir.Runtime, hooks Hooks) (*Service, 
 		Store:     st,
 		Pairings:  pairings.New(pairings.Deps{Store: st, BaseURL: func() string { return baseURL }}),
 		Contacts:  contacts.Service{Store: st},
-		Schedules: schedules.Service{Store: st},
+		Schedules: schedulesvc.Service{Store: st},
 		Runtime:   rt,
 		Network:   func() access.Network { return access.Network{Private: network.ProviderTailscale} },
 		Hooks:     hooks,
@@ -265,8 +265,8 @@ func TestSchedulesActAsOwner(t *testing.T) {
 		t.Fatalf("Pair() error = %v", err)
 	}
 	anna := auth.Principal{ID: auth.PairingPrincipal("anna")}
-	if _, err := (schedules.Service{Store: st}).Add(ctx, schedule.Request{Name: "hers", Cron: "@daily", Prompt: "hi"}, anna, "ctx-1"); err != nil {
-		t.Fatalf("schedules.Service.Add() error = %v", err)
+	if _, err := (schedulesvc.Service{Store: st}).Add(ctx, schedule.Request{Name: "hers", Cron: "@daily", Prompt: "hi"}, anna, "ctx-1"); err != nil {
+		t.Fatalf("schedulesvc.Service.Add() error = %v", err)
 	}
 
 	added, err := s.AddSchedule(ctx, schedule.Request{Name: "mine", Cron: "@daily", Prompt: "hi"})
