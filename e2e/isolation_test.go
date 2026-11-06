@@ -110,6 +110,23 @@ func TestConversationHandleWorksOnlyInItsTurn(t *testing.T) {
 	owner.mustSend(coder.url, "--task-id", string(waiting.ID), "once")
 }
 
+func TestAgentsURLRefusalReachesTheAgent(t *testing.T) {
+	t.Parallel()
+	dependsOnSandbox(t)
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	turn := owner.mustSend(coder.url, "agents")
+	agentsURL, socket := coder.agentsOf(turn)
+	waiting := owner.mustSend(coder.url, "--context-id", turn.ContextID, "ask")
+
+	_, err := owner.exec(owner.home, "a2a", "send", "-a", agentsURL+"/nosuch", "--unix-socket", socket, "hi")
+	want := "stderr: Error: failed to send message: \"nosuch\" is not an agent you can call; the [a2a agents] line lists them\n"
+	if err == nil || !strings.HasSuffix(err.Error(), want) {
+		t.Fatalf("a2a send to an unknown agent error = %v, want it to end with %q", err, want)
+	}
+	owner.mustSend(coder.url, "--task-id", string(waiting.ID), "once")
+}
+
 var calledTaskRE = regexp.MustCompile(`tool result: task (\S+) `)
 
 // calledTaskID returns the ID of the task a call or acall prompt started.
