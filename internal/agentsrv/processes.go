@@ -23,6 +23,7 @@ import (
 	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aevent"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
@@ -207,11 +208,39 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			}
 			defer release()
 		}
+		sent, final := false, false
 		for ev, err := range exec.Execute(ctx, execCtx) {
+			if err != nil && e.stopped() {
+				break
+			}
+			if err == nil {
+				sent, final = true, a2aevent.IsFinal(ev)
+			}
 			if !yield(ev, err) {
 				return
 			}
 		}
+		if !final && e.stopped() {
+			failStopped(execCtx, sent)(yield)
+		}
+	}
+}
+
+// stopped reports whether the server stopped, which ends the turns.
+func (e *splitExecutor) stopped() bool { return e.ctx != nil && e.ctx.Err() != nil }
+
+// stoppedMessage fails the turns that the server stopped.
+const stoppedMessage = "The server stopped before this task finished. Send the message again."
+
+// failStopped fails the task of execCtx, which the server stopped, so
+// that its subscribers get a final event. sent is whether the task was
+// already sent.
+func failStopped(execCtx *a2asrv.ExecutorContext, sent bool) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		if !sent && execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
+			return
+		}
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(stoppedMessage))), nil)
 	}
 }
 

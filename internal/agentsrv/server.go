@@ -176,6 +176,8 @@ type Server struct {
 	// stalls fails the turns of the ACP executors in which the agent stopped
 	// sending updates.
 	stalls *stallGuard
+	// lockFile is the lock file of the state directory the server opened.
+	lockFile os.FileInfo
 }
 
 // maxExecutions bounds the tasks running at once, and
@@ -297,6 +299,9 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 		return fmt.Errorf("locking the agent directory: %w", err)
 	}
 	closers.push(func(context.Context) error { return release() })
+	if s.lockFile, err = os.Stat(s.dir.LockPath()); err != nil {
+		return err
+	}
 	// Written before the slow startup steps, so that a stop can signal a
 	// server whose control socket doesn't exist yet.
 	if err := fsutil.WriteAtomic(s.dir.PIDPath(), []byte(strconv.Itoa(pid())), 0o600); err != nil {
@@ -569,6 +574,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	s.background.Go(func() { s.approvals.CloseStale(ctx) })
 	s.watches.Resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
+	s.background.Go(func() { s.watchState(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.startBackups(ctx)
@@ -616,13 +622,19 @@ func (s *Server) listenLocal(ctx context.Context, closers *stack, errc chan<- er
 // serveHTTP serves the routes of a listener in the background and returns
 // the function which shuts the listener down.
 func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, errc chan<- error) func(context.Context) error {
-	srv := httpserver.New(ctx, s.routes(l), httpserver.WithConnContext(connContext))
+	// Requests outlive ctx for a moment on the way out, so that the streams
+	// of tasks the server stopped get their final events.
+	reqCtx, cancelRequests := context.WithCancel(context.WithoutCancel(ctx))
+	srv := httpserver.New(reqCtx, s.routes(l), httpserver.WithConnContext(connContext))
 	go func() {
 		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) && !errors.Is(err, net.ErrClosed) {
 			reportFatal(errc, fmt.Errorf("%s listener: %w", l.kind, err))
 		}
 	}()
 	return func(ctx context.Context) error {
+		defer cancelRequests()
+		grace := time.AfterFunc(requestGrace, cancelRequests)
+		defer grace.Stop()
 		err := srv.Shutdown(ctx)
 		if errors.Is(err, context.DeadlineExceeded) {
 			return srv.Close()
@@ -630,6 +642,9 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 		return err
 	}
 }
+
+// requestGrace is how long requests may run once the server stops.
+const requestGrace = 2 * time.Second
 
 // reportFatal hands err to Run, which stops on the first one; later errors
 // are only logged.
@@ -682,6 +697,32 @@ func (s *Server) pruneLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+	}
+}
+
+// watchState stops the server once its state directory is deleted or
+// replaced, which leaves nothing to stop it with and lets another server
+// start in the directory.
+func (s *Server) watchState(ctx context.Context) {
+	t := time.NewTicker(s.timings.StateCheckInterval)
+	defer t.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+		fi, err := os.Stat(s.dir.LockPath())
+		if err == nil && os.SameFile(fi, s.lockFile) {
+			continue
+		}
+		if err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("checking the state directory", "error", err)
+			continue
+		}
+		slog.Warn("the state directory was deleted; stopping", "dir", s.dir.StateDir())
+		s.Stop()
+		return
 	}
 }
 
