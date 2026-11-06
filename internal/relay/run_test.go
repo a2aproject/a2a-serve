@@ -93,7 +93,10 @@ func runFake(t *testing.T, exitAfter string) (relaydir.Dir, *control.Client, con
 		}
 	})
 	d := relaydir.Dir{Root: dir}
-	port := freeTestPort(t)
+	port, err := freePort()
+	if err != nil {
+		t.Fatalf("freePort() error = %v", err)
+	}
 	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
 		t.Fatalf("SaveSettings() error = %v", err)
 	}
@@ -109,19 +112,6 @@ func runFake(t *testing.T, exitAfter string) (relaydir.Dir, *control.Client, con
 	}()
 	t.Cleanup(cancel)
 	return d, control.NewSocketClient(d.SocketPath(), 5*time.Second), cancel, done
-}
-
-func freeTestPort(t *testing.T) int {
-	t.Helper()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatal(err)
-	}
-	port := ln.Addr().(*net.TCPAddr).Port
-	if err := ln.Close(); err != nil {
-		t.Fatal(err)
-	}
-	return port
 }
 
 func waitRunning(t *testing.T, c *control.Client, done <-chan error) {
