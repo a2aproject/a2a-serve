@@ -26,6 +26,33 @@ type turnCount struct {
 	n  int
 	// idle is closed when n drops to zero, for those who wait for it.
 	idle chan struct{}
+	// held are the keys of the turns that hold added, until release.
+	held map[any]struct{}
+}
+
+// hold counts a turn under key until release is called with it.
+func (c *turnCount) hold(key any) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if _, ok := c.held[key]; ok {
+		return
+	}
+	if c.held == nil {
+		c.held = make(map[any]struct{})
+	}
+	c.held[key] = struct{}{}
+	c.n++
+}
+
+// release ends the turn that hold counted under key, if there is one.
+func (c *turnCount) release(key any) {
+	c.mu.Lock()
+	_, ok := c.held[key]
+	delete(c.held, key)
+	c.mu.Unlock()
+	if ok {
+		c.done()
+	}
 }
 
 func (c *turnCount) add() {
