@@ -47,7 +47,9 @@ func newHarnessCmd(cfg *globalConfig, sf *serverFlags, name string) *cobra.Comma
 		Short: short,
 		Long: short + `. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like ` + "`a2a-serve config set`" + `. In a
-subdirectory of an agent, pass --dir to create a separate agent.
+subdirectory of an agent, pass --dir to create a separate agent while that
+agent is stopped. The Docker sandbox refuses your home directory or / as the
+workspace unless --allow-broad-mount names it.
 
 ` + flagparse.SecretHelp,
 		Example: fmt.Sprintf(`  a2a-serve start %[1]s --name coder --secret OPENROUTER_API_KEY

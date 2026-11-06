@@ -56,6 +56,9 @@ type Config struct {
 	Workspace string `yaml:"workspace,omitempty" json:"workspace,omitempty"`
 	// Mounts are src[:dst][:ro] specs mounted besides the workspace.
 	Mounts []string `yaml:"mounts,omitempty" json:"mounts,omitempty"`
+	// AllowBroadMounts are the paths the Docker sandbox may mount although
+	// they are the user's home directory, / or a directory that holds it.
+	AllowBroadMounts []string `yaml:"allowBroadMounts,omitempty" json:"allowBroadMounts,omitempty"`
 	// Secrets are the names of secrets passed to the harness as environment variables.
 	Secrets []string `yaml:"secrets,omitempty" json:"secrets,omitempty"`
 	// Env are extra NAME=value pairs for the harness.
@@ -710,6 +713,7 @@ func (c *Config) Clone() *Config {
 	out := *c
 	out.Command = slices.Clone(c.Command)
 	out.Mounts = slices.Clone(c.Mounts)
+	out.AllowBroadMounts = slices.Clone(c.AllowBroadMounts)
 	out.Secrets = slices.Clone(c.Secrets)
 	out.Env = slices.Clone(c.Env)
 	out.Approvals.Allow = slices.Clone(c.Approvals.Allow)

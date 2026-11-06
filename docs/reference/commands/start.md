@@ -42,7 +42,9 @@ a2a-serve start echo --port 9000
 
 Start any ACP agent (--command) in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`. In a
-subdirectory of an agent, pass --dir to create a separate agent.
+subdirectory of an agent, pass --dir to create a separate agent while that
+agent is stopped. The Docker sandbox refuses your home directory or / as the
+workspace unless --allow-broad-mount names it.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -73,6 +75,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--allow-broad-mount path` |  | Let the Docker sandbox mount a path that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it (repeatable) |
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
@@ -124,7 +127,9 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 Start a claude agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`. In a
-subdirectory of an agent, pass --dir to create a separate agent.
+subdirectory of an agent, pass --dir to create a separate agent while that
+agent is stopped. The Docker sandbox refuses your home directory or / as the
+workspace unless --allow-broad-mount names it.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -155,6 +160,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--allow-broad-mount path` |  | Let the Docker sandbox mount a path that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it (repeatable) |
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
@@ -278,7 +284,9 @@ a2a-serve start exec 'mkdir -p "/tmp/$A2A_CONTEXT_ID" && tee -a "/tmp/$A2A_CONTE
 
 Start an opencode agent in this directory. The first run saves the settings to .a2a/config.yaml; in an
 existing agent, the flags change them like `a2a-serve config set`. In a
-subdirectory of an agent, pass --dir to create a separate agent.
+subdirectory of an agent, pass --dir to create a separate agent while that
+agent is stopped. The Docker sandbox refuses your home directory or / as the
+workspace unless --allow-broad-mount names it.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal
@@ -309,6 +317,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
+| `--allow-broad-mount path` |  | Let the Docker sandbox mount a path that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it (repeatable) |
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |

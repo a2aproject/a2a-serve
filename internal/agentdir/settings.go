@@ -44,9 +44,12 @@ type Settings struct {
 	// Workspace is a src[:dst][:ro] spec; Mounts are mounted besides it.
 	Workspace string
 	Mounts    []string
-	Env       []string
-	Private   string
-	Public    string
+	// AllowBroadMounts are the paths the Docker sandbox may mount although
+	// they expose the user's home directory.
+	AllowBroadMounts []string
+	Env              []string
+	Private          string
+	Public           string
 	// PrivateAccess is everyone or paired, and PublicAccess paired or anyone.
 	PrivateAccess string
 	PublicAccess  string

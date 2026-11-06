@@ -21,8 +21,10 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -214,6 +216,58 @@ func TestSetRejectsWithoutSaving(t *testing.T) {
 			}
 			if diff := cmp.Diff(agentdir.Secrets{}, secrets); diff != "" {
 				t.Fatalf("Set() saved secrets (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestSetCreatingInsideAnotherAgent(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		running string
+		wantErr bool
+	}{
+		{name: "enclosing agents stopped"},
+		{name: "outer agent running", running: "outer", wantErr: true},
+		{name: "inner agent running", running: "inner", wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			outer := newAgent(t, &agentdir.Config{Name: "outer", Harness: "opencode"}, nil)
+			inner, err := agentdir.Open(filepath.Join(outer.Root, "inner"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := inner.SaveConfig(&agentdir.Config{Name: "inner", Harness: "opencode"}); err != nil {
+				t.Fatal(err)
+			}
+			agents := map[string]agentdir.Dir{"outer": outer, "inner": inner}
+			if tc.running != "" {
+				serveFake(t, agents[tc.running], &fakeServer{})
+			}
+			d, err := agentdir.Open(filepath.Join(inner.Root, "sub", "deeper"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(d.Root, 0o755); err != nil {
+				t.Fatal(err)
+			}
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Harness: "opencode", Name: "nested"}, false)
+
+			if !tc.wantErr {
+				if err != nil || !got.Created {
+					t.Fatalf("Set() = %+v, %v, want the agent created", got, err)
+				}
+				return
+			}
+			if want := "is inside the agent in " + agents[tc.running].Root + ", which is running"; err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Set() error = %v, want %q", err, want)
+			}
+			if d.Exists() {
+				t.Fatalf("Set() created the agent in %s", d.Root)
 			}
 		})
 	}
