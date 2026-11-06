@@ -353,7 +353,7 @@ func (ts *testServer) stop() {
 		if err != nil {
 			ts.t.Errorf("Run() error = %v", err)
 		}
-	case <-time.After(30 * time.Second):
+	case <-time.After(2 * closeTimeout):
 		ts.t.Errorf("server did not stop")
 	}
 	ts.srv = nil
