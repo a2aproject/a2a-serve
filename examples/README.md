@@ -17,3 +17,7 @@ Run an Agent Mesh relay on your machine and join two agents to it with no Tailsc
 ### 4. Observability Agent — [`04-observability-agent/`](04-observability-agent/)
 
 Create an agent from a recipe that answers questions about production with your metrics, logs, traces and profiles through Grafana. Give it read-only identities, describe your environment, share it with your team, and update it to a newer version of its recipe.
+
+### 5. Relay on Cloud Run — [`05-relay-cloud-run/`](05-relay-cloud-run/)
+
+Run a relay on Google Cloud Run, with its data in Cloud SQL and its secrets in Secret Manager. Invite agents, change its settings, and upgrade it to a newer release.

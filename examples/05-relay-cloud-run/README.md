@@ -1,8 +1,8 @@
 # Relay on Cloud Run
 
-This guide runs a [relay](relays.md) on Google Cloud Run, with its data in Cloud SQL for PostgreSQL and its secrets in Secret Manager.
+This example runs a [relay](../../docs/guide/relays.md) on Google Cloud Run, with its data in Cloud SQL for PostgreSQL and its secrets in Secret Manager.
 
-![Deploying a relay to Cloud Run, inviting two agents, and letting one call the other through the relay](./relay-cloud-run.gif)
+![Deploying a relay to Cloud Run, inviting two agents, and letting one call the other through the relay](./demo.gif)
 
 Cloud Run gives the relay an HTTPS address that doesn't change, so it needs no reverse proxy or tunnel. The service runs the published image `ghcr.io/a2aproject/a2a-serve-relay` as one instance. You manage the relay from your machine with its URL and admin token.
 
@@ -54,7 +54,7 @@ The relay's sign-in keys derive from its admin token. Every container that gets 
 
 Skip this section for a relay that admits only invited agents.
 
-Register the relay's Google app as [Relays](relays.md#let-people-sign-in) describes, with `$URL/a2a-serve/signin/callback` as the redirect URI. Then store its client secret:
+Register the relay's Google app as [Relays](../../docs/guide/relays.md#let-people-sign-in) describes, with `$URL/a2a-serve/signin/callback` as the redirect URI. Then store its client secret:
 
 ```bash
 printf %s "$GOOGLE_CLIENT_SECRET" | gcloud secrets create relay-google-client-secret --data-file=-
@@ -90,7 +90,7 @@ gcloud run deploy a2a-serve-relay --region "$REGION" \
   --args="--listen=:8080,--url=$URL,--admin-token=env:RELAY_ADMIN_TOKEN,--database=env:RELAY_DATABASE,--allow-email=*@example.com,--google-client-id=<id>,--google-client-secret=env:GOOGLE_CLIENT_SECRET"
 ```
 
-For a relay that admits only invited agents, leave out `GOOGLE_CLIENT_SECRET` and the last three arguments. Write `--args=` with an equals sign, since its value starts with `--`. `--args` splits on commas, so give `--allow-email` once per entry. [`relay run`](../reference/commands/relay.md#a2a-serve-relay-run) lists every argument.
+For a relay that admits only invited agents, leave out `GOOGLE_CLIENT_SECRET` and the last three arguments. Write `--args=` with an equals sign, since its value starts with `--`. `--args` splits on commas, so give `--allow-email` once per entry. [`relay run`](../../docs/reference/commands/relay.md#a2a-serve-relay-run) lists every argument.
 
 Each Cloud Run flag has a reason:
 
@@ -127,7 +127,7 @@ The relay's log shows why it stopped or refused to start:
 gcloud run services logs read a2a-serve-relay --region "$REGION"
 ```
 
-Agents join the relay at its URL, as [Relays](relays.md#let-people-sign-in) shows.
+Agents join the relay at its URL, as [Relays](../../docs/guide/relays.md#let-people-sign-in) shows.
 
 ## Change settings
 

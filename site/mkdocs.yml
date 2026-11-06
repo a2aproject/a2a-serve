@@ -80,7 +80,6 @@ nav:
       - Email Sign-In: guide/email-sign-in.md
       - Networks: guide/networks.md
       - Relays: guide/relays.md
-      - Relay on Cloud Run: guide/relay-cloud-run.md
       - Messengers: guide/messengers.md
       - Agent2Agent: guide/agent2agent.md
       - Schedules: guide/schedules.md
@@ -92,6 +91,7 @@ nav:
       - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
       - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
       - Observability Agent: examples/04-observability-agent/index.md
+      - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
   - Advanced:
       - Architecture: advanced/architecture.md
       - Agent Directory: advanced/agent-directory.md

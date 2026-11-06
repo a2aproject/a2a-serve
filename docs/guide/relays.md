@@ -133,7 +133,7 @@ docker run -p 8080:8080 -e RELAY_ADMIN_TOKEN -e RELAY_DATABASE ghcr.io/a2aprojec
   --admin-token=env:RELAY_ADMIN_TOKEN --database=env:RELAY_DATABASE
 ```
 
-Run one container per relay. Agent Mesh runs a relay as one process, and two would form two meshes behind one URL. [Relay on Cloud Run](relay-cloud-run.md) runs the image on Google Cloud.
+Run one container per relay. Agent Mesh runs a relay as one process, and two would form two meshes behind one URL. [Relay on Cloud Run](../../examples/05-relay-cloud-run/README.md) runs the image on Google Cloud.
 
 The relay's sign-in keys derive from its admin token, so a container keeps its signed-in agents across restarts when it gets the same admin token.
 
