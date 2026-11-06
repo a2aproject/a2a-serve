@@ -85,8 +85,9 @@ func readFrom(path string, offset int64) ([]string, int64, error) {
 }
 
 // FollowLog prints the last n lines of the log, then new lines until ctx
-// ends if follow is set.
-func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out io.Writer) error {
+// ends if follow is set. Notes for the user, such as that the agent isn't
+// running, go to notes.
+func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out, notes io.Writer) error {
 	offset, err := printTail(dir.LogPath(), n, out)
 	if errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("no log yet at %s", dir.LogPath())
@@ -96,6 +97,11 @@ func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out io
 	}
 	if !follow {
 		return nil
+	}
+	if !serverRunning(dir) {
+		if _, err := fmt.Fprintln(notes, "note: the agent is not running; waiting for it to write to its log (Ctrl-C to stop)"); err != nil {
+			return err
+		}
 	}
 	for {
 		select {

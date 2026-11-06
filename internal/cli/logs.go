@@ -17,6 +17,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 )
 
@@ -30,13 +31,16 @@ func newLogsCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Print the agent's log",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if lines < 0 {
+				return clierr.Usage("--lines must be 0 or more")
+			}
 			d, err := sf.agentDir()
 			if err != nil {
 				return err
 			}
 			ctx, stop := signalContext(cmd.Context())
 			defer stop()
-			return lifecycle.FollowLog(ctx, d, lines, follow, cfg.Out)
+			return lifecycle.FollowLog(ctx, d, lines, follow, cfg.Out, cfg.stderr())
 		},
 	}
 	cmd.Flags().BoolVarP(&follow, "follow", "f", false, "Keep printing new lines")
