@@ -150,7 +150,9 @@ func TestLimitDeadline(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			readErr := make(chan error, 1)
+			reading := make(chan struct{})
 			srv := httptest.NewServer(tc.limit.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				close(reading)
 				_, err := io.Copy(io.Discard, r.Body)
 				readErr <- err
 			})))
@@ -168,6 +170,7 @@ func TestLimitDeadline(t *testing.T) {
 				t.Fatal(err)
 			}
 			go func() {
+				<-reading
 				for _, p := range tc.pauses {
 					time.Sleep(p)
 					if _, err := conn.Write([]byte{'x'}); err != nil {
