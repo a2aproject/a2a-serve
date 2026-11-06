@@ -50,7 +50,7 @@ func remoteRelay(t *testing.T) (string, *meshtest.Mesh) {
 	m := meshtest.New(t, relayAdminToken)
 	m.AddNode(meshadmin.Node{PeerID: "12D3bot", Role: meshadmin.RoleNode, EnrollmentType: "bootstrap", Enrolled: time.Date(2026, 11, 5, 8, 30, 0, 0, time.UTC)}, time.Time{}, "ci-bot")
 	var relayURL string
-	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, testHTTP), func() control.Status {
+	svc := control.NewService(meshadmin.New(m.URL, relayAdminToken, testHTTP), control.NewRemovedAgents(filepath.Join(t.TempDir(), "removed-agents.json")), meshadmin.Policy{}, func() control.Status {
 		return control.Status{URL: relayURL, PID: 7, Versions: control.Versions{A2AServe: "v1.0.0", AgentMesh: "v0.2.0"}, Join: "invites"}
 	}, func(control.Member) bool { return false })
 	h := control.RequireToken(relayAdminToken, backoff.NewFailures(time.Millisecond, time.Millisecond, time.Now), control.Handler(svc, nil))
@@ -106,6 +106,28 @@ func TestRelayCommandsAtURL(t *testing.T) {
 				t.Fatalf("%s wrong output (-want +got) diff = %s", strings.Join(tt.args, " "), diff)
 			}
 		})
+	}
+}
+
+func TestRelayInviteLetsBackARemovedAgent(t *testing.T) {
+	t.Parallel()
+	url, m := remoteRelay(t)
+	if _, err := runRelayCMD(t, "relay", "remove", "ci-bot", "--url", url, "--admin-token", "-"); err != nil {
+		t.Fatalf("relay remove error = %v", err)
+	}
+
+	got, err := runRelayCMD(t, "relay", "invite", "ci-bot", "--url", url, "--admin-token", "-")
+
+	if err != nil {
+		t.Fatalf("relay invite error = %v", err)
+	}
+	want := strings.ReplaceAll("invite ci-bot for {url}, one agent, until 2026-11-06 09:00 UTC:\n  mesh-bt-1\non that agent: a2a-serve config set --private {url} --public {url} --relay-token -\n"+
+		"✓ let back ci-bot (12D3bot): it joins again with its identity when it restarts\n", "{url}", url)
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("relay invite wrong output (-want +got) diff = %s", diff)
+	}
+	if got := m.Banned(); len(got) != 0 {
+		t.Fatalf("relay invite left %v banned, want none", got)
 	}
 }
 

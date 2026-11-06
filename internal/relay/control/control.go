@@ -20,6 +20,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"maps"
 	"slices"
 	"strings"
 	"time"
@@ -64,6 +65,9 @@ type Invite struct {
 	Token   string    `json:"token"`
 	Expires time.Time `json:"expires"`
 	URL     string    `json:"url"`
+	// LetBack is the removed agent of that name that the invite let back
+	// with its identity.
+	LetBack *Member `json:"letBack,omitempty"`
 }
 
 // Member is a node on the relay.
@@ -107,16 +111,26 @@ type Admits func(Member) bool
 // Service implements the operations of the control API with the admin API
 // of the relay's agentmesh-one.
 type Service struct {
-	mesh   *meshadmin.Client
-	status func() Status
-	admits Admits
+	mesh    *meshadmin.Client
+	removed *RemovedAgents
+	policy  meshadmin.Policy
+	status  func() Status
+	admits  Admits
 }
 
-// NewService returns the operations of a relay, whose static status comes
-// from status, and which lets the members that signed in stay that admits
-// allows.
-func NewService(mesh *meshadmin.Client, status func() Status, admits Admits) *Service {
-	return &Service{mesh: mesh, status: status, admits: admits}
+// NewService returns the operations of a relay, which remembers the agents
+// it removes in removed, applies policy to its mesh, gets its static status
+// from status, and lets the members that signed in stay that admits allows.
+func NewService(mesh *meshadmin.Client, removed *RemovedAgents, policy meshadmin.Policy, status func() Status, admits Admits) *Service {
+	return &Service{mesh: mesh, removed: removed, policy: policy, status: status, admits: admits}
+}
+
+// ApplyPolicy applies the relay's policy to its mesh.
+func (s *Service) ApplyPolicy(ctx context.Context) error {
+	if err := s.mesh.SetPolicy(ctx, s.policy); err != nil {
+		return fmt.Errorf("applying the relay's policy: %w", err)
+	}
+	return nil
 }
 
 // Status returns the relay's status.
@@ -156,7 +170,46 @@ func (s *Service) Invite(ctx context.Context, req InviteRequest) (*Invite, error
 	if err != nil {
 		return nil, err
 	}
-	return &Invite{Name: name, Token: tok.Token, Expires: tok.Expires, URL: s.status().URL}, nil
+	back, err := s.letBack(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	return &Invite{Name: name, Token: tok.Token, Expires: tok.Expires, URL: s.status().URL, LetBack: back}, nil
+}
+
+// letBack lifts the ban of the removed invited agent named name, which
+// keeps its identity, and returns it, or nil when there is none.
+func (s *Service) letBack(ctx context.Context, name string) (*Member, error) {
+	peers, err := s.removed.load()
+	if err != nil {
+		return nil, err
+	}
+	peer, ok := peers[name]
+	if !ok {
+		return nil, nil
+	}
+	all, err := s.Members(ctx, true)
+	if err != nil {
+		return nil, err
+	}
+	var back *Member
+	if i := slices.IndexFunc(all, func(m Member) bool { return m.Peer == peer }); i >= 0 && all[i].Banned && all[i].Invite {
+		if err := s.mesh.Unban(ctx, peer); err != nil {
+			return nil, fmt.Errorf("letting back %s: %w", name, err)
+		}
+		// Agent Mesh announces no unban, and routers and agents read the bans
+		// again at once only on a policy update.
+		if err := s.ApplyPolicy(ctx); err != nil {
+			return nil, fmt.Errorf("letting back %s: %w", name, err)
+		}
+		m := all[i]
+		m.Banned = false
+		back = &m
+	}
+	if err := s.removed.update(func(peers map[string]string) { forget(peers, peer) }); err != nil {
+		return nil, err
+	}
+	return back, nil
 }
 
 // Members lists the agents on the relay, and with banned the banned ones too.
@@ -165,7 +218,20 @@ func (s *Service) Members(ctx context.Context, banned bool) ([]Member, error) {
 	if err != nil {
 		return nil, err
 	}
-	return members(st, banned), nil
+	ms := members(st, banned)
+	if !banned {
+		return ms, nil
+	}
+	peers, err := s.removed.load()
+	if err != nil {
+		return nil, err
+	}
+	for i, m := range ms {
+		if m.Banned && m.Agent == "" {
+			ms[i].Agent = agentsOf(peers, m.Peer)
+		}
+	}
+	return ms, nil
 }
 
 func members(st *meshadmin.Status, banned bool) []Member {
@@ -199,12 +265,15 @@ func (s *Service) Remove(ctx context.Context, req RemoveRequest) (*RemoveRespons
 	if target == "" {
 		return nil, agenterr.Invalidf("name the member to remove: an agent, an email or a peer ID")
 	}
-	all, err := s.Members(ctx, false)
+	all, err := s.Members(ctx, true)
 	if err != nil {
 		return nil, err
 	}
-	matched, err := match(all, target)
+	matched, err := match(slices.DeleteFunc(slices.Clone(all), func(m Member) bool { return m.Banned }), target)
 	if err != nil {
+		return nil, err
+	}
+	if err := s.remember(all, matched); err != nil {
 		return nil, err
 	}
 	removed, err := s.ban(ctx, matched)
@@ -251,6 +320,44 @@ func (s *Service) Reconcile(ctx context.Context) (removed, readmitted []Member, 
 		readmitted = append(readmitted, m)
 	}
 	return removed, readmitted, nil
+}
+
+// remember records the agent names of the invited members among matched,
+// which are about to be removed, and forgets the names of peers that all
+// doesn't list as removed.
+func (s *Service) remember(all, matched []Member) error {
+	removed := map[string]bool{}
+	for _, m := range all {
+		removed[m.Peer] = m.Banned
+	}
+	return s.removed.update(func(peers map[string]string) {
+		maps.DeleteFunc(peers, func(_, p string) bool { return !removed[p] })
+		for _, m := range matched {
+			if !m.Invite || m.Agent == "" {
+				continue
+			}
+			for name := range strings.SplitSeq(m.Agent, ",") {
+				peers[name] = m.Peer
+			}
+		}
+	})
+}
+
+// forget drops the agent names of peer from peers.
+func forget(peers map[string]string, peer string) {
+	maps.DeleteFunc(peers, func(_, p string) bool { return p == peer })
+}
+
+// agentsOf returns the agent names peers record for peer.
+func agentsOf(peers map[string]string, peer string) string {
+	var names []string
+	for name, p := range peers {
+		if p == peer {
+			names = append(names, name)
+		}
+	}
+	slices.Sort(names)
+	return strings.Join(names, ",")
 }
 
 // ban bans ms and returns them banned. It stops at the first failure.

@@ -29,6 +29,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -262,6 +263,21 @@ func TestHasMeshIdentity(t *testing.T) {
 				t.Fatalf("hasMeshIdentity(%q) = %v, want %v", tc.dir, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestSavedPeerID(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+
+	if got := savedPeerID(dir); !strings.HasPrefix(got, "12D3KooW") {
+		t.Fatalf("savedPeerID() = %q, want an Ed25519 peer ID", got)
+	}
+	if got := savedPeerID(t.TempDir()); got != "" {
+		t.Fatalf("savedPeerID() of an empty directory = %q, want none", got)
 	}
 }
 

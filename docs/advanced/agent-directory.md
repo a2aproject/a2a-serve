@@ -48,6 +48,7 @@ A [relay](../guide/relays.md) keeps its settings and state in `.a2a` too. A dire
         ├── agentmesh/           # agentmesh-one's data: SQLite database, router key
         ├── agentmesh-version    # the Agent Mesh version that last ran on the data
         ├── backups/             # SQLite backups taken before upgrades; the last 3 are kept
+        ├── removed-agents.json  # names of removed invited agents, which a new invite lets back
         ├── relay.log            # agentmesh-one's output, and the log of a relay service
         ├── relay.lock           # held by the running relay
         └── relay.sock           # control socket for a2a-serve relay commands

@@ -101,7 +101,15 @@ a2a-serve relay remove reviewer
 
 Removing an agent that signed in bans the Google account behind it, so the person's other agents lose their place too, and they can't sign in again until the relay lets them back.
 
-For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email. Invite a removed invited agent again to let it back.
+For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email.
+
+To let a removed invited agent back, invite its name again:
+
+```bash
+a2a-serve relay invite reviewer
+```
+
+The agent comes back with its identity when it restarts. It keeps its URLs, so pairings and contacts that saved them keep working. The relay remembers the names of removed agents in its relay directory, so a relay in a container forgets them when the container goes away. `relay members --banned` lists the removed agents.
 
 ## Manage a relay elsewhere
 

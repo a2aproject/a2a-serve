@@ -30,14 +30,16 @@ func newRelayRemoveCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 		Short:   "Remove agents from the relay",
 		Long: `Remove agents from the relay at once: the agent with that name or peer ID,
 or every agent of a person, given their email. The relay refuses their next
-request, and the other agents drop them. A removed agent can't join again
-with its identity, and removing an agent that signed in bans the Google
-account behind it, so the person can't sign in again either.
+request, and the other agents drop them. Removing an agent that signed in
+bans the Google account behind it, so the person can't sign in again either.
+
+To let a removed invited agent back, invite its name again with
+` + "`a2a-serve relay invite`" + `. It joins again with its identity.
 
 For people who sign in, --allow-email decides: when the relay starts, it
 removes the agents of people the list no longer admits, and lets back the
 removed people it admits. To keep someone out, also drop them from
---allow-email. Invite a removed invited agent again to let it back.
+--allow-email.
 
 ` + flagparse.SecretHelp,
 		Args: namedArgs,

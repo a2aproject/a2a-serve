@@ -26,6 +26,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -141,6 +142,8 @@ type RelayLogin struct {
 
 type relayInfo struct {
 	issuer, clientID, audience string
+	// banned are the peer IDs of the agents the relay removed.
+	banned []string
 }
 
 // info reads the relay's identity provider, which agents sign in with.
@@ -183,9 +186,9 @@ func fetchRelayInfo(ctx context.Context, client *http.Client, relayURL string) (
 	return info, nil
 }
 
-// decodeRelayInfo reads oidc_issuer (1), client_id (2) and audience (3) from
-// a serialized api.ControlPlaneInfoResponse without pulling generated mesh
-// protos into builds without -tags agentmesh.
+// decodeRelayInfo reads oidc_issuer (1), client_id (2), audience (3) and
+// banned_peer_ids (5) from a serialized api.ControlPlaneInfoResponse
+// without pulling generated mesh protos into builds without -tags agentmesh.
 func decodeRelayInfo(b []byte) (relayInfo, error) {
 	var info relayInfo
 	for len(b) > 0 {
@@ -194,7 +197,7 @@ func decodeRelayInfo(b []byte) (relayInfo, error) {
 			return relayInfo{}, protowire.ParseError(n)
 		}
 		b = b[n:]
-		if typ == protowire.BytesType && (num == 1 || num == 2 || num == 3) {
+		if typ == protowire.BytesType && (num == 1 || num == 2 || num == 3 || num == 5) {
 			v, m := protowire.ConsumeString(b)
 			if m < 0 {
 				return relayInfo{}, protowire.ParseError(m)
@@ -207,6 +210,8 @@ func decodeRelayInfo(b []byte) (relayInfo, error) {
 				info.clientID = v
 			case 3:
 				info.audience = v
+			case 5:
+				info.banned = append(info.banned, v)
 			}
 			continue
 		}
@@ -217,6 +222,24 @@ func decodeRelayInfo(b []byte) (relayInfo, error) {
 		b = b[m:]
 	}
 	return info, nil
+}
+
+// relayRemoval returns an error that says how to get back when the relay
+// in cfg removed the agent with peerID, and nil otherwise, also when it
+// can't tell.
+func relayRemoval(ctx context.Context, client *http.Client, cfg RelayConfig, peerID string) error {
+	info, err := fetchRelayInfo(ctx, client, cfg.URL)
+	if err != nil {
+		slog.Debug("checking whether the relay removed this agent", "error", err)
+		return nil
+	}
+	if !slices.Contains(info.banned, peerID) {
+		return nil
+	}
+	if cfg.Token == "" {
+		return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let you back on --allow-email and restart the relay", cfg.URL, peerID)
+	}
+	return fmt.Errorf("the relay %s removed this agent (peer %s); ask its operator to let it back with `a2a-serve relay invite %s`, then run `a2a-serve restart`", cfg.URL, peerID, cfg.AgentName)
 }
 
 func (l *RelayLogin) getJSON(ctx context.Context, u string, out any) error {
