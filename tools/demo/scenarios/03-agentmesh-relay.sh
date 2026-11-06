@@ -62,6 +62,13 @@ JSON"
   local name
   for name in coder reviewer; do
     run B "mkdir -p ~/a2a-example3/$name && cd ~/a2a-example3/$name"
+    if [[ "$name" == coder ]]; then
+      run B "cat > README.md <<'EOF'
+# greet
+
+\`greet\` prints a greeting in the language you pick: \`greet --lang fr\` prints \`Bonjour\`.
+EOF"
+    fi
     run B "a2a-serve config set --agent $AGENT --name $name $AGENT_FLAGS \\
   --private \"\$RELAY\" --public \"\$RELAY\" --relay-token env:RELAY_TOKEN"
     run B "a2a-serve start --detach"
@@ -77,7 +84,10 @@ JSON"
   run B "a2a-serve peers --dir ~/a2a-example3/coder"
   run B "a2a-serve contact add reviewer --dir ~/a2a-example3/coder"
   run B "a2a send -a \"\$(a2a-serve status --url=local --dir ~/a2a-example3/coder)\" \\
-  \"$(fake 'Ask reviewer what it thinks of the README of this project.' 'call reviewer hello')\""
+  \"$(fake 'Ask reviewer what it thinks of the README in your workspace.' 'call reviewer hello')\""
+  approve_pending B '-a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)"'
+  expect_status B completed
+  expect_log "$HOME/a2a-example3/reviewer" 'task completed'
   pause 3
 
   clear_pane B
@@ -89,6 +99,8 @@ JSON"
   pause 2
   run B "a2a-serve pair join \"\$PUBLIC\" ${code#code }"
   run B "a2a send -a \"\$PUBLIC\" \"$(fake 'What does this project do?' hello)\""
+  approve_pending B '-a "$PUBLIC"'
+  expect_status B completed
   pause 3
 
   run B "a2a-serve stop --dir ~/a2a-example3/coder && a2a-serve stop --dir ~/a2a-example3/reviewer"

@@ -81,5 +81,7 @@ EOF'
   run B "a2a-serve contact add reviewer --url $url --code ${code#code }"
   run B "a2a send \"$(fake 'Ask the reviewer agent what files it sees in its workspace, and tell me.' 'call reviewer hello')\""
   approve_pending B
+  expect_status B completed
+  expect_log "$HOME/a2a-example1/reviewer" 'task completed'
   pause 4
 }

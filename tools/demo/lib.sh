@@ -238,6 +238,25 @@ approve_pending() {
   reply_pending "$1" approve "${2:-}"
 }
 
+# expect_status <pane> <status> fails the recording unless the pane's last
+# a2a send ended in status, such as completed.
+expect_status() {
+  local got
+  got="$(last_match "$1" 'Status: +[a-z-]+')"
+  [[ "${got##* }" == "$2" ]] || die "pane $1: the last task is ${got##* }, want $2"
+}
+
+# expect_log <dir> <ERE> fails the recording unless the log of the agent in
+# dir shows a match within 10 seconds.
+expect_log() {
+  local i
+  for i in 1 2 3 4 5 6 7 8 9 10; do
+    a2a-serve logs --dir "$1" --lines 0 2>/dev/null | grep -Eq -- "$2" && return 0
+    sleep 1
+  done
+  die "agent in $1: no log line matches /$2/"
+}
+
 # fake <real> <fake> prints <fake> in fake mode and <real> otherwise, for
 # prompts that fakeacp has to understand.
 fake() {

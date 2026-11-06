@@ -116,7 +116,8 @@ the macOS default. It defines:
 Type the commands of the example README as written, in its order, so the
 demo matches the docs. When a README changes, update its scenario. Use
 `$AGENT` and `$AGENT_FLAGS` in start commands, so `--fake` can swap in
-fakeacp.
+fakeacp. Check the key results with `expect_status` and `expect_log`; a
+step that stops in `input-required` doesn't fail the run on its own.
 
 Helpers from `lib.sh`, where `<pane>` is a pane name:
 
@@ -133,6 +134,8 @@ Helpers from `lib.sh`, where `<pane>` is a pane name:
 | `say <pane> <text>` | Types a `# text` comment as narration. |
 | `wait_text <pane> <ERE> [timeout]` | Waits until the pane shows a match. |
 | `last_match <pane> <ERE>` | Prints the last match on the pane, to reuse a task ID or code. |
+| `expect_status <pane> <status>` | Fails the run unless the pane's last `a2a send` ended in the status, such as `completed`. |
+| `expect_log <dir> <ERE>` | Fails the run unless the log of the agent in dir matches, such as `task completed` on the agent that was called. |
 | `clear_pane`, `interrupt`, `pause <s>` | Ctrl-L, Ctrl-C, a pause scaled by `--speed`. |
 | `until_ok <timeout> <cmd...>` | Retries a command off camera, for waits that would bore the viewer. |
 | `fake <real> <fake>` | Picks a prompt that fakeacp understands in `--fake` mode (`hello`, `ask`, `call <agent> <text>`; see `internal/agentsrv/testdata/fakeacp/main.go`). |

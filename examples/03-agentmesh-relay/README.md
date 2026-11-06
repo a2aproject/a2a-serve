@@ -53,6 +53,11 @@ CODER_TOKEN="$(a2a-serve relay invite coder -o json | jq -r .token)"
 REVIEWER_TOKEN="$(a2a-serve relay invite reviewer -o json | jq -r .token)"
 
 mkdir -p ~/a2a-example3/coder && cd ~/a2a-example3/coder
+cat > README.md <<'EOF'
+# greet
+
+`greet` prints a greeting in the language you pick: `greet --lang fr` prints `Bonjour`.
+EOF
 printf '%s' "$CODER_TOKEN" | a2a-serve config set --agent opencode --name coder --secret OPENROUTER_API_KEY \
   --model openrouter/~google/gemini-flash-latest --private "$RELAY" --public "$RELAY" --relay-token -
 a2a-serve start --detach
@@ -63,6 +68,7 @@ printf '%s' "$REVIEWER_TOKEN" | a2a-serve config set --agent opencode --name rev
 a2a-serve start --detach
 ```
 
+The `README.md` gives coder a small project to talk about.
 `--relay-token` is a `config set` setting, so `config set --agent` creates
 each agent with it before its first start, and `start` starts it.
 
@@ -99,11 +105,21 @@ reviewer, and coder needs no code:
 ```bash
 a2a-serve contact add reviewer --dir ~/a2a-example3/coder
 a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)" \
-  "Ask reviewer what it thinks of the README of this project."
+  "Ask reviewer what it thinks of the README in your workspace."
+```
+
+coder reads its `README.md` and calls reviewer with `a2a send`. That is a
+bash command, so coder asks first and the task stops in `input-required`.
+Approve it on the task that the output names:
+
+```bash
+a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)" \
+  --task-id <task-id> approve
 ```
 
 coder's call goes through its server, over the relay, to reviewer. No
-credentials enter coder's sandbox.
+credentials enter coder's sandbox. The task completes with reviewer's
+answer.
 
 ## 4. Call an agent from outside the relay
 
