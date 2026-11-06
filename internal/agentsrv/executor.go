@@ -64,6 +64,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Settings:     s.sessionSettings,
 		Turn:         s.claims.turn,
 	})
 	if err != nil {
@@ -106,6 +107,7 @@ func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer)
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Settings:     s.sessionSettings,
 		Turn:         s.claims.turn,
 		// Approvals reject questions after AnonymousQuestionTimeout; this
 		// stops the turn if that answer doesn't arrive.
@@ -134,6 +136,7 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 		AutoAnswer:   liveToolRules(s.config),
 		SessionStore: s.store.Sessions(),
 		Session:      s.sessionParams,
+		Settings:     s.sessionSettings,
 		Turn:         s.claims.turn,
 	})
 	if err != nil {
@@ -332,6 +335,17 @@ func (s *Server) localCLI() string {
 		return ""
 	}
 	return cli
+}
+
+// sessionSettings selects the model of the config in every session, so that
+// a model the harness doesn't know fails the turn.
+func (s *Server) sessionSettings(context.Context, *a2asrv.ExecutorContext) (map[string]any, error) {
+	cfg := s.config()
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return nil, err
+	}
+	return profile.SessionSettings(cfg.Model), nil
 }
 
 // liveToolRules answers tool permissions with the allow and deny rules of

@@ -272,6 +272,34 @@ func TestLookup(t *testing.T) {
 	}
 }
 
+func TestSessionSettings(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		command []string
+		model   string
+		want    map[string]any
+	}{
+		{name: "opencode", model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
+		{name: "opencode", command: []string{"cloudcode", "acp"}, model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
+		{name: "opencode"},
+		{name: "claude", model: "sonnet"},
+		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, model: "gemini-pro"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name+strings.Join(tc.command, "_")+tc.model, func(t *testing.T) {
+			t.Parallel()
+			p, err := Lookup(tc.name, tc.command)
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, p.SessionSettings(tc.model)); diff != "" {
+				t.Fatalf("SessionSettings() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestWarnings(t *testing.T) {
 	t.Parallel()
 	openrouter := []string{"OPENROUTER_API_KEY"}
