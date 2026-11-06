@@ -241,6 +241,39 @@ func shortTempDir(t *testing.T) string {
 	return d
 }
 
+// copyAgent copies the agent directory src to dst with the modes of its
+// files, as a restore or a move does.
+func copyAgent(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, strings.TrimPrefix(path, src))
+		if d.IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatalf("copying %s to %s: %v", src, dst, err)
+	}
+}
+
 func leftFiles(dir string) []string {
 	var left []string
 	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {

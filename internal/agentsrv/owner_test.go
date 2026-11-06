@@ -166,9 +166,7 @@ func TestOwnerTokenOfOriginalKeptWhenRestoredCopyStarts(t *testing.T) {
 	dir := orig.dir.Root
 	orig.stop()
 	copyDir := shortTempDir(t)
-	if err := os.CopyFS(copyDir, os.DirFS(dir)); err != nil {
-		t.Fatalf("CopyFS() error = %v", err)
-	}
+	copyAgent(t, dir, copyDir)
 	orig = startServer(t, serverOpts{dir: dir, credentials: creds})
 	origToken := lookupOwnerToken(t, creds, orig.localURL())
 
