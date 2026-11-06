@@ -3,10 +3,11 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Open a page where the owner sees what the agent is doing: its conversations
-and tasks, pending approvals with Approve and Deny, and the state of its
-messengers, pairings, webhook nodes and contacts.
+and tasks, pending approvals with buttons that answer them, and the state of
+its messengers, pairings, webhook nodes and contacts.
 
-The link logs in once and works for 5 minutes; the session lasts 12 hours.
+The link logs in once and works for 5 minutes. The session lasts 12 hours. The
+server keeps sessions in memory, so they end when it restarts.
 The page is served on the local URL, and with --url private on the private
 URL of a tailnet, which is HTTPS. It is never served on a relay or the public
 URL.

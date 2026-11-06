@@ -26,8 +26,9 @@ var pages = template.Must(template.New("").Funcs(template.FuncMap{
 		if t.IsZero() {
 			return "-"
 		}
-		return time.Since(t).Round(time.Second).String() + " ago"
+		return elapsed(t) + " ago"
 	},
+	"elapsed": elapsed,
 	"when": func(t time.Time) string {
 		if t.IsZero() {
 			return "-"
@@ -53,7 +54,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 {{define "overview"}}{{template "head" .Agent}}
 <h1>{{.Agent}} <span class="muted">({{.Status.Harness}})</span></h1>
 <table>
-<tr><th>Running</th><td>for {{since .Status.Started}}, pid {{.Status.PID}}</td></tr>
+<tr><th>Running</th><td>for {{elapsed .Status.Started}}, pid {{.Status.PID}}</td></tr>
 <tr><th>Directory</th><td>{{.Status.Dir}}</td></tr>
 <tr><th>Local</th><td>{{.Status.Local}}</td></tr>
 {{if .Status.Private}}<tr><th>Private</th><td>{{.Status.Private}}{{if .Status.PrivateNote}} <span class="muted">({{.Status.PrivateNote}})</span>{{end}}</td></tr>{{end}}
@@ -65,7 +66,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 
 <h2>Pending approvals</h2>
 {{range .Approvals}}<div class="approval">
-<div class="muted">{{if .Contact}}from {{.Contact}}, {{end}}asked {{since .Created}} · <a href="{{path}}/conversations/{{.ContextID}}">conversation</a></div>
+<div class="muted">{{if .Contact}}from {{.Contact}}, {{end}}asked {{since .Created}}{{if .ContextID}} · <a href="{{path}}/conversations/{{.ContextID}}">conversation</a>{{end}}</div>
 <pre>{{.Text}}</pre>
 <form method="post" action="{{.Action}}"><input type="hidden" name="csrf" value="{{$.CSRF}}">
 {{if .Question}}<input type="hidden" name="question" value="{{.Question}}">{{end}}
@@ -115,6 +116,14 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 {{end}}
 {{template "foot"}}{{end}}
 `))
+
+// elapsed is the time since t, or "-" if t is unset.
+func elapsed(t time.Time) string {
+	if t.IsZero() {
+		return "-"
+	}
+	return time.Since(t).Round(time.Second).String()
+}
 
 func render(w http.ResponseWriter, name string, data any) {
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
