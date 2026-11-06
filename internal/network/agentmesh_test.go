@@ -29,12 +29,9 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
-<<<<<<< HEAD
 	"strings"
-=======
 	"sync"
 	"sync/atomic"
->>>>>>> c5b9e36 (fix: report a relay that removed the agent or lost its connection)
 	"testing"
 	"time"
 
