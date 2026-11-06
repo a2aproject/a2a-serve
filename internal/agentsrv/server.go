@@ -566,6 +566,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []channel.Chan
 	var ownerErr error
 	if s.credentials != nil {
 		ownerErr = s.saveLocalOwnerToken(ctx)
+		closers.push(s.forgetLocalOwnerToken)
 	}
 	if err := s.serveControl(ctx, closers, errc); err != nil {
 		return nil, err

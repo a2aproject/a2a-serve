@@ -49,6 +49,9 @@ type Credential struct {
 	Agent     string    `json:"agent,omitempty"`
 	Principal string    `json:"principal,omitempty"`
 	Created   time.Time `json:"created"`
+	// Dir is the .a2a directory of the agent whose server saved this owner
+	// token. The entry is dropped once the directory is gone.
+	Dir string `json:"dir,omitempty"`
 }
 
 // Store is a credentials file, readable only by its owner.
@@ -70,8 +73,26 @@ func At(home string) *Store {
 	return &Store{Path: filepath.Join(home, ".config", "a2a-serve", "credentials.json")}
 }
 
-// List returns the stored credentials.
+// List returns the stored credentials, without those of agents whose
+// directory is gone.
 func (s *Store) List() ([]Credential, error) {
+	creds, err := s.read()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(creds, removed), nil
+}
+
+// removed reports whether c was saved by an agent whose directory is gone.
+func removed(c Credential) bool {
+	if c.Dir == "" {
+		return false
+	}
+	_, err := os.Stat(c.Dir)
+	return errors.Is(err, os.ErrNotExist)
+}
+
+func (s *Store) read() ([]Credential, error) {
 	data, err := os.ReadFile(s.Path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
@@ -101,12 +122,14 @@ func (s *Store) save(creds []Credential) error {
 // concurrent commands don't lose each other's changes.
 func (s *Store) update(fn func([]Credential) ([]Credential, bool)) error {
 	return fsutil.WithLock(s.Path, func() error {
-		creds, err := s.List()
+		creds, err := s.read()
 		if err != nil {
 			return err
 		}
+		n := len(creds)
+		creds = slices.DeleteFunc(creds, removed)
 		next, changed := fn(creds)
-		if !changed {
+		if !changed && len(creds) == n {
 			return nil
 		}
 		return s.save(next)
@@ -132,6 +155,21 @@ func (s *Store) Delete(u string) (bool, error) {
 		return creds, found
 	})
 	return found, err
+}
+
+// DeleteDir removes the owner tokens saved by the agent in the .a2a
+// directory dir.
+func (s *Store) DeleteDir(dir string) error {
+	return s.update(func(creds []Credential) ([]Credential, bool) {
+		n := len(creds)
+		creds = slices.DeleteFunc(creds, func(x Credential) bool { return x.Dir == dir })
+		return creds, len(creds) != n
+	})
+}
+
+// Prune removes the credentials of agents whose directory is gone.
+func (s *Store) Prune() error {
+	return s.update(func(creds []Credential) ([]Credential, bool) { return creds, false })
 }
 
 // Has reports whether [Store.Delete] would remove a credential for url.

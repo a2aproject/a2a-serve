@@ -51,6 +51,20 @@ func lookupOwnerToken(t *testing.T, creds *credstore.Store, url string) string {
 	return c.Token
 }
 
+// stopLeavingOwnerToken stops ts and saves its owner token again, as a
+// server that exited without cleaning up leaves it.
+func stopLeavingOwnerToken(t *testing.T, ts *testServer, creds *credstore.Store) {
+	t.Helper()
+	c, ok, err := creds.Lookup(ts.localURL())
+	if err != nil || !ok {
+		t.Fatalf("Lookup() = %v, %v, want the owner token", ok, err)
+	}
+	ts.stop()
+	if err := creds.Put(c); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+}
+
 func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	t.Parallel()
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
@@ -61,7 +75,7 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
 
 	dir := ts.dir.Root
-	ts.stop()
+	stopLeavingOwnerToken(t, ts, creds)
 	ts = startServer(t, serverOpts{dir: dir, credentials: creds})
 	if got := lookupOwnerToken(t, creds, ts.localURL()); got != token {
 		t.Fatalf("owner token after a restart = %q, want the saved %q", got, token)
@@ -70,7 +84,7 @@ func TestOwnerTokenSavedForThisMachine(t *testing.T) {
 	if _, err := controlapi.NewClient(ts.dir).Revoke(context.Background(), localOwnerName); err != nil {
 		t.Fatalf("Revoke(%q) error = %v", localOwnerName, err)
 	}
-	ts.stop()
+	stopLeavingOwnerToken(t, ts, creds)
 	ts = startServer(t, serverOpts{dir: dir, credentials: creds})
 	renewed := lookupOwnerToken(t, creds, ts.localURL())
 	if renewed == token {
@@ -90,7 +104,7 @@ func TestOwnerTokenReplacedWhenLocalURLChanges(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant", credentials: creds})
 	oldURL := ts.localURL()
 	dir := ts.dir.Root
-	ts.stop()
+	stopLeavingOwnerToken(t, ts, creds)
 
 	ts = startServer(t, serverOpts{dir: dir, credentials: creds, configure: func(c *agentdir.Config) { c.Port = freePort(t) }})
 
@@ -118,7 +132,7 @@ func TestOwnerTokenKeepsAgentNameCurrent(t *testing.T) {
 	ts := startServer(t, serverOpts{name: "assistant", credentials: creds})
 	token := lookupOwnerToken(t, creds, ts.localURL())
 	dir := ts.dir.Root
-	ts.stop()
+	stopLeavingOwnerToken(t, ts, creds)
 
 	ts = startServer(t, serverOpts{dir: dir, credentials: creds, configure: func(c *agentdir.Config) { c.Name = "renamed" }})
 
@@ -128,6 +142,43 @@ func TestOwnerTokenKeepsAgentNameCurrent(t *testing.T) {
 	}
 	if got.Token != token || got.Agent != "renamed" {
 		t.Fatalf("saved owner token after renaming the agent = %+v, want token %q for agent %q", got, token, "renamed")
+	}
+}
+
+func TestOwnerTokenRemovedOnStop(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	ts := startServer(t, serverOpts{credentials: creds})
+	local := ts.localURL()
+	lookupOwnerToken(t, creds, local)
+
+	ts.stop()
+
+	if c, ok, err := creds.Lookup(local); err != nil || ok {
+		t.Fatalf("Lookup(%q) after stop = %+v, %v, %v, want no credential", local, c, ok, err)
+	}
+}
+
+func TestOwnerTokenOfOriginalKeptWhenRestoredCopyStarts(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	orig := startServer(t, serverOpts{name: "proj", credentials: creds})
+	dir := orig.dir.Root
+	orig.stop()
+	copyDir := shortTempDir(t)
+	copyAgent(t, dir, copyDir)
+	orig = startServer(t, serverOpts{dir: dir, credentials: creds})
+	origToken := lookupOwnerToken(t, creds, orig.localURL())
+
+	restored := startServer(t, serverOpts{dir: copyDir, credentials: creds, configure: func(c *agentdir.Config) { c.Port = freePort(t) }})
+
+	if got := lookupOwnerToken(t, creds, orig.localURL()); got != origToken {
+		t.Fatalf("owner token of the original after the restored copy started = %q, want %q", got, origToken)
+	}
+	task := send(t, orig.client(origToken), userText("hello", "", ""))
+	wantResult(t, task, a2a.TaskStateCompleted, "Hello from fakeacp.")
+	if got := lookupOwnerToken(t, creds, restored.localURL()); got == origToken {
+		t.Fatalf("owner token of the restored copy = the original's token, want its own")
 	}
 }
 

@@ -172,17 +172,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		o.name = "coder"
 	}
 	if o.dir == "" {
-		// Unix socket paths are short, so the agent lives in a short temp dir.
-		d, err := os.MkdirTemp("", "a2a")
-		if err != nil {
-			t.Fatal(err)
-		}
-		t.Cleanup(func() {
-			if err := os.RemoveAll(d); err != nil {
-				t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
-			}
-		})
-		o.dir = d
+		o.dir = shortTempDir(t)
 	}
 	dir, err := agentdir.Open(o.dir)
 	if err != nil {
@@ -235,6 +225,55 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 
 // leftFiles lists the files under dir, which a writer that outlived the
 // server left there.
+// shortTempDir returns a temp dir for an agent, removed when the test ends.
+// Unix socket paths are short, so the agent lives in a short temp dir.
+func shortTempDir(t *testing.T) string {
+	t.Helper()
+	d, err := os.MkdirTemp("", "a2a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := os.RemoveAll(d); err != nil {
+			t.Errorf("removing %s: %v; left: %v", d, err, leftFiles(d))
+		}
+	})
+	return d
+}
+
+// copyAgent copies the agent directory src to dst with the modes of its
+// files, as a restore or a move does.
+func copyAgent(t *testing.T, src, dst string) {
+	t.Helper()
+	err := filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		info, err := d.Info()
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, strings.TrimPrefix(path, src))
+		if d.IsDir() {
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, info.Mode().Perm())
+	})
+	if err != nil {
+		t.Fatalf("copying %s to %s: %v", src, dst, err)
+	}
+}
+
 func leftFiles(dir string) []string {
 	var left []string
 	if err := filepath.WalkDir(dir, func(path string, _ fs.DirEntry, err error) error {
