@@ -143,10 +143,11 @@ func TestA2AErrorBodies(t *testing.T) {
 					t.Fatal(err)
 				}
 				req.Header.Set("Content-Type", "application/json")
+				req.Header.Set("Expect", "100-continue")
 				if tc.auth != "" {
 					req.Header.Set("Authorization", tc.auth)
 				}
-				resp, err := testHTTP.Do(req)
+				resp, err := expectContinueHTTP.Do(req)
 				if err != nil {
 					t.Fatalf("POST %s error = %v", path, err)
 				}
