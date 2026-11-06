@@ -89,6 +89,8 @@ type splitExecutor struct {
 	startMu sync.Mutex
 	mu      sync.Mutex
 	pools   map[string]*startedPool
+	// closed is set by close; a pool started after it would never stop.
+	closed bool
 	// pending are the agent keys of conversations without a stored session
 	// yet.
 	pending map[string]string
@@ -200,14 +202,21 @@ func (e *splitExecutor) Anonymous(ctx context.Context, contextID string) bool {
 	return key == anonymousAgentKey
 }
 
+// errServerStopping is returned for turns that would start agent processes
+// while the server stops.
+var errServerStopping = errors.New("the server is stopping")
+
 func (e *splitExecutor) pool(name string) (a2asrv.AgentExecutor, error) {
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	e.mu.Lock()
-	p := e.pools[name]
+	p, closed := e.pools[name], e.closed
 	e.mu.Unlock()
 	if p != nil {
 		return p.exec, nil
+	}
+	if closed {
+		return nil, errServerStopping
 	}
 	exec, stop, err := e.start(e.ctx, name)
 	if err != nil {
@@ -228,7 +237,7 @@ func (e *splitExecutor) close(ctx context.Context) error {
 	defer e.startMu.Unlock()
 	e.mu.Lock()
 	pools := e.pools
-	e.pools = nil
+	e.pools, e.closed = nil, true
 	e.mu.Unlock()
 	var (
 		wg   sync.WaitGroup

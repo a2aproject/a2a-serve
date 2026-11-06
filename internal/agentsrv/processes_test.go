@@ -201,3 +201,29 @@ func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
 		t.Fatalf("splitExecutor.pending has %d entries after the turn, want 0", got)
 	}
 }
+
+func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
+	t.Parallel()
+	started := false
+	e := &splitExecutor{
+		main:     emptyExecutor{},
+		sessions: openTestStore(t).Sessions(),
+		budget:   newAnonymousBudget(),
+		start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+			started = true
+			return emptyExecutor{}, func(context.Context) error { return nil }, nil
+		},
+	}
+	if err := e.close(context.Background()); err != nil {
+		t.Fatalf("splitExecutor.close() error = %v", err)
+	}
+
+	_, err := e.pool(usersPool)
+
+	if err == nil {
+		t.Fatalf("splitExecutor.pool() after close error = nil, want error")
+	}
+	if started {
+		t.Fatalf("splitExecutor.pool() after close started the pool, want it not started")
+	}
+}
