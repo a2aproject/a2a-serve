@@ -148,14 +148,22 @@ func (r *Relay) run(ctx context.Context) (err error) {
 	meshURL := &url.URL{Scheme: "http", Host: net.JoinHostPort("127.0.0.1", strconv.Itoa(port))}
 	admin := meshadmin.New(meshURL.String(), conf.AdminToken, &http.Client{Timeout: 30 * time.Second})
 	started := r.opts.Now()
-	svc := control.NewService(admin, control.NewRemovedAgents(d.RemovedAgentsPath()), Policy(conf.SignIn()), func() control.Status {
-		return control.Status{
-			URL: publicURL, PID: os.Getpid(), Started: started,
-			Versions: control.Versions{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version},
-			Join:     joinedBy(&conf.Config),
-		}
-	}, func(m control.Member) bool {
-		return conf.SignIn() && googleauth.Allowed(conf.AllowEmails, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
+	svc := control.NewService(control.Options{
+		Mesh:        admin,
+		Removed:     control.NewRemovedAgents(d.RemovedAgentsPath()),
+		InviteNames: control.NewInviteNames(d.InviteNamesPath()),
+		Policy:      Policy(conf.SignIn()),
+		Status: func() control.Status {
+			return control.Status{
+				URL: publicURL, PID: os.Getpid(), Started: started,
+				Versions: control.Versions{A2AServe: r.opts.A2AServe, AgentMesh: agentmesh.Version},
+				Join:     joinedBy(&conf.Config),
+			}
+		},
+		Admits: func(m control.Member) bool {
+			return conf.SignIn() && googleauth.Allowed(conf.AllowEmails, googleauth.Claims{Email: m.Email, EmailVerified: true, HostedDomain: m.Domain})
+		},
+		Now: r.opts.Now,
 	})
 	var signIn http.Handler
 	issuer := ""

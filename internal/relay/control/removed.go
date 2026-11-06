@@ -28,25 +28,39 @@ import (
 // RemovedAgents remembers the peer of each removed invited agent by the
 // agent's name. Agent Mesh forgets what a banned node serves, so without it
 // a new invite couldn't tell which removed agent to let back.
-type RemovedAgents struct {
-	path string
-	mu   sync.Mutex
-}
+type RemovedAgents struct{ stringMap }
 
 // NewRemovedAgents returns the removed agents kept in the file at path.
 func NewRemovedAgents(path string) *RemovedAgents {
-	return &RemovedAgents{path: path}
+	return &RemovedAgents{stringMap{path: path, what: "the removed agents"}}
 }
 
-// load returns the peers of the removed agents by agent name.
-func (r *RemovedAgents) load() (map[string]string, error) {
+// InviteNames remembers the name of the invite each invited agent joined
+// with, by its peer. Agent Mesh forgets which token enrolled a node some
+// time after the node joins, and the agent stays on the relay longer.
+type InviteNames struct{ stringMap }
+
+// NewInviteNames returns the invite names kept in the file at path.
+func NewInviteNames(path string) *InviteNames {
+	return &InviteNames{stringMap{path: path, what: "the invite names"}}
+}
+
+// stringMap is a map of strings kept in a JSON file.
+type stringMap struct {
+	path string
+	what string
+	mu   sync.Mutex
+}
+
+// load returns the map.
+func (r *stringMap) load() (map[string]string, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	return r.read()
 }
 
-// update applies fn to the peers by agent name and saves the result.
-func (r *RemovedAgents) update(fn func(map[string]string)) error {
+// update applies fn to the map and saves the result.
+func (r *stringMap) update(fn func(map[string]string)) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	peers, err := r.read()
@@ -63,22 +77,22 @@ func (r *RemovedAgents) update(fn func(map[string]string)) error {
 		return err
 	}
 	if err := fsutil.WriteAtomic(r.path, data, 0o600); err != nil {
-		return fmt.Errorf("saving the removed agents: %w", err)
+		return fmt.Errorf("saving %s: %w", r.what, err)
 	}
 	return nil
 }
 
-func (r *RemovedAgents) read() (map[string]string, error) {
+func (r *stringMap) read() (map[string]string, error) {
 	data, err := os.ReadFile(r.path)
 	if errors.Is(err, os.ErrNotExist) {
 		return map[string]string{}, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("reading the removed agents: %w", err)
+		return nil, fmt.Errorf("reading %s: %w", r.what, err)
 	}
 	peers := map[string]string{}
 	if err := json.Unmarshal(data, &peers); err != nil {
-		return nil, fmt.Errorf("reading the removed agents in %s: %w", r.path, err)
+		return nil, fmt.Errorf("reading %s in %s: %w", r.what, r.path, err)
 	}
 	return peers, nil
 }

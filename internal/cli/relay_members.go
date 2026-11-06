@@ -29,10 +29,12 @@ func newRelayMembersCmd(cfg *globalConfig, f *relayFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "members",
 		Aliases: []string{"ls"},
-		Short:   "List the agents on the relay",
+		Short:   "List the agents on the relay and the unused invites",
 		Long: `List the agents on the relay: the agents they serve, who they joined as (an
-email for a signed-in agent, or an invite), when they joined, when they last
-reported to the relay, and their peer ID.
+email for a signed-in agent, or the name of its invite), when they joined,
+when they last reported to the relay, and their peer ID. Then list the
+unused invites and when they expire. ` + "`a2a-serve relay remove <name>`" + ` revokes
+an unused invite.
 
 ` + flagparse.SecretHelp,
 		Args: cobra.NoArgs,
@@ -63,7 +65,11 @@ func printMembers(cfg *globalConfig, ms []control.Member, banned bool) error {
 	}
 	rows := make([][]string, 0, len(ms))
 	for _, m := range ms {
-		row := []string{orDash(m.Agent), m.Who(), formatTime(m.Joined), formatTime(m.Seen), m.Peer}
+		joined := formatTime(m.Joined)
+		if m.Unused {
+			joined = "unused until " + formatTime(m.Expires)
+		}
+		row := []string{orDash(m.Agent), m.Who(), joined, formatTime(m.Seen), orDash(m.Peer)}
 		if banned {
 			row = append(row, map[bool]string{true: "yes", false: "-"}[m.Banned])
 		}

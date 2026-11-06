@@ -25,7 +25,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -36,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
+	"github.com/a2aproject/a2a-serve/internal/names"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -125,15 +125,9 @@ func notFound(name string) error {
 	return &agenterr.NotFoundError{Kind: "pairing", Name: name}
 }
 
-// maxNameLen bounds the names of new pairings, which appear in URLs,
-// principals and chat messages.
-const maxNameLen = 64
-
-var namePattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]*$`)
-
 func validateName(name string) error {
-	if len(name) > maxNameLen || !namePattern.MatchString(name) {
-		return invalid("the name must have up to %d letters, digits, dots, hyphens or underscores, and start with a letter or digit", maxNameLen)
+	if !names.Valid(name) {
+		return invalid("the name must have up to %d letters, digits, dots, hyphens or underscores, and start with a letter or digit", names.MaxLen)
 	}
 	if strings.EqualFold(name, LocalOwner) || strings.EqualFold(name, auth.OwnerName) {
 		return invalid("%q names the user running the agent; pick another name", name)

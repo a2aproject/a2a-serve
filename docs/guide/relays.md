@@ -79,7 +79,7 @@ invite ci-bot for https://relay.example.com, one agent, until 2026-11-06 09:00 U
 on that agent: a2a-serve config set --private https://relay.example.com --public https://relay.example.com --relay-token -
 ```
 
-The token is printed once. An unused invite expires after a day, or after `--expires`, up to a week. An invited agent keeps its place on the relay while it is away, even for days, until you remove it. An agent that stays away longer than 30 days needs a new invite.
+The name has up to 64 letters, digits, dots, hyphens or underscores, and starts with a letter or digit. The token is printed once. An unused invite expires after a day, or after `--expires`, up to a week. To revoke it sooner, such as after it leaked into a log, run `a2a-serve relay remove ci-bot`. An invited agent keeps its place on the relay while it is away, even for days, until you remove it. An agent that stays away longer than 30 days needs a new invite.
 
 The agent joins the relay before it starts. When the relay refuses the invite, such as one that is truncated, used, expired or revoked, the start fails with the reason and the next step. `a2a-serve doctor` reports the refused invite until a join succeeds.
 
@@ -90,12 +90,15 @@ a2a-serve relay members
 ```
 
 ```
-AGENT     WHO               JOINED            SEEN              PEER
-coder     anna@example.com  2026-11-04 10:12  2026-11-05 09:58  12D3KooWQx…
-reviewer  invite            2026-11-04 10:15  2026-11-05 09:58  12D3KooWLm…
+AGENT     WHO               JOINED                         SEEN              PEER
+coder     anna@example.com  2026-11-04 10:12               2026-11-05 09:58  12D3KooWQx…
+reviewer  invite reviewer   2026-11-04 10:15               2026-11-05 09:58  12D3KooWLm…
+-         invite ci-bot     unused until 2026-11-06 09:00  -                 -
 ```
 
-`relay remove` takes an agent name, a peer ID, or an email, which removes every agent of that person. The relay refuses the removed agent's next request, and the other agents drop it:
+`WHO` shows the email of an agent that signed in, or the name of the invite it joined with. The unused invites come last.
+
+`relay remove` takes an agent name, a peer ID, or an email, which removes every agent of that person. The relay refuses the removed agent's next request, and the other agents drop it. A name also revokes the unused invites of that name:
 
 ```bash
 a2a-serve relay remove reviewer

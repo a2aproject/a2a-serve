@@ -86,7 +86,7 @@ func runFakeMesh(exitAfter string) int {
 	}
 	go func() {
 		if err := http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			if r.URL.Path == "/admin/status" {
+			if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/admin/") {
 				if _, err := io.WriteString(w, "{}"); err != nil {
 					return
 				}

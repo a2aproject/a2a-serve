@@ -32,7 +32,6 @@ import (
 	"io/fs"
 	"log/slog"
 	"os"
-	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -40,6 +39,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/names"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -89,10 +89,8 @@ type Entry struct {
 // it with the host's listed name, see [Table.List].
 func (e Entry) Key() string { return e.Name + "@" + e.Host }
 
-var namePart = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$`)
-
 func (e Entry) validate() error {
-	if !namePart.MatchString(e.Name) || !namePart.MatchString(e.Host) {
+	if !names.Valid(e.Name) || !names.Valid(e.Host) {
 		return fmt.Errorf("invalid advertisement %q", e.Key())
 	}
 	if len(e.Node) > maxNode {
@@ -107,7 +105,7 @@ func (e Entry) validate() error {
 // ParseKey splits name@host.
 func ParseKey(key string) (name, host string, ok bool) {
 	name, host, ok = strings.Cut(key, "@")
-	if !ok || !namePart.MatchString(name) || !namePart.MatchString(host) {
+	if !ok || !names.Valid(name) || !names.Valid(host) {
 		return "", "", false
 	}
 	return name, host, true
