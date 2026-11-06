@@ -111,3 +111,27 @@ func TestSanitizeKeepsContextErrors(t *testing.T) {
 		t.Fatalf("Sanitize(%v) = %v, want %v", err, got, context.Canceled)
 	}
 }
+
+func TestExecutionInProgress(t *testing.T) {
+	t.Parallel()
+	inProgress := a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress")
+	tests := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "a2a-go error", err: inProgress, want: true},
+		{name: "wrapped", err: fmt.Errorf("answering: %w", inProgress), want: true},
+		{name: "joined", err: errors.Join(errors.New("other"), inProgress), want: true},
+		{name: "other unsupported operation", err: a2a.ErrUnsupportedOperation},
+		{name: "nil"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := ExecutionInProgress(tc.err); got != tc.want {
+				t.Fatalf("ExecutionInProgress(%v) = %t, want %t", tc.err, got, tc.want)
+			}
+		})
+	}
+}
