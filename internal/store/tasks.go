@@ -626,8 +626,20 @@ func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string, keep fun
 // UnfinishedOf returns the IDs of the tasks of the scope that user owns and
 // that aren't in a terminal state.
 func (ts *TaskStore) UnfinishedOf(ctx context.Context, user string) ([]a2a.TaskID, error) {
-	rows, err := ts.s.reads.QueryContext(ctx, `SELECT id FROM tasks WHERE scope = ? AND owner = ? AND state NOT IN (?, ?, ?, ?)`,
-		ts.scope, user, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
+	return ts.unfinished(ctx, `owner = ?`, user)
+}
+
+// UnfinishedRemoved returns the IDs of the tasks of the scope that
+// [Store.DeletePairing] deletes with u and that aren't in a terminal state.
+func (ts *TaskStore) UnfinishedRemoved(ctx context.Context, u PairingUser) ([]a2a.TaskID, error) {
+	where, args := removedTasks(u)
+	return ts.unfinished(ctx, where, args...)
+}
+
+func (ts *TaskStore) unfinished(ctx context.Context, where string, args ...any) ([]a2a.TaskID, error) {
+	args = append([]any{ts.scope}, args...)
+	args = append(args, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
+	rows, err := ts.s.reads.QueryContext(ctx, `SELECT id FROM tasks WHERE scope = ? AND `+where+` AND state NOT IN (?, ?, ?, ?)`, args...)
 	if err != nil {
 		return nil, err
 	}
