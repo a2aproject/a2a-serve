@@ -216,8 +216,7 @@ func (u *user) pairJoin(url, code string) {
 	u.run(u.home, "a2a", "serve", "pair", "join", url, code)
 }
 
-// agent is an `a2a-serve start acp` agent of a user, running fakeacp in the
-// background without a sandbox.
+// agent is an agent of a user, running in the background.
 type agent struct {
 	u       *user
 	name    string
@@ -226,20 +225,31 @@ type agent struct {
 	stopped bool
 }
 
-// startAgent starts an agent in the sandbox of the run, with extra start
-// flags.
+// startAgent starts an `a2a-serve start acp` agent running fakeacp in the
+// sandbox of the run, with extra start flags.
 func (u *user) startAgent(name string, flags ...string) *agent {
+	u.t.Helper()
+	a := u.newAgent(name)
+	a.start("acp", append(sandboxFlags(), flags...)...)
+	return a
+}
+
+// newAgent creates the directory of an agent that isn't started yet.
+func (u *user) newAgent(name string) *agent {
 	u.t.Helper()
 	dir := filepath.Join(u.home, name)
 	if err := os.Mkdir(dir, 0o700); err != nil {
 		u.t.Fatalf("os.Mkdir() error = %v", err)
 	}
-	a := &agent{u: u, name: name, dir: dir}
-	u.t.Cleanup(a.cleanup)
-	args := append([]string{"start", "acp", "--name", name, "--detach"}, sandboxFlags()...)
-	a.serve(append(args, flags...)...)
+	return &agent{u: u, name: name, dir: dir}
+}
+
+// start runs `a2a-serve start <kind>` with flags in the background.
+func (a *agent) start(kind string, flags ...string) {
+	a.u.t.Helper()
+	a.u.t.Cleanup(a.cleanup)
+	a.serve(append([]string{"start", kind, "--name", a.name, "--detach"}, flags...)...)
 	a.url = strings.TrimSpace(a.serve("status", "--url=local"))
-	return a
 }
 
 func sandboxFlags() []string {
@@ -343,7 +353,13 @@ func (a *agent) cleanup() {
 // and fails with the last description check returned.
 func eventually(t *testing.T, what string, check func() (bool, string)) {
 	t.Helper()
-	deadline := time.Now().Add(cmdTimeout)
+	eventuallyWithin(t, cmdTimeout, what, check)
+}
+
+// eventuallyWithin is eventually with a timeout of its own.
+func eventuallyWithin(t *testing.T, timeout time.Duration, what string, check func() (bool, string)) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
 	for {
 		ok, last := check()
 		if ok {

@@ -26,6 +26,25 @@ jobs:
     - name: Test Loop
       run: go test -mod=readonly -count=200 -shuffle=on -timeout=60m ./...
 
+  # Runs the real opencode image, built from this commit, against a scripted
+  # model (see CONTRIBUTING.md).
+  harness-opencode:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Setup
+      uses: ./.github/actions/setup
+
+    - name: Build the opencode image
+      run: docker build -t a2a-harness-opencode:e2e internal/harness/images/opencode
+
+    - name: Harness E2E
+      env:
+        E2E_HARNESS: opencode
+        E2E_HARNESS_IMAGE: a2a-harness-opencode:e2e
+      run: go test -tags e2e -mod=readonly -v -count=1 -run '^TestHarness' ./e2e/...
+
   # The bot's messages go to the real Bot API, while a fake plays the user
   # (see CONTRIBUTING.md).
   telegram:

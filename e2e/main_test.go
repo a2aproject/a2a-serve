@@ -18,6 +18,7 @@ package e2e
 
 import (
 	"cmp"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -26,13 +27,31 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
-// binDir holds a2a, a2a-serve and fakeacp; it goes first on every user's PATH.
+// binDir holds a2a, a2a-serve, fakeacp and, for the harness tests, mcpecho;
+// it goes first on every user's PATH.
 var binDir string
 
+// harnessName is the agent the harness tests run with its real image, set
+// with E2E_HARNESS. They skip without it.
+var harnessName = os.Getenv("E2E_HARNESS")
+
+// harnessImage is the image of harnessName: E2E_HARNESS_IMAGE, or the
+// image the server pulls by default.
+var harnessImage string
+
 // sandbox is where the agents run: local, or docker with E2E_SANDBOX=docker.
-var sandbox = cmp.Or(os.Getenv("E2E_SANDBOX"), "local")
+// The harness tests need Docker, so it defaults to docker with E2E_HARNESS.
+var sandbox = cmp.Or(os.Getenv("E2E_SANDBOX"), defaultSandbox())
+
+func defaultSandbox() string {
+	if harnessName != "" {
+		return "docker"
+	}
+	return "local"
+}
 
 // dockerHost is the daemon the docker CLI of the users talks to, which their
 // own HOME doesn't name.
@@ -68,6 +87,12 @@ func run(m *testing.M) int {
 	binDir = dir
 	if sandbox == "docker" {
 		if err := buildImage(dir); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e:", err)
+			return 1
+		}
+	}
+	if harnessName != "" {
+		if err := prepareHarness(dir); err != nil {
 			fmt.Fprintln(os.Stderr, "e2e:", err)
 			return 1
 		}
@@ -114,6 +139,28 @@ func buildImage(dir string) error {
 		return fmt.Errorf("docker context inspect: %w", err)
 	}
 	dockerHost = strings.TrimSpace(string(out))
+	return nil
+}
+
+// prepareHarness builds the MCP server of the harness tests and makes the
+// harness image available, pulling or building it like the server does.
+func prepareHarness(dir string) error {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		return err
+	}
+	if err := goCmd(root, []string{"CGO_ENABLED=0"}, "build", "-o", filepath.Join(dir, "mcpecho"), "./e2e/testdata/mcpecho"); err != nil {
+		return err
+	}
+	profile, err := harness.Lookup(harnessName, nil)
+	if err != nil {
+		return err
+	}
+	image, _, err := harness.EnsureImage(context.Background(), os.Getenv("E2E_HARNESS_IMAGE"), profile, os.Stderr)
+	if err != nil {
+		return err
+	}
+	harnessImage = image
 	return nil
 }
 
