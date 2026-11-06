@@ -296,9 +296,14 @@ func (c *ChatTurns) handle(ctx context.Context, in channel.Inbound, t *convTicke
 	msg.ContextID = contextID
 	msg.Metadata = map[string]any{"channel": in.Channel, "identity": in.Identity, "sender": in.Name}
 	if lastID, state, err := c.tasks.LatestStateInContext(ctx, contextID); err == nil && state == a2a.TaskStateInputRequired {
-		if c.canContinue(ctx, p, lastID) {
+		approval, ok := c.canContinue(ctx, p, lastID)
+		switch {
+		case ok && approval != nil:
+			c.reply(ctx, ch, last, "A tool call waits for your approval, so I didn't send this to the agent. Answer it with one of: "+approval.Words()+", or send /stop to stop the task.")
+			return
+		case ok:
 			msg.TaskID = lastID
-		} else {
+		default:
 			c.reply(ctx, ch, last, "⏳ Another task in this conversation is waiting for an answer; yours starts after it.")
 		}
 	}
@@ -366,21 +371,21 @@ func (c *ChatTurns) prepare(ctx context.Context, ch channel.Channel, in *channel
 // or is an owner, and may answer its question. Others start a task of their
 // own, so that a group member's message doesn't land in another member's
 // pending task, and an anonymous caller's message doesn't answer an
-// approval.
-func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) bool {
-	if p.IsOwner() {
-		return true
-	}
+// approval. approval is the permission question the task waits on, which
+// only an answer continues.
+func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) (approval *approvals.Question, ok bool) {
 	stored, err := c.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err != nil {
 		slog.Warn("loading the pending task of a conversation", "task", taskID, "error", err)
-		return false
+		return nil, p.IsOwner()
 	}
-	if stored.User != p.ID {
-		return false
+	if q := approvals.FromStatus(stored.Task.Status); q != nil && q.Type == approvals.TypePermission {
+		approval = q
 	}
-	q := approvals.FromStatus(stored.Task.Status)
-	return q == nil || q.Type != approvals.TypePermission || approvals.MayAnswer(p, stored.User)
+	if !p.IsOwner() && stored.User != p.ID {
+		return nil, false
+	}
+	return approval, approval == nil || approvals.MayAnswer(p, stored.User)
 }
 
 // isCommand reports whether text is the bot command /name, optionally

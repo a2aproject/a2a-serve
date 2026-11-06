@@ -174,7 +174,7 @@ func hidden(r rune) bool {
 }
 
 // Match maps a typed reply to an option, accepting option IDs and labels
-// and the words of an email approval.
+// and the words of an email approval. It accepts every word a2aacp does.
 func (q *Question) Match(text string) (Option, bool) {
 	reply := strings.ToLower(strings.Trim(strings.TrimSpace(text), ".!\"'`"))
 	for _, o := range q.Options {
@@ -184,11 +184,11 @@ func (q *Question) Match(text string) (Option, bool) {
 	}
 	var id string
 	switch reply {
-	case "approve", "approved", "yes", "y", "ok", "allow":
+	case "approve", "approved", "yes", "y", "ok", "allow", "lgtm":
 		id = a2aacp.OptionOnce
-	case "always", "always allow":
+	case "always", "always allow", "allow always":
 		id = a2aacp.OptionAlways
-	case "deny", "denied", "no", "n", "reject":
+	case "deny", "denied", "no", "n", "reject", "decline":
 		id = a2aacp.OptionReject
 	}
 	for _, o := range q.Options {

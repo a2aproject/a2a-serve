@@ -106,10 +106,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		q := approvals.FromRecord(rec)
 		option, ok := replyOption(execCtx.Message, q)
 		if !ok {
-			asked := execCtx.StoredTask.Status.Message
-			ask := a2a.NewMessage(a2a.MessageRoleAgent, asked.Parts...)
-			ask.TaskID, ask.ContextID, ask.Metadata = execCtx.TaskID, execCtx.ContextID, asked.Metadata
-			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateInputRequired, ask), nil)
+			yield(refusal(execCtx, q), nil)
 			return
 		}
 		p, _ := auth.Caller(ctx)

@@ -405,7 +405,7 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 	if err != nil || !ok {
 		return
 	}
-	if q := approvals.FromStatus(task.Status); q != nil {
+	if q := approvals.FromStatus(task.Status); q != nil && !askedBefore(execCtx.StoredTask, q) {
 		e.approvals.OnQuestion(ctx, execCtx, q)
 	}
 }
@@ -413,6 +413,11 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
 	if id, ok := callerQuestionOf(execCtx.StoredTask); ok {
 		return e.observe(ctx, execCtx, e.answerCallerQuestion(ctx, execCtx, id))
+	}
+	// a2aacp takes a reply that isn't an answer as a new instruction, and
+	// rejects the tool call without saying so.
+	if q := pendingApproval(execCtx.StoredTask); q != nil && !answersQuestion(execCtx.Message, q) {
+		return e.observe(ctx, execCtx, refuseReply(execCtx, q))
 	}
 	return e.observe(ctx, execCtx, e.withCallerQuestion(execCtx, e.turn(ctx, execCtx)))
 }

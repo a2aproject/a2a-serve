@@ -805,19 +805,15 @@ func TestChatTurnsTypedAnswerAfterButtonAnswersTheOtherQuestion(t *testing.T) {
 	}
 }
 
-func TestChatTurnsReplyToQuestionOfOtherTextContinuesWaitingTask(t *testing.T) {
+func TestChatTurnsOtherTextKeepsApprovalPending(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
 	rec := fx.askPendingQuestion(t, "dm1", a2a.TaskStateInputRequired)
 
 	fx.ch.Write("telegram:1", "dm1", "what would it push?")
 
-	call := fx.sender.nextStream(t)
-	want := sentMessage{ContextID: "c1", TaskID: "t1", Text: "what would it push?"}
-	got := sentMessageOf(call.req.Message)
-	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(sentMessage{}, "ID", "Metadata")); diff != "" {
-		t.Fatalf("SendStreamingMessage() message wrong result (-want +got) diff = %s", diff)
-	}
+	fx.ch.WaitFor(t, "dm1", channeltest.HasText("A tool call waits for your approval, so I didn't send this to the agent. Answer it with one of: approve, always, deny, or send /stop to stop the task."))
+	fx.sender.wantIdle(t)
 	if by := fx.question(t, rec.ID).AnsweredBy; by != "" {
 		t.Fatalf("question answered by %q, want nobody", by)
 	}
