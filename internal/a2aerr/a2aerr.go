@@ -175,12 +175,7 @@ func ExecutionInProgress(err error) bool {
 	if err.Error() == executionInProgress {
 		return true
 	}
-	for _, e := range unwrap(err) {
-		if ExecutionInProgress(e) {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(unwrap(err), ExecutionInProgress)
 }
 
 // a2aGoError returns the A2A error for an error that a2a-go doesn't export
