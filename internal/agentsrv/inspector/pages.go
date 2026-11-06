@@ -68,6 +68,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 <div class="muted">{{if .Contact}}from {{.Contact}}, {{end}}asked {{since .Created}} · <a href="{{path}}/conversations/{{.ContextID}}">conversation</a></div>
 <pre>{{.Text}}</pre>
 <form method="post" action="{{.Action}}"><input type="hidden" name="csrf" value="{{$.CSRF}}">
+{{if .Question}}<input type="hidden" name="question" value="{{.Question}}">{{end}}
 {{range .Options}}<button name="option" value="{{.ID}}">{{.Label}}</button>{{end}}</form>
 </div>{{else}}<p class="muted">Nothing waits for an answer.</p>{{end}}
 

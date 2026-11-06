@@ -185,7 +185,10 @@ func (in *Inspector) page(h func(http.ResponseWriter, *http.Request, session)) h
 // Approval is a question waiting for the owner's answer.
 type Approval struct {
 	// Action is where the answer is posted.
-	Action    string
+	Action string
+	// Question is the ID of the task's question that the answer is for,
+	// set when the answer is posted on the task.
+	Question  string
 	Text      string
 	ContextID string
 	Contact   string
@@ -284,12 +287,12 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	}
 	for _, t := range tasks {
 		q := approvals.FromStatus(t.Status)
-		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
+		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Question: q.ID, Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
 		}
 		if rec, ok := records[taskQuestion{string(t.ID), q.ID}]; ok {
-			a.Action = Path + "/questions/" + rec.ID
+			a.Action, a.Question = Path+"/questions/"+rec.ID, ""
 		}
 		out = append(out, a)
 	}
@@ -487,7 +490,8 @@ func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ sess
 }
 
 // handleTaskAnswer answers the question of a task asked of its A2A caller,
-// as the owner.
+// as the owner. It refuses an answer to a question the task no longer asks,
+// so that a stale page or a double click can't answer the next question.
 func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
 	stored, err := in.deps.Tasks.Get(ctx, a2a.TaskID(r.PathValue("id")))
@@ -498,7 +502,11 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 	t := stored.Task
 	q := approvals.FromStatus(t.Status)
 	if t.Status.State != a2a.TaskStateInputRequired || q == nil {
-		http.Redirect(w, r, Path+"/", http.StatusSeeOther)
+		http.Error(w, "This task no longer waits for an answer. Reload the page.", http.StatusConflict)
+		return
+	}
+	if r.FormValue("question") != q.ID {
+		http.Error(w, "This task asks a different question now. Reload the page to see it.", http.StatusConflict)
 		return
 	}
 	opt, ok := q.Match(r.FormValue("option"))
