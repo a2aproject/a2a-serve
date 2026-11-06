@@ -17,6 +17,7 @@ package email
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net"
 	"strings"
 	"testing"
@@ -212,7 +213,7 @@ func silentServer(t *testing.T) string {
 		<-done
 		for _, c := range conns {
 			if err := c.Close(); err != nil {
-				t.Logf("closing a connection: %v", err)
+				slog.Debug("closing a connection", "error", err)
 			}
 		}
 	})
@@ -241,15 +242,8 @@ func TestSessionEndsWithContext(t *testing.T) {
 
 func TestRunReportsFailedSessions(t *testing.T) {
 	t.Parallel()
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("net.Listen() error = %v", err)
-	}
-	addr := ln.Addr().String()
-	if err := ln.Close(); err != nil {
-		t.Fatalf("closing the listener: %v", err)
-	}
-	c := New(Config{Address: "coder@example.com", IMAP: addr, TrustedAuthServ: "mx.example.com"}, messengertest.NewKV(nil))
+	ln := hangUpListener(t)
+	c := New(Config{Address: "coder@example.com", IMAP: ln.Addr().String(), TrustedAuthServ: "mx.example.com"}, messengertest.NewKV(nil))
 	ctx, cancel := context.WithCancel(t.Context())
 	reports := make(chan error, 1)
 	done := make(chan error, 1)
@@ -265,8 +259,8 @@ func TestRunReportsFailedSessions(t *testing.T) {
 
 	select {
 	case err := <-reports:
-		if err == nil || !strings.Contains(err.Error(), "refused") {
-			t.Fatalf("Run() reported %v, want the refused connection", err)
+		if err == nil {
+			t.Fatalf("Run() reported %v, want the error of the session that the server hung up on", err)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("Run() reported nothing after a failed session")
@@ -275,6 +269,33 @@ func TestRunReportsFailedSessions(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
+}
+
+// hangUpListener closes every connection it accepts. Its port stays taken
+// until the test ends.
+func hangUpListener(t *testing.T) net.Listener {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("closing the listener: %v", err)
+		}
+	})
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			if err := conn.Close(); err != nil {
+				slog.Debug("closing a connection", "error", err)
+			}
+		}
+	}()
+	return ln
 }
 
 func TestSendRetries(t *testing.T) {
