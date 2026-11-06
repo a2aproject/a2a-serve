@@ -413,6 +413,20 @@ func appendNew(list []string, items ...string) []string {
 	return list
 }
 
+// WaitingForRestart returns the settings that wait for a restart of the
+// running agent: those of res, the result of a change, and those saved
+// before it. A stopped agent applies them on its next start, so none wait.
+func WaitingForRestart(ctx context.Context, d agentdir.Dir, client *controlapi.Client, res *Result) ([]string, error) {
+	if !res.Running {
+		return nil, nil
+	}
+	pending, running, err := Pending(ctx, d, client)
+	if err != nil || !running {
+		return nil, err
+	}
+	return appendNew(slices.Clone(res.Restart), pending...), nil
+}
+
 // Pending returns the settings changed in config.yaml since the running
 // server started, and whether it runs.
 func Pending(ctx context.Context, d agentdir.Dir, client *controlapi.Client) ([]string, bool, error) {

@@ -27,7 +27,7 @@ false if the agent wasn't running and `serviceInstalled` is true if it starts
 again at login. `restart` prints the object of `status -o json` for the running
 agent, without `pending`. `channel add` prints the channel's `name` and
 `account`, and `ownerLink` with the `hint`, `code` and `expires` of the link
-that makes you its owner, until you link an account. Progress lines of `restart` and `config set --restart` go to stderr with
+that makes you its owner, until you link an account. Progress lines of `restart`, `config set --restart` and `config unset --restart` go to stderr with
 `-o json`. `config show` prints an invalid config with the reason in `invalid`, and exits 1. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 

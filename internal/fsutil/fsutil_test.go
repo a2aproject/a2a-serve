@@ -188,3 +188,42 @@ func TestMkdirReal(t *testing.T) {
 		})
 	}
 }
+
+func TestMkdirAll(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		existing string
+		dir      string
+		want     string
+	}{
+		{name: "existing", existing: "a/b", dir: "a/b"},
+		{name: "missing parents", dir: "a/b/c", want: "a"},
+		{name: "existing parent", existing: "a", dir: "a/b/c", want: "a/b"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			if tc.existing != "" {
+				if err := os.MkdirAll(filepath.Join(base, tc.existing), 0o700); err != nil {
+					t.Fatal(err)
+				}
+			}
+			want := ""
+			if tc.want != "" {
+				want = filepath.Join(base, tc.want)
+			}
+			got, err := MkdirAll(filepath.Join(base, tc.dir))
+			if err != nil {
+				t.Fatalf("MkdirAll() error = %v", err)
+			}
+			if got != want {
+				t.Fatalf("MkdirAll() = %q, want %q", got, want)
+			}
+			if fi, err := os.Stat(filepath.Join(base, tc.dir)); err != nil || !fi.IsDir() {
+				t.Fatalf("MkdirAll() left %s as %v (%v), want a directory", tc.dir, fi, err)
+			}
+		})
+	}
+}

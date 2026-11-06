@@ -260,7 +260,13 @@ func (d Dir) Init() error {
 			return err
 		}
 	}
-	gi := filepath.Join(d.Path(), ".gitignore")
+	return WriteGitignore(d.Path())
+}
+
+// WriteGitignore writes the .gitignore which keeps state out of version
+// control into dir, an .a2a directory, unless dir has one.
+func WriteGitignore(dir string) error {
+	gi := filepath.Join(dir, ".gitignore")
 	if _, err := os.Stat(gi); errors.Is(err, os.ErrNotExist) {
 		if err := os.WriteFile(gi, []byte("state/\n"), 0o644); err != nil {
 			return err

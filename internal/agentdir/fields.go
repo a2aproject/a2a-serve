@@ -82,6 +82,9 @@ type field struct {
 	secretOnly bool
 	// values are the completions of the flag.
 	values []string
+	// unsetTo describes the value of a number setting without an entry,
+	// which `config unset` restores.
+	unsetTo string
 	// key returns the key of an entry, or of an argument naming it.
 	key func(string) string
 	// parse normalizes an entry of the flag before it is merged.
@@ -329,7 +332,7 @@ var fields = []field{
 	},
 	{
 		access: num(func(c *Config) *int { return &c.Port }, func(s *Settings) *int { return &s.Port }),
-		flag:   "port", path: "port", scope: scopeOwner, section: SectionNetwork,
+		flag:   "port", path: "port", scope: scopeOwner, section: SectionNetwork, unsetTo: "a free port",
 		usage: "Localhost port, 1-65535 (default: a free port, kept across runs)",
 	},
 	{
@@ -461,7 +464,8 @@ var fields = []field{
 	{
 		access: num(func(c *Config) *int { return &c.Limits.PIDs }, func(s *Settings) *int { return &s.PIDs }),
 		flag:   "pids", path: "limits.pids", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
-		usage: "Container process limit (default 512)",
+		unsetTo: fmt.Sprintf("the default of %d", DefaultLimits.PIDs),
+		usage:   "Container process limit (default 512)",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Auth.GoogleClientID }, func(s *Settings) *string { return &s.GoogleClientID }),
@@ -826,6 +830,9 @@ type Flag struct {
 	Secret bool
 	// Values are the completions of the flag.
 	Values []string
+	// UnsetTo describes the value of a number setting without an entry.
+	// Its flag takes no 0, which stands for no entry.
+	UnsetTo string
 }
 
 // FlagSet selects the settings flags of a command.
@@ -865,7 +872,7 @@ func (s *Settings) Flags(sets FlagSet) []Flag {
 			continue
 		}
 		out = append(out, Flag{
-			Name: f.flag, Usage: f.usage, Section: f.section, Value: f.arg(s), Split: f.split, Values: f.values,
+			Name: f.flag, Usage: f.usage, Section: f.section, Value: f.arg(s), Split: f.split, Values: f.values, UnsetTo: f.unsetTo,
 			// --secret takes NAME=value, stored under NAME.
 			Secret: f.secret != "" || f.flag == "secret",
 		})

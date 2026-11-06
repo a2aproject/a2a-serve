@@ -140,7 +140,7 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | Flag | Default | Description |
 |---|---|---|
 | `--dry-run` |  | Print the diff without saving |
-| `--restart` |  | Restart the running agent if a change needs it |
+| `--restart` |  | Restart the running agent if the change, or one saved before, needs it |
 
 ## a2a-serve config show
 
@@ -186,7 +186,7 @@ a2a-serve config unset secret OPENROUTER_API_KEY
 a2a-serve config unset env DEBUG
 a2a-serve config unset mount /docs
 a2a-serve config unset allow-email '*@example.com'
-a2a-serve config unset private
+a2a-serve config unset private --restart
 ```
 
 **Flags**
@@ -194,3 +194,4 @@ a2a-serve config unset private
 | Flag | Default | Description |
 |---|---|---|
 | `--dry-run` |  | Print the diff without saving |
+| `--restart` |  | Restart the running agent if the change, or one saved before, needs it |

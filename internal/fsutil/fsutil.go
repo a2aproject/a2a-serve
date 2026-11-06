@@ -150,6 +150,25 @@ func MkdirReal(dir string) error {
 	return nil
 }
 
+// MkdirAll is [os.MkdirAll] with mode 0700, which also returns the topmost
+// directory it created, or "" if dir existed.
+func MkdirAll(dir string) (created string, err error) {
+	for p := filepath.Clean(dir); ; p = filepath.Dir(p) {
+		_, err := os.Lstat(p)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, os.ErrNotExist) {
+			return "", err
+		}
+		created = p
+		if filepath.Dir(p) == p {
+			break
+		}
+	}
+	return created, os.MkdirAll(dir, 0o700)
+}
+
 func removeIfExists(path string) error {
 	if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err

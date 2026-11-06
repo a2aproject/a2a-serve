@@ -14,7 +14,7 @@ $ a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHRO
 ```
 
 <!-- generated:live-settings -->
-A running agent applies `--description`, `--private-allow-incoming`, `--public-allow-incoming`, `--private-allow-outgoing`, `--allow-email`, `--allow-tools`, `--deny-tools`, `--disable-mcp` and `--owner-chat` at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set`.
+A running agent applies `--description`, `--private-allow-incoming`, `--public-allow-incoming`, `--private-allow-outgoing`, `--allow-email`, `--allow-tools`, `--deny-tools`, `--disable-mcp` and `--owner-chat` at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set` or `config unset`.
 <!-- /generated:live-settings -->
 
 | Command | What it does |

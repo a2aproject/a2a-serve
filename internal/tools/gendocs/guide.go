@@ -46,7 +46,7 @@ func liveSettingsText() string {
 		flags[i] = "`--" + name + "`"
 	}
 	list := strings.Join(flags[:len(flags)-1], ", ") + " and " + flags[len(flags)-1]
-	return "A running agent applies " + list + " at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set`."
+	return "A running agent applies " + list + " at once, and messengers too. Other settings apply after `a2a-serve restart`, or pass `--restart` to `config set` or `config unset`."
 }
 
 // settingsTable lists the key of config.yaml each flag sets.

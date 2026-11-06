@@ -145,6 +145,7 @@ func TestTakeAndRestore(t *testing.T) {
 		{
 			name: "without the network identity",
 			want: map[string]string{
+				".gitignore":        "state/\n",
 				"config.yaml":       "present",
 				"state/secrets":     "present",
 				"state/server.db":   "present",
@@ -159,6 +160,7 @@ func TestTakeAndRestore(t *testing.T) {
 			name:     "taking over",
 			takeOver: true,
 			want: map[string]string{
+				".gitignore":        "state/\n",
 				"config.yaml":       "present",
 				"state/secrets":     "present",
 				"state/server.db":   "present",
@@ -245,6 +247,81 @@ func TestRestoreErrors(t *testing.T) {
 	if diff := cmp.Diff(map[string]string{"relay.yaml": "name: mesh"}, files(t, other)); diff != "" {
 		t.Fatalf("Restore() into a non-empty %s changed it (-want +got) diff = %s", agentdir.Name, diff)
 	}
+}
+
+func TestRestoreFailureRemovesOnlyCreatedDirectories(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dest, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		setup map[string]string
+		root  string
+		want  []string
+	}{
+		{name: "new directories", root: "new/app"},
+		{name: "existing parent", setup: map[string]string{"new/": ""}, root: "new/app", want: []string{"new"}},
+		{
+			name:  "existing directory with a file",
+			setup: map[string]string{"app/README.md": "readme"},
+			root:  "app",
+			want:  []string{"app", "app/README.md"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			base := t.TempDir()
+			for p, content := range tc.setup {
+				full := filepath.Join(base, p)
+				if strings.HasSuffix(p, "/") {
+					if err := os.MkdirAll(full, 0o700); err != nil {
+						t.Fatal(err)
+					}
+					continue
+				}
+				if err := os.MkdirAll(filepath.Dir(full), 0o700); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.WriteFile(full, []byte(content), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+
+			if err := Restore(ctx, dest, snap.Name, "wrong", filepath.Join(base, tc.root), false); err == nil {
+				t.Fatalf("Restore() with the wrong key error = nil, want error")
+			}
+			if diff := cmp.Diff(tc.want, paths(t, base)); diff != "" {
+				t.Fatalf("Restore() with the wrong key wrong leftovers (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+// paths lists the files and directories under root.
+func paths(t *testing.T, root string) []string {
+	t.Helper()
+	var out []string
+	err := filepath.WalkDir(root, func(p string, _ fs.DirEntry, err error) error {
+		if err != nil || p == root {
+			return err
+		}
+		rel, err := filepath.Rel(root, p)
+		out = append(out, filepath.ToSlash(rel))
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
 
 func TestRestoreRemovesLeftoverRestores(t *testing.T) {
