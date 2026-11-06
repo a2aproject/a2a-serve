@@ -142,7 +142,7 @@ type splitExecutor struct {
 	// progress, which close waits for: an agent process that a turn starts
 	// after its pool closed would outlive the server.
 	closing bool
-	running sync.WaitGroup
+	running turnCount
 }
 
 // splitDeps are the dependencies of [splitExecutor].
@@ -174,7 +174,7 @@ func (e *splitExecutor) track(ctx context.Context) (context.Context, func(), err
 	if e.closing {
 		return nil, nil, errServerStopping
 	}
-	e.running.Add(1)
+	e.running.add()
 	ctx, cancel := context.WithCancel(ctx)
 	stop := func() bool { return true }
 	if e.ctx != nil {
@@ -183,7 +183,7 @@ func (e *splitExecutor) track(ctx context.Context) (context.Context, func(), err
 	return ctx, func() {
 		stop()
 		cancel()
-		e.running.Done()
+		e.running.done()
 	}, nil
 }
 
@@ -320,7 +320,7 @@ func (e *splitExecutor) close(ctx context.Context) error {
 	e.mu.Lock()
 	e.closing = true
 	e.mu.Unlock()
-	e.running.Wait()
+	e.running.wait(context.Background())
 	e.startMu.Lock()
 	defer e.startMu.Unlock()
 	e.mu.Lock()

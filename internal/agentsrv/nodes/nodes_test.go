@@ -332,20 +332,23 @@ func TestOpenTaskCaps(t *testing.T) {
 	}
 }
 
+// unreachableWebhook is a URL nothing answers at. The port of a closed
+// server can go to a listener of another test, so it is port 1, which
+// nothing listens on.
+const unreachableWebhook = "http://127.0.0.1:1"
+
 func TestPostWebhookErrorHidesSecrets(t *testing.T) {
 	t.Parallel()
 	failing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad key s3cret", http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
 	tests := []struct {
 		name    string
 		webhook string
 	}{
 		{name: "error status", webhook: failing.URL + "/hook?key=s3cret"},
-		{name: "unreachable", webhook: closed.URL + "/hook?key=s3cret"},
+		{name: "unreachable", webhook: unreachableWebhook + "/hook?key=s3cret"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -449,15 +452,13 @@ func TestWakeLastErrorIsGeneric(t *testing.T) {
 		http.Error(w, "bad key", http.StatusUnauthorized)
 	}))
 	t.Cleanup(failing.Close)
-	closed := httptest.NewServer(http.NotFoundHandler())
-	closed.Close()
 	tests := []struct {
 		name    string
 		webhook string
 		want    string
 	}{
 		{name: "error status", webhook: failing.URL + "/hook", want: "webhook returned 401 Unauthorized"},
-		{name: "unreachable", webhook: closed.URL + "/hook", want: errWakeUnreachable},
+		{name: "unreachable", webhook: unreachableWebhook + "/hook", want: errWakeUnreachable},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

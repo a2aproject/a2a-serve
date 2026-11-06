@@ -34,7 +34,9 @@ func TestServerTakesBackups(t *testing.T) {
 		},
 	})
 	ctx := context.Background()
-	deadline := time.Now().Add(20 * time.Second)
+	// The snapshot's key comes from scrypt, which is slow under the race
+	// detector on a busy machine.
+	deadline := time.Now().Add(60 * time.Second)
 	var st *controlapi.Status
 	for {
 		var err error

@@ -189,6 +189,9 @@ type Server struct {
 	users userAgents
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
+	// turns counts the executions of the A2A handler, until a2a-go consumed
+	// their last events.
+	turns turnCount
 
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
@@ -213,6 +216,10 @@ var errCallerBusy = fmt.Errorf("you have %d unfinished tasks; answer or cancel o
 // other than owners get.
 func maxExecutionsOf(string) int { return maxCallerExecutions }
 
+// closeTimeout bounds closing everything when the server stops. It leaves
+// room for the streams of stopped turns to deliver their final events.
+const closeTimeout = 30 * time.Second
+
 // stack holds what to close when the server stops, closed in reverse order
 // of opening. Only Run owns one.
 type stack []func(context.Context) error
@@ -220,7 +227,7 @@ type stack []func(context.Context) error
 func (st *stack) push(f func(context.Context) error) { *st = append(*st, f) }
 
 func (st stack) close() {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), closeTimeout)
 	defer cancel()
 	for i := len(st) - 1; i >= 0; i-- {
 		if err := st[i](ctx); err != nil {
@@ -487,7 +494,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}},
+		return withLimitedHistory(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}}),
@@ -670,8 +677,20 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 	}()
 	return func(ctx context.Context) error {
 		defer cancelRequests()
-		grace := time.AfterFunc(requestGrace, cancelRequests)
-		defer grace.Stop()
+		// The grace of requests starts once the stopped turns yielded
+		// their final events, which their streams then deliver.
+		shutDown := make(chan struct{})
+		defer close(shutDown)
+		go func() {
+			turnsCtx, cancel := context.WithTimeout(ctx, turnsGrace)
+			defer cancel()
+			s.turns.wait(turnsCtx)
+			select {
+			case <-time.After(requestGrace):
+				cancelRequests()
+			case <-shutDown:
+			}
+		}()
 		err := srv.Shutdown(ctx)
 		if errors.Is(err, context.DeadlineExceeded) {
 			return srv.Close()
@@ -680,8 +699,13 @@ func (s *Server) serveHTTP(ctx context.Context, ln net.Listener, l listener, err
 	}
 }
 
-// requestGrace is how long requests may run once the server stops.
-const requestGrace = 2 * time.Second
+// requestGrace is how long requests may run once the server stopped and
+// its turns ended, so that streams deliver the final events of the turns
+// on a busy machine; turnsGrace is how long it waits for the turns.
+const (
+	requestGrace = 10 * time.Second
+	turnsGrace   = 10 * time.Second
+)
 
 // reportFatal hands err to Run, which stops on the first one; later errors
 // are only logged.
