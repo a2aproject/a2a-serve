@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"net/http"
+	"sync"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -253,5 +254,48 @@ func TestControlCardServesReloadedSkills(t *testing.T) {
 	}
 	if _, err := client.Card(ctx, network.ListenerPrivate); err == nil {
 		t.Fatalf("Card(%q) error = nil, want an error for an agent without a private URL", network.ListenerPrivate)
+	}
+}
+
+func TestConcurrentRuleAnswersOfWaitingApprovals(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	waiting := make([]*a2a.Task, 3)
+	for i := range waiting {
+		waiting[i] = send(t, c, userText("ask", "", ""))
+	}
+	saved, err := ts.dir.ReadConfig()
+	if err != nil {
+		t.Fatalf("ReadConfig() error = %v", err)
+	}
+	saved.Approvals.Allow = []string{"execute"}
+	if err := ts.dir.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	if err := ts.srv.rt.Reload(); err != nil {
+		t.Fatalf("Reload() error = %v", err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 4)
+	var wg sync.WaitGroup
+	for range cap(errs) {
+		wg.Go(func() {
+			<-start
+			errs <- ts.srv.answerWaiting(context.Background(), nil)
+		})
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("answerWaiting() error = %v", err)
+		}
+	}
+	for _, w := range waiting {
+		wantResult(t, waitState(t, c, w.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Pushed (allow).")
 	}
 }

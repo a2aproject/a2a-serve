@@ -162,12 +162,28 @@ func leaf(err error) error {
 	}
 }
 
+// executionInProgress is the message of the a2a-go error for a message to
+// a task that runs an execution.
+const executionInProgress = "task execution is already in progress"
+
+// ExecutionInProgress reports whether err refused a message to a task
+// because the task already runs an execution.
+func ExecutionInProgress(err error) bool {
+	if err == nil {
+		return false
+	}
+	if err.Error() == executionInProgress {
+		return true
+	}
+	return slices.ContainsFunc(unwrap(err), ExecutionInProgress)
+}
+
 // a2aGoError returns the A2A error for an error that a2a-go doesn't export
 // or type, or nil. a2a-go#552 types them.
 func a2aGoError(err error) error {
 	msg := err.Error()
 	switch {
-	case msg == "task execution is already in progress" || msg == "task cancelation is in progress":
+	case msg == executionInProgress || msg == "task cancelation is in progress":
 		return a2a.NewError(a2a.ErrUnsupportedOperation, "the task is already handling a request; try again when it is done")
 	case msg == "max concurrency limit reached" || strings.HasPrefix(msg, "max scope concurrency limit reached"):
 		return a2a.NewError(a2a.ErrUnauthorized, "too many tasks are running; try again when one finishes")
