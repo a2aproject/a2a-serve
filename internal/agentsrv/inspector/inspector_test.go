@@ -23,7 +23,9 @@ import (
 	"net/url"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -41,16 +43,29 @@ import (
 
 var csrfField = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 
-type fakeSender struct{}
+type fakeSender struct {
+	mu   sync.Mutex
+	sent []*a2a.Message
+}
 
-func (fakeSender) SendMessage(context.Context, *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+func (s *fakeSender) SendMessage(_ context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sent = append(s.sent, req.Message)
 	return nil, nil
+}
+
+func (s *fakeSender) messages() []*a2a.Message {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.sent)
 }
 
 type testInspector struct {
 	*inspector.Inspector
 	store  *store.Store
 	tasks  *store.TaskStore
+	sender *fakeSender
 	client *http.Client
 	url    string
 }
@@ -68,6 +83,7 @@ func startInspector(t *testing.T) *testInspector {
 	})
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
 	tasks := st.Tasks("", all)
+	sender := &fakeSender{}
 	in := inspector.New(inspector.Deps{
 		Store:     st,
 		Tasks:     tasks,
@@ -75,7 +91,7 @@ func startInspector(t *testing.T) *testInspector {
 		ListPairings: func(context.Context) ([]pairings.Pairing, error) {
 			return []pairings.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
 		},
-		Sender:  fakeSender{},
+		Sender:  sender,
 		Config:  func() *agentdir.Config { return &agentdir.Config{Name: "coder"} },
 		BaseURL: func() string { return "https://coder.example.com" },
 		Status: func(context.Context) (*controlapi.Status, error) {
@@ -92,7 +108,7 @@ func startInspector(t *testing.T) *testInspector {
 		t.Fatal(err)
 	}
 	client := &http.Client{Jar: jar, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &testInspector{Inspector: in, store: st, tasks: tasks, client: client, url: ts.URL}
+	return &testInspector{Inspector: in, store: st, tasks: tasks, sender: sender, client: client, url: ts.URL}
 }
 
 func (ti *testInspector) do(t *testing.T, req *http.Request) (int, string) {
@@ -341,6 +357,62 @@ func TestInspectorAnswerRefusals(t *testing.T) {
 			tc.form.Set("csrf", m[1])
 			if code, body := ti.post(t, inspector.Path+tc.path, tc.form); code != tc.want {
 				t.Fatalf("POST %s = %d %q, want %d", tc.path, code, body, tc.want)
+			}
+		})
+	}
+}
+
+func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
+	t.Parallel()
+	optionSchema := &jsonschema.Schema{Type: "string", OneOf: []*jsonschema.Schema{{Const: jsonschema.Ptr[any]("once"), Title: "Allow"}}}
+	part, err := structuredinput.NewSchemaPart("tool2", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"option": optionSchema}})
+	if err != nil {
+		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
+	}
+	waiting := a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("git push"), part)}
+	tests := []struct {
+		name     string
+		task     string
+		question string
+		want     int
+		wantSent int
+	}{
+		{name: "current question", task: "t1", question: "tool2", want: http.StatusSeeOther, wantSent: 1},
+		{name: "question changed", task: "t1", question: "tool1", want: http.StatusConflict},
+		{name: "no question in the form", task: "t1", want: http.StatusConflict},
+		{name: "nothing pending", task: "t2", question: "tool2", want: http.StatusConflict},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ti := startInspector(t)
+			for _, task := range []*a2a.Task{
+				{ID: "t1", ContextID: "c1", Status: waiting},
+				{ID: "t2", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}},
+			} {
+				if _, err := ti.tasks.Create(context.Background(), task); err != nil {
+					t.Fatalf("TaskStore.Create(%s) error = %v", task.ID, err)
+				}
+			}
+			overview := ti.login(t)
+			if !strings.Contains(overview, `name="question" value="tool2"`) {
+				t.Fatalf("overview = %q, want the form to carry the question ID", overview)
+			}
+			form := url.Values{"csrf": {csrfField.FindStringSubmatch(overview)[1]}, "option": {"once"}}
+			if tc.question != "" {
+				form.Set("question", tc.question)
+			}
+
+			code, body := ti.post(t, inspector.Path+"/tasks/"+tc.task+"/answer", form)
+
+			if code != tc.want {
+				t.Fatalf("POST task answer = %d %q, want %d", code, body, tc.want)
+			}
+			if code == http.StatusConflict && !strings.Contains(body, "Reload the page") {
+				t.Fatalf("POST task answer body = %q, want it to tell the owner to reload", body)
+			}
+			if got := len(ti.sender.messages()); got != tc.wantSent {
+				t.Fatalf("POST task answer sent %d answers, want %d", got, tc.wantSent)
 			}
 		})
 	}
