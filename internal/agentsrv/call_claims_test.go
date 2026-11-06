@@ -448,7 +448,7 @@ func TestCallClaimsAgentsLineListsPeers(t *testing.T) {
 		t.Fatalf("CallClaims.agentsURL() error = %v", err)
 	}
 	want := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s (built-in): schedule prompts for later in this conversation, such as reminders; send it help"+
-		` | coder (contact), says of itself: "Writes Go." | ben (private network), says of itself: "Reviews." Skills: review (Code review). %s`, agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote)
+		` | coder (contact), says of itself: "Writes Go." | ben (private network), says of itself: "Reviews." Skills: review (Code review). %s %s`, agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote, agentsLineEnd)
 	if got.Message.Parts[0].Text() != want {
 		t.Fatalf("CallClaims.withAgentsLine() line = %q, want %q", got.Message.Parts[0].Text(), want)
 	}
@@ -548,7 +548,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 			if err != nil {
 				t.Fatalf("CallClaims.agentsURL() error = %v", err)
 			}
-			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s (built-in): schedule prompts for later in this conversation, such as reminders; send it help | coder (contact). %s", agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote)
+			wantLine := fmt.Sprintf("%s Agents URL for this conversation: %s (call one with a2a send -a %s/<name>). Agents: %s (built-in): schedule prompts for later in this conversation, such as reminders; send it help | coder (contact). %s %s", agentsLinePrefix, u, u, pairings.SchedulesAgent, cardNote, agentsLineEnd)
 			if len(got.Message.Parts) != 2 || got.Message.Parts[0].Text() != wantLine || got.Message.Parts[1].Text() != "hello" {
 				t.Fatalf("CallClaims.withAgentsLine() parts = %v, want the line %q before the message", got.Message.Parts, wantLine)
 			}

@@ -106,11 +106,15 @@ The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
 sends it with later requests to the same agent, such as a2a send, through the
 credential helper that a2a-serve doctor --fix configures.
 
+Joining an agent you joined before replaces your saved token, so you lose
+access to what you did with it. The command refuses that without --replace.
+A code for a webhook node replaces nothing, so --replace is safe with it.
+
 A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
 instead, which the a2a-serve mailbox commands use.
 
 ```
-a2a-serve pair join <agent-url> <code>
+a2a-serve pair join <agent-url> <code> [flags]
 ```
 
 **Examples**
@@ -118,6 +122,12 @@ a2a-serve pair join <agent-url> <code>
 ```bash
 a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D
 ```
+
+**Flags**
+
+| Flag | Default | Description |
+|---|---|---|
+| `--replace` |  | Join an agent you joined before, replacing the saved token |
 
 ## a2a-serve pair list
 

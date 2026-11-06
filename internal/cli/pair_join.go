@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
 	"github.com/a2aproject/a2a-serve/internal/doctor"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
@@ -28,6 +29,7 @@ import (
 )
 
 func newPairJoinCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
+	var replace bool
 	cmd := &cobra.Command{
 		Use:   "join <agent-url> <code>",
 		Short: "Join another agent with a pairing code from its owner",
@@ -36,18 +38,27 @@ The token is saved to ~/.config/a2a-serve/credentials.json. The a2a CLI
 sends it with later requests to the same agent, such as a2a send, through the
 credential helper that a2a-serve doctor --fix configures.
 
+Joining an agent you joined before replaces your saved token, so you lose
+access to what you did with it. The command refuses that without --replace.
+A code for a webhook node replaces nothing, so --replace is safe with it.
+
 A code for a webhook node (a2a-serve pair invite --webhook) returns a node token
 instead, which the a2a-serve mailbox commands use.`,
 		Example: "  a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
-			defer cancel()
-			c, err := credstore.Pair(ctx, &http.Client{Transport: cfg.httpTransport}, args[0], args[1], pairapi.PairingPerson)
+			store, err := cfg.credentialStore()
 			if err != nil {
 				return err
 			}
-			store, err := cfg.credentialStore()
+			if !replace {
+				if err := checkNotJoined(store, args[0]); err != nil {
+					return err
+				}
+			}
+			ctx, cancel := context.WithTimeout(cmd.Context(), sf.timeout)
+			defer cancel()
+			c, err := credstore.Pair(ctx, &http.Client{Transport: cfg.httpTransport}, args[0], args[1], pairapi.PairingPerson)
 			if err != nil {
 				return err
 			}
@@ -61,11 +72,29 @@ instead, which the a2a-serve mailbox commands use.`,
 			return printJoinedAs(cfg, c, store.Path, setup)
 		},
 	}
+	cmd.Flags().BoolVar(&replace, "replace", false, "Join an agent you joined before, replacing the saved token")
 	// Joining another agent uses no agent directory of this one.
 	var dir string
 	cmd.Flags().StringVar(&dir, "dir", "", "")
 	must(cmd.Flags().MarkHidden("dir"))
 	return cmd
+}
+
+// checkNotJoined refuses a join that would replace the token of an earlier
+// join. The check runs before the code is exchanged, so a refused join
+// leaves the code unused.
+func checkNotJoined(store *credstore.Store, agentURL string) error {
+	c, ok, err := store.Joined(agentURL)
+	if err != nil || !ok {
+		return err
+	}
+	who := c.Principal
+	if c.Agent != "" {
+		who = c.Agent + " as " + who
+	}
+	e := clierr.Usage(fmt.Sprintf("you already joined %s; joining again replaces that token in %s, and you lose access to the conversations and tasks of %s", who, store.Path, c.Principal))
+	e.Hint = "pass --replace to join anyway; a code for a webhook node replaces nothing"
+	return e
 }
 
 // needsHelperSetup reports whether the a2a CLI lacks the credential helper
