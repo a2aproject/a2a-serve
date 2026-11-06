@@ -18,7 +18,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
@@ -91,19 +90,10 @@ func (s *Server) waitingApprovals(ctx context.Context) ([]*a2a.Task, error) {
 	}
 }
 
-// answerByRules answers the approval q of task t with opt.
+// answerByRules answers the approval q of task t with opt. A question
+// shown in a chat or in the inspector is answered there, so that it shows
+// who answered. The executor logs the answer.
 func (s *Server) answerByRules(ctx context.Context, t *a2a.Task, q *approvals.Question, opt approvals.Option) error {
-	if err := s.deliverByRules(ctx, t, q, opt); err != nil {
-		return err
-	}
-	slog.Info("answered a waiting approval with the new rules", "task", t.ID, "tool", q.Title, "option", opt.ID)
-	return nil
-}
-
-// deliverByRules sends the answer opt to the approval q of task t. A
-// question shown in a chat or in the inspector is answered there, so that
-// it shows who answered.
-func (s *Server) deliverByRules(ctx context.Context, t *a2a.Task, q *approvals.Question, opt approvals.Option) error {
 	ids, err := s.store.UnansweredQuestionsOf(ctx, string(t.ID))
 	if err != nil {
 		return err
