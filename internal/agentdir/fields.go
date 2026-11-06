@@ -231,6 +231,15 @@ func parseWorkspace(d Dir, v string) (string, error) {
 	return m.String(), nil
 }
 
+// parsePath returns v as an absolute path, with ~ expanded.
+func parsePath(_ Dir, v string) (string, error) {
+	p, err := expandHome(v)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Abs(p)
+}
+
 func parseMountArg(_ Dir, v string) (string, error) {
 	m, err := ParseMount(v)
 	if err != nil {
@@ -302,6 +311,11 @@ var fields = []field{
 		access: strs(func(c *Config) *[]string { return &c.Mounts }, func(s *Settings) *[]string { return &s.Mounts }),
 		flag:   "mount", path: "mounts", scope: scopeAgent, section: SectionWorkspace, key: mountArgKey, parse: parseMountArg,
 		usage: "Extra directory to mount: `src[:dst][:ro]`, such as ~/docs:/docs:ro; keyed by dst",
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.AllowBroadMounts }, func(s *Settings) *[]string { return &s.AllowBroadMounts }),
+		flag:   "allow-broad-mount", path: "allowBroadMounts", scope: scopeOwner, section: SectionWorkspace, key: identity, parse: parsePath,
+		usage: "Let the Docker sandbox mount a `path` that is your home directory, / or a directory that holds your home directory; the agent can then read your credentials and the secrets of the agents in it",
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Secrets }, func(s *Settings) *[]string { return &s.Secrets }),

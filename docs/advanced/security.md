@@ -6,7 +6,7 @@ An a2a-serve agent can read your project, run commands and reach the network, an
 
 By default the agent runs in Docker with:
 
-- the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config. `.mcp.json` appears as a read-only file with no servers, so the agent gets only the MCP servers the server passes it;
+- the workspace and the `--mount` directories, and nothing else from your disk. `.a2a/` appears as an empty read-only directory, so the agent can't read its own secrets, tokens, database or config. The `.a2a/` directories of other agents in the mounts appear empty too, which keeps their secrets and control sockets out of reach. The server refuses a workspace or mount that is your home directory, `/` or a directory that holds it, unless `--allow-broad-mount` names it. `.mcp.json` appears as a read-only file with no servers, so the agent gets only the MCP servers the server passes it;
 - `state/home` as its home directory, where it keeps its sessions and config;
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
 - a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is a TCP port on the host's loopback, and each container sends a key of its own.
@@ -21,9 +21,10 @@ What the sandbox doesn't protect yet:
 - **It can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
 - **It reaches the tailnet as you.** The tailnet is a trusted private network. When the machine running the agent is on it, the agent's connections to tailnet addresses go out through that machine's Tailscale node, so this agent's private URL, your other agents and other tailnet services see your device and grant your rights, whoever started the task.
 - **The workspace is writable** unless mounted `:ro`, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project.
+- **An agent created in the mounts of a running agent is visible to its running containers.** `a2a-serve start` refuses to create an agent inside the directory of a running agent, and the server refuses new containers once another agent appears in their mounts. Containers that already run see the new agent's `.a2a/` until `a2a-serve restart`.
 - **Docker is the boundary.** Kernel and Docker escapes are out of scope for this project.
 
-`--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token and the conversations of every user. Use it only for agents and callers you trust completely.
+`--sandbox local` runs the agent on the host, as you, with no isolation. It can read everything you can, including `~/.config/a2a-serve/credentials.json` with your owner token, the `.a2a/` directories of your other agents and the conversations of every user. Use it only for agents and callers you trust completely.
 
 ## Who can call the agent
 

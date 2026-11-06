@@ -289,6 +289,16 @@ func (d Dir) CheckConfig(cfg *Config, secrets Secrets) error {
 		if _, err := os.Stat(m.Src); err != nil {
 			errs = append(errs, fmt.Errorf("%s %s: the source does not exist", flag, m))
 		}
+		if cfg.Sandbox == SandboxLocal {
+			continue
+		}
+		label := flag + " " + m.String()
+		if i == 0 && cfg.Workspace == "" {
+			label = "the workspace " + m.Src
+		}
+		if err := checkBroadMount(label, m.Src, cfg.AllowBroadMounts); err != nil {
+			errs = append(errs, err)
+		}
 	}
 	for _, name := range cfg.Secrets {
 		if secrets[name] == "" {
@@ -345,6 +355,19 @@ func (c *Config) ContainerEnvErrors(secrets Secrets) []error {
 		}
 	}
 	return errs
+}
+
+// checkBroadMount refuses a mount of src that exposes the user's home
+// directory, unless allowed names src.
+func checkBroadMount(label, src string, allowed []string) error {
+	broad, err := BroadMount(src)
+	if err != nil || !broad {
+		return err
+	}
+	if slices.ContainsFunc(allowed, func(p string) bool { return resolved(p) == resolved(src) }) {
+		return nil
+	}
+	return fmt.Errorf("%s includes your home directory, with your credentials and the secrets of other agents, and the sandbox would expose it to the agent; use a project directory, or pass --allow-broad-mount %s to mount it anyway", label, src)
 }
 
 type secretRef struct{ flag, value string }

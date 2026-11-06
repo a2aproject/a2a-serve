@@ -226,6 +226,94 @@ func TestPrepareRejectsInvalidSpecs(t *testing.T) {
 	}
 }
 
+func tmpfsMounts(args []string) []string {
+	var out []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "--mount" {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func TestPrepareDockerHidesNestedAgents(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws, docs := t.TempDir(), t.TempDir()
+	own := mkdir(t, filepath.Join(ws, agentdir.Name))
+	mkdir(t, filepath.Join(ws, "sub", "deeper", agentdir.Name, "state"))
+	mkdir(t, filepath.Join(docs, "x", agentdir.Name))
+
+	p, err := startDocker(t, Spec{
+		Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
+		Hidden: []string{own},
+		Home:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{
+		"type=tmpfs,dst=" + own + ",readonly",
+		"type=tmpfs,dst=" + filepath.Join(ws, "sub", "deeper", agentdir.Name) + ",readonly",
+		"type=tmpfs,dst=/docs/x/" + agentdir.Name + ",readonly",
+	}
+	if diff := cmp.Diff(want, tmpfsMounts(p.Args)); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+	wantWarnings := []string{"found other agents in " + filepath.Join(ws, "sub", "deeper") + ", " + filepath.Join(docs, "x") + "; the sandbox hides their .a2a directories"}
+	if diff := cmp.Diff(wantWarnings, p.Warnings); diff != "" {
+		t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s", diff)
+	}
+	if err := p.Check(); err != nil {
+		t.Fatalf("Prepared.Check() error = %v, want nil", err)
+	}
+	mkdir(t, filepath.Join(ws, "later", agentdir.Name))
+	if err := p.Check(); err == nil || !strings.Contains(err.Error(), "a2a-serve restart") {
+		t.Fatalf("Prepared.Check() error = %v, want a restart for the agent created later", err)
+	}
+}
+
+func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws := t.TempDir()
+	own := mkdir(t, filepath.Join(ws, agentdir.Name))
+
+	p, err := startDocker(t, Spec{
+		Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: "/", Dst: "/host", ReadOnly: true}},
+		Hidden: []string{own},
+		Home:   t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{"type=tmpfs,dst=" + own + ",readonly", "type=tmpfs,dst=" + filepath.Join("/host", own) + ",readonly"}
+	if diff := cmp.Diff(want, tmpfsMounts(p.Args)); diff != "" {
+		t.Fatalf("Prepare() hidden mounts wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	mkdir(t, filepath.Join(ws, "sub", agentdir.Name))
+
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Sandbox: SandboxLocal,
+		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:    t.TempDir(),
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+
+	want := []string{"found other agents in " + filepath.Join(ws, "sub") + "; --sandbox local doesn't hide their .a2a directories, so the agent can read their secrets"}
+	if diff := cmp.Diff(want, p.Warnings); diff != "" {
+		t.Fatalf("Prepare() warnings wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestPrepareDockerMasksMCP(t *testing.T) {
 	fakeDocker(t, runningDocker)
 	tests := []struct {

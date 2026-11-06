@@ -108,8 +108,11 @@ type Prepared struct {
 	// Stop cleans up after the harness exited, such as removing its container.
 	Stop func(context.Context) error
 	// Check refuses to start the harness again when the agent could have
-	// redirected its sandbox since Prepare.
+	// redirected its sandbox since Prepare, or when another agent was
+	// created in a mount that the sandbox doesn't hide.
 	Check func() error
+	// Warnings are problems of the sandbox that don't stop the harness.
+	Warnings []string
 }
 
 // Prepare bootstraps the harness home and returns the command which runs
@@ -123,20 +126,97 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if ws := spec.Mounts[0]; ws.Dst != ws.Src {
 		return nil, fmt.Errorf("the first --mount is the workspace and must keep its path (%s), got %s", ws.Src, ws.Dst)
 	}
+	if spec.Sandbox != "" && spec.Sandbox != SandboxDocker && spec.Sandbox != SandboxLocal {
+		return nil, fmt.Errorf("unknown sandbox %q: want docker or local", spec.Sandbox)
+	}
 	if err := PrepareHome(spec); err != nil {
 		return nil, err
+	}
+	nested, err := nestedAgents(spec)
+	var warnings []string
+	switch {
+	case err != nil && spec.Sandbox == SandboxLocal:
+		warnings = append(warnings, fmt.Sprintf("searching the mounts for other agents: %v", err))
+	case err != nil:
+		return nil, err
+	case len(nested) > 0 && spec.Sandbox == SandboxLocal:
+		warnings = append(warnings, fmt.Sprintf("found other agents in %s; --sandbox local doesn't hide their .a2a directories, so the agent can read their secrets", agentRoots(nested)))
+	case len(nested) > 0:
+		warnings = append(warnings, fmt.Sprintf("found other agents in %s; the sandbox hides their .a2a directories", agentRoots(nested)))
+		spec.Hidden = append(slices.Clone(spec.Hidden), nested...)
 	}
 	ws := Workspace{Dir: spec.Mounts[0].Src, Home: spec.Home}
 	if err := spec.Profile.Bootstrap(ws); err != nil {
 		return nil, fmt.Errorf("bootstrapping %s: %w", spec.Profile.Name(), err)
 	}
-	switch spec.Sandbox {
-	case "", SandboxDocker:
-		return prepareDocker(ctx, spec, ws)
-	case SandboxLocal:
-		return prepareLocal(ctx, spec, ws)
+	var p *Prepared
+	if spec.Sandbox == SandboxLocal {
+		p, err = prepareLocal(ctx, spec, ws)
+	} else {
+		p, err = prepareDocker(ctx, spec, ws)
 	}
-	return nil, fmt.Errorf("unknown sandbox %q: want docker or local", spec.Sandbox)
+	if err != nil {
+		return nil, err
+	}
+	p.Warnings = warnings
+	return p, nil
+}
+
+// maxNestedScan bounds the directories that a search of the mounts for
+// other agents visits.
+const maxNestedScan = 500_000
+
+// nestedAgents returns the .a2a entries of other agents in the mounts of
+// spec, those that spec doesn't hide yet. A mount that exposes the user's
+// home directory, which the owner allowed with --allow-broad-mount,
+// exposes the agents in it, and isn't searched.
+func nestedAgents(spec Spec) ([]string, error) {
+	hidden := make([]string, len(spec.Hidden))
+	for i, h := range spec.Hidden {
+		hidden[i] = resolvePath(h)
+	}
+	var out []string
+	for _, m := range spec.Mounts {
+		broad, err := agentdir.BroadMount(m.Src)
+		if err != nil {
+			return nil, err
+		}
+		if broad {
+			continue
+		}
+		found, err := agentdir.FindBelow(resolvePath(m.Src), maxNestedScan)
+		if err != nil {
+			return nil, err
+		}
+		for _, p := range found {
+			if !slices.Contains(hidden, p) && !slices.Contains(out, p) {
+				out = append(out, p)
+			}
+		}
+	}
+	return out, nil
+}
+
+// checkNoNewAgents refuses a container start after another agent was
+// created in a mount since Prepare: the container would expose its .a2a.
+func checkNoNewAgents(spec Spec) error {
+	nested, err := nestedAgents(spec)
+	if err != nil {
+		return err
+	}
+	if len(nested) > 0 {
+		return fmt.Errorf("another agent was created in %s after this agent started, and its sandbox doesn't hide it yet; restart this agent with `a2a-serve restart`", agentRoots(nested))
+	}
+	return nil
+}
+
+// agentRoots lists the directories holding the .a2a entries.
+func agentRoots(a2a []string) string {
+	roots := make([]string, len(a2a))
+	for i, p := range a2a {
+		roots[i] = filepath.Dir(p)
+	}
+	return strings.Join(roots, ", ")
 }
 
 func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
@@ -178,7 +258,12 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop, Check: func() error { return checkPaths(spec) }}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop, Check: func() error {
+		if err := checkPaths(spec); err != nil {
+			return err
+		}
+		return checkNoNewAgents(spec)
+	}}, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.

@@ -21,6 +21,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentctl"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
@@ -60,6 +62,13 @@ on the old host before taking over.
 			}
 			if key == "" {
 				return clierr.Usage("--backup-key is required: the snapshots are encrypted with it")
+			}
+			d, err := agentdir.Open(dir)
+			if err != nil {
+				return err
+			}
+			if err := agentctl.CheckEnclosing(ctx, d); err != nil {
+				return err
 			}
 			passphrase, err := flagparse.ResolveSecret("backup-key", key, cfg.secretReader(cfg.stderr()))
 			if err != nil {

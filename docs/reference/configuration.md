@@ -58,6 +58,7 @@ dot. Files with the snake_case keys of older versions still load, and
 | `--sandbox` | `sandbox` | `start <agent>`, `config set` |
 | `--workspace` | `workspace` | `start <agent>`, `config set` |
 | `--mount` | `mounts` | `start <agent>`, `config set` |
+| `--allow-broad-mount` | `allowBroadMounts` | `start <agent>`, `config set` |
 | `--secret` | `secrets` | `start <agent>`, `config set` |
 | `--env` | `env` | `start <agent>`, `config set` |
 | `--port` | `port` | `start <agent>`, `config set` |

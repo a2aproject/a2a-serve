@@ -209,6 +209,50 @@ func TestCheckConfig(t *testing.T) {
 	}
 }
 
+func TestCheckConfigBroadMounts(t *testing.T) {
+	t.Parallel()
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Fatal(err)
+	}
+	project := t.TempDir()
+	tests := []struct {
+		name    string
+		root    string
+		cfg     Config
+		wantErr string
+	}{
+		{name: "project directory", root: project, cfg: Config{Workspace: project}},
+		{name: "agent in home", root: home, wantErr: "the workspace " + home + " includes your home directory"},
+		{name: "home workspace", root: project, cfg: Config{Workspace: home}, wantErr: "--workspace " + home + " includes your home directory"},
+		{name: "root workspace", root: project, cfg: Config{Workspace: "/"}, wantErr: "--workspace / includes your home directory"},
+		{name: "root mount", root: project, cfg: Config{Mounts: []string{"/:/host:ro"}}, wantErr: "--mount /:/host:ro includes your home directory"},
+		{name: "home allowed", root: project, cfg: Config{Workspace: home, AllowBroadMounts: []string{home}}},
+		{name: "another path allowed", root: project, cfg: Config{Workspace: "/", AllowBroadMounts: []string{home}}, wantErr: "--allow-broad-mount /"},
+		{name: "local sandbox", root: home, cfg: Config{Sandbox: SandboxLocal}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d, err := Open(tc.root)
+			if err != nil {
+				t.Fatal(err)
+			}
+			tc.cfg.Name, tc.cfg.Harness = "coder", "opencode"
+			err = d.CheckConfig(&tc.cfg, nil)
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("CheckConfig() error = %v, want nil", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("CheckConfig() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestSaveSettingsValidatesBeforeSaving(t *testing.T) {
 	t.Parallel()
 	d, err := Open(t.TempDir())

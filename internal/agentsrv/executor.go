@@ -61,6 +61,9 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		mountDesc[i] = m.String()
 	}
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
+	for _, w := range h.prepared.Warnings {
+		s.logf("! %s", w)
+	}
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
 	if err != nil {

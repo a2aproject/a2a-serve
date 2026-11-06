@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -125,6 +126,11 @@ func ApplyThen(ctx context.Context, d agentdir.Dir, client *controlapi.Client, m
 // apply is [ApplyThen], saving raw as config.yaml if set.
 func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, then Step, dryRun bool, raw []byte) (_ *Result, err error) {
 	created := !d.Exists()
+	if created {
+		if err := CheckEnclosing(ctx, d); err != nil {
+			return nil, err
+		}
+	}
 	old, err := d.LoadOrNewConfig()
 	if err != nil {
 		return nil, err
@@ -194,6 +200,31 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		}
 	}
 	return res, nil
+}
+
+// CheckEnclosing refuses to create an agent in d while an agent whose
+// directory holds d runs. Its sandbox hides the .a2a directories of the
+// agents it holds only from its next start.
+func CheckEnclosing(ctx context.Context, d agentdir.Dir) error {
+	dir := filepath.Dir(d.Root)
+	for {
+		outer, err := agentdir.Find(dir)
+		if errors.Is(err, agentdir.ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		_, err = controlapi.NewClient(outer).Status(ctx)
+		if err == nil || !errors.Is(err, agenterr.ErrNotRunning) {
+			return agenterr.Conflictf("%s is inside the agent in %s, which is running, and its sandbox would expose the new agent's secrets; stop it with `a2a-serve stop --dir %s` first", d.Root, outer.Root, outer.Root)
+		}
+		parent := filepath.Dir(outer.Root)
+		if parent == outer.Root {
+			return nil
+		}
+		dir = parent
+	}
 }
 
 // saveConfig saves raw as config.yaml, or the config on disk with mutate
