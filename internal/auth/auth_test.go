@@ -294,13 +294,19 @@ func TestChainAuthenticate(t *testing.T) {
 			name:    "node token with a wrong secret",
 			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "grok-node", "stale"))},
-			wantErr: ErrNoCredential,
+			wantErr: ErrUnknownToken,
+		},
+		{
+			name:    "revoked pairing token",
+			policy:  testPolicy(true, nil),
+			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+TokenPrefix+"revoked")},
+			wantErr: ErrUnknownToken,
 		},
 		{
 			name:    "token of an unknown node",
 			policy:  testPolicy(true, nil),
 			req:     Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+mailboxapi.NewNodeToken("https://agent/mailbox", "nobody", "secret"))},
-			wantErr: ErrNoCredential,
+			wantErr: ErrUnknownToken,
 		},
 	}
 	for _, tc := range tests {

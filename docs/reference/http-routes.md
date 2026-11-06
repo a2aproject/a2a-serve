@@ -54,6 +54,16 @@ Each listener handles at most 1024 requests at once, including open streams. It 
 
 A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
 
+## Errors
+
+The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show the server's message. `POST /` answers with a JSON-RPC error and `"id": null`, and the REST paths answer with a `google.rpc.Status`. The error's `google.rpc.ErrorInfo` carries the A2A reason:
+
+| Status | JSON-RPC code | REST status | Reason |
+| --- | --- | --- | --- |
+| 401 | -31401 | `UNAUTHENTICATED` | `UNAUTHENTICATED` |
+| 403 | -31403 | `PERMISSION_DENIED` | `UNAUTHORIZED` |
+| 413 | -32600 | `INVALID_ARGUMENT` | `INVALID_REQUEST` |
+
 ## Signatures and headers
 
 The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.
