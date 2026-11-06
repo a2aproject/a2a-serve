@@ -565,6 +565,12 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 	if opts.Executor == nil {
 		start = s.poolStarter(opts.HarnessLog)
 	}
+	// The stopped turns end with a final event, which a2a-go stores after
+	// the turn returns; the task store must stay open until it did.
+	closers.push(func(ctx context.Context) error {
+		s.turns.wait(ctx)
+		return nil
+	})
 	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start})
 	closers.push(s.split.close)
 	return nil

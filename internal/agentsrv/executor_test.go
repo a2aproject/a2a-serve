@@ -679,3 +679,39 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 		}
 	}
 }
+
+func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
+	t.Parallel()
+	turns := &turnCount{}
+	e := &observedExecutor{bus: messenger.NewBus(), unattended: &messenger.ContextSet{}, notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})}), turns: turns}
+	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
+	completed := func(yield func(a2a.Event, error) bool) {
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
+	}
+	for _, err := range e.observe(t.Context(), execCtx, completed) {
+		if err != nil {
+			t.Fatalf("observe() error = %v", err)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	turns.wait(ctx)
+	if ctx.Err() == nil {
+		t.Fatalf("turns.wait() returned after the last event, want it to wait for Cleanup, which a2a-go calls once it stored the event")
+	}
+
+	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
+	e.Cleanup(t.Context(), execCtx, &a2a.Task{Status: a2a.TaskStatus{State: a2a.TaskStateCompleted}}, nil)
+	e.Cleanup(t.Context(), &a2asrv.ExecutorContext{TaskID: "t2", ContextID: "c2"}, nil, errors.New("setup failed"))
+	turns.wait(t.Context())
+
+	turns.add()
+	ctx, cancel = context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	turns.wait(ctx)
+	if ctx.Err() == nil {
+		t.Fatalf("turns.wait() returned while a turn is counted, want extra Cleanup calls to leave the count alone")
+	}
+	turns.done()
+}
