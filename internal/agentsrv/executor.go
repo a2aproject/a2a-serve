@@ -607,7 +607,8 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 			from = p.ID
 		}
 		slog.Info("task received", "task", execCtx.TaskID, "context", execCtx.ContextID, "from", from)
-		defer e.notes.start(execCtx.TaskID)()
+		stopNotes := e.notes.start(execCtx.TaskID)
+		defer stopNotes()
 		closed := false
 		for ev, err := range events {
 			if err != nil {
