@@ -323,6 +323,24 @@ func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 	}
 }
 
+func TestOwnerMessageKeepsConversationWithItsUser(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	owner := ts.client(ts.pair("me", auth.RoleOwner))
+	contextID := send(t, anna, userText("hello", "", "")).ContextID
+	send(t, owner, userText("hello", "", contextID))
+
+	if _, err := anna.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", contextID)}); err != nil {
+		t.Fatalf("SendMessage() by anna after the owner's message error = %v, want nil", err)
+	}
+	_, err := ben.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", contextID)})
+	if !errors.Is(err, a2a.ErrUnauthorized) {
+		t.Fatalf("SendMessage() by ben error = %v, want %v", err, a2a.ErrUnauthorized)
+	}
+}
+
 func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

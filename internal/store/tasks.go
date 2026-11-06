@@ -654,9 +654,16 @@ func (ts *TaskStore) LatestStateInContext(ctx context.Context, contextID string)
 	return a2a.TaskID(id), a2a.TaskState(state), nil
 }
 
-// HasOthersTasks reports whether a context has tasks of another owner than user.
-func (ts *TaskStore) HasOthersTasks(ctx context.Context, contextID, user string) (bool, error) {
-	return ts.s.exists(ctx, `SELECT EXISTS (SELECT 1 FROM tasks WHERE scope = ? AND context_id = ? AND owner != ?)`, ts.scope, contextID, user)
+// ContextStarter returns the owner of the oldest stored task of a context,
+// or [ErrNotFound] if the context has no tasks.
+func (ts *TaskStore) ContextStarter(ctx context.Context, contextID string) (string, error) {
+	var owner string
+	err := ts.s.reads.QueryRowContext(ctx, `SELECT owner FROM tasks WHERE scope = ? AND context_id = ? ORDER BY rowid LIMIT 1`,
+		ts.scope, contextID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	return owner, err
 }
 
 // TaskCounts returns the number of tasks of the scope per state.
