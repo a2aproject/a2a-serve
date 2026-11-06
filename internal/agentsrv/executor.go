@@ -385,8 +385,12 @@ func (s *Server) acpConfig() *a2aacp.Config {
 // waited for an answer, since the executor can't emit it. It does for the
 // event what observedExecutor does for the events of a running execution.
 // A reply may have ended the task first; the store refuses tasks in a
-// terminal state.
+// terminal state. The agent exits when the server stops, and the next start
+// fails the open tasks as restarted.
 func (s *Server) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
+	if s.split.stopped() {
+		return
+	}
 	_, err := s.tasks.Update(ctx, &taskstore.UpdateRequest{Task: &a2a.Task{ID: ev.TaskID}, Event: ev, PrevVersion: taskstore.TaskVersionMissing})
 	if errors.Is(err, a2a.ErrUnsupportedOperation) {
 		return

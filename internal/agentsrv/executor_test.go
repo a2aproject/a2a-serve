@@ -392,6 +392,27 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 	}
 }
 
+func TestApprovalOfStoppedServerFailsTaskAsRestarted(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	token := ts.pair("me", auth.RoleOwner)
+	task := send(t, ts.client(token), userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	root := ts.dir.Root
+	ts.stop()
+
+	restarted := startServer(t, serverOpts{dir: root})
+	got, err := restarted.client(token).GetTask(context.Background(), &a2a.GetTaskRequest{ID: task.ID})
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "restarted") {
+		t.Fatalf("GetTask() = %s %q, want failed by the restart", got.Status.State, a2atext.Message(got.Status.Message))
+	}
+}
+
 func TestCallerLimitCountsTasksWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
