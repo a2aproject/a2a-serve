@@ -445,6 +445,12 @@ func (a *recordingAgent) SendMessage(context.Context, *a2a.SendMessageRequest) (
 func (a *recordingAgent) SendStreamingMessage(ctx context.Context, _ *a2a.SendMessageRequest) iter.Seq2[a2a.Event, error] {
 	a.reach("SendStreamingMessage")
 	return func(yield func(a2a.Event, error) bool) {
+		if a.stream == nil {
+			if a.task != nil {
+				yield(a.task, nil)
+			}
+			return
+		}
 		for _, ev := range a.stream {
 			if !yield(ev, nil) {
 				return
@@ -611,7 +617,7 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 		{name: "delete push config of another conversation's task", contextID: "c2", wantErr: a2a.ErrTaskNotFound, call: func(g *guardedHandler) error {
 			return g.DeleteTaskPushConfig(ctx, &a2a.DeleteTaskPushConfigRequest{TaskID: "t1"})
 		}},
-		{name: "continue its task", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "continue its task", contextID: "c1", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			_, err := g.SendMessage(ctx, message("t1", ""))
 			return err
 		}},
@@ -619,7 +625,7 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 			_, err := g.SendMessage(ctx, message("t1", "r1"))
 			return err
 		}},
-		{name: "join its context", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "join its context", contextID: "c1", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			_, err := g.SendMessage(ctx, message("", "r1"))
 			return err
 		}},
@@ -631,7 +637,7 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 			_, err := g.SendMessage(ctx, message("", "r2"))
 			return err
 		}},
-		{name: "reference its task", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "reference its task", contextID: "c1", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			req := message("", "")
 			req.Message.ReferenceTasks = []a2a.TaskID{"t1"}
 			_, err := g.SendMessage(ctx, req)
@@ -649,13 +655,13 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 			_, err := g.SendMessage(ctx, req)
 			return err
 		}},
-		{name: "push config for its task", contextID: "c1", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "push config for its task", contextID: "c1", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			req := message("t1", "")
 			req.Config = &a2a.SendMessageConfig{PushConfig: &a2a.PushConfig{TaskID: "t1", URL: "https://hook.example"}}
 			_, err := g.SendMessage(ctx, req)
 			return err
 		}},
-		{name: "push config without a task", contextID: "c2", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "push config without a task", contextID: "c2", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			req := message("", "")
 			req.Config = &a2a.SendMessageConfig{PushConfig: &a2a.PushConfig{URL: "https://hook.example"}}
 			_, err := g.SendMessage(ctx, req)
@@ -675,7 +681,7 @@ func TestGuardedHandlerRefusesWhatTheConversationDidNotStart(t *testing.T) {
 			}
 			return nil
 		}},
-		{name: "start a new task", contextID: "c2", want: "SendMessage", call: func(g *guardedHandler) error {
+		{name: "start a new task", contextID: "c2", want: "SendStreamingMessage", call: func(g *guardedHandler) error {
 			_, err := g.SendMessage(ctx, message("", ""))
 			return err
 		}},
@@ -923,7 +929,7 @@ func TestGuardedHandlerKeepsApprovalsWithTheUser(t *testing.T) {
 				t.Fatalf("guardedHandler.SendMessage() answering the task error = %v, want %v", err, tc.wantErr)
 			}
 			for _, call := range agent.calls() {
-				if call == "SendMessage" && tc.wantErr != nil {
+				if call != "GetTask" && tc.wantErr != nil {
 					t.Fatalf("calls that reached the agent = %v, want the answer to the permission question held back", agent.calls())
 				}
 			}

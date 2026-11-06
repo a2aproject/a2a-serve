@@ -91,6 +91,40 @@ func TestAgentCallsContact(t *testing.T) {
 	wantResult(t, unknown, a2a.TaskStateCompleted, `"nobody" is not an agent you can call`)
 }
 
+func TestCancelingTaskCancelsItsCalls(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+
+	task := sendAsync(t, c, userText("call coder slow", "", ""))
+	var calls []store.CallTask
+	deadline := time.Now().Add(10 * time.Second)
+	for len(calls) == 0 && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+		var err error
+		if calls, err = assistant.srv.store.CallTasksOf(ctx, task.ContextID, string(task.ID)); err != nil {
+			t.Fatalf("store.CallTasksOf() error = %v", err)
+		}
+	}
+	if len(calls) != 1 {
+		t.Fatalf("store.CallTasksOf() = %+v, want the call to coder", calls)
+	}
+	coderClient := coder.client(coder.pair("me", auth.RoleOwner))
+	waitState(t, coderClient, a2a.TaskID(calls[0].TaskID), a2a.TaskStateWorking)
+
+	if _, err := c.CancelTask(ctx, &a2a.CancelTaskRequest{ID: task.ID}); err != nil {
+		t.Fatalf("CancelTask() error = %v", err)
+	}
+
+	got := waitState(t, coderClient, a2a.TaskID(calls[0].TaskID), a2a.TaskStateCanceled)
+	if got.Status.State != a2a.TaskStateCanceled {
+		t.Fatalf("called task state after canceling the caller's task = %s, want canceled", got.Status.State)
+	}
+}
+
 func TestAgentCallsContactWhileWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})

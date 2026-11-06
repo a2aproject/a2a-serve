@@ -274,7 +274,7 @@ func TestCallClaimsTurnOpensURLUntilEnd(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CallClaims.ClaimsOf() during the turn error = %v", err)
 	}
-	if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: anna}, got); diff != "" {
+	if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", TaskID: "t1", User: anna}, got); diff != "" {
 		t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 	}
 	if _, err := cl.ClaimsOf(ctx, h, ""); !errors.Is(err, agentproxy.ErrNoTurn) {
@@ -335,7 +335,7 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 			if err != nil {
 				return
 			}
-			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
+			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", TaskID: "t1", User: tc.want}, got); diff != "" {
 				t.Fatalf("CallClaims.ClaimsOf() wrong result (-want +got) diff = %s", diff)
 			}
 		})
@@ -381,7 +381,7 @@ func TestTurnClaims(t *testing.T) {
 
 			got := turnClaims(tc.ctx, tc.execCtx)
 
-			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", User: tc.want}, got); diff != "" {
+			if diff := cmp.Diff(agentproxy.Claims{ContextID: "ctx1", TaskID: "t1", User: tc.want}, got); diff != "" {
 				t.Fatalf("turnClaims() wrong result (-want +got) diff = %s", diff)
 			}
 		})

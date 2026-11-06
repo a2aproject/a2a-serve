@@ -234,6 +234,7 @@ type target interface {
 	send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error)
 	// get returns the task with no history, which watches don't read.
 	get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
+	cancel(ctx context.Context, id a2a.TaskID) error
 }
 
 type remoteTarget struct {
@@ -249,6 +250,11 @@ func (t remoteTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error)
 	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
 }
 
+func (t remoteTarget) cancel(ctx context.Context, id a2a.TaskID) error {
+	_, err := t.c.CancelTask(viaAgent(ctx, t.hops), &a2a.CancelTaskRequest{ID: id})
+	return err
+}
+
 type localTarget struct {
 	h a2asrv.RequestHandler
 	p auth.Principal
@@ -260,6 +266,11 @@ func (t localTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessag
 
 func (t localTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
 	return t.h.GetTask(auth.InProcess(ctx, t.p), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
+}
+
+func (t localTarget) cancel(ctx context.Context, id a2a.TaskID) error {
+	_, err := t.h.CancelTask(auth.InProcess(ctx, t.p), &a2a.CancelTaskRequest{ID: id})
+	return err
 }
 
 // ErrOffline is returned when a contact can't be reached.

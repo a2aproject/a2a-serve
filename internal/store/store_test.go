@@ -1433,6 +1433,31 @@ func TestCallTasks(t *testing.T) {
 	}
 }
 
+func TestCallTasksOf(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	calls := []CallTask{
+		{ContextID: "c1", Agent: "coder", TaskID: "t1", RemoteContextID: "r1", OriginTaskID: "o1"},
+		{ContextID: "c1", Agent: "reviewer", TaskID: "t2", RemoteContextID: "r2", OriginTaskID: "o1"},
+		{ContextID: "c1", Agent: "coder", TaskID: "t3", RemoteContextID: "r1", OriginTaskID: "o2"},
+		{ContextID: "c2", Agent: "coder", TaskID: "t4", RemoteContextID: "r1", OriginTaskID: "o1"},
+	}
+	for _, c := range calls {
+		if err := s.PutCallTask(ctx, c); err != nil {
+			t.Fatalf("PutCallTask() error = %v", err)
+		}
+	}
+
+	got, err := s.CallTasksOf(ctx, "c1", "o1")
+	if err != nil {
+		t.Fatalf("CallTasksOf() error = %v", err)
+	}
+	if diff := cmp.Diff(calls[:2], got); diff != "" {
+		t.Fatalf("CallTasksOf() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestCallTasksListsNewestFirst(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
