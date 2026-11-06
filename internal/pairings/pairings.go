@@ -636,3 +636,20 @@ func (s *Service) List(ctx context.Context) ([]Pairing, error) {
 	}
 	return out, nil
 }
+
+// DirectConv returns the direct chat of user on a channel.
+func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
+	var links []store.Link
+	if name, ok := auth.PrincipalPairing(user); ok {
+		var err error
+		if links, err = st.LinksOf(ctx, name); err != nil {
+			return "", err
+		}
+	}
+	for _, l := range links {
+		if l.Channel == ch && l.Conv != "" {
+			return l.Conv, nil
+		}
+	}
+	return "", agenterr.WithHint(agenterr.Invalidf("%s has no chat on %s", auth.DisplayPrincipal(user), ch), agenterr.HintLinkChat, "")
+}

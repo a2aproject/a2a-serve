@@ -27,10 +27,11 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
@@ -263,7 +264,7 @@ func (a *ChatApprovals) OwnerChat(ctx context.Context) (approvals.Chat, bool) {
 		chName, who, _ := strings.Cut(v, ":")
 		c, err := a.directChat(ctx, chName, who)
 		if err != nil {
-			slog.Warn("the owner chat is unavailable", "owner-chat", v, "error", err)
+			slog.Warn("the owner chat is unavailable", "owner-chat", v, "error", agenterr.Text(err))
 			return approvals.Chat{}, false
 		}
 		return c, true
@@ -286,7 +287,7 @@ func (a *ChatApprovals) directChat(ctx context.Context, chName, who string) (app
 	}
 	anyOwner := who == "" || who == auth.OwnerName || who == auth.OwnerID
 	if anyOwner {
-		conv, err := schedulesvc.DirectConv(ctx, a.store, chName, auth.OwnerID)
+		conv, err := pairings.DirectConv(ctx, a.store, chName, auth.OwnerID)
 		if err == nil {
 			return approvals.Chat{Channel: chName, Conv: channel.ConvKey(conv)}, nil
 		}

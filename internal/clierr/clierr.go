@@ -179,7 +179,7 @@ func Classify(err error) *Error {
 		return nil
 	}
 	ce := classify(err)
-	if text := hintText(err); text != "" && ce.Hint != text {
+	if text := agenterr.HintText(err); text != "" && ce.Hint != text {
 		hinted := *ce
 		hinted.Hint = text
 		return &hinted
@@ -188,7 +188,6 @@ func Classify(err error) *Error {
 }
 
 func classify(err error) *Error {
-
 	var classified *Error
 	if errors.As(err, &classified) {
 		if classified == err {

@@ -31,7 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/messenger"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/channel"
-	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	schedulesvc "github.com/a2aproject/a2a-serve/internal/schedules"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -191,7 +191,7 @@ func (sc *Runner) recordFailure(name string) func(error) {
 }
 
 func (sc *Runner) record(ctx context.Context, name string, ran time.Time, runErr error) {
-	if err := sc.store.RecordScheduleResult(ctx, name, ran, clierr.Text(runErr)); err != nil {
+	if err := sc.store.RecordScheduleResult(ctx, name, ran, agenterr.Text(runErr)); err != nil {
 		slog.Error("recording a schedule run", "schedule", name, "error", err)
 	}
 }
@@ -271,7 +271,7 @@ func (sc *Runner) contextFor(ctx context.Context, s store.Schedule) (string, err
 	if sc.supervisor.Channel(s.DeliverChannel) == nil {
 		return "", fmt.Errorf("channel %s is not running", s.DeliverChannel)
 	}
-	conv, err := schedulesvc.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
+	conv, err := pairings.DirectConv(ctx, sc.store, s.DeliverChannel, s.DeliverUser)
 	if err != nil {
 		return "", err
 	}
@@ -332,7 +332,7 @@ func (sc *Runner) RunNow(ctx context.Context, name string) (store.Schedule, erro
 		return store.Schedule{}, err
 	}
 	runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
-	s.LastRun, s.LastError = sc.now(), clierr.Text(runErr)
+	s.LastRun, s.LastError = sc.now(), agenterr.Text(runErr)
 	if err := sc.store.RecordScheduleResult(ctx, s.Name, s.LastRun, s.LastError); err != nil {
 		return store.Schedule{}, err
 	}

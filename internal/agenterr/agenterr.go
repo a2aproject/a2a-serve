@@ -103,12 +103,11 @@ func NotRunning(name string) error {
 	return &NotRunningError{Msg: name + " is not running", Hint: HintStart}
 }
 
-// Hint names how to fix an error. The CLI words it as a command to run;
-// the server and the agent only pass the code on.
+// Hint names how to fix an error. The control socket carries the code;
+// [HintText] words it as a command to run.
 type Hint string
 
-// Hints. The comment of each says what the CLI tells the user; Arg is the
-// pairing name for the hints of a pairing.
+// Hints. Arg is the pairing name for the hints of a pairing.
 const (
 	// HintStart starts the agent server.
 	HintStart Hint = "start"

@@ -27,6 +27,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -127,7 +128,7 @@ func (m Service) Add(ctx context.Context, req schedule.Request, by auth.Principa
 				return store.Schedule{}, err
 			}
 		}
-		if _, err := DirectConv(ctx, m.Store, s.DeliverChannel, s.DeliverUser); err != nil {
+		if _, err := pairings.DirectConv(ctx, m.Store, s.DeliverChannel, s.DeliverUser); err != nil {
 			return store.Schedule{}, err
 		}
 	}
@@ -185,23 +186,6 @@ func (m Service) Visible(ctx context.Context, by auth.Principal) ([]store.Schedu
 
 func canManage(s store.Schedule, by auth.Principal) bool {
 	return by.IsOwner() || by.ID == s.UserID || by.ID == s.CreatedBy
-}
-
-// DirectConv returns the direct chat of user on a channel.
-func DirectConv(ctx context.Context, st *store.Store, ch, user string) (string, error) {
-	var links []store.Link
-	if name, ok := auth.PrincipalPairing(user); ok {
-		var err error
-		if links, err = st.LinksOf(ctx, name); err != nil {
-			return "", err
-		}
-	}
-	for _, l := range links {
-		if l.Channel == ch && l.Conv != "" {
-			return l.Conv, nil
-		}
-	}
-	return "", agenterr.WithHint(agenterr.Invalidf("%s has no chat on %s", auth.DisplayPrincipal(user), ch), agenterr.HintLinkChat, "")
 }
 
 // ResolveUser turns owner or a pairing name into the principal its tokens

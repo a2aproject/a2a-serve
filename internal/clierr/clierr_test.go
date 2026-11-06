@@ -227,28 +227,6 @@ func TestClassifyTimeoutHint(t *testing.T) {
 	}
 }
 
-func TestText(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name string
-		err  error
-		want string
-	}{
-		{name: "nil", err: nil, want: ""},
-		{name: "without a hint", err: errors.New("boom"), want: "boom"},
-		{name: "with a hint", err: agenterr.WithHint(agenterr.Invalidf("anna has no chat on telegram"), agenterr.HintLinkChat, ""), want: "anna has no chat on telegram: link it with a code from `a2a-serve pair invite`"},
-		{name: "with a hint argument", err: agenterr.WithHint(agenterr.Conflictf("anna is already paired"), agenterr.HintPairRm, "anna"), want: "anna is already paired: pick another name, or run `a2a-serve pair rm anna` first"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := Text(tc.err); got != tc.want {
-				t.Fatalf("Text(%v) = %q, want %q", tc.err, got, tc.want)
-			}
-		})
-	}
-}
-
 func TestClassifyWordsHint(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
