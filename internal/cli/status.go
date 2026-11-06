@@ -46,8 +46,8 @@ func newStatusCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 
 --url prints only the agent's URL which reaches furthest: public, then
 private, then local. --url local, --url private and --url public pick one;
---url=local does the same. --url local also works while the agent is stopped, once its first start
-picked its port.`,
+--url=local does the same. --url local also works while the agent is
+stopped, once its first start picked its port.`,
 		Example: `  a2a-serve status
   a2a send -a "$(a2a-serve status --url)" "hello"
   a2a-serve status --url=private`,
@@ -95,8 +95,10 @@ picked its port.`,
 	f := cmd.Flags()
 	f.StringVar(&scope, "url", "", "Print only the agent's `scope` URL: local, private or public; without a value, the one which reaches furthest")
 	f.Lookup("url").NoOptDefVal = urlFurthest
+	hideBareValue(f, "url")
 	must(cmd.RegisterFlagCompletionFunc("url", fixedCompletions(scopeLocal, scopePrivate, scopePublic)))
 	sf.addControlFlags(f)
+	cmd.SetUsageFunc(sectionedUsage)
 	return cmd
 }
 

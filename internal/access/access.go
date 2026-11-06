@@ -34,11 +34,13 @@ type Network struct {
 	Private string
 	// Public reports whether the agent has a public URL.
 	Public bool
+	// Messenger reports whether the agent has a messenger.
+	Messenger bool
 }
 
 // NetworkOf returns the networks cfg configures.
 func NetworkOf(cfg *agentdir.Config) Network {
-	n := Network{Public: cfg.Network.Public != ""}
+	n := Network{Public: cfg.Network.Public != "", Messenger: cfg.HasMessenger()}
 	switch p := cfg.Network.Private; p {
 	case "":
 	case agentdir.NetworkTailscale:
@@ -122,7 +124,7 @@ func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 	pol := Policy(p)
 	a := &Description{
 		Owner: []string{auth.MemberSelf}, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
-		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private),
+		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private, net.Public, net.Messenger),
 	}
 	if net.Private != "" {
 		a.PrivateAllowIncoming = PrivateAllowIncoming(p)

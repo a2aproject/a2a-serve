@@ -78,6 +78,14 @@ func TestConfigCommands(t *testing.T) {
 			},
 		},
 		{
+			name:    "set a value equal to the default",
+			args:    []string{"config", "set", "--private-allow-incoming", "everyone", "--sandbox", "docker"},
+			wantOut: []string{"no changes"},
+			wantConfig: func(c *agentdir.Config) {
+				c.Sandbox, c.Policy.PrivateAllowIncoming = "docker", "everyone"
+			},
+		},
+		{
 			name:    "set dry run",
 			args:    []string{"config", "set", "--sandbox", "local", "--dry-run"},
 			wantOut: []string{"sandbox      (default) → local", "(dry run: nothing saved)"},
@@ -688,6 +696,42 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 			got, _, _ := strings.Cut(buf.String(), "✓")
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("printConfigResult() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrintStartRunning(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		res  *agentctl.Result
+		want string
+	}{
+		{
+			name: "nothing to restart",
+			res:  &agentctl.Result{Name: "other", Running: true},
+			want: "  no changes\n✓ other is already running (a2a-serve status)\n",
+		},
+		{
+			name: "settings wait for a restart",
+			res:  &agentctl.Result{Name: "other", Running: true, Restart: []string{"name", "env"}},
+			want: "  no changes\n✓ other is already running; restart to apply name, env (a2a-serve restart)\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+
+			err := printStartRunning(cfg, tc.res)
+
+			if err != nil {
+				t.Fatalf("printStartRunning() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, buf.String()); diff != "" {
+				t.Fatalf("printStartRunning() wrong output (-want +got) diff = %s", diff)
 			}
 		})
 	}

@@ -64,7 +64,7 @@ func newTestContactClientsOutgoing(t *testing.T, st *store.Store, private networ
 func putContact(t *testing.T, st *store.Store, c store.Contact) {
 	t.Helper()
 	if c.Via == "" {
-		c.Via = ViaHTTPS
+		c.Via = ViaDirect
 	}
 	if err := st.PutContact(context.Background(), c); err != nil {
 		t.Fatalf("store.PutContact() error = %v", err)
@@ -246,7 +246,7 @@ func TestContactClientsContactClientRebuiltWhenContactChanges(t *testing.T) {
 			ctx := context.Background()
 			remote := newFakeContact(t)
 			st := openTestStore(t)
-			c := store.Contact{Name: "coder", URL: remote.URL, Token: "a2p_old", Via: ViaHTTPS}
+			c := store.Contact{Name: "coder", URL: remote.URL, Token: "a2p_old", Via: ViaDirect}
 			putContact(t, st, c)
 			cc := newTestContactClients(t, st, nil)
 			first, err := cc.contactClient(ctx, "coder")
@@ -297,7 +297,7 @@ func TestContactClientsContactClientForgetsRemovedContact(t *testing.T) {
 	ctx := context.Background()
 	remote := newFakeContact(t)
 	st := openTestStore(t)
-	c := store.Contact{Name: "coder", URL: remote.URL, Via: ViaHTTPS}
+	c := store.Contact{Name: "coder", URL: remote.URL, Via: ViaDirect}
 	putContact(t, st, c)
 	cc := newTestContactClients(t, st, nil)
 	first, err := cc.contactClient(ctx, "coder")
@@ -586,9 +586,9 @@ func TestContactClientsLocate(t *testing.T) {
 		wantVia   string
 		wantError string
 	}{
-		{name: "explicit URL without a private network", agent: "coder", url: "https://coder.test", wantURL: "https://coder.test", wantVia: ViaHTTPS},
+		{name: "explicit URL without a private network", agent: "coder", url: "https://coder.test", wantURL: "https://coder.test", wantVia: ViaDirect},
 		{name: "explicit URL of a peer", private: peers, agent: "ben", url: "http://ben.test:4000", wantURL: "http://ben.test:4000", wantVia: ViaPrivate},
-		{name: "explicit URL elsewhere", private: peers, agent: "coder", url: "https://coder.test", wantURL: "https://coder.test", wantVia: ViaHTTPS},
+		{name: "explicit URL elsewhere", private: peers, agent: "coder", url: "https://coder.test", wantURL: "https://coder.test", wantVia: ViaDirect},
 		{name: "peer by name", private: peers, agent: "ben", wantURL: "http://ben.test:4000/", wantVia: ViaPrivate},
 		{name: "peer by name in other case", private: peers, agent: "BEN", wantURL: "http://ben.test:4000/", wantVia: ViaPrivate},
 		{name: "unknown peer", private: peers, agent: "nobody", wantError: `no agent named "nobody" on the private network; pass its URL with --url`},

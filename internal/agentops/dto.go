@@ -34,10 +34,10 @@ func AccessInfo(a *access.Description) *controlapi.Access {
 	return &info
 }
 
-func codeInfo(c *pairings.Code) *controlapi.PairCodeResponse {
+func (s *Service) codeInfo(c *pairings.Code) *controlapi.PairCodeResponse {
 	resp := &controlapi.PairCodeResponse{
 		Code: c.Code, Expires: c.Expires, URL: c.URL, PairCommand: pairCommand(c.URL, c.Code),
-		Advertised: c.Advertised, Hints: c.Hints,
+		Advertised: c.Advertised, Hints: c.Hints, Messenger: s.deps.Runtime.Config().HasMessenger(),
 	}
 	if c.Node != nil {
 		node := controlapi.NodeInfo(*c.Node)

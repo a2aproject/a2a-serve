@@ -65,7 +65,7 @@ func addContact(t *testing.T, caller, callee *testServer, name, role string) {
 	if err != nil {
 		t.Fatalf("AddContact() error = %v", err)
 	}
-	if !c.HasToken || c.Via != contacts.ViaHTTPS {
+	if !c.HasToken || c.Via != contacts.ViaDirect {
 		t.Fatalf("AddContact() = %+v, want an https contact with a token", c)
 	}
 }

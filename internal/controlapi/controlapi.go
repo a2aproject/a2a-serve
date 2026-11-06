@@ -160,6 +160,9 @@ type PairCodeResponse struct {
 	PairCommand string `json:"pairCommand"`
 	// Advertised is set when the request advertised the node.
 	Advertised bool `json:"advertised,omitempty"`
+	// Messenger is set when the agent has a messenger a person can link
+	// with the code.
+	Messenger bool `json:"messenger,omitempty"`
 	// Hints tell a person how to link a channel identity with the code.
 	Hints []string `json:"hints,omitempty"`
 	// Node is set for node codes.
@@ -311,8 +314,10 @@ type ContactRequest struct {
 
 // ContactInfo describes a contact.
 type ContactInfo struct {
-	Name     string `json:"name"`
-	URL      string `json:"url"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
+	// Via is the route to the contact: private for the private network,
+	// direct for an ordinary connection. It doesn't depend on the URL scheme.
 	Via      string `json:"via"`
 	HasToken bool   `json:"hasToken"`
 }

@@ -122,13 +122,29 @@ func TestDescribe(t *testing.T) {
 			want: &Description{
 				PrivateAllowIncoming: "paired", PublicAllowIncoming: "anyone",
 				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{"anyone"},
-				Pairings: 1, Others: []string{"anyone on the public URL or in a direct chat"},
+				Pairings: 1, Others: []string{"anyone on the public URL"},
 				Summary: []string{
 					"you: this machine and your tailnet devices",
-					"anyone on the public URL or in a direct chat, 1 pairing",
+					"anyone on the public URL, 1 pairing",
 					"the tailnet needs a pairing",
 					"the public URL is open to anyone",
 				},
+			},
+		},
+		{
+			name: "anyone with a messenger and no public URL", settings: agentdir.PolicyConfig{PublicAllowIncoming: "anyone"}, net: Network{Messenger: true},
+			want: &Description{
+				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{"anyone"},
+				Others:  []string{"anyone in a direct chat"},
+				Summary: []string{"you: this machine", "anyone in a direct chat"},
+			},
+		},
+		{
+			name: "anyone without a public URL or messenger", settings: agentdir.PolicyConfig{PublicAllowIncoming: "anyone"},
+			want: &Description{
+				Owner: []string{"self"}, Authenticated: []string{"private"}, Anonymous: []string{"anyone"},
+				Others:  []string{"anyone (no public URL or messenger is set up yet)"},
+				Summary: []string{"you: this machine", "anyone (no public URL or messenger is set up yet)"},
 			},
 		},
 		{

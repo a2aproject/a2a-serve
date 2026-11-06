@@ -33,10 +33,13 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
-// Contact routes.
+// Contact routes: how the agent reaches a contact, whatever the scheme of
+// its URL.
 const (
+	// ViaPrivate goes through the private network provider's HTTP client.
 	ViaPrivate = "private"
-	ViaHTTPS   = "https"
+	// ViaDirect is an ordinary connection from this machine.
+	ViaDirect = "direct"
 )
 
 // ErrNeedsNetwork is returned for a contact found by name, which needs the
@@ -48,7 +51,7 @@ type Service struct {
 	Store *store.Store
 	// Locate returns the URL of the contact name on the private network
 	// when url is empty, and the route to the URL. Nil adds only contacts
-	// with a URL, over HTTPS.
+	// with a URL, directly.
 	Locate func(ctx context.Context, name, url string) (string, string, error)
 	// HTTPClient returns the client which reaches a contact. Nil sends the
 	// contact's token over the default client.
@@ -82,7 +85,7 @@ func (m Service) Add(ctx context.Context, req Request) (store.Contact, error) {
 	} else if !errors.Is(err, store.ErrNotFound) {
 		return store.Contact{}, err
 	}
-	c := store.Contact{Name: req.Name, URL: strings.TrimSuffix(req.URL, "/"), Token: req.Token, Via: ViaHTTPS}
+	c := store.Contact{Name: req.Name, URL: strings.TrimSuffix(req.URL, "/"), Token: req.Token, Via: ViaDirect}
 	switch {
 	case m.Locate != nil:
 		u, via, err := m.Locate(ctx, req.Name, c.URL)

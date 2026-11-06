@@ -22,6 +22,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/credstore"
+	"github.com/a2aproject/a2a-serve/internal/doctor"
 	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
@@ -53,14 +54,11 @@ instead, which the a2a-serve mailbox commands use.`,
 			if err := store.Put(c); err != nil {
 				return err
 			}
+			setup := needsHelperSetup(cfg)
 			if c.Kind == credstore.KindNode {
-				return printNodePaired(cfg, c, store.Path)
+				return printNodePaired(cfg, c, store.Path, setup)
 			}
-			if cfg.IsJSON() {
-				return cfg.PrintJSON(map[string]string{"url": c.URL, "agent": c.Agent, "principal": c.Principal, "saved": store.Path})
-			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ joined %s as %s; token saved to %s\n  (%s)\n", c.Agent, c.Principal, store.Path, credstore.HelperSetup)
-			return err
+			return printJoinedAs(cfg, c, store.Path, setup)
 		},
 	}
 	// Joining another agent uses no agent directory of this one.
@@ -70,12 +68,35 @@ instead, which the a2a-serve mailbox commands use.`,
 	return cmd
 }
 
-func printNodePaired(cfg *globalConfig, c credstore.Credential, saved string) error {
+// needsHelperSetup reports whether the a2a CLI lacks the credential helper
+// that sends the saved token, which `a2a-serve doctor --fix` configures.
+func needsHelperSetup(cfg *globalConfig) bool {
+	env, err := doctorEnv(cfg)
+	return err != nil || !doctor.CredentialHelperConfigured(env)
+}
+
+func printJoinedAs(cfg *globalConfig, c credstore.Credential, saved string, helperSetup bool) error {
+	if cfg.IsJSON() {
+		return cfg.PrintJSON(map[string]string{"url": c.URL, "agent": c.Agent, "principal": c.Principal, "saved": saved})
+	}
+	hint := ""
+	if helperSetup {
+		hint = "  (" + credstore.HelperSetup + ")\n"
+	}
+	_, err := fmt.Fprintf(cfg.Out, "✓ joined %s as %s; token saved to %s\n%s", c.Agent, c.Principal, saved, hint)
+	return err
+}
+
+func printNodePaired(cfg *globalConfig, c credstore.Credential, saved string, helperSetup bool) error {
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(map[string]string{"url": c.URL, "node": c.Agent, "principal": c.Principal, "token": c.Token, "saved": saved})
 	}
 	agent, _ := mailboxapi.AgentURL(c.Token)
-	_, err := fmt.Fprintf(cfg.Out, "✓ paired as node %s at %s; token saved to %s\n\n  Node token: %s\n\nKeep the token as the secret %s if the node runs elsewhere; it includes the agent's URL.\nThe node calls the agent with: a2a send -a %s \"…\"\n(%s)\n",
-		c.Agent, c.URL, saved, c.Token, mailboxapi.EnvNodeToken, agent, credstore.HelperSetup)
+	hint := ""
+	if helperSetup {
+		hint = "(" + credstore.HelperSetup + ")\n"
+	}
+	_, err := fmt.Fprintf(cfg.Out, "✓ paired as node %s at %s; token saved to %s\n\n  Node token: %s\n\nKeep the token as the secret %s if the node runs elsewhere; it includes the agent's URL.\nThe node calls the agent with: a2a send -a %s \"…\"\n%s",
+		c.Agent, c.URL, saved, c.Token, mailboxapi.EnvNodeToken, agent, hint)
 	return err
 }

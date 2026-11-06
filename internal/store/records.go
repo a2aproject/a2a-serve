@@ -132,7 +132,7 @@ type Contact struct {
 	// Token is the outbound a2p_ token, empty for contacts reached over the
 	// private network, which recognize the caller by its network identity.
 	Token string
-	// Via is private (the network provider's HTTP client) or https.
+	// Via is private (the network provider's HTTP client) or direct.
 	Via     string
 	Created time.Time
 }

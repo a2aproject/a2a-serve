@@ -91,7 +91,7 @@ func NewContactClients(deps ContactClientsDeps) *ContactClients {
 // Contact routes.
 const (
 	ViaPrivate = contacts.ViaPrivate
-	ViaHTTPS   = contacts.ViaHTTPS
+	ViaDirect  = contacts.ViaDirect
 )
 
 // contactClient is the A2A client of a contact, built for the contact as
@@ -152,7 +152,7 @@ func (cc *ContactClients) Locate(ctx context.Context, name, u string) (string, s
 		if cc.private != nil && cc.onPrivateNetwork(ctx, u) {
 			return u, ViaPrivate, nil
 		}
-		return u, ViaHTTPS, nil
+		return u, ViaDirect, nil
 	}
 	if node, host, ok := gossip.ParseKey(name); ok {
 		u, err := cc.advertisedURL(ctx, name, node, host)

@@ -109,10 +109,10 @@ func TestStatusAccess(t *testing.T) {
 		PrivateAllowIncoming: agentdir.AccessEveryone, PublicAllowIncoming: agentdir.AccessAnyone,
 		Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{"anyone"},
 		Pairings: 1, OwnerPairings: 1,
-		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL or in a direct chat"},
+		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL"},
 		Summary: []string{
 			"you: this machine and your tailnet devices",
-			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL or in a direct chat, 1 pairing (1 owner)",
+			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
 			"the public URL is open to anyone",
 		},
 	}

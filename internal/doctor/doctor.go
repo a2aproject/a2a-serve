@@ -208,6 +208,17 @@ func CLIChecks(ctx context.Context, env Env) []Result {
 	return cliChecks(ctx, env)
 }
 
+// CredentialHelperConfigured reports whether the a2a CLI attaches the tokens
+// of this machine: the credential-helper check passes.
+func CredentialHelperConfigured(env Env) bool {
+	path := UserConfigPath(env.Home)
+	values, err := readUserConfig(path)
+	if err != nil {
+		return false
+	}
+	return checkCredentialHelper(env, path, values).Status == StatusOK
+}
+
 // SetupProblems returns one line per failed a2a CLI check of this machine,
 // for the server to print on start.
 func SetupProblems(ctx context.Context) []string {

@@ -28,6 +28,10 @@ import (
 // sectionAnnotation is the flag annotation naming the help section of a flag.
 const sectionAnnotation = "a2a-serve-section"
 
+// bareValueAnnotation marks a flag whose bare form's value, NoOptDefVal, is
+// left out of the usage line.
+const bareValueAnnotation = "a2a-serve-hide-bare-value"
+
 const sectionRun = "Run (not saved)"
 
 var sections = []string{
@@ -40,6 +44,13 @@ func setSection(f *pflag.FlagSet, section string, names ...string) {
 	for _, name := range names {
 		must(f.SetAnnotation(name, sectionAnnotation, []string{section}))
 	}
+}
+
+// hideBareValue leaves the value of the bare form of the named flag, which
+// pflag prints as [="value"], out of the usage line. The usage text says what
+// the bare form does.
+func hideBareValue(f *pflag.FlagSet, name string) {
+	must(f.SetAnnotation(name, bareValueAnnotation, []string{"true"}))
 }
 
 // sectionedUsage prints the usage of a command whose flags are in help
@@ -56,6 +67,11 @@ func sectionedUsage(c *cobra.Command) error {
 	bySection := map[string]*pflag.FlagSet{}
 	other := pflag.NewFlagSet("other", pflag.ContinueOnError)
 	c.LocalFlags().VisitAll(func(fl *pflag.Flag) {
+		if len(fl.Annotations[bareValueAnnotation]) > 0 {
+			shown := *fl
+			shown.NoOptDefVal = ""
+			fl = &shown
+		}
 		section := other
 		if s := fl.Annotations[sectionAnnotation]; len(s) > 0 {
 			if bySection[s[0]] == nil {

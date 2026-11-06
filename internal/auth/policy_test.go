@@ -121,6 +121,8 @@ func TestPolicyOthers(t *testing.T) {
 		name     string
 		policy   Policy
 		provider string
+		public   bool
+		chat     bool
 		want     []string
 	}{
 		{name: "private network", policy: testPolicy(true, nil), provider: network.ProviderTailscale, want: []string{"everyone on the tailnet"}},
@@ -130,12 +132,15 @@ func TestPolicyOthers(t *testing.T) {
 			name: "emails", policy: testPolicy(true, []string{"*@example.com", "anna@example.org"}), provider: network.ProviderTailscale,
 			want: []string{"everyone on the tailnet", "emails matching *@example.com", "emails matching anna@example.org"},
 		},
-		{name: "anyone", policy: Policy{Anonymous: []string{MemberAnyone}}, want: []string{"anyone on the public URL or in a direct chat"}},
+		{name: "anyone on both routes", policy: Policy{Anonymous: []string{MemberAnyone}}, public: true, chat: true, want: []string{"anyone on the public URL or in a direct chat"}},
+		{name: "anyone on the public URL", policy: Policy{Anonymous: []string{MemberAnyone}}, public: true, want: []string{"anyone on the public URL"}},
+		{name: "anyone in a direct chat", policy: Policy{Anonymous: []string{MemberAnyone}}, chat: true, want: []string{"anyone in a direct chat"}},
+		{name: "anyone without a route", policy: Policy{Anonymous: []string{MemberAnyone}}, want: []string{"anyone (no public URL or messenger is set up yet)"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if diff := cmp.Diff(tc.want, tc.policy.Others(tc.provider)); diff != "" {
+			if diff := cmp.Diff(tc.want, tc.policy.Others(tc.provider, tc.public, tc.chat)); diff != "" {
 				t.Fatalf("Policy.Others() wrong result (-want +got) diff = %s", diff)
 			}
 		})

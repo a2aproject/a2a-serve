@@ -19,9 +19,19 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/contacts"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
 )
+
+// routeLabel names how the agent reaches a contact. It doesn't depend on the
+// scheme of the contact's URL.
+func routeLabel(via string) string {
+	if via == contacts.ViaPrivate {
+		return "private network"
+	}
+	return "direct connection"
+}
 
 func newContactAddCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	var req controlapi.ContactRequest
@@ -57,7 +67,7 @@ calls to it go through that agent.
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(info)
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ the agent can call %s (%s, via %s)\n", info.Name, info.URL, info.Via)
+			_, err = fmt.Fprintf(cfg.Out, "✓ the agent can call %s (%s, %s)\n", info.Name, info.URL, routeLabel(info.Via))
 			return err
 		},
 	}

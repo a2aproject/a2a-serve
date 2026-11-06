@@ -67,8 +67,11 @@ type field struct {
 	access
 	flag string
 	// path is the dotted key in config.yaml, empty for a stored secret.
-	path    string
-	usage   string
+	path  string
+	usage string
+	// def is the value the agent uses when the setting is empty, so that
+	// setting it explicitly isn't shown as a change.
+	def     string
 	section string
 	place   placement
 	scope   scope
@@ -304,6 +307,7 @@ var fields = []field{
 		flag:   "sandbox", path: "sandbox", scope: scopeAgent, section: SectionSandbox,
 		usage:  "Where the agent runs: docker (default) or local",
 		values: []string{SandboxDocker, SandboxLocal},
+		def:    SandboxDocker,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Workspace }, func(s *Settings) *string { return &s.Workspace }),
@@ -352,18 +356,21 @@ var fields = []field{
 		flag:   "private-allow-incoming", path: "policy.privateAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
 		usage:  "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)",
 		values: []string{AccessEveryone, AccessPaired},
+		def:    AccessEveryone,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PublicAllowIncoming }, func(s *Settings) *string { return &s.PublicAllowIncoming }),
 		flag:   "public-allow-incoming", path: "policy.publicAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
 		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)",
 		values: []string{AccessPaired, AccessAnyone},
+		def:    AccessPaired,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PrivateAllowOutgoing }, func(s *Settings) *string { return &s.PrivateAllowOutgoing }),
 		flag:   "private-allow-outgoing", path: "policy.privateAllowOutgoing", scope: scopeOwner, live: true, section: SectionAccess,
 		usage:  "Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts)",
 		values: []string{AccessEveryone, AccessContacts},
+		def:    AccessContacts,
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Policy.AllowEmails }, func(s *Settings) *[]string { return &s.AllowEmails }),
@@ -455,17 +462,20 @@ var fields = []field{
 		access: str(func(c *Config) *string { return &c.Limits.Memory }, func(s *Settings) *string { return &s.Memory }),
 		flag:   "memory", path: "limits.memory", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
 		usage: "Container memory limit, such as 4g or 512m (default 4g)",
+		def:   DefaultLimits.Memory,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Limits.CPUs }, func(s *Settings) *string { return &s.CPUs }),
 		flag:   "cpus", path: "limits.cpus", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
 		usage: "Container CPU limit, such as 2 or 1.5 (default 2)",
+		def:   DefaultLimits.CPUs,
 	},
 	{
 		access: num(func(c *Config) *int { return &c.Limits.PIDs }, func(s *Settings) *int { return &s.PIDs }),
 		flag:   "pids", path: "limits.pids", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
 		unsetTo: fmt.Sprintf("the default of %d", DefaultLimits.PIDs),
 		usage:   "Container process limit (default 512)",
+		def:     strconv.Itoa(DefaultLimits.PIDs),
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Auth.GoogleClientID }, func(s *Settings) *string { return &s.GoogleClientID }),
@@ -627,7 +637,7 @@ func Diff(old, next *Config) []Change {
 	var out []Change
 	for _, f := range fields {
 		o, n := f.get(old), f.get(next)
-		if slices.Equal(o, n) {
+		if slices.Equal(o, n) || f.def != "" && f.valueOr(o) == f.valueOr(n) {
 			continue
 		}
 		c := Change{Setting: f.flag, Live: f.live}
@@ -648,6 +658,14 @@ func Diff(old, next *Config) []Change {
 		out = append(out, c)
 	}
 	return out
+}
+
+// valueOr returns the value of a scalar setting, which is def when empty.
+func (f field) valueOr(v []string) string {
+	if len(v) == 0 {
+		return f.def
+	}
+	return v[0]
 }
 
 // Unset removes entries from a list setting, or the whole list without
