@@ -471,15 +471,16 @@ func TestWatchesWatchStopsAtItsLimits(t *testing.T) {
 	tests := []struct {
 		name       string
 		prompt     string
+		state      a2a.TaskState
 		timings    Timings
 		wantReason string
 	}{
 		{
-			name: "no state change", prompt: promptHold, wantReason: "it has been working for 50ms",
+			name: "no state change", prompt: promptHold, state: a2a.TaskStateWorking, wantReason: "it has been working for 50ms",
 			timings: Timings{WatchInterval: time.Millisecond, WatchMaxInterval: 4 * time.Millisecond, WatchStale: 50 * time.Millisecond},
 		},
 		{
-			name: "too long in total, also while waiting for the user", prompt: promptAsk, wantReason: "it hasn't finished after 50ms",
+			name: "too long in total, also while waiting for the user", prompt: promptAsk, state: a2a.TaskStateInputRequired, wantReason: "it hasn't finished after 50ms",
 			timings: Timings{WatchInterval: time.Millisecond, WatchMaxInterval: 4 * time.Millisecond, WatchMaxAge: 50 * time.Millisecond},
 		},
 	}
@@ -488,6 +489,7 @@ func TestWatchesWatchStopsAtItsLimits(t *testing.T) {
 			t.Parallel()
 			f := newWatchesFixtureWith(t, tc.timings)
 			task := f.remote.startTask(t, tc.prompt)
+			f.remote.waitState(t, task.ID, tc.state)
 			f.ws.watch(f.addWatch(t, task, auth.OwnerID))
 
 			got := f.nextTurn(t)
@@ -506,6 +508,7 @@ func TestWatchesWatchOfTaskWaitingForTheUserIsNotStale(t *testing.T) {
 		t.Fatalf("store.SetContext() error = %v", err)
 	}
 	task := f.remote.startTask(t, promptAsk)
+	f.remote.waitState(t, task.ID, a2a.TaskStateInputRequired)
 	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
 
 	waitFor(t, "the question to be asked", func() bool { return len(f.chat.questions()) > 0 })
@@ -801,6 +804,7 @@ func TestWatchesWatchRelaysPermissionQuestionOnce(t *testing.T) {
 		t.Fatalf("store.SetContext() error = %v", err)
 	}
 	task := f.remote.startTask(t, promptAsk)
+	f.remote.waitState(t, task.ID, a2a.TaskStateInputRequired)
 	f.ws.watch(f.addWatch(t, task, auth.OwnerID))
 
 	waitFor(t, "the question to be asked", func() bool { return len(f.chat.questions()) > 0 })
