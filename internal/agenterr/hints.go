@@ -34,6 +34,7 @@ var hintTexts = map[Hint]string{
 	HintPortInUse:         "another process uses the port; pick another with `a2a-serve config set --port <port>`, or a free one with `a2a-serve config unset port`",
 	HintConfigUnset:       "fix it with `a2a-serve config unset %s`",
 	HintConfigEdit:        "fix it with `a2a-serve config edit`",
+	HintChannelList:       "run `a2a-serve channel list` to see the channels",
 }
 
 // Text returns the message of err followed by its worded hint, for

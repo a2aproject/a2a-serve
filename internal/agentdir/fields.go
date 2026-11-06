@@ -781,6 +781,13 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// ChannelsDiffer reports whether a and b have different messengers.
+func ChannelsDiffer(a, b *Config) bool {
+	return slices.ContainsFunc(fields, func(f field) bool {
+		return f.place == placeChannel && !slices.Equal(f.get(a), f.get(b))
+	})
+}
+
 // CopyLive copies the settings a running server applies without a restart,
 // other than channels, from src to dst.
 func CopyLive(dst, src *Config) {

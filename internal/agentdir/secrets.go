@@ -141,3 +141,27 @@ func ResolveInput(v, fallbackName string) (ref string, s Secrets, err error) {
 	}
 	return SecretPrefix + fallbackName, Secrets{fallbackName: v}, nil
 }
+
+// StoreSecretValues moves the values of the secret settings that next, a
+// config.yaml edited by hand, changed since old to the secrets to store, as
+// the flags of the settings do. next keeps references to them. Messengers
+// are left alone, since only `a2a-serve channel add` changes them.
+func StoreSecretValues(old, next *Config) (Secrets, error) {
+	secrets := Secrets{}
+	for _, f := range fields {
+		if f.secret == "" || f.secretOnly || f.place == placeChannel {
+			continue
+		}
+		v := first(f.get(next))
+		if v == "" || v == first(f.get(old)) {
+			continue
+		}
+		ref, sec, err := ResolveInput(v, f.secret)
+		if err != nil {
+			return nil, &FieldError{Flag: f.flag, Entry: v, Reason: err.Error()}
+		}
+		maps.Copy(secrets, sec)
+		f.put(next, []string{ref})
+	}
+	return secrets, nil
+}
