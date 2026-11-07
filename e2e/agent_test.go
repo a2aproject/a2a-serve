@@ -17,8 +17,12 @@
 package e2e
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
@@ -56,6 +60,31 @@ func TestRestartStartsStoppedAgent(t *testing.T) {
 
 	if !coder.running() {
 		t.Fatalf("a2a-serve status running = false after restart, want true")
+	}
+}
+
+// TestStopWithoutState covers stop in an agent directory whose
+// .a2a/state is gone: the server exits, and stop returns at once.
+func TestStopWithoutState(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	if err := os.RemoveAll(filepath.Join(coder.dir, ".a2a", "state")); err != nil {
+		t.Fatalf("os.RemoveAll() error = %v", err)
+	}
+	eventually(t, "the server exits without its state", func() (bool, string) {
+		st := coder.status()
+		return !st.Running, fmt.Sprintf("%+v", st)
+	})
+
+	start := time.Now()
+	out := coder.serve("stop")
+	coder.stopped = true
+	if !strings.Contains(out, "coder is not running") {
+		t.Fatalf("a2a-serve stop without state = %q, want %q", out, "coder is not running")
+	}
+	if elapsed := time.Since(start); elapsed > 30*time.Second {
+		t.Fatalf("a2a-serve stop without state took %v, want it to return at once", elapsed)
 	}
 }
 
