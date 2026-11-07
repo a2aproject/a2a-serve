@@ -260,7 +260,7 @@ func (c CardConfig) validate() []error {
 	for _, sk := range c.Skills {
 		switch {
 		case strings.TrimSpace(sk.ID) == "":
-			invalid(sk.Name, "want a non-empty id")
+			errs = append(errs, &FieldError{Flag: cardSkillsSetting, Entry: sk.Name, Desc: fmt.Sprintf("a skill named %q", sk.Name), Reason: "want a non-empty id"})
 		case seen[sk.ID]:
 			invalid(sk.ID, "the id is taken by another skill")
 		case len([]rune(sk.Description)) > MaxCardSkillDescription:

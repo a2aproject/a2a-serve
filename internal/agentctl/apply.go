@@ -239,7 +239,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 func fileProblems(d agentdir.Dir, err error, old *agentdir.Config, stored agentdir.Secrets, created, edited bool) error {
 	switch {
 	case edited:
-		return agentdir.FileProblems(err)
+		return agentdir.EditProblems(err)
 	case created:
 		return err
 	}

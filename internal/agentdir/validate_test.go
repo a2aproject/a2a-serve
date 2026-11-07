@@ -113,7 +113,7 @@ func TestValidate(t *testing.T) {
 		{name: "card skills", modify: func(c *Config) {
 			c.Card.Skills = []CardSkill{{ID: "release-notes", Name: "Release notes", Description: "Writes release notes.", Tags: []string{"git"}}, {ID: "review"}}
 		}},
-		{name: "card skill without an id", modify: func(c *Config) { c.Card.Skills = []CardSkill{{Name: "Review"}} }, wantErr: `config.yaml: card.skills has "Review": want a non-empty id`},
+		{name: "card skill without an id", modify: func(c *Config) { c.Card.Skills = []CardSkill{{Name: "Review"}} }, wantErr: `config.yaml: card.skills has a skill named "Review": want a non-empty id`},
 		{name: "card skills with one id", modify: func(c *Config) { c.Card.Skills = []CardSkill{{ID: "review"}, {ID: "review"}} }, wantErr: `card.skills has "review": the id is taken by another skill`},
 		{name: "card skill description too long", modify: func(c *Config) {
 			c.Card.Skills = []CardSkill{{ID: "review", Description: strings.Repeat("a", MaxCardSkillDescription+1)}}

@@ -178,3 +178,62 @@ func TestConversationContinuesAfterWorkspaceMoved(t *testing.T) {
 		t.Fatalf("task result in the new session = %q, want no earlier conversation", got)
 	}
 }
+
+func TestProjectStatusWithRefusedMCPFile(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, path string)
+		wantErr string
+	}{
+		{
+			name: "empty file",
+			setup: func(t *testing.T, path string) {
+				if err := os.WriteFile(path, nil, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: "%s isn't valid JSON (unexpected end of JSON input); the agent gets no MCP servers from it",
+		},
+		{
+			name: "link out of the workspace",
+			setup: func(t *testing.T, path string) {
+				outside := filepath.Join(t.TempDir(), "mcp.json")
+				if err := os.WriteFile(outside, []byte(testMCPFile), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(outside, path); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: "%s links out of the workspace; the agent gets no MCP servers from it",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			path := filepath.Join(root, project.MCPFile)
+			tc.setup(t, path)
+			skill := filepath.Join(root, ".agents", "skills", "deploy")
+			if err := os.MkdirAll(skill, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(skill, "SKILL.md"), []byte("---\nname: deploy\n---\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			servers, skills, err := ProjectStatus(agentdir.Dir{Root: root}, &agentdir.Config{}, nil)
+
+			if want := strings.ReplaceAll(tc.wantErr, "%s", path); err == nil || err.Error() != want {
+				t.Fatalf("ProjectStatus() error = %v, want %q", err, want)
+			}
+			if len(servers) != 0 {
+				t.Fatalf("ProjectStatus() servers = %v, want none", servers)
+			}
+			if diff := cmp.Diff([]project.Skill{{Name: "deploy", Dir: ".agents/skills"}}, skills); diff != "" {
+				t.Fatalf("ProjectStatus() wrong skills (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}

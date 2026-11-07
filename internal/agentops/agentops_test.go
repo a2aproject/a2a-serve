@@ -228,7 +228,7 @@ func TestUpdatePairing(t *testing.T) {
 	want := struct {
 		Role, PairCommand string
 		Access            bool
-	}{auth.RoleOwner, "a2a-serve pair join " + baseURL + " " + got.Code.Code, true}
+	}{auth.RoleOwner, "a2a-serve pair join " + baseURL + " " + got.Code.Code + " --replace", true}
 	if diff := cmp.Diff(want, gotSummary); diff != "" {
 		t.Fatalf("UpdatePairing() wrong result (-want +got) diff = %s", diff)
 	}

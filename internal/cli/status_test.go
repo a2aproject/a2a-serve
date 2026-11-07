@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 func TestStatusStoppedJSON(t *testing.T) {
@@ -107,7 +108,7 @@ func TestPrintStatusAccess(t *testing.T) {
 		Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000", Private: "https://coder.tail1234.ts.net",
 		Access: &controlapi.Access{Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 2 pairings", "the public URL needs a pairing"}},
 	}
-	if err := printStatus(cfg, st, nil, "", ""); err != nil {
+	if err := printStatus(cfg, st, nil, nil, "", ""); err != nil {
 		t.Fatalf("printStatus() error = %v", err)
 	}
 	want := "  access   you: this machine and your tailnet devices\n" +
@@ -115,6 +116,49 @@ func TestPrintStatusAccess(t *testing.T) {
 		"           the public URL needs a pairing\n"
 	if !strings.Contains(out.String(), want) {
 		t.Fatalf("printStatus() = %q, want the access block %q", out.String(), want)
+	}
+}
+
+func TestPrintStatusMCPMissing(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		stored agentdir.Secrets
+		want   string
+	}{
+		{
+			name: "unset",
+			want: "  mcp      grafana: uvx mcp-grafana ! not passed to the agent, unset: GRAFANA_TOKEN, GRAFANA_URL (pass them with --secret)\n",
+		},
+		{
+			name:   "stored since the start",
+			stored: agentdir.Secrets{"GRAFANA_TOKEN": "tok"},
+			want: "  mcp      grafana: uvx mcp-grafana ! not passed to the agent, unset: GRAFANA_URL (pass them with --secret);" +
+				" stored, passed after `a2a-serve restart`: GRAFANA_TOKEN\n",
+		},
+		{
+			name:   "all stored",
+			stored: agentdir.Secrets{"GRAFANA_TOKEN": "tok", "GRAFANA_URL": "https://g.example.com"},
+			want:   "  mcp      grafana: uvx mcp-grafana ! stored, passed after `a2a-serve restart`: GRAFANA_TOKEN, GRAFANA_URL\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+			st := &controlapi.Status{
+				Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000",
+				MCPServers: []controlapi.MCPServerStatus{{Name: "grafana", Summary: "uvx mcp-grafana", Missing: []string{"GRAFANA_TOKEN", "GRAFANA_URL"}}},
+			}
+			next := project.Vars(&agentdir.Config{Secrets: []string{"GRAFANA_TOKEN", "GRAFANA_URL"}}, tc.stored)
+			if err := printStatus(cfg, st, nil, next, "", ""); err != nil {
+				t.Fatalf("printStatus() error = %v", err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("printStatus() = %q, want the MCP line %q", out.String(), tc.want)
+			}
+		})
 	}
 }
 
@@ -126,7 +170,7 @@ func TestPrintStatusTools(t *testing.T) {
 		Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000",
 		AllowTools: []string{"read", "tool:grafana.*", "command:kubectl get *"}, DenyTools: []string{"command:git push *"},
 	}
-	if err := printStatus(cfg, st, nil, "", ""); err != nil {
+	if err := printStatus(cfg, st, nil, nil, "", ""); err != nil {
 		t.Fatalf("printStatus() error = %v", err)
 	}
 	want := "  tools    allow read, tool:grafana.*, command:kubectl get *\n" +
@@ -167,7 +211,7 @@ func TestPrintStatusNetworkProblems(t *testing.T) {
 			cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
 			st := tc.st
 			st.Name, st.Harness, st.Started, st.Local = "coder", "opencode", time.Now(), "http://127.0.0.1:4000"
-			if err := printStatus(cfg, &st, nil, "", ""); err != nil {
+			if err := printStatus(cfg, &st, nil, nil, "", ""); err != nil {
 				t.Fatalf("printStatus() error = %v", err)
 			}
 			if !strings.Contains(out.String(), tc.want) {

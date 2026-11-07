@@ -61,6 +61,9 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
+	if fi, lerr := os.Lstat(path); err != nil && lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+		return nil, fmt.Errorf("%s links out of the workspace", path)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("reading %s: %w", path, err)
 	}
@@ -68,7 +71,7 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 		MCPServers map[string]MCPServer `json:"mcpServers"`
 	}
 	if err := json.Unmarshal(data, &file); err != nil {
-		return nil, fmt.Errorf("parsing %s: %w", path, err)
+		return nil, fmt.Errorf("%s isn't valid JSON (%w)", path, err)
 	}
 	out := make([]MCPServer, 0, len(file.MCPServers))
 	for _, name := range slices.Sorted(maps.Keys(file.MCPServers)) {

@@ -144,6 +144,11 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 	if r.Code != nil {
 		resp.Code = s.codeInfo(r.Code)
 	}
+	if r.Code != nil && r.Code.Node == nil && req.Rotate {
+		// The callers of the pairing joined before, and the code keeps their
+		// conversations and tasks.
+		resp.Code.PairCommand += " --replace"
+	}
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
 	}

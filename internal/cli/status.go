@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 )
 
@@ -89,7 +90,11 @@ stopped, once its first start picked its port.`,
 			if cfg.IsJSON() {
 				return cfg.PrintJSON(statusJSON{Name: st.Name, Harness: st.Harness, Dir: st.Dir, Running: true, Status: st, Pending: pending, Recipe: recipeOf(d), ConfigError: problem})
 			}
-			return printStatus(cfg, st, pending, recipeOf(d), problem)
+			next, err := restartVars(d, problem)
+			if err != nil {
+				return err
+			}
+			return printStatus(cfg, st, pending, next, recipeOf(d), problem)
 		},
 	}
 	f := cmd.Flags()
@@ -215,7 +220,26 @@ func writeNetworkProblem(sb *strings.Builder, label, u string, p *controlapi.Net
 	fmt.Fprintf(sb, "  %-8s ! %s\n", label, p.Line())
 }
 
-func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fromRecipe, configProblem string) error {
+// restartVars returns the variables of the MCP servers that the agent in d
+// gets once it restarts, or nil if its config has a problem.
+func restartVars(d agentdir.Dir, problem string) (func(string) (string, bool), error) {
+	if problem != "" {
+		return nil, nil
+	}
+	saved, err := d.ReadConfig()
+	if err != nil {
+		return nil, err
+	}
+	stored, err := d.LoadSecrets()
+	if err != nil {
+		return nil, err
+	}
+	return project.Vars(saved, stored), nil
+}
+
+// printStatus prints the status st of the running agent. next returns the
+// variables of its MCP servers once it restarts, if not nil.
+func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, next func(string) (string, bool), fromRecipe, configProblem string) error {
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%s (%s) running for %s, pid %d\n", st.Name, st.Harness, time.Since(st.Started).Round(time.Second), st.PID)
 	fmt.Fprintf(&sb, "  dir      %s\n", st.Dir)
@@ -268,8 +292,27 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, fro
 		if m.Disabled {
 			line += fmt.Sprintf(" (off; turn it on with `a2a-serve config unset disable-mcp %s`)", m.Name)
 		}
-		if len(m.Missing) > 0 {
-			line += fmt.Sprintf(" ! not passed to the agent, unset: %s (pass them with --secret)", strings.Join(m.Missing, ", "))
+		var unset, saved []string
+		for _, name := range m.Missing {
+			if next == nil {
+				unset = append(unset, name)
+				continue
+			}
+			if _, ok := next(name); ok {
+				saved = append(saved, name)
+				continue
+			}
+			unset = append(unset, name)
+		}
+		var problems []string
+		if len(unset) > 0 {
+			problems = append(problems, fmt.Sprintf("not passed to the agent, unset: %s (pass them with --secret)", strings.Join(unset, ", ")))
+		}
+		if len(saved) > 0 {
+			problems = append(problems, fmt.Sprintf("stored, passed after `a2a-serve restart`: %s", strings.Join(saved, ", ")))
+		}
+		if len(problems) > 0 {
+			line += " ! " + strings.Join(problems, "; ")
 		}
 		fmt.Fprintf(&sb, "  mcp      %s\n", line)
 	}
