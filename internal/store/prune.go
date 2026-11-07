@@ -21,21 +21,22 @@ import (
 	"time"
 )
 
-// DefaultTaskTTL is how long tasks are kept after their last update unless
-// [Store.SetTaskTTL] sets another time.
+// DefaultTaskTTL is how long finished tasks are kept after their last update
+// unless [Store.SetTaskTTL] sets another time.
 const DefaultTaskTTL = 30 * 24 * time.Hour
 
-// SetTaskTTL sets how long tasks are kept after their last update.
+// SetTaskTTL sets how long finished tasks are kept after their last update.
 func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 
 // Prune deletes expired codes, Google sign-in tokens idle for
-// [SignInTokenTTL], and the pairings nobody redeemed a code of
-// when their last code expires; tasks not updated for the task TTL with their
-// events, snapshots, questions and attachments; questions of remote agents
-// as old whose task nobody watches; the messenger conversations, agent
-// sessions, handles, call tasks, grants and suggestions of contexts left
-// without tasks; the counts of taps on "Always allow" older than their
-// retention; and the dedup keys of messages older than the retention.
+// [SignInTokenTTL], and the pairings nobody redeemed a code of when their
+// last code expires; tasks in a terminal state that weren't updated for the
+// task TTL, with their events, snapshots, questions and attachments;
+// questions of remote agents as old whose task nobody watches; the messenger
+// conversations, agent sessions, handles, call tasks, grants and suggestions
+// of contexts left without tasks; the counts of taps on "Always allow" older
+// than their retention; and the dedup keys of messages older than the
+// retention.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
@@ -60,7 +61,7 @@ func (s *Store) Prune(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM tool_taps WHERE updated < ?`, now.Add(-ToolTapRetention).UnixNano()); err != nil {
 			return err
 		}
-		pruned, err := deleteTasks(ctx, tx, `updated < ?`, cutoff)
+		pruned, err := deleteTasks(ctx, tx, `updated < ? AND state IN (?, ?, ?, ?)`, append([]any{cutoff}, terminalStates()...)...)
 		if err != nil {
 			return err
 		}
