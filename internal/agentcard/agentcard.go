@@ -18,7 +18,6 @@ package agentcard
 
 import (
 	"cmp"
-	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
@@ -88,7 +87,7 @@ func skills(cfg *agentdir.Config) []a2a.AgentSkill {
 	}
 	out := make([]a2a.AgentSkill, len(cfg.Card.Skills))
 	for i, sk := range cfg.Card.Skills {
-		out[i] = a2a.AgentSkill{ID: sk.ID, Name: cmp.Or(sk.Name, sk.ID), Description: sk.Description, Tags: slices.Clone(sk.Tags)}
+		out[i] = a2a.AgentSkill{ID: sk.ID, Name: cmp.Or(sk.Name, sk.ID), Description: sk.Description, Tags: append([]string{}, sk.Tags...)}
 	}
 	return out
 }
