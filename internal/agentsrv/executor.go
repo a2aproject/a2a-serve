@@ -450,6 +450,10 @@ func explainFailure(cfg *agentdir.Config, reported string) string {
 	if hint := harness.MissingKey(cfg); hint != "" {
 		return hint + "; the agent reported: " + text
 	}
+	// Other agents take their model in their command.
+	if !slices.Contains(agentdir.Harnesses, cfg.Harness) {
+		return text
+	}
 	model := "<model>"
 	if cfg.Harness == "opencode" {
 		model = "<provider/model>"
@@ -457,14 +461,13 @@ func explainFailure(cfg *agentdir.Config, reported string) string {
 	return text + "; choose another model with `a2a-serve config set --model " + model + " --restart`"
 }
 
-// modelNotFound reports whether the agent or its provider doesn't know the
-// model, as in "model not found: google/x", "models/x is not found for API
-// version v1beta" or "The model `x` does not exist".
-func modelNotFound(text string) bool {
-	lower := strings.ToLower(text)
-	return strings.Contains(lower, "model") &&
-		(strings.Contains(lower, "not found") || strings.Contains(lower, "not_found") || strings.Contains(lower, "does not exist"))
-}
+// modelNotFoundText matches the failures of an agent or its provider that
+// doesn't know the model, as in "model not found: google/x", "models/x is
+// not found for API version v1beta", "The model `x` does not exist" or
+// Anthropic's not_found_error for "model: x".
+var modelNotFoundText = regexp.MustCompile("(?i)\\bmodels?[/: `][^\\n]*?\\b(?:not found|does not exist)|not_found_error[^\\n]*?\\bmodel\\b")
+
+func modelNotFound(text string) bool { return modelNotFoundText.MatchString(text) }
 
 // acpError matches a failure that a2aacp reports for an error response of
 // the agent: its message, then its JSON-RPC code and data.
