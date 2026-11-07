@@ -18,6 +18,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -544,6 +545,46 @@ func TestInitRefusesSymlinkedState(t *testing.T) {
 			}
 			if err := d.Init(); err == nil {
 				t.Fatalf("Dir.Init() with %s a symlink error = nil, want an error", link)
+			}
+		})
+	}
+}
+
+func TestRefusesStateOpenToOthers(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		run  func(d Dir) error
+	}{
+		{name: "Init", run: Dir.Init},
+		{name: "UpdateConfig", run: func(d Dir) error {
+			return d.UpdateConfig(func(*Config) error { return nil })
+		}},
+		{name: "SaveSecrets", run: func(d Dir) error {
+			return d.SaveSecrets(Secrets{"key": "value"})
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+				t.Fatalf("os.MkdirAll() error = %v", err)
+			}
+			if err := os.Chmod(d.StateDir(), 0o755); err != nil {
+				t.Fatalf("os.Chmod() error = %v", err)
+			}
+
+			err := tc.run(d)
+			if err == nil || !strings.Contains(err.Error(), "chmod 700 "+d.StateDir()) {
+				t.Fatalf("Dir.%s() with state mode 0755 error = %v, want the chmod hint", tc.name, err)
+			}
+			entries, err := os.ReadDir(d.StateDir())
+			if err != nil {
+				t.Fatalf("os.ReadDir() error = %v", err)
+			}
+			if len(entries) != 0 {
+				t.Fatalf("Dir.%s() wrote %v into the refused state directory, want nothing", tc.name, entries)
 			}
 		})
 	}

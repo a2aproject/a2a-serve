@@ -36,6 +36,20 @@ func MkdirPrivate(dir string) error {
 // CheckPrivate checks that dir is a real directory owned by the current user
 // and closed to others.
 func CheckPrivate(dir string) error {
+	return checkPrivate(dir, "remove it or set XDG_RUNTIME_DIR", "run chmod 700 "+dir)
+}
+
+// MkdirOwned is [MkdirReal] that also refuses a directory that another user
+// owns or that others can open. A cloned repository can ship the directory
+// with files in it, and git creates it with the user's umask.
+func MkdirOwned(dir string) error {
+	if err := MkdirReal(dir); err != nil {
+		return err
+	}
+	return checkPrivate(dir, "remove it so the server can create the directory", "remove it if it came with a cloned repository, or run chmod 700 "+dir)
+}
+
+func checkPrivate(dir, ownerFix, modeFix string) error {
 	fi, err := os.Lstat(dir)
 	if err != nil {
 		return err
@@ -48,10 +62,10 @@ func CheckPrivate(dir string) error {
 		return fmt.Errorf("can't check the owner of %s", dir)
 	}
 	if int(st.Uid) != os.Getuid() {
-		return fmt.Errorf("%s is owned by another user (uid %d); remove it or set XDG_RUNTIME_DIR", dir, st.Uid)
+		return fmt.Errorf("%s is owned by another user (uid %d); %s", dir, st.Uid, ownerFix)
 	}
 	if fi.Mode().Perm()&0o077 != 0 {
-		return fmt.Errorf("%s is accessible to other users (mode %v); run chmod 700 %s", dir, fi.Mode().Perm(), dir)
+		return fmt.Errorf("%s is accessible to other users (mode %v); %s", dir, fi.Mode().Perm(), modeFix)
 	}
 	return nil
 }

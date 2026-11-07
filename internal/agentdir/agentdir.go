@@ -271,15 +271,23 @@ func (d Dir) Init() error {
 	if d.HasRelay() {
 		return ErrRelayDir
 	}
+	if err := d.mkdirState(); err != nil {
+		return err
+	}
+	if err := fsutil.MkdirReal(d.HomeDir()); err != nil {
+		return err
+	}
+	return WriteGitignore(d.Path())
+}
+
+// mkdirState creates the .a2a and state directories, and refuses a state
+// directory that another user owns or that others can open. Call it before
+// the first write to the state directory.
+func (d Dir) mkdirState() error {
 	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
 		return err
 	}
-	for _, p := range []string{d.StateDir(), d.HomeDir()} {
-		if err := fsutil.MkdirReal(p); err != nil {
-			return err
-		}
-	}
-	return WriteGitignore(d.Path())
+	return fsutil.MkdirOwned(d.StateDir())
 }
 
 // WriteGitignore writes the .gitignore which keeps state out of version

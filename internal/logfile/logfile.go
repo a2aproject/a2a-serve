@@ -18,10 +18,13 @@ package logfile
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"slices"
 	"sync"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // DefaultLimit is the size at which logs are rotated.
@@ -41,7 +44,7 @@ var _ io.WriteCloser = (*Rotating)(nil)
 
 // Open opens the log at path for appending. Files in shared that other
 // writers of this process have open on the log keep working after a
-// rotation.
+// rotation. It refuses a symlink at path.
 func Open(path string, limit int64, shared ...*os.File) (*Rotating, error) {
 	l := &Rotating{path: path, limit: limit, shared: shared}
 	f, err := l.open()
@@ -53,7 +56,7 @@ func Open(path string, limit int64, shared ...*os.File) (*Rotating, error) {
 }
 
 func (l *Rotating) open() (*os.File, error) {
-	return os.OpenFile(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	return fsutil.OpenNoFollow(l.path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 }
 
 // Write implements [io.Writer].
@@ -97,14 +100,18 @@ func (l *Rotating) Close() error {
 // Rotate moves the log at path to path.1 once it is larger than limit. A
 // log this process already writes to through one of writers, as the stdout
 // a detached start or the service manager opened, is copied and truncated
-// instead, since a rename would leave those writes in path.1.
+// instead, since a rename would leave those writes in path.1. It refuses a
+// symlink or another file that isn't regular at path.
 func Rotate(path string, limit int64, writers ...*os.File) error {
-	info, err := os.Stat(path)
+	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
 		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file; remove it so the server can create the log", path)
 	}
 	if info.Size() <= limit {
 		return nil
@@ -124,12 +131,12 @@ func sameFile(f *os.File, info os.FileInfo) bool {
 }
 
 func copyTruncate(src, dst string) (err error) {
-	in, err := os.Open(src)
+	in, err := fsutil.OpenNoFollow(src, os.O_RDWR, 0)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, in.Close()) }()
-	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	out, err := fsutil.OpenNoFollow(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return err
 	}
@@ -139,5 +146,5 @@ func copyTruncate(src, dst string) (err error) {
 	if err := out.Close(); err != nil {
 		return err
 	}
-	return os.Truncate(src, 0)
+	return in.Truncate(0)
 }

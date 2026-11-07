@@ -84,6 +84,49 @@ func TestMkdirPrivate(t *testing.T) {
 	}
 }
 
+func TestMkdirOwned(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, dir string)
+		wantErr bool
+	}{
+		{name: "new", setup: func(*testing.T, string) {}},
+		{name: "private", setup: func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+		}},
+		{name: "open to others", setup: func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				t.Fatalf("Chmod() error = %v", err)
+			}
+		}, wantErr: true},
+		{name: "symlink to a private directory", setup: func(t *testing.T, dir string) {
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			if err := os.Symlink(target, dir); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+		}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "state")
+			tc.setup(t, dir)
+			if err := MkdirOwned(dir); (err != nil) != tc.wantErr {
+				t.Fatalf("MkdirOwned() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestWithLockSerializesUpdates(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "counter")
