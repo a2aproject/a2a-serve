@@ -17,10 +17,14 @@ package signin_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -31,6 +35,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/googleauth/googletest"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
 )
 
@@ -520,5 +525,36 @@ func TestASignInKeepsItsLastThreeTripsToGoogle(t *testing.T) {
 	}
 	if status, got := r.browse(t, trips[3]); status != http.StatusOK || !strings.Contains(got, d.UserCode) {
 		t.Fatalf("returning from the newest trip to Google = %d %q, want 200 with the code %s", status, got, d.UserCode)
+	}
+}
+
+func TestSignInDropsBodiesSentTooSlowly(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	u, err := url.Parse(r.url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	req := fmt.Sprintf("POST %s/token HTTP/1.1\r\nHost: %s\r\nContent-Type: application/x-www-form-urlencoded\r\nContent-Length: 100\r\n\r\nclient_id=", signin.Path, u.Host)
+	if _, err := io.WriteString(conn, req); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(3 * jsonhttp.UnauthenticatedReadTimeout)); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = io.ReadAll(conn)
+
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("reading the connection of a stalled body error = %v, want the server to close it", err)
 	}
 }

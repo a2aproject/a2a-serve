@@ -24,6 +24,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -248,5 +249,181 @@ func TestFrontProxiesWebSockets(t *testing.T) {
 	}
 	if string(got) != "ping" {
 		t.Fatalf("echo = %q, want %q", got, "ping")
+	}
+}
+
+// holder holds the requests it gets until the test ends.
+type holder struct {
+	entered chan struct{}
+	release chan struct{}
+}
+
+func newHolder() *holder {
+	return &holder{entered: make(chan struct{}, 128), release: make(chan struct{})}
+}
+
+func (h *holder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	h.entered <- struct{}{}
+	select {
+	case <-h.release:
+	case <-r.Context().Done():
+	}
+}
+
+// client is where a request comes from: the connection's address and the
+// X-Forwarded-For header.
+type client struct{ remoteAddr, forwardedFor string }
+
+// tryer sends requests to a front whose routes a holder serves.
+type tryer struct {
+	f    *front.Front
+	h    *holder
+	path string
+	wg   sync.WaitGroup
+}
+
+func newTryer(t *testing.T, f *front.Front, h *holder, path string) *tryer {
+	t.Helper()
+	tr := &tryer{f: f, h: h, path: path}
+	t.Cleanup(func() {
+		close(h.release)
+		tr.wg.Wait()
+	})
+	return tr
+}
+
+// try sends a request from c and returns its status, or 0 once the holder
+// holds it.
+func (tr *tryer) try(t *testing.T, c client) int {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, tr.path, nil)
+	req.RemoteAddr = c.remoteAddr
+	if c.forwardedFor != "" {
+		req.Header.Set("X-Forwarded-For", c.forwardedFor)
+	}
+	rec := httptest.NewRecorder()
+	done := make(chan struct{})
+	tr.wg.Go(func() {
+		defer close(done)
+		tr.f.ServeHTTP(rec, req)
+	})
+	select {
+	case <-done:
+		return rec.Code
+	case <-tr.h.entered:
+		return 0
+	case <-time.After(time.Minute):
+		t.Fatalf("GET %s from %v: neither answered nor held", tr.path, c)
+		return 0
+	}
+}
+
+func TestFrontLimitsEachClient(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		path  string
+		limit int
+	}{
+		{name: "proxied", path: "/ingress/12D3/a2a/coder", limit: 64},
+		{name: "sign-in", path: "/a2a-serve/signin/token", limit: 32},
+		{name: "control", path: "/a2a-serve/control/status", limit: 32},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHolder()
+			f := front.New(info, h, h)
+			mesh := httptest.NewServer(h)
+			t.Cleanup(mesh.Close)
+			u, err := url.Parse(mesh.URL)
+			if err != nil {
+				t.Fatal(err)
+			}
+			f.Open(u)
+			tr := newTryer(t, f, h, tt.path)
+			a := client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1"}
+			b := client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2"}
+
+			for i := range tt.limit {
+				if got := tr.try(t, a); got != 0 {
+					t.Fatalf("request %d of a client status = %d, want it held", i+1, got)
+				}
+			}
+			overLimit := tr.try(t, a)
+			other := tr.try(t, b)
+
+			if overLimit != http.StatusTooManyRequests {
+				t.Fatalf("request over the client's limit status = %d, want %d", overLimit, http.StatusTooManyRequests)
+			}
+			if other != 0 {
+				t.Fatalf("request of another client status = %d, want it held", other)
+			}
+		})
+	}
+}
+
+func TestFrontTellsClientsApart(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		held, next client
+		wantSame   bool
+	}{
+		{
+			name: "clients behind a local proxy",
+			held: client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1"},
+			next: client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2"},
+		},
+		{
+			name: "clients behind Cloud Run",
+			held: client{remoteAddr: "169.254.1.1:1000", forwardedFor: "198.51.100.1"},
+			next: client{remoteAddr: "169.254.1.1:1001", forwardedFor: "198.51.100.2"},
+		},
+		{
+			name:     "a client with a forged header behind a private proxy",
+			held:     client{remoteAddr: "10.0.0.1:1000", forwardedFor: "198.51.100.1"},
+			next:     client{remoteAddr: "10.0.0.1:1001", forwardedFor: "203.0.113.9, 198.51.100.1"},
+			wantSame: true,
+		},
+		{
+			name:     "a direct client with forged headers",
+			held:     client{remoteAddr: "203.0.113.5:1000", forwardedFor: "198.51.100.1"},
+			next:     client{remoteAddr: "203.0.113.5:1001", forwardedFor: "198.51.100.2"},
+			wantSame: true,
+		},
+		{
+			name: "direct clients",
+			held: client{remoteAddr: "203.0.113.5:1000"},
+			next: client{remoteAddr: "203.0.113.6:1000"},
+		},
+		{
+			name:     "local clients without a header",
+			held:     client{remoteAddr: "127.0.0.1:1000"},
+			next:     client{remoteAddr: "127.0.0.1:1001"},
+			wantSame: true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			h := newHolder()
+			tr := newTryer(t, front.New(info, h, h), h, "/a2a-serve/signin/token")
+			for i := range 32 {
+				if got := tr.try(t, tt.held); got != 0 {
+					t.Fatalf("request %d of the first client status = %d, want it held", i+1, got)
+				}
+			}
+
+			got := tr.try(t, tt.next)
+
+			want := 0
+			if tt.wantSame {
+				want = http.StatusTooManyRequests
+			}
+			if got != want {
+				t.Fatalf("request of the second client status = %d, want %d", got, want)
+			}
+		})
 	}
 }
