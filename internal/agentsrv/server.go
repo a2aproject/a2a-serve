@@ -98,7 +98,8 @@ type Options struct {
 	Public  network.Provider
 	// NewRelay replaces network.NewRelay, for tests.
 	NewRelay func(network.RelayConfig) (network.Provider, error)
-	// Now replaces time.Now for schedules, for tests.
+	// Now replaces time.Now for schedules and the backoff of pairing codes,
+	// for tests.
 	Now func() time.Time
 	// Timings replace the delays and timeouts of the server, for tests.
 	Timings Timings
@@ -470,6 +471,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Changed:   s.refreshInstructions,
 			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
 			Homes:     userHomes{s},
+			Limiter:   pairings.NewLimiter(opts.Now),
 		})
 		s.chatTurns = chat.NewChatTurns(chat.ChatTurnsDeps{
 			Store:       s.store,
