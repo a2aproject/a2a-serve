@@ -309,7 +309,12 @@ func TestStopDoesNotWaitForRemoteResult(t *testing.T) {
 	if took := time.Since(start); took > closeTimeout/2 {
 		t.Fatalf("Stop() took %s with a task waiting for a remote result, want less than %s", took, closeTimeout/2)
 	}
-	got := <-answered
+	var got reply
+	select {
+	case got = <-answered:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("SendMessage() of the approval returned nothing after the server stopped")
+	}
 	if got.err != nil {
 		t.Fatalf("SendMessage() of the approval error = %v", got.err)
 	}
