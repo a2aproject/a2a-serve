@@ -16,24 +16,26 @@ package agentsrv
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // ruleAnswers saves what an answer to a permission question with the
-// server's options allows, before the answer reaches the task: "always"
-// saves the grant of the conversation for the person whose task asked. A
-// failed save refuses the answer, so the question keeps waiting. That
-// person's own answers count toward the offer to allow the rule in all
-// their conversations: "always" counts the conversation, and a rejection
-// starts the count over.
+// server's options allows, once the answer's execution took the task and
+// before the answer reaches the agent, so that an answer which loses a race
+// saves nothing: "always" saves the grant of the conversation for the
+// person whose task asked. A failed save refuses the answer, so the
+// question keeps waiting. That person's own answers count toward the offer
+// to allow the rule in all their conversations: "always" counts the
+// conversation, and a rejection starts the count over.
 type ruleAnswers struct {
 	store *store.Store
 	tasks *store.TaskStore
@@ -42,46 +44,38 @@ type ruleAnswers struct {
 	granted func(ctx context.Context, except a2a.TaskID)
 }
 
-// record saves what msg, p's reply to a stored task, allows.
-func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, msg *a2a.Message) error {
-	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), msg.TaskID)
-	if errors.Is(err, a2a.ErrTaskNotFound) {
+// record saves what opt, p's answer to q, the question of the task of
+// execCtx, allows.
+func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2asrv.ExecutorContext, q *approvals.Question, opt approvals.Option) error {
+	if q.Rule == "" {
 		return nil
 	}
+	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), execCtx.TaskID)
 	if err != nil {
-		return fmt.Errorf("checking task %s: %w", msg.TaskID, err)
-	}
-	q := pendingApproval(stored.Task)
-	if q == nil || q.Rule == "" {
-		return nil
-	}
-	opt, ok := replyOption(msg, q)
-	if !ok {
-		return nil
+		return fmt.Errorf("checking task %s: %w", execCtx.TaskID, err)
 	}
 	own := p.ID == stored.User
 	if isRejection(opt.ID) && own {
 		if err := r.store.ResetToolTaps(ctx, stored.User, q.Rule); err != nil {
-			slog.Warn("resetting the taps on always allow", "task", msg.TaskID, "error", err)
+			slog.Warn("resetting the taps on always allow", "task", execCtx.TaskID, "error", err)
 		}
 		return nil
 	}
 	if opt.ID != a2aacp.OptionAlways {
 		return nil
 	}
-	if err := r.store.AddToolGrant(ctx, stored.Task.ContextID, stored.User, q.Rule); err != nil {
-		slog.Error("saving the grant of a conversation", "task", msg.TaskID, "error", err)
-		return fmt.Errorf("%w: couldn't save the answer, so the question still waits for an answer; try again", a2a.ErrServerError)
+	if err := r.store.AddToolGrant(ctx, execCtx.ContextID, stored.User, q.Rule); err != nil {
+		return fmt.Errorf("saving the grant of a conversation: %w", err)
 	}
-	slog.Info("tool calls allowed for the conversation", "task", msg.TaskID, "context", stored.Task.ContextID, "rule", q.Rule, "user", stored.User, "by", p.ID)
+	slog.Info("tool calls allowed for the conversation", "task", execCtx.TaskID, "context", execCtx.ContextID, "rule", q.Rule, "user", stored.User, "by", p.ID)
 	if r.granted != nil {
-		r.granted(ctx, msg.TaskID)
+		r.granted(ctx, execCtx.TaskID)
 	}
 	if !own {
 		return nil
 	}
-	if _, err := r.store.CountToolTap(ctx, stored.User, q.Rule, stored.Task.ContextID); err != nil {
-		slog.Warn("counting a tap on always allow", "task", msg.TaskID, "error", err)
+	if _, err := r.store.CountToolTap(ctx, stored.User, q.Rule, execCtx.ContextID); err != nil {
+		slog.Warn("counting a tap on always allow", "task", execCtx.TaskID, "error", err)
 	}
 	return nil
 }
