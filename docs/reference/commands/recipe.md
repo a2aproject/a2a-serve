@@ -76,7 +76,7 @@ a2a-serve recipe --dry-run
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
 | `--cpus string` |  | Container CPU limit, such as 2 or 1.5 (default 2) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
-| `--memory string` |  | Container memory limit, such as 4g or 512m (default 4g) |
+| `--memory string` |  | Container memory limit of at least 6m, such as 4g or 512m (default 4g) |
 | `--pids int` |  | Container process limit (default 512) |
 | `--sandbox string` |  | Where the agent runs: docker (default) or local |
 

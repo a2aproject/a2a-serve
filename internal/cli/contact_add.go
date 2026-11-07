@@ -73,7 +73,7 @@ calls to it go through that agent.
 		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			if req.URL != "" {
-				if err := checkAgentURL("--url", req.URL, "https://grok.example.com"); err != nil {
+				if err = checkAgentURL("--url", req.URL, "https://grok.example.com"); err != nil {
 					return err
 				}
 			}

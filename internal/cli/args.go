@@ -64,9 +64,9 @@ func joinAnd(names []string) string {
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
-// checkAgentURL refuses a value of what that isn't an http or https URL with
-// a host, so that a typo is a usage error before any request. example is a
-// URL for the hint.
+// checkAgentURL returns a usage error unless raw is an http or https URL
+// with a host, so that a typo fails before any request. what names the value
+// in the message and example is the URL the hint shows.
 func checkAgentURL(what, raw, example string) error {
 	u, err := url.Parse(raw)
 	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
