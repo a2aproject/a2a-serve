@@ -203,8 +203,9 @@ func TestConformanceCrashRestartsAgent(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 	task := send(t, c, userText("crash", "", ""))
-	if task.Status.State != a2a.TaskStateFailed {
-		t.Fatalf("task state = %s, want failed", task.Status.State)
+	want := "the agent stopped unexpectedly; send the message again"
+	if got := a2atext.Message(task.Status.Message); task.Status.State != a2a.TaskStateFailed || got != want {
+		t.Fatalf("task = %s %q, want %s %q", task.Status.State, got, a2a.TaskStateFailed, want)
 	}
 	wantResult(t, send(t, c, userText("hello", "", "")), a2a.TaskStateCompleted, "Hello from fakeacp.")
 }
@@ -228,7 +229,7 @@ func TestConformanceSessionModel(t *testing.T) {
 		},
 		{
 			name: "unknown model of a provider with a key", model: "google/gemini-missing", secret: "GEMINI_API_KEY", wantState: a2a.TaskStateFailed,
-			wantText: "model not found: google/gemini-missing", notText: "no key",
+			wantText: "model not found: google/gemini-missing; choose another model with `a2a-serve config set --model <provider/model> --restart`", notText: "no key",
 		},
 	}
 	for _, tc := range tests {
@@ -262,12 +263,12 @@ func TestConformanceSessionModel(t *testing.T) {
 
 func TestConformanceAgentErrorWithoutProtocolDetails(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
+	ts := startServer(t, serverOpts{configure: func(cfg *agentdir.Config) { cfg.Harness = "opencode" }})
 	c := ts.client(ts.pair("me", auth.RoleOwner))
 
 	task := send(t, c, userText("apierror", "", ""))
 
-	want := "the agent failed: models/gemini-2.5-flash is not found for API version v1beta"
+	want := "the agent failed: models/gemini-2.5-flash is not found for API version v1beta; choose another model with `a2a-serve config set --model <provider/model> --restart`"
 	if got := a2atext.Message(task.Status.Message); task.Status.State != a2a.TaskStateFailed || got != want {
 		t.Fatalf("task = %s %q, want %s %q", task.Status.State, got, a2a.TaskStateFailed, want)
 	}

@@ -91,3 +91,45 @@ func TestServerStopsWhenStateDirIsDeleted(t *testing.T) {
 		t.Fatal("Run() kept serving after its state directory was deleted")
 	}
 }
+
+func TestStopFailsQueuedTasksAsStopped(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	running := sendAsync(t, c, userText("slow", "", ""))
+	waitState(t, c, running.ID, a2a.TaskStateWorking)
+	queued := sendAsync(t, c, userText("hello", "", running.ContextID))
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	subscribed := make(chan struct{})
+	last := make(chan a2a.Event, 1)
+	go func() {
+		var got a2a.Event
+		for ev, err := range c.SubscribeToTask(ctx, &a2a.SubscribeToTaskRequest{ID: queued.ID}) {
+			if err != nil {
+				break
+			}
+			if got == nil {
+				close(subscribed)
+			}
+			got = ev
+		}
+		last <- got
+	}()
+	select {
+	case <-subscribed:
+	case <-ctx.Done():
+		t.Fatal("SubscribeToTask() sent no event")
+	}
+
+	ts.stop()
+
+	ev := <-last
+	status, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	if !ok || status.Status.State != a2a.TaskStateFailed || status.Status.Message == nil {
+		t.Fatalf("SubscribeToTask() last event = %#v, want a failed status", ev)
+	}
+	if got := a2atext.Message(status.Status.Message); got != stoppedMessage {
+		t.Fatalf("SubscribeToTask() last message = %q, want %q", got, stoppedMessage)
+	}
+}
