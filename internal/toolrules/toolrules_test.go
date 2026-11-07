@@ -251,3 +251,25 @@ func TestSuggest(t *testing.T) {
 		})
 	}
 }
+
+func TestRedact(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		entry string
+		want  string
+	}{
+		{entry: "command:printf abc123token *", want: "command:printf ..."},
+		{entry: "command:ls *", want: "command:ls ..."},
+		{entry: "command:make", want: "command:make"},
+		{entry: "tool:grafana.query", want: "tool:grafana.query"},
+		{entry: "edit", want: "edit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.entry, func(t *testing.T) {
+			t.Parallel()
+			if got := Redact(tc.entry); got != tc.want {
+				t.Fatalf("Redact(%q) = %q, want %q", tc.entry, got, tc.want)
+			}
+		})
+	}
+}

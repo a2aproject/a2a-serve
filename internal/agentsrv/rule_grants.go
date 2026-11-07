@@ -26,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // ruleAnswers saves what an answer to a permission question with the
@@ -67,7 +68,7 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2a
 	if err := r.store.AddToolGrant(ctx, execCtx.ContextID, stored.User, q.Rule); err != nil {
 		return fmt.Errorf("saving the grant of a conversation: %w", err)
 	}
-	slog.Info("tool calls allowed for the conversation", "task", execCtx.TaskID, "context", execCtx.ContextID, "rule", q.Rule, "user", stored.User, "by", p.ID)
+	slog.Info("tool calls allowed for the conversation", "task", execCtx.TaskID, "context", execCtx.ContextID, "rule", toolrules.Redact(q.Rule), "user", stored.User, "by", p.ID)
 	if r.granted != nil {
 		r.granted(ctx, execCtx.TaskID)
 	}

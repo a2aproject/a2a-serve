@@ -148,12 +148,23 @@ func (d *toolDecider) AutoAnswer(ctx context.Context, execCtx *a2asrv.ExecutorCo
 	if !dec.allow {
 		d.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
 	}
-	attrs := []any{"task", execCtx.TaskID, "rule", dec.entry, "kind", q.Tool.Kind}
+	slog.Info("approval answered by a "+dec.by, dec.logAttrs(execCtx.TaskID, q.Tool.Kind, ans.Option)...)
+	return ans, true
+}
+
+// logAttrs are the attributes of the log line of the approval of task that
+// dec answered with option. A preference or grant comes from an answer to
+// a command, which can hold secrets, so it names only the program.
+func (dec decision) logAttrs(task a2a.TaskID, kind, option string) []any {
+	entry := dec.entry
+	if dec.by != byRule {
+		entry = toolrules.Redact(entry)
+	}
+	attrs := []any{"task", task, "rule", entry, "kind", kind}
 	if dec.user != "" {
 		attrs = append(attrs, "user", dec.user)
 	}
-	slog.Info("approval answered by a "+dec.by, append(attrs, "option", ans.Option)...)
-	return ans, true
+	return append(attrs, "option", option)
 }
 
 // ruleAnswer returns the option that allows a tool call once, or always if
