@@ -68,6 +68,8 @@ def rewrite_target(target, src_repo_file, dst_site_file):
     if re.match(r"^[a-z]+:", target) or target.startswith("#"):
         return target
     path, _, anchor = target.partition("#")
+    if path.startswith("/"):
+        sys.exit(f"error: {src_repo_file}: root-relative link not allowed: {target}")
     repo_path = os.path.normpath(os.path.join(os.path.dirname(src_repo_file), path))
     if repo_path.startswith(".."):
         sys.exit(f"error: {src_repo_file}: relative link escapes repository: {target}")

@@ -37,7 +37,7 @@ A changed key reaches the agent after `a2a-serve restart`, or with `--restart` o
 `${VAR}` in the project's `.mcp.json` also takes its value from these keys. See [MCP and Skills](mcp-and-skills.md).
 
 > [!WARNING]
-> The agent can read every key passed with `--secret`, since they are its environment variables. Every agent container receives these variables, including the containers of callers, so anyone allowed to approve commands on the agent can read them. A tricked agent can send them anywhere. See [Security](../advanced/security.md#the-sandbox).
+> Every agent container, including caller and anonymous containers, receives every key passed with `--secret` as an environment variable, so a tricked agent or any caller who can approve commands can read them. See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
 
 ## Tokens for the server
 

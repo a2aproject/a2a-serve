@@ -1,5 +1,5 @@
 site_name: A2A Serve
-site_description: One command turns the coding agent on your machine into a sandboxed A2A agent that people, scripts and other agents can call.
+site_description: Turn opencode, Claude Code, or any ACP coding agent into a sandboxed A2A agent that people, messengers, and other agents can call.
 site_url: https://a2aproject.github.io/a2a-serve/
 repo_url: https://github.com/a2aproject/a2a-serve
 repo_name: a2aproject/a2a-serve
@@ -89,7 +89,7 @@ nav:
   - Examples:
       - Overview: examples/index.md
       - Serve a Coding Agent: examples/01-agent-server/index.md
-      - Tailscale, Telegram and Grok: examples/02-tailscale-telegram-grok/index.md
+      - Tailscale, Telegram, and Grok: examples/02-tailscale-telegram-grok/index.md
       - Agent Mesh Relay: examples/03-agentmesh-relay/index.md
       - Observability Agent: examples/04-observability-agent/index.md
       - Relay on Cloud Run: examples/05-relay-cloud-run/index.md
