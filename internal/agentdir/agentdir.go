@@ -105,7 +105,6 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 	if err != nil {
 		return Dir{}, err
 	}
-	var stale *Dir
 	for {
 		d := Dir{Root: dir}
 		if match(d) {
@@ -114,13 +113,11 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 		if d.HasRelay() {
 			return Dir{}, relayNotAgent(dir)
 		}
-		if stale == nil && d.HasServerState() {
-			stale = &d
+		// An outer agent isn't the one meant here.
+		if d.HasServerState() {
+			return Dir{}, missingConfig(d)
 		}
 		parent := filepath.Dir(dir)
-		if parent == dir && stale != nil {
-			return Dir{}, missingConfig(*stale)
-		}
 		if parent == dir {
 			return Dir{}, ErrNotFound
 		}

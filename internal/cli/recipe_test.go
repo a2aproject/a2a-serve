@@ -254,14 +254,25 @@ func TestRecipeWithoutTerminal(t *testing.T) {
 	}
 }
 
-func TestRecipeWithoutTerminalReadsSourceFirst(t *testing.T) {
+func TestRecipeWithoutTerminalReadsLocalSourceFirst(t *testing.T) {
 	t.Parallel()
-	src := filepath.Join(t.TempDir(), "missing")
-
-	_, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", src, "--dir", filepath.Join(t.TempDir(), "obs"))
-
-	if err == nil || !strings.Contains(err.Error(), "recipe "+src+": ") || !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("a2a-serve recipe error = %v, want it to say that %s doesn't exist", err, src)
+	missing := filepath.Join(t.TempDir(), "missing")
+	tests := []struct {
+		name    string
+		src     string
+		wantErr string
+	}{
+		{name: "missing directory", src: missing, wantErr: "recipe " + missing + ": "},
+		{name: "git source", src: "https://127.0.0.1:1/acme/agents.git", wantErr: "without a terminal, pass --yes or --dry-run"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", tc.src, "--dir", filepath.Join(t.TempDir(), "obs"))
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("a2a-serve recipe error = %v, want %q", err, tc.wantErr)
+			}
+		})
 	}
 }
 

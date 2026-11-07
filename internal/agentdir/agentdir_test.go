@@ -126,6 +126,41 @@ func TestFindWithState(t *testing.T) {
 	}
 }
 
+func TestFindStopsAtAgentWithoutConfig(t *testing.T) {
+	t.Parallel()
+	outer, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := outer.SaveConfig(&Config{Name: "outer", Harness: "opencode"}); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	inner := Dir{Root: filepath.Join(outer.Root, "inner")}
+	if err := inner.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	if err := os.WriteFile(inner.LockPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	want := inner.ConfigPath() + " is missing; create it again with `a2a-serve start <agent>` in " + inner.Root
+	tests := []struct {
+		name string
+		find func() error
+	}{
+		{name: "Find", find: func() error { _, err := Find(filepath.Join(inner.Root, "src")); return err }},
+		{name: "NotFoundIn", find: func() error { return NotFoundIn(inner.Root) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			err := tc.find()
+			if !errors.Is(err, ErrNotFound) || err.Error() != want {
+				t.Fatalf("%s() error = %v, want %q", tc.name, err, want)
+			}
+		})
+	}
+}
+
 func TestRemoveUserHome(t *testing.T) {
 	t.Parallel()
 	d, err := Open(t.TempDir())

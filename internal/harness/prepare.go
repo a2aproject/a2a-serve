@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -343,14 +344,25 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return checkInstalled(c.Path) }, OnHost: true}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return checkInstalled(c.Path, ws.Dir) }, OnHost: true}, nil
 }
 
 // checkInstalled refuses to start an agent without a sandbox whose command
-// isn't on PATH.
-func checkInstalled(command string) error {
-	if _, err := exec.LookPath(command); errors.Is(err, exec.ErrNotFound) {
-		return fmt.Errorf("%s is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor", command)
+// isn't on PATH, or whose path, relative to the workspace dir, is missing.
+func checkInstalled(command, dir string) error {
+	missing := fmt.Errorf("%s is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor", command)
+	if !strings.ContainsRune(command, filepath.Separator) {
+		if _, err := exec.LookPath(command); errors.Is(err, exec.ErrNotFound) {
+			return missing
+		}
+		return nil
+	}
+	path := command
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(dir, path)
+	}
+	if _, err := os.Stat(path); errors.Is(err, fs.ErrNotExist) {
+		return missing
 	}
 	return nil
 }
