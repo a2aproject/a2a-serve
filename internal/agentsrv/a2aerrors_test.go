@@ -83,6 +83,10 @@ func TestA2AErrorBodies(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	owner := "Bearer " + ts.pair("me", auth.RoleOwner)
+	// A connection the transport dialed but didn't use holds up the
+	// server's shutdown for 5s, so this client closes its own.
+	client := &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
+	t.Cleanup(client.CloseIdleConnections)
 	tooLarge := `{"padding":"` + strings.Repeat("a", jsonhttp.MaxBody) + `"}`
 	tests := []struct {
 		name      string
@@ -134,22 +138,26 @@ func TestA2AErrorBodies(t *testing.T) {
 			}
 			t.Run(tc.name+" "+path, func(t *testing.T) {
 				t.Parallel()
-				var body io.Reader = strings.NewReader(tc.body)
-				if tc.chunked {
-					body = io.MultiReader(body)
-				}
-				req, err := http.NewRequest(http.MethodPost, ts.localURL()+path, body)
-				if err != nil {
-					t.Fatal(err)
-				}
-				req.Header.Set("Content-Type", "application/json")
-				req.Header.Set("Expect", "100-continue")
+				header := http.Header{"Content-Type": {"application/json"}}
 				if tc.auth != "" {
-					req.Header.Set("Authorization", tc.auth)
+					header.Set("Authorization", tc.auth)
 				}
-				resp, err := expectContinueHTTP.Do(req)
-				if err != nil {
-					t.Fatalf("POST %s error = %v", path, err)
+				var resp *http.Response
+				if len(tc.body) > jsonhttp.MaxBody && !tc.chunked {
+					resp = postHeaders(t, ts.localURL()+path, header, len(tc.body))
+				} else {
+					var body io.Reader = strings.NewReader(tc.body)
+					if tc.chunked {
+						body = io.MultiReader(body)
+					}
+					req, err := http.NewRequest(http.MethodPost, ts.localURL()+path, body)
+					if err != nil {
+						t.Fatal(err)
+					}
+					req.Header = header
+					if resp, err = client.Do(req); err != nil {
+						t.Fatalf("POST %s error = %v", path, err)
+					}
 				}
 				defer func() {
 					if err := resp.Body.Close(); err != nil {
