@@ -624,7 +624,7 @@ func body(raw []byte, reply bool) (string, []messenger.File, error) {
 		}
 	}
 	if strings.TrimSpace(plain) == "" && html != "" {
-		if plain, err = htmlText(strings.NewReader(html)); err != nil {
+		if plain, err = htmlText(strings.NewReader(html), maxPart); err != nil {
 			return "", nil, fmt.Errorf("reading the HTML part: %w", err)
 		}
 	}

@@ -130,7 +130,7 @@ func TestHTMLText(t *testing.T) {
 	in := `<html><head><style>p{}</style></head><body><div dir="ltr">Approve&nbsp;<b>it</b></div><br>` +
 		`<div class="gmail_quote"><div class="gmail_attr">On Mon, Jan 1, 2026 at 10:00 AM coder wrote:<br></div>` +
 		`<blockquote class="gmail_quote"><p>coder wants to run git push</p></blockquote></div></body></html>`
-	got, err := htmlText(strings.NewReader(in))
+	got, err := htmlText(strings.NewReader(in), maxPart)
 	if err != nil {
 		t.Fatalf("htmlText() error = %v", err)
 	}

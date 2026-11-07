@@ -16,6 +16,7 @@ package email
 
 import (
 	"errors"
+	"fmt"
 	"io"
 	"regexp"
 	"strings"
@@ -125,29 +126,46 @@ func isHeaderBlock(lines []string) bool {
 
 var space = regexp.MustCompile(`\s+`)
 
+// maxQuoteDepth caps the "> " marks of a line, so that deeply nested quotes
+// can't make the text grow faster than the HTML.
+const maxQuoteDepth = 20
+
 // htmlText returns the text of an HTML mail body. Block elements become
 // lines, quoted blocks are marked with "> " and horizontal rules become the
-// Outlook separator, so [StripQuoted] can cut the quoted message.
-func htmlText(r io.Reader) (string, error) {
+// Outlook separator, so [StripQuoted] can cut the quoted message. It fails
+// once the text is longer than limit bytes.
+func htmlText(r io.Reader, limit int) (string, error) {
 	z := html.NewTokenizer(r)
 	var (
-		lines []string
-		line  strings.Builder
-		quote int
-		skip  int
+		out    strings.Builder
+		line   strings.Builder
+		blank  bool
+		quote  int
+		prefix string
+		skip   int
 	)
+	writeLine := func(text string) {
+		if out.Len() > 0 {
+			out.WriteByte('\n')
+		}
+		out.WriteString(text)
+		blank = text == ""
+	}
 	flush := func() {
 		text := strings.TrimSpace(line.String())
 		line.Reset()
 		if text == "" {
-			if len(lines) > 0 && lines[len(lines)-1] != "" {
-				lines = append(lines, "")
+			if out.Len() > 0 && !blank {
+				writeLine("")
 			}
 			return
 		}
-		lines = append(lines, strings.Repeat("> ", quote)+text)
+		writeLine(prefix + text)
 	}
 	for {
+		if out.Len() > limit {
+			return "", fmt.Errorf("the text is longer than %d bytes", limit)
+		}
 		tt := z.Next()
 		switch tt {
 		case html.ErrorToken:
@@ -155,7 +173,7 @@ func htmlText(r io.Reader) (string, error) {
 				return "", z.Err()
 			}
 			flush()
-			return strings.TrimSpace(strings.Join(lines, "\n")), nil
+			return strings.TrimSpace(out.String()), nil
 		case html.TextToken:
 			if skip > 0 {
 				continue
@@ -182,9 +200,10 @@ func htmlText(r io.Reader) (string, error) {
 				} else if tt == html.EndTagToken && quote > 0 {
 					quote--
 				}
+				prefix = strings.Repeat("> ", min(quote, maxQuoteDepth))
 			case atom.Hr:
 				flush()
-				lines = append(lines, strings.Repeat("> ", quote)+"__________")
+				writeLine(prefix + "__________")
 			case atom.Br, atom.P, atom.Div, atom.Li, atom.Tr, atom.Table, atom.Ul, atom.Ol, atom.Pre,
 				atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
 				flush()
