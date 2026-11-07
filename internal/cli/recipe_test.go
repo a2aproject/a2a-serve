@@ -276,6 +276,30 @@ func TestRecipeWithoutTerminalReadsLocalSourceFirst(t *testing.T) {
 	}
 }
 
+func TestRecipeRefusesAgentBehindOneWithoutConfig(t *testing.T) {
+	t.Parallel()
+	outer, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := outer.SaveConfig(&agentdir.Config{Name: "outer", Harness: "opencode"}); err != nil {
+		t.Fatal(err)
+	}
+	stale := agentdir.Dir{Root: filepath.Join(outer.Root, "old")}
+	if err := stale.Init(); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale.LockPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = runCMDWith(t, recipeConfig(false, nil, nil), "recipe", newTestRecipe(t), "--dir", filepath.Join(stale.Root, "new"), "--dry-run")
+
+	if want := "inside the agent in " + outer.Root; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("a2a-serve recipe error = %v, want %q", err, want)
+	}
+}
+
 func TestRecipeRefuses(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

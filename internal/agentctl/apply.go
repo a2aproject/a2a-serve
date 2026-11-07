@@ -259,7 +259,7 @@ func fileProblems(d agentdir.Dir, err error, old *agentdir.Config, stored agentd
 func CheckEnclosing(ctx context.Context, d agentdir.Dir) error {
 	dir := filepath.Dir(d.Root)
 	for {
-		outer, err := agentdir.Find(dir)
+		outer, err := agentdir.FindEnclosing(dir)
 		if errors.Is(err, agentdir.ErrNotFound) {
 			return nil
 		}

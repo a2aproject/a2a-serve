@@ -90,17 +90,25 @@ func Open(root string) (Dir, error) {
 // Find walks up from start to the first directory holding .a2a/config.yaml,
 // the way git finds a repository. The walk stops at a relay directory.
 func Find(start string) (Dir, error) {
-	return find(start, Dir.Exists)
+	return find(start, Dir.Exists, true)
+}
+
+// FindEnclosing is [Find] that walks past the agents whose config.yaml is
+// gone, for the checks that refuse to create an agent inside another one.
+func FindEnclosing(start string) (Dir, error) {
+	return find(start, Dir.Exists, false)
 }
 
 // FindWithState is [Find] that also stops at an agent whose config.yaml is
 // gone but whose server left its state, so that the server can still be
 // found and stopped.
 func FindWithState(start string) (Dir, error) {
-	return find(start, func(d Dir) bool { return d.Exists() || d.HasServerState() })
+	return find(start, func(d Dir) bool { return d.Exists() || d.HasServerState() }, true)
 }
 
-func find(start string, match func(Dir) bool) (Dir, error) {
+// find walks up from start to the first directory that match accepts. With
+// stopAtStale, it stops at an agent whose config.yaml is gone.
+func find(start string, match func(Dir) bool, stopAtStale bool) (Dir, error) {
 	dir, err := filepath.Abs(start)
 	if err != nil {
 		return Dir{}, err
@@ -114,7 +122,7 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 			return Dir{}, relayNotAgent(dir)
 		}
 		// An outer agent isn't the one meant here.
-		if d.HasServerState() {
+		if stopAtStale && d.HasServerState() {
 			return Dir{}, missingConfig(d)
 		}
 		parent := filepath.Dir(dir)
