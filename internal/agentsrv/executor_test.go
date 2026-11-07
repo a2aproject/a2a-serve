@@ -701,6 +701,38 @@ func TestAlwaysThatTheTaskDoesNotTakeSavesNoGrant(t *testing.T) {
 	}
 }
 
+func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		start string
+		first string
+		reply string
+		want  string
+	}{
+		{name: "follow-up to a working task", start: "slow 3s", reply: "hello", want: "is still working on an earlier message; check it with a2a task get"},
+		{name: "answer that loses to another answer", start: "ask slow", first: "once", reply: "always", want: "already got an answer to this question; see where it stands with a2a task get"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			task := sendAsync(t, c, userText(tc.start, "", ""))
+			if tc.first != "" {
+				task = waitState(t, c, task.ID, a2a.TaskStateInputRequired)
+				sendAsync(t, c, userText(tc.first, string(task.ID), task.ContextID))
+			}
+
+			_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText(tc.reply, string(task.ID), task.ContextID)})
+
+			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), string(task.ID)) {
+				t.Fatalf("SendMessage() to the busy task error = %v, want it to name task %s and say %q", err, task.ID, tc.want)
+			}
+		})
+	}
+}
+
 // Not parallel: it replaces the default logger, which the server logs to.
 func TestApprovalAnswersAreLogged(t *testing.T) {
 	var logs lockedBuffer

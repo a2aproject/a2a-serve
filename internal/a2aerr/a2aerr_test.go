@@ -70,6 +70,12 @@ func TestSanitize(t *testing.T) {
 			wantMsg:    "the task is already handling a request; try again when it is done",
 		},
 		{
+			name:       "execution in progress as a2a-go types it",
+			err:        fmt.Errorf("create execution failure: %w", a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress")),
+			wantReason: "UNSUPPORTED_OPERATION",
+			wantMsg:    "the task is already handling a request; try again when it is done",
+		},
+		{
 			name:       "concurrency quota",
 			err:        fmt.Errorf("create execution failure: %w", fmt.Errorf("concurrency quota exceeded: %w", errors.New(`max scope concurrency limit reached for "pair:mallory"`))),
 			wantReason: "UNAUTHORIZED",
@@ -123,6 +129,8 @@ func TestExecutionInProgress(t *testing.T) {
 		{name: "a2a-go error", err: inProgress, want: true},
 		{name: "wrapped", err: fmt.Errorf("answering: %w", inProgress), want: true},
 		{name: "joined", err: errors.Join(errors.New("other"), inProgress), want: true},
+		{name: "sanitized", err: Sanitize(inProgress), want: true},
+		{name: "rewritten for callers", err: InProgress("task t1 already got an answer"), want: true},
 		{name: "other unsupported operation", err: a2a.ErrUnsupportedOperation},
 		{name: "nil"},
 	}
