@@ -139,6 +139,39 @@ func TestAnonymousApprovalTimesOut(t *testing.T) {
 	wantResult(t, waitState(t, anon, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
 }
 
+func TestRefusedReplyKeepsApprovalOpen(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{
+		public:    publicNet(),
+		messenger: messengertest.NewMessenger("fake"),
+		configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone },
+	})
+	anon := anonymousClient(t, ts)
+	owner := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, anon, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	open := func() int {
+		qs, err := ts.srv.store.UnansweredQuestions(context.Background())
+		if err != nil {
+			t.Fatalf("UnansweredQuestions() error = %v", err)
+		}
+		return len(qs)
+	}
+	waitFor(t, "the approval record", func() bool { return open() == 1 })
+
+	refused := send(t, owner, userText("maybe", string(task.ID), task.ContextID))
+	if refused.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state after a refused reply = %s, want %s", refused.Status.State, a2a.TaskStateInputRequired)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if got := open(); got != 1 {
+		t.Fatalf("open approvals after a refused reply = %d, want 1", got)
+	}
+	wantResult(t, waitState(t, anon, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
+}
+
 func TestAnonymousApprovalInOwnerChat(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, func(c *agentdir.Config) { c.Approvals.OwnerChat = "fake" })

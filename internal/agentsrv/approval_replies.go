@@ -62,15 +62,15 @@ func answersQuestion(msg *a2a.Message, q *approvals.Question) bool {
 // refuseReply asks the question of the stored task again, after a note that
 // the reply chose none of its options. The question keeps waiting.
 func refuseReply(execCtx *a2asrv.ExecutorContext, q *approvals.Question) iter.Seq2[a2a.Event, error] {
-	return askAgain(execCtx, refusal(execCtx, q))
+	return askAgain(refusal(execCtx, q))
 }
 
 // askAgain answers a reply with ev, which asks the question of the stored
 // task again.
-func askAgain(execCtx *a2asrv.ExecutorContext, ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
-	return withAnswerOrder(execCtx, func(yield func(a2a.Event, error) bool) {
+func askAgain(ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
 		yield(ev, nil)
-	})
+	}
 }
 
 // refusal is the status update of refuseReply.

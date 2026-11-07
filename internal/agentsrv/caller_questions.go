@@ -178,7 +178,7 @@ func (e *observedExecutor) withCallerQuestion(execCtx *a2asrv.ExecutorContext, e
 // question asked on its task, waits for that agent, and continues the turn
 // with its result, or asks its next question.
 func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, recID string) iter.Seq2[a2a.Event, error] {
-	return withAnswerOrder(execCtx, func(yield func(a2a.Event, error) bool) {
+	return func(yield func(a2a.Event, error) bool) {
 		rec, err := e.store.QuestionByID(ctx, recID)
 		if err != nil {
 			yield(nil, fmt.Errorf("loading the question of task %s: %w", execCtx.TaskID, err))
@@ -227,7 +227,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 			return
 		}
 		e.continueWithResult(ctx, execCtx, o.Result, yield)
-	})
+	}
 }
 
 // continueWithResult runs the next turn of a task with the result of
