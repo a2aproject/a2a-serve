@@ -484,9 +484,9 @@ func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Pri
 		return Closed, nil
 	}
 	err = s.store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID)
+	// The answer that holds the question shows itself once the task takes
+	// it, and is cleared if the task doesn't.
 	if errors.Is(err, store.ErrAnswered) {
-		label, by := s.answeredWith(ctx, rec, option, who)
-		s.notifier.MarkAnswered(ctx, rec.ID, label, by)
 		return AlreadyAnswered, nil
 	}
 	if err != nil {
@@ -592,22 +592,6 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 		return Closed, nil
 	}
 	return 0, err
-}
-
-// answeredWith returns what to show as the answer of a question that
-// another answer than option, given by who, came first to.
-func (s *Service) answeredWith(ctx context.Context, rec store.Question, option Option, who string) (label, by string) {
-	stored, err := s.store.QuestionByID(ctx, rec.ID)
-	if err != nil {
-		slog.Warn("reloading an answered question", "question", rec.ID, "error", err)
-		return option.Label, who
-	}
-	for _, o := range FromRecord(stored).Options {
-		if o.ID == stored.Answer {
-			return o.Label, auth.DisplayPrincipal(stored.AnsweredBy)
-		}
-	}
-	return option.Label, who
 }
 
 func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, p auth.Principal, option Option) error {

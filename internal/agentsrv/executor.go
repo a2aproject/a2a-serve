@@ -618,6 +618,8 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 		var err error
 		if answer, err = agentAnswer(execCtx, q, opt); err != nil {
 			slog.Warn("translating an approval", "task", execCtx.TaskID, "error", err)
+			p, _ := auth.Caller(ctx)
+			e.approvals.Release(context.WithoutCancel(ctx), execCtx.TaskID, q.ID, p.ID)
 			return e.observe(ctx, execCtx, askAgain(reask(execCtx, "I couldn't pass the answer on, so the question still waits for an answer. Try again.\n")))
 		}
 	}
