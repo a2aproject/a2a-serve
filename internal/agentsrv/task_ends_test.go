@@ -30,6 +30,12 @@ func TestEndingQuestionTaskKeepsContextUnattended(t *testing.T) {
 	ts := startServer(t, serverOpts{})
 	started := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("hello", "", ""))
 	ctx := context.Background()
+	waitCtx, cancel := context.WithTimeout(ctx, waitTimeout)
+	defer cancel()
+	ts.srv.turns.wait(waitCtx)
+	if waitCtx.Err() != nil {
+		t.Fatalf("turns.wait() error = %v, want the turn of the first message ended", waitCtx.Err())
+	}
 	rec := store.Question{ID: "q1", Token: "tok1", TaskID: "remote-task", ContextID: "remote-context", Contact: "reviewer", HitlID: "h1", Data: map[string]any{"id": "h1", "type": "permission"}}
 	if err := ts.srv.store.PutQuestion(ctx, rec); err != nil {
 		t.Fatalf("PutQuestion() error = %v", err)
