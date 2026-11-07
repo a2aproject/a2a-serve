@@ -796,10 +796,7 @@ func mergeValue(old, next *yaml.Node, t reflect.Type) *yaml.Node {
 // read-modify-write cycles of several processes don't lose changes. The
 // lock file lives in the state directory, which is never committed.
 func (d Dir) LockConfig(fn func() error) error {
-	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
-		return err
-	}
-	if err := fsutil.MkdirReal(d.StateDir()); err != nil {
+	if err := d.mkdirState(); err != nil {
 		return err
 	}
 	return fsutil.WithLock(filepath.Join(d.StateDir(), configFile), fn)

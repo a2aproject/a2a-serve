@@ -292,27 +292,40 @@ func (d Dir) Init() error {
 	if d.HasRelay() {
 		return ErrRelayDir
 	}
-	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+	if err := d.mkdirState(); err != nil {
 		return err
 	}
-	for _, p := range []string{d.StateDir(), d.HomeDir()} {
-		if err := fsutil.MkdirReal(p); err != nil {
-			return err
-		}
+	if err := fsutil.MkdirReal(d.HomeDir()); err != nil {
+		return err
 	}
 	return WriteGitignore(d.Path())
 }
 
-// WriteGitignore writes the .gitignore which keeps state out of version
-// control into dir, an .a2a directory, unless dir has one.
-func WriteGitignore(dir string) error {
-	gi := filepath.Join(dir, ".gitignore")
-	if _, err := os.Stat(gi); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(gi, []byte("state/\n"), 0o644); err != nil {
-			return err
-		}
+// mkdirState creates the .a2a and state directories, and refuses a state
+// directory that another user owns or that others can open. Call it before
+// the first write to the state directory.
+func (d Dir) mkdirState() error {
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		return err
 	}
-	return nil
+	return fsutil.MkdirOwned(d.StateDir())
+}
+
+// WriteGitignore writes the .gitignore which keeps state out of version
+// control into dir, an .a2a directory, unless dir has one. It leaves a
+// symlink in its place alone, even one to a missing file.
+func WriteGitignore(dir string) error {
+	f, err := os.OpenFile(filepath.Join(dir, ".gitignore"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString("state/\n"); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 // Exists reports whether the agent has a config.yaml.

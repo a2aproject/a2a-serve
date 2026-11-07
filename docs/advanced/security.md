@@ -90,7 +90,7 @@ The agent's instructions list the description and skills from the cards of conta
 | Relay admin token | The relay's control API: invite, list and remove agents | The relay's `state/relay/secrets` (mode 0600), or the container's environment | Stop the relay, then start it with a new one: `a2a-serve relay run --admin-token <value>` |
 | `--secret` values, bot tokens, email password, Tailscale key, relay token, Google client secret, backup key | What the service behind them grants | `state/secrets` (mode 0600) | `a2a-serve config unset <setting>` or `a2a-serve messenger rm <kind>`, then rotate at the service |
 
-`state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. Backups contain `state/secrets` and are always encrypted with the backup key.
+`state/` is mode 0700 and `state/secrets` 0600. `a2a-serve doctor` reports looser modes, and `doctor --fix` tightens them. The server refuses a `state/` that another user owns or that others can open, and a symlink in place of its log or lock files. Backups contain `state/secrets` and are always encrypted with the backup key.
 
 ## What a project can make your machine run
 
@@ -103,7 +103,14 @@ Starting an agent runs what its files say. Read the ones you didn't write before
   - `mounts` and `workspace`: the host directories the agent can read and write;
   - `env` and `secrets`: the variables the agent gets;
   - `backup`: where snapshots of the agent's secrets are uploaded;
-  - webhook nodes: the URLs the server POSTs to.
+  - webhook nodes: the URLs the server POSTs to;
+  - `network` and `policy`: where the agent is reachable and who may call it;
+  - `network.tailscaleControlURL`: a Headscale server, which decides who is on the private network and who counts as the owner;
+  - `auth.googleClientID`: the Google app that signs callers in;
+  - `allowBroadMounts`: whether the agent can mount your home directory, and with it your credentials;
+  - `approvals`: which tool calls run without asking;
+  - messenger tokens: the bots that carry the agent's chats.
+- **`.a2a/state/`** holds the agent's secrets, pairings and network identity. A cloned repository can ship one. Delete a `state/` that came with a repository before you start the agent.
 - **`.mcp.json`** decides which MCP servers the agent starts in the sandbox and which URLs it calls. `${VAR}` in it can use only the agent's `--secret` and `--env` values, which the sandbox sees anyway. In the Docker sandbox, the agent can't read or edit the file. With `sandbox: local`, the agent can edit it, and Claude Code may start its servers on its own, including the ones `--disable-mcp` turns off.
 - **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills`, and instruction files such as `AGENTS.md` and `CLAUDE.md`, are instructions for the agent. Commands they suggest still wait for approval.
 

@@ -84,6 +84,54 @@ func TestMkdirPrivate(t *testing.T) {
 	}
 }
 
+func TestMkdirOwned(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, dir string)
+		wantErr bool
+	}{
+		{name: "new", setup: func(*testing.T, string) {}},
+		{name: "private", setup: func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+		}},
+		{name: "open to others", setup: func(t *testing.T, dir string) {
+			if err := os.Mkdir(dir, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			if err := os.Chmod(dir, 0o755); err != nil {
+				t.Fatalf("Chmod() error = %v", err)
+			}
+		}, wantErr: true},
+		{name: "symlink to a private directory", setup: func(t *testing.T, dir string) {
+			target := filepath.Join(t.TempDir(), "target")
+			if err := os.Mkdir(target, 0o700); err != nil {
+				t.Fatalf("Mkdir() error = %v", err)
+			}
+			if err := os.Symlink(target, dir); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+		}, wantErr: true},
+		{name: "file", setup: func(t *testing.T, dir string) {
+			if err := os.WriteFile(dir, nil, 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+		}, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := filepath.Join(t.TempDir(), "state")
+			tc.setup(t, dir)
+			if err := MkdirOwned(dir); (err != nil) != tc.wantErr {
+				t.Fatalf("MkdirOwned() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestWithLockSerializesUpdates(t *testing.T) {
 	t.Parallel()
 	path := filepath.Join(t.TempDir(), "counter")
@@ -120,6 +168,43 @@ func TestWithLockSerializesUpdates(t *testing.T) {
 	}
 	if got := string(data); got != strconv.Itoa(n) {
 		t.Fatalf("counter = %s, want %d", got, n)
+	}
+}
+
+func TestLocksRefuseSymlinks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		lock string
+		run  func(path string) error
+	}{
+		{name: "TryLock", lock: "server.lock", run: func(path string) error {
+			release, err := TryLock(path)
+			if err != nil {
+				return err
+			}
+			return release()
+		}},
+		{name: "WithLock", lock: "server.lock.lock", run: func(path string) error {
+			return WithLock(path, func() error { return nil })
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := filepath.Join(t.TempDir(), ".bash_profile")
+			if err := os.Symlink(target, filepath.Join(dir, tc.lock)); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+
+			if err := tc.run(filepath.Join(dir, "server.lock")); err == nil {
+				t.Fatalf("%s() with the symlink %s error = nil, want an error", tc.name, tc.lock)
+			}
+			if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("%s() created the symlink target: Lstat() error = %v, want %v", tc.name, err, os.ErrNotExist)
+			}
+		})
 	}
 }
 

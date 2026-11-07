@@ -26,3 +26,6 @@ func CheckPrivate(dir string) error {
 	_, err := os.Stat(dir)
 	return err
 }
+
+// MkdirOwned is [MkdirReal].
+func MkdirOwned(dir string) error { return MkdirReal(dir) }

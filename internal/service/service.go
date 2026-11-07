@@ -24,6 +24,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Unit describes a background agent server process.
@@ -48,7 +50,7 @@ func Detach(u Unit) (<-chan struct{}, error) {
 	if err := os.MkdirAll(filepath.Dir(u.LogPath), 0o700); err != nil {
 		return nil, err
 	}
-	log, err := os.OpenFile(u.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
+	log, err := fsutil.OpenNoFollow(u.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
 		return nil, err
 	}

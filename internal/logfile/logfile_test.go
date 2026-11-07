@@ -15,6 +15,7 @@
 package logfile
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -186,6 +187,62 @@ func TestRotateLog(t *testing.T) {
 			}
 			if diff := cmp.Diff(tc.wantOld, string(old)); diff != "" {
 				t.Fatalf("Rotate() wrong rotated log (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestLogRefusesSymlinks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		link string
+		run  func(t *testing.T, path string) error
+	}{
+		{name: "Open", link: "server.log", run: func(t *testing.T, path string) error {
+			w, err := Open(path, DefaultLimit)
+			if err != nil {
+				return err
+			}
+			_, err = w.Write([]byte("injected\n"))
+			return errors.Join(err, w.Close())
+		}},
+		{name: "Rotate", link: "server.log", run: func(t *testing.T, path string) error {
+			return Rotate(path, 8)
+		}},
+		{name: "Rotate while the log is stdout", link: "server.log.1", run: func(t *testing.T, path string) error {
+			if err := os.WriteFile(path, []byte("0123456789\n"), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			stdout, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o600)
+			if err != nil {
+				t.Fatalf("OpenFile() error = %v", err)
+			}
+			return errors.Join(Rotate(path, 8, stdout), stdout.Close())
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			target := filepath.Join(t.TempDir(), ".bashrc")
+			const original = "# the user's file\n"
+			if err := os.WriteFile(target, []byte(original), 0o600); err != nil {
+				t.Fatalf("WriteFile() error = %v", err)
+			}
+			if err := os.Symlink(target, filepath.Join(dir, tc.link)); err != nil {
+				t.Fatalf("Symlink() error = %v", err)
+			}
+
+			if err := tc.run(t, filepath.Join(dir, "server.log")); err == nil {
+				t.Fatalf("%s() with the symlink %s error = nil, want an error", tc.name, tc.link)
+			}
+			got, err := os.ReadFile(target)
+			if err != nil {
+				t.Fatalf("ReadFile() error = %v", err)
+			}
+			if diff := cmp.Diff(original, string(got)); diff != "" {
+				t.Fatalf("%s() changed the symlink target (-want +got) diff = %s", tc.name, diff)
 			}
 		})
 	}
