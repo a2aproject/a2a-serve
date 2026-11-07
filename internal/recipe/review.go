@@ -168,24 +168,13 @@ func skillItems(skills []project.Skill) []Item {
 }
 
 // fileItems lists the files of the recipe among names, where a name ending
-// in / matches the files in that directory.
+// in / matches the files in that directory. It follows the symlinks of the
+// directories in a name, as the agent does.
 func fileItems(files Files, names []string, warn bool) []Item {
 	var found []string
 	for _, name := range names {
-		dir, isDir := strings.CutSuffix(name, "/")
-		for _, p := range files.Paths() {
-			if isDir && strings.HasPrefix(p, dir+"/") {
-				found = append(found, name)
-				break
-			}
-			if p != name {
-				continue
-			}
-			if f := files[p]; f.Link != "" {
-				found = append(found, p+" → "+path.Join(path.Dir(p), f.Link))
-			} else {
-				found = append(found, p)
-			}
+		if entry := files.match(name); entry != "" {
+			found = append(found, entry)
 		}
 	}
 	if len(found) == 0 {
@@ -197,6 +186,56 @@ func fileItems(files Files, names []string, warn bool) []Item {
 	}
 	return []Item{{Text: text, Warn: warn}}
 }
+
+// match returns the review entry for name, or "" if the recipe has no such
+// file.
+func (f Files) match(name string) string {
+	dir, isDir := strings.CutSuffix(name, "/")
+	parent, base := path.Split(dir)
+	resolved := path.Join(f.resolveLinks(strings.TrimSuffix(parent, "/")), base)
+	entry, ok := f[resolved]
+	if ok && entry.Link != "" {
+		return dir + " → " + path.Join(path.Dir(resolved), entry.Link)
+	}
+	if isDir {
+		for p := range f {
+			if strings.HasPrefix(p, resolved+"/") {
+				return name
+			}
+		}
+		return ""
+	}
+	switch {
+	case !ok:
+		return ""
+	case resolved != name:
+		return name + " → " + resolved
+	}
+	return name
+}
+
+// resolveLinks follows the symlinks along the directory dir.
+func (f Files) resolveLinks(dir string) string {
+	cur := ""
+	for part := range strings.SplitSeq(dir, "/") {
+		if part == "" {
+			continue
+		}
+		cur = path.Join(cur, part)
+		for range maxLinkDepth {
+			link := f[cur].Link
+			if link == "" {
+				break
+			}
+			cur = path.Join(path.Dir(cur), link)
+		}
+	}
+	return cur
+}
+
+// maxLinkDepth bounds the symlinks followed for one path component, so that
+// a cycle ends.
+const maxLinkDepth = 40
 
 func approvalItems(a agentdir.ApprovalsConfig) []Item {
 	var out []Item

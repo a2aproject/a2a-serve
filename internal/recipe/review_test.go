@@ -193,3 +193,77 @@ func TestRecipePlan(t *testing.T) {
 		t.Fatalf("Recipe.DropMounts() wrong mounts (-want +got) diff = %s", diff)
 	}
 }
+
+func TestReviewAgentConfigThroughLinks(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files map[string]string
+		links map[string]string
+		want  string
+	}{
+		{
+			name:  "claude directory link",
+			files: map[string]string{"cfg/settings.json": "{}"},
+			links: map[string]string{".claude": "cfg"},
+			want:  ".claude/settings.json → cfg/settings.json",
+		},
+		{
+			name:  "opencode directory link",
+			files: map[string]string{"cfg/agent/reviewer.md": "agent"},
+			links: map[string]string{".opencode": "cfg"},
+			want:  ".opencode → cfg",
+		},
+		{
+			name:  "chain of directory links",
+			files: map[string]string{"real/settings.json": "{}"},
+			links: map[string]string{".claude": "mid", "mid": "real"},
+			want:  ".claude/settings.json → real/settings.json",
+		},
+		{
+			name:  "file link in a directory link",
+			files: map[string]string{"cfg/shared.json": "{}"},
+			links: map[string]string{".claude": "cfg", "cfg/settings.json": "shared.json"},
+			want:  ".claude/settings.json → cfg/shared.json",
+		},
+		{
+			name:  "directory link without the file",
+			files: map[string]string{"cfg/other.json": "{}"},
+			links: map[string]string{".claude": "cfg"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			writeFile(t, dir, ".a2a/config.yaml", testConfig)
+			writeFile(t, dir, ".a2a/recipe.yaml", testManifest)
+			writeFile(t, dir, ".mcp.json", testMCP)
+			for name, content := range tc.files {
+				writeFile(t, dir, name, content)
+			}
+			for name, target := range tc.links {
+				symlink(t, dir, name, target)
+			}
+			r, err := Load(dir)
+			if err != nil {
+				t.Fatalf("Load() error = %v", err)
+			}
+
+			var got []Item
+			for _, line := range Review(r, r.NewConfig("o11y"), "./o11y") {
+				if line.Label == "agent config" {
+					got = line.Items
+				}
+			}
+
+			var want []Item
+			if tc.want != "" {
+				want = []Item{{Text: tc.want + ": they can change what the agent runs and approves", Warn: true}}
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("Review() wrong agent config line (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
