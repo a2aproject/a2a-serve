@@ -56,6 +56,9 @@ func TestWatchesCancelCallsCancelsTheTasksOfTheTurn(t *testing.T) {
 	done := f.startThroughProxy(t, srv.URL, "c1", "turn2", promptDone)
 	f.remote.waitState(t, done, a2a.TaskStateCompleted)
 	other := f.startThroughProxy(t, srv.URL, "c2", "turn2", promptHold)
+	for _, id := range []a2a.TaskID{earlier, held, other} {
+		f.remote.waitState(t, id, a2a.TaskStateWorking)
+	}
 
 	if err := f.ws.CancelCalls(ctx, Claims{ContextID: "c1", TaskID: "turn2", User: auth.Owner()}); err != nil {
 		t.Fatalf("Watches.CancelCalls() error = %v", err)
