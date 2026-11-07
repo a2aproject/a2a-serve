@@ -32,6 +32,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -220,7 +221,8 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 		t.Fatal(err)
 	}
 	cfg := &agentdir.Config{Name: o.name, Harness: "fake", Command: []string{fakeACP}, Sandbox: harness.SandboxLocal, Port: freePort(t)}
-	if dir.Exists() {
+	fresh := !dir.Exists()
+	if !fresh {
 		if cfg, err = dir.LoadConfig(); err != nil {
 			t.Fatal(err)
 		}
@@ -252,16 +254,26 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	if o.messenger != nil {
 		opts.Messengers = []messenger.Messenger{o.messenger}
 	}
-	go func() { ts.done <- Run(context.Background(), opts) }()
-	select {
-	case ts.srv = <-ready:
-	case err := <-ts.done:
-		t.Fatalf("Run() error = %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("server did not start")
+	// freePort only knows the ports of this process, so another test
+	// process can take the port of a fresh agent before it listens.
+	for attempt := 1; ; attempt++ {
+		go func() { ts.done <- Run(context.Background(), opts) }()
+		select {
+		case ts.srv = <-ready:
+			t.Cleanup(ts.stop)
+			return ts
+		case err := <-ts.done:
+			if !fresh || attempt == 3 || !errors.Is(err, syscall.EADDRINUSE) {
+				t.Fatalf("Run() error = %v", err)
+			}
+			cfg.Port = freePort(t)
+			if err := dir.SaveConfig(cfg); err != nil {
+				t.Fatal(err)
+			}
+		case <-time.After(30 * time.Second):
+			t.Fatal("server did not start")
+		}
 	}
-	t.Cleanup(ts.stop)
-	return ts
 }
 
 // leftFiles lists the files under dir, which a writer that outlived the
