@@ -86,7 +86,7 @@ func WithLock(path string, fn func() error) (err error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := OpenNoFollow(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return err
 	}
@@ -119,7 +119,7 @@ var ErrLocked = errors.New("locked by another process")
 // TryLock takes an exclusive advisory lock on path without waiting, and
 // returns the function that releases it.
 func TryLock(path string) (release func() error, err error) {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
+	f, err := OpenNoFollow(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return nil, err
 	}

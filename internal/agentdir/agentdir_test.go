@@ -590,6 +590,25 @@ func TestRefusesStateOpenToOthers(t *testing.T) {
 	}
 }
 
+func TestInitKeepsGitignoreSymlinkTarget(t *testing.T) {
+	t.Parallel()
+	d := Dir{Root: t.TempDir()}
+	target := filepath.Join(t.TempDir(), ".bash_profile")
+	if err := os.MkdirAll(d.Path(), 0o700); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := os.Symlink(target, filepath.Join(d.Path(), ".gitignore")); err != nil {
+		t.Fatalf("os.Symlink() error = %v", err)
+	}
+
+	if err := d.Init(); err != nil {
+		t.Fatalf("Dir.Init() error = %v", err)
+	}
+	if _, err := os.Lstat(target); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Dir.Init() created the target of .gitignore: os.Lstat() error = %v, want %v", err, os.ErrNotExist)
+	}
+}
+
 func TestInitKeepsExistingState(t *testing.T) {
 	t.Parallel()
 	d := Dir{Root: t.TempDir()}

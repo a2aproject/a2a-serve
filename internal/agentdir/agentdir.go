@@ -291,15 +291,20 @@ func (d Dir) mkdirState() error {
 }
 
 // WriteGitignore writes the .gitignore which keeps state out of version
-// control into dir, an .a2a directory, unless dir has one.
+// control into dir, an .a2a directory, unless dir has one. It leaves a
+// symlink in its place alone, even one to a missing file.
 func WriteGitignore(dir string) error {
-	gi := filepath.Join(dir, ".gitignore")
-	if _, err := os.Stat(gi); errors.Is(err, os.ErrNotExist) {
-		if err := os.WriteFile(gi, []byte("state/\n"), 0o644); err != nil {
-			return err
-		}
+	f, err := os.OpenFile(filepath.Join(dir, ".gitignore"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o644)
+	if errors.Is(err, os.ErrExist) {
+		return nil
 	}
-	return nil
+	if err != nil {
+		return err
+	}
+	if _, err := f.WriteString("state/\n"); err != nil {
+		return errors.Join(err, f.Close())
+	}
+	return f.Close()
 }
 
 // Exists reports whether the agent has a config.yaml.

@@ -17,7 +17,7 @@ package fsutil
 
 import "os"
 
-// OpenNoFollow is [os.OpenFile].
+// OpenNoFollow is [os.OpenFile], which follows symlinks on these platforms.
 func OpenNoFollow(path string, flag int, perm os.FileMode) (*os.File, error) {
 	return os.OpenFile(path, flag, perm)
 }
