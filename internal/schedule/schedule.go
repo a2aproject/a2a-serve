@@ -58,9 +58,26 @@ func Location(tz string) (*time.Location, error) {
 	return loc, nil
 }
 
+// minEvery is the shortest interval of an @every descriptor, the same as the
+// shortest gap between runs of a five-field cron expression.
+const minEvery = time.Minute
+
 // ParseCron parses a standard five-field cron expression, or a descriptor
-// such as @daily or @every 2h.
+// such as @daily or @every 2h. An @every interval is at least minEvery.
 func ParseCron(expr string) (cron.Schedule, error) {
+	s, err := parseCron(expr)
+	if err != nil {
+		return nil, err
+	}
+	if d, ok := s.(cron.ConstantDelaySchedule); ok && d.Delay < minEvery {
+		return nil, fmt.Errorf("invalid cron expression %q: an @every interval is at least 1 minute", expr)
+	}
+	return s, nil
+}
+
+// parseCron parses without the minimum of ParseCron, so that a schedule
+// stored before it keeps running.
+func parseCron(expr string) (cron.Schedule, error) {
 	if strings.Contains(expr, "TZ=") {
 		return nil, errors.New("set the time zone with --tz, not in the cron expression")
 	}
@@ -125,7 +142,7 @@ func (w When) Next(last, after time.Time) (time.Time, bool, error) {
 	if err != nil {
 		return time.Time{}, false, err
 	}
-	s, err := ParseCron(w.Cron)
+	s, err := parseCron(w.Cron)
 	if err != nil {
 		return time.Time{}, false, err
 	}
@@ -180,7 +197,7 @@ func (w When) MinInterval() (time.Duration, error) {
 	if w.Cron == "" {
 		return 0, nil
 	}
-	s, err := ParseCron(w.Cron)
+	s, err := parseCron(w.Cron)
 	if err != nil {
 		return 0, err
 	}

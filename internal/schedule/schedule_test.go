@@ -15,6 +15,7 @@
 package schedule
 
 import (
+	"strings"
 	"testing"
 	"time"
 )
@@ -150,6 +151,26 @@ func TestWhenNextAcrossDSTChanges(t *testing.T) {
 	}
 }
 
+func TestWhenNextOfStoredShortInterval(t *testing.T) {
+	t.Parallel()
+	after := time.Date(2026, 11, 6, 8, 30, 0, 0, time.UTC)
+	got, ok, err := When{Cron: "@every 10s"}.Next(time.Time{}, after)
+	if err != nil || !ok {
+		t.Fatalf("When.Next() = %v, %v, %v, want a run: schedules stored before the floor keep running", got, ok, err)
+	}
+	if want := after.Add(10 * time.Second); !got.Equal(want) {
+		t.Fatalf("When.Next() = %v, want %v", got, want)
+	}
+}
+
+func TestParseCronMinimumInterval(t *testing.T) {
+	t.Parallel()
+	_, err := ParseCron("@every 30s")
+	if err == nil || !strings.Contains(err.Error(), "at least 1 minute") {
+		t.Fatalf("ParseCron(@every 30s) error = %v, want one naming the 1 minute minimum", err)
+	}
+}
+
 func TestWhenMinInterval(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -200,6 +221,11 @@ func TestRequestValidate(t *testing.T) {
 		{name: "time zone in cron", req: Request{Name: "x", Cron: "CRON_TZ=UTC 0 7 * * *", Prompt: "x"}, wantErr: true},
 		{name: "invalid at", req: Request{Name: "x", At: "friday at 5", Prompt: "x"}, wantErr: true},
 		{name: "unknown time zone", req: Request{Name: "x", Cron: "@daily", TZ: "Mars/Olympus", Prompt: "x"}, wantErr: true},
+		{name: "every minute", req: Request{Name: "x", Cron: "@every 1m", Prompt: "x"}},
+		{name: "every 90 seconds", req: Request{Name: "x", Cron: "@every 90s", Prompt: "x"}},
+		{name: "every zero", req: Request{Name: "x", Cron: "@every 0s", Prompt: "x"}, wantErr: true},
+		{name: "every second", req: Request{Name: "x", Cron: "@every 1s", Prompt: "x"}, wantErr: true},
+		{name: "every 59 seconds", req: Request{Name: "x", Cron: "@every 59s", Prompt: "x"}, wantErr: true},
 		{name: "invalid thread", req: Request{Name: "x", Cron: "@daily", Prompt: "x", Thread: "old"}, wantErr: true},
 	}
 	for _, tc := range tests {

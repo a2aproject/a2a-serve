@@ -224,7 +224,7 @@ func TestHarnessSchedulesAreLimited(t *testing.T) {
 	linkOwner(t, ts, "telegram:1", "dm1")
 	ctx := context.Background()
 
-	ts.ch.Write("telegram:1", "dm1", `call schedules add fast --cron "@every 1s" --prompt "x"`)
+	ts.ch.Write("telegram:1", "dm1", `call schedules add fast --cron "@every 1m" --prompt "x"`)
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("at least 5 minutes apart"))
 	for i := range schedulesvc.AgentLimits.PerUser {
 		if err := ts.srv.store.AddSchedule(ctx, store.Schedule{
@@ -236,7 +236,7 @@ func TestHarnessSchedulesAreLimited(t *testing.T) {
 	ts.ch.Write("telegram:1", "dm1", `call schedules add one-more --cron @daily --prompt "x"`)
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("at most 50 schedules"))
 
-	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "fast", Cron: "@every 1s", Prompt: "x"}); err != nil {
+	if _, err := controlapi.NewClient(ts.dir).AddSchedule(ctx, schedule.Request{Name: "fast", Cron: "@every 1m", Prompt: "x"}); err != nil {
 		t.Fatalf("AddSchedule() by the owner past the agent limits error = %v", err)
 	}
 }
