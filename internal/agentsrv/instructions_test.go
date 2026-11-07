@@ -15,11 +15,14 @@
 package agentsrv
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -306,6 +309,80 @@ func TestAgentRefString(t *testing.T) {
 			t.Parallel()
 			if got := tc.ref.String(); got != tc.want {
 				t.Fatalf("AgentRef.String() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestWriteInstructionsSkipsFilesItCannotRead(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{
+			name: "FIFO",
+			setup: func(t *testing.T, path string) {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "over 1 MiB",
+			setup: func(t *testing.T, path string) {
+				if err := os.WriteFile(path, bytes.Repeat([]byte("x"), 1<<20+1), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := dir.Init(); err != nil {
+				t.Fatal(err)
+			}
+			pins, err := harness.NewPins(dir.Root, dir.Path(), dir.StateDir(), dir.HomeDir())
+			if err != nil {
+				t.Fatalf("harness.NewPins() error = %v", err)
+			}
+			cfg := &agentdir.Config{Name: "coder", Harness: "fake", Command: []string{"fake-acp"}, Workspace: "..", Sandbox: harness.SandboxDocker}
+			s := &Server{dir: dir, pins: pins, rt: agentdir.NewRuntime(dir, cfg, agentdir.Secrets{}), store: openTestStore(t)}
+			skipped := filepath.Join(dir.HomeDir(), instructionFiles[1])
+			if err := os.MkdirAll(filepath.Dir(skipped), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, skipped)
+			before, err := os.Stat(skipped)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- s.writeInstructions(context.Background()) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("Server.writeInstructions() error = %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Server.writeInstructions() blocked")
+			}
+
+			after, err := os.Stat(skipped)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Mode() != before.Mode() || after.Size() != before.Size() {
+				t.Fatalf("Server.writeInstructions() changed %s to %v of %d bytes, want it skipped", skipped, after.Mode(), after.Size())
+			}
+			if _, err := os.Stat(filepath.Join(dir.HomeDir(), instructionFiles[0])); err != nil {
+				t.Fatalf("Server.writeInstructions() didn't write %s: %v", instructionFiles[0], err)
 			}
 		})
 	}

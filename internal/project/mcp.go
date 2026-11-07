@@ -28,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // MCPFile is the name of the project's MCP server list, in the format
@@ -99,7 +100,6 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 	return out, nil
 }
 
-// readIn reads the file name in dir without leaving dir.
 // linksOut reports whether path is a symlink whose target is out of dir.
 func linksOut(dir, path string) bool {
 	target, err := filepath.EvalSymlinks(path)
@@ -114,13 +114,15 @@ func linksOut(dir, path string) bool {
 	return err == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)))
 }
 
+// readIn reads the file name in dir without leaving dir. The agent can
+// write dir, so it reads only a regular file of limited size.
 func readIn(dir, name string) (data []byte, err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {
 		return nil, err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	return root.ReadFile(name)
+	return fsutil.ReadRegular(root, name)
 }
 
 func (s MCPServer) validate() error {

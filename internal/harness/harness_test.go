@@ -15,6 +15,7 @@
 package harness
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,7 +23,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -436,6 +439,70 @@ func TestBootstrapRefusesSymlinksOutOfHome(t *testing.T) {
 			}
 			if len(entries) != 0 {
 				t.Fatalf("Bootstrap() through linked %s wrote %v outside the home, want nothing", tc.link, entries)
+			}
+		})
+	}
+}
+
+func TestBootstrapSkipsFilesItCannotRead(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, path string)
+	}{
+		{
+			name: "FIFO",
+			setup: func(t *testing.T, path string) {
+				if err := syscall.Mkfifo(path, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+		{
+			name: "over 1 MiB",
+			setup: func(t *testing.T, path string) {
+				data := append([]byte(`{"x": "`), bytes.Repeat([]byte("x"), 1<<20)...)
+				if err := os.WriteFile(path, append(data, `"}`...), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			home := t.TempDir()
+			settings := filepath.Join(home, ".claude", "settings.json")
+			if err := os.MkdirAll(filepath.Dir(settings), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			tc.setup(t, settings)
+			before, err := os.Stat(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			p, err := Lookup("claude", nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			done := make(chan error, 1)
+			go func() { done <- p.Bootstrap(Workspace{Dir: t.TempDir(), Home: home}) }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("Bootstrap() error = %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("Bootstrap() blocked")
+			}
+
+			after, err := os.Stat(settings)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if after.Mode() != before.Mode() || after.Size() != before.Size() {
+				t.Fatalf("Bootstrap() changed %s to %v of %d bytes, want it skipped", settings, after.Mode(), after.Size())
 			}
 		})
 	}

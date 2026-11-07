@@ -214,10 +214,6 @@ func (s *snapshotter) addStableFile(src, name string) error {
 	return s.writeEntry(info, name, info.Size(), f)
 }
 
-// errNotRegular reports a path that doesn't name a regular file, such as
-// one the agent replaced with a symlink.
-var errNotRegular = errors.New("not a regular file")
-
 // addFile adds the file src that the agent may write to, opened through the
 // directory it is in.
 func (s *snapshotter) addFile(src, name string) (err error) {
@@ -235,7 +231,7 @@ func (s *snapshotter) addFile(src, name string) (err error) {
 func (s *snapshotter) addRootFile(r *os.Root, rel, name string) error {
 	for attempt := 1; ; attempt++ {
 		info, n, stable, err := s.copyToStage(r, rel, name, attempt)
-		if errors.Is(err, errNotRegular) {
+		if errors.Is(err, fsutil.ErrNotRegular) {
 			if attempt < maxCopyAttempts {
 				continue
 			}
@@ -263,15 +259,13 @@ func (s *snapshotter) addRootFile(r *os.Root, rel, name string) error {
 // checks of rel go through r and don't follow a symlink at rel, so the copy
 // is always of a regular file in r.
 func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (info fs.FileInfo, n int64, stable bool, err error) {
-	listed, err := r.Lstat(rel)
+	// The agent can replace rel with a FIFO, which OpenRegular doesn't block
+	// on, or with a symlink out of r, which r refuses to open.
+	f, err := fsutil.OpenRegular(r, rel)
 	if err != nil {
-		return nil, 0, false, err
-	}
-	if !listed.Mode().IsRegular() {
-		return nil, 0, false, errNotRegular
-	}
-	f, err := r.Open(rel)
-	if err != nil {
+		if listed, lerr := r.Lstat(rel); errors.Is(err, fsutil.ErrNotRegular) || lerr == nil && !listed.Mode().IsRegular() {
+			return nil, 0, false, fsutil.ErrNotRegular
+		}
 		return nil, 0, false, err
 	}
 	defer closeLogged(f)
@@ -279,9 +273,13 @@ func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (in
 	if err != nil {
 		return nil, 0, false, err
 	}
-	if !os.SameFile(listed, before) {
-		// rel was replaced between the Lstat and the open.
-		return nil, 0, false, errNotRegular
+	// The open follows a symlink at rel, which the Lstat finds.
+	listed, err := r.Lstat(rel)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !listed.Mode().IsRegular() || !os.SameFile(listed, before) {
+		return nil, 0, false, fsutil.ErrNotRegular
 	}
 	if err := s.stage.Truncate(0); err != nil {
 		return nil, 0, false, err
@@ -380,8 +378,12 @@ func (s *snapshotter) addTree(ctx context.Context, root, name string) (err error
 			return s.addEntry(info, func() (string, error) { return r.Readlink(filepath.FromSlash(rel)) }, entry)
 		}
 		err = s.addRootFile(r, filepath.FromSlash(rel), entry)
-		if errors.Is(err, fs.ErrNotExist) || errors.Is(err, errNotRegular) {
-			// The file was deleted or replaced after the walk listed it.
+		if errors.Is(err, fs.ErrNotExist) {
+			// The file was deleted after the walk listed it.
+			return nil
+		}
+		if errors.Is(err, fsutil.ErrNotRegular) {
+			s.log.Warn("skipped a file that was replaced while it was backed up", "file", entry)
 			return nil
 		}
 		return err

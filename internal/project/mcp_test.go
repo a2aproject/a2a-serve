@@ -18,7 +18,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -343,6 +345,55 @@ func TestLoadMCPErrors(t *testing.T) {
 			_, err := LoadMCP(dir)
 			if want := strings.ReplaceAll(tc.wantErr, "%s", filepath.Join(dir, MCPFile)); err == nil || !strings.HasPrefix(err.Error(), want) {
 				t.Fatalf("LoadMCP() error = %v, want it to start with %q", err, want)
+			}
+		})
+	}
+}
+
+func TestProjectReadsDoNotBlockOnFIFO(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		fifo string
+		read func(dir string) error
+	}{
+		{
+			name: "MCP file",
+			fifo: MCPFile,
+			read: func(dir string) error {
+				_, err := LoadMCP(dir)
+				return err
+			},
+		},
+		{
+			name: "skill folder",
+			fifo: filepath.Join(".claude", "skills"),
+			read: func(dir string) error {
+				_, err := Skills(dir)
+				return err
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			path := filepath.Join(dir, tc.fifo)
+			if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := syscall.Mkfifo(path, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			done := make(chan error, 1)
+			go func() { done <- tc.read(dir) }()
+			select {
+			case err := <-done:
+				if err == nil {
+					t.Fatalf("reading %s error = nil, want an error", tc.fifo)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatalf("reading %s blocked", tc.fifo)
 			}
 		})
 	}

@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
@@ -100,15 +101,11 @@ func LinkSkills(p Profile, ws Workspace) (err error) {
 // removeStaleSkillLinks removes the links in the folder home of root to
 // project skill folders of dir which aren't wanted any more.
 func removeStaleSkillLinks(root *os.Root, home, dir string, want map[string]string) error {
-	f, err := root.Open(home)
+	entries, err := fsutil.ReadDirIn(root, home)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
 	if err != nil {
-		return err
-	}
-	entries, err := f.ReadDir(-1)
-	if err := errors.Join(err, f.Close()); err != nil {
 		return err
 	}
 	for _, e := range entries {

@@ -407,6 +407,20 @@ func TestUserApprovalTimesOut(t *testing.T) {
 	wantResult(t, waitState(t, anna, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
 }
 
+func TestAgentMessageOverLimitFailsTask(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{maxAgentMessage: 1 << 20})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("flood", "", ""))
+	if task.Status.State != a2a.TaskStateFailed {
+		task = waitState(t, c, task.ID, a2a.TaskStateFailed)
+	}
+	if text := a2atext.Message(task.Status.Message); !strings.Contains(text, "the agent sent a message over 1 MiB") {
+		t.Fatalf("task status message = %q, want it to say the agent sent a message over 1 MiB", text)
+	}
+	wantResult(t, send(t, c, userText("hello", "", "")), a2a.TaskStateCompleted, "Hello from fakeacp.")
+}
+
 func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})

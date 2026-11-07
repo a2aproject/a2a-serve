@@ -20,6 +20,8 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // SkillDirs are the project folders harnesses read skills from, each skill
@@ -69,7 +71,7 @@ func Skills(root string) (out []Skill, err error) {
 // readDir lists the folder dir of r. A missing folder, or a symlink r
 // refuses to follow, has no entries.
 func readDir(r *os.Root, dir string) ([]os.DirEntry, error) {
-	f, err := r.Open(dir)
+	entries, err := fsutil.ReadDirIn(r, dir)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
@@ -77,10 +79,6 @@ func readDir(r *os.Root, dir string) ([]os.DirEntry, error) {
 		if fi, lerr := r.Lstat(dir); lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
 			return nil, nil
 		}
-		return nil, err
-	}
-	entries, err := f.ReadDir(-1)
-	if err := errors.Join(err, f.Close()); err != nil {
 		return nil, err
 	}
 	slices.SortFunc(entries, func(a, b os.DirEntry) int { return strings.Compare(a.Name(), b.Name()) })

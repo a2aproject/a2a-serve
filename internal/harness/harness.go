@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -27,6 +28,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // Workspace is what a harness works on.
@@ -312,19 +314,23 @@ func writeJSONIfMissing(home, name string, v any) (err error) {
 	if err != nil {
 		return err
 	}
-	return root.WriteFile(name, append(data, '\n'), 0o600)
+	return fsutil.WriteRegular(root, name, append(data, '\n'), 0o600)
 }
 
 // setJSONKey sets key in the JSON object in the file name in home, keeping
 // the other keys. Like [writeJSONIfMissing], it refuses symlinks that lead
-// out of home.
+// out of home. It skips a file that isn't regular or is too large to read.
 func setJSONKey(home, name, key string, v any) (err error) {
 	root, err := os.OpenRoot(home)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	data, err := root.ReadFile(name)
+	data, err := fsutil.ReadRegular(root, name)
+	if errors.Is(err, fsutil.ErrNotRegular) || errors.Is(err, fsutil.ErrTooLarge) {
+		slog.Warn("skipped a settings file the server can't read", "file", filepath.Join(home, name), "error", err)
+		return nil
+	}
 	if err != nil {
 		return err
 	}
@@ -339,5 +345,5 @@ func setJSONKey(home, name, key string, v any) (err error) {
 	if data, err = json.MarshalIndent(obj, "", "  "); err != nil {
 		return err
 	}
-	return root.WriteFile(name, append(data, '\n'), 0o600)
+	return fsutil.WriteRegular(root, name, append(data, '\n'), 0o600)
 }

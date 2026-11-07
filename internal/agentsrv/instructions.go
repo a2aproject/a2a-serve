@@ -24,6 +24,7 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -168,7 +169,12 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 			continue
 		}
 		for _, f := range instructionFiles {
-			errs = append(errs, writeSection(home, f, sb.String()))
+			err := writeSection(home, f, sb.String())
+			if errors.Is(err, fsutil.ErrNotRegular) || errors.Is(err, fsutil.ErrTooLarge) {
+				slog.Warn("skipped writing the instructions into a file the server can't read", "file", filepath.Join(home, f), "error", err)
+				continue
+			}
+			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
@@ -184,21 +190,22 @@ func (s *Server) refreshInstructions(ctx context.Context) {
 
 // writeSection replaces the managed section of the file name in home,
 // keeping whatever else the file holds. The harness can change its home, so
-// symlinks that lead out of it are refused.
+// symlinks that lead out of it are refused, and so are files that aren't
+// regular or are too large to read.
 func writeSection(home, name, body string) (err error) {
 	root, err := os.OpenRoot(home)
 	if err != nil {
 		return err
 	}
 	defer func() { err = errors.Join(err, root.Close()) }()
-	data, err := root.ReadFile(name)
+	data, err := fsutil.ReadRegular(root, name)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
 	if err := root.MkdirAll(filepath.Dir(name), 0o700); err != nil {
 		return err
 	}
-	return root.WriteFile(name, []byte(withSection(string(data), body)), 0o600)
+	return fsutil.WriteRegular(root, name, []byte(withSection(string(data), body)), 0o600)
 }
 
 func withSection(text, body string) string {
