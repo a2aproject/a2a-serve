@@ -61,7 +61,7 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil
 	}
-	if fi, lerr := os.Lstat(path); err != nil && lerr == nil && fi.Mode()&os.ModeSymlink != 0 {
+	if err != nil && linksOut(dir, path) {
 		return nil, fmt.Errorf("%s links out of the workspace", path)
 	}
 	if err != nil {
@@ -70,8 +70,13 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 	var file struct {
 		MCPServers map[string]MCPServer `json:"mcpServers"`
 	}
-	if err := json.Unmarshal(data, &file); err != nil {
+	err = json.Unmarshal(data, &file)
+	var syntaxErr *json.SyntaxError
+	if errors.As(err, &syntaxErr) {
 		return nil, fmt.Errorf("%s isn't valid JSON (%w)", path, err)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s: %w", path, err)
 	}
 	out := make([]MCPServer, 0, len(file.MCPServers))
 	for _, name := range slices.Sorted(maps.Keys(file.MCPServers)) {
@@ -95,6 +100,20 @@ func LoadMCP(dir string) ([]MCPServer, error) {
 }
 
 // readIn reads the file name in dir without leaving dir.
+// linksOut reports whether path is a symlink whose target is out of dir.
+func linksOut(dir, path string) bool {
+	target, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return false
+	}
+	root, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return false
+	}
+	rel, err := filepath.Rel(root, target)
+	return err == nil && (rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)))
+}
+
 func readIn(dir, name string) (data []byte, err error) {
 	root, err := os.OpenRoot(dir)
 	if err != nil {

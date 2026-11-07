@@ -324,7 +324,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, nex
 		fmt.Fprintf(&sb, "  skills   %s\n", strings.Join(names, ", "))
 	}
 	if st.ProjectError != "" {
-		fmt.Fprintf(&sb, "  project  ! %s\n", st.ProjectError)
+		fmt.Fprintf(&sb, "  project  ! %s\n", strings.ReplaceAll(st.ProjectError, "\n", "; "))
 	}
 	label := "tools"
 	for _, l := range []struct {

@@ -17,6 +17,7 @@ package project
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -297,5 +298,52 @@ func TestSkillsSymlinks(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Skills() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestLoadMCPErrors(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setup   func(t *testing.T, dir string)
+		wantErr string
+	}{
+		{
+			name: "link out of the workspace",
+			setup: func(t *testing.T, dir string) {
+				outside := filepath.Join(t.TempDir(), "mcp.json")
+				writeFile(t, outside, `{}`)
+				if err := os.Symlink(outside, filepath.Join(dir, MCPFile)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: "%s links out of the workspace",
+		},
+		{
+			name: "link to a directory in the workspace",
+			setup: func(t *testing.T, dir string) {
+				if err := os.Mkdir(filepath.Join(dir, "config"), 0o755); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink("config", filepath.Join(dir, MCPFile)); err != nil {
+					t.Fatal(err)
+				}
+			},
+			wantErr: "reading %s: ",
+		},
+		{name: "empty file", setup: func(t *testing.T, dir string) { writeFile(t, filepath.Join(dir, MCPFile), "") }, wantErr: "%s isn't valid JSON (unexpected end of JSON input)"},
+		{name: "invalid JSON", setup: func(t *testing.T, dir string) { writeFile(t, filepath.Join(dir, MCPFile), "{") }, wantErr: "%s isn't valid JSON ("},
+		{name: "wrong shape", setup: func(t *testing.T, dir string) { writeFile(t, filepath.Join(dir, MCPFile), `{"mcpServers": []}`) }, wantErr: "parsing %s: "},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			_, err := LoadMCP(dir)
+			if want := strings.ReplaceAll(tc.wantErr, "%s", filepath.Join(dir, MCPFile)); err == nil || !strings.HasPrefix(err.Error(), want) {
+				t.Fatalf("LoadMCP() error = %v, want it to start with %q", err, want)
+			}
+		})
 	}
 }

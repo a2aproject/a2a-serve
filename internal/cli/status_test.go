@@ -131,7 +131,7 @@ func TestPrintStatusMCPMissing(t *testing.T) {
 			want: "  mcp      grafana: uvx mcp-grafana ! not passed to the agent, unset: GRAFANA_TOKEN, GRAFANA_URL (pass them with --secret)\n",
 		},
 		{
-			name:   "stored since the start",
+			name:   "stored after the start",
 			stored: agentdir.Secrets{"GRAFANA_TOKEN": "tok"},
 			want: "  mcp      grafana: uvx mcp-grafana ! not passed to the agent, unset: GRAFANA_URL (pass them with --secret);" +
 				" stored, passed after `a2a-serve restart`: GRAFANA_TOKEN\n",
