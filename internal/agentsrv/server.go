@@ -603,6 +603,7 @@ func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Messenger) (<-chan error, error) {
 	errc := make(chan error, 1)
 	s.chatTurns.Start(ctx)
+	closers.push(s.chatTurns.Wait)
 	closers.push(s.supervisor.StopAll)
 	closers.push(s.harness.serve(ctx, s.proxy.Routes(s.harness.processOf), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {

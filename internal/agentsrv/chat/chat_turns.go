@@ -56,6 +56,8 @@ type ChatTurns struct {
 	// downloads holds a place for each message being prepared.
 	downloads chan struct{}
 	config    func() *agentdir.Config
+	// running counts the dispatcher and the handlers it started.
+	running sync.WaitGroup
 }
 
 // ChatTurnsDeps are the dependencies of [ChatTurns].
@@ -124,7 +126,25 @@ func NewChatTurns(deps ChatTurnsDeps) *ChatTurns {
 }
 
 // Start dispatches messenger messages until ctx ends.
-func (c *ChatTurns) Start(ctx context.Context) { go c.dispatch(ctx) }
+func (c *ChatTurns) Start(ctx context.Context) {
+	c.running.Go(func() { c.dispatch(ctx) })
+}
+
+// Wait returns once the ctx of [ChatTurns.Start] ended and the messages it
+// dispatched are handled, so that the store can close, or when ctx ends.
+func (c *ChatTurns) Wait(ctx context.Context) error {
+	done := make(chan struct{})
+	go func() {
+		c.running.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 // ContextSet is a set of context IDs, safe for concurrent use.
 type ContextSet struct {
@@ -168,7 +188,7 @@ func (c *ChatTurns) dispatch(ctx context.Context) {
 			if in.Action == nil {
 				t = c.queue.enqueue(in.Messenger, in.Conv)
 			}
-			go c.handle(ctx, in, t)
+			c.running.Go(func() { c.handle(ctx, in, t) })
 		}
 	}
 }

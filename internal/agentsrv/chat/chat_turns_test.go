@@ -226,6 +226,14 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 		Config:     config,
 	})
 	turns.Start(fx.ctx)
+	t.Cleanup(func() {
+		fx.cancel()
+		ctx, stop := context.WithTimeout(context.Background(), waitTimeout)
+		defer stop()
+		if err := turns.Wait(ctx); err != nil {
+			t.Errorf("ChatTurns.Wait() error = %v", err)
+		}
+	})
 	fx.link(t, linkSpec{pairing: auth.LocalPairing, messenger: "fake", identity: "telegram:1", conv: "dm1"})
 	return &turnsFixture{chatFixture: fx, ch: ch, sender: sender, unattended: unattended, turns: turns}
 }
@@ -494,6 +502,27 @@ func TestChatTurnsStopDoesNotWaitForRunningTurn(t *testing.T) {
 	}
 	close(fx.sender.hold)
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText(agentReply))
+}
+
+func TestChatTurnsWaitForRunningTurn(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.sender.hold = make(chan struct{})
+	fx.ch.Write("telegram:1", "dm1", "slow")
+	fx.sender.nextStream(t)
+
+	shortCtx, stopShort := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer stopShort()
+	if err := fx.turns.Wait(shortCtx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("ChatTurns.Wait() with a turn running error = %v, want %v", err, context.DeadlineExceeded)
+	}
+
+	fx.cancel()
+	waitCtx, stopWait := context.WithTimeout(context.Background(), waitTimeout)
+	defer stopWait()
+	if err := fx.turns.Wait(waitCtx); err != nil {
+		t.Fatalf("ChatTurns.Wait() after the stop error = %v, want nil", err)
+	}
 }
 
 func TestChatTurnsInjectTurnWithoutConversationPostsUnattendedMessage(t *testing.T) {
