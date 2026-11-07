@@ -17,6 +17,8 @@ package recipe
 import (
 	"context"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -183,6 +185,11 @@ func TestFetchErrors(t *testing.T) {
 	t.Parallel()
 	repo := newGitRepo(t)
 	repo.commit(map[string]string{"elk/AGENTS.md": "v1", "README.md": "repo"})
+	private := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("WWW-Authenticate", `Basic realm="git"`)
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	t.Cleanup(private.Close)
 	tests := []struct {
 		name    string
 		src     Source
@@ -193,6 +200,7 @@ func TestFetchErrors(t *testing.T) {
 		{name: "missing ref", src: Source{Repo: repo.url(), Ref: "nope", Path: "elk"}, wantErr: "fetching"},
 		{name: "tree rest without a known ref", src: Source{Repo: repo.url(), treeRest: "nope/elk"}, wantErr: `no branch or tag that starts "nope/elk"`},
 		{name: "missing repository", src: Source{Repo: "file://" + filepath.Join(t.TempDir(), "nope")}, wantErr: "fetching"},
+		{name: "repository that needs credentials", src: Source{Repo: private.URL + "/acme/agents.git"}, wantErr: "the repository doesn't exist, or git has no credentials for it"},
 		{name: "missing local directory", src: Source{Dir: filepath.Join(t.TempDir(), "nope")}, wantErr: "no such file or directory"},
 		{name: "local file", src: Source{Dir: filepath.Join(repo.dir, "README.md")}, wantErr: "is not a directory"},
 	}

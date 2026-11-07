@@ -72,10 +72,7 @@ version is saved next to it as <file>.recipe.
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			interactive := cfg.isTerminal() && !yes
-			if !interactive && !yes && !dryRun {
-				return clierr.Usage("recipe asks before it changes anything; without a terminal, pass --yes or --dry-run")
-			}
-			run := &recipeRun{cfg: cfg, sf: sf, dir: sf.dir, interactive: interactive, dryRun: dryRun, getenv: cfg.env}
+			run := &recipeRun{cfg: cfg, sf: sf, dir: sf.dir, interactive: interactive, dryRun: dryRun, unconfirmed: !interactive && !yes && !dryRun, getenv: cfg.env}
 			if len(args) == 1 {
 				src, err := recipe.ParseSource(args[0])
 				if err != nil {
@@ -112,6 +109,9 @@ type recipeRun struct {
 	dir         string
 	interactive bool
 	dryRun      bool
+	// unconfirmed is a run that can neither ask nor change anything, which
+	// fails once the source is read.
+	unconfirmed bool
 	getenv      func(string) string
 	prompter    *wizard.Prompter
 	// stored are the secrets of an agent being updated.
@@ -155,6 +155,9 @@ func (r *recipeRun) run(ctx context.Context) error {
 	fetched, rec, err := r.fetch(ctx, work)
 	if err != nil {
 		return err
+	}
+	if r.unconfirmed {
+		return clierr.Usage("recipe asks before it changes anything; without a terminal, pass --yes or --dry-run")
 	}
 	if record != nil {
 		return r.update(ctx, d, record, fetched, rec)

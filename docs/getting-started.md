@@ -38,7 +38,7 @@ cd ~/src/app
 a2a-serve start claude --secret ANTHROPIC_API_KEY --detach
 ```
 
-For `opencode`, run `a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach`. Without Docker, add `--sandbox local`.
+For `opencode`, run `a2a-serve start opencode --model openrouter/~google/gemini-flash-latest --secret OPENROUTER_API_KEY --detach`. Without Docker, install the agent on your machine and add `--sandbox local`.
 
 ## Talk to it
 

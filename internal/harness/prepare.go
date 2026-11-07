@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -342,7 +343,16 @@ func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, erro
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return nil }, OnHost: true}, nil
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "no sandbox", Stop: func(context.Context) error { return nil }, Check: func() error { return checkInstalled(c.Path) }, OnHost: true}, nil
+}
+
+// checkInstalled refuses to start an agent without a sandbox whose command
+// isn't on PATH.
+func checkInstalled(command string) error {
+	if _, err := exec.LookPath(command); errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("%s is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor", command)
+	}
+	return nil
 }
 
 // TCPBridge reports whether a harness in sandbox must reach the agent

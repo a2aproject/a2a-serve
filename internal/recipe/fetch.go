@@ -23,6 +23,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 )
@@ -47,13 +48,26 @@ func ExecGit(interactive bool) Runner {
 		var stdout, stderr bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &stdout, &stderr
 		if err := cmd.Run(); err != nil {
-			if msg := strings.TrimSpace(stderr.String()); msg != "" {
-				return nil, fmt.Errorf("git %s: %w: %s", args[0], err, msg)
-			}
-			return nil, fmt.Errorf("git %s: %w", args[0], err)
+			return nil, gitError(args[0], err, strings.TrimSpace(stderr.String()))
 		}
 		return stdout.Bytes(), nil
 	}
+}
+
+// noAccess are the messages of git for a repository it can't read. Git
+// hosts answer a missing repository like a private one.
+var noAccess = []string{"terminal prompts disabled", "Authentication failed", "Repository not found", "Permission denied (publickey)"}
+
+// gitError returns the error of the git command that failed with err and
+// wrote stderr.
+func gitError(command string, err error, stderr string) error {
+	if slices.ContainsFunc(noAccess, func(m string) bool { return strings.Contains(stderr, m) }) {
+		return fmt.Errorf("git %s: the repository doesn't exist, or git has no credentials for it; check the URL, or set up an SSH key or a git credential helper for it (git said: %s)", command, stderr)
+	}
+	if stderr != "" {
+		return fmt.Errorf("git %s: %w: %s", command, err, stderr)
+	}
+	return fmt.Errorf("git %s: %w", command, err)
 }
 
 // Fetcher fetches recipes.
