@@ -142,7 +142,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 // checkNotRunning fails if a server holds the lock of dir. The lock
 // is released at once: the server takes it again when it starts.
 func checkNotRunning(dir agentdir.Dir) error {
-	release, err := dir.Lock()
+	release, err := dir.LockWithin(agentdir.ProbeWait)
 	if errors.Is(err, fsutil.ErrLocked) {
 		return fmt.Errorf("the server is already running in %s (a2a-serve status)", dir.Root)
 	}
@@ -203,26 +203,17 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 	}
 	var note string
 	var pid int
-	alive := func() bool { return true }
+	// A service manager restarts a server that failed, so the process of a
+	// service never counts as exited.
+	var exited <-chan struct{}
 	if asService {
 		if note, err = service.Install(u); err != nil {
 			return err
 		}
-	} else {
-		var exited <-chan struct{}
-		if pid, exited, err = service.Detach(u); err != nil {
-			return err
-		}
-		alive = func() bool {
-			select {
-			case <-exited:
-				return false
-			default:
-				return true
-			}
-		}
+	} else if pid, exited, err = service.Detach(u); err != nil {
+		return err
 	}
-	if err := waitReady(ctx, dir, offset, pid, alive, out); err != nil {
+	if err := waitReady(ctx, dir, offset, pid, exited, out); err != nil {
 		if asService {
 			return fmt.Errorf("%w\n  the service stays installed; remove it with `a2a-serve stop --uninstall`", err)
 		}
@@ -240,10 +231,10 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 }
 
 // waitReady relays progress lines from the log until the control socket
-// answers or the process dies. The error output of a server that exits is
-// held back and returned, so it is reported once. Only the stop record of
-// the server with pid counts, or any with pid zero.
-func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, alive func() bool, out io.Writer) error {
+// answers or the process dies, which closes exited. The error output of a
+// server that exits is held back and returned, so it is reported once. Only
+// the stop record of the server with pid counts, or any with pid zero.
+func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exited <-chan struct{}, out io.Writer) error {
 	deadline := time.Now().Add(15 * time.Minute)
 	client := controlapi.NewClient(dir)
 	r := relay{out: out, pid: pid}
@@ -263,9 +254,16 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, ali
 			}
 			return nil
 		}
-		// A service manager restarts a server that failed, so the process
-		// may still be alive.
-		if r.stopped || !alive() {
+		if r.stopped || isClosed(exited) {
+			// The server prints its error after the stop record, and it
+			// has printed it once it exited.
+			if pid != 0 {
+				select {
+				case <-exited:
+				case <-ctx.Done():
+				case <-time.After(exitWait):
+				}
+			}
 			if _, err := r.read(dir.LogPath(), offset); err != nil {
 				slog.Debug("reading the log of the exited server", "error", err)
 			}
@@ -279,6 +277,19 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, ali
 			return ctx.Err()
 		case <-time.After(300 * time.Millisecond):
 		}
+	}
+}
+
+// exitWait is how long waitReady waits for a server that logged its stop
+// record to exit.
+const exitWait = 5 * time.Second
+
+func isClosed(c <-chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
 	}
 }
 

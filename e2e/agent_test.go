@@ -109,10 +109,10 @@ func TestConcurrentStarts(t *testing.T) {
 			results <- result{out, err}
 		}()
 	}
+	coder.stopped = false
 	started := 0
 	for range starters {
 		r := <-results
-		coder.stopped = false
 		switch {
 		case r.err == nil && strings.Contains(r.out, "Error"):
 			t.Errorf("a2a-serve start --detach = %q, want no error output", r.out)

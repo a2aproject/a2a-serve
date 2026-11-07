@@ -331,7 +331,7 @@ func (s *Server) open(ctx context.Context, closers *stack, sandboxed bool) error
 	if err := s.dir.Init(); err != nil {
 		return err
 	}
-	release, err := s.dir.Lock()
+	release, err := s.dir.LockWithin(agentdir.ProbeWait)
 	if errors.Is(err, fsutil.ErrLocked) {
 		return fmt.Errorf("the server is already running in %s (a2a-serve status)", s.dir.Root)
 	}

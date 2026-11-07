@@ -18,10 +18,15 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 func TestFind(t *testing.T) {
@@ -751,5 +756,64 @@ func TestUpdateConfigLocksInState(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{".gitignore", "config.yaml", "state"}, got); diff != "" {
 		t.Fatalf("Dir.UpdateConfig() wrong .a2a entries (-want +got) diff = %s", diff)
+	}
+}
+
+func TestLockWithin(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("advisory locks are no-ops on this platform")
+	}
+	tests := []struct {
+		name      string
+		server    bool
+		releaseIn time.Duration
+		wait      time.Duration
+		wantErr   error
+	}{
+		{name: "released while waiting", releaseIn: 200 * time.Millisecond, wait: 30 * time.Second},
+		{name: "held longer than the wait", releaseIn: time.Hour, wait: 100 * time.Millisecond, wantErr: fsutil.ErrLocked},
+		{name: "held by a server", server: true, releaseIn: time.Hour, wait: time.Hour, wantErr: fsutil.ErrLocked},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := Dir{Root: t.TempDir()}
+			if err := d.Init(); err != nil {
+				t.Fatalf("Dir.Init() error = %v", err)
+			}
+			holder, err := fsutil.TryLock(d.LockPath())
+			if err != nil {
+				t.Fatalf("fsutil.TryLock() error = %v", err)
+			}
+			if tc.server {
+				if err := os.WriteFile(d.PIDPath(), []byte("1"), 0o600); err != nil {
+					t.Fatalf("os.WriteFile() error = %v", err)
+				}
+			}
+			var once sync.Once
+			releaseHolder := func() {
+				once.Do(func() {
+					if err := holder(); err != nil {
+						t.Errorf("releasing the holder: %v", err)
+					}
+				})
+			}
+			timer := time.AfterFunc(tc.releaseIn, releaseHolder)
+			t.Cleanup(func() {
+				timer.Stop()
+				releaseHolder()
+			})
+
+			release, err := d.LockWithin(tc.wait)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("Dir.LockWithin() error = %v, want %v", err, tc.wantErr)
+			}
+			if err == nil {
+				if err := release(); err != nil {
+					t.Fatalf("release() error = %v", err)
+				}
+			}
+		})
 	}
 }

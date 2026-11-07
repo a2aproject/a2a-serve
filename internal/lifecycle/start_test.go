@@ -126,7 +126,7 @@ func TestWaitReadyFailsWhenServerStops(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	err := waitReady(ctx, dir, 0, 0, func() bool { return true }, io.Discard)
+	err := waitReady(ctx, dir, 0, 0, nil, io.Discard)
 
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitReady() error = %v, want the error the server stopped with", err)
@@ -215,7 +215,7 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 			defer cancel()
 			var out bytes.Buffer
 
-			err := waitReady(ctx, dir, 0, 42, func() bool { return false }, &out)
+			err := waitReady(ctx, dir, 0, 42, exitedProcess(), &out)
 
 			ce := clierr.Classify(err)
 			if ce == nil {
@@ -264,7 +264,7 @@ func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 	defer cancel()
 	var out bytes.Buffer
 
-	if err := waitReady(ctx, dir, 0, 42, func() bool { return true }, &out); err != nil {
+	if err := waitReady(ctx, dir, 0, 42, nil, &out); err != nil {
 		t.Fatalf("waitReady() error = %v", err)
 	}
 	if want := "✓ opencode is running (ACP)\n"; out.String() != want {
@@ -277,4 +277,27 @@ func stopRecord(pid int, err string) string {
 	var b bytes.Buffer
 	logStop(slog.New(slog.NewTextHandler(&b, nil)), pid, errors.New(err))
 	return b.String()
+}
+
+func TestWaitReadyKeepsWaitingAfterStopRecordOfAnotherServer(t *testing.T) {
+	t.Parallel()
+	dir := newAgent(t)
+	log := stopRecord(7, "the server is already running in /a (a2a-serve status)") +
+		"Error: the server is already running in /a (a2a-serve status)\n"
+	if err := os.WriteFile(dir.LogPath(), []byte(log), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+
+	err := waitReady(ctx, dir, 0, 42, nil, io.Discard)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("waitReady() error = %v, want %v", err, context.DeadlineExceeded)
+	}
+}
+
+func exitedProcess() <-chan struct{} {
+	c := make(chan struct{})
+	close(c)
+	return c
 }
