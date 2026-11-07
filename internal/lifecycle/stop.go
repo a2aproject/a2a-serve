@@ -20,11 +20,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
@@ -113,7 +115,7 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
 		return res, err
 	}
-	if !opts.Wait {
+	if opts.Wait == NoWait || !res.Running {
 		return res, nil
 	}
 	kill := func() error { return nil }
@@ -128,7 +130,8 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 
 // waitStopped waits until the server releases the lock of the agent
 // directory, which it holds until everything is shut down. kill runs once
-// the server is still running after killAfter.
+// the server is still running after killAfter. A missing lock file means
+// that no server can hold it.
 func waitStopped(ctx context.Context, d agentdir.Dir, killAfter time.Duration, kill func() error) error {
 	start := time.Now()
 	killed := false
@@ -136,6 +139,12 @@ func waitStopped(ctx context.Context, d agentdir.Dir, killAfter time.Duration, k
 		release, err := d.Lock()
 		if err == nil {
 			return release()
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		if !errors.Is(err, fsutil.ErrLocked) {
+			return fmt.Errorf("checking that the server stopped: %w", err)
 		}
 		if !killed && time.Since(start) > killAfter {
 			if err := kill(); err != nil {

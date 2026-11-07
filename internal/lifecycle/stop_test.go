@@ -15,6 +15,8 @@
 package lifecycle
 
 import (
+	"context"
+	"os"
 	"runtime"
 	"testing"
 	"time"
@@ -107,5 +109,37 @@ func TestStopSignalsServerThatIsStarting(t *testing.T) {
 			case <-time.After(200 * time.Millisecond):
 			}
 		})
+	}
+}
+
+func TestStopWithoutStateDir(t *testing.T) {
+	t.Parallel()
+	dir := newAgent(t)
+	if err := os.RemoveAll(dir.StateDir()); err != nil {
+		t.Fatalf("os.RemoveAll() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	got, err := Stop(ctx, dir, controlapi.NewClient(dir), StopOptions{Wait: WaitStopped})
+	if err != nil {
+		t.Fatalf("Stop() error = %v", err)
+	}
+	if diff := cmp.Diff(StopResult{}, got); diff != "" {
+		t.Fatalf("Stop() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestWaitStoppedWithoutStateDir(t *testing.T) {
+	t.Parallel()
+	dir := newAgent(t)
+	if err := os.RemoveAll(dir.StateDir()); err != nil {
+		t.Fatalf("os.RemoveAll() error = %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	if err := waitStopped(ctx, dir, time.Minute, func() error { return nil }); err != nil {
+		t.Fatalf("waitStopped() error = %v, want nil", err)
 	}
 }
