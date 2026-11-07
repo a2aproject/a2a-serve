@@ -64,7 +64,7 @@ a2a-serve start opencode --private https://relay.example.com --public https://re
 → sign in to the relay https://relay.example.com: https://relay.example.com/a2a-serve/signin/device?link=… (code BCDF-GHJK)
 ```
 
-Open the link, sign in with Google, and approve the sign-in if the page shows the code the agent printed. On another device, open `https://relay.example.com/a2a-serve/signin/device` and type the code. The agent keeps a refresh token, so it doesn't need you again when it renews its credential or restarts. Each renewal checks the account with Google and against the allowlist again. An agent prints a new link when its sign-in no longer works: after you revoke the relay's access in your Google account, or after the relay gets a new admin token.
+Open the link, sign in with Google, and approve the sign-in if the page shows the code the agent printed. On another device, open `https://relay.example.com/a2a-serve/signin/device` and type the code. The agent keeps a refresh token, so it doesn't need you again when it renews its credential or restarts. Each renewal checks the account with Google and against the allowlist again. An agent prints a new link when its sign-in no longer works: after you revoke the relay's access in your Google account, after the relay gets a new admin token, or after you move the agent to another relay. The agent sends its refresh token only to the relay that issued it.
 
 
 `relay invite` creates a single-use token that joins one agent:

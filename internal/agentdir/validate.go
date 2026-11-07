@@ -17,7 +17,6 @@ package agentdir
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
 	"regexp"
 	"slices"
@@ -25,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -98,8 +98,8 @@ func (c *Config) Validate() error {
 		if !isRelayURL(v) {
 			continue
 		}
-		if u, err := url.Parse(v); err != nil || u.Host == "" || (u.Path != "" && u.Path != "/") || u.RawQuery != "" {
-			invalid(flag, v, "want a relay URL such as https://relay.example.com")
+		if err := agentmesh.CheckRelayURL(v); err != nil {
+			invalid(flag, v, "%v", err)
 		}
 	}
 	if isRelayURL(c.Network.Private) && isRelayURL(c.Network.Public) && strings.TrimSuffix(c.Network.Private, "/") != strings.TrimSuffix(c.Network.Public, "/") {

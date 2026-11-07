@@ -94,6 +94,8 @@ func TestValidate(t *testing.T) {
 			c.Network = NetworkConfig{Private: "https://relay.example.com", Public: "https://relay.example.com/"}
 		}},
 		{name: "relay with a path", modify: func(c *Config) { c.Network.Private = "https://relay.example.com/x" }, wantErr: `invalid --private "https://relay.example.com/x"`},
+		{name: "relay over http", modify: func(c *Config) { c.Network.Private = "http://relay.example.com" }, wantErr: `invalid --private "http://relay.example.com": must use https`},
+		{name: "relay over http on loopback", modify: func(c *Config) { c.Network.Private = "http://127.0.0.1:8443" }},
 		{name: "two relays", modify: func(c *Config) {
 			c.Network = NetworkConfig{Private: "https://a.example.com", Public: "https://b.example.com"}
 		}, wantErr: "different relays"},

@@ -33,6 +33,8 @@ import (
 	"github.com/google/agentmesh/sdk/meshnet"
 	"github.com/libp2p/go-libp2p/core/crypto"
 	"github.com/libp2p/go-libp2p/core/peer"
+
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 )
 
 // AgentMeshBuilt reports whether this a2a-serve can join Agent Mesh relays.
@@ -73,8 +75,8 @@ type agentMesh struct {
 
 // NewRelay returns the provider of an Agent Mesh relay.
 func NewRelay(cfg RelayConfig) (Provider, error) {
-	if !IsRelayURL(cfg.URL) {
-		return nil, fmt.Errorf("invalid relay URL %q", cfg.URL)
+	if err := agentmesh.CheckRelayURL(cfg.URL); err != nil {
+		return nil, fmt.Errorf("invalid relay URL %q: %w", cfg.URL, err)
 	}
 	return &agentMesh{cfg: cfg}, nil
 }
@@ -139,7 +141,7 @@ func (a *agentMesh) start(ctx context.Context) error {
 		StateDir:        a.cfg.StateDir,
 		ControlPlaneURL: a.cfg.URL,
 		BootstrapToken:  a.cfg.Token,
-		AllowInsecure:   strings.HasPrefix(a.cfg.URL, "http://"),
+		AllowInsecure:   agentmesh.InsecureLoopback(a.cfg.URL),
 		OnCredentialLapse: func(err error) {
 			slog.Warn("relay credential lapsed; retrying", "error", err)
 			a.logf("! relay: credential lapsed (%v)", err)
@@ -154,7 +156,7 @@ func (a *agentMesh) start(ctx context.Context) error {
 		if err != nil {
 			slog.Warn("reading the relay's refresh token", "error", err)
 		}
-		if !hasMeshIdentity(a.cfg.StateDir) && refresh == "" {
+		if !hasMeshIdentity(a.cfg.StateDir) && refresh.Token == "" {
 			a.logf("… joining the relay %s; this needs a sign-in on the first run (or --relay-token)", a.cfg.URL)
 		}
 	}

@@ -21,6 +21,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -271,6 +273,54 @@ func TestRelayLoginSignsInAgainWhenTheRelayRefusesTheRefreshToken(t *testing.T) 
 	}
 	if diff := cmp.Diff(want, logs); diff != "" {
 		t.Fatalf("RelayLogin printed wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRelayLoginSignsInAgainAtANewRelay(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, dir string)
+	}{
+		{name: "signed in at another relay", setup: func(t *testing.T, dir string) {
+			old := fakeRelay(t, token, 0, true, true)
+			l := &RelayLogin{RelayURL: old.URL, StateDir: dir, HTTP: old.Client(), Poll: time.Millisecond}
+			if _, err := l.Token(context.Background()); err != nil {
+				t.Fatalf("RelayLogin.Token() at the old relay error = %v", err)
+			}
+		}},
+		{name: "token saved without its relay", setup: func(t *testing.T, dir string) {
+			if err := os.WriteFile(filepath.Join(dir, "refresh-token"), []byte("rt"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			tc.setup(t, dir)
+			relay := fakeRelay(t, token, 0, true, true)
+			l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
+
+			if _, err := l.Token(context.Background()); err != nil {
+				t.Fatalf("RelayLogin.Token() error = %v", err)
+			}
+
+			if got := relay.refreshes.Load(); got != 0 {
+				t.Fatalf("refresh grants at the new relay = %d, want 0: the token belongs to another relay", got)
+			}
+			if got := relay.polls.Load(); got != 1 {
+				t.Fatalf("device polls at the new relay = %d, want 1", got)
+			}
+			if _, err := l.Token(context.Background()); err != nil {
+				t.Fatalf("RelayLogin.Token() renewal error = %v", err)
+			}
+			if got := relay.refreshes.Load(); got != 1 {
+				t.Fatalf("refresh grants after signing in at the new relay = %d, want 1", got)
+			}
+		})
 	}
 }
 

@@ -13,7 +13,7 @@
 // limitations under the License.
 
 // Package agentmesh pins the Agent Mesh release that agents join relays with
-// and that relays run.
+// and that relays run, and checks the URLs agents join relays at.
 package agentmesh
 
 import (

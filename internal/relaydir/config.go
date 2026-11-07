@@ -21,7 +21,6 @@ import (
 	"fmt"
 	"maps"
 	"net"
-	"net/url"
 	"os"
 	"strings"
 
@@ -29,6 +28,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
@@ -274,42 +274,19 @@ func (c *Config) validateSignIn() error {
 	return nil
 }
 
-// CheckURL checks a relay URL: https, or http on loopback, with no path.
-// Tokens travel over it.
+// CheckURL checks the relay's URL with [agentmesh.CheckRelayURL].
 func CheckURL(raw string) error {
 	if raw == "" {
 		return agenterr.Invalidf("the relay needs --url, the address agents reach it at, or --tunnel %s for a demo", TunnelCloudflare)
 	}
-	u, err := url.Parse(raw)
-	if err != nil || u.Host == "" {
-		return agenterr.Invalidf("invalid relay URL %q", raw)
+	err := agentmesh.CheckRelayURL(raw)
+	switch {
+	case errors.Is(err, agentmesh.ErrCleartextRelayURL):
+		return agenterr.Invalidf("invalid relay URL %q: %v; serve the relay behind a reverse proxy or a tunnel that ends TLS", raw, err)
+	case err != nil:
+		return agenterr.Invalidf("invalid relay URL %q: %v", raw, err)
 	}
-	if u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" || u.User != nil {
-		return agenterr.Invalidf("the relay URL %q must be a bare origin such as https://relay.example.com", raw)
-	}
-	switch u.Scheme {
-	case "https":
-		return nil
-	case "http":
-		if loopback(u.Hostname()) {
-			return nil
-		}
-	}
-	return agenterr.Invalidf("the relay URL %q must use https, since tokens travel over it; serve the relay behind a reverse proxy or a tunnel that ends TLS", raw)
-}
-
-func loopback(host string) bool {
-	if host == "localhost" {
-		return true
-	}
-	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback()
-}
-
-// Loopback reports whether the relay URL is on this machine.
-func Loopback(raw string) bool {
-	u, err := url.Parse(raw)
-	return err == nil && loopback(u.Hostname())
+	return nil
 }
 
 // Resolved are the relay's settings with their secrets.

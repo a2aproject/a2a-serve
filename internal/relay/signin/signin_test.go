@@ -397,6 +397,24 @@ func TestRefreshTokenIsUsedAtMostOnceInAnInterval(t *testing.T) {
 	}
 }
 
+func TestRefusedRenewalsLeaveRoomForOthers(t *testing.T) {
+	t.Parallel()
+	r := newRelay(t, anna, relayOptions{})
+	spender, other := r.signIn(t), r.signIn(t)
+	if status, got := r.refresh(t, spender.RefreshToken); status != http.StatusOK {
+		t.Fatalf("refresh = %d %q, want 200", status, got.Error)
+	}
+	for range 300 {
+		if status, got := r.refresh(t, spender.RefreshToken); status != http.StatusServiceUnavailable {
+			t.Fatalf("repeated refresh = %d %q, want 503", status, got.Error)
+		}
+	}
+
+	if status, got := r.refresh(t, other.RefreshToken); status != http.StatusOK {
+		t.Fatalf("refresh of another token = %d %q, want 200", status, got.Error)
+	}
+}
+
 func TestDeviceFlowAnswers(t *testing.T) {
 	t.Parallel()
 	r := newRelay(t, anna, relayOptions{})

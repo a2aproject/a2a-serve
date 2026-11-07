@@ -92,7 +92,7 @@ func (i *Issuer) refresh(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusBadRequest, "invalid_grant", "unknown refresh token; sign in again")
 		return
 	}
-	if !i.refreshes.Allow() || !i.mayRefresh(refresh) {
+	if !i.mayRefresh(refresh) || !i.refreshes.Allow() {
 		oauthError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "too many renewals; try again in a minute")
 		return
 	}

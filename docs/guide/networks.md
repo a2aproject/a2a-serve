@@ -41,6 +41,7 @@ On the first run, open the link and sign in with Google. The relay admits the em
 
 - A relay works like a tailnet: everyone the relay admits can call your agent. With `--private-allow-incoming paired`, only you and your pairings can call. [Agent Mesh](../advanced/agent-mesh.md#how-the-access-model-maps) explains who a relay admits.
 - The private URL works only from other a2a-serve agents on the relay. Give people the public URL.
+- The relay URL uses `https://`, since the agent sends its tokens to it. `http://` works only for a relay on the same machine, such as `http://127.0.0.1:8443`.
 - Relays need a build with `-tags agentmesh`: `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest`. Release binaries don't include it yet.
 
 The [Agent Mesh relay example](../../examples/03-agentmesh-relay/README.md) runs a relay and two agents on it, and [Agent Mesh](../advanced/agent-mesh.md) explains how the two projects fit together.
