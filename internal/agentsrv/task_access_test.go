@@ -150,3 +150,19 @@ func TestNodeCallerCantReachRunningTaskOfOthers(t *testing.T) {
 	wantNoAccessToTask(t, ben, task.ID)
 	waitState(t, anna, task.ID, a2a.TaskStateSubmitted)
 }
+
+func TestMessageToAnotherUsersTaskLooksUnknown(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	running := sendAsync(t, anna, userText("slow 3s", "", ""))
+	ctx := context.Background()
+
+	_, unknown := ben.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", string(a2a.NewTaskID()), "")})
+	_, foreign := ben.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", string(running.ID), "")})
+
+	if !errors.Is(foreign, a2a.ErrTaskNotFound) || unknown == nil || foreign.Error() != unknown.Error() {
+		t.Fatalf("SendMessage() to anna's running task error = %v, want the error of an unknown task %v", foreign, unknown)
+	}
+}
