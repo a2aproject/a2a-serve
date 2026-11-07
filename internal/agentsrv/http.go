@@ -107,8 +107,8 @@ func (s *Server) routes(l listener) http.Handler {
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
 	mux.Handle("GET /download/a2a", unauthenticated.Handler(http.HandlerFunc(handleDownloadCLI)))
 	mux.Handle("GET /download/a2a-serve", unauthenticated.Handler(http.HandlerFunc(handleDownloadServe)))
-	mux.Handle("POST "+pairapi.Path, unauthenticated.Handler(jsonhttp.RequireJSON(jsonhttp.LimitUnauthenticatedBody(maxPairBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))))
-	mux.Handle("/hitl/{token}", unauthenticated.Handler(jsonhttp.LimitUnauthenticatedBody(maxHITLBody, http.HandlerFunc(s.approvals.HandlePage))))
+	mux.Handle("POST "+pairapi.Path, unauthenticated.Handler(jsonhttp.RequireJSON(jsonhttp.Limit{Max: maxPairBody, Total: s.timings.PairReadTimeout}.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))))
+	mux.Handle("/hitl/{token}", unauthenticated.Handler(jsonhttp.Limit{Max: maxHITLBody, Total: s.timings.PairReadTimeout}.Handler(http.HandlerFunc(s.approvals.HandlePage))))
 	if l.kind == network.ListenerPublic {
 		s.oauth.Register(mux, func(r *http.Request) string { return base(baseURL, r) }, unauthenticated.Handler)
 	}
