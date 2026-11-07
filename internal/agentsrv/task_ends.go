@@ -44,6 +44,15 @@ func (te *taskEnds) finish(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
 	te.ended(ctx, ev.TaskID, ev.ContextID, ev.Status.State)
 }
 
+// questionEnded publishes ev, the stored event that ended a question task,
+// and wakes the followers of its context. A question task isn't the
+// execution that the unattended set tracks, which may still run in the
+// same context, so the context stays unattended.
+func (te *taskEnds) questionEnded(ev *a2a.TaskStatusUpdateEvent) {
+	te.bus.Publish(ev.TaskID, ev)
+	te.bus.ExecutionEnded(ev.ContextID)
+}
+
 // ended closes the questions of a task that no longer waits for input,
 // forgets that nobody watches the context of a task that ended, and wakes
 // the followers of the context, such as held chat turns. An empty state

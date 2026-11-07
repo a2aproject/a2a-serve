@@ -1231,6 +1231,7 @@ func TestOpenQuestionOf(t *testing.T) {
 		{ID: "other question", Token: "t2", TaskID: "task", HitlID: "tool2"},
 		{ID: "remote", Token: "t3", TaskID: "task", HitlID: "tool1", Contact: "reviewer"},
 		{ID: "closed", Token: "t4", TaskID: "task", HitlID: "tool1"},
+		{ID: "newer", Token: "t5", TaskID: "task", HitlID: "tool1"},
 	} {
 		if err := s.PutQuestion(ctx, q); err != nil {
 			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)

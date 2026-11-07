@@ -303,7 +303,8 @@ func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID s
 }
 
 // expireWith runs reject, the answer of a timeout, again while the task is
-// busy with another request.
+// busy with another request, or another answer holds the question: that
+// answer is cleared again if the task doesn't take it.
 func (s *Service) expireWith(reject func() (Outcome, error), logArgs ...any) {
 	for attempt := 1; ; attempt++ {
 		out, err := reject()
@@ -314,7 +315,7 @@ func (s *Service) expireWith(reject func() (Outcome, error), logArgs ...any) {
 		case out == Answered:
 			slog.Info("rejected an unanswered approval", logArgs...)
 			return
-		case out != InProgress:
+		case out == Closed:
 			return
 		case attempt == expireAttempts:
 			slog.Warn("rejecting an expired question: the task stayed busy", logArgs...)
@@ -453,7 +454,7 @@ const (
 
 // Send sends msg, an answer to the agent's own task, and calls accepted
 // once with the error of the send, as soon as the task took it or refused
-// it.
+// it, before it returns. The question stays claimed until accepted runs.
 type Send func(ctx context.Context, msg *a2a.Message, accepted func(error))
 
 // Answer answers a stored question with option on behalf of p, whom who
@@ -528,6 +529,23 @@ func (s *Service) settle(ctx context.Context, rec store.Question, p auth.Princip
 		return Closed, nil
 	}
 	return 0, err
+}
+
+// Release clears by's answer to the question hitlID of the agent's own
+// task taskID, which the task took but couldn't act on, so that the
+// question can be answered again.
+func (s *Service) Release(ctx context.Context, taskID a2a.TaskID, hitlID, by string) {
+	rec, err := s.store.OpenQuestionOf(ctx, string(taskID), hitlID)
+	if errors.Is(err, store.ErrNotFound) {
+		return
+	}
+	if err != nil {
+		slog.Warn("loading the record of an answered question", "task", taskID, "error", err)
+		return
+	}
+	if err := s.store.UnanswerQuestion(ctx, rec.ID, by); err != nil {
+		slog.Warn("clearing an answer the task couldn't act on", "question", rec.ID, "error", err)
+	}
 }
 
 // AnswerTask answers q, a question of the agent's own task taskID, with

@@ -608,8 +608,13 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 		p, _ := auth.Caller(ctx)
 		if err := e.answers.record(ctx, p, execCtx, q, opt); err != nil {
 			slog.Error("saving what an approval allows", "task", execCtx.TaskID, "error", err)
+			e.approvals.Release(context.WithoutCancel(ctx), execCtx.TaskID, q.ID, p.ID)
 			return e.observe(ctx, execCtx, askAgain(reask(execCtx, "I couldn't save the answer, so the question still waits for an answer. Try again.\n")))
 		}
+	}
+	// The agent takes only structured input for the question, and the
+	// reply may be words or an untagged data part.
+	if chosen {
 		var err error
 		if answer, err = agentAnswer(execCtx, q, opt); err != nil {
 			slog.Warn("translating an approval", "task", execCtx.TaskID, "error", err)
@@ -619,12 +624,15 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	return e.observe(ctx, execCtx, e.withAnswer(ctx, execCtx, q, e.withCallerQuestion(answer, e.turn(ctx, answer))))
 }
 
-// agentAnswer returns execCtx with its reply to q, a question with the
-// server's options, translated to the agent's option. "always" becomes
-// the option that allows once: [ruleAnswers] saved the grant of the
-// conversation, and the server enforces it.
+// agentAnswer returns execCtx with its reply to q as structured input with
+// the agent's option. For a question with the server's options, "always"
+// becomes the option that allows once: [ruleAnswers] saved the grant of
+// the conversation, and the server enforces it.
 func agentAnswer(execCtx *a2asrv.ExecutorContext, q *approvals.Question, opt approvals.Option) (*a2asrv.ExecutorContext, error) {
-	agentOption, _ := q.AgentOption(opt.ID)
+	agentOption, ok := q.AgentOption(opt.ID)
+	if !ok {
+		agentOption = opt.ID
+	}
 	part, err := structuredinput.NewResponsePart(q.ID, a2aacp.Answer{Option: agentOption})
 	if err != nil {
 		return nil, err

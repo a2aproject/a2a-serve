@@ -79,6 +79,9 @@ func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskSt
 	for i, o := range q.Options {
 		ids[i] = o.ID
 	}
+	if answersOther(execCtx.Message, q) {
+		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: it answers another question, so this question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
+	}
 	reply, ok := replyText(execCtx.Message)
 	if !ok {
 		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: its data has no \"option\" field, so the question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
@@ -88,6 +91,15 @@ func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskSt
 		quoted = append(quoted[:maxQuotedReply], '…')
 	}
 	return reask(execCtx, fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(quoted), strings.Join(ids, ", ")))
+}
+
+// answersOther reports whether a reply is structured input for another
+// question than q, such as one the task asked before.
+func answersOther(msg *a2a.Message, q *approvals.Question) bool {
+	return msg != nil && slices.ContainsFunc(msg.Parts, func(p *a2a.Part) bool {
+		meta, ok := structuredinput.GetPartMetadata(p)
+		return ok && meta.Type == structuredinput.PartTypeStructuredInput && meta.ID != q.ID
+	})
 }
 
 // replyText is what a refusal quotes of a reply: its text, or else the
