@@ -159,9 +159,10 @@ func CallbackURL(relayURL string) string {
 
 // ServeHTTP serves the identity provider at paths with [Path] stripped.
 func (i *Issuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method == http.MethodPost {
-		r.Body = http.MaxBytesReader(w, r.Body, maxBody)
-	}
+	jsonhttp.LimitUnauthenticatedBody(maxBody, http.HandlerFunc(i.serve)).ServeHTTP(w, r)
+}
+
+func (i *Issuer) serve(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.URL.Path == discoveryPath && r.Method == http.MethodGet:
 		jsonhttp.Write(w, http.StatusOK, i.discovery())

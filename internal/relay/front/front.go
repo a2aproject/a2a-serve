@@ -22,14 +22,17 @@ package front
 import (
 	"errors"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/netip"
 	"net/url"
 	"path"
 	"strings"
 	"sync/atomic"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/httpserver"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
@@ -41,14 +44,25 @@ type Front struct {
 	control http.Handler
 	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
+	// proxied limits the requests to Agent Mesh, and unauthenticated the
+	// requests to the control API and the identity provider.
+	proxied, unauthenticated *httpserver.KeyedLimiter
 }
+
+// maxProxiedPerClient is how many requests to Agent Mesh one client may
+// have open, WebSockets of agents included.
+const maxProxiedPerClient = 64
 
 // New returns the front of a relay that reports info and serves control,
 // which checks the admin token itself, at [control.RemotePath], and signIn
 // at [signin.Path], or nil when agents can't sign in. It answers 503 on
 // proxied routes until [Front.Open].
 func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
-	return &Front{info: info, control: ctl, signIn: signIn}
+	return &Front{
+		info: info, control: ctl, signIn: signIn,
+		proxied:         httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		unauthenticated: httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client),
+	}
 }
 
 // Open starts proxying to the agentmesh-one at upstream.
@@ -109,14 +123,14 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Write(w, http.StatusOK, f.info)
 		return
 	case under(p, control.RemotePath):
-		http.StripPrefix(control.RemotePath, f.control).ServeHTTP(w, r)
+		f.unauthenticated.Handler(http.StripPrefix(control.RemotePath, f.control)).ServeHTTP(w, r)
 		return
 	case under(p, signin.Path):
 		if f.signIn == nil {
 			jsonhttp.Error(w, http.StatusNotFound, "this relay doesn't let agents sign in; join it with an invite")
 			return
 		}
-		http.StripPrefix(signin.Path, f.signIn).ServeHTTP(w, r)
+		f.unauthenticated.Handler(http.StripPrefix(signin.Path, f.signIn)).ServeHTTP(w, r)
 		return
 	case blocked(p, r.Method):
 		jsonhttp.Error(w, http.StatusNotFound, "not found")
@@ -128,7 +142,35 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusServiceUnavailable, "the relay is starting")
 		return
 	}
-	proxy.ServeHTTP(w, r)
+	f.proxied.Handler(proxy).ServeHTTP(w, r)
+}
+
+// client identifies the client of a request for its limits. A connection
+// from the relay's machine or a private network comes from a tunnel or a
+// reverse proxy, such as cloudflared or Cloud Run's, so the client is the
+// address that proxy added last to X-Forwarded-For. Otherwise it is the
+// remote address, and the header may be forged.
+func client(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+	ip, err := netip.ParseAddr(host)
+	if err != nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+		return host
+	}
+	forwarded := r.Header.Values("X-Forwarded-For")
+	if len(forwarded) == 0 {
+		return host
+	}
+	last := forwarded[len(forwarded)-1]
+	if i := strings.LastIndexByte(last, ','); i >= 0 {
+		last = last[i+1:]
+	}
+	if last = strings.TrimSpace(last); last != "" {
+		return last
+	}
+	return host
 }
 
 func under(p, prefix string) bool {
