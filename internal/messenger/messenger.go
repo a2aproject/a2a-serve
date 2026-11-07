@@ -60,6 +60,13 @@ type Validator interface {
 	Validate(ctx context.Context) error
 }
 
+// Linker is a messenger that keeps state only for senders who were let in.
+type Linker interface {
+	// Linked tells the messenger that the sender of in linked their chat
+	// account with in, which skipped [Inbound.Prepare].
+	Linked(ctx context.Context, in Inbound) error
+}
+
 // Validate checks the credentials of ch if it is a [Validator].
 func Validate(ctx context.Context, ch Messenger) error {
 	if v, ok := ch.(Validator); ok {

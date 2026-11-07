@@ -47,12 +47,14 @@ type Messenger struct {
 	in    chan<- messenger.Inbound
 	msgs  map[string]messenger.Outbound
 	order []string
+	links []messenger.ConvKey
 	ready chan struct{}
 }
 
 var (
 	_ messenger.Messenger = (*Messenger)(nil)
 	_ messenger.Describer = (*Messenger)(nil)
+	_ messenger.Linker    = (*Messenger)(nil)
 )
 
 // seq numbers the messages of all messengers.
@@ -82,6 +84,21 @@ func (c *Messenger) Describe() string { return "@fake_bot" }
 
 // LinkHint implements [messenger.Describer].
 func (c *Messenger) LinkHint(code string) string { return "/start " + code }
+
+// Linked implements [messenger.Linker].
+func (c *Messenger) Linked(_ context.Context, in messenger.Inbound) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.links = append(c.links, in.Conv)
+	return nil
+}
+
+// Links returns the conversations in which senders linked themselves.
+func (c *Messenger) Links() []messenger.ConvKey {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.links)
+}
 
 // Run implements [messenger.Messenger].
 func (c *Messenger) Run(ctx context.Context, in chan<- messenger.Inbound, _ func(error)) error {
