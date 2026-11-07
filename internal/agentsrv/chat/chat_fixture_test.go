@@ -126,6 +126,7 @@ type readyWaiter interface{ WaitReady(t testing.TB) }
 // chatFixture is the parts the chat code works with, over a temporary store.
 type chatFixture struct {
 	ctx        context.Context
+	cancel     context.CancelFunc
 	store      *store.Store
 	tasks      *store.TaskStore
 	chain      *auth.Chain
@@ -143,7 +144,7 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...messenger.Messenger) 
 	t.Helper()
 	st := openTestStore(t)
 	ctx, cancel := context.WithCancel(context.Background())
-	fx := &chatFixture{ctx: ctx, store: st, bus: NewBus(), queue: NewConversationQueue(), timings: testTimings}
+	fx := &chatFixture{ctx: ctx, cancel: cancel, store: st, bus: NewBus(), queue: NewConversationQueue(), timings: testTimings}
 	fx.tasks = st.Tasks("", func(context.Context) (string, bool, error) { return "", true, nil })
 	fx.chain = &auth.Chain{Store: st, Policy: func() auth.Policy { return auth.Policy{} }}
 	fx.records = approvals.NewRecords(approvals.RecordsDeps{
