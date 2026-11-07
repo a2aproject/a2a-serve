@@ -32,6 +32,8 @@ import (
 	"time"
 
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // hookWriter calls onHeader with the entry name of every tar header block
@@ -328,8 +330,8 @@ func TestSnapshotterAddFileRefusesSymlinkSwappedIn(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if !errors.Is(err, errNotRegular) {
-		t.Fatalf("snapshotter.addFile() error = %v, want %v", err, errNotRegular)
+	if !errors.Is(err, fsutil.ErrNotRegular) {
+		t.Fatalf("snapshotter.addFile() error = %v, want %v", err, fsutil.ErrNotRegular)
 	}
 	if diff := cmp.Diff(map[string]string{}, readTar(t, buf.Bytes())); diff != "" {
 		t.Fatalf("snapshotter.addFile() wrong entries (-want +got) diff = %s", diff)

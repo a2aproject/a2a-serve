@@ -13,6 +13,8 @@ By default the agent runs in Docker with:
 
 Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server. All containers share the workspace, the `--mount` directories and the `--secret` values.
 
+The server bounds what it reads from the agent. It reads a file the agent can write, such as an instruction file or a settings file in its home, only when the file is a regular file of at most 1 MiB. It skips other files with a warning in the server log. Backups skip special files such as FIFOs. A task fails with "the agent sent a message over 64 MiB" when the agent sends a single message larger than that.
+
 Every tool call that changes something waits for approval from the person who started the task, or an owner (see [Approvals](../guide/approvals.md)). The agent can't answer the approvals of agents it calls; the server relays them to the user. Only the owner's settings, `--allow-tools` and `--deny-tools`, decide calls for every caller. A person who taps "Always allow" skips the question for calls like it in that conversation, or in all their conversations after they accept the offer to remember it. Either covers only the tasks that person starts, which they could approve anyway, and `--deny-tools` decides before both. Rules, preferences and grants trust what the agent reports about a call, such as its kind and command. Approvals keep you informed and able to step in; the sandbox and scoped credentials are what protect you.
 
 What the sandbox doesn't protect yet:

@@ -18,6 +18,7 @@
 package agentsrv
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -103,6 +104,9 @@ type Options struct {
 	Now func() time.Time
 	// Timings replace the delays and timeouts of the server, for tests.
 	Timings Timings
+	// MaxAgentMessage replaces the 64 MiB limit of a message from the
+	// agent, for tests.
+	MaxAgentMessage int
 }
 
 // Server is a running server.
@@ -199,6 +203,8 @@ type Server struct {
 	// instructionsMu serializes rewrites of the harness instruction files.
 	instructionsMu sync.Mutex
 	timings        Timings
+	// maxAgentMessage bounds a message from the agent.
+	maxAgentMessage int
 	// stalls fails the turns of the ACP executors in which the agent stopped
 	// sending updates.
 	stalls *stallGuard
@@ -266,7 +272,8 @@ func Run(ctx context.Context, opts Options) error {
 		public:            opts.Public,
 		newRelay:          opts.NewRelay,
 
-		timings: opts.Timings.withDefaults(),
+		timings:         opts.Timings.withDefaults(),
+		maxAgentMessage: cmp.Or(opts.MaxAgentMessage, maxAgentMessage),
 
 		peerCards:          newPeerCards(),
 		cardRefreshChanged: make(chan struct{}, 1),

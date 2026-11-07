@@ -209,13 +209,16 @@ type preparedHarness struct {
 	prepared *harness.Prepared
 	// stop cleans up after the harness exited.
 	stop func(context.Context) error
+	// maxMessage bounds a message from the agent.
+	maxMessage int
 }
 
 func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
 	return checkedProcess{
-		Process: a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr},
-		check:   h.prepared.Check,
-		onHost:  h.prepared.OnHost,
+		Process:    a2aacp.Process{Argv: h.prepared.Args, Dir: h.mounts[0].Src, Env: h.prepared.Env, Stderr: stderr},
+		check:      h.prepared.Check,
+		onHost:     h.prepared.OnHost,
+		maxMessage: h.maxMessage,
 	}
 }
 
@@ -227,15 +230,22 @@ type checkedProcess struct {
 	// onHost marks each process, so that the processes it starts are killed
 	// once it stops.
 	onHost bool
+	// maxMessage bounds a message from the agent.
+	maxMessage int
 }
 
-// Start implements [a2aacp.Agent].
+// Start implements [a2aacp.Agent]. A message from the agent over
+// maxMessage fails the connection.
 func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteCloser, error) {
 	if err := p.check(); err != nil {
 		return nil, err
 	}
 	if !p.onHost {
-		return p.Process.Start(ctx, key)
+		rwc, err := p.Process.Start(ctx, key)
+		if err != nil {
+			return nil, err
+		}
+		return newBoundedMessages(rwc, p.maxMessage), nil
 	}
 	mark := harness.NewProcessMark()
 	proc := p.Process
@@ -244,7 +254,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 	if err != nil {
 		return nil, err
 	}
-	return mark.Watch(rwc), nil
+	return newBoundedMessages(mark.Watch(rwc), p.maxMessage), nil
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
@@ -323,7 +333,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, errors.Join(err, closeEndpoint())
 	}
 	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
-	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop}, nil
+	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage}, nil
 }
 
 // checkHome makes home a real directory and pins it, after the sandbox

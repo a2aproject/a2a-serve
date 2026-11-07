@@ -27,6 +27,7 @@
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
 //	crash            exits mid-turn
+//	flood            a message chunk without end
 //	orphan <file>    starts a process in a session of its own, writes its
 //	                 PID to file, and exits mid-turn
 //	mcp              replies with the MCP servers of session/new
@@ -230,6 +231,24 @@ func (a *agent) call(method string, params any) message {
 
 func (a *agent) chunk(sessionID, text string) {
 	a.notify(sessionID, map[string]any{"sessionUpdate": "agent_message_chunk", "content": map[string]any{"type": "text", "text": text}})
+}
+
+// flood writes a message chunk whose text never ends.
+func (a *agent) flood(sessionID string) {
+	a.outMu.Lock()
+	defer a.outMu.Unlock()
+	start := `{"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"` + sessionID + `","update":{"sessionUpdate":"agent_message_chunk","content":{"type":"text","text":"`
+	if _, err := os.Stdout.WriteString(start); err != nil {
+		fmt.Fprintln(os.Stderr, "fakeacp: write:", err)
+		os.Exit(1)
+	}
+	text := strings.Repeat("x", 1<<20)
+	for {
+		if _, err := os.Stdout.WriteString(text); err != nil {
+			fmt.Fprintln(os.Stderr, "fakeacp: write:", err)
+			os.Exit(1)
+		}
+	}
 }
 
 // askPush asks permission to run git push in tool call toolCallID, and
@@ -622,6 +641,8 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 	case "crash":
 		a.chunk(sid, "about to crash")
 		os.Exit(3)
+	case "flood":
+		a.flood(sid)
 	case "orphan":
 		child := exec.Command("sleep", "60")
 		child.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
