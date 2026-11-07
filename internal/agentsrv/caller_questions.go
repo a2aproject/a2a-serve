@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -110,7 +111,7 @@ func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID strin
 			continue
 		}
 		if ev != nil {
-			qt.ends.finish(ctx, ev)
+			qt.ends.questionEnded(ev)
 		}
 	}
 }
@@ -204,6 +205,10 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		case err != nil:
 			stop()
 			yield(nil, fmt.Errorf("answering %s: %w", rec.Contact, err))
+			return
+		case out == approvals.InProgress:
+			stop()
+			yield(nil, a2aerr.InProgress(fmt.Sprintf("%s is busy with another request; send the answer again", rec.Contact)))
 			return
 		case out != approvals.Answered:
 			// Someone answered it elsewhere, such as in the inspector, so its

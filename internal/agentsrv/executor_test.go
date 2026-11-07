@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
@@ -724,7 +725,7 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 		reply string
 		want  string
 	}{
-		{name: "follow-up to a working task", start: "slow 3s", reply: "hello", want: "is still working on an earlier message; check it with a2a task get"},
+		{name: "follow-up to a working task", start: "slow", reply: "hello", want: "is still working on an earlier message; check it with a2a task get"},
 		{name: "answer that loses to another answer", start: "ask slow", first: "once", reply: "always", want: "already got an answer to this question; see where it stands with a2a task get"},
 	}
 	for _, tc := range tests {
@@ -753,14 +754,16 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 func TestDataPartReplyToApproval(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		data      map[string]any
-		wantState a2a.TaskState
-		want      string
+		name          string
+		data          map[string]any
+		otherQuestion bool
+		wantState     a2a.TaskState
+		want          string
 	}{
 		{name: "untagged option", data: map[string]any{"option": "once"}, wantState: a2a.TaskStateCompleted, want: "Pushed (allow)."},
 		{name: "unknown option", data: map[string]any{"option": "maybe"}, wantState: a2a.TaskStateInputRequired, want: `I couldn't use the reply "maybe"`},
 		{name: "no option", data: map[string]any{"answer": "yes"}, wantState: a2a.TaskStateInputRequired, want: `I couldn't use the reply: its data has no "option" field`},
+		{name: "structured input for another question", data: map[string]any{"option": "once"}, otherQuestion: true, wantState: a2a.TaskStateInputRequired, want: "I couldn't use the reply: it answers another question"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -768,7 +771,14 @@ func TestDataPartReplyToApproval(t *testing.T) {
 			ts := startServer(t, serverOpts{})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
 			asked := send(t, c, userText("ask", "", ""))
-			msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewDataPart(tc.data))
+			part := a2a.NewDataPart(tc.data)
+			if tc.otherQuestion {
+				var err error
+				if part, err = structuredinput.NewResponsePart("earlier-question", tc.data); err != nil {
+					t.Fatalf("structuredinput.NewResponsePart() error = %v", err)
+				}
+			}
+			msg := a2a.NewMessage(a2a.MessageRoleUser, part)
 			msg.TaskID, msg.ContextID = asked.ID, asked.ContextID
 
 			got := send(t, c, msg)

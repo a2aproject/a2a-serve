@@ -686,3 +686,44 @@ func TestUserApprovalTimeoutRetriesWhileTheTaskIsBusy(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+func TestUserApprovalTimeoutRetriesWhileAnotherAnswerHoldsTheQuestion(t *testing.T) {
+	t.Parallel()
+	h := &scriptedHandler{}
+	svc := newService(t, h, func(d *Deps) {
+		d.User = func(context.Context, string) bool { return true }
+		d.UserTimeout = time.Millisecond
+	})
+	ctx := context.Background()
+	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+	q := FromMessage(permissionMessage(t))
+	rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+	if err != nil {
+		t.Fatalf("NewRecord() error = %v", err)
+	}
+	if err := svc.store.AnswerQuestion(ctx, rec.ID, "pair:anna", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+
+	svc.OnQuestion(ctx, &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, q)
+	time.Sleep(100 * time.Millisecond)
+	if n := h.sent(); n != 0 {
+		t.Fatalf("timeout sent %d answers while another answer held the question, want 0", n)
+	}
+	svc.Release(ctx, "t1", q.ID, "pair:anna")
+
+	deadline := time.Now().Add(5 * time.Second)
+	for h.sent() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("timeout sent no answer after the other answer was released")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	got, err := svc.store.QuestionByID(ctx, rec.ID)
+	if err != nil {
+		t.Fatalf("QuestionByID() error = %v", err)
+	}
+	if got.AnsweredBy != timeoutPrincipal.ID {
+		t.Fatalf("question answered by %q, want %q", got.AnsweredBy, timeoutPrincipal.ID)
+	}
+}
