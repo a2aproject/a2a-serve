@@ -240,15 +240,13 @@ func checkMCP(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secrets) []
 		return []Result{{ID: "mcp", Status: StatusFail, Message: err.Error(), Detail: "the agent gets none of the project's MCP servers"}}
 	}
 	var results []Result
-	for _, name := range cfg.MCP.Disabled {
-		if !slices.ContainsFunc(servers, func(s project.MCPServer) bool { return s.Name == name }) {
-			results = append(results, Result{
-				ID:      "mcp",
-				Status:  StatusWarn,
-				Message: fmt.Sprintf("--disable-mcp %s names no server of %s", name, project.MCPFile),
-				Fix:     "a2a-serve config unset disable-mcp " + name,
-			})
-		}
+	for _, u := range project.UnknownDisabled(servers, cfg.MCP.Disabled) {
+		results = append(results, Result{
+			ID:      "mcp",
+			Status:  StatusWarn,
+			Message: u.String(),
+			Fix:     "a2a-serve config unset disable-mcp " + u.Name,
+		})
 	}
 	if len(servers) == 0 {
 		return results

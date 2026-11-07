@@ -577,14 +577,23 @@ func closestKey(key string, t reflect.Type) string {
 	for t.Kind() == reflect.Pointer {
 		t = t.Elem()
 	}
-	best, bestDist := "", max(1, len(key)/3)+1
+	var names []string
 	for f := range t.Fields() {
 		name, _, _ := strings.Cut(f.Tag.Get("yaml"), ",")
 		if name == "" || name == "-" || f.Tag.Get("json") == "-" {
 			continue
 		}
-		if d := editDistance(foldKey(key), foldKey(name)); d < bestDist {
-			best, bestDist = name, d
+		names = append(names, name)
+	}
+	return Closest(key, names)
+}
+
+// Closest returns the one of names which name most likely misspells, or "".
+func Closest(name string, names []string) string {
+	best, bestDist := "", max(1, len(name)/3)+1
+	for _, n := range names {
+		if d := editDistance(foldKey(name), foldKey(n)); d < bestDist {
+			best, bestDist = n, d
 		}
 	}
 	return best

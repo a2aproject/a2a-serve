@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 // Secret actions of a [SecretChange].
@@ -185,7 +186,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	res := &Result{
 		Name: next.Name, Path: d.ConfigPath(), Changes: agentdir.Diff(old, next),
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
-		Warnings: harness.Warnings(next),
+		Warnings: append(harness.Warnings(next), mcpWarnings(d, old, next)...),
 	}
 	if dryRun {
 		return res, nil
@@ -402,6 +403,28 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	}
 	res.Applied = appendNew(res.Applied, live...)
 	return nil
+}
+
+// mcpWarnings returns a warning for each MCP server that next turns off and
+// old didn't, which the project's .mcp.json has no server for.
+func mcpWarnings(d agentdir.Dir, old, next *agentdir.Config) []string {
+	added := slices.DeleteFunc(slices.Clone(next.MCP.Disabled), func(name string) bool { return old.MCPDisabled(name) })
+	if len(added) == 0 {
+		return nil
+	}
+	ws, err := d.WorkspaceMount(next)
+	if err != nil {
+		return nil
+	}
+	servers, err := project.LoadMCP(ws.Src)
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for _, u := range project.UnknownDisabled(servers, added) {
+		out = append(out, u.String())
+	}
+	return out
 }
 
 func appendNew(list []string, items ...string) []string {

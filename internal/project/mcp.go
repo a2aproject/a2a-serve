@@ -26,6 +26,8 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 )
 
 // MCPFile is the name of the project's MCP server list, in the format
@@ -224,4 +226,41 @@ func (s MCPServer) Summary() string {
 		u = u[:i] + "?…"
 	}
 	return s.Type + " " + u
+}
+
+// UnknownServer is a name of a list of disabled servers that .mcp.json has
+// no server for.
+type UnknownServer struct {
+	Name string
+	// Suggestion is the server whose name is closest, or "".
+	Suggestion string
+	// Known are the names of the servers .mcp.json has.
+	Known []string
+}
+
+func (u UnknownServer) String() string {
+	msg := fmt.Sprintf("--disable-mcp %s names no server of %s", u.Name, MCPFile)
+	switch {
+	case u.Suggestion != "":
+		return msg + ": did you mean " + u.Suggestion + "?"
+	case len(u.Known) == 0:
+		return msg + "; it has none"
+	}
+	return msg + "; it has " + strings.Join(u.Known, ", ")
+}
+
+// UnknownDisabled returns the names of disabled that servers don't have.
+func UnknownDisabled(servers []MCPServer, disabled []string) []UnknownServer {
+	known := make([]string, len(servers))
+	for i, s := range servers {
+		known[i] = s.Name
+	}
+	var out []UnknownServer
+	for _, name := range disabled {
+		if slices.Contains(known, name) {
+			continue
+		}
+		out = append(out, UnknownServer{Name: name, Suggestion: agentdir.Closest(name, known), Known: known})
+	}
+	return out
 }

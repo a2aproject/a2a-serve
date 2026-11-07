@@ -312,6 +312,51 @@ func TestSetWarnings(t *testing.T) {
 	}
 }
 
+func TestSetDisableMCPWarnings(t *testing.T) {
+	t.Parallel()
+	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`
+	tests := []struct {
+		name    string
+		mcp     string
+		stale   []string
+		disable []string
+		want    []string
+	}{
+		{name: "a server of the file", mcp: mcp, disable: []string{"github"}},
+		{
+			name: "a typo", mcp: mcp, disable: []string{"githb"},
+			want: []string{"--disable-mcp githb names no server of .mcp.json: did you mean github?"},
+		},
+		{
+			name: "no near name", mcp: mcp, disable: []string{"nosuch", "github"},
+			want: []string{"--disable-mcp nosuch names no server of .mcp.json; it has files, github"},
+		},
+		{
+			name: "no file", disable: []string{"github"},
+			want: []string{"--disable-mcp github names no server of .mcp.json; it has none"},
+		},
+		{name: "a name set before", mcp: mcp, stale: []string{"nosuch"}, disable: []string{"github"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", MCP: agentdir.MCPConfig{Disabled: tc.stale}}, nil)
+			if tc.mcp != "" {
+				if err := os.WriteFile(filepath.Join(d.Root, ".mcp.json"), []byte(tc.mcp), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{DisableMCP: tc.disable}, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got.Warnings); diff != "" {
+				t.Fatalf("Set().Warnings wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestUnsetSecret(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY", "OTHER"}}, agentdir.Secrets{"KEY": "k", "OTHER": "o"})
