@@ -38,6 +38,9 @@ func TestCheckRelayURL(t *testing.T) {
 		{url: "https://relay.example.com?a=b", wantErr: true},
 		{url: "https://user@relay.example.com", wantErr: true},
 		{url: "https://", wantErr: true},
+		{url: "https://:8443", wantErr: true},
+		{url: "https://relay.example.com?", wantErr: true},
+		{url: "http://LOCALHOST:8443", wantInsecure: true},
 		{url: "ftp://relay.example.com", wantErr: true},
 	}
 	for _, tt := range tests {

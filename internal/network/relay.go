@@ -92,8 +92,8 @@ func SavedOwner(stateDir string) string {
 
 // refreshFile keeps the refresh token the relay gave the agent at its
 // sign-in, so that renewing the agent's credential doesn't need the person.
-// It names the issuer and client the token came from, so the token goes
-// only to them.
+// It names the relay, issuer and client the token came from, so that
+// neither the token nor the ID tokens it gets go to another relay.
 const refreshFile = "refresh.json"
 
 // legacyRefreshFile kept the refresh token without its issuer. The agent
@@ -101,6 +101,7 @@ const refreshFile = "refresh.json"
 const legacyRefreshFile = "refresh-token"
 
 type savedRefresh struct {
+	RelayURL string `json:"relay_url"`
 	Issuer   string `json:"issuer"`
 	ClientID string `json:"client_id"`
 	Token    string `json:"refresh_token"`
@@ -177,6 +178,8 @@ type relayInfo struct {
 	banned []string
 }
 
+func (l *RelayLogin) relayURL() string { return strings.TrimSuffix(l.RelayURL, "/") }
+
 // info reads the relay's identity provider, which agents sign in with.
 func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
 	info, err := fetchRelayInfo(ctx, l.HTTP, l.RelayURL)
@@ -185,6 +188,9 @@ func (l *RelayLogin) info(ctx context.Context) (relayInfo, error) {
 	}
 	if info.issuer == "" || info.clientID == "" {
 		return relayInfo{}, errors.New("the relay doesn't let agents sign in; join it with --relay-token")
+	}
+	if !agentmesh.SecureURL(info.issuer) {
+		return relayInfo{}, fmt.Errorf("the relay's identity provider %s doesn't use https; join it with --relay-token", relayText(info.issuer))
 	}
 	return info, nil
 }
@@ -341,6 +347,11 @@ func (l *RelayLogin) Token(ctx context.Context) (string, error) {
 	if disc.TokenEndpoint == "" {
 		return "", errors.New("the relay's identity provider has no token endpoint; join it with --relay-token")
 	}
+	for _, u := range []string{disc.TokenEndpoint, disc.DeviceEndpoint} {
+		if u != "" && !agentmesh.SecureURL(u) {
+			return "", fmt.Errorf("the relay's identity provider sends tokens to %s, which doesn't use https; join it with --relay-token", relayText(u))
+		}
+	}
 	tok, err := l.refresh(ctx, info, disc.TokenEndpoint)
 	if !errors.Is(err, errSignInAgain) {
 		return tok, err
@@ -362,8 +373,8 @@ func (l *RelayLogin) refresh(ctx context.Context, info relayInfo, tokenURL strin
 	if saved.Token == "" {
 		return "", errSignInAgain
 	}
-	if saved.Issuer != info.issuer || saved.ClientID != info.clientID {
-		slog.Info("the relay's identity provider changed; signing in again", "issuer", info.issuer)
+	if saved.RelayURL != l.relayURL() || saved.Issuer != info.issuer || saved.ClientID != info.clientID {
+		slog.Info("the relay or its identity provider changed; signing in again", "relay", l.RelayURL, "issuer", info.issuer)
 		if err := removeRefreshToken(l.StateDir); err != nil {
 			return "", err
 		}
@@ -394,7 +405,7 @@ func (l *RelayLogin) refresh(ctx context.Context, info relayInfo, tokenURL strin
 // signedIn records who the agent signed in as, and the refresh token.
 func (l *RelayLogin) signedIn(info relayInfo, tok tokenResponse, announce bool) error {
 	if tok.RefreshToken != "" {
-		saved := savedRefresh{Issuer: info.issuer, ClientID: info.clientID, Token: tok.RefreshToken}
+		saved := savedRefresh{RelayURL: l.relayURL(), Issuer: info.issuer, ClientID: info.clientID, Token: tok.RefreshToken}
 		if err := saveRefreshToken(l.StateDir, saved); err != nil {
 			return fmt.Errorf("saving the relay's refresh token: %w", err)
 		}
