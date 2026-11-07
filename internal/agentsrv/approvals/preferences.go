@@ -53,7 +53,7 @@ func (p *Preferences) List(ctx context.Context, user string) ([]string, error) {
 // user's taps for it over.
 func (p *Preferences) Allow(ctx context.Context, user, rule string) error {
 	if err := toolrules.Validate(rule); err != nil {
-		return fmt.Errorf("invalid rule %q: %w", rule, err)
+		return fmt.Errorf("invalid rule %q: %w", toolrules.Redact(rule), err)
 	}
 	if err := p.store.AddToolPreference(ctx, user, rule); err != nil {
 		return err
