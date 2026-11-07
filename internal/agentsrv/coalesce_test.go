@@ -18,6 +18,7 @@ import (
 	"errors"
 	"iter"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -115,6 +116,52 @@ func TestCoalesceArtifactsMergesChunksWithinTheWindow(t *testing.T) {
 	}
 
 	want := []string{string(a2a.TaskStateWorking), "a:1", "a:23", string(a2a.TaskStateCompleted)}
+	if diff := cmp.Diff(want, describe(got)); diff != "" {
+		t.Fatalf("coalesceArtifacts() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestCoalesceArtifactsSendsLastChunkAtOnce(t *testing.T) {
+	t.Parallel()
+	done := a2a.NewStatusUpdateEvent(&a2a.Task{ID: "t1"}, a2a.TaskStateCompleted, nil)
+	last := chunk("a", "2", true)
+	last.LastChunk = true
+	firstSeen, lastSeen := make(chan struct{}), make(chan struct{})
+	var late atomic.Bool
+	in := func(yield func(a2a.Event, error) bool) {
+		if !yield(chunk("a", "1", false), nil) {
+			return
+		}
+		<-firstSeen
+		if !yield(last, nil) {
+			return
+		}
+		select {
+		case <-lastSeen:
+		case <-time.After(waitTimeout):
+			late.Store(true)
+		}
+		yield(done, nil)
+	}
+
+	var got []a2a.Event
+	for ev, err := range coalesceArtifacts(in, time.Hour) {
+		if err != nil {
+			t.Fatalf("coalesceArtifacts() error = %v", err)
+		}
+		got = append(got, ev)
+		switch len(got) {
+		case 1:
+			close(firstSeen)
+		case 2:
+			close(lastSeen)
+		}
+	}
+
+	if late.Load() {
+		t.Fatalf("coalesceArtifacts() held the last chunk for the window, want it sent at once")
+	}
+	want := []string{"a:1", "a:2", string(a2a.TaskStateCompleted)}
 	if diff := cmp.Diff(want, describe(got)); diff != "" {
 		t.Fatalf("coalesceArtifacts() wrong result (-want +got) diff = %s", diff)
 	}

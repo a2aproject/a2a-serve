@@ -28,8 +28,8 @@ import (
 // coalesceQueue is how many events wait while the consumer is busy.
 const coalesceQueue = 256
 
-// coalesceWindow is the least time between two events of chunks that
-// continue one artifact.
+// coalesceWindow is how long after an event of chunks the next one waits
+// for more chunks of its artifact.
 const coalesceWindow = 100 * time.Millisecond
 
 type eventOrErr struct {
@@ -37,13 +37,13 @@ type eventOrErr struct {
 	err error
 }
 
-// coalesceArtifacts merges artifact chunks which queue up while the consumer
-// is busy into one event. a2a-go saves the task after every event, so an
-// agent streaming one chunk per token would otherwise rewrite the task per
-// token. a2a-go buffers events before it saves them, so a slow consumer
-// doesn't hold up yield. After an event of chunks, the next one therefore
-// also takes in the chunks that come within window. Otherwise up to a
-// buffer of unmerged chunks waits to be saved ahead of a cancel.
+// coalesceArtifacts merges consecutive chunks of one artifact into one
+// event. a2a-go saves the task after every event, and it buffers up to 256
+// events ahead of the save, so yield seldom blocks. After an event of
+// chunks, the next one also takes in the continuing chunks that arrive
+// within window. This keeps an agent that streams one chunk per token from
+// queuing a save per token ahead of a cancel. Any other event, a last chunk
+// or the end of the events sends the batch at once.
 func coalesceArtifacts(events iter.Seq2[a2a.Event, error], window time.Duration) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		queue := make(chan eventOrErr, coalesceQueue)
