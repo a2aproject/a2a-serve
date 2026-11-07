@@ -900,6 +900,12 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		}
 	}
 	if msg.Message.TaskID != "" {
+		// a2a-go reports a running execution before it loads the task in
+		// the caller's scope, which tells another person's task from an
+		// unknown one.
+		if _, err := i.tasks.Get(ctx, msg.Message.TaskID); errors.Is(err, a2a.ErrTaskNotFound) {
+			return ctx, nil, err
+		}
 		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
