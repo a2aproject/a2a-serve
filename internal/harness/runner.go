@@ -264,13 +264,17 @@ func (r *DockerRunner) Stop(ctx context.Context) error {
 // of labels, and returns how many it found. It cleans up after a server
 // that crashed before it could remove its containers.
 func PruneContainers(ctx context.Context, labels map[string]string) (int, error) {
+	return pruneContainers(ctx, labels, dockerTimeout)
+}
+
+func pruneContainers(ctx context.Context, labels map[string]string, timeout time.Duration) (int, error) {
 	args := []string{"ps", "-aq"}
 	for _, k := range slices.Sorted(maps.Keys(labels)) {
 		args = append(args, "--filter", "label="+k+"="+labels[k])
 	}
-	out, err := exec.CommandContext(ctx, "docker", args...).Output()
+	out, err := dockerQuery(ctx, timeout, args...)
 	if err != nil {
-		return 0, fmt.Errorf("docker ps: %w", exitErr(err))
+		return 0, fmt.Errorf("docker ps: %w", err)
 	}
 	ids := strings.Fields(string(out))
 	if len(ids) == 0 {
@@ -286,17 +290,55 @@ func PruneContainers(ctx context.Context, labels map[string]string) (int, error)
 // CheckDocker reports whether the docker daemon is reachable and whether it
 // runs rootless.
 func CheckDocker(ctx context.Context) (rootless bool, err error) {
+	return checkDocker(ctx, dockerTimeout)
+}
+
+func checkDocker(ctx context.Context, timeout time.Duration) (rootless bool, err error) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return false, fmt.Errorf("docker is not installed; install Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", err)
 	}
-	out, err := exec.CommandContext(ctx, "docker", "info", "--format", "{{.SecurityOptions}}").Output()
+	out, err := dockerQuery(ctx, timeout, "info", "--format", "{{.SecurityOptions}}")
+	if errors.Is(err, ErrDockerNoAnswer) {
+		return false, err
+	}
 	if host := os.Getenv("DOCKER_HOST"); err != nil && host != "" {
-		return false, fmt.Errorf("docker is not reachable at %s from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", host, exitErr(err))
+		return false, fmt.Errorf("docker is not reachable at %s from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", host, err)
 	}
 	if err != nil {
-		return false, fmt.Errorf("docker is not running; start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", exitErr(err))
+		return false, fmt.Errorf("docker is not running; start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor: %w", err)
 	}
 	return bytes.Contains(out, []byte("rootless")), nil
+}
+
+// dockerTimeout bounds the docker calls that a daemon answers at once.
+const dockerTimeout = 10 * time.Second
+
+// ErrDockerNoAnswer is returned when the docker daemon takes a call and
+// doesn't answer it, as an endpoint that accepts connections and hangs does.
+var ErrDockerNoAnswer = errors.New("docker does not answer")
+
+// dockerQuery runs a docker command that the daemon answers at once, and
+// fails with [ErrDockerNoAnswer] after timeout.
+func dockerQuery(ctx context.Context, timeout time.Duration, args ...string) ([]byte, error) {
+	qctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	cmd := exec.CommandContext(qctx, "docker", args...)
+	cmd.WaitDelay = time.Second
+	out, err := cmd.Output()
+	if err == nil {
+		return out, nil
+	}
+	if ctx.Err() == nil && qctx.Err() != nil {
+		return nil, noAnswer(timeout)
+	}
+	return nil, exitErr(err)
+}
+
+func noAnswer(timeout time.Duration) error {
+	if host := os.Getenv("DOCKER_HOST"); host != "" {
+		return fmt.Errorf("%w within %s at %s from DOCKER_HOST; fix or unset DOCKER_HOST, or run a2a-serve config set --sandbox local, or run a2a-serve doctor", ErrDockerNoAnswer, timeout, host)
+	}
+	return fmt.Errorf("%w within %s; restart Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor", ErrDockerNoAnswer, timeout)
 }
 
 func exitErr(err error) error {

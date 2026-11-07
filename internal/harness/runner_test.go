@@ -16,9 +16,11 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -85,5 +87,16 @@ func TestPruneContainersWithoutMatches(t *testing.T) {
 	}
 	if diff := cmp.Diff("ps -aq --filter label=a2a.dir=/work/agent\n", string(data)); diff != "" {
 		t.Fatalf("PruneContainers() wrong docker calls (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPruneContainersWithoutAnswer(t *testing.T) {
+	fakeDocker(t, "exec sleep 60")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := pruneContainers(ctx, map[string]string{"a2a.dir": "/work/agent"}, 100*time.Millisecond)
+	if !errors.Is(err, ErrDockerNoAnswer) {
+		t.Fatalf("pruneContainers() error = %v, want %v", err, ErrDockerNoAnswer)
 	}
 }
