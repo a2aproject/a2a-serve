@@ -31,6 +31,7 @@ import (
 // preference or grant that decides them was added.
 var (
 	rulesPrincipal   = auth.Principal{ID: "allow-tools", Role: auth.RoleOwner}
+	denyPrincipal    = auth.Principal{ID: "deny-tools", Role: auth.RoleOwner}
 	allowedPrincipal = auth.Principal{ID: "always-allow", Role: auth.RoleOwner}
 )
 
@@ -75,13 +76,21 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 			continue
 		}
 		by, who := rulesPrincipal, rulesPrincipal.ID
-		if dec.by != byRule {
+		switch {
+		case dec.by != byRule:
 			by, who = allowedPrincipal, approvals.AlwaysLabel(dec.entry)
+		case !dec.allow:
+			by, who = denyPrincipal, denyPrincipal.ID
 		}
 		// Another answer, such as one of a concurrent run, may come first;
 		// the outcome tells, and only a failure is an error.
-		if _, err := s.approvals.AnswerTask(ctx, t.ID, t.ContextID, q, by, opt, who); err != nil {
+		out, err := s.approvals.AnswerTask(ctx, t.ID, t.ContextID, q, by, opt, who)
+		if err != nil {
 			errs = append(errs, fmt.Errorf("answering the approval of task %s: %w", t.ID, err))
+			continue
+		}
+		if out == approvals.Answered {
+			slog.Info("approval answered by a "+dec.by, dec.logAttrs(t.ID, q.Kind, opt.ID)...)
 		}
 	}
 	return errors.Join(errs...)

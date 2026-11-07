@@ -193,6 +193,20 @@ func Match(entries []string, c Call) (string, bool) {
 	return "", false
 }
 
+// Redact returns entry with only the program of a command entry, for logs:
+// an entry that comes from a command, such as a grant, can hold secrets.
+func Redact(entry string) string {
+	p, ok := strings.CutPrefix(entry, PrefixCommand)
+	if !ok {
+		return entry
+	}
+	words := strings.FieldsFunc(p, isSpace)
+	if len(words) <= 1 {
+		return entry
+	}
+	return PrefixCommand + words[0] + " ..."
+}
+
 // Simple reports whether a command has a single part that a command entry
 // can match: no ; & | ` $( < > or line break, since `git status; curl … |
 // sh` starts with `git status`.

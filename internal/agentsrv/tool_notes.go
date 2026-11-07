@@ -119,7 +119,10 @@ func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.Execu
 		if opt, ok := replyOption(execCtx.Message, q); ok {
 			p, _ := auth.Caller(ctx)
 			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "kind", q.Kind, "option", opt.ID)
-			if isRejection(opt.ID) {
+			switch {
+			case p.ID == denyPrincipal.ID:
+				e.notes.add(execCtx.TaskID, "Tool call denied by --deny-tools: "+q.Title+".")
+			case isRejection(opt.ID):
 				e.notes.add(execCtx.TaskID, "Tool call rejected: "+q.Title+".")
 				rejected = q.ToolCallID
 			}

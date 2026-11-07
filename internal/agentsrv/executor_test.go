@@ -809,20 +809,32 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 	answered := send(t, c, userText("ask", "", ""))
 	send(t, c, userText("always", string(answered.ID), answered.ContextID))
 	granted := send(t, c, userText("ask", "", answered.ContextID))
+	waiting := send(t, c, userText("ask", "", ""))
 	if err := ts.srv.rt.Update(func(c *agentdir.Config) error { c.Approvals.Deny = []string{"execute"}; return nil }); err != nil {
 		t.Fatalf("Runtime.Update() error = %v", err)
 	}
+	if err := ts.srv.answerWaiting(context.Background(), nil); err != nil {
+		t.Fatalf("answerWaiting() error = %v", err)
+	}
 	denied := send(t, c, userText("ask", "", ""))
+	if got := a2atext.Message(waitState(t, c, waiting.ID, a2a.TaskStateCompleted).Status.Message); got != "Tool call denied by --deny-tools: git push." {
+		t.Fatalf("status message of the waiting task = %q, want the deny rule noted", got)
+	}
 
 	for _, want := range []string{
 		fmt.Sprintf(`msg="approval answered" task=%s by=pair:me kind=execute option=always`, answered.ID),
-		fmt.Sprintf(`msg="tool calls allowed for the conversation" task=%s context=%s rule="command:git push *" user=pair:me by=pair:me`, answered.ID, answered.ContextID),
-		fmt.Sprintf(`msg="approval answered by a grant of the conversation" task=%s rule="command:git push *" kind=execute user=pair:me option=once`, granted.ID),
+		fmt.Sprintf(`msg="tool calls allowed for the conversation" task=%s context=%s rule="command:git ..." user=pair:me by=pair:me`, answered.ID, answered.ContextID),
+		fmt.Sprintf(`msg="approval answered by a grant of the conversation" task=%s rule="command:git ..." kind=execute user=pair:me option=once`, granted.ID),
 		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=execute kind=execute option=reject`, denied.ID),
+		fmt.Sprintf(`msg="approval answered by a rule" task=%s rule=execute kind=execute option=reject`, waiting.ID),
+		fmt.Sprintf(`msg="approval answered" task=%s by=deny-tools kind=execute option=reject`, waiting.ID),
 	} {
 		if !strings.Contains(logs.String(), want) {
 			t.Fatalf("logs have no line with %q; logs:\n%s", want, logs.String())
 		}
+	}
+	if strings.Contains(logs.String(), "git push *") {
+		t.Fatalf("logs name the command of a grant; logs:\n%s", logs.String())
 	}
 }
 

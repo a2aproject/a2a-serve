@@ -53,12 +53,12 @@ func (p *Preferences) List(ctx context.Context, user string) ([]string, error) {
 // user's taps for it over.
 func (p *Preferences) Allow(ctx context.Context, user, rule string) error {
 	if err := toolrules.Validate(rule); err != nil {
-		return fmt.Errorf("invalid rule %q: %w", rule, err)
+		return fmt.Errorf("invalid rule %q: %w", toolrules.Redact(rule), err)
 	}
 	if err := p.store.AddToolPreference(ctx, user, rule); err != nil {
 		return err
 	}
-	slog.Info("tool calls allowed in all conversations", "user", user, "rule", rule)
+	slog.Info("tool calls allowed in all conversations", "user", user, "rule", toolrules.Redact(rule))
 	p.forgetTaps(ctx, user, rule)
 	if p.added != nil {
 		p.added(ctx)
@@ -72,7 +72,7 @@ func (p *Preferences) Remove(ctx context.Context, user, rule string) error {
 	if err := p.store.DeleteToolPreference(ctx, user, rule); err != nil {
 		return err
 	}
-	slog.Info("tool calls no longer allowed in all conversations", "user", user, "rule", rule)
+	slog.Info("tool calls no longer allowed in all conversations", "user", user, "rule", toolrules.Redact(rule))
 	return nil
 }
 
