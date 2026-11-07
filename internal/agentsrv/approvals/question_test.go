@@ -76,7 +76,7 @@ func TestFromStatus(t *testing.T) {
 		{
 			name:   "permission with its tool call",
 			status: inputRequired(withToolCall(permissionMessage(t), "execute")),
-			want: &Question{ID: "tool1", Type: TypePermission, Title: "git push", Text: "Run git push?", Kind: "execute",
+			want: &Question{ID: "tool1", Type: TypePermission, Title: "git push", Text: "Run git push?", Kind: "execute", ToolCallID: "tool1",
 				Options: []Option{{ID: "once", Label: "Allow"}, {ID: "always", Label: "Always allow"}, {ID: "reject", Label: "reject"}}},
 		},
 		{

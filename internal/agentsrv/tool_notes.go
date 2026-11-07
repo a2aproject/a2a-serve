@@ -18,6 +18,7 @@ import (
 	"context"
 	"iter"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 
@@ -114,17 +115,51 @@ func isRejection(option string) bool {
 // task, and notes it if it rejects the tool call, before events run.
 func (e *observedExecutor) withAnswer(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *approvals.Question, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
+		rejected := ""
 		if opt, ok := replyOption(execCtx.Message, q); ok {
 			p, _ := auth.Caller(ctx)
 			slog.Info("approval answered", "task", execCtx.TaskID, "by", p.ID, "kind", q.Kind, "option", opt.ID)
 			if isRejection(opt.ID) {
 				e.notes.add(execCtx.TaskID, "Tool call rejected: "+q.Title+".")
+				rejected = q.ToolCallID
 			}
 		}
 		for ev, err := range events {
+			if rejected != "" && err == nil {
+				ev = rejectedCall(ev, rejected)
+			}
 			if !yield(ev, err) {
 				return
 			}
 		}
 	}
+}
+
+// rejectedCall shows the failure of the tool call id, which an answer
+// rejected, as a rejection: the agent reports the call as failed, though
+// it never ran.
+func rejectedCall(ev a2a.Event, id string) a2a.Event {
+	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	if !ok || up.Status.Message == nil {
+		return ev
+	}
+	msg := up.Status.Message
+	i := slices.IndexFunc(msg.Parts, func(p *a2a.Part) bool {
+		data, _ := p.Data().(map[string]any)
+		tool, _ := data["toolCall"].(map[string]any)
+		return tool["id"] == id && tool["status"] == "failed"
+	})
+	if i < 0 {
+		return ev
+	}
+	parts := slices.Clone(msg.Parts)
+	for j, p := range parts {
+		if text, ok := strings.CutPrefix(p.Text(), "Failed "); ok && j != i {
+			parts[j] = a2a.NewTextPart("Rejected " + text)
+		}
+	}
+	c, m := *up, *msg
+	m.Parts = parts
+	c.Status.Message = &m
+	return &c
 }
