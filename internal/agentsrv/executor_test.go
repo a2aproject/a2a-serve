@@ -750,3 +750,50 @@ func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
 	}
 	turns.done()
 }
+
+func TestExplainFailure(t *testing.T) {
+	t.Parallel()
+	const (
+		opencodeHint = "; choose another model with `a2a-serve config set --model <provider/model> --restart`"
+		claudeHint   = "; choose another model with `a2a-serve config set --model <model> --restart`"
+	)
+	opencode := &agentdir.Config{Harness: "opencode", Model: "google/gemini-old", Secrets: []string{"GEMINI_API_KEY"}}
+	tests := []struct {
+		name     string
+		cfg      *agentdir.Config
+		reported string
+		want     string
+	}{
+		{name: "agent exited", cfg: opencode, reported: "acp agent error: acp agent exited", want: "the agent stopped unexpectedly; send the message again"},
+		{name: "agent exited during an answer", cfg: opencode, reported: "forwarding answer to acp agent: acp agent exited", want: "the agent stopped unexpectedly; send the message again"},
+		{
+			name: "unknown model", cfg: opencode, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
+			want: `the agent failed: setting "model": model not found: google/x` + opencodeHint,
+		},
+		{
+			name: "retired model of a provider", cfg: opencode, reported: "acp agent error: Internal error: models/gemini-2.5-flash is not found for API version v1beta (code -32603)",
+			want: "the agent failed: models/gemini-2.5-flash is not found for API version v1beta" + opencodeHint,
+		},
+		{name: "model that does not exist", cfg: opencode, reported: "The model `gpt-old` does not exist", want: "The model `gpt-old` does not exist" + opencodeHint},
+		{
+			name: "anthropic not found error", cfg: &agentdir.Config{Harness: "claude"}, reported: `{"type":"error","error":{"type":"not_found_error","message":"model: claude-old"}}`,
+			want: `{"type":"error","error":{"type":"not_found_error","message":"model: claude-old"}}` + claudeHint,
+		},
+		{
+			name: "provider without a key", cfg: &agentdir.Config{Harness: "opencode", Model: "google/gemini-old"}, reported: "model not found: google/gemini-old",
+			want: "no key for provider google: set one with `a2a-serve config set --secret GOOGLE_GENERATIVE_AI_API_KEY`; the agent reported: model not found: google/gemini-old",
+		},
+		{name: "agent that takes its model in its command", cfg: &agentdir.Config{Harness: "acp"}, reported: "model not found: x", want: "model not found: x"},
+		{name: "missing file named after a model", cfg: opencode, reported: "file not found: src/model.go", want: "file not found: src/model.go"},
+		{name: "missing model file", cfg: opencode, reported: "src/model.go: not found", want: "src/model.go: not found"},
+		{name: "other failure", cfg: opencode, reported: "the agent reached its token limit", want: "the agent reached its token limit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := explainFailure(tc.cfg, tc.reported); got != tc.want {
+				t.Fatalf("explainFailure(%q) = %q, want %q", tc.reported, got, tc.want)
+			}
+		})
+	}
+}
