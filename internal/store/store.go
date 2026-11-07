@@ -44,7 +44,7 @@ type Store struct {
 	db    *sql.DB
 	reads *sql.DB
 	now   func() time.Time
-	// taskTTL is how long tasks are kept after their last update.
+	// taskTTL is how long finished tasks are kept after their last update.
 	taskTTL atomic.Int64
 
 	// Close waits for writes in progress: a transaction keeps its connection

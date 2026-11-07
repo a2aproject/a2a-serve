@@ -598,7 +598,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.TaskTTL }, func(s *Settings) *string { return &s.TaskTTL }),
 		flag:   "task-ttl", path: "taskTTL", place: placeOperational, scope: scopeOwner, section: SectionGeneral,
-		usage: "How long tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted",
+		usage: "How long finished tasks are kept after their last update, a `duration` in hours or days such as 12h or 30d (default 30d); a chat conversation starts over when its last task is deleted",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.ContactRefresh }, func(s *Settings) *string { return &s.ContactRefresh }),

@@ -65,8 +65,8 @@ type Config struct {
 	Env []string `yaml:"env,omitempty" json:"env,omitempty"`
 	// Port is the localhost port. Zero picks a free port on first run.
 	Port int `yaml:"port,omitempty" json:"port,omitempty"`
-	// TaskTTL is how long tasks are kept after their last update, such as
-	// 30d. Default 30d.
+	// TaskTTL is how long finished tasks are kept after their last update,
+	// such as 30d. Default 30d.
 	TaskTTL string `yaml:"taskTTL,omitempty" json:"taskTTL,omitempty"`
 	// ContactRefresh is how often the server fetches the cards of contacts
 	// and peers again, such as 1h. Default 1h.
@@ -194,14 +194,14 @@ const (
 	DefaultBackupRetention = 7 * 24 * time.Hour
 )
 
-// DefaultTaskTTL is how long tasks are kept after their last update.
+// DefaultTaskTTL is how long finished tasks are kept after their last update.
 const DefaultTaskTTL = 30 * 24 * time.Hour
 
-// MinTaskTTL is the shortest task TTL, so that tasks waiting for input or
-// still running don't expire.
+// MinTaskTTL is the shortest task TTL, so that finished tasks stay long enough
+// to read their results.
 const MinTaskTTL = time.Hour
 
-// TaskTTLDuration returns how long tasks are kept after their last update.
+// TaskTTLDuration returns how long finished tasks are kept after their last update.
 func (c *Config) TaskTTLDuration() time.Duration {
 	if d, err := ParseDays(c.TaskTTL); err == nil {
 		return d

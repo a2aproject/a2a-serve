@@ -1617,13 +1617,28 @@ func TestPrune(t *testing.T) {
 	ts := s.Tasks("", testViewer)
 	owner := asUser("owner")
 
+	for id, state := range map[string]a2a.TaskState{"failed": a2a.TaskStateFailed, "canceled": a2a.TaskStateCanceled, "rejected": a2a.TaskStateRejected} {
+		task := newTask(id, "c-"+id)
+		task.Status.State = state
+		if _, err := ts.Create(owner, task); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
+	}
 	old := newTask("old", "c-old")
+	old.Status.State = a2a.TaskStateCompleted
 	old.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte("photo")))}
 	if _, err := ts.Create(owner, old); err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
 	if _, err := ts.Create(owner, newTask("running", "c-running")); err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	for id, state := range map[string]a2a.TaskState{"waiting": a2a.TaskStateInputRequired, "auth": a2a.TaskStateAuthRequired, "stuck": a2a.TaskStateWorking, "queued": a2a.TaskStateSubmitted} {
+		task := newTask(id, "c-"+id)
+		task.Status.State = state
+		if _, err := ts.Create(owner, task); err != nil {
+			t.Fatalf("Create() error = %v", err)
+		}
 	}
 	now = start.Add(2 * time.Hour)
 	if _, err := ts.Update(owner, &taskstore.UpdateRequest{
@@ -1672,11 +1687,18 @@ func TestPrune(t *testing.T) {
 		t.Fatalf("Prune() error = %v", err)
 	}
 
-	if _, err := ts.Get(owner, "old"); !errors.Is(err, a2a.ErrTaskNotFound) {
-		t.Fatalf("Get() of a pruned task error = %v, want %v", err, a2a.ErrTaskNotFound)
+	for _, id := range []a2a.TaskID{"old", "failed", "canceled", "rejected"} {
+		if _, err := ts.Get(owner, id); !errors.Is(err, a2a.ErrTaskNotFound) {
+			t.Fatalf("Get() of the pruned task %s error = %v, want %v", id, err, a2a.ErrTaskNotFound)
+		}
 	}
 	if _, err := ts.Get(owner, "running"); err != nil {
 		t.Fatalf("Get() of a recently updated task error = %v", err)
+	}
+	for _, id := range []string{"waiting", "auth", "stuck", "queued"} {
+		if _, err := ts.Get(owner, a2a.TaskID(id)); err != nil {
+			t.Fatalf("Get() of the unfinished task %s not updated for the TTL error = %v", id, err)
+		}
 	}
 	if _, err := s.QuestionByID(ctx, "q-old"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("QuestionByID() of a pruned task error = %v, want %v", err, ErrNotFound)

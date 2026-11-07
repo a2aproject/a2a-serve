@@ -32,7 +32,7 @@ approvals:
 mcp:
   disabled: [kubernetes]         # servers of .mcp.json the agent doesn't get
 limits: {memory: 8g, cpus: "4", pids: 1024}
-taskTTL: 30d                     # tasks idle this long are deleted
+taskTTL: 30d                     # finished tasks idle this long are deleted
 contactRefresh: 1h               # how often the cards of contacts and peers are fetched
 card:
   skills:                        # replace the card's default skill

@@ -23,8 +23,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
-
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 )
@@ -219,8 +217,7 @@ func (s *Store) PairingRemoval(ctx context.Context, name string, users ...Pairin
 		{&r.Questions, `SELECT COUNT(*) FROM questions WHERE user_id IN ` + in + ` OR (contact = '' AND task_id IN (SELECT id FROM tasks WHERE ` + removed + `))`, slices.Concat(principals, removedArgs)},
 		{&r.Tasks, `SELECT COUNT(*) FROM tasks WHERE ` + removed, removedArgs},
 		{&r.Preferences, `SELECT COUNT(*) FROM tool_preferences WHERE user_id IN ` + in, principals},
-		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE ` + removed + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(removedArgs),
-			string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))},
+		{&r.Unfinished, `SELECT COUNT(*) FROM tasks WHERE ` + removed + ` AND state NOT IN (?, ?, ?, ?)`, append(slices.Clone(removedArgs), terminalStates()...)},
 		{&r.Conversations, `SELECT COUNT(*) FROM convs WHERE context_id IN (SELECT context_id FROM tasks WHERE ` + removed + `)
 			AND NOT EXISTS (SELECT 1 FROM tasks WHERE tasks.context_id = convs.context_id AND NOT ` + removed + `)`, slices.Concat(removedArgs, removedArgs)},
 	} {

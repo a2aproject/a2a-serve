@@ -578,12 +578,18 @@ func (ts *TaskStore) CheckNotInterrupted(ctx context.Context, id a2a.TaskID) err
 	return fmt.Errorf("%w: task %s failed because the server stopped or restarted before it finished; send the message again without the task ID", a2a.ErrUnsupportedOperation, id)
 }
 
+// terminalStates returns the states a task never leaves, as arguments for the
+// four placeholders of a `state IN (?, ?, ?, ?)` filter.
+func terminalStates() []any {
+	return []any{string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected)}
+}
+
 // FailUnfinished marks every task of the scope which isn't in a terminal
 // state as failed with reason, except the ones keep keeps. Executions don't
 // survive a restart, so such tasks would otherwise never finish.
 func (ts *TaskStore) FailUnfinished(ctx context.Context, reason string, keep func(*a2a.Task) bool) (int, error) {
 	rows, err := ts.s.reads.QueryContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND state NOT IN (?, ?, ?, ?)`,
-		ts.scope, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
+		append([]any{ts.scope}, terminalStates()...)...)
 	if err != nil {
 		return 0, err
 	}
@@ -638,7 +644,7 @@ func (ts *TaskStore) UnfinishedRemoved(ctx context.Context, u PairingUser) ([]a2
 
 func (ts *TaskStore) unfinished(ctx context.Context, where string, args ...any) ([]a2a.TaskID, error) {
 	args = append([]any{ts.scope}, args...)
-	args = append(args, string(a2a.TaskStateCompleted), string(a2a.TaskStateFailed), string(a2a.TaskStateCanceled), string(a2a.TaskStateRejected))
+	args = append(args, terminalStates()...)
 	rows, err := ts.s.reads.QueryContext(ctx, `SELECT id FROM tasks WHERE scope = ? AND `+where+` AND state NOT IN (?, ?, ?, ?)`, args...)
 	if err != nil {
 		return nil, err
