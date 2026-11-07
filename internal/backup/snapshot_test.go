@@ -28,6 +28,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -125,6 +126,61 @@ func TestAddTreeFilesDeletedDuringWalk(t *testing.T) {
 	want := map[string]string{"home/": "", "home/a": "1", "home/c": "3"}
 	if diff := cmp.Diff(want, readTar(t, buf.Bytes())); diff != "" {
 		t.Fatalf("snapshotter.addTree() wrong entries (-want +got) diff = %s", diff)
+	}
+}
+
+func TestAddTreeSkipsFileReplacedDuringCopy(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		replace func(t *testing.T, path string) error
+	}{
+		{name: "FIFO", replace: func(_ *testing.T, path string) error { return syscall.Mkfifo(path, 0o600) }},
+		{name: "symlink out of the tree", replace: func(t *testing.T, path string) error { return os.Symlink(t.TempDir(), path) }},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			writeFiles(t, root, map[string]string{"a": "1", "f": "2"})
+			var logs bytes.Buffer
+			var buf bytes.Buffer
+			tw := tar.NewWriter(&buf)
+			s := newTestSnapshotter(t, tw, slog.New(slog.NewTextHandler(&logs, nil)), func(name string, attempt int) {
+				if name != "home/f" || attempt != 1 {
+					return
+				}
+				path := filepath.Join(root, "f")
+				if err := os.Remove(path); err != nil {
+					t.Error(err)
+				}
+				if err := tc.replace(t, path); err != nil {
+					t.Error(err)
+				}
+			})
+
+			done := make(chan error, 1)
+			go func() { done <- s.addTree(context.Background(), root, "home") }()
+			select {
+			case err := <-done:
+				if err != nil {
+					t.Fatalf("snapshotter.addTree() error = %v", err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("snapshotter.addTree() blocked")
+			}
+			if err := tw.Close(); err != nil {
+				t.Fatal(err)
+			}
+
+			want := map[string]string{"home/": "", "home/a": "1"}
+			if diff := cmp.Diff(want, readTar(t, buf.Bytes())); diff != "" {
+				t.Fatalf("snapshotter.addTree() wrong entries (-want +got) diff = %s", diff)
+			}
+			if !strings.Contains(logs.String(), "home/f") {
+				t.Fatalf("snapshotter.addTree() logged %q, want a warning naming home/f", logs.String())
+			}
+		})
 	}
 }
 

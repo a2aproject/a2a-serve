@@ -28,13 +28,17 @@ const maxAgentMessage = 64 << 20
 type errAgentMessageTooLarge struct{ limit int }
 
 func (e errAgentMessageTooLarge) Error() string {
+	if e.limit%(1<<20) != 0 {
+		return fmt.Sprintf("the agent sent a message over %d bytes", e.limit)
+	}
 	return fmt.Sprintf("the agent sent a message over %d MiB", e.limit>>20)
 }
 
-// boundedMessages fails reads from the agent once a JSON value it sends
-// exceeds max bytes. The ACP decoder buffers each value whole, so an
-// endless value would otherwise run the server out of memory. It tracks
-// just enough JSON syntax to tell where a top-level value ends; the decoder
+// boundedMessages fails reads from the agent once a JSON value it sends, or
+// the whitespace between two values, exceeds limit bytes. The ACP decoder
+// buffers each value whole, and the whitespace before it, so an endless
+// value would otherwise run the server out of memory. It tracks just enough
+// JSON syntax to tell where a top-level value starts and ends; the decoder
 // rejects malformed input. Only the decoder's goroutine reads it.
 type boundedMessages struct {
 	io.ReadWriteCloser
@@ -43,6 +47,7 @@ type boundedMessages struct {
 	depth    int
 	inString bool
 	escaped  bool
+	inScalar bool
 	err      error
 }
 
@@ -62,11 +67,12 @@ func (b *boundedMessages) Read(p []byte) (int, error) {
 	return n, err
 }
 
-// scan counts the bytes of p in the values they belong to. When a value
-// exceeds the limit, it reports the offset of the first byte past it.
+// scan counts the bytes of p in the values, or the whitespace between
+// them, they belong to. When one exceeds the limit, it reports the offset of
+// the first byte past it.
 func (b *boundedMessages) scan(p []byte) (int, bool) {
-	size, depth, inString, escaped := b.size, b.depth, b.inString, b.escaped
-	defer func() { b.size, b.depth, b.inString, b.escaped = size, depth, inString, escaped }()
+	size, depth, inString, escaped, inScalar := b.size, b.depth, b.inString, b.escaped, b.inScalar
+	defer func() { b.size, b.depth, b.inString, b.escaped, b.inScalar = size, depth, inString, escaped, inScalar }()
 	for i := 0; i < len(p); i++ {
 		if inString && !escaped {
 			// Skips the plain text of a string at once.
@@ -83,6 +89,17 @@ func (b *boundedMessages) scan(p []byte) (int, bool) {
 			}
 		}
 		c := p[i]
+		space := c == ' ' || c == '\t' || c == '\n' || c == '\r'
+		if depth == 0 && !inString {
+			if inScalar && (space || c == '{' || c == '[' || c == '"') {
+				inScalar = false
+				size = 0
+			}
+			if !inScalar && !space {
+				// A value starts.
+				size = 0
+			}
+		}
 		ended := false
 		switch {
 		case inString:
@@ -102,9 +119,8 @@ func (b *boundedMessages) scan(p []byte) (int, bool) {
 		case c == '}' || c == ']':
 			depth = max(depth-1, 0)
 			ended = depth == 0
-		case depth == 0 && (c == ' ' || c == '\t' || c == '\n' || c == '\r'):
-			size = 0
-			continue
+		case depth == 0 && !space:
+			inScalar = true
 		}
 		if size++; size > b.limit {
 			return i, true

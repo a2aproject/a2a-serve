@@ -259,20 +259,13 @@ func (s *snapshotter) addRootFile(r *os.Root, rel, name string) error {
 // checks of rel go through r and don't follow a symlink at rel, so the copy
 // is always of a regular file in r.
 func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (info fs.FileInfo, n int64, stable bool, err error) {
-	listed, err := r.Lstat(rel)
-	if err != nil {
-		return nil, 0, false, err
-	}
-	if !listed.Mode().IsRegular() {
-		return nil, 0, false, fsutil.ErrNotRegular
-	}
+	// The agent can replace rel with a FIFO, which OpenRegular doesn't block
+	// on, or with a symlink out of r, which r refuses to open.
 	f, err := fsutil.OpenRegular(r, rel)
-	if errors.Is(err, fsutil.ErrNotRegular) {
-		// rel was replaced, such as with a FIFO, between the Lstat and the
-		// open.
-		return nil, 0, false, fsutil.ErrNotRegular
-	}
 	if err != nil {
+		if listed, lerr := r.Lstat(rel); errors.Is(err, fsutil.ErrNotRegular) || lerr == nil && !listed.Mode().IsRegular() {
+			return nil, 0, false, fsutil.ErrNotRegular
+		}
 		return nil, 0, false, err
 	}
 	defer closeLogged(f)
@@ -280,8 +273,12 @@ func (s *snapshotter) copyToStage(r *os.Root, rel, name string, attempt int) (in
 	if err != nil {
 		return nil, 0, false, err
 	}
-	if !os.SameFile(listed, before) {
-		// rel was replaced between the Lstat and the open.
+	// The open follows a symlink at rel, which the Lstat finds.
+	listed, err := r.Lstat(rel)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	if !listed.Mode().IsRegular() || !os.SameFile(listed, before) {
 		return nil, 0, false, fsutil.ErrNotRegular
 	}
 	if err := s.stage.Truncate(0); err != nil {

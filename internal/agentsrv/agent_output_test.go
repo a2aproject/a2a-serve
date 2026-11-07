@@ -43,6 +43,9 @@ func TestBoundedMessages(t *testing.T) {
 		{name: "object over the limit", in: "{\"a\":12}\n", want: "{\"a\":12", wantErr: errAgentMessageTooLarge{7}},
 		{name: "brackets and escapes in a string", in: "\"}}\\\"}}\"", want: "\"}}\\\"}}", wantErr: errAgentMessageTooLarge{7}},
 		{name: "endless number", in: "12345678", want: "1234567", wantErr: errAgentMessageTooLarge{7}},
+		{name: "endless whitespace", in: "{}        ", want: "{}       ", wantErr: errAgentMessageTooLarge{7}},
+		{name: "whitespace before a value", in: "\n\n{\"a\":1}", want: "\n\n{\"a\":1}"},
+		{name: "scalars separated by whitespace", in: "1234567 1234567\n", want: "1234567 1234567\n"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,8 +65,16 @@ func TestBoundedMessages(t *testing.T) {
 
 func TestAgentMessageTooLargeError(t *testing.T) {
 	t.Parallel()
-	want := "the agent sent a message over 64 MiB"
-	if got := (errAgentMessageTooLarge{maxAgentMessage}).Error(); got != want {
-		t.Fatalf("errAgentMessageTooLarge.Error() = %q, want %q", got, want)
+	tests := []struct {
+		limit int
+		want  string
+	}{
+		{limit: maxAgentMessage, want: "the agent sent a message over 64 MiB"},
+		{limit: 1000, want: "the agent sent a message over 1000 bytes"},
+	}
+	for _, tc := range tests {
+		if got := (errAgentMessageTooLarge{tc.limit}).Error(); got != tc.want {
+			t.Fatalf("errAgentMessageTooLarge.Error() = %q, want %q", got, tc.want)
+		}
 	}
 }
