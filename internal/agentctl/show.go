@@ -16,6 +16,7 @@ package agentctl
 
 import (
 	"context"
+	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -67,6 +68,21 @@ func Show(ctx context.Context, d agentdir.Dir, client *controlapi.Client) (*View
 			v.Secrets[name] = SecretStateStored
 		}
 	}
+	for _, sv := range cfg.SettingValues() {
+		if !sv.Secret {
+			continue
+		}
+		for _, ref := range sv.Values {
+			name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix)
+			if !ok {
+				continue
+			}
+			v.Secrets[name] = SecretStateMissing
+			if stored[name] != "" {
+				v.Secrets[name] = SecretStateStored
+			}
+		}
+	}
 	if stored[agentdir.SecretTailscaleKey] != "" {
 		v.Secrets[agentdir.SecretTailscaleKey] = SecretStateStored
 	}
@@ -103,6 +119,18 @@ func defaults(d agentdir.Dir, cfg *agentdir.Config) *agentdir.Config {
 	}
 	if cfg.Limits.CPUs == "" {
 		out.Limits.CPUs = agentdir.DefaultLimits.CPUs
+	}
+	if cfg.TaskTTL == "" {
+		out.TaskTTL = agentdir.FormatDuration(agentdir.DefaultTaskTTL)
+	}
+	if cfg.ContactRefresh == "" {
+		out.ContactRefresh = agentdir.FormatDuration(agentdir.DefaultContactRefresh)
+	}
+	if cfg.Backup.Interval == "" {
+		out.Backup.Interval = agentdir.FormatDuration(agentdir.DefaultBackupInterval)
+	}
+	if cfg.Backup.Retention == "" {
+		out.Backup.Retention = agentdir.FormatDuration(agentdir.DefaultBackupRetention)
 	}
 	if cfg.Limits.PIDs == 0 {
 		out.Limits.PIDs = agentdir.DefaultLimits.PIDs

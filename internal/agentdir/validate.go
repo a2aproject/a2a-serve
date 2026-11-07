@@ -251,7 +251,7 @@ func isRelayURL(v string) bool {
 func (c CardConfig) validate() []error {
 	var errs []error
 	invalid := func(entry, format string, args ...any) {
-		errs = append(errs, &FieldError{Flag: cardSkillsSetting, Entry: entry, Reason: fmt.Sprintf(format, args...)})
+		errs = append(errs, &FieldError{Flag: CardSkillsSetting, Entry: entry, Reason: fmt.Sprintf(format, args...)})
 	}
 	if len(c.Skills) > MaxCardSkills {
 		errs = append(errs, fmt.Errorf("card.skills has %d skills: want at most %d", len(c.Skills), MaxCardSkills))
