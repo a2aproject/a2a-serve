@@ -227,6 +227,18 @@ func TestReviewAgentConfigThroughLinks(t *testing.T) {
 			want:  ".claude/settings.json → cfg/shared.json",
 		},
 		{
+			name:  "link target through another link",
+			files: map[string]string{"real/inner/settings.json": "{}"},
+			links: map[string]string{".claude": "cfg/inner", "cfg": "real"},
+			want:  ".claude/settings.json → real/inner/settings.json",
+		},
+		{
+			name:  "parent directory after a link",
+			files: map[string]string{"real/sub/other.json": "{}", "real/cfg/settings.json": "{}"},
+			links: map[string]string{".claude": "ln/../cfg", "ln": "real/sub"},
+			want:  ".claude/settings.json → real/cfg/settings.json",
+		},
+		{
 			name:  "directory link without the file",
 			files: map[string]string{"cfg/other.json": "{}"},
 			links: map[string]string{".claude": "cfg"},
@@ -263,6 +275,28 @@ func TestReviewAgentConfigThroughLinks(t *testing.T) {
 			}
 			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatalf("Review() wrong agent config line (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestFileItemsLinkLoops(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		files Files
+	}{
+		{name: "link to itself", files: Files{".opencode": {Link: ".opencode"}, ".claude": {Link: ".claude"}}},
+		{name: "links in a loop", files: Files{".opencode": {Link: "a"}, "a": {Link: "b"}, "b": {Link: ".opencode"}, ".claude": {Link: "a"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			got := fileItems(tc.files, agentConfigFiles, true)
+
+			if len(got) != 0 {
+				t.Fatalf("fileItems() = %v, want none", got)
 			}
 		})
 	}

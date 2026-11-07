@@ -191,10 +191,15 @@ func fileItems(files Files, names []string, warn bool) []Item {
 // file.
 func (f Files) match(name string) string {
 	dir, isDir := strings.CutSuffix(name, "/")
-	parent, base := path.Split(dir)
-	resolved := path.Join(f.resolveLinks(strings.TrimSuffix(parent, "/")), base)
-	entry, ok := f[resolved]
-	if ok && entry.Link != "" {
+	resolved, ok := f.realpath(dir, false)
+	if !ok {
+		return ""
+	}
+	entry, exists := f[resolved]
+	if exists && entry.Link != "" {
+		if _, ok := f.realpath(dir, true); !ok {
+			return ""
+		}
 		return dir + " → " + path.Join(path.Dir(resolved), entry.Link)
 	}
 	if isDir {
@@ -206,7 +211,7 @@ func (f Files) match(name string) string {
 		return ""
 	}
 	switch {
-	case !ok:
+	case !exists:
 		return ""
 	case resolved != name:
 		return name + " → " + resolved
@@ -214,28 +219,45 @@ func (f Files) match(name string) string {
 	return name
 }
 
-// resolveLinks follows the symlinks along the directory dir.
-func (f Files) resolveLinks(dir string) string {
-	cur := ""
-	for part := range strings.SplitSeq(dir, "/") {
-		if part == "" {
+// realpath resolves name the way the file system does, following the
+// symlinks of the recipe, including the one at the last component when
+// followLast is set. It reports false when the links loop or leave the
+// recipe.
+func (f Files) realpath(name string, followLast bool) (string, bool) {
+	queue := strings.Split(name, "/")
+	var resolved []string
+	hops := 0
+	for len(queue) > 0 {
+		part := queue[0]
+		queue = queue[1:]
+		switch part {
+		case "", ".":
+			continue
+		case "..":
+			if len(resolved) == 0 {
+				return "", false
+			}
+			resolved = resolved[:len(resolved)-1]
 			continue
 		}
-		cur = path.Join(cur, part)
-		for range maxLinkDepth {
-			link := f[cur].Link
-			if link == "" {
-				break
-			}
-			cur = path.Join(path.Dir(cur), link)
+		cur := path.Join(append(slices.Clone(resolved), part)...)
+		link := f[cur].Link
+		if link == "" || (len(queue) == 0 && !followLast) {
+			resolved = append(resolved, part)
+			continue
 		}
+		hops++
+		if hops > maxLinkHops {
+			return "", false
+		}
+		queue = append(strings.Split(link, "/"), queue...)
 	}
-	return cur
+	return path.Join(resolved...), true
 }
 
-// maxLinkDepth bounds the symlinks followed for one path component, so that
-// a cycle ends.
-const maxLinkDepth = 40
+// maxLinkHops bounds the symlinks followed for one path, so that a loop
+// ends.
+const maxLinkHops = 40
 
 func approvalItems(a agentdir.ApprovalsConfig) []Item {
 	var out []Item
