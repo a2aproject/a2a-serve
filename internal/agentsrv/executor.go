@@ -543,6 +543,8 @@ type observedExecutor struct {
 	// stopping ends when the server stops, so that a task waiting for
 	// another agent doesn't hold the stop. Nil never ends.
 	stopping context.Context
+	// answers saves what answers to permission questions allow.
+	answers *ruleAnswers
 }
 
 var (
@@ -592,6 +594,11 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 	}
 	answer := execCtx
 	if ownOptions {
+		p, _ := auth.Caller(ctx)
+		if err := e.answers.record(ctx, p, execCtx, q, opt); err != nil {
+			slog.Error("saving what an approval allows", "task", execCtx.TaskID, "error", err)
+			return e.observe(ctx, execCtx, askAgain(reask(execCtx, "I couldn't save the answer, so the question still waits for an answer. Try again.\n")))
+		}
 		var err error
 		if answer, err = agentAnswer(execCtx, q, opt); err != nil {
 			slog.Warn("translating an approval", "task", execCtx.TaskID, "error", err)
@@ -604,7 +611,7 @@ func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Executor
 // agentAnswer returns execCtx with its reply to q, a question with the
 // server's options, translated to the agent's option. "always" becomes
 // the option that allows once: [ruleAnswers] saved the grant of the
-// conversation before the execution, and the server enforces it.
+// conversation, and the server enforces it.
 func agentAnswer(execCtx *a2asrv.ExecutorContext, q *approvals.Question, opt approvals.Option) (*a2asrv.ExecutorContext, error) {
 	agentOption, _ := q.AgentOption(opt.ID)
 	part, err := structuredinput.NewResponsePart(q.ID, a2aacp.Answer{Option: agentOption})
@@ -831,8 +838,6 @@ type callerInterceptor struct {
 	budget    *anonymousBudget
 	keys      *agentKeys
 	users     *userAgents
-	// answers saves what answers to permission questions allow.
-	answers *ruleAnswers
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -888,9 +893,6 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 			return ctx, nil, err
 		}
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
-			return ctx, nil, err
-		}
-		if err := i.answers.record(ctx, p, msg.Message); err != nil {
 			return ctx, nil, err
 		}
 	}

@@ -685,6 +685,22 @@ func TestAlwaysAllowsTheRuleInTheConversation(t *testing.T) {
 	}
 }
 
+func TestAlwaysThatTheTaskDoesNotTakeSavesNoGrant(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+
+	if _, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("always", string(asked.ID), a2a.NewContextID())}); err == nil {
+		t.Fatalf("SendMessage() of always with another context ID error = nil, want an error")
+	}
+	wantResult(t, send(t, c, userText("reject", string(asked.ID), asked.ContextID)), a2a.TaskStateCompleted, "Push denied.")
+
+	if next := send(t, c, userText("ask", "", asked.ContextID)); next.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("next task in the conversation state = %s, want %s", next.Status.State, a2a.TaskStateInputRequired)
+	}
+}
+
 // Not parallel: it replaces the default logger, which the server logs to.
 func TestApprovalAnswersAreLogged(t *testing.T) {
 	var logs lockedBuffer
