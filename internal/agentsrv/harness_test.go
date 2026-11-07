@@ -108,16 +108,15 @@ var fakeACP string
 var migratedDB []byte
 
 var testTimings = Timings{
-	WatchInterval:            50 * time.Millisecond,
-	WatchMaxInterval:         200 * time.Millisecond,
-	EditInterval:             50 * time.Millisecond,
-	ScheduleMinWait:          10 * time.Millisecond,
-	WebhookRetries:           []time.Duration{0, 100 * time.Millisecond},
-	MessengerRetryMin:        10 * time.Millisecond,
-	FirstBackupDelay:         50 * time.Millisecond,
-	AnonymousQuestionTimeout: 5 * time.Second,
-	SendRetry:                time.Millisecond,
-	StateCheckInterval:       50 * time.Millisecond,
+	WatchInterval:      50 * time.Millisecond,
+	WatchMaxInterval:   200 * time.Millisecond,
+	EditInterval:       50 * time.Millisecond,
+	ScheduleMinWait:    10 * time.Millisecond,
+	WebhookRetries:     []time.Duration{0, 100 * time.Millisecond},
+	MessengerRetryMin:  10 * time.Millisecond,
+	FirstBackupDelay:   50 * time.Millisecond,
+	SendRetry:          time.Millisecond,
+	StateCheckInterval: 50 * time.Millisecond,
 }
 
 func TestMain(m *testing.M) {

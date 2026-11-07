@@ -132,10 +132,6 @@ func TestAnonymousApprovalTimesOut(t *testing.T) {
 	if task.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
 	}
-	_, err := anon.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
-	if !errors.Is(err, a2a.ErrUnauthorized) {
-		t.Fatalf("SendMessage() of an answer error = %v, want %v", err, a2a.ErrUnauthorized)
-	}
 	wantResult(t, waitState(t, anon, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
 }
 
@@ -161,6 +157,10 @@ func TestRefusedReplyKeepsApprovalOpen(t *testing.T) {
 	}
 	waitFor(t, "the approval record", func() bool { return open() == 1 })
 
+	_, err := anon.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(task.ID), task.ContextID)})
+	if !errors.Is(err, a2a.ErrUnauthorized) {
+		t.Fatalf("SendMessage() of an answer by the caller error = %v, want %v", err, a2a.ErrUnauthorized)
+	}
 	refused := send(t, owner, userText("maybe", string(task.ID), task.ContextID))
 	if refused.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state after a refused reply = %s, want %s", refused.Status.State, a2a.TaskStateInputRequired)
@@ -169,7 +169,7 @@ func TestRefusedReplyKeepsApprovalOpen(t *testing.T) {
 	if got := open(); got != 1 {
 		t.Fatalf("open approvals after a refused reply = %d, want 1", got)
 	}
-	wantResult(t, waitState(t, anon, task.ID, a2a.TaskStateCompleted), a2a.TaskStateCompleted, "Push denied.")
+	wantResult(t, send(t, owner, userText("deny", string(task.ID), task.ContextID)), a2a.TaskStateCompleted, "Push denied.")
 }
 
 func TestAnonymousApprovalInOwnerChat(t *testing.T) {
