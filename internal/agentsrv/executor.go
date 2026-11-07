@@ -706,7 +706,7 @@ func (e *observedExecutor) turn(ctx context.Context, execCtx *a2asrv.ExecutorCon
 		e.claims.addTokens(execCtx.ContextID, estimateTokens(execCtx.Message.Parts))
 	}
 	prompted, moved := e.moved.withEarlier(ctx, withLine)
-	events := coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted))))
+	events := coalesceArtifacts(e.claims.countTokens(execCtx.ContextID, e.withServerOptions(execCtx, e.inner.Execute(ctx, prompted))), coalesceWindow)
 	if prompted == execCtx && !moved {
 		return events
 	}

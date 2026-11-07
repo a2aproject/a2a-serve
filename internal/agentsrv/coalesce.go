@@ -18,6 +18,7 @@ import (
 	"iter"
 	"maps"
 	"slices"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -27,17 +28,23 @@ import (
 // coalesceQueue is how many events wait while the consumer is busy.
 const coalesceQueue = 256
 
+// coalesceWindow is how long after an event of chunks the next one waits
+// for more chunks of its artifact.
+const coalesceWindow = 100 * time.Millisecond
+
 type eventOrErr struct {
 	ev  a2a.Event
 	err error
 }
 
-// coalesceArtifacts merges artifact chunks which queue up while the consumer
-// is busy into one event. a2a-go saves the task after every event, so an
-// agent streaming one chunk per token would otherwise rewrite the task per
-// token. Chunks are only merged when they already wait, so a fast consumer
-// still sees every chunk at once.
-func coalesceArtifacts(events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
+// coalesceArtifacts merges consecutive chunks of one artifact into one
+// event. a2a-go saves the task after every event, and it buffers up to 256
+// events ahead of the save, so yield seldom blocks. After an event of
+// chunks, the next one also takes in the continuing chunks that arrive
+// within window. This keeps an agent that streams one chunk per token from
+// queuing a save per token ahead of a cancel. Any other event, a last chunk
+// or the end of the events sends the batch at once.
+func coalesceArtifacts(events iter.Seq2[a2a.Event, error], window time.Duration) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		queue := make(chan eventOrErr, coalesceQueue)
 		done := make(chan struct{})
@@ -59,6 +66,7 @@ func coalesceArtifacts(events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, 
 			}
 		}()
 		var pending *eventOrErr
+		var hold time.Time
 		for {
 			next := pending
 			pending = nil
@@ -73,8 +81,8 @@ func coalesceArtifacts(events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, 
 			if first, ok := next.ev.(*a2a.TaskArtifactUpdateEvent); ok && next.err == nil {
 				chunks = append(chunks, first)
 			}
-			for len(chunks) > 0 {
-				item, ok := tryReceive(queue)
+			for len(chunks) > 0 && !chunks[len(chunks)-1].LastChunk {
+				item, ok := receiveBefore(queue, hold)
 				if !ok {
 					break
 				}
@@ -91,15 +99,31 @@ func coalesceArtifacts(events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, 
 			if !yield(next.ev, next.err) {
 				return
 			}
+			if len(chunks) > 0 {
+				hold = time.Now().Add(window)
+			}
 		}
 	}
 }
 
-func tryReceive(queue <-chan eventOrErr) (eventOrErr, bool) {
+// receiveBefore returns the next item of queue, waiting for it until
+// deadline. It reports false if the queue closed or no item came in time.
+func receiveBefore(queue <-chan eventOrErr, deadline time.Time) (eventOrErr, bool) {
+	wait := time.Until(deadline)
+	if wait <= 0 {
+		select {
+		case item, ok := <-queue:
+			return item, ok
+		default:
+			return eventOrErr{}, false
+		}
+	}
+	timer := time.NewTimer(wait)
+	defer timer.Stop()
 	select {
 	case item, ok := <-queue:
 		return item, ok
-	default:
+	case <-timer.C:
 		return eventOrErr{}, false
 	}
 }
