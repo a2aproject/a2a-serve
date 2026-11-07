@@ -406,6 +406,18 @@ func TestUnknownKeys(t *testing.T) {
 			want: []UnknownKey{{Path: "TaskTTL", Suggestion: "taskTTL"}, {Path: "network.privat", Suggestion: "network.private"}, {Path: "sandbx", Suggestion: "sandbox"}},
 		},
 		{
+			name: "keys of card skills",
+			data: "card:\n  skills:\n    - id: review\n      descriptoin: Reviews\n    - id: docs\n      owner: me\n      tags: [a]\n",
+			want: []UnknownKey{
+				{Path: "card.skills[0].descriptoin", Suggestion: "card.skills[0].description"},
+				{Path: "card.skills[1].owner"},
+			},
+		},
+		{
+			name: "card skills that are not mappings",
+			data: "card:\n  skills: [review, 3]\n",
+		},
+		{
 			name: "removed keys are not suggested",
 			data: "harnes: opencode\n",
 			want: []UnknownKey{{Path: "harnes"}},

@@ -552,6 +552,12 @@ func yamlFields(t reflect.Type) map[string]reflect.Type {
 }
 
 func unknownKeys(n *yaml.Node, t reflect.Type, prefix string, out *[]UnknownKey) {
+	if n.Kind == yaml.SequenceNode && t.Kind() == reflect.Slice {
+		for i, item := range n.Content {
+			unknownKeys(item, t.Elem(), fmt.Sprintf("%s[%d].", strings.TrimSuffix(prefix, "."), i), out)
+		}
+		return
+	}
 	known := yamlFields(t)
 	if known == nil || n.Kind != yaml.MappingNode {
 		return
