@@ -21,6 +21,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 	"time"
@@ -88,6 +89,36 @@ type AttachmentError struct {
 func (e *AttachmentError) Error() string { return fmt.Sprintf("downloading %s: %v", e.Name, e.Err) }
 
 func (e *AttachmentError) Unwrap() error { return e.Err }
+
+// TooLargeError is returned by [ReadLimited] for data over the limit.
+type TooLargeError struct {
+	Limit int64
+}
+
+func (e *TooLargeError) Error() string { return "file is " + e.Over() }
+
+// Over describes the limit, such as "over 20 MiB".
+func (e *TooLargeError) Over() string {
+	const mib = 1 << 20
+	if e.Limit%mib == 0 {
+		return fmt.Sprintf("over %d MiB", e.Limit/mib)
+	}
+	return fmt.Sprintf("over %d bytes", e.Limit)
+}
+
+// ReadLimited reads r to its end, and returns a [TooLargeError] if it has more
+// than limit bytes. Cutting the data at limit instead would hand a corrupt
+// file to the agent.
+func ReadLimited(r io.Reader, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, &TooLargeError{Limit: limit}
+	}
+	return data, nil
+}
 
 // DroppedError is returned by [Inbound.Prepare] when the message can't be
 // handled. Reason is shown to its sender.

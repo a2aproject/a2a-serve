@@ -21,7 +21,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -347,7 +346,7 @@ func (c *Messenger) download(ctx context.Context, b *bot.Bot, fileID, name, medi
 		return messenger.File{}, err
 	}
 	if f.FileSize > maxFile {
-		return messenger.File{}, fmt.Errorf("file %s is too large (%d bytes)", name, f.FileSize)
+		return messenger.File{}, &messenger.TooLargeError{Limit: maxFile}
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.downloadTimeout)
 	defer cancel()
@@ -367,12 +366,9 @@ func (c *Messenger) download(ctx context.Context, b *bot.Bot, fileID, name, medi
 	if resp.StatusCode != http.StatusOK {
 		return messenger.File{}, fmt.Errorf("the server answered %s", resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile+1))
+	data, err := messenger.ReadLimited(resp.Body, maxFile)
 	if err != nil {
 		return messenger.File{}, c.redact(err)
-	}
-	if len(data) > maxFile {
-		return messenger.File{}, fmt.Errorf("file %s is too large (over %d bytes)", name, maxFile)
 	}
 	return messenger.File{Name: name, MediaType: mediaType, Data: data}, nil
 }

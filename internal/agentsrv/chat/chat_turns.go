@@ -368,6 +368,10 @@ func (c *ChatTurns) prepare(ctx context.Context, ch messenger.Messenger, in *mes
 	names := make([]string, len(failed))
 	for i, f := range failed {
 		names[i] = f.Name
+		var tooLarge *messenger.TooLargeError
+		if errors.As(f, &tooLarge) {
+			names[i] += " (" + tooLarge.Over() + ")"
+		}
 	}
 	notice := "⚠ I couldn't download " + strings.Join(names, ", ") + ", so the agent doesn't see it."
 	if len(names) > 1 {

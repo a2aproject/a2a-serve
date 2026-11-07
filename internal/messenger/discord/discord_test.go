@@ -787,3 +787,82 @@ func TestLiveMessagesKeepTheCursorUntilCatchUpSucceeds(t *testing.T) {
 		t.Fatalf("cursor = %q after the catch-up succeeded, want 1500", got)
 	}
 }
+
+func TestMessageSendsBatchFiles(t *testing.T) {
+	t.Parallel()
+	files := func(n int) []messenger.File {
+		var out []messenger.File
+		for i := range n {
+			out = append(out, messenger.File{Name: "f" + strconv.Itoa(i), Data: []byte("x")})
+		}
+		return out
+	}
+	question := &messenger.Question{ID: "q1", Options: []string{"yes", "no"}}
+	type send struct {
+		Content    string
+		Files      int
+		Components bool
+	}
+	tests := []struct {
+		name string
+		m    messenger.Outbound
+		want []send
+	}{
+		{name: "text only", m: messenger.Outbound{Text: "hi"}, want: []send{{Content: "hi"}}},
+		{name: "text with a file", m: messenger.Outbound{Text: "hi", Files: files(1)}, want: []send{{Content: "hi", Files: 1}}},
+		{name: "ten files", m: messenger.Outbound{Text: "hi", Files: files(10)}, want: []send{{Content: "hi", Files: 10}}},
+		{name: "eleven files", m: messenger.Outbound{Text: "hi", Files: files(11)}, want: []send{{Files: 10}, {Content: "hi", Files: 1}}},
+		{name: "twenty five files", m: messenger.Outbound{Text: "hi", Files: files(25)}, want: []send{{Files: 10}, {Files: 10}, {Content: "hi", Files: 5}}},
+		{name: "files without text", m: messenger.Outbound{Files: files(12)}, want: []send{{Files: 10}, {Files: 2}}},
+		{name: "question goes with the last message", m: messenger.Outbound{Text: "ok?", Question: question, Files: files(11)}, want: []send{{Files: 10}, {Content: "ok?", Files: 1, Components: true}}},
+		{name: "long text keeps the files for its last piece", m: messenger.Outbound{Text: strings.Repeat("a", maxText+1), Files: files(11)}, want: []send{{Content: strings.Repeat("a", maxText)}, {Files: 10}, {Content: "a", Files: 1}}},
+		{name: "nothing to send", m: messenger.Outbound{}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var got []send
+			for _, s := range messageSends(tc.m) {
+				got = append(got, send{Content: s.Content, Files: len(s.Files), Components: len(s.Components) > 0})
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("messageSends() wrong messages (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestDownloadRefusesAttachmentsOverTheLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		size    int
+		claimed int
+		wantErr bool
+	}{
+		{name: "small attachment", size: 5, claimed: 5},
+		{name: "over the limit with the size announced", size: 0, claimed: maxFile + 1, wantErr: true},
+		{name: "over the limit with a wrong size announced", size: maxFile + 1, claimed: 10, wantErr: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if _, err := w.Write(make([]byte, tc.size)); err != nil {
+					t.Errorf("writing the attachment: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+
+			f, err := download(t.Context(), &discordgo.MessageAttachment{Filename: "a.bin", URL: srv.URL, Size: tc.claimed})
+
+			var tooLarge *messenger.TooLargeError
+			if got := errors.As(err, &tooLarge); got != tc.wantErr {
+				t.Fatalf("download() error = %v, want TooLargeError = %v", err, tc.wantErr)
+			}
+			if !tc.wantErr && len(f.Data) != tc.size {
+				t.Fatalf("download() read %d bytes, want %d", len(f.Data), tc.size)
+			}
+		})
+	}
+}

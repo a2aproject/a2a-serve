@@ -14,7 +14,12 @@
 
 package messenger
 
-import "testing"
+import (
+	"errors"
+	"io"
+	"strings"
+	"testing"
+)
 
 func TestTruncate(t *testing.T) {
 	t.Parallel()
@@ -36,5 +41,67 @@ func TestTruncate(t *testing.T) {
 				t.Fatalf("Truncate(%q, %d) = %q, want %q", tc.in, tc.limit, got, tc.want)
 			}
 		})
+	}
+}
+
+type failingReader struct{ err error }
+
+func (r failingReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestReadLimited(t *testing.T) {
+	t.Parallel()
+	readErr := errors.New("connection reset")
+	tests := []struct {
+		name       string
+		r          io.Reader
+		limit      int64
+		want       string
+		wantErr    error
+		wantTooBig bool
+	}{
+		{name: "under the limit", r: strings.NewReader("abc"), limit: 5, want: "abc"},
+		{name: "at the limit", r: strings.NewReader("abcde"), limit: 5, want: "abcde"},
+		{name: "empty", r: strings.NewReader(""), limit: 5, want: ""},
+		{name: "one byte over", r: strings.NewReader("abcdef"), limit: 5, wantTooBig: true},
+		{name: "far over", r: strings.NewReader(strings.Repeat("x", 100)), limit: 5, wantTooBig: true},
+		{name: "read error", r: failingReader{readErr}, limit: 5, wantErr: readErr},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ReadLimited(tc.r, tc.limit)
+			var tooLarge *TooLargeError
+			if gotTooBig := errors.As(err, &tooLarge); gotTooBig != tc.wantTooBig {
+				t.Fatalf("ReadLimited() error = %v, want TooLargeError = %v", err, tc.wantTooBig)
+			}
+			if tc.wantTooBig {
+				if tooLarge.Limit != tc.limit {
+					t.Fatalf("ReadLimited() limit = %d, want %d", tooLarge.Limit, tc.limit)
+				}
+				return
+			}
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("ReadLimited() error = %v, want %v", err, tc.wantErr)
+			}
+			if string(got) != tc.want {
+				t.Fatalf("ReadLimited() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestTooLargeErrorNamesTheLimit(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		limit int64
+		want  string
+	}{
+		{limit: 20 << 20, want: "over 20 MiB"},
+		{limit: 1500, want: "over 1500 bytes"},
+	}
+	for _, tc := range tests {
+		if got := (&TooLargeError{Limit: tc.limit}).Over(); got != tc.want {
+			t.Fatalf("TooLargeError{%d}.Over() = %q, want %q", tc.limit, got, tc.want)
+		}
 	}
 }

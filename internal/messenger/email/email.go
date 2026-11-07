@@ -613,7 +613,7 @@ func (c *Messenger) conv(ctx context.Context, env envelope) (messenger.ConvKey, 
 // a whole mail whose body can't be parsed, and returns errors of the
 // messenger's state.
 func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte, complete bool, fetch func(context.Context) ([]byte, error)) (messenger.Inbound, bool, error) {
-	text, files, err := body(raw, env.reply(), !complete)
+	text, files, refused, err := body(raw, env.reply(), !complete)
 	if err != nil && complete {
 		slog.Warn("email: dropped mail whose body couldn't be parsed", "from", env.sender, "error", err)
 		return messenger.Inbound{}, false, nil
@@ -643,14 +643,14 @@ func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte, compl
 			if err != nil {
 				return &messenger.DroppedError{Reason: "⚠ I couldn't read your mail from the mailbox, so I ignored it. Send it again.", Err: err}
 			}
-			if in.Text, in.Files, err = body(data, env.reply(), false); err != nil {
+			if in.Text, in.Files, refused, err = body(data, env.reply(), false); err != nil {
 				return &messenger.DroppedError{Reason: "⚠ I couldn't read your mail, so I ignored it.", Err: err}
 			}
 		}
 		if err := c.threads.received(ctx, conv, env.subject); err != nil {
-			return fmt.Errorf("email: recording the thread: %w", err)
+			return errors.Join(append([]error{fmt.Errorf("email: recording the thread: %w", err)}, refused...)...)
 		}
-		return nil
+		return errors.Join(refused...)
 	}
 	return in, true, nil
 }
@@ -658,15 +658,17 @@ func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte, compl
 // body returns the new text of a mail and its attachments. Mail without a
 // text/plain part falls back to its text/html part. For the start of a mail,
 // cut is set: body then returns the text of the parts it could read, and no
-// attachments.
-func body(raw []byte, reply, cut bool) (string, []messenger.File, error) {
+// attachments. Attachments over maxPart are left out, with an error each in
+// refused.
+func body(raw []byte, reply, cut bool) (string, []messenger.File, []error, error) {
 	r, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
 	var (
 		plain, html string
 		files       []messenger.File
+		refused     []error
 	)
 	for {
 		p, err := r.NextPart()
@@ -677,14 +679,16 @@ func body(raw []byte, reply, cut bool) (string, []messenger.File, error) {
 			if cut {
 				break
 			}
-			return "", nil, err
+			return "", nil, nil, err
 		}
-		data, readErr := io.ReadAll(io.LimitReader(p.Body, maxPart))
-		if readErr != nil && !cut {
-			return "", nil, readErr
-		}
+		var readErr error
 		switch ph := p.Header.(type) {
 		case *mail.InlineHeader:
+			var data []byte
+			data, readErr = io.ReadAll(io.LimitReader(p.Body, maxPart))
+			if readErr != nil && !cut {
+				return "", nil, nil, readErr
+			}
 			ct, _, err := ph.ContentType()
 			if err != nil {
 				slog.Debug("email: inline part without a valid content type", "error", err)
@@ -709,6 +713,15 @@ func body(raw []byte, reply, cut bool) (string, []messenger.File, error) {
 				slog.Debug("email: attachment without a valid content type", "error", err)
 				ct = "application/octet-stream"
 			}
+			data, err := messenger.ReadLimited(p.Body, maxPart)
+			var tooLarge *messenger.TooLargeError
+			if errors.As(err, &tooLarge) {
+				refused = append(refused, &messenger.AttachmentError{Name: cmp.Or(name, "attachment"), Err: err})
+				continue
+			}
+			if err != nil {
+				return "", nil, nil, err
+			}
 			files = append(files, messenger.File{Name: name, MediaType: ct, Data: data})
 		}
 		if readErr != nil {
@@ -717,10 +730,10 @@ func body(raw []byte, reply, cut bool) (string, []messenger.File, error) {
 	}
 	if strings.TrimSpace(plain) == "" && html != "" {
 		if plain, err = htmlText(strings.NewReader(html), maxPart); err != nil {
-			return "", nil, fmt.Errorf("reading the HTML part: %w", err)
+			return "", nil, nil, fmt.Errorf("reading the HTML part: %w", err)
 		}
 	}
-	return StripQuoted(plain, reply), files, nil
+	return StripQuoted(plain, reply), files, refused, nil
 }
 
 // ConvKey identifies an email thread: the correspondent and the thread
