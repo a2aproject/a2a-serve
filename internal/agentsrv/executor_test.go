@@ -478,7 +478,7 @@ func TestApprovalOfExitedAgentWakesFollowersOfItsContext(t *testing.T) {
 
 	select {
 	case <-changed:
-	case <-ctx.Done():
+	case <-time.After(waitTimeout):
 		t.Fatal("followers of the context were not woken when the agent stopped while its task waited for input")
 	}
 }
