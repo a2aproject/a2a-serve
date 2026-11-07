@@ -298,26 +298,12 @@ func TestGossipRefusesOversizedBody(t *testing.T) {
 	for _, path := range []string{gossipPath, gossipEntriesPath} {
 		t.Run(path, func(t *testing.T) {
 			t.Parallel()
-			sent := &countingReader{r: strings.NewReader(body)}
-			req, err := http.NewRequest(http.MethodPost, anna.srv.privateURL+path, sent)
-			if err != nil {
-				t.Fatal(err)
-			}
-			req.ContentLength = int64(len(body))
-			req.Header.Set("Content-Type", "application/json")
-			req.Header.Set("Expect", "100-continue")
-			resp, err := expectContinueHTTP.Do(req)
-			if err != nil {
-				t.Fatalf("POST %s error = %v", path, err)
-			}
+			resp := postHeaders(t, anna.srv.privateURL+path, http.Header{"Content-Type": {"application/json"}}, len(body))
 			if err := resp.Body.Close(); err != nil {
 				t.Fatal(err)
 			}
 			if resp.StatusCode != http.StatusRequestEntityTooLarge {
 				t.Fatalf("POST %s status = %d, want %d", path, resp.StatusCode, http.StatusRequestEntityTooLarge)
-			}
-			if n := sent.n.Load(); n != 0 {
-				t.Fatalf("POST %s sent %d bytes of the body, want the server to refuse it by its length first", path, n)
 			}
 		})
 	}

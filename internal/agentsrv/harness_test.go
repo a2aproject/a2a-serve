@@ -15,6 +15,7 @@
 package agentsrv
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -24,13 +25,13 @@ import (
 	"math/rand/v2"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -60,26 +61,43 @@ import (
 // tests send through it at the same time.
 var testHTTP = &http.Client{Transport: http.DefaultTransport.(*http.Transport).Clone()}
 
-// expectContinueHTTP sends a request with "Expect: 100-continue" only once
-// the server asks for the body. A server that refuses a body by its length
-// then answers before the client writes it, and doesn't close the
-// connection under a write in progress.
-var expectContinueHTTP = func() *http.Client {
-	tr := http.DefaultTransport.(*http.Transport).Clone()
-	tr.ExpectContinueTimeout = time.Minute
-	return &http.Client{Transport: tr}
-}()
-
-// countingReader counts the bytes read from r.
-type countingReader struct {
-	r io.Reader
-	n atomic.Int64
-}
-
-func (c *countingReader) Read(p []byte) (int, error) {
-	n, err := c.r.Read(p)
-	c.n.Add(int64(n))
-	return n, err
+// postHeaders sends the headers of a POST to rawURL with a body of size
+// bytes, without the body, and returns the response. It is for bodies that
+// the server refuses by their length: a client that writes the body can
+// find the connection closed under the write instead of the response.
+func postHeaders(t *testing.T, rawURL string, header http.Header, size int) *http.Response {
+	t.Helper()
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", u.Host)
+	if err != nil {
+		t.Fatalf("dialing %s: %v", u.Host, err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	if err := conn.SetDeadline(time.Now().Add(waitTimeout)); err != nil {
+		t.Fatal(err)
+	}
+	req := &http.Request{Method: http.MethodPost, URL: u, Header: header.Clone()}
+	var head strings.Builder
+	fmt.Fprintf(&head, "POST %s HTTP/1.1\r\nHost: %s\r\nContent-Length: %d\r\n", u.RequestURI(), u.Host, size)
+	if err := header.Write(&head); err != nil {
+		t.Fatal(err)
+	}
+	head.WriteString("\r\n")
+	if _, err := io.WriteString(conn, head.String()); err != nil {
+		t.Fatalf("writing the request headers: %v", err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), req)
+	if err != nil {
+		t.Fatalf("reading the response: %v", err)
+	}
+	return resp
 }
 
 var fakeACP string
