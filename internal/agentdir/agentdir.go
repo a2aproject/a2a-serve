@@ -150,6 +150,10 @@ func (d Dir) Path() string { return filepath.Join(d.Root, Name) }
 // ConfigPath returns the path of config.yaml.
 func (d Dir) ConfigPath() string { return filepath.Join(d.Path(), configFile) }
 
+// ConfigDraftPath returns the path of the last edit of config.yaml that
+// `config edit` rejected.
+func (d Dir) ConfigDraftPath() string { return filepath.Join(d.StateDir(), "config-draft.yaml") }
+
 // StateDir returns the directory which is never committed.
 func (d Dir) StateDir() string { return filepath.Join(d.Path(), "state") }
 
