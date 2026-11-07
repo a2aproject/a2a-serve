@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/a2aproject/a2a-serve/internal/agentmesh"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/signin"
-	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
 // SignInSession is how long a signed-in agent stays on the relay without
@@ -57,7 +57,7 @@ func MeshArgs(c MeshConfig) []string {
 		// Agents join by sign-in or with an invite.
 		"--no-join-token",
 		"--enroll-qr=false",
-		"--router-allow-loopback=" + strconv.FormatBool(relaydir.Loopback(c.URL)),
+		"--router-allow-loopback=" + strconv.FormatBool(agentmesh.Loopback(c.URL)),
 		// The router's peer ID derives from the admin token, so a relay that
 		// replaces this one, such as a new Cloud Run revision, leases the same
 		// router. A shortened lease at shutdown would drop that router from the

@@ -18,9 +18,12 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -74,6 +77,8 @@ type fakeIdP struct {
 	down      atomic.Bool
 	// badGateways is how many device polls a proxy answers with an HTML 502.
 	badGateways atomic.Int32
+	// issuer replaces the relay's own identity provider in /info.
+	issuer atomic.Pointer[string]
 }
 
 // fakeRelay serves a relay's /info and its identity provider's device flow,
@@ -94,8 +99,12 @@ func fakeRelay(t *testing.T, idToken string, pending int, withOIDC, withDevice b
 		}
 		w.Header().Set("Content-Type", "application/x-protobuf")
 		var payload []byte
+		issuer := f.URL + "/idp"
+		if p := f.issuer.Load(); p != nil {
+			issuer = *p
+		}
 		if withOIDC {
-			payload = encodeControlPlaneInfo(f.URL+"/idp", "mesh-client", "mesh", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
+			payload = encodeControlPlaneInfo(issuer, "mesh-client", "mesh", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
 		} else {
 			payload = encodeControlPlaneInfo("", "", "", "/ip4/127.0.0.1/tcp/4001/p2p/12D3KooWRouter")
 		}
@@ -190,6 +199,9 @@ func TestRelayLoginErrors(t *testing.T) {
 		}
 	}))
 	t.Cleanup(badWire.Close)
+	cleartextIssuer := fakeRelay(t, unverified, 0, true, true)
+	issuer := "http://idp.example.com"
+	cleartextIssuer.issuer.Store(&issuer)
 
 	tests := []struct {
 		name      string
@@ -200,6 +212,7 @@ func TestRelayLoginErrors(t *testing.T) {
 		{name: "no oidc on relay", relay: fakeRelay(t, unverified, 0, false, false).Server, wantErr: true},
 		{name: "malformed protobuf info", relay: badWire, wantErr: true},
 		{name: "no device sign-in", relay: fakeRelay(t, unverified, 0, true, false).Server, wantErr: true},
+		{name: "identity provider over http", relay: cleartextIssuer.Server, wantErr: true},
 		{name: "unverified email", relay: fakeRelay(t, unverified, 0, true, true).Server},
 	}
 	for _, tc := range tests {
@@ -271,6 +284,75 @@ func TestRelayLoginSignsInAgainWhenTheRelayRefusesTheRefreshToken(t *testing.T) 
 	}
 	if diff := cmp.Diff(want, logs); diff != "" {
 		t.Fatalf("RelayLogin printed wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestRelayLoginSignsInAgainAtANewRelay(t *testing.T) {
+	t.Parallel()
+	token := fakeIDToken(t, map[string]any{"email": "ben@example.com", "email_verified": true})
+	signIn := func(t *testing.T, relay *fakeIdP, dir string) {
+		t.Helper()
+		l := &RelayLogin{RelayURL: relay.URL, StateDir: dir, HTTP: relay.Client(), Poll: time.Millisecond}
+		if _, err := l.Token(context.Background()); err != nil {
+			t.Fatalf("RelayLogin.Token() error = %v", err)
+		}
+	}
+	tests := []struct {
+		name string
+		// setup prepares dir before the agent moves to relay, and returns
+		// the identity provider that issued the saved token, if any.
+		setup func(t *testing.T, dir string, relay *fakeIdP) *fakeIdP
+	}{
+		{name: "signed in at another relay", setup: func(t *testing.T, dir string, _ *fakeIdP) *fakeIdP {
+			old := fakeRelay(t, token, 0, true, true)
+			signIn(t, old, dir)
+			return old
+		}},
+		{name: "new relay names the old relay's identity provider", setup: func(t *testing.T, dir string, relay *fakeIdP) *fakeIdP {
+			old := fakeRelay(t, token, 0, true, true)
+			signIn(t, old, dir)
+			issuer := old.URL + "/idp"
+			relay.issuer.Store(&issuer)
+			return old
+		}},
+		{name: "token saved without its relay", setup: func(t *testing.T, dir string, _ *fakeIdP) *fakeIdP {
+			if err := os.WriteFile(filepath.Join(dir, legacyRefreshFile), []byte("rt"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			return nil
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			relay := fakeRelay(t, token, 0, true, true)
+			idps := []*fakeIdP{relay}
+			if old := tc.setup(t, dir, relay); old != nil {
+				idps = append(idps, old)
+			}
+			grants := func() (refreshes, polls int32) {
+				for _, f := range idps {
+					refreshes += f.refreshes.Load()
+					polls += f.polls.Load()
+				}
+				return refreshes, polls
+			}
+			_, pollsBefore := grants()
+
+			signIn(t, relay, dir)
+
+			if refreshes, polls := grants(); refreshes != 0 || polls != pollsBefore+1 {
+				t.Fatalf("joining the new relay used %d refresh grants and %d device sign-ins, want 0 and 1", refreshes, polls-pollsBefore)
+			}
+			if _, err := os.Stat(filepath.Join(dir, legacyRefreshFile)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("os.Stat(%s) error = %v, want %v", legacyRefreshFile, err, os.ErrNotExist)
+			}
+			signIn(t, relay, dir)
+			if refreshes, _ := grants(); refreshes != 1 {
+				t.Fatalf("renewing at the new relay used %d refresh grants, want 1", refreshes)
+			}
+		})
 	}
 }
 
