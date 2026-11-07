@@ -215,7 +215,7 @@ func (r *recipeRun) create(ctx context.Context, fetched *recipe.Fetched, rec *re
 	if err != nil {
 		return err
 	}
-	if outer, err := agentdir.Find(parent); err == nil {
+	if outer, err := agentdir.FindEnclosing(parent); err == nil {
 		return clierr.Usage(fmt.Sprintf("%s is inside the agent in %s, which could read the new agent's secrets; create it elsewhere or pass --dir", parent, outer.Root))
 	}
 	name := agentdir.SanitizeName(firstNonEmpty(r.s.Name, rec.Config.Name, r.src.Name()))

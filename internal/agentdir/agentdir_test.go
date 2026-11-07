@@ -150,6 +150,10 @@ func TestFindStopsAtAgentWithoutConfig(t *testing.T) {
 		{name: "Find", find: func() error { _, err := Find(filepath.Join(inner.Root, "src")); return err }},
 		{name: "NotFoundIn", find: func() error { return NotFoundIn(inner.Root) }},
 	}
+	got, err := FindEnclosing(filepath.Join(inner.Root, "new"))
+	if err != nil || got.Root != outer.Root {
+		t.Fatalf("FindEnclosing() = %v, %v, want %v", got.Root, err, outer.Root)
+	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

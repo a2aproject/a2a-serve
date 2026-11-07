@@ -127,7 +127,7 @@ func harnessDirFrom(wd, dir string) (agentdir.Dir, error) {
 	if err != nil || d.Exists() {
 		return d, err
 	}
-	parent, err := agentdir.Find(filepath.Dir(d.Root))
+	parent, err := agentdir.FindEnclosing(filepath.Dir(d.Root))
 	if errors.Is(err, agentdir.ErrNotFound) {
 		return d, nil
 	}
