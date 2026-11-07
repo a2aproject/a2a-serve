@@ -69,6 +69,38 @@ func TestPairListJoined(t *testing.T) {
 	}
 }
 
+func TestPairListJoinedSkipsTokensOfLocalServers(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	for _, c := range []credstore.Credential{
+		{URL: "http://127.0.0.1:4100", Token: "a2p_owner", Agent: "proj", Dir: t.TempDir()},
+		{URL: "https://coder.example.com", Token: "tok", Agent: "coder"},
+	} {
+		if err := creds.Put(c); err != nil {
+			t.Fatalf("creds.Put() error = %v", err)
+		}
+	}
+
+	out, err := runCMDWithCreds(t, creds, "-o", "json", "pair", "list", "--joined")
+	if err != nil {
+		t.Fatalf("a2a-serve pair list --joined error = %v", err)
+	}
+	var got []joinedPairing
+	if err := json.Unmarshal([]byte(out), &got); err != nil {
+		t.Fatalf("json.Unmarshal(%q) error = %v", out, err)
+	}
+	var urls []string
+	for _, j := range got {
+		urls = append(urls, j.URL)
+	}
+	if diff := cmp.Diff([]string{"https://coder.example.com"}, urls); diff != "" {
+		t.Fatalf("a2a-serve pair list --joined URLs wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := runCMDWithCreds(t, creds, "pair", "get", "http://127.0.0.1:4100"); err == nil || !strings.Contains(err.Error(), "you haven't joined") {
+		t.Fatalf("a2a-serve pair get of a local server's URL error = %v, want a hint to join", err)
+	}
+}
+
 func TestPairGetJoinedNode(t *testing.T) {
 	t.Parallel()
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}

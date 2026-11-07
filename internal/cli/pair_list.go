@@ -154,7 +154,7 @@ func listJoined(cfg *globalConfig) ([]joinedAgent, error) {
 	if err != nil {
 		return nil, err
 	}
-	creds, err := store.List()
+	creds, err := store.ListJoined()
 	if err != nil {
 		return nil, err
 	}

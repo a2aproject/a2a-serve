@@ -296,6 +296,59 @@ func TestNodeTokensAreKeptApart(t *testing.T) {
 	}
 }
 
+func TestJoinedCredentialsExcludeOwnerTokens(t *testing.T) {
+	t.Parallel()
+	const (
+		local  = "http://127.0.0.1:9001"
+		caller = "https://assistant.example.com"
+		node   = "https://assistant.example.com/n/grok"
+	)
+	s := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	for _, c := range []Credential{
+		{URL: local, Token: "a2p_owner", Dir: t.TempDir()},
+		{URL: caller, Token: "a2p_caller"},
+		{URL: node, Kind: KindNode, Token: "a2rn.grok"},
+	} {
+		if err := s.Put(c); err != nil {
+			t.Fatalf("Put() error = %v", err)
+		}
+	}
+	tokens := func(creds []Credential) []string {
+		var out []string
+		for _, c := range creds {
+			out = append(out, c.Token)
+		}
+		return out
+	}
+
+	listed, err := s.ListJoined()
+	if err != nil {
+		t.Fatalf("ListJoined() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"a2p_caller", "a2rn.grok"}, tokens(listed)); diff != "" {
+		t.Fatalf("ListJoined() wrong result (-want +got) diff = %s", diff)
+	}
+	for url, want := range map[string]bool{local: false, caller + "/": true, node: true, "https://other.example.com": false} {
+		if got, err := s.HasJoined(url); err != nil || got != want {
+			t.Fatalf("HasJoined(%q) = %v, %v, want %v, nil", url, got, err, want)
+		}
+	}
+	if deleted, err := s.DeleteJoined(local); err != nil || deleted {
+		t.Fatalf("DeleteJoined(%q) = %v, %v, want false, nil", local, deleted, err)
+	}
+	if deleted, err := s.DeleteJoined(caller + "/"); err != nil || !deleted {
+		t.Fatalf("DeleteJoined(%q) = %v, %v, want true, nil", caller+"/", deleted, err)
+	}
+
+	left, err := s.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{"a2p_owner", "a2rn.grok"}, tokens(left)); diff != "" {
+		t.Fatalf("List() after DeleteJoined() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestDeleteDir(t *testing.T) {
 	t.Parallel()
 	s := &Store{Path: filepath.Join(t.TempDir(), "credentials.json")}

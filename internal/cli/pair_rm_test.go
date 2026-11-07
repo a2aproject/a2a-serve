@@ -21,6 +21,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/credstore"
@@ -142,10 +145,33 @@ func TestPairRmDryRunOfJoinedAgent(t *testing.T) {
 	if want := "would delete the token you saved for https://coder.example.com\n(dry run: nothing removed)\n"; out != want {
 		t.Fatalf("a2a-serve pair rm <url> --dry-run = %q, want %q", out, want)
 	}
-	if ok, err := creds.Has("https://coder.example.com"); err != nil || !ok {
-		t.Fatalf("creds.Has() after pair rm --dry-run = %v, %v, want the token kept", ok, err)
+	if ok, err := creds.HasJoined("https://coder.example.com"); err != nil || !ok {
+		t.Fatalf("creds.HasJoined() after pair rm --dry-run = %v, %v, want the token kept", ok, err)
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "rm", "https://other.example.com", "--dry-run"); err == nil {
 		t.Fatalf("a2a-serve pair rm <unknown url> --dry-run error = nil, want an error that it isn't joined")
+	}
+}
+
+func TestPairRmOfLocalServerURLKeepsItsOwnerToken(t *testing.T) {
+	t.Parallel()
+	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
+	local := credstore.Credential{URL: "http://127.0.0.1:4100", Token: "a2p_owner", Agent: "proj", Dir: t.TempDir()}
+	if err := creds.Put(local); err != nil {
+		t.Fatalf("Put() error = %v", err)
+	}
+
+	for _, args := range [][]string{{"pair", "rm", local.URL}, {"pair", "rm", local.URL, "--dry-run"}} {
+		if _, err := runCMDWithCreds(t, creds, args...); err == nil || !isUsage(err) {
+			t.Fatalf("a2a-serve %s error = %v, want a usage error that it isn't joined", strings.Join(args, " "), err)
+		}
+	}
+
+	got, err := creds.List()
+	if err != nil {
+		t.Fatalf("creds.List() error = %v", err)
+	}
+	if diff := cmp.Diff([]credstore.Credential{local}, got, cmpopts.IgnoreFields(credstore.Credential{}, "Created")); diff != "" {
+		t.Fatalf("creds.List() after pair rm wrong result (-want +got) diff = %s", diff)
 	}
 }

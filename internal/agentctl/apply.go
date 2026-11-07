@@ -100,11 +100,18 @@ var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2
 // Replace replaces the agent's config with data, the content of
 // config.yaml as edited by hand, which is saved as it is. Values typed into
 // secret settings are stored, and replaced by references in the saved
-// file. A change of messengers is refused.
+// file. A name that isn't a lowercase DNS label is normalized, as `config
+// set --name` does, in the saved file too. A change of messengers is refused.
 func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data []byte, dryRun bool) (*Result, error) {
 	next, err := agentdir.ParseConfig(data)
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
+	}
+	if name := agentdir.SanitizeName(next.Name); next.Name != "" && name != next.Name {
+		next.Name = name
+		if data, err = agentdir.MergeConfig(data, next); err != nil {
+			return nil, err
+		}
 	}
 	return apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
 		if agentdir.MessengersDiffer(cfg, next) {
