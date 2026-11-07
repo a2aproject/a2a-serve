@@ -28,7 +28,8 @@ const DefaultTaskTTL = 30 * 24 * time.Hour
 // SetTaskTTL sets how long tasks are kept after their last update.
 func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 
-// Prune deletes expired codes, and the pairings nobody redeemed a code of
+// Prune deletes expired codes, Google sign-in tokens idle for
+// [SignInTokenTTL], and the pairings nobody redeemed a code of
 // when their last code expires; tasks not updated for the task TTL with their
 // events, snapshots, questions and attachments; questions of remote agents
 // as old whose task nobody watches; the messenger conversations, agent
@@ -48,6 +49,9 @@ func (s *Store) Prune(ctx context.Context) error {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM codes WHERE expires < ?`, now.UnixNano()); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM tokens WHERE pairing IS NULL AND max(created, last_used) < ?`, now.Add(-SignInTokenTTL).UnixNano()); err != nil {
 			return err
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM seen WHERE at < ?`, now.Add(-seenRetention).UnixNano()); err != nil {

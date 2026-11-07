@@ -265,6 +265,14 @@ type Token struct {
 	LastUsed time.Time
 }
 
+// idleSince is when the token was last used, or issued if it never was.
+func (t Token) idleSince() time.Time {
+	if t.LastUsed.After(t.Created) {
+		return t.LastUsed
+	}
+	return t.Created
+}
+
 // PutToken stores a token by its hash. A pairing whose kind is unset gets
 // kind.
 func (s *Store) PutToken(ctx context.Context, token string, t Token, kind string) error {
@@ -303,8 +311,13 @@ func scanToken(row interface{ Scan(...any) error }) (Token, error) {
 // records a new one, which keeps lookups from writing on every request.
 const lastUsedGranularity = time.Minute
 
-// LookupToken returns the token record and records its use. A failure to
-// record the use is logged and doesn't fail the lookup.
+// SignInTokenTTL is how long a Google sign-in token works after its last
+// use, or after it was issued when it was never used.
+const SignInTokenTTL = 90 * 24 * time.Hour
+
+// LookupToken returns the token record and records its use. A Google
+// sign-in token idle for [SignInTokenTTL] is not found. A failure to record
+// the use is logged and doesn't fail the lookup.
 func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 	h := cryptoutil.Hash(token)
 	t, err := scanToken(s.reads.QueryRowContext(ctx, `SELECT `+tokenColumns+` FROM tokens WHERE hash = ?`, h))
@@ -312,6 +325,9 @@ func (s *Store) LookupToken(ctx context.Context, token string) (Token, error) {
 		return Token{}, err
 	}
 	now := s.now()
+	if t.Pairing == "" && now.Sub(t.idleSince()) > SignInTokenTTL {
+		return Token{}, ErrNotFound
+	}
 	if now.Sub(t.LastUsed) <= lastUsedGranularity {
 		return t, nil
 	}
