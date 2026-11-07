@@ -241,6 +241,20 @@ func ParseDays(v string) (time.Duration, error) {
 	return d, nil
 }
 
+// FormatDuration writes d the short way ParseDays reads: 7d for two days or
+// more in whole days, then 36h, 30m, and a Go duration for the rest.
+func FormatDuration(d time.Duration) string {
+	switch {
+	case d >= 48*time.Hour && d%(24*time.Hour) == 0:
+		return strconv.Itoa(int(d/(24*time.Hour))) + "d"
+	case d%time.Hour == 0:
+		return strconv.Itoa(int(d/time.Hour)) + "h"
+	case d%time.Minute == 0:
+		return strconv.Itoa(int(d/time.Minute)) + "m"
+	}
+	return d.String()
+}
+
 // BackupInterval returns the time between snapshots.
 func (b BackupConfig) BackupInterval() time.Duration {
 	if d, err := ParseDays(b.Interval); err == nil {

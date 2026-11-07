@@ -364,7 +364,7 @@ var fields = []field{
 	},
 	{
 		access: cardSkills(),
-		flag:   cardSkillsSetting, path: "card.skills", place: placeFile, scope: scopeAgent, live: true,
+		flag:   CardSkillsSetting, path: "card.skills", place: placeFile, scope: scopeAgent, live: true,
 		key: cardSkillKey, show: cardSkillKey,
 	},
 	{
@@ -607,9 +607,9 @@ var fields = []field{
 	},
 }
 
-// cardSkillsSetting names the skills of the agent card, which config.yaml
+// CardSkillsSetting names the skills of the agent card, which config.yaml
 // sets.
-const cardSkillsSetting = "card-skills"
+const CardSkillsSetting = "card-skills"
 
 // cardSkills reads and writes the card skills as one JSON entry each, so
 // that the entries carry whole skills.
@@ -750,6 +750,37 @@ func (c *Config) OwnerSettings() []string {
 		if f.scope == scopeOwner && len(f.get(c)) > 0 {
 			out = append(out, f.flag)
 		}
+	}
+	return out
+}
+
+// SettingValue is a setting of a config with the entries it holds.
+type SettingValue struct {
+	Setting string
+	// Values are empty for a setting that is not set.
+	Values []string
+	// Secret says the values are references to stored secrets, or secrets
+	// kept in config.yaml.
+	Secret bool
+	// Messenger says the setting belongs to a messenger.
+	Messenger bool
+}
+
+// SettingValues returns every setting that config.yaml holds, in the order
+// of the fields, set or not. Secrets kept in the secrets file alone are
+// left out.
+func (c *Config) SettingValues() []SettingValue {
+	var out []SettingValue
+	for _, f := range fields {
+		if f.secretOnly {
+			continue
+		}
+		out = append(out, SettingValue{
+			Setting:   f.flag,
+			Values:    slices.Clone(f.get(c)),
+			Secret:    f.secret != "",
+			Messenger: f.place == placeMessenger,
+		})
 	}
 	return out
 }

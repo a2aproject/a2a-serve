@@ -19,7 +19,7 @@ A running agent applies `--description`, `card.skills`, `--private-allow-incomin
 
 | Command | What it does |
 | --- | --- |
-| `a2a-serve config show` | Shows the settings. `--as-command` prints the commands that recreate the agent, and `-o yaml` prints the settings as YAML. |
+| `a2a-serve config show` | Shows every setting that is set, and with `--defaults` the others too. `--as-command` prints the commands that recreate the agent, and `-o yaml` prints the settings as YAML. |
 | `a2a-serve config set <flags>` | Changes settings. `--dry-run` only prints the diff. |
 | `a2a-serve config unset <setting> [<entry>…]` | Removes entries from a list, or resets a setting to its default. |
 | `a2a-serve config edit` | Opens `config.yaml` in your editor and validates it on save. |

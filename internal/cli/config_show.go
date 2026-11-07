@@ -98,20 +98,33 @@ func printConfigView(cfg *globalConfig, v *agentctl.View, f showFlags) error {
 	return err
 }
 
+// configLine is a line of the text view of the config.
+type configLine struct{ label, value string }
+
+// minLabelWidth is the width of the labels of the lines, which grows for a
+// longer setting name.
+const minLabelWidth = 12
+
 // renderConfig formats the settings grouped like the flags of `a2a-serve
-// <harness>`. all also lists settings left unset.
+// <harness>`, then each setting the groups leave out under its name. all
+// also lists settings left unset.
 func renderConfig(v *agentctl.View, all bool) string {
 	c, def := v.Config, v.Defaults
 	var sb strings.Builder
 	fmt.Fprintf(&sb, "%-38s %s\n", fmt.Sprintf("%s (%s)", c.Name, c.Harness), v.Path)
-	line := func(label, value string) {
+	var lines []configLine
+	shown := map[string]bool{"name": true, "agent": true}
+	line := func(label, value string, settings ...string) {
+		for _, s := range settings {
+			shown[s] = true
+		}
 		if value == "" && !all {
 			return
 		}
 		if value == "" {
 			value = "none"
 		}
-		fmt.Fprintf(&sb, "  %-12s %s\n", label, value)
+		lines = append(lines, configLine{label, value})
 	}
 	withDefault := func(v, d string) string {
 		if v != "" {
@@ -122,30 +135,30 @@ func renderConfig(v *agentctl.View, all bool) string {
 		}
 		return d + " (default)"
 	}
-	line("description", c.Description)
+	line("description", c.Description, "description")
 	var skills []string
 	for _, sk := range c.Card.Skills {
 		skills = append(skills, sk.ID)
 	}
-	line("card skills", strings.Join(skills, ", "))
-	line("command", agentdir.ShellJoin(c.Command))
-	line("workspace", withDefault(formatMount(c.Workspace), def.Workspace))
+	line("card skills", strings.Join(skills, ", "), agentdir.CardSkillsSetting)
+	line("command", agentdir.ShellJoin(c.Command), "command")
+	line("workspace", withDefault(formatMount(c.Workspace), def.Workspace), "workspace")
 	var mounts []string
 	for _, m := range c.Mounts {
 		mounts = append(mounts, formatMount(m))
 	}
-	line("mounts", strings.Join(mounts, ", "))
+	line("mounts", strings.Join(mounts, ", "), "mount")
 	sandbox := withDefault(c.Sandbox, def.Sandbox)
-	if img := withDefault(c.Image, def.Image); img != "" && sandbox != agentdir.SandboxLocal {
+	if img := withDefault(c.Image, def.Image); img != "" && (c.Image != "" || sandbox != agentdir.SandboxLocal) {
 		sandbox = fmt.Sprintf("%-23s image %s", sandbox, img)
 	}
-	line("sandbox", sandbox)
+	line("sandbox", sandbox, "sandbox", "image")
 	var secrets []string
 	for _, name := range c.Secrets {
 		secrets = append(secrets, name+" "+v.Secrets[name])
 	}
-	line("secrets", strings.Join(secrets, ", "))
-	line("env", strings.Join(c.Env, ", "))
+	line("secrets", strings.Join(secrets, ", "), "secret")
+	line("env", strings.Join(c.Env, ", "), "env")
 	network := []string{fmt.Sprintf("%-23s public %s", "private "+orNone(c.Network.Private), orNone(c.Network.Public))}
 	for _, extra := range []struct{ label, value string }{
 		{"tailscale-control-url", c.Network.TailscaleControlURL},
@@ -156,30 +169,23 @@ func renderConfig(v *agentctl.View, all bool) string {
 			network = append(network, extra.label+" "+extra.value)
 		}
 	}
-	line("network", strings.Join(network, ", "))
-	line("access", formatPolicy(c.Policy))
+	line("network", strings.Join(network, ", "), "private", "public", "tailscale-control-url")
+	line("access", formatPolicy(c.Policy), "private-allow-incoming", "public-allow-incoming", "allow-email", "private-allow-outgoing")
 	var messengers []string
-	secretState := func(ref string) string {
-		name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix)
-		if !ok {
-			return "in config.yaml"
-		}
-		return v.Secrets[name]
-	}
 	if t := c.Messengers.Telegram; t != nil {
-		messengers = append(messengers, "telegram token "+secretState(t.Token))
+		messengers = append(messengers, "telegram token "+secretState(v, t.Token))
 	}
 	if dc := c.Messengers.Discord; dc != nil {
-		messengers = append(messengers, "discord token "+secretState(dc.Token))
+		messengers = append(messengers, "discord token "+secretState(v, dc.Token))
 	}
 	if e := c.Messengers.Email; e != nil {
-		login := "password " + secretState(e.Password)
+		login := "password " + secretState(v, e.Password)
 		if e.OAuthRefreshToken != "" {
-			login = "OAuth refresh token " + secretState(e.OAuthRefreshToken)
+			login = "OAuth refresh token " + secretState(v, e.OAuthRefreshToken)
 		}
 		messengers = append(messengers, fmt.Sprintf("email %s via %s, %s, %s", e.Address, e.IMAP, e.SMTP, login))
 	}
-	line("messengers", strings.Join(messengers, "; "))
+	line("messengers", strings.Join(messengers, "; "), agentdir.MessengerTelegram, agentdir.MessengerDiscord, "email-address", "email-imap", "email-smtp", "email-password", "email-oauth-refresh-token")
 	var approvals []string
 	for _, a := range []struct {
 		label  string
@@ -189,13 +195,21 @@ func renderConfig(v *agentctl.View, all bool) string {
 			approvals = append(approvals, a.label+" "+strings.Join(a.values, ", "))
 		}
 	}
-	line("approvals", strings.Join(approvals, "; "))
-	line("limits", formatLimits(c.Limits, def.Limits))
+	line("approvals", strings.Join(approvals, "; "), "allow-tools", "deny-tools", "owner-chat")
+	line("limits", formatLimits(c.Limits, def.Limits), "memory", "cpus", "pids")
 	port := "a free port, picked on the first start"
 	if c.Port != 0 {
 		port = strconv.Itoa(c.Port)
 	}
-	line("port", port)
+	line("port", port, "port")
+	lines = append(lines, otherSettingLines(v, all, shown)...)
+	width := minLabelWidth
+	for _, l := range lines {
+		width = max(width, len(l.label))
+	}
+	for _, l := range lines {
+		fmt.Fprintf(&sb, "  %-*s %s\n", width, l.label, l.value)
+	}
 	if v.Invalid != "" {
 		fmt.Fprintf(&sb, "✗ invalid: %s\n", strings.ReplaceAll(v.Invalid, "\n", "; "))
 	}
@@ -203,6 +217,53 @@ func renderConfig(v *agentctl.View, all bool) string {
 		fmt.Fprintf(&sb, "! restart to apply %s: a2a-serve restart\n", strings.Join(v.Pending, ", "))
 	}
 	return sb.String()
+}
+
+// otherSettingLines returns a line for each setting that the grouped lines
+// of renderConfig leave out, so that every setting config.yaml holds is
+// shown.
+func otherSettingLines(v *agentctl.View, all bool, shown map[string]bool) []configLine {
+	var lines []configLine
+	defaults := map[string][]string{}
+	for _, d := range v.Defaults.SettingValues() {
+		defaults[d.Setting] = d.Values
+	}
+	for _, s := range v.Config.SettingValues() {
+		if shown[s.Setting] {
+			continue
+		}
+		values, isDefault := s.Values, false
+		if len(values) == 0 && (!all || s.Messenger) {
+			continue
+		}
+		if len(values) == 0 {
+			values, isDefault = defaults[s.Setting], true
+		}
+		if len(values) == 0 {
+			lines = append(lines, configLine{s.Setting, "none"})
+			continue
+		}
+		if s.Secret {
+			for i, e := range values {
+				values[i] = secretState(v, e)
+			}
+		}
+		value := strings.Join(values, ", ")
+		if isDefault {
+			value += " (default)"
+		}
+		lines = append(lines, configLine{s.Setting, value})
+	}
+	return lines
+}
+
+// secretState tells where the secret a config value refers to is kept.
+func secretState(v *agentctl.View, ref string) string {
+	name, ok := strings.CutPrefix(ref, agentdir.SecretPrefix)
+	if !ok {
+		return "in config.yaml"
+	}
+	return v.Secrets[name]
 }
 
 // joinCommands formats commands for a shell, one per line, separated by sep.
