@@ -221,6 +221,9 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		select {
 		case <-ctx.Done():
 			return
+		case <-e.stopped():
+			failStopped(execCtx, true)(yield)
+			return
 		case o = <-outcomes:
 		}
 		stop()
@@ -230,6 +233,15 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		}
 		e.continueWithResult(ctx, execCtx, o.Result, yield)
 	}
+}
+
+// stopped is closed when the server stops, and nil when the executor has no
+// stop context.
+func (e *observedExecutor) stopped() <-chan struct{} {
+	if e.stopping == nil {
+		return nil
+	}
+	return e.stopping.Done()
 }
 
 // continueWithResult runs the next turn of a task with the result of

@@ -19,6 +19,7 @@
 //	tool             a tool call with progress
 //	ask              a permission request; the answer decides the reply
 //	ask twice        two permission requests in one turn
+//	ask slow         a permission request, then chunks until canceled
 //	slow [<d>]       chunks for duration d, or until canceled
 //	stall            nothing until canceled, like opencode retrying a model
 //	                 that refuses requests
@@ -466,6 +467,17 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		if !ok {
 			end("cancelled")
 			return
+		}
+		if arg == "slow" {
+			for {
+				select {
+				case <-canceled:
+					end("cancelled")
+					return
+				case <-time.After(50 * time.Millisecond):
+					a.chunk(sid, ".")
+				}
+			}
 		}
 		if option == "deny" {
 			a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "t2", "status": "failed"})

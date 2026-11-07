@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
+	"github.com/a2aproject/a2a-serve/internal/names"
 )
 
 // ErrUnsupported is returned by providers for capabilities they don't have.
@@ -70,7 +71,8 @@ type PeerInfo struct {
 	// Node identifies the machine of the agent, as [Peer.Node] does.
 	Node string `json:"-"`
 	// CardName is the name in the agent's card, the name it advertises its
-	// pairings under. Name differs from it when another agent has it.
+	// pairings under, empty when the card has no valid name. Name differs
+	// from it when another agent has it.
 	CardName string `json:"-"`
 	// Card is what the agent's card says about it.
 	Card cardinfo.Summary `json:"-"`
@@ -151,7 +153,9 @@ func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo
 				return
 			}
 			c.Description = card.Description
-			c.CardName = card.Name
+			if names.Valid(card.Name) {
+				c.CardName = card.Name
+			}
 			c.Card = cardinfo.Of(card)
 			mu.Lock()
 			agents = append(agents, c)

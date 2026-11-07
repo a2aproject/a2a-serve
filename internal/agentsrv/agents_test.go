@@ -273,6 +273,51 @@ func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
 	}
 }
 
+func TestStopDoesNotWaitForRemoteResult(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+	first := send(t, c, userText("acall coder ask slow", "", ""))
+	asking := waitQuestionTask(t, c, first.ContextID, "coder wants to run git push")
+	type reply struct {
+		res a2a.SendMessageResult
+		err error
+	}
+	answered := make(chan reply, 1)
+	go func() {
+		res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("approve", string(asking.ID), asking.ContextID)})
+		answered <- reply{res, err}
+	}()
+	coderClient := coder.client(coder.pair("me", auth.RoleOwner))
+	deadline := time.Now().Add(20 * time.Second)
+	for working := false; !working; time.Sleep(20 * time.Millisecond) {
+		res, err := coderClient.ListTasks(context.Background(), &a2a.ListTasksRequest{})
+		if err != nil {
+			t.Fatalf("ListTasks() error = %v", err)
+		}
+		working = slices.ContainsFunc(res.Tasks, func(task *a2a.Task) bool { return task.Status.State == a2a.TaskStateWorking })
+		if !working && time.Now().After(deadline) {
+			t.Fatalf("coder has no working task, want the one that continues after the approval")
+		}
+	}
+
+	start := time.Now()
+	assistant.stop()
+
+	if took := time.Since(start); took > closeTimeout/2 {
+		t.Fatalf("Stop() took %s with a task waiting for a remote result, want less than %s", took, closeTimeout/2)
+	}
+	got := <-answered
+	if got.err != nil {
+		t.Fatalf("SendMessage() of the approval error = %v", got.err)
+	}
+	if task, ok := got.res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateFailed || a2atext.Message(task.Status.Message) != stoppedMessage {
+		t.Fatalf("SendMessage() of the approval = %#v, want a failed task that says the server stopped", got.res)
+	}
+}
+
 func TestRemoteApprovalOnTheCallersTaskKeepsUnclearReply(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
