@@ -45,10 +45,12 @@ type Question struct {
 	Title   string
 	Options []Option
 	// Kind is the ACP tool kind of a permission, if its message tells, and
-	// ToolTitle and ToolInput the title and raw input of its tool call.
-	Kind      string
-	ToolTitle string
-	ToolInput any
+	// ToolCallID, ToolTitle and ToolInput the ID, title and raw input of its
+	// tool call.
+	Kind       string
+	ToolCallID string
+	ToolTitle  string
+	ToolInput  any
 	// Text is the text of the status message.
 	Text string
 	// Rule is what the always option of a permission allows, when the
@@ -120,6 +122,7 @@ func FromMessage(msg *a2a.Message) *Question {
 			tool, _ := data["toolCall"].(map[string]any)
 			if kind, ok := tool["kind"].(string); ok {
 				q.Kind = kind
+				q.ToolCallID, _ = tool["id"].(string)
 				q.ToolTitle, _ = tool["title"].(string)
 				q.ToolInput = tool["input"]
 			}

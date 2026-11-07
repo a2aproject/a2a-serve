@@ -16,11 +16,15 @@ package agentsrv
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
 type historyHandler struct {
@@ -69,5 +73,28 @@ func TestLimitedHistory(t *testing.T) {
 				t.Fatalf("withLimitedHistory().SendMessage() changed the handler's task history to %d messages, want 3", len(stored.History))
 			}
 		})
+	}
+}
+
+func TestRejectedToolCallShowsAsRejectedInHistory(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+	send(t, c, userText("reject", string(asked.ID), asked.ContextID))
+
+	task, err := c.GetTask(context.Background(), &a2a.GetTaskRequest{ID: asked.ID})
+	if err != nil {
+		t.Fatalf("GetTask() error = %v", err)
+	}
+	var texts []string
+	for _, m := range task.History {
+		if m.Role == a2a.MessageRoleAgent {
+			texts = append(texts, a2atext.Message(m))
+		}
+	}
+	history := strings.Join(texts, "\n")
+	if !strings.Contains(history, "Rejected git push") || strings.Contains(history, "Failed git push") {
+		t.Fatalf("agent messages of the task:\n%s\nwant the rejected call shown as Rejected", history)
 	}
 }
