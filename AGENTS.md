@@ -6,6 +6,13 @@
 * When working on a bug fix, follow the RED-GREEN-BLUE TDD approach.
 * Before reviewing code, read `review/baseline.md` and don't report the findings it lists unless the code changed in a way that makes them reachable or worse.
 
+### Feature Design
+
+* Work from critical user journeys (CUJs) to the implementation. Start with who the users are and what they want to get done, and derive the commands, settings, messages and code from that.
+* Present each journey as a short sketch of the interaction: the commands with their output, the chat messages with their buttons, the `config.yaml` snippet.
+* For each decision that changes what users do, present the alternatives with their own sketches and trade-offs, and recommend one.
+* Prefer the existing commands, flags and settings to new ones, and list what users have to learn.
+
 ### Code Style
 
 * Do not leave comments in the code unless they explain a non-trivial implementation detail or highlight a suboptimally handled edge-case.
