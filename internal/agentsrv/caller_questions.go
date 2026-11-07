@@ -273,18 +273,21 @@ func (e *observedExecutor) continueWithResult(ctx context.Context, execCtx *a2as
 }
 
 // replyOption returns the option a reply chooses: structured input for the
-// question, or typed words.
+// question, a data part with an option, such as `a2a send --data-part`
+// sends without the structured input tag, or typed words.
 func replyOption(msg *a2a.Message, q *approvals.Question) (approvals.Option, bool) {
 	if msg == nil {
 		return approvals.Option{}, false
 	}
 	for _, p := range msg.Parts {
 		meta, ok := structuredinput.GetPartMetadata(p)
-		if !ok || meta.Type != structuredinput.PartTypeStructuredInput || meta.ID != q.ID {
+		if ok && (meta.Type != structuredinput.PartTypeStructuredInput || meta.ID != q.ID) {
 			continue
 		}
-		data, _ := p.Data().(map[string]any)
-		id, _ := data["option"].(string)
+		id, ok := dataOption(p)
+		if !ok {
+			continue
+		}
 		for _, o := range q.Options {
 			if o.ID == id {
 				return o, true
@@ -292,4 +295,11 @@ func replyOption(msg *a2a.Message, q *approvals.Question) (approvals.Option, boo
 		}
 	}
 	return q.Match(a2atext.Message(msg))
+}
+
+// dataOption returns the option of a data part.
+func dataOption(p *a2a.Part) (string, bool) {
+	data, _ := p.Data().(map[string]any)
+	id, ok := data["option"].(string)
+	return id, ok
 }

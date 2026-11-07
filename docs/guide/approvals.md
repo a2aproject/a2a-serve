@@ -18,7 +18,7 @@ A reply that chooses none of the options is refused with the list of options, an
 
 While a task waits for an approval, a new message to its conversation is refused with the task ID and the question. Answer the question first, or leave out the context ID to start a new conversation. Messages of other people in a group chat, and runs of schedules, wait until the question is answered.
 
-Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises.
+Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises. A data part with an `option` field answers too, such as `a2a send --task-id <task> --data-part '{"option":"once"}'`.
 
 When a tool call is rejected or denied, the status message of the finished task says so, such as `Tool call rejected: git push.` `a2a-serve logs` has a line for each answer: who gave it, or which rule, preference or grant, and the option. The line leaves out the command and the tool input, which can hold secrets.
 

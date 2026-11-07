@@ -750,6 +750,43 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 	}
 }
 
+func TestDataPartReplyToApproval(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		data      map[string]any
+		wantState a2a.TaskState
+		want      string
+	}{
+		{name: "untagged option", data: map[string]any{"option": "once"}, wantState: a2a.TaskStateCompleted, want: "Pushed (allow)."},
+		{name: "unknown option", data: map[string]any{"option": "maybe"}, wantState: a2a.TaskStateInputRequired, want: `I couldn't use the reply "maybe"`},
+		{name: "no option", data: map[string]any{"answer": "yes"}, wantState: a2a.TaskStateInputRequired, want: `I couldn't use the reply: its data has no "option" field`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			asked := send(t, c, userText("ask", "", ""))
+			msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewDataPart(tc.data))
+			msg.TaskID, msg.ContextID = asked.ID, asked.ContextID
+
+			got := send(t, c, msg)
+
+			if got.Status.State != tc.wantState {
+				t.Fatalf("task state = %s (%s), want %s", got.Status.State, a2atext.Message(got.Status.Message), tc.wantState)
+			}
+			text := a2atext.Result(got)
+			if tc.wantState == a2a.TaskStateInputRequired {
+				text = a2atext.Message(got.Status.Message)
+			}
+			if !strings.Contains(text, tc.want) {
+				t.Fatalf("task text = %q, want it to contain %q", text, tc.want)
+			}
+		})
+	}
+}
+
 // Not parallel: it replaces the default logger, which the server logs to.
 func TestApprovalAnswersAreLogged(t *testing.T) {
 	var logs lockedBuffer
