@@ -721,6 +721,9 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 			task := sendAsync(t, c, userText(tc.start, "", ""))
 			if tc.first != "" {
 				task = waitState(t, c, task.ID, a2a.TaskStateInputRequired)
+				ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+				defer cancel()
+				ts.srv.turns.wait(ctx)
 				sendAsync(t, c, userText(tc.first, string(task.ID), task.ContextID))
 			}
 
