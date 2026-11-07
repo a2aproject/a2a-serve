@@ -44,9 +44,7 @@ type Front struct {
 	control http.Handler
 	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
-	// proxied limits the requests to Agent Mesh, and unauthenticated the
-	// requests to the control API and the identity provider.
-	proxied, unauthenticated *httpserver.KeyedLimiter
+	proxied *httpserver.KeyedLimiter
 }
 
 // maxProxiedPerClient is how many requests to Agent Mesh one client may
@@ -58,11 +56,18 @@ const maxProxiedPerClient = 64
 // at [signin.Path], or nil when agents can't sign in. It answers 503 on
 // proxied routes until [Front.Open].
 func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
-	return &Front{
-		info: info, control: ctl, signIn: signIn,
-		proxied:         httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
-		unauthenticated: httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client),
+	// The control API and the identity provider serve callers before they
+	// authenticate, so they share a pool of their own.
+	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
+	f := &Front{
+		info:    info,
+		control: unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied: httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
 	}
+	if signIn != nil {
+		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
+	}
+	return f
 }
 
 // Open starts proxying to the agentmesh-one at upstream.
@@ -123,14 +128,14 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Write(w, http.StatusOK, f.info)
 		return
 	case under(p, control.RemotePath):
-		f.unauthenticated.Handler(http.StripPrefix(control.RemotePath, f.control)).ServeHTTP(w, r)
+		f.control.ServeHTTP(w, r)
 		return
 	case under(p, signin.Path):
 		if f.signIn == nil {
 			jsonhttp.Error(w, http.StatusNotFound, "this relay doesn't let agents sign in; join it with an invite")
 			return
 		}
-		f.unauthenticated.Handler(http.StripPrefix(signin.Path, f.signIn)).ServeHTTP(w, r)
+		f.signIn.ServeHTTP(w, r)
 		return
 	case blocked(p, r.Method):
 		jsonhttp.Error(w, http.StatusNotFound, "not found")
@@ -145,32 +150,36 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	f.proxied.Handler(proxy).ServeHTTP(w, r)
 }
 
-// client identifies the client of a request for its limits. A connection
-// from the relay's machine or a private network comes from a tunnel or a
-// reverse proxy, such as cloudflared or Cloud Run's, so the client is the
-// address that proxy added last to X-Forwarded-For. Otherwise it is the
-// remote address, and the header may be forged.
+// client identifies the client of a request for its limits. A tunnel or a
+// reverse proxy, such as cloudflared or Cloud Run's, connects from the
+// relay's machine or a private network and appends the address it got the
+// request from to X-Forwarded-For. The client is the last address there
+// that isn't such a proxy. A header that reaches the relay from a public
+// address may be forged, so the client is the remote address then.
 func client(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		host = r.RemoteAddr
 	}
 	ip, err := netip.ParseAddr(host)
-	if err != nil || !(ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()) {
+	if err != nil {
 		return host
 	}
-	forwarded := r.Header.Values("X-Forwarded-For")
-	if len(forwarded) == 0 {
-		return host
+	forwarded := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(forwarded) - 1; i >= 0 && isProxy(ip); i-- {
+		next, err := netip.ParseAddr(strings.TrimSpace(forwarded[i]))
+		if err != nil {
+			break
+		}
+		ip = next
 	}
-	last := forwarded[len(forwarded)-1]
-	if i := strings.LastIndexByte(last, ','); i >= 0 {
-		last = last[i+1:]
-	}
-	if last = strings.TrimSpace(last); last != "" {
-		return last
-	}
-	return host
+	return ip.Unmap().String()
+}
+
+// isProxy reports whether a connection from ip may come from a tunnel or a
+// reverse proxy of the relay.
+func isProxy(ip netip.Addr) bool {
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast()
 }
 
 func under(p, prefix string) bool {
