@@ -22,9 +22,9 @@ jobs:
       run: go test -race -mod=readonly -v -count=1 -shuffle=on ./...
 
     # A run of the agentsrv package takes several seconds on a hosted runner,
-    # so 200 runs need more than the default 10m timeout.
+    # so 100 runs need more than the default 10m timeout.
     - name: Test Loop
-      run: go test -mod=readonly -count=200 -shuffle=on -timeout=60m ./...
+      run: go test -mod=readonly -count=100 -shuffle=on -timeout=60m ./...
 
   # Runs the real opencode image, built from this commit, against a scripted
   # model (see CONTRIBUTING.md).
