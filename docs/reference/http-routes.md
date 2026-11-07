@@ -44,7 +44,7 @@ On every route, the server refuses state-changing requests that a browser marks 
 
 Each listener handles at most 1024 requests at once, including open streams. It answers requests over this limit with 503 and `Retry-After`.
 
-`/pair`, `/oauth/…` and `/hitl/<token>` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so anonymous callers through the relay share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
+`/pair`, `/oauth/…`, `/hitl/<token>` and `/download/…` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so anonymous callers through the relay share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
 
 | Route | Largest body | Time to send the body |
 | --- | --- | --- |

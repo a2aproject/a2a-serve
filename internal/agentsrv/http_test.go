@@ -420,15 +420,14 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	for range httpserver.MaxUnauthenticatedPerClient {
 		stallPair(t, ts.localURL())
 	}
-	// Until all stalled requests reach the server, one more may get in too.
+	// Until all stalled requests reach the server, more may get in too.
 	refused := 0
-	for range 5 {
-		if refused = stalledStatus(t, stallPair(t, ts.localURL()), 2*time.Second); refused != 0 {
-			break
-		}
+	for deadline := time.Now().Add(time.Minute); refused == 0 && time.Now().Before(deadline); {
+		refused = stalledStatus(t, stallPair(t, ts.localURL()), time.Second)
 	}
 
 	hitl := statusOf(t, http.MethodGet, ts.localURL()+"/hitl/unknown", "", nil)
+	download := statusOf(t, http.MethodGet, ts.localURL()+"/download/a2a-serve", "", nil)
 	owner := statusOf(t, http.MethodPost, ts.localURL()+"/", listTasksRPC, http.Header{"Content-Type": {"application/json"}, "Authorization": {bearer}})
 
 	if refused != http.StatusTooManyRequests {
@@ -436,6 +435,9 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	}
 	if hitl != http.StatusTooManyRequests {
 		t.Fatalf("GET /hitl/unknown while the client's pairing requests stall status = %d, want %d", hitl, http.StatusTooManyRequests)
+	}
+	if download != http.StatusTooManyRequests {
+		t.Fatalf("GET /download/a2a-serve while the client's pairing requests stall status = %d, want %d", download, http.StatusTooManyRequests)
 	}
 	if owner != http.StatusOK {
 		t.Fatalf("POST / of the owner while the client's pairing requests stall status = %d, want %d", owner, http.StatusOK)

@@ -102,11 +102,11 @@ func (s *Server) routes(l listener) http.Handler {
 		w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
 		writeBody(w, strings.ReplaceAll(skills.A2AMailbox, "{{BASE}}", base(baseURL, r)))
 	})
-	mux.HandleFunc("GET /download/a2a", handleDownloadCLI)
-	mux.HandleFunc("GET /download/a2a-serve", handleDownloadServe)
 	// Routes that serve callers before they authenticate share a pool of
 	// their own, limited for each client.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
+	mux.Handle("GET /download/a2a", unauthenticated.Handler(http.HandlerFunc(handleDownloadCLI)))
+	mux.Handle("GET /download/a2a-serve", unauthenticated.Handler(http.HandlerFunc(handleDownloadServe)))
 	mux.Handle("POST "+pairapi.Path, unauthenticated.Handler(jsonhttp.RequireJSON(jsonhttp.LimitUnauthenticatedBody(maxPairBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))))
 	mux.Handle("/hitl/{token}", unauthenticated.Handler(jsonhttp.LimitUnauthenticatedBody(maxHITLBody, http.HandlerFunc(s.approvals.HandlePage))))
 	if l.kind == network.ListenerPublic {
