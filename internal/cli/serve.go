@@ -202,9 +202,7 @@ func runWizard(cmd *cobra.Command, cfg *globalConfig, quiet bool) error {
 	if err != nil {
 		return err
 	}
-	dockerCtx, cancel := context.WithTimeout(cmd.Context(), 10*time.Second)
-	defer cancel()
-	_, dockerErr := harness.CheckDocker(dockerCtx)
+	_, dockerErr := harness.CheckDocker(cmd.Context())
 	res, err := wizard.Run(os.Stdin, cfg.Out, wizard.Options{
 		DefaultName: d.DefaultName(),
 		Harnesses:   harness.ProfileNames(),

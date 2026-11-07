@@ -153,3 +153,14 @@ func TestCheckDockerWithoutAnswer(t *testing.T) {
 		t.Fatalf("checkDocker() error = %v, want %v", err, ErrDockerNoAnswer)
 	}
 }
+
+func TestDockerQueryCancelled(t *testing.T) {
+	fakeDocker(t, "exec sleep 60")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := dockerQuery(ctx, time.Minute, "info")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("dockerQuery() error = %v, want %v", err, context.Canceled)
+	}
+}
