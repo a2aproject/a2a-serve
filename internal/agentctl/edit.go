@@ -18,12 +18,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // errorPrefix marks the lines Edit puts on top of the file to show why the
@@ -66,11 +68,13 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		edited = stripErrors(edited)
 		if bytes.Equal(edited, orig) {
+			removeDraft(d)
 			return withUnknownKeys(&Result{Path: d.ConfigPath()}, edited), nil
 		}
 		res, err := Replace(ctx, d, client, edited, false)
 		var se *agentdir.SettingsError
 		if err == nil {
+			removeDraft(d)
 			return withUnknownKeys(res, edited), nil
 		}
 		if !errors.As(err, &se) {
@@ -81,9 +85,31 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			return nil, rerr
 		}
 		if !again {
-			return nil, &agentdir.SettingsError{Err: errors.Join(err, errors.New("config.yaml was not changed"))}
+			return nil, &agentdir.SettingsError{Err: errors.Join(err, keepDraft(d, edited))}
 		}
 		content = withErrors(edited, err)
+	}
+}
+
+// keepDraft saves the rejected edit, so that the work isn't lost, and returns
+// the note that config.yaml stayed as it was.
+func keepDraft(d agentdir.Dir, edited []byte) error {
+	path := d.ConfigDraftPath()
+	err := fsutil.MkdirPrivate(d.StateDir())
+	if err == nil {
+		err = fsutil.WriteAtomic(path, edited, 0o600)
+	}
+	if err != nil {
+		return fmt.Errorf("config.yaml was not changed, and saving your edit failed: %w", err)
+	}
+	return fmt.Errorf("config.yaml was not changed; your edit is saved in %s", path)
+}
+
+// removeDraft deletes the draft of an earlier rejected edit, which a
+// finished edit replaces.
+func removeDraft(d agentdir.Dir) {
+	if err := os.Remove(d.ConfigDraftPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
+		slog.Warn("removing the draft of config.yaml", "path", d.ConfigDraftPath(), "error", err)
 	}
 }
 

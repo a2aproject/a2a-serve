@@ -103,6 +103,38 @@ func TestEdit(t *testing.T) {
 	}
 }
 
+func TestEditKeepsRejectedDraft(t *testing.T) {
+	t.Parallel()
+	const (
+		valid   = "name: coder\nagent: opencode\nsandbox: local\n"
+		invalid = "name: coder\nagent: opencode\nsandbox: vm\n"
+	)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	write := func(content string) func(string) error {
+		return func(path string) error { return os.WriteFile(path, []byte(content), 0o600) }
+	}
+	giveUp := func(error) (bool, error) { return false, nil }
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), write(invalid), giveUp)
+	if err == nil || !strings.Contains(err.Error(), "config.yaml was not changed; your edit is saved in "+d.ConfigDraftPath()) {
+		t.Fatalf("Edit() error = %v, want it to name the saved draft %s", err, d.ConfigDraftPath())
+	}
+	got, err := os.ReadFile(d.ConfigDraftPath())
+	if err != nil {
+		t.Fatalf("reading the draft: %v", err)
+	}
+	if diff := cmp.Diff(invalid, string(got)); diff != "" {
+		t.Fatalf("draft wrong result (-want +got) diff = %s", diff)
+	}
+
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), write(valid), giveUp); err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if _, err := os.Stat(d.ConfigDraftPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(draft) error = %v, want it removed after a valid edit", err)
+	}
+}
+
 func TestEditReportsUnknownKeys(t *testing.T) {
 	t.Parallel()
 	const typo = "name: coder\nagent: opencode\nsandbx: local\n"
