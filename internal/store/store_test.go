@@ -2043,6 +2043,108 @@ func TestLookupTokenRecordsUseOncePerMinute(t *testing.T) {
 	}
 }
 
+func TestSignInTokenExpiresWhenIdle(t *testing.T) {
+	t.Parallel()
+	start := time.Now()
+	tests := []struct {
+		name    string
+		token   Token
+		uses    []time.Duration
+		at      time.Duration
+		wantErr error
+	}{
+		{
+			name:  "unused within the window",
+			token: Token{Email: "anna@example.com", URL: "http://x"},
+			at:    SignInTokenTTL - time.Hour,
+		},
+		{
+			name:    "unused past the window",
+			token:   Token{Email: "anna@example.com", URL: "http://x"},
+			at:      SignInTokenTTL + time.Hour,
+			wantErr: ErrNotFound,
+		},
+		{
+			name:  "used within the window of the last use",
+			token: Token{Email: "anna@example.com", URL: "http://x"},
+			uses:  []time.Duration{60 * 24 * time.Hour, 120 * 24 * time.Hour},
+			at:    200 * 24 * time.Hour,
+		},
+		{
+			name:    "idle past the window after a use",
+			token:   Token{Email: "anna@example.com", URL: "http://x"},
+			uses:    []time.Duration{60 * 24 * time.Hour},
+			at:      60*24*time.Hour + SignInTokenTTL + time.Hour,
+			wantErr: ErrNotFound,
+		},
+		{
+			name:  "pairing token never expires",
+			token: Token{Pairing: "grok", URL: "http://x"},
+			at:    SignInTokenTTL * 4,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			now := start
+			s.now = func() time.Time { return now }
+			ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+			kind := ""
+			if tc.token.Pairing != "" {
+				kind = "agent"
+			}
+			if err := s.PutToken(ctx, "a2p_token", tc.token, kind); err != nil {
+				t.Fatalf("PutToken() error = %v", err)
+			}
+			for _, use := range tc.uses {
+				now = start.Add(use)
+				if _, err := s.LookupToken(ctx, "a2p_token"); err != nil {
+					t.Fatalf("LookupToken() at %s error = %v", use, err)
+				}
+			}
+			now = start.Add(tc.at)
+
+			_, err := s.LookupToken(ctx, "a2p_token")
+
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("s.LookupToken() error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestPruneDeletesIdleSignInTokens(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	start := time.Now()
+	now := start
+	s.now = func() time.Time { return now }
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
+		t.Fatalf("PutToken() error = %v", err)
+	}
+	putSignIns(t, s, map[string]Token{
+		"a2p_idle":   {Email: "idle@example.com", URL: "http://x"},
+		"a2p_active": {Email: "active@example.com", URL: "http://x"},
+	})
+	now = start.Add(SignInTokenTTL - time.Hour)
+	if _, err := s.LookupToken(ctx, "a2p_active"); err != nil {
+		t.Fatalf("LookupToken() error = %v", err)
+	}
+	now = start.Add(SignInTokenTTL + time.Hour)
+
+	if err := s.Prune(ctx); err != nil {
+		t.Fatalf("s.Prune() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"active@example.com", "grok"}, tokenEmails(t, s)); diff != "" {
+		t.Fatalf("Tokens() after Prune() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestLookupTokenSucceedsWhenRecordingUseFails(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
