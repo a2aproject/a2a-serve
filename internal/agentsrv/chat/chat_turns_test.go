@@ -1070,6 +1070,13 @@ func TestChatTurnsTellsSenderWhenPreparingTheMessageFails(t *testing.T) {
 			wantNotice: "⚠ I couldn't download report.pdf, so the agent doesn't see it.",
 		},
 		{
+			name:       "attachment over the size limit",
+			text:       "look at this",
+			prepareErr: &messenger.AttachmentError{Name: "big.zip", Err: &messenger.TooLargeError{Limit: 20 << 20}},
+			wantNotice: "⚠ I couldn't download big.zip (over 20 MiB), so the agent doesn't see it.",
+			wantTurn:   true,
+		},
+		{
 			name:       "message that can't be handled",
 			text:       "hello",
 			prepareErr: &messenger.DroppedError{Reason: "⚠ I couldn't start a thread, so I ignored your message.", Err: errors.New("missing access")},

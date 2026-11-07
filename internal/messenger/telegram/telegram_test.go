@@ -276,7 +276,7 @@ func TestDownload(t *testing.T) {
 		wantErr string
 	}{
 		{name: "small file", path: "small.txt", want: []byte("hello")},
-		{name: "file larger than the limit", path: "big.bin", wantErr: "too large"},
+		{name: "file larger than the limit", path: "big.bin", wantErr: "over 20 MiB"},
 		{name: "stalled download", path: "slow.bin", timeout: 200 * time.Millisecond, wantErr: "deadline exceeded"},
 	}
 	api := telegramtest.NewServer(t, telegramtest.Options{})

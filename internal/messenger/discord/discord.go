@@ -23,7 +23,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -40,6 +39,8 @@ import (
 const (
 	maxText = 2000
 	maxFile = 20 << 20
+	// maxFiles is the most files Discord takes in one message.
+	maxFiles = 10
 	// catchUpLimit is Discord's page size for message history.
 	catchUpLimit = 50
 	// maxCatchUpMessages bounds the messages read per channel when catching
@@ -651,7 +652,7 @@ func threadName(text, botID string) string {
 
 func download(ctx context.Context, a *discordgo.MessageAttachment) (messenger.File, error) {
 	if a.Size > maxFile {
-		return messenger.File{}, fmt.Errorf("attachment %s is too large", a.Filename)
+		return messenger.File{}, &messenger.TooLargeError{Limit: maxFile}
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
@@ -671,7 +672,7 @@ func download(ctx context.Context, a *discordgo.MessageAttachment) (messenger.Fi
 	if resp.StatusCode != http.StatusOK {
 		return messenger.File{}, fmt.Errorf("the server answered %s", resp.Status)
 	}
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxFile))
+	data, err := messenger.ReadLimited(resp.Body, maxFile)
 	if err != nil {
 		return messenger.File{}, err
 	}
@@ -813,27 +814,49 @@ func messagePieces(m messenger.Outbound) []string {
 	return pieces
 }
 
+// messageSends splits m into the messages that carry it. Discord takes
+// maxFiles files per message, so the files go in batches; the last message has
+// the last text and the buttons, so that it is the one to edit.
+func messageSends(m messenger.Outbound) []*discordgo.MessageSend {
+	pieces := messagePieces(m)
+	batches := slices.Collect(slices.Chunk(m.Files, maxFiles))
+	var sends []*discordgo.MessageSend
+	for _, piece := range pieces[:len(pieces)-1] {
+		sends = append(sends, &discordgo.MessageSend{Content: piece, AllowedMentions: noMentions})
+	}
+	if len(batches) > 1 {
+		for _, batch := range batches[:len(batches)-1] {
+			sends = append(sends, &discordgo.MessageSend{Files: discordFiles(batch), AllowedMentions: noMentions})
+		}
+	}
+	last := &discordgo.MessageSend{Content: pieces[len(pieces)-1], AllowedMentions: noMentions}
+	if len(batches) > 0 {
+		last.Files = discordFiles(batches[len(batches)-1])
+	}
+	if m.Question != nil {
+		last.Components = components(m.Question)
+	}
+	if last.Content == "" && len(last.Files) == 0 {
+		return sends
+	}
+	return append(sends, last)
+}
+
+func discordFiles(files []messenger.File) []*discordgo.File {
+	out := make([]*discordgo.File, len(files))
+	for i, f := range files {
+		out[i] = &discordgo.File{Name: f.Name, ContentType: f.MediaType, Reader: bytes.NewReader(f.Data)}
+	}
+	return out
+}
+
 // Send implements [messenger.Messenger].
 func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.Ref, error) {
 	if err := c.connect(); err != nil {
 		return messenger.Ref{}, err
 	}
 	var ref messenger.Ref
-	pieces := messagePieces(m)
-	for i, piece := range pieces {
-		send := &discordgo.MessageSend{Content: piece, AllowedMentions: noMentions}
-		last := i == len(pieces)-1
-		if last && m.Question != nil {
-			send.Components = components(m.Question)
-		}
-		if last {
-			for _, f := range m.Files {
-				send.Files = append(send.Files, &discordgo.File{Name: f.Name, ContentType: f.MediaType, Reader: bytes.NewReader(f.Data)})
-			}
-		}
-		if send.Content == "" && len(send.Files) == 0 {
-			continue
-		}
+	for _, send := range messageSends(m) {
 		msg, err := c.s.ChannelMessageSendComplex(string(m.Conv), send, discordgo.WithContext(ctx))
 		if err != nil {
 			return ref, fmt.Errorf("discord send: %w", err)
