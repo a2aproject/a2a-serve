@@ -540,6 +540,9 @@ type observedExecutor struct {
 	// turns counts the executions until a2a-go stored their last event and
 	// called Cleanup.
 	turns *turnCount
+	// stopping ends when the server stops, so that a task waiting for
+	// another agent doesn't hold the stop. Nil never ends.
+	stopping context.Context
 }
 
 var (
