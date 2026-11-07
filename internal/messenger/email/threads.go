@@ -30,17 +30,24 @@ const (
 	// threads used least recently are forgotten first.
 	maxThreads = 200
 	maxSent    = 10
+	// maxPending bounds the subjects kept in memory for mail whose sender
+	// wasn't admitted yet, and maxPendingSubject the length of each.
+	maxPending        = 100
+	maxPendingSubject = 998
 )
 
 // threads remembers the subject of recent threads and the Message-IDs the
 // agent sent in them, so a reply that references only the agent's mail
-// stays in its conversation.
+// stays in its conversation. Only admitted senders' threads are stored;
+// pending keeps the subjects of other mail, so that a reply to it keeps
+// the subject.
 type threads struct {
 	kv messenger.KV
 
-	mu     sync.Mutex
-	loaded bool
-	state  threadState
+	mu      sync.Mutex
+	loaded  bool
+	state   threadState
+	pending map[messenger.ConvKey]string
 }
 
 type threadState struct {
@@ -148,13 +155,35 @@ func (t *threads) convOf(ctx context.Context, addr, root string, ids []string, r
 	return ConvKey(addr, root), nil
 }
 
-// received records the subject of the latest mail in conv.
+// arrived remembers the subject of a mail in conv until its sender is
+// admitted.
+func (t *threads) arrived(conv messenger.ConvKey, subject string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if len(subject) > maxPendingSubject {
+		subject = ""
+	}
+	if t.pending == nil {
+		t.pending = map[messenger.ConvKey]string{}
+	}
+	if _, ok := t.pending[conv]; !ok && len(t.pending) >= maxPending {
+		for k := range t.pending {
+			delete(t.pending, k)
+			break
+		}
+	}
+	t.pending[conv] = subject
+}
+
+// received records the subject of the latest mail in conv, whose sender
+// was admitted.
 func (t *threads) received(ctx context.Context, conv messenger.ConvKey, subject string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := t.loadLocked(ctx); err != nil {
 		return err
 	}
+	delete(t.pending, conv)
 	th := t.touchLocked(conv)
 	if subject != "" {
 		th.Subject = subject
@@ -162,12 +191,17 @@ func (t *threads) received(ctx context.Context, conv messenger.ConvKey, subject 
 	return t.saveLocked(ctx)
 }
 
-// sent records a Message-ID the agent sends in conv.
+// sent records a Message-ID the agent sends in conv. A thread started by
+// mail is recorded once its sender is admitted, so a reply in a thread
+// that isn't recorded yet, such as one to a stranger, is not recorded.
 func (t *threads) sent(ctx context.Context, conv messenger.ConvKey, msgID string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if err := t.loadLocked(ctx); err != nil {
 		return err
+	}
+	if _, root, _ := parseConv(conv); root != "" && !t.knownLocked(conv) {
+		return nil
 	}
 	th := t.touchLocked(conv)
 	th.Sent = append(th.Sent, msgID)
@@ -189,5 +223,9 @@ func (t *threads) subject(ctx context.Context, conv messenger.ConvKey) (string, 
 			return th.Subject, nil
 		}
 	}
-	return "", nil
+	return t.pending[conv], nil
+}
+
+func (t *threads) knownLocked(conv messenger.ConvKey) bool {
+	return slices.ContainsFunc(t.state.List, func(th thread) bool { return th.Conv == conv })
 }

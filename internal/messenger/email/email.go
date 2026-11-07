@@ -76,8 +76,14 @@ const (
 	dialTimeout = 30 * time.Second
 	// maxHeader bounds the header read to authenticate a mail. The trusted
 	// Authentication-Results header is on top, so a cut header still has it.
-	maxHeader         = 256 << 10
-	maxPart           = 20 << 20
+	maxHeader = 256 << 10
+	maxPart   = 20 << 20
+	// maxEarlyBody is how much of a mail is read before its sender is
+	// admitted, so that a join mail can link the sender. The rest is read
+	// only once its sender is admitted.
+	maxEarlyBody = 64 << 10
+	// fetchTimeout bounds reading the rest of a mail.
+	fetchTimeout      = 5 * time.Minute
 	defaultMaxMessage = 64 << 20
 	fetchBatch        = 20
 	sendAttempts      = 4
@@ -87,6 +93,7 @@ const (
 type Messenger struct {
 	cfg     Config
 	kv      messenger.KV
+	dial    imapDialer
 	tokens  oauth2.TokenSource
 	threads *threads
 
@@ -98,9 +105,17 @@ var (
 	_ messenger.Describer = (*Messenger)(nil)
 )
 
+// imapDialer connects to the IMAP server at addr. Ending ctx aborts the
+// connection.
+type imapDialer func(ctx context.Context, addr string, opts *imapclient.Options) (*imapclient.Client, error)
+
 // New returns a messenger for the mailbox. kv keeps the last UID processed
 // and the state of recent threads.
 func New(cfg Config, kv messenger.KV) *Messenger {
+	return newMessenger(cfg, kv, dialIMAP)
+}
+
+func newMessenger(cfg Config, kv messenger.KV, dial imapDialer) *Messenger {
 	if cfg.Mailbox == "" {
 		cfg.Mailbox = "INBOX"
 	}
@@ -110,7 +125,7 @@ func New(cfg Config, kv messenger.KV) *Messenger {
 	if cfg.MaxMessage == 0 {
 		cfg.MaxMessage = defaultMaxMessage
 	}
-	c := &Messenger{cfg: cfg, kv: kv, threads: &threads{kv: kv}}
+	c := &Messenger{cfg: cfg, kv: kv, dial: dial, threads: &threads{kv: kv}}
 	if cfg.OAuth != nil {
 		c.tokens = newTokenSource(*cfg.OAuth)
 	}
@@ -159,9 +174,9 @@ func (c *Messenger) Run(ctx context.Context, in chan<- messenger.Inbound, report
 	return nil
 }
 
-// dialIMAP connects to the IMAP server. Ending ctx aborts the connection.
-func (c *Messenger) dialIMAP(ctx context.Context, opts *imapclient.Options) (*imapclient.Client, error) {
-	host, port, err := net.SplitHostPort(c.cfg.IMAP)
+// dialIMAP connects to the IMAP server with TLS.
+func dialIMAP(ctx context.Context, addr string, opts *imapclient.Options) (*imapclient.Client, error) {
+	host, port, err := net.SplitHostPort(addr)
 	if err != nil {
 		return nil, fmt.Errorf("email: imap must be host:port: %w", err)
 	}
@@ -171,13 +186,13 @@ func (c *Messenger) dialIMAP(ctx context.Context, opts *imapclient.Options) (*im
 	opts.TLSConfig = &tls.Config{ServerName: host}
 	d := &net.Dialer{Timeout: dialTimeout}
 	if port == "993" {
-		conn, err := (&tls.Dialer{NetDialer: d, Config: &tls.Config{ServerName: host, NextProtos: []string{"imap"}}}).DialContext(ctx, "tcp", c.cfg.IMAP)
+		conn, err := (&tls.Dialer{NetDialer: d, Config: &tls.Config{ServerName: host, NextProtos: []string{"imap"}}}).DialContext(ctx, "tcp", addr)
 		if err != nil {
 			return nil, err
 		}
 		return imapclient.New(conn, opts), nil
 	}
-	conn, err := d.DialContext(ctx, "tcp", c.cfg.IMAP)
+	conn, err := d.DialContext(ctx, "tcp", addr)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +236,7 @@ func (c *Messenger) login(ctx context.Context, client *imapclient.Client) error 
 // connection, which unblocks any command in flight.
 func (c *Messenger) session(ctx context.Context, in chan<- messenger.Inbound, report func(error)) error {
 	wake := make(chan struct{}, 1)
-	client, err := c.dialIMAP(ctx, &imapclient.Options{
+	client, err := c.dial(ctx, c.cfg.IMAP, &imapclient.Options{
 		UnilateralDataHandler: &imapclient.UnilateralDataHandler{
 			Mailbox: func(data *imapclient.UnilateralDataMailbox) {
 				if data.NumMessages != nil {
@@ -255,7 +270,7 @@ func (c *Messenger) session(ctx context.Context, in chan<- messenger.Inbound, re
 	}
 	report(nil)
 	for {
-		if err := c.fetchNew(ctx, client, in); err != nil {
+		if err := c.fetchNew(ctx, client, sel.UIDValidity, in); err != nil {
 			return err
 		}
 		idle, err := client.Idle()
@@ -305,10 +320,14 @@ func (c *Messenger) checkValidity(ctx context.Context, sel *imap.SelectData, hig
 			return fmt.Errorf("finding the newest message: %w", err)
 		}
 	}
-	if err := c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(uint64(last), 10)); err != nil {
+	if err := c.setLastUID(ctx, last); err != nil {
 		return err
 	}
 	return c.kv.Set(ctx, uidValidityKey, v)
+}
+
+func (c *Messenger) setLastUID(ctx context.Context, uid imap.UID) error {
+	return c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(uint64(uid), 10))
 }
 
 // highestUID returns the UID of message n, the newest of the mailbox.
@@ -325,14 +344,20 @@ func highestUID(client *imapclient.Client, n uint32) (imap.UID, error) {
 
 var (
 	headerSection = &imap.FetchItemBodySection{Specifier: imap.PartSpecifierHeader, Peek: true, Partial: &imap.SectionPartial{Size: maxHeader}}
+	earlySection  = &imap.FetchItemBodySection{Peek: true, Partial: &imap.SectionPartial{Size: maxEarlyBody}}
 	fullSection   = &imap.FetchItemBodySection{Peek: true}
 )
 
 // fetchNew processes the mail after the last UID processed. It lists UIDs
 // and sizes first, because "UID last+1:*" also returns the newest message
 // when there is no new one. Then it reads the headers of a batch, and the
-// body of each authenticated mail on its own.
-func (c *Messenger) fetchNew(ctx context.Context, client *imapclient.Client, in chan<- messenger.Inbound) error {
+// body of each authenticated mail on its own. validity is the UIDVALIDITY
+// of the selected mailbox.
+//
+// The UID of a mail is recorded before the mail is read, so that a mail
+// which crashes the server isn't read again after the restart. A mail
+// that wasn't handed over because of an error is read again.
+func (c *Messenger) fetchNew(ctx context.Context, client *imapclient.Client, validity uint32, in chan<- messenger.Inbound) error {
 	lastStr, ok, err := c.kv.Get(ctx, lastUIDKey)
 	if err != nil {
 		return err
@@ -363,15 +388,13 @@ func (c *Messenger) fetchNew(ctx context.Context, client *imapclient.Client, in 
 			return fmt.Errorf("IMAP fetch: %w", err)
 		}
 		for _, m := range batch {
-			if err := c.process(ctx, client, m.UID, m.RFC822Size, headers[m.UID], in); err != nil {
+			if err := c.setLastUID(ctx, m.UID); err != nil {
 				return err
 			}
-			if ctx.Err() != nil {
-				return nil
+			if err := c.process(ctx, client, validity, m.UID, m.RFC822Size, headers[m.UID], in); err != nil {
+				return errors.Join(err, c.setLastUID(context.WithoutCancel(ctx), last))
 			}
-			if err := c.kv.Set(ctx, lastUIDKey, strconv.FormatUint(uint64(m.UID), 10)); err != nil {
-				return err
-			}
+			last = m.UID
 		}
 	}
 	return nil
@@ -413,8 +436,9 @@ func fetchSection(client *imapclient.Client, uids []imap.UID, section *imap.Fetc
 
 // process reads a listed message and delivers it to in. It drops mail which
 // is malformed, unauthenticated or too large, and only returns errors of the
-// IMAP connection and the messenger's state.
-func (c *Messenger) process(ctx context.Context, client *imapclient.Client, uid imap.UID, size int64, header []byte, in chan<- messenger.Inbound) error {
+// IMAP connection and the messenger's state, and ctx's error if the message
+// wasn't delivered.
+func (c *Messenger) process(ctx context.Context, client *imapclient.Client, validity uint32, uid imap.UID, size int64, header []byte, in chan<- messenger.Inbound) error {
 	if len(header) >= maxHeader {
 		slog.Info("email: dropped mail", "uid", uid, "reason", "header too large")
 		return nil
@@ -432,24 +456,63 @@ func (c *Messenger) process(ctx context.Context, client *imapclient.Client, uid 
 		slog.Warn("email: dropped mail larger than the limit", "uid", uid, "from", env.sender, "size", size, "limit", c.cfg.MaxMessage)
 		return nil
 	}
-	bodies, err := fetchSection(client, []imap.UID{uid}, fullSection, c.cfg.MaxMessage)
+	early, err := fetchSection(client, []imap.UID{uid}, earlySection, maxEarlyBody)
 	if err != nil {
 		return fmt.Errorf("IMAP fetch: %w", err)
 	}
-	raw, ok := bodies[uid]
+	raw, ok := early[uid]
 	if !ok {
 		slog.Warn("email: dropped mail whose body couldn't be read", "uid", uid, "from", env.sender)
 		return nil
 	}
-	msg, ok, err := c.inbound(ctx, env, raw)
+	msg, ok, err := c.inbound(ctx, env, raw, len(raw) < maxEarlyBody, func(ctx context.Context) ([]byte, error) { return c.fetchBody(ctx, validity, uid) })
 	if err != nil || !ok {
 		return err
 	}
 	select {
 	case in <- msg:
+		return nil
 	case <-ctx.Done():
+		return ctx.Err()
 	}
-	return nil
+}
+
+// fetchBody reads a whole mail on a connection of its own, because the
+// session's connection may be idling. It fails if the mailbox was
+// recreated since the mail was listed, since uid may name another mail.
+func (c *Messenger) fetchBody(ctx context.Context, validity uint32, uid imap.UID) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+	defer cancel()
+	client, err := c.dial(ctx, c.cfg.IMAP, nil)
+	if err != nil {
+		return nil, fmt.Errorf("IMAP %s: %w", c.cfg.IMAP, err)
+	}
+	closeOnce := sync.OnceFunc(func() { closeIMAP(client) })
+	stop := context.AfterFunc(ctx, closeOnce)
+	defer stop()
+	defer closeOnce()
+	if err := c.login(ctx, client); err != nil {
+		return nil, fmt.Errorf("IMAP login: %w", err)
+	}
+	sel, err := client.Select(c.cfg.Mailbox, &imap.SelectOptions{ReadOnly: true}).Wait()
+	if err != nil {
+		return nil, fmt.Errorf("selecting %s: %w", c.cfg.Mailbox, err)
+	}
+	if sel.UIDValidity != validity {
+		return nil, fmt.Errorf("%s was recreated", c.cfg.Mailbox)
+	}
+	bodies, err := fetchSection(client, []imap.UID{uid}, fullSection, c.cfg.MaxMessage)
+	if err != nil {
+		return nil, fmt.Errorf("IMAP fetch: %w", err)
+	}
+	raw, ok := bodies[uid]
+	if !ok {
+		return nil, fmt.Errorf("mail %d is gone or larger than %d bytes", uid, c.cfg.MaxMessage)
+	}
+	if err := client.Logout().Wait(); err != nil {
+		slog.Debug("email: IMAP logout", "error", err)
+	}
+	return raw, nil
 }
 
 // envelope is what the header of an authenticated mail tells.
@@ -542,11 +605,16 @@ func (c *Messenger) conv(ctx context.Context, env envelope) (messenger.ConvKey, 
 	return c.threads.convOf(ctx, env.sender, root, slices.Concat(env.references, env.inReplyTo), root != env.msgID, env.subject)
 }
 
-// inbound turns an authenticated mail into a message. It drops a mail whose
-// body can't be parsed, and returns errors of the messenger's state.
-func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte) (messenger.Inbound, bool, error) {
-	text, files, err := body(raw, env.reply())
-	if err != nil {
+// inbound turns an authenticated mail into a message. raw is the start of
+// the mail read before its sender is admitted, and complete tells whether
+// it is the whole mail. Otherwise the message has the text of raw, and
+// Prepare reads the whole mail with fetch. Prepare also records the
+// thread, so that only admitted senders' threads are stored. inbound drops
+// a whole mail whose body can't be parsed, and returns errors of the
+// messenger's state.
+func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte, complete bool, fetch func(context.Context) ([]byte, error)) (messenger.Inbound, bool, error) {
+	text, files, err := body(raw, env.reply(), !complete)
+	if err != nil && complete {
 		slog.Warn("email: dropped mail whose body couldn't be parsed", "from", env.sender, "error", err)
 		return messenger.Inbound{}, false, nil
 	}
@@ -554,9 +622,7 @@ func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte) (mess
 	if err != nil {
 		return messenger.Inbound{}, false, err
 	}
-	if err := c.threads.received(ctx, conv, env.subject); err != nil {
-		return messenger.Inbound{}, false, err
-	}
+	c.threads.arrived(conv, env.subject)
 	in := messenger.Inbound{
 		Messenger: c.Name(),
 		MessageID: env.sender + "|" + env.msgID,
@@ -571,12 +637,29 @@ func (c *Messenger) inbound(ctx context.Context, env envelope, raw []byte) (mess
 	if env.reply() && len(env.inReplyTo) > 0 {
 		in.ReplyTo = messenger.Ref{Conv: conv, ID: env.inReplyTo[0]}
 	}
+	in.Prepare = func(ctx context.Context, in *messenger.Inbound) error {
+		if !complete {
+			data, err := fetch(ctx)
+			if err != nil {
+				return &messenger.DroppedError{Reason: "⚠ I couldn't read your mail from the mailbox, so I ignored it. Send it again.", Err: err}
+			}
+			if in.Text, in.Files, err = body(data, env.reply(), false); err != nil {
+				return &messenger.DroppedError{Reason: "⚠ I couldn't read your mail, so I ignored it.", Err: err}
+			}
+		}
+		if err := c.threads.received(ctx, conv, env.subject); err != nil {
+			return fmt.Errorf("email: recording the thread: %w", err)
+		}
+		return nil
+	}
 	return in, true, nil
 }
 
 // body returns the new text of a mail and its attachments. Mail without a
-// text/plain part falls back to its text/html part.
-func body(raw []byte, reply bool) (string, []messenger.File, error) {
+// text/plain part falls back to its text/html part. For the start of a mail,
+// cut is set: body then returns the text of the parts it could read, and no
+// attachments.
+func body(raw []byte, reply, cut bool) (string, []messenger.File, error) {
 	r, err := mail.CreateReader(bytes.NewReader(raw))
 	if err != nil {
 		return "", nil, err
@@ -591,11 +674,14 @@ func body(raw []byte, reply bool) (string, []messenger.File, error) {
 			break
 		}
 		if err != nil {
+			if cut {
+				break
+			}
 			return "", nil, err
 		}
-		data, err := io.ReadAll(io.LimitReader(p.Body, maxPart))
-		if err != nil {
-			return "", nil, err
+		data, readErr := io.ReadAll(io.LimitReader(p.Body, maxPart))
+		if readErr != nil && !cut {
+			return "", nil, readErr
 		}
 		switch ph := p.Header.(type) {
 		case *mail.InlineHeader:
@@ -611,6 +697,9 @@ func body(raw []byte, reply bool) (string, []messenger.File, error) {
 				html = string(data)
 			}
 		case *mail.AttachmentHeader:
+			if cut {
+				continue
+			}
 			name, err := ph.Filename()
 			if err != nil {
 				slog.Debug("email: attachment without a valid filename", "error", err)
@@ -621,6 +710,9 @@ func body(raw []byte, reply bool) (string, []messenger.File, error) {
 				ct = "application/octet-stream"
 			}
 			files = append(files, messenger.File{Name: name, MediaType: ct, Data: data})
+		}
+		if readErr != nil {
+			break
 		}
 	}
 	if strings.TrimSpace(plain) == "" && html != "" {
@@ -811,7 +903,7 @@ func writeMessage(w io.Writer, h mail.Header, m messenger.Outbound) error {
 func (c *Messenger) Validate(ctx context.Context) error {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	client, err := c.dialIMAP(ctx, nil)
+	client, err := c.dial(ctx, c.cfg.IMAP, nil)
 	if err != nil {
 		return fmt.Errorf("IMAP %s: %w", c.cfg.IMAP, err)
 	}
