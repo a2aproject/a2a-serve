@@ -201,8 +201,10 @@ webhook node. Its tokens keep working, and a change applies to their next
 request.
 
 --rotate revokes every token of the pairing and its pending codes, and
-prints a new code; for a webhook node, it also changes the secret its wakes
-are signed with. Linked messenger accounts stay linked.
+prints a new code. The caller joins again with the code and --replace, and
+keeps its conversations and tasks. For a webhook node, --rotate also
+changes the secret its wakes are signed with. Linked messenger accounts
+stay linked.
 
 Secret values: env:VAR reads the value from the environment variable VAR; -
 reads it from a prompt without echo, or from stdin when it isn't a terminal

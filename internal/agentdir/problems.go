@@ -28,16 +28,23 @@ import (
 type FieldError struct {
 	Flag  string
 	Entry string
+	// Desc describes an entry that Entry can't name, such as a card skill
+	// without an id.
+	Desc string
 	// Reason says why the entry is invalid, such as "want docker or local".
 	Reason string
 	inFile bool
 }
 
 func (e *FieldError) Error() string {
-	if f, ok := lookupField(e.Flag); ok && (e.inFile || f.place == placeFile) && f.path != "" {
-		return fmt.Sprintf("%s: %s has %q: %s", configFile, f.path, e.Entry, e.Reason)
+	entry := fmt.Sprintf("%q", e.Entry)
+	if e.Desc != "" {
+		entry = e.Desc
 	}
-	return fmt.Sprintf("invalid --%s %q: %s", e.Flag, e.Entry, e.Reason)
+	if f, ok := lookupField(e.Flag); ok && (e.inFile || f.place == placeFile) && f.path != "" {
+		return fmt.Sprintf("%s: %s has %s: %s", configFile, f.path, entry, e.Reason)
+	}
+	return fmt.Sprintf("invalid --%s %s: %s", e.Flag, entry, e.Reason)
 }
 
 // fileError is a problem of config.yaml that has no entry of its own.
@@ -67,7 +74,14 @@ func reasonOf(err error) string {
 // or [ParseConfig], as problems of config.yaml, with a hint at the command
 // that fixes them.
 func FileProblems(err error) error {
-	return markProblems(err, func(error) bool { return true })
+	return markProblems(err, func(error) bool { return true }, fixHint)
+}
+
+// EditProblems is [FileProblems] for an edit of config.yaml that was
+// rejected, so the file doesn't have the problems, and only another edit
+// fixes them.
+func EditProblems(err error) error {
+	return markProblems(err, func(error) bool { return true }, func(*FieldError) (agenterr.Hint, string) { return agenterr.HintConfigEdit, "" })
 }
 
 // FileProblemsOf is [FileProblems] for the problems of err that old, the
@@ -78,10 +92,10 @@ func FileProblemsOf(err, old error) error {
 	for _, p := range problems(old) {
 		saved = append(saved, p.Error())
 	}
-	return markProblems(err, func(p error) bool { return slices.Contains(saved, p.Error()) })
+	return markProblems(err, func(p error) bool { return slices.Contains(saved, p.Error()) }, fixHint)
 }
 
-func markProblems(err error, inFile func(error) bool) error {
+func markProblems(err error, inFile func(error) bool, fix func(*FieldError) (agenterr.Hint, string)) error {
 	if err == nil {
 		return nil
 	}
@@ -106,7 +120,7 @@ func markProblems(err error, inFile func(error) bool) error {
 		marked.inFile = true
 		out = append(out, &marked)
 		if n == 1 {
-			hint, arg = fixHint(fe)
+			hint, arg = fix(fe)
 		}
 	}
 	joined := errors.Join(out...)
@@ -122,7 +136,7 @@ func markProblems(err error, inFile func(error) bool) error {
 // fixHint names the command that removes the entry of e from config.yaml.
 func fixHint(e *FieldError) (agenterr.Hint, string) {
 	f, ok := lookupField(e.Flag)
-	if !ok || CheckUnset(e.Flag) != nil {
+	if !ok || e.Desc != "" || CheckUnset(e.Flag) != nil {
 		return agenterr.HintConfigEdit, ""
 	}
 	if !f.list {

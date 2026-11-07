@@ -675,6 +675,16 @@ func TestApplyToInvalidFile(t *testing.T) {
 			wantHint: "fix it with `a2a-serve config edit`",
 		},
 		{
+			name: "a card skill without an id",
+			file: "name: coder\nagent: opencode\ncard:\n    skills:\n        - name: Review\n",
+			apply: func(d agentdir.Dir) error {
+				_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{Sandbox: "local"}, false)
+				return err
+			},
+			wantErr:  `config.yaml: card.skills has a skill named "Review": want a non-empty id`,
+			wantHint: "fix it with `a2a-serve config edit`",
+		},
+		{
 			name: "a problem without a key in the file",
 			file: "name: coder\nagent: opencode\nbackup:\n    to: /backups\n",
 			apply: func(d agentdir.Dir) error {

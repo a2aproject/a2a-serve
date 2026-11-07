@@ -91,7 +91,7 @@ func TestEdit(t *testing.T) {
 				t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
 			}
 			if tc.wantErr {
-				if got, want := agenterr.HintText(editErr), "fix it with `a2a-serve config unset sandbox`"; got != want {
+				if got, want := agenterr.HintText(editErr), "fix it with `a2a-serve config edit`"; got != want {
 					t.Fatalf("agenterr.HintText() = %q, want %q", got, want)
 				}
 				return

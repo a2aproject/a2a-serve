@@ -17,6 +17,8 @@ package agentsrv
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"log/slog"
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
@@ -33,9 +35,9 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 	if err != nil {
 		return nil, nil, err
 	}
-	found, err := project.LoadMCP(ws.Src)
-	if err != nil {
-		return nil, nil, err
+	found, mcpErr := project.LoadMCP(ws.Src)
+	if mcpErr != nil {
+		mcpErr = fmt.Errorf("%w; the agent gets no MCP servers from it", mcpErr)
 	}
 	vars := project.Vars(cfg, secrets)
 	for _, srv := range found {
@@ -46,7 +48,7 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 		servers = append(servers, st)
 	}
 	skills, err = project.Skills(ws.Src)
-	return servers, skills, err
+	return servers, skills, errors.Join(mcpErr, err)
 }
 
 // sessionParams passes the MCP servers of the project's .mcp.json to each
