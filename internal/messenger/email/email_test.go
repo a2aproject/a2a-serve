@@ -17,7 +17,9 @@ package email
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -156,17 +158,51 @@ func newTestMessenger(t *testing.T) *Messenger {
 	return New(Config{Address: "coder@example.com", TrustedAuthServ: "mx.example.com"}, messengertest.NewKV(nil))
 }
 
-// parse reads a whole mail as the IMAP fetch does in two steps.
+// parse reads a whole mail as the IMAP fetch does in two steps, and
+// prepares it as for an admitted sender.
 func parse(ctx context.Context, c *Messenger, raw string) (messenger.Inbound, error) {
+	in, err := parseUnprepared(ctx, c, raw)
+	if err != nil {
+		return messenger.Inbound{}, err
+	}
+	if err := in.Prepare(ctx, &in); err != nil {
+		return messenger.Inbound{}, err
+	}
+	in.Prepare = nil
+	return in, nil
+}
+
+// parseUnprepared reads a whole mail as for a sender who isn't admitted.
+func parseUnprepared(ctx context.Context, c *Messenger, raw string) (messenger.Inbound, error) {
 	env, err := c.envelope([]byte(raw))
 	if err != nil {
 		return messenger.Inbound{}, err
 	}
-	in, ok, err := c.inbound(ctx, env, []byte(raw))
+	in, ok, err := c.inbound(ctx, env, []byte(raw), true, nil)
 	if err == nil && !ok {
 		err = errors.New("dropped")
 	}
 	return in, err
+}
+
+// storedThreads returns the conversations whose threads kv stores.
+func storedThreads(t *testing.T, kv messenger.KV) []messenger.ConvKey {
+	t.Helper()
+	v, _, err := kv.Get(t.Context(), threadsKey)
+	if err != nil {
+		t.Fatalf("kv.Get(%s) error = %v", threadsKey, err)
+	}
+	var st threadState
+	if v != "" {
+		if err := json.Unmarshal([]byte(v), &st); err != nil {
+			t.Fatalf("json.Unmarshal(%s) error = %v", threadsKey, err)
+		}
+	}
+	var out []messenger.ConvKey
+	for _, th := range st.List {
+		out = append(out, th.Conv)
+	}
+	return out
 }
 
 func TestParse(t *testing.T) {
@@ -422,6 +458,60 @@ func TestSendThreadsReplies(t *testing.T) {
 	}
 	if got.Conv != in.Conv {
 		t.Fatalf("parse(reply).Conv = %q, want %q", got.Conv, in.Conv)
+	}
+}
+
+func TestThreadsOnlyOfAdmittedSenders(t *testing.T) {
+	t.Parallel()
+	srv := startSMTP(t)
+	kv := messengertest.NewKV(nil)
+	c := New(Config{Address: "coder@example.com", SMTP: srv.addr, TrustedAuthServ: "mx.example.com"}, kv)
+	in, err := parseUnprepared(t.Context(), c, rawMail)
+	if err != nil {
+		t.Fatalf("parseUnprepared() error = %v, want a message", err)
+	}
+	if _, err := c.Send(t.Context(), messenger.Outbound{Conv: in.Conv, Text: "I don't know you yet."}); err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if msgs := srv.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "Subject: Re: fix the test\r\n") {
+		t.Fatalf("Send() sent %q, want one mail with the subject %q", msgs, "Re: fix the test")
+	}
+	if got := storedThreads(t, kv); len(got) != 0 {
+		t.Fatalf("storedThreads() = %q before Prepare, want none", got)
+	}
+
+	if err := in.Prepare(t.Context(), &in); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if diff := cmp.Diff([]messenger.ConvKey{in.Conv}, storedThreads(t, kv)); diff != "" {
+		t.Fatalf("storedThreads() after Prepare wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSendToManyStrangersKeepsNoThreads(t *testing.T) {
+	t.Parallel()
+	srv := startSMTP(t)
+	kv := messengertest.NewKV(nil)
+	c := New(Config{Address: "coder@example.com", SMTP: srv.addr, TrustedAuthServ: "mx.example.com"}, kv)
+	var convs []messenger.ConvKey
+	for i := range maxPending + 1 {
+		raw := strings.Replace(rawMail, "Message-ID: <m2@alice.org>", fmt.Sprintf("Message-ID: <m%d@alice.org>", i), 1)
+		raw = strings.Replace(raw, "References: <root@alice.org> <m1@example.com>", fmt.Sprintf("References: <root%d@alice.org>", i), 1)
+		in, err := parseUnprepared(t.Context(), c, raw)
+		if err != nil {
+			t.Fatalf("parseUnprepared() error = %v, want a message", err)
+		}
+		convs = append(convs, in.Conv)
+	}
+
+	for _, conv := range convs {
+		if _, err := c.Send(t.Context(), messenger.Outbound{Conv: conv, Text: "I don't know you yet."}); err != nil {
+			t.Fatalf("Send() error = %v", err)
+		}
+	}
+
+	if got := storedThreads(t, kv); len(got) != 0 {
+		t.Fatalf("storedThreads() = %q, want none", got)
 	}
 }
 

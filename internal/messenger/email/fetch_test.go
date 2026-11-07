@@ -20,9 +20,11 @@ import (
 	"log/slog"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/emersion/go-imap/v2/imapclient"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/messenger"
@@ -47,17 +49,11 @@ func TestFetchNew(t *testing.T) {
 	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", "GENUINE2"))
 	kv := messengertest.NewKV(map[string]string{lastUIDKey: "0"})
 	c := New(Config{Address: "coder@example.com", Password: "pw", TrustedAuthServ: "mx.example.com", MaxMessage: 1000}, kv)
-	client := srv.dial(t)
-	if err := c.login(t.Context(), client); err != nil {
-		t.Fatalf("login() error = %v", err)
-	}
-	if _, err := client.Select("INBOX", nil).Wait(); err != nil {
-		t.Fatalf("Select() error = %v", err)
-	}
+	client, validity := selectInbox(t, srv, c)
 	in := make(chan messenger.Inbound, 10)
 
 	for range 2 {
-		if err := c.fetchNew(t.Context(), client, in); err != nil {
+		if err := c.fetchNew(t.Context(), client, validity, in); err != nil {
 			t.Fatalf("fetchNew() error = %v", err)
 		}
 	}
@@ -77,6 +73,170 @@ func TestFetchNew(t *testing.T) {
 		if got := srv.sentCount(body); got != want {
 			t.Fatalf("fetchNew() read the body %s %d times, want %d", body, got, want)
 		}
+	}
+}
+
+// selectInbox signs c in to srv and selects the INBOX. It returns the
+// client and the UIDVALIDITY of the INBOX.
+func selectInbox(t *testing.T, srv *imapServer, c *Messenger) (*imapclient.Client, uint32) {
+	t.Helper()
+	client := srv.dial(t)
+	if err := c.login(t.Context(), client); err != nil {
+		t.Fatalf("login() error = %v", err)
+	}
+	sel, err := client.Select("INBOX", nil).Wait()
+	if err != nil {
+		t.Fatalf("Select() error = %v", err)
+	}
+	return client, sel.UIDValidity
+}
+
+func TestFetchNewReadsLargeMailOnceAdmitted(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "pw", "")
+	large := strings.Repeat("x", maxEarlyBody) + "LARGEEND"
+	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", large))
+	kv := messengertest.NewKV(map[string]string{lastUIDKey: "0"})
+	c := newMessenger(Config{Address: "coder@example.com", IMAP: srv.addr, Password: "pw", TrustedAuthServ: "mx.example.com"}, kv, dialInsecure)
+	client, validity := selectInbox(t, srv, c)
+	in := make(chan messenger.Inbound, 1)
+
+	if err := c.fetchNew(t.Context(), client, validity, in); err != nil {
+		t.Fatalf("fetchNew() error = %v", err)
+	}
+	m := <-in
+	if got := srv.sentCount("LARGEEND"); got != 0 {
+		t.Fatalf("fetchNew() read the end of the body %d times before Prepare, want 0", got)
+	}
+	if got := storedThreads(t, kv); len(got) != 0 {
+		t.Fatalf("storedThreads() = %q before Prepare, want none", got)
+	}
+
+	if err := m.Prepare(t.Context(), &m); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if !strings.HasSuffix(m.Text, "LARGEEND") || len(m.Text) != len(large) {
+		t.Fatalf("Prepare() Text has %d bytes ending in %q, want %d bytes ending in %q", len(m.Text), m.Text[max(0, len(m.Text)-8):], len(large), "LARGEEND")
+	}
+	if diff := cmp.Diff([]messenger.ConvKey{m.Conv}, storedThreads(t, kv)); diff != "" {
+		t.Fatalf("storedThreads() after Prepare wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestFetchNewReadsJoinInLargeMailEarly(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "pw", "")
+	srv.deliver(t, "From: bob@bob.org\r\n"+
+		"Subject: join\r\n"+
+		"Message-ID: <j1@bob.org>\r\n"+
+		"Authentication-Results: mx.example.com; dmarc=pass header.from=bob.org\r\n"+
+		"Content-Type: multipart/mixed; boundary=b\r\n"+
+		"\r\n"+
+		"--b\r\nContent-Type: text/plain\r\n\r\njoin abcd1234\r\n"+
+		"--b\r\nContent-Type: image/png\r\nContent-Disposition: attachment; filename=logo.png\r\n\r\n"+
+		strings.Repeat("x", maxEarlyBody)+"\r\n"+
+		"--b--\r\n")
+	c := newMessenger(Config{Address: "coder@example.com", IMAP: srv.addr, Password: "pw", TrustedAuthServ: "mx.example.com"}, messengertest.NewKV(map[string]string{lastUIDKey: "0"}), dialInsecure)
+	client, validity := selectInbox(t, srv, c)
+	in := make(chan messenger.Inbound, 1)
+
+	if err := c.fetchNew(t.Context(), client, validity, in); err != nil {
+		t.Fatalf("fetchNew() error = %v", err)
+	}
+	m := <-in
+	if m.Text != "join abcd1234" || len(m.Files) != 0 {
+		t.Fatalf("fetchNew() = %q with %d files before Prepare, want %q without files", m.Text, len(m.Files), "join abcd1234")
+	}
+
+	if err := m.Prepare(t.Context(), &m); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if m.Text != "join abcd1234" || len(m.Files) != 1 {
+		t.Fatalf("Prepare() = %q with %d files, want %q with 1 file", m.Text, len(m.Files), "join abcd1234")
+	}
+}
+
+func TestPrepareDropsMailOfRecreatedMailbox(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "pw", "")
+	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", strings.Repeat("x", maxEarlyBody)+"LARGEEND"))
+	c := newMessenger(Config{Address: "coder@example.com", IMAP: srv.addr, Password: "pw", TrustedAuthServ: "mx.example.com"}, messengertest.NewKV(map[string]string{lastUIDKey: "0"}), dialInsecure)
+	client, validity := selectInbox(t, srv, c)
+	in := make(chan messenger.Inbound, 1)
+	if err := c.fetchNew(t.Context(), client, validity+1, in); err != nil {
+		t.Fatalf("fetchNew() error = %v", err)
+	}
+	m := <-in
+
+	err := m.Prepare(t.Context(), &m)
+
+	var dropped *messenger.DroppedError
+	if !errors.As(err, &dropped) {
+		t.Fatalf("Prepare() error = %v, want a DroppedError", err)
+	}
+	if got := srv.sentCount("LARGEEND"); got != 0 {
+		t.Fatalf("Prepare() read the end of the body %d times, want 0", got)
+	}
+}
+
+// handOverKV records how many messages wait in in each time the last UID
+// is set.
+type handOverKV struct {
+	messenger.KV
+	in chan messenger.Inbound
+
+	mu     sync.Mutex
+	queued []int
+}
+
+func (k *handOverKV) Set(ctx context.Context, key, value string) error {
+	if key == lastUIDKey {
+		k.mu.Lock()
+		k.queued = append(k.queued, len(k.in))
+		k.mu.Unlock()
+	}
+	return k.KV.Set(ctx, key, value)
+}
+
+func TestFetchNewRecordsUIDBeforeHandingOver(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "pw", "")
+	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", "GENUINE1"))
+	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", "GENUINE2"))
+	kv := &handOverKV{KV: messengertest.NewKV(map[string]string{lastUIDKey: "0"}), in: make(chan messenger.Inbound, 2)}
+	c := New(Config{Address: "coder@example.com", Password: "pw", TrustedAuthServ: "mx.example.com"}, kv)
+	client, validity := selectInbox(t, srv, c)
+
+	if err := c.fetchNew(t.Context(), client, validity, kv.in); err != nil {
+		t.Fatalf("fetchNew() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]int{0, 1}, kv.queued); diff != "" {
+		t.Fatalf("fetchNew() messages handed over before setting the last UID wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestFetchNewRereadsMailNotHandedOver(t *testing.T) {
+	t.Parallel()
+	srv := startIMAP(t, "coder@example.com", "pw", "")
+	srv.deliver(t, mailWithBody("alice@alice.org", "mx.example.com; dmarc=pass header.from=alice.org", "GENUINE1"))
+	kv := messengertest.NewKV(map[string]string{lastUIDKey: "0"})
+	c := New(Config{Address: "coder@example.com", Password: "pw", TrustedAuthServ: "mx.example.com"}, kv)
+	client, validity := selectInbox(t, srv, c)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() { done <- c.fetchNew(ctx, client, validity, make(chan messenger.Inbound)) }()
+	for onlyKey(kv.All(), lastUIDKey)[lastUIDKey] != "1" {
+		time.Sleep(time.Millisecond)
+	}
+
+	cancel()
+
+	if err := <-done; err == nil {
+		t.Fatalf("fetchNew() error = nil, want the context's error")
+	}
+	if diff := cmp.Diff(map[string]string{lastUIDKey: "0"}, onlyKey(kv.All(), lastUIDKey)); diff != "" {
+		t.Fatalf("fetchNew() wrong last UID (-want +got) diff = %s", diff)
 	}
 }
 

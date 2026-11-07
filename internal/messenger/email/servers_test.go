@@ -17,6 +17,7 @@ package email
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -115,6 +116,15 @@ func (s *imapServer) dial(t *testing.T) *imapclient.Client {
 		}
 	})
 	return client
+}
+
+// dialInsecure connects without TLS, which the test server allows.
+func dialInsecure(ctx context.Context, addr string, opts *imapclient.Options) (*imapclient.Client, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", addr)
+	if err != nil {
+		return nil, err
+	}
+	return imapclient.New(conn, opts), nil
 }
 
 // oauthSession signs in with XOAUTH2 only.
