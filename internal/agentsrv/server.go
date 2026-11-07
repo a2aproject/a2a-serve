@@ -185,6 +185,8 @@ type Server struct {
 	// unattended are the contexts of turns posted with no conversation,
 	// whose tasks nobody watches.
 	unattended *chat.ContextSet
+	// ends does what follows the end of a task's execution.
+	ends *taskEnds
 	// users are the agent processes of users that run now.
 	users userAgents
 	// background runs the server's loops, which Run waits for.
@@ -460,6 +462,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			UserTimeout:      s.timings.UserQuestionTimeout,
 			Config:           s.rt.Config,
 		})
+		s.ends = newTaskEnds(s.bus, s.approvals, s.unattended)
 		s.pairings = pairings.New(pairings.Deps{
 			Store:     s.store,
 			BaseURL:   s.bestURL,
@@ -494,11 +497,11 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Records: records,
 			Chat:    s.chatApprovals,
 			Turns:   s.chatTurns,
-			Asked:   &questionTasks{store: s.store, tasks: s.tasks, bus: s.bus},
+			Asked:   &questionTasks{store: s.store, tasks: s.tasks, bus: s.bus, ends: s.ends},
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, unattended: s.unattended, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns},
+		return withLimitedHistory(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
 			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}}),

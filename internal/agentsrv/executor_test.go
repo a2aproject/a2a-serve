@@ -92,10 +92,17 @@ func openTestStore(t *testing.T) *store.Store {
 	return st
 }
 
+// testApprovals returns an approvals service with a store of its own and
+// no way to ask or answer.
+func testApprovals(t *testing.T) *approvals.Service {
+	t.Helper()
+	return approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})
+}
+
 func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: testApprovals(t)}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 
 	var states []a2a.TaskState
@@ -119,7 +126,7 @@ func TestCancelYieldsCanceledBeforeTurnEnds(t *testing.T) {
 func TestCancelStopsTurnAfterConsumerStops(t *testing.T) {
 	t.Parallel()
 	inner := &turnExecutor{}
-	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})})}
+	exec := &observedExecutor{inner: inner, bus: chat.NewBus(), notes: newToolNotes(), approvals: testApprovals(t)}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -167,11 +174,13 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 	asked := send(t, ts.client(ts.pair("me", auth.RoleOwner)), userText("ask", "", ""))
 	contextID := a2a.NewContextID()
 	ts.srv.unattended.Add(contextID)
+	bus := chat.NewBus()
 	exec := &observedExecutor{
 		inner:     statusExecutor{state: a2a.TaskStateInputRequired, msg: asked.Status.Message},
-		bus:       chat.NewBus(),
+		bus:       bus,
 		claims:    ts.srv.claims,
 		approvals: ts.srv.approvals,
+		ends:      newTaskEnds(bus, ts.srv.approvals, ts.srv.unattended),
 		notes:     newToolNotes(),
 	}
 	execCtx := &a2asrv.ExecutorContext{TaskID: a2a.NewTaskID(), ContextID: contextID}
@@ -197,7 +206,7 @@ func TestUnattendedQuestionIsAskedAfterExecutionEnds(t *testing.T) {
 func TestExecutionEndWakesFollowersOfItsContext(t *testing.T) {
 	t.Parallel()
 	bus := chat.NewBus()
-	exec := &observedExecutor{bus: bus, unattended: &chat.ContextSet{}}
+	exec := &observedExecutor{bus: bus, ends: newTaskEnds(bus, testApprovals(t), &chat.ContextSet{})}
 	changed, unsubscribe := bus.SubscribeContext("c1")
 	defer unsubscribe()
 	other, unsubscribeOther := bus.SubscribeContext("c2")
@@ -435,6 +444,30 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 	}
 }
 
+func TestApprovalOfExitedAgentWakesFollowersOfItsContext(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("ask", "", ""))
+	if task.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), waitTimeout)
+	defer cancel()
+	ts.srv.turns.wait(ctx)
+	changed, unsubscribe := ts.srv.bus.SubscribeContext(task.ContextID)
+	defer unsubscribe()
+
+	send(t, c, userText("crash", "", ""))
+	waitState(t, c, task.ID, a2a.TaskStateFailed)
+
+	select {
+	case <-changed:
+	case <-ctx.Done():
+		t.Fatal("followers of the context were not woken when the agent stopped while its task waited for input")
+	}
+}
+
 func TestApprovalOfStoppedServerFailsTaskAsRestarted(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
@@ -529,7 +562,8 @@ func TestObservedExecutorCleanupForgetsUnattendedContextOfEndedTask(t *testing.T
 			unattended := &chat.ContextSet{}
 			unattended.Add("c1")
 			unattended.Add("c2")
-			e := &observedExecutor{bus: chat.NewBus(), unattended: unattended, notes: newToolNotes()}
+			bus := chat.NewBus()
+			e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, testApprovals(t), unattended), notes: newToolNotes()}
 
 			e.Cleanup(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}, tc.result, tc.err)
 
@@ -683,7 +717,8 @@ func TestApprovalAnswersAreLogged(t *testing.T) {
 func TestObservedExecutorCountsTurnUntilCleanup(t *testing.T) {
 	t.Parallel()
 	turns := &turnCount{}
-	e := &observedExecutor{bus: chat.NewBus(), unattended: &chat.ContextSet{}, notes: newToolNotes(), approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: openTestStore(t)})}), turns: turns}
+	bus, service := chat.NewBus(), testApprovals(t)
+	e := &observedExecutor{bus: bus, ends: newTaskEnds(bus, service, &chat.ContextSet{}), notes: newToolNotes(), approvals: service, turns: turns}
 	execCtx := &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}
 	completed := func(yield func(a2a.Event, error) bool) {
 		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)

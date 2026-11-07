@@ -64,6 +64,7 @@ type questionTasks struct {
 	store *store.Store
 	tasks *store.TaskStore
 	bus   *chat.Bus
+	ends  *taskEnds
 }
 
 var _ agentproxy.QuestionTasks = (*questionTasks)(nil)
@@ -94,7 +95,6 @@ func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID strin
 		slog.Warn("listing the question tasks of a conversation", "context", contextID, "error", err)
 		return
 	}
-	ended := false
 	for _, t := range res.Tasks {
 		recID, ok := callerQuestionOf(t)
 		if !ok {
@@ -104,35 +104,37 @@ func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID strin
 		if err != nil || rec.Contact != agent || rec.TaskID != taskID {
 			continue
 		}
-		if err := qt.end(ctx, t.ID, rec); err != nil {
+		ev, err := qt.end(ctx, t.ID, rec)
+		if err != nil {
 			slog.Warn("ending a question task", "task", t.ID, "error", err)
 			continue
 		}
-		ended = true
-	}
-	if ended {
-		qt.bus.ExecutionEnded(contextID)
+		if ev != nil {
+			qt.ends.finish(ctx, ev)
+		}
 	}
 }
 
-func (qt *questionTasks) end(ctx context.Context, id a2a.TaskID, rec store.Question) error {
+// end completes the question task id, and returns its last event, or nil
+// if the task moved on.
+func (qt *questionTasks) end(ctx context.Context, id a2a.TaskID, rec store.Question) (*a2a.TaskStatusUpdateEvent, error) {
 	stored, err := qt.tasks.Get(ctx, id)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if cur, ok := callerQuestionOf(stored.Task); !ok || cur != rec.ID {
-		return nil
+		return nil, nil
 	}
 	msg := a2a.NewMessageForTask(a2a.MessageRoleAgent, stored.Task, a2a.NewTextPart(fmt.Sprintf("%s no longer waits for this approval; its result comes into this conversation.", rec.Contact)))
-	_, err = qt.tasks.Update(ctx, &taskstore.UpdateRequest{
-		Task:        stored.Task,
-		Event:       a2a.NewStatusUpdateEvent(stored.Task, a2a.TaskStateCompleted, msg),
-		PrevVersion: stored.Version,
-	})
+	ev := a2a.NewStatusUpdateEvent(stored.Task, a2a.TaskStateCompleted, msg)
+	_, err = qt.tasks.Update(ctx, &taskstore.UpdateRequest{Task: stored.Task, Event: ev, PrevVersion: stored.Version})
 	if errors.Is(err, taskstore.ErrConcurrentModification) {
-		return nil
+		return nil, nil
 	}
-	return err
+	if err != nil {
+		return nil, err
+	}
+	return ev, nil
 }
 
 // callerQuestionOf returns the record ID of another agent's question which
@@ -155,7 +157,7 @@ func asksCallerQuestion(task *a2a.Task) bool {
 // withCallerQuestion ends a completed turn on the question of another
 // agent, relayed during the turn, which the turn's A2A caller answers.
 func (e *observedExecutor) withCallerQuestion(execCtx *a2asrv.ExecutorContext, events iter.Seq2[a2a.Event, error]) iter.Seq2[a2a.Event, error] {
-	if e.watches == nil || e.unattended.Has(execCtx.ContextID) {
+	if e.watches == nil || e.ends.unattended.Has(execCtx.ContextID) {
 		return events
 	}
 	end := e.watches.Attend(execCtx.ContextID)

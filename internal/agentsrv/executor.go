@@ -392,11 +392,10 @@ func (s *Server) acpConfig() *a2aacp.Config {
 }
 
 // abandoned stores the event that ends a task whose agent stopped while it
-// waited for an answer, since the executor can't emit it. It does for the
-// event what observedExecutor does for the events of a running execution.
-// A reply may have ended the task first; the store refuses tasks in a
-// terminal state. The agent exits when the server stops, and the next start
-// fails the open tasks as restarted.
+// waited for an answer, since the executor can't emit it. A reply may have
+// ended the task first; the store refuses tasks in a terminal state. The
+// agent exits when the server stops, and the next start fails the open
+// tasks as restarted.
 func (s *Server) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
 	if s.split.stopped() {
 		return
@@ -410,11 +409,7 @@ func (s *Server) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
 		return
 	}
 	slog.Info("task "+a2atext.StateName(ev.Status.State), "task", ev.TaskID, "reason", "the agent stopped while the task waited for input")
-	s.approvals.CloseQuestions(ctx, ev.TaskID)
-	if ev.Status.State.Terminal() {
-		s.unattended.Remove(ev.ContextID)
-	}
-	s.bus.Publish(ev.TaskID, ev)
+	s.ends.finish(ctx, ev)
 }
 
 // guardACP fails the stalled turns of an executor made with acpConfig.
@@ -525,8 +520,8 @@ type observedExecutor struct {
 	bus       *chat.Bus
 	claims    *CallClaims
 	approvals *approvals.Service
-	// unattended is told when the task of a context ends.
-	unattended *chat.ContextSet
+	// ends does what follows the end of an execution.
+	ends *taskEnds
 	// watches ask the A2A caller of a turn the questions of the agents it
 	// calls, on the caller's task.
 	watches *agentproxy.Watches
@@ -549,20 +544,23 @@ var (
 	_ a2asrv.AgentExecutionCleaner = (*observedExecutor)(nil)
 )
 
-// Cleanup tells the followers of the task's context that an execution
-// ended, relays the question the task stopped on, and forgets that nobody
-// watches the context of a task that ended. a2a-go calls it once the
-// execution is done with its last event and stored it, so an answer to the
-// question can start the next execution.
+// Cleanup ends the execution and relays the question the task stopped on.
+// a2a-go calls it once the execution is done with its last event and
+// stored it, so an answer to the question can start the next execution.
 func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.ExecutorContext, result a2a.SendMessageResult, err error) {
 	if e.turns != nil {
 		defer e.turns.release(execCtx)
 	}
-	e.bus.ExecutionEnded(execCtx.ContextID)
 	task, ok := result.(*a2a.Task)
-	if err != nil || (ok && task.Status.State.Terminal()) {
-		e.unattended.Remove(execCtx.ContextID)
+	var state a2a.TaskState
+	switch {
+	case err != nil:
+	case ok:
+		state = task.Status.State
+	default:
+		state = a2a.TaskStateCompleted
 	}
+	e.ends.ended(ctx, execCtx.TaskID, execCtx.ContextID, state)
 	if err != nil || !ok {
 		return
 	}
