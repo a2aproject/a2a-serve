@@ -17,10 +17,12 @@
 package e2e
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -63,18 +65,27 @@ func TestRestartStartsStoppedAgent(t *testing.T) {
 	}
 }
 
+func processSignal(pid int, sig os.Signal) error {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return p.Signal(sig)
+}
+
 // TestStopWithoutState covers stop in an agent directory whose
 // .a2a/state is gone: the server exits, and stop returns at once.
 func TestStopWithoutState(t *testing.T) {
 	t.Parallel()
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
+	pid := coder.status().PID
 	if err := os.RemoveAll(filepath.Join(coder.dir, ".a2a", "state")); err != nil {
 		t.Fatalf("os.RemoveAll() error = %v", err)
 	}
 	eventually(t, "the server exits without its state", func() (bool, string) {
-		st := coder.status()
-		return !st.Running, fmt.Sprintf("%+v", st)
+		err := processSignal(pid, syscall.Signal(0))
+		return errors.Is(err, os.ErrProcessDone), fmt.Sprintf("signal 0 to pid %d: %v", pid, err)
 	})
 
 	start := time.Now()

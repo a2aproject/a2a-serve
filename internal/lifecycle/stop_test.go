@@ -16,6 +16,7 @@ package lifecycle
 
 import (
 	"context"
+	"errors"
 	"os"
 	"runtime"
 	"testing"
@@ -130,16 +131,35 @@ func TestStopWithoutStateDir(t *testing.T) {
 	}
 }
 
-func TestWaitStoppedWithoutStateDir(t *testing.T) {
+func TestWaitStoppedWithoutLockFile(t *testing.T) {
 	t.Parallel()
-	dir := newAgent(t)
-	if err := os.RemoveAll(dir.StateDir()); err != nil {
-		t.Fatalf("os.RemoveAll() error = %v", err)
+	tests := []struct {
+		name    string
+		state   func(t *testing.T, path string)
+		wantErr bool
+	}{
+		{name: "state directory removed", state: func(*testing.T, string) {}},
+		{name: "state is a file", state: func(t *testing.T, path string) {
+			if err := os.WriteFile(path, nil, 0o600); err != nil {
+				t.Fatalf("os.WriteFile() error = %v", err)
+			}
+		}, wantErr: true},
 	}
-	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
-	defer cancel()
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			if err := os.RemoveAll(dir.StateDir()); err != nil {
+				t.Fatalf("os.RemoveAll() error = %v", err)
+			}
+			tc.state(t, dir.StateDir())
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+			defer cancel()
 
-	if err := waitStopped(ctx, dir, time.Minute, func() error { return nil }); err != nil {
-		t.Fatalf("waitStopped() error = %v, want nil", err)
+			err := waitStopped(ctx, dir, time.Minute, func() error { return nil })
+			if gotErr := err != nil; gotErr != tc.wantErr || errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("waitStopped() error = %v, want error %v", err, tc.wantErr)
+			}
+		})
 	}
 }

@@ -115,7 +115,9 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 	} else if err := client.Stop(ctx); err != nil && !errors.Is(err, agenterr.ErrNotRunning) {
 		return res, err
 	}
-	if opts.Wait == NoWait || !res.Running {
+	// A server that is shutting down removes its PID file before it
+	// releases the lock.
+	if opts.Wait == NoWait || !res.Running && !serverRunning(dir) {
 		return res, nil
 	}
 	kill := func() error { return nil }
@@ -131,7 +133,8 @@ func Stop(ctx context.Context, dir agentdir.Dir, client *controlapi.Client, opts
 // waitStopped waits until the server releases the lock of the agent
 // directory, which it holds until everything is shut down. kill runs once
 // the server is still running after killAfter. A missing lock file means
-// that no server can hold it.
+// that the state directory is gone, and a server without it stops on its
+// own.
 func waitStopped(ctx context.Context, d agentdir.Dir, killAfter time.Duration, kill func() error) error {
 	start := time.Now()
 	killed := false
