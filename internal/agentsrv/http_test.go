@@ -471,7 +471,8 @@ func TestPairingThroughTunnel(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: !tc.peerPerConn, peerPerConn: tc.peerPerConn}
-			ts := startServer(t, serverOpts{public: relay})
+			start := time.Now()
+			ts := startServer(t, serverOpts{public: relay, now: func() time.Time { return start }})
 			code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
 			if err != nil {
 				t.Fatalf("Pair() error = %v", err)
