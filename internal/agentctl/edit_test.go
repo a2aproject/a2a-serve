@@ -229,6 +229,40 @@ func TestEditStoresSecretValues(t *testing.T) {
 	}
 }
 
+func TestEditNormalizesName(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	edit := func(path string) error {
+		return os.WriteFile(path, []byte("name: My Agent # shown to peers\nagent: opencode\n"), 0o600)
+	}
+
+	res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if diff := cmp.Diff([]agentdir.Change{{Setting: "name", Old: "coder", New: "my-agent"}}, res.Changes); diff != "" {
+		t.Fatalf("Edit() changes wrong result (-want +got) diff = %s", diff)
+	}
+	if res.Name != "my-agent" {
+		t.Fatalf("Edit() name = %q, want %q", res.Name, "my-agent")
+	}
+	saved, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := "name: my-agent # shown to peers"; !strings.Contains(string(saved), want) {
+		t.Fatalf("config.yaml = %q, want %q", saved, want)
+	}
+	cfg, err := d.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if cfg.Name != "my-agent" {
+		t.Fatalf("saved name = %q, want %q", cfg.Name, "my-agent")
+	}
+}
+
 func TestEditRefusesMessengers(t *testing.T) {
 	t.Parallel()
 	const refused = "# ERROR: messengers are changed with a2a-serve messenger add and a2a-serve messenger rm\n"

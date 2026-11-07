@@ -172,23 +172,52 @@ func (s *Store) Prune() error {
 	return s.update(func(creds []Credential) ([]Credential, bool) { return creds, false })
 }
 
-// Has reports whether [Store.Delete] would remove a credential for url.
-func (s *Store) Has(u string) (bool, error) {
+// isJoinedToken reports whether c is a token that `pair join` saved, a caller or a
+// node token, and not an owner token that a local server saved.
+func isJoinedToken(c Credential) bool { return c.Dir == "" }
+
+// ListJoined returns the tokens that `pair join` saved. Owner tokens saved
+// by local servers don't count.
+func (s *Store) ListJoined() ([]Credential, error) {
 	creds, err := s.List()
+	if err != nil {
+		return nil, err
+	}
+	return slices.DeleteFunc(creds, func(c Credential) bool { return !isJoinedToken(c) }), nil
+}
+
+// HasJoined reports whether [Store.DeleteJoined] would remove a token for
+// the agent or node at u.
+func (s *Store) HasJoined(u string) (bool, error) {
+	creds, err := s.ListJoined()
 	if err != nil {
 		return false, err
 	}
-	return slices.ContainsFunc(creds, func(x Credential) bool { return x.URL == Normalize(u) }), nil
+	return slices.ContainsFunc(creds, func(c Credential) bool { return c.URL == Normalize(u) }), nil
+}
+
+// DeleteJoined removes the tokens that `pair join` saved for the agent or
+// node at u, and keeps the owner tokens that local servers saved for the same
+// URL. It reports whether one existed.
+func (s *Store) DeleteJoined(u string) (bool, error) {
+	found := false
+	err := s.update(func(creds []Credential) ([]Credential, bool) {
+		n := len(creds)
+		creds = slices.DeleteFunc(creds, func(c Credential) bool { return isJoinedToken(c) && c.URL == Normalize(u) })
+		found = len(creds) != n
+		return creds, found
+	})
+	return found, err
 }
 
 // Joined returns the caller token that `pair join` saved for the agent at
-// u, if there is one. Owner tokens saved by a local server don't count.
+// u, if there is one.
 func (s *Store) Joined(u string) (Credential, bool, error) {
-	creds, err := s.List()
+	creds, err := s.ListJoined()
 	if err != nil {
 		return Credential{}, false, err
 	}
-	i := slices.IndexFunc(creds, func(c Credential) bool { return c.Kind == "" && c.Dir == "" && c.URL == Normalize(u) })
+	i := slices.IndexFunc(creds, func(c Credential) bool { return c.Kind == "" && c.URL == Normalize(u) })
 	if i < 0 {
 		return Credential{}, false, nil
 	}

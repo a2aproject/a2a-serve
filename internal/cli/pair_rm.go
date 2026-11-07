@@ -123,7 +123,7 @@ func forgetJoined(cfg *globalConfig, agentURL string, dryRun bool) error {
 		return err
 	}
 	if dryRun {
-		ok, err := store.Has(agentURL)
+		ok, err := store.HasJoined(agentURL)
 		if err != nil {
 			return err
 		}
@@ -136,7 +136,7 @@ func forgetJoined(cfg *globalConfig, agentURL string, dryRun bool) error {
 		_, err = fmt.Fprintf(cfg.Out, "would delete the token you saved for %s\n%s\n", agentURL, dryRunNote)
 		return err
 	}
-	ok, err := store.Delete(agentURL)
+	ok, err := store.DeleteJoined(agentURL)
 	if err != nil {
 		return err
 	}

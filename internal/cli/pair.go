@@ -67,7 +67,7 @@ func joinedCredential(cfg *globalConfig, url string) (credstore.Credential, erro
 	if err != nil {
 		return credstore.Credential{}, err
 	}
-	creds, err := store.List()
+	creds, err := store.ListJoined()
 	if err != nil {
 		return credstore.Credential{}, err
 	}
@@ -92,7 +92,7 @@ func joinedCompletions(cfg *globalConfig) ([]cobra.Completion, error) {
 	if err != nil {
 		return nil, err
 	}
-	creds, err := store.List()
+	creds, err := store.ListJoined()
 	if err != nil {
 		return nil, err
 	}
