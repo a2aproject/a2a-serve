@@ -415,7 +415,7 @@ func stalledStatus(t *testing.T, conn net.Conn, wait time.Duration) int {
 
 func TestUnauthenticatedClientLimit(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.PairReadTimeout = time.Hour }})
 	bearer := "Bearer " + ts.pair("me", auth.RoleOwner)
 	for range httpserver.MaxUnauthenticatedPerClient {
 		stallPair(t, ts.localURL())

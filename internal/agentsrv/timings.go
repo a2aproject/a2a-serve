@@ -20,6 +20,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
 
 // Timings are the delays and timeouts of the server. Zero fields take their
@@ -62,6 +63,9 @@ type Timings struct {
 	// StateCheckInterval is how often the server checks that its state
 	// directory still exists.
 	StateCheckInterval time.Duration
+	// PairReadTimeout bounds reading the whole body of a pairing request or
+	// of an approval page, which callers send before they authenticate.
+	PairReadTimeout time.Duration
 	// CardRefresh replaces --contact-refresh, the time between refreshes
 	// of the cards of contacts and peers, when set.
 	CardRefresh time.Duration
@@ -89,5 +93,6 @@ func (t Timings) withDefaults() Timings {
 	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)
 	t.TurnStallTimeout = cmp.Or(t.TurnStallTimeout, 10*time.Minute)
 	t.StateCheckInterval = cmp.Or(t.StateCheckInterval, 5*time.Second)
+	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	return t
 }
