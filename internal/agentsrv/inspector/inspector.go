@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -501,6 +502,10 @@ func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ sess
 		http.Error(w, "This approval is no longer open.", http.StatusConflict)
 		return
 	}
+	if a2aerr.ExecutionInProgress(err) {
+		http.Error(w, inProgressText, http.StatusConflict)
+		return
+	}
 	if err != nil && !errors.Is(err, store.ErrAnswered) {
 		slog.Error("answering a question from the inspector", "question", rec.ID, "error", err)
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
@@ -510,6 +515,10 @@ func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ sess
 	in.deps.MarkAnswered(ctx, rec.ID, label, by)
 	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
+
+// inProgressText answers a post that lost to another answer of the task,
+// such as one of a double click.
+const inProgressText = "The task is already handling another answer. Reload the page to see where it stands."
 
 // handleTaskAnswer answers the question of a task asked of its A2A caller,
 // as the owner. It refuses an answer to a question the task no longer asks,
@@ -539,6 +548,10 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 	msg, err := approvals.AnswerMessage(t.ID, t.ContextID, q.ID, opt.ID)
 	if err == nil {
 		_, err = in.deps.Sender.SendMessage(auth.InProcess(ctx, auth.Owner()), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+	}
+	if a2aerr.ExecutionInProgress(err) {
+		http.Error(w, inProgressText, http.StatusConflict)
+		return
 	}
 	if err != nil {
 		slog.Error("answering a task from the inspector", "task", t.ID, "error", err)

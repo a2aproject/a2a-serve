@@ -77,6 +77,9 @@ var sentinels = []error{
 // "permission denied: <detail>" or "<detail>: task not found", or a
 // context error. Other errors become an internal error.
 func Sanitize(err error) error {
+	if known := find(err, func(e error) bool { return a2aGoError(e) != nil }); known != nil {
+		return a2aGoError(known)
+	}
 	var a2aErr *a2a.Error
 	if errors.As(err, &a2aErr) {
 		return a2aErr
@@ -96,9 +99,6 @@ func Sanitize(err error) error {
 			}
 			return s
 		}
-	}
-	if known := a2aGoError(leaf(err)); known != nil {
-		return known
 	}
 	return a2a.NewError(a2a.ErrInternalError, "internal error")
 }
@@ -150,21 +150,19 @@ func unwrap(err error) []error {
 	return nil
 }
 
-// leaf returns the innermost error of err, following the first error of
-// errors that wrap several.
-func leaf(err error) error {
-	for {
-		next := unwrap(err)
-		if len(next) == 0 {
-			return err
-		}
-		err = next[0]
-	}
-}
-
 // executionInProgress is the message of the a2a-go error for a message to
 // a task that runs an execution.
 const executionInProgress = "task execution is already in progress"
+
+// inProgressKey marks the details of an error that [InProgress] made.
+const inProgressKey = "a2a-serve/execution-in-progress"
+
+// InProgress returns the error with msg for callers, for a message that a
+// task refused because it already runs an execution.
+// [ExecutionInProgress] recognizes it.
+func InProgress(msg string) *a2a.Error {
+	return a2a.NewError(a2a.ErrUnsupportedOperation, msg).WithDetails(map[string]any{inProgressKey: true})
+}
 
 // ExecutionInProgress reports whether err refused a message to a task
 // because the task already runs an execution.
@@ -175,6 +173,9 @@ func ExecutionInProgress(err error) bool {
 	if err.Error() == executionInProgress {
 		return true
 	}
+	if e, ok := err.(*a2a.Error); ok && e.Details[inProgressKey] == true {
+		return true
+	}
 	return slices.ContainsFunc(unwrap(err), ExecutionInProgress)
 }
 
@@ -183,7 +184,9 @@ func ExecutionInProgress(err error) bool {
 func a2aGoError(err error) error {
 	msg := err.Error()
 	switch {
-	case msg == executionInProgress || msg == "task cancelation is in progress":
+	case msg == executionInProgress:
+		return InProgress("the task is already handling a request; try again when it is done")
+	case msg == "task cancelation is in progress":
 		return a2a.NewError(a2a.ErrUnsupportedOperation, "the task is already handling a request; try again when it is done")
 	case msg == "max concurrency limit reached" || strings.HasPrefix(msg, "max scope concurrency limit reached"):
 		return a2a.NewError(a2a.ErrUnauthorized, "too many tasks are running; try again when one finishes")

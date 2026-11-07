@@ -47,13 +47,23 @@ var csrfField = regexp.MustCompile(`name="csrf" value="([^"]+)"`)
 type fakeSender struct {
 	mu   sync.Mutex
 	sent []*a2a.Message
+	err  error
 }
 
 func (s *fakeSender) SendMessage(_ context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.err != nil {
+		return nil, s.err
+	}
 	s.sent = append(s.sent, req.Message)
 	return nil, nil
+}
+
+func (s *fakeSender) fail(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.err = err
 }
 
 func (s *fakeSender) messages() []*a2a.Message {
@@ -378,10 +388,12 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 		name     string
 		task     string
 		question string
+		sendErr  error
 		want     int
 		wantSent int
 	}{
 		{name: "current question", task: "t1", question: "tool2", want: http.StatusSeeOther, wantSent: 1},
+		{name: "another answer in progress", task: "t1", question: "tool2", sendErr: a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress"), want: http.StatusConflict},
 		{name: "question changed", task: "t1", question: "tool1", want: http.StatusConflict},
 		{name: "no question in the form", task: "t1", want: http.StatusConflict},
 		{name: "nothing pending", task: "t2", question: "tool2", want: http.StatusConflict},
@@ -390,6 +402,7 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			ti := startInspector(t)
+			ti.sender.fail(tc.sendErr)
 			for _, task := range []*a2a.Task{
 				{ID: "t1", ContextID: "c1", Status: waiting},
 				{ID: "t2", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateWorking}},

@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
@@ -905,8 +906,62 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
+		ctx = i.withReply(ctx, msg.Message)
 	}
 	return ctx, nil, nil
+}
+
+// replyKey is the context key of the [reply] a request sends.
+type replyKey struct{}
+
+// reply is a message to an existing task, which the caller can see.
+type reply struct {
+	task      a2a.TaskID
+	contextID string
+	// approval is set when the reply answers the approval that the task
+	// waits for, or that an answer just took.
+	approval bool
+}
+
+// withReply returns ctx with msg, the reply to a task that it sends, for
+// After.
+func (i *callerInterceptor) withReply(ctx context.Context, msg *a2a.Message) context.Context {
+	stored, err := i.tasks.Get(ctx, msg.TaskID)
+	if err != nil {
+		return ctx
+	}
+	q := pendingApproval(stored.Task)
+	if q == nil {
+		q = lastQuestion(stored.Task)
+	}
+	approval := q != nil && answersQuestion(msg, q)
+	return context.WithValue(ctx, replyKey{}, reply{task: msg.TaskID, contextID: stored.Task.ContextID, approval: approval})
+}
+
+// lastQuestion returns the question of the last agent message in the
+// history of task, which the messages after it answer.
+func lastQuestion(task *a2a.Task) *approvals.Question {
+	for _, m := range slices.Backward(task.History) {
+		if m.Role == a2a.MessageRoleAgent {
+			return approvals.FromMessage(m)
+		}
+	}
+	return nil
+}
+
+// After names the task, and what to do next, in the error of a reply that
+// the task refused since it already runs an execution.
+func (i *callerInterceptor) After(ctx context.Context, _ *a2asrv.CallContext, resp *a2asrv.Response) error {
+	r, ok := ctx.Value(replyKey{}).(reply)
+	if !ok || !a2aerr.ExecutionInProgress(resp.Err) {
+		return nil
+	}
+	if r.approval {
+		resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s already got an answer to this question; see where it stands with a2a task get %s", r.task, r.task))
+		return nil
+	}
+	resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s is still working on an earlier message; check it with a2a task get %s, and once it is done, continue with a2a send --context-id %s", r.task, r.task, r.contextID))
+	return nil
 }
 
 // checkUnfinished refuses a new task of a caller who has
