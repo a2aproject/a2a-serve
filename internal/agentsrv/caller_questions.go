@@ -195,23 +195,23 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		p, _ := auth.Caller(ctx)
 		outcomes, stop := e.watches.Await(execCtx.ContextID)
 		defer stop()
-		err = e.approvals.Answer(ctx, rec, p, option)
+		out, err := e.approvals.Answer(ctx, rec, p, option, auth.DisplayPrincipal(p.ID))
 		switch {
 		case errors.Is(err, approvals.ErrNotApprover):
 			stop()
 			yield(nil, fmt.Errorf("%w: only the person who started the task or an owner can answer this approval", a2a.ErrUnauthorized))
 			return
-		case errors.Is(err, store.ErrAnswered) || errors.Is(err, approvals.ErrClosed):
+		case err != nil:
+			stop()
+			yield(nil, fmt.Errorf("answering %s: %w", rec.Contact, err))
+			return
+		case out != approvals.Answered:
 			// Someone answered it elsewhere, such as in the inspector, so its
 			// result is posted into the conversation as a new turn.
 			stop()
 			msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(fmt.Sprintf("This approval for %s was already answered; its result comes into this conversation.", rec.Contact)))
 			msg.TaskID, msg.ContextID = execCtx.TaskID, execCtx.ContextID
 			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, msg), nil)
-			return
-		case err != nil:
-			stop()
-			yield(nil, fmt.Errorf("answering %s: %w", rec.Contact, err))
 			return
 		}
 		if !yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateWorking, nil), nil) {

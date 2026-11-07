@@ -402,8 +402,8 @@ func TestRemoteApprovalOfAsyncCallAnsweredElsewhereEndsItsQuestionTask(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := assistant.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0]); err != nil {
-		t.Fatalf("Answer() error = %v", err)
+	if out, err := assistant.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0], "owner"); err != nil || out != approvals.Answered {
+		t.Fatalf("Answer() = %v, %v, want %v", out, err, approvals.Answered)
 	}
 
 	deadline := time.Now().Add(10 * time.Second)

@@ -419,6 +419,13 @@ func (s *Store) QuestionByToken(ctx context.Context, token string) (Question, er
 	return s.question(ctx, `token = ?`, token)
 }
 
+// OpenQuestionOf returns the newest question record of this agent's task
+// taskID for its question hitlID that isn't closed, answered or not.
+func (s *Store) OpenQuestionOf(ctx context.Context, taskID, hitlID string) (Question, error) {
+	return scanQuestion(s.reads.QueryRowContext(ctx, `SELECT `+questionColumns+` FROM questions
+		WHERE task_id = ? AND hitl_id = ? AND contact = '' AND NOT closed ORDER BY created DESC LIMIT 1`, taskID, hitlID))
+}
+
 const questionColumns = `id, token, task_id, context_id, contact, hitl_id, user_id, data, created, answered_by, answer, closed`
 
 func scanQuestion(row interface{ Scan(...any) error }) (Question, error) {

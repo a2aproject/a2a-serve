@@ -547,11 +547,9 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Tasks:        s.tasks,
 		Approvals:    s.approvals,
 		ListPairings: s.pairings.List,
-		Sender:       s.sender,
 		Config:       s.rt.Config,
 		BaseURL:      s.bestURL,
 		Status:       s.status,
-		MarkAnswered: s.chatApprovals.MarkAnswered,
 	})
 	return nil
 }
