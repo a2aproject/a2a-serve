@@ -45,6 +45,8 @@ const (
 	// maxCatchUpMessages bounds the messages read per channel when catching
 	// up after an outage; the newest are read.
 	maxCatchUpMessages = 1000
+	// maxCatchUpRetry caps the delay between attempts to catch up.
+	maxCatchUpRetry = time.Minute
 	// convsKey lists the conversations to catch up on after a reconnect.
 	convsKey = "discord:convs"
 	// maxConvs bounds the conversations kept; the least recently active
@@ -66,6 +68,9 @@ type Messenger struct {
 	queue *orderedQueue
 	// threadRetry is the first delay before starting a thread is tried again.
 	threadRetry time.Duration
+	// catchUpRetry is the first delay before a failed catch-up is tried
+	// again; it doubles up to maxCatchUpRetry.
+	catchUpRetry time.Duration
 
 	mu     sync.Mutex
 	in     chan<- messenger.Inbound
@@ -74,6 +79,12 @@ type Messenger struct {
 	// convs are the conversations to catch up on, least recently active
 	// first.
 	convs []string
+	// catching maps a conversation whose catch-up hasn't succeeded yet to
+	// the ID of that catch-up. Live messages of such a conversation don't
+	// move its cursor, which would skip the messages it hasn't caught up on.
+	catching map[string]uint64
+	// catchUps counts the catch-ups started.
+	catchUps uint64
 
 	// cursorMu serializes updates of the last message seen of conversations.
 	cursorMu sync.Mutex
@@ -91,7 +102,15 @@ var noMentions = &discordgo.MessageAllowedMentions{Parse: []discordgo.AllowedMen
 // New returns a messenger for the bot with token. kv keeps the last message
 // seen per conversation.
 func New(token string, kv messenger.KV) *Messenger {
-	return &Messenger{token: token, kv: kv, queue: newOrderedQueue(), threadRetry: 500 * time.Millisecond}
+	return newMessenger(token, kv, time.Second)
+}
+
+func newMessenger(token string, kv messenger.KV, catchUpRetry time.Duration) *Messenger {
+	return &Messenger{
+		token: token, kv: kv, queue: newOrderedQueue(),
+		threadRetry: 500 * time.Millisecond, catchUpRetry: catchUpRetry,
+		catching: map[string]uint64{},
+	}
 }
 
 // Name implements [messenger.Messenger].
@@ -211,7 +230,9 @@ type readyAPI interface {
 // ready catches up on messages missed while disconnected, since the gateway
 // doesn't replay them, and registers the application commands. The catch-up
 // starts from the cursors as they are now and is queued before the live
-// messages of its conversation, which move the cursors.
+// messages of its conversation. A failed catch-up is tried again with a
+// growing delay, and until one succeeds the live messages of its conversation
+// don't move the cursor.
 func (c *Messenger) ready(api readyAPI, st *discordgo.State, appID string) {
 	c.mu.Lock()
 	convs, ctx := slices.Clone(c.convs), c.ctx
@@ -225,7 +246,8 @@ func (c *Messenger) ready(api readyAPI, st *discordgo.State, appID string) {
 		if !ok || last == "" {
 			continue
 		}
-		c.queue.do(conv, func() { c.catchUp(api, st, conv, last) })
+		id := c.beginCatchUp(conv)
+		c.queue.do(conv, func() { c.runCatchUp(api, st, conv, last, id, c.catchUpRetry) })
 	}
 	go registerCommands(api, appID)
 }
@@ -257,28 +279,118 @@ type threadStarter interface {
 	MessageThreadStartComplex(channelID, messageID string, data *discordgo.ThreadStart, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 }
 
-// catchUp delivers the messages of conv after last.
-func (c *Messenger) catchUp(s restAPI, st *discordgo.State, conv, last string) {
+// beginCatchUp marks conv as catching up and returns the ID of the catch-up,
+// which a newer one of conv supersedes.
+func (c *Messenger) beginCatchUp(conv string) uint64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.catchUps++
+	c.catching[conv] = c.catchUps
+	return c.catchUps
+}
+
+func (c *Messenger) catchUpCurrent(conv string, id uint64) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.catching[conv] == id
+}
+
+func (c *Messenger) endCatchUp(conv string, id uint64) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.catching[conv] == id {
+		delete(c.catching, conv)
+	}
+}
+
+func (c *Messenger) isCatchingUp(conv string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	_, ok := c.catching[conv]
+	return ok
+}
+
+// runCatchUp catches up on conv from last. If that fails for a reason that
+// may pass, it queues another attempt after delay, from the cursor as it is
+// then.
+func (c *Messenger) runCatchUp(api restAPI, st *discordgo.State, conv, last string, id uint64, delay time.Duration) {
+	err := c.catchUp(api, st, conv, last)
+	if err == nil {
+		c.endCatchUp(conv, id)
+		return
+	}
+	c.mu.Lock()
+	ctx := c.ctx
+	c.mu.Unlock()
+	if ctx.Err() != nil || permanent(err) {
+		slog.Warn("discord: catching up", "messenger", conv, "error", err)
+		c.endCatchUp(conv, id)
+		return
+	}
+	slog.Warn("discord: catching up failed; trying again", "messenger", conv, "error", err, "delay", delay)
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(delay):
+		}
+		c.queue.do(conv, func() {
+			if !c.catchUpCurrent(conv, id) {
+				return
+			}
+			next, ok, err := c.kv.Get(ctx, lastKey(conv))
+			if err != nil || !ok || next == "" {
+				slog.Warn("discord: loading the last message seen", "messenger", conv, "error", err)
+				c.endCatchUp(conv, id)
+				return
+			}
+			c.runCatchUp(api, st, conv, next, id, min(delay*2, maxCatchUpRetry))
+		})
+	}()
+}
+
+// permanent reports whether err is Discord refusing the request in a way
+// that trying again doesn't change, such as a deleted channel. Rate limits,
+// server errors and network errors may pass.
+func permanent(err error) bool {
+	var restErr *discordgo.RESTError
+	if !errors.As(err, &restErr) || restErr.Response == nil {
+		return false
+	}
+	code := restErr.Response.StatusCode
+	return code >= 400 && code < 500 && code != http.StatusTooManyRequests
+}
+
+// catchUp delivers the messages of conv after last. It returns an error if it
+// couldn't read the messages or tell what kind of channel conv is, and
+// errStopped if the messenger stopped first.
+func (c *Messenger) catchUp(s restAPI, st *discordgo.State, conv, last string) error {
 	msgs, skipped, err := missed(s, conv, last)
 	if err != nil {
-		slog.Warn("discord: catching up", "messenger", conv, "error", err)
-		return
+		return err
 	}
 	if skipped > 0 {
 		slog.Warn("discord: catching up on the newest missed messages only; older ones are skipped",
 			"messenger", conv, "read", len(msgs), "skipped_at_least", skipped)
 	}
 	if len(msgs) == 0 {
-		return
+		return nil
 	}
-	direct := isDirect(s, st, conv)
+	direct, err := isDirect(s, st, conv)
+	if err != nil {
+		return err
+	}
 	for _, m := range msgs {
 		if !c.handleMessage(s, m, direct) {
-			return
+			return errStopped
 		}
-		c.trackInbound(conv, m.ID)
+		c.setCursor(conv, m.ID, newer(m.ID))
+		c.remember(conv)
 	}
+	return nil
 }
+
+var errStopped = errors.New("discord: stopped")
 
 // missed returns the newest messages of conv after last, up to
 // maxCatchUpMessages, oldest first. If older ones are left unread, it also
@@ -332,23 +444,34 @@ func compareSnowflakes(a, b string) int {
 // isDirect reports whether conv is a direct message channel. Messages read
 // over REST have no guild_id and the state may not know the channel yet, so
 // it asks Discord; a channel that can't be found counts as a guild channel,
-// where the bot only answers when mentioned.
-func isDirect(api restAPI, st *discordgo.State, conv string) bool {
+// where the bot only answers when mentioned. Other errors may pass and are
+// returned, since a direct message taken for a guild message is dropped.
+func isDirect(api restAPI, st *discordgo.State, conv string) (bool, error) {
 	ch, err := st.Channel(conv)
 	if err != nil {
 		if ch, err = api.Channel(conv); err != nil {
-			slog.Warn("discord: looking up messenger", "messenger", conv, "error", err)
-			return false
+			if permanent(err) {
+				slog.Warn("discord: looking up messenger", "messenger", conv, "error", err)
+				return false, nil
+			}
+			return false, fmt.Errorf("discord: looking up channel: %w", err)
 		}
 	}
-	return ch.Type == discordgo.ChannelTypeDM || ch.Type == discordgo.ChannelTypeGroupDM
+	return ch.Type == discordgo.ChannelTypeDM || ch.Type == discordgo.ChannelTypeGroupDM, nil
 }
 
-// trackInbound moves the catch-up cursor of a conversation to a message the
-// bot received, unless it is already past it.
+// trackInbound moves the catch-up cursor of a conversation to a live message
+// the bot received, unless it is already past it or the conversation hasn't
+// caught up on the messages before it.
 func (c *Messenger) trackInbound(conv, msgID string) {
-	c.setCursor(conv, msgID, func(old string, ok bool) bool { return !ok || compareSnowflakes(msgID, old) > 0 })
+	if !c.isCatchingUp(conv) {
+		c.setCursor(conv, msgID, newer(msgID))
+	}
 	c.remember(conv)
+}
+
+func newer(msgID string) func(old string, ok bool) bool {
+	return func(old string, ok bool) bool { return !ok || compareSnowflakes(msgID, old) > 0 }
 }
 
 // trackSent starts the catch-up cursor of a conversation with a message the
@@ -390,6 +513,9 @@ func (c *Messenger) remember(conv string) {
 	if len(c.convs) > maxConvs {
 		evicted = slices.Clone(c.convs[:len(c.convs)-maxConvs])
 		c.convs = slices.Delete(c.convs, 0, len(evicted))
+		for _, old := range evicted {
+			delete(c.catching, old)
+		}
 	}
 	if err := c.kv.Set(ctx, convsKey, strings.Join(c.convs, ",")); err != nil {
 		slog.Warn("discord: recording conversations", "error", err)
