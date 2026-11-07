@@ -59,6 +59,7 @@ SIM_AGENT="${SIM_AGENT:-opencode}"
 [[ -n "${!SIM_SECRET:-}" ]] || die "set $SIM_SECRET to the model key, or SIM_SECRET to the name of the variable that holds it"
 command -v docker >/dev/null || die "docker is not on PATH"
 command -v go >/dev/null || die "go is not on PATH"
+command -v jq >/dev/null || die "jq is not on PATH"
 
 mkdir -p "$ROOT/bin" "$ROOT/lanes"
 chmod 700 "$ROOT"
@@ -137,7 +138,10 @@ if [[ "$SMOKE" == 1 ]]; then
     cd "$SIM_LANE/proj"
     sim_start
     trap 'a2a-serve stop >/dev/null' EXIT
-    a2a send -a "$(sim_url)" "Reply with only the word PONG." | grep -q PONG || die "smoke test: no PONG from the agent; see a2a-serve logs"
+    # The history echoes the prompt, so check the state and the artifacts.
+    a2a send -o json -a "$(sim_url)" "Reply with only the word PONG." |
+      jq -e '.task.status.state == "TASK_STATE_COMPLETED" and any(.task.artifacts[]?.parts[]?.text // ""; test("PONG"))' >/dev/null ||
+      die "smoke test: no PONG from the agent; see a2a-serve logs"
     echo "smoke test passed"
   )
 fi

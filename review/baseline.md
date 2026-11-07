@@ -53,3 +53,22 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **`restart`, `config set --restart` and `config unset --restart` all restart the agent.** The flags apply a change and restart in one step, and each form is documented.
 - **A2A request bodies have a 30-second idle timeout and no total read deadline.** #115 chose this.
 - **`card-skills` can be set only with `config edit`, and `config unset` can clear it.** `docs/reference/configuration.md` documents this.
+
+### User simulation
+
+These came from the user-simulation round at `9341d2f`, and their locations refer to that commit. They are wording or output polish with no lost work and no wrong instruction, or the behavior is intended.
+
+- **`start` with no key for the model's provider starts, and the first task fails.** This is the design from #174. The start banner, `doctor` and the failed task all name the missing key.
+- **`start --quiet` still prints the status block** (`internal/cli/start.go:27`). The flag hides only the image pull and build output, as its help says.
+- **An answer to a finished task shows the raw state enum, such as `TASK_STATE_COMPLETED`** (`internal/a2aerr/a2aerr.go:89-97`). The message is still clear enough to act on.
+- **The per-caller limit of 8 unfinished tasks gives two different refusal texts** (`internal/a2aerr/a2aerr.go:188-189`, `internal/agentsrv/server.go:213`). Both tell the caller to wait.
+- **`config set --restart` prints "restart to apply" before it restarts** (`internal/cli/config.go:90`). It's a cosmetic message order.
+- **`config unset --description` gets only the generic "unknown flag" hint.** `unset` takes setting names, and the help shows them.
+- **`doctor` has no `--timeout` and waits 60 s on a frozen server** (`internal/doctor/agent.go:414`). A frozen server is rare, and the default timeout bounds the wait.
+- **`schedule run` points to `logs`, which doesn't name the schedule** (`internal/cli/schedule_run.go:41`), **and a long invalid schedule name is echoed in full without the 64-character limit** (`internal/schedule/schedule.go:38-44`).
+- **The `status` hint to turn on a recipe's optional MCP server doesn't restore the mount it needs** (`internal/cli/status.go:269`). It rests on one run that never started the real server.
+- **Inspector approval cards don't say who started the task** (`internal/agentsrv/inspector/pages.go:69`). The conversation page shows it.
+- **The question for an edit or a fetch doesn't name the action.** #167 tracks the question format.
+- **`recipe --yes` reports one missing variable per run** (`internal/cli/recipe.go:437-445`). Each run names the variable and the flag that sets it.
+- **`pair invite --webhook -o json` prints a zero `created` time for the new node** (`internal/pairings/pairings.go:240-252`). `pair get` shows the real time.
+- **In an agent-to-agent call, the caller's agent may run `a2a send --task-id <callee task> once` itself.** That is model behavior. The callee's real approval reaches the user as its own task.

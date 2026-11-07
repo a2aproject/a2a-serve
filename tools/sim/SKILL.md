@@ -180,5 +180,9 @@ by the harness contract tests proposed in #148.
   owner. The server writes the owner token to the `HOME` it starts in.
 - Lanes share the model key. Many parallel lanes can hit rate limits.
   Lanes back off on HTTP 429, and so should you when you reproduce bugs.
+- At most six background subagents run at once. Run the extra lanes as a
+  foreground batch, or in a second wave.
+- To run chaos without disturbing rechecks, give the chaos lanes their own
+  run directory (`setup.sh --root`). Chaos only touches its own directory.
 - Containers from a lane that hit its time limit keep running. Run
   `cleanup.sh` after every round, including failed ones.
