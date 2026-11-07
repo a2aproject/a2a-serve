@@ -45,18 +45,19 @@ type Unit struct {
 var ErrUnsupported = errors.New("--service is supported on Linux (systemd) and macOS (launchd); use --detach instead")
 
 // Detach starts the unit's process in its own session, with output appended
-// to the log. The returned channel is closed when the process exits.
-func Detach(u Unit) (<-chan struct{}, error) {
+// to the log, and returns its PID. The returned channel is closed when the
+// process exits.
+func Detach(u Unit) (pid int, exited <-chan struct{}, err error) {
 	if err := os.MkdirAll(filepath.Dir(u.LogPath), 0o700); err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	log, err := fsutil.OpenNoFollow(u.LogPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o600)
 	if err != nil {
-		return nil, err
+		return 0, nil, err
 	}
 	devnull, err := os.Open(os.DevNull)
 	if err != nil {
-		return nil, errors.Join(err, log.Close())
+		return 0, nil, errors.Join(err, log.Close())
 	}
 	cmd := exec.Command(u.Exe, u.Args...)
 	cmd.Dir = u.Dir
@@ -66,18 +67,18 @@ func Detach(u Unit) (<-chan struct{}, error) {
 	startErr := cmd.Start()
 	closeErr := errors.Join(log.Close(), devnull.Close())
 	if startErr != nil {
-		return nil, startErr
+		return 0, nil, startErr
 	}
 	// Waiting reaps the process if it exits while this one runs, so a crash
 	// isn't hidden by a zombie that still looks alive.
-	exited := make(chan struct{})
+	done := make(chan struct{})
 	go func() {
-		defer close(exited)
+		defer close(done)
 		if err := cmd.Wait(); err != nil {
 			slog.Debug("detached process exited", "error", err)
 		}
 	}()
-	return exited, closeErr
+	return cmd.Process.Pid, done, closeErr
 }
 
 func run(name string, args ...string) error {

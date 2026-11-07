@@ -119,14 +119,14 @@ func TestWaitReadyFailsWhenServerStops(t *testing.T) {
 	dir := newAgent(t)
 	var log bytes.Buffer
 	log.WriteString("pulling the harness image\n")
-	slog.New(slog.NewTextHandler(&log, nil)).Error(stopMsg, "error", errors.New("pulling the image: exit status 1"))
+	log.WriteString(stopRecord(42, "pulling the image: exit status 1"))
 	if err := os.WriteFile(dir.LogPath(), log.Bytes(), 0o600); err != nil {
 		t.Fatalf("WriteFile() error = %v", err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 
-	err := waitReady(ctx, dir, 0, func() bool { return true }, io.Discard)
+	err := waitReady(ctx, dir, 0, 0, func() bool { return true }, io.Discard)
 
 	if err == nil || !strings.Contains(err.Error(), "exit status 1") {
 		t.Fatalf("waitReady() error = %v, want the error the server stopped with", err)
@@ -137,11 +137,6 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("unix sockets are not used on this platform")
-	}
-	stop := func(err string) string {
-		var b bytes.Buffer
-		slog.New(slog.NewTextHandler(&b, nil)).Error(stopMsg, "error", errors.New(err))
-		return b.String()
 	}
 	type result struct {
 		Out, Message, Hint string
@@ -154,7 +149,7 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 		{
 			name: "error and hint the server printed",
 			log: "✓ opencode is running (ACP)\n" +
-				stop("listening on localhost:1: address already in use") +
+				stopRecord(42, "listening on localhost:1: address already in use") +
 				"Error: listening on localhost:1: address already in use\n" +
 				"hint: pick another port\n",
 			want: result{
@@ -169,8 +164,40 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 			want: result{Message: "the server exited: the server is already running in /a (a2a-serve status)"},
 		},
 		{
+			name: "errors of two servers",
+			log: "Error: the server is already running in /a (a2a-serve status)\n" +
+				"Error: the server is already running in /a (a2a-serve status)\n",
+			want: result{Message: "the server exited: the server is already running in /a (a2a-serve status)"},
+		},
+		{
+			name: "error before the progress of another server",
+			log: "Error: the server is already running in /a (a2a-serve status)\n" +
+				"hint: run a2a-serve status\n" +
+				"✓ opencode is running (ACP)\n" +
+				"hint: not part of the error\n",
+			want: result{
+				Out:     "✓ opencode is running (ACP)\nhint: not part of the error\n",
+				Message: "the server exited: the server is already running in /a (a2a-serve status)",
+				Hint:    "run a2a-serve status",
+			},
+		},
+		{
+			name: "stop record of another server first",
+			log: stopRecord(7, "the server is already running in /a (a2a-serve status)") +
+				"Error: the server is already running in /a (a2a-serve status)\n" +
+				"✓ opencode is running (ACP)\n" +
+				stopRecord(42, "listening on localhost:1: address already in use") +
+				"Error: listening on localhost:1: address already in use\n" +
+				"hint: pick another port\n",
+			want: result{
+				Out:     "✓ opencode is running (ACP)\n",
+				Message: "the server exited: listening on localhost:1: address already in use",
+				Hint:    "pick another port",
+			},
+		},
+		{
 			name: "stop record only",
-			log:  "pulling the harness image\n" + stop("pulling the image: exit status 1"),
+			log:  "pulling the harness image\n" + stopRecord(42, "pulling the image: exit status 1"),
 			want: result{
 				Out:     "pulling the harness image\n",
 				Message: "the server exited: pulling the image: exit status 1",
@@ -188,7 +215,7 @@ func TestWaitReadyReportsServerErrorOnce(t *testing.T) {
 			defer cancel()
 			var out bytes.Buffer
 
-			err := waitReady(ctx, dir, 0, func() bool { return false }, &out)
+			err := waitReady(ctx, dir, 0, 42, func() bool { return false }, &out)
 
 			ce := clierr.Classify(err)
 			if ce == nil {
@@ -217,4 +244,37 @@ func TestStartDetachedWhileRunning(t *testing.T) {
 	if want := "✓ coder is already running (a2a-serve status)\n"; out.String() != want {
 		t.Fatalf("Start() output = %q, want %q", out.String(), want)
 	}
+}
+
+func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	dir := newAgent(t)
+	log := stopRecord(7, "the server is already running in /a (a2a-serve status)") +
+		"Error: the server is already running in /a (a2a-serve status)\n" +
+		"hint: run a2a-serve status\n" +
+		"✓ opencode is running (ACP)\n"
+	if err := os.WriteFile(dir.LogPath(), []byte(log), 0o600); err != nil {
+		t.Fatalf("WriteFile() error = %v", err)
+	}
+	serveControl(t, dir, &fakeControl{})
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var out bytes.Buffer
+
+	if err := waitReady(ctx, dir, 0, 42, func() bool { return true }, &out); err != nil {
+		t.Fatalf("waitReady() error = %v", err)
+	}
+	if want := "✓ opencode is running (ACP)\n"; out.String() != want {
+		t.Fatalf("waitReady() output = %q, want %q", out.String(), want)
+	}
+}
+
+// stopRecord is the record a server with pid logs when it stops with err.
+func stopRecord(pid int, err string) string {
+	var b bytes.Buffer
+	logStop(slog.New(slog.NewTextHandler(&b, nil)), pid, errors.New(err))
+	return b.String()
 }
