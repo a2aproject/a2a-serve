@@ -210,75 +210,47 @@ func (c *ChatTurns) answerIn(ctx context.Context, ch messenger.Messenger, in mes
 	// A turn queued behind the task holds a busy conversation, so the rest
 	// of the task is rendered without it, as for answers given elsewhere.
 	if rec.Contact == "" && rec.ContextID == own && !c.queue.busy(in.Messenger, in.Conv) {
-		waiting, err := c.approvals.Waiting(ctx, rec)
-		if err != nil {
-			slog.Error("checking whether a question is still open", "question", rec.ID, "error", err)
-			c.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
-			c.restorePending(ctx, in, rec)
-			return
-		}
-		if !waiting {
-			c.approvals.Close(ctx, rec.ID)
-			c.reply(ctx, ch, in, "This question is no longer open.")
-			return
-		}
-		msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
-		if err != nil {
-			slog.Error("answering question", "question", rec.ID, "error", err)
-			c.reply(ctx, ch, in, "Couldn't send the answer. Try again.")
-			c.restorePending(ctx, in, rec)
-			return
-		}
-		if err := c.store.AnswerQuestion(ctx, rec.ID, p.ID, opt.ID); err != nil {
-			if !errors.Is(err, store.ErrAnswered) {
-				slog.Error("answering question", "question", rec.ID, "error", err)
-				c.reply(ctx, ch, in, "Couldn't record the answer. Try again.")
-				c.restorePending(ctx, in, rec)
-				return
-			}
-			c.reply(ctx, ch, in, "Already answered.")
-			return
-		}
 		unlock := c.queue.lock(in.Messenger, in.Conv)
 		defer unlock()
-		answered := false
-		c.streamThen(ctx, ch, in.Conv, messenger.Ref{}, p, &a2a.SendMessageRequest{Message: msg}, func(err error) {
-			if err == nil {
-				answered = true
-				c.chat.MarkAnswered(ctx, rec.ID, opt.Label, who)
-				return
-			}
-			if err := c.store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); err != nil {
-				slog.Error("clearing an undelivered answer", "question", rec.ID, "error", err)
-			}
-		})
-		if !answered {
+		sent := false
+		send := func(ctx context.Context, msg *a2a.Message, accepted func(error)) {
+			sent = true
+			c.streamThen(ctx, ch, in.Conv, messenger.Ref{}, p, &a2a.SendMessageRequest{Message: msg}, accepted)
+		}
+		out, err := c.approvals.AnswerWith(ctx, rec, p, opt, who, send)
+		if !sent {
+			c.answered(ctx, ch, in, rec, out, err)
+			return
+		}
+		// The stream shows why an answer that was sent didn't take.
+		if err != nil || out != approvals.Answered {
 			c.restorePending(ctx, in, rec)
 			return
 		}
 		c.offerPreference(ctx, ch, in, p, rec, q, opt)
 		return
 	}
-	err = c.approvals.Answer(ctx, rec, p, opt)
-	c.answered(ctx, ch, in, rec, opt, who, err)
-	if err == nil {
+	out, err := c.approvals.Answer(ctx, rec, p, opt, who)
+	c.answered(ctx, ch, in, rec, out, err)
+	if err == nil && out == approvals.Answered {
 		c.offerPreference(ctx, ch, in, p, rec, q, opt)
 	}
 }
 
-// answered reports the result of answering a question in a conversation.
-func (c *ChatTurns) answered(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, rec store.Question, opt approvals.Option, who string, err error) {
+// answered reports the outcome of answering a question in a conversation,
+// or err.
+func (c *ChatTurns) answered(ctx context.Context, ch messenger.Messenger, in messenger.Inbound, rec store.Question, out approvals.Outcome, err error) {
 	switch {
-	case errors.Is(err, store.ErrAnswered):
-		c.reply(ctx, ch, in, "Already answered.")
-	case errors.Is(err, approvals.ErrClosed):
-		c.approvals.Close(ctx, rec.ID)
-		c.reply(ctx, ch, in, "This question is no longer open.")
 	case err != nil:
 		c.restorePending(ctx, in, rec)
 		c.reply(ctx, ch, in, "Couldn't send the answer: "+err.Error())
-	default:
-		c.chat.MarkAnswered(ctx, rec.ID, opt.Label, who)
+	case out == approvals.AlreadyAnswered:
+		c.reply(ctx, ch, in, "Already answered.")
+	case out == approvals.Closed:
+		c.reply(ctx, ch, in, "This question is no longer open.")
+	case out == approvals.InProgress:
+		c.restorePending(ctx, in, rec)
+		c.reply(ctx, ch, in, "The task is already handling another answer. Try again if the question still waits.")
 	}
 }
 

@@ -1222,6 +1222,36 @@ func TestRemoteQuestionStoredOnce(t *testing.T) {
 	}
 }
 
+func TestOpenQuestionOf(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	for _, q := range []Question{
+		{ID: "answered", Token: "t1", TaskID: "task", HitlID: "tool1"},
+		{ID: "other question", Token: "t2", TaskID: "task", HitlID: "tool2"},
+		{ID: "remote", Token: "t3", TaskID: "task", HitlID: "tool1", Contact: "reviewer"},
+		{ID: "closed", Token: "t4", TaskID: "task", HitlID: "tool1"},
+	} {
+		if err := s.PutQuestion(ctx, q); err != nil {
+			t.Fatalf("PutQuestion(%s) error = %v", q.ID, err)
+		}
+	}
+	if err := s.AnswerQuestion(ctx, "answered", "user:owner", "once"); err != nil {
+		t.Fatalf("AnswerQuestion() error = %v", err)
+	}
+	if err := s.CloseQuestion(ctx, "closed"); err != nil {
+		t.Fatalf("CloseQuestion() error = %v", err)
+	}
+
+	got, err := s.OpenQuestionOf(ctx, "task", "tool1")
+	if err != nil || got.ID != "answered" {
+		t.Fatalf("OpenQuestionOf() = %q, %v, want answered", got.ID, err)
+	}
+	if _, err := s.OpenQuestionOf(ctx, "task", "tool3"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("OpenQuestionOf() of an unknown question error = %v, want %v", err, ErrNotFound)
+	}
+}
+
 func TestUnansweredQuestions(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

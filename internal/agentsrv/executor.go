@@ -949,11 +949,12 @@ func lastQuestion(task *a2a.Task) *approvals.Question {
 	return nil
 }
 
-// After names the task, and what to do next, in the error of a reply that
-// the task refused since it already runs an execution.
+// After names the task, and what to do next with the a2a CLI, in the error
+// of a reply that the task refused since it already runs an execution.
+// In-process senders, such as chats, render the outcome themselves.
 func (i *callerInterceptor) After(ctx context.Context, _ *a2asrv.CallContext, resp *a2asrv.Response) error {
 	r, ok := ctx.Value(replyKey{}).(reply)
-	if !ok || !a2aerr.ExecutionInProgress(resp.Err) {
+	if !ok || auth.IsInProcess(ctx) || !a2aerr.ExecutionInProgress(resp.Err) {
 		return nil
 	}
 	if r.approval {

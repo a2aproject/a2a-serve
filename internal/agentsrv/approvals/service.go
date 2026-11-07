@@ -27,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
@@ -153,9 +154,6 @@ func New(deps Deps) *Service {
 // ErrNotApprover is returned when someone who may not approve answers an approval.
 var ErrNotApprover = errors.New("only the person who started the task or an owner can answer this")
 
-// ErrClosed is returned when the task of a question no longer waits for its answer.
-var ErrClosed = errors.New("the task no longer waits for an answer to this question")
-
 // NewRecord stores a question so that buttons and pages can answer it.
 // contact is the agent whose task asked, or empty for this agent; user is
 // who may answer it besides owners. It returns [store.ErrExists] for a
@@ -270,64 +268,60 @@ func ApprovalTimeout(d time.Duration) string {
 // timeoutPrincipal answers the questions nobody answered in time.
 var timeoutPrincipal = auth.Principal{ID: "timeout", Role: auth.RoleOwner}
 
+// Retries of a timeout that found its task busy, such as with a reply that
+// it refused.
+const (
+	expireRetry    = time.Second
+	expireAttempts = 60
+)
+
 // expire rejects a question if nobody answered it yet.
 func (s *Service) expire(ctx context.Context, id string) {
-	rec, err := s.store.QuestionByID(ctx, id)
-	if err != nil {
-		slog.Warn("loading an expired question", "question", id, "error", err)
-		return
-	}
-	if rec.AnsweredBy != "" {
-		return
-	}
-	q := FromRecord(rec)
-	opt, ok := q.Match("reject")
-	if !ok {
-		slog.Warn("an expired question has no option to reject it", "question", id)
-		return
-	}
-	err = s.Answer(ctx, rec, timeoutPrincipal, opt)
-	switch {
-	case errors.Is(err, store.ErrAnswered), errors.Is(err, ErrClosed):
-		return
-	case err != nil:
-		slog.Warn("rejecting an expired question", "question", id, "error", err)
-		return
-	}
-	slog.Info("rejected an unanswered approval", "task", rec.TaskID, "question", id)
-	s.notifier.MarkAnswered(ctx, rec.ID, opt.Label, "timeout")
+	s.expireWith(func() (Outcome, error) {
+		rec, err := s.store.QuestionByID(ctx, id)
+		if err != nil {
+			return 0, err
+		}
+		opt, ok := FromRecord(rec).Match("reject")
+		if !ok {
+			return 0, errors.New("the question has no option to reject it")
+		}
+		return s.Answer(ctx, rec, timeoutPrincipal, opt, timeoutPrincipal.ID)
+	}, "question", id)
 }
 
 // expireTask rejects the question of a task if the task still waits for
 // its answer. Unlike expire, it needs no stored record.
 func (s *Service) expireTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question) {
-	stored, err := s.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
-	if err != nil {
-		slog.Warn("loading the task of an expired question", "task", taskID, "error", err)
-		return
+	s.expireWith(func() (Outcome, error) {
+		opt, ok := q.Match("reject")
+		if !ok {
+			return 0, errors.New("the question has no option to reject it")
+		}
+		return s.AnswerTask(ctx, taskID, contextID, q, timeoutPrincipal, opt, timeoutPrincipal.ID)
+	}, "task", taskID)
+}
+
+// expireWith runs reject, the answer of a timeout, again while the task is
+// busy with another request.
+func (s *Service) expireWith(reject func() (Outcome, error), logArgs ...any) {
+	for attempt := 1; ; attempt++ {
+		out, err := reject()
+		switch {
+		case err != nil:
+			slog.Warn("rejecting an expired question", append(logArgs, "error", err)...)
+			return
+		case out == Answered:
+			slog.Info("rejected an unanswered approval", logArgs...)
+			return
+		case out != InProgress:
+			return
+		case attempt == expireAttempts:
+			slog.Warn("rejecting an expired question: the task stayed busy", logArgs...)
+			return
+		}
+		time.Sleep(expireRetry)
 	}
-	if open := FromStatus(stored.Task.Status); open == nil || open.ID != q.ID {
-		return
-	}
-	opt, ok := q.Match("reject")
-	if !ok {
-		slog.Warn("an expired question has no option to reject it", "task", taskID)
-		return
-	}
-	msg, err := AnswerMessage(taskID, contextID, q.ID, opt.ID)
-	if err != nil {
-		slog.Warn("rejecting an expired question", "task", taskID, "error", err)
-		return
-	}
-	_, err = s.sender.SendMessage(auth.InProcess(ctx, timeoutPrincipal), &a2a.SendMessageRequest{
-		Message: msg,
-		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
-	})
-	if err != nil {
-		slog.Warn("rejecting an expired question", "task", taskID, "error", err)
-		return
-	}
-	slog.Info("rejected an unanswered approval", "task", taskID)
 }
 
 // TaskUser returns the user who started a stored task.
@@ -441,45 +435,153 @@ func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.
 	return fmt.Errorf("%w: only the person who started the task or an owner can answer this approval", a2a.ErrUnauthorized)
 }
 
-// Answer answers a stored question with option on behalf of p. Questions of
-// remote agents are forwarded to them. An answer which can't be delivered
-// isn't kept, so that the question can be answered again. It returns
-// [ErrClosed] if the task no longer waits for the answer.
-func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option) error {
+// Outcome is what became of an answer to a question.
+type Outcome int
+
+const (
+	// Answered means that the answer reached the task.
+	Answered Outcome = iota + 1
+	// Closed means that the task no longer waits for an answer to the
+	// question.
+	Closed
+	// AlreadyAnswered means that another answer to the question came first.
+	AlreadyAnswered
+	// InProgress means that the task was busy with another request, such as
+	// another answer. The question may still wait.
+	InProgress
+)
+
+// Send sends msg, an answer to the agent's own task, and calls accepted
+// once with the error of the send, as soon as the task took it or refused
+// it.
+type Send func(ctx context.Context, msg *a2a.Message, accepted func(error))
+
+// Answer answers a stored question with option on behalf of p, whom who
+// names where the question was asked. It claims the question, so that only
+// the first answer is delivered, and forwards the answers to the questions
+// of remote agents to them. An answer that isn't delivered isn't kept, so
+// that the question can be answered again. Errors are failures; the
+// Outcome tells the rest.
+func (s *Service) Answer(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string) (Outcome, error) {
+	return s.AnswerWith(ctx, rec, p, option, who, nil)
+}
+
+// AnswerWith answers like Answer. It sends the answer to a question of the
+// agent's own task with send, such as one that shows the rest of the task
+// where it was answered; a nil send uses the notifier.
+func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string, send Send) (Outcome, error) {
 	q := FromRecord(rec)
 	if q.Type == TypePermission && !MayAnswer(p, rec.User) {
-		return ErrNotApprover
+		return 0, ErrNotApprover
 	}
 	waiting, err := s.Waiting(ctx, rec)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if !waiting {
-		return ErrClosed
+		s.Close(ctx, rec.ID)
+		return Closed, nil
 	}
-	if err := s.store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID); err != nil {
-		return err
+	err = s.store.AnswerQuestion(ctx, rec.ID, p.ID, option.ID)
+	if errors.Is(err, store.ErrAnswered) {
+		label, by := s.answeredWith(ctx, rec, option, who)
+		s.notifier.MarkAnswered(ctx, rec.ID, label, by)
+		return AlreadyAnswered, nil
 	}
-	err = s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) })
-	if err == nil {
-		return nil
+	if err != nil {
+		return 0, err
 	}
-	if uerr := s.store.UnanswerQuestion(context.WithoutCancel(ctx), rec.ID, p.ID); uerr != nil {
-		return errors.Join(err, fmt.Errorf("clearing the undelivered answer: %w", uerr))
+	var (
+		out    Outcome
+		outErr error
+	)
+	accepted := func(err error) { out, outErr = s.settle(ctx, rec, p, option, who, err) }
+	if send == nil || rec.Contact != "" {
+		accepted(s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) }))
+		return out, outErr
 	}
-	return err
+	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
+	if err != nil {
+		accepted(err)
+		return out, outErr
+	}
+	send(ctx, msg, accepted)
+	return out, outErr
 }
 
-// Outcome returns what to show as the answer of a question after Answer
-// returned err. If another answer was stored first, it is the stored one;
-// otherwise it is option, given by who.
-func (s *Service) Outcome(ctx context.Context, rec store.Question, option Option, who string, err error) (label, by string) {
-	if !errors.Is(err, store.ErrAnswered) {
-		return option.Label, who
+// settle keeps the answer of p to rec if its delivery succeeded, and clears
+// it if it failed with err.
+func (s *Service) settle(ctx context.Context, rec store.Question, p auth.Principal, option Option, who string, err error) (Outcome, error) {
+	if err == nil {
+		s.notifier.MarkAnswered(ctx, rec.ID, option.Label, who)
+		return Answered, nil
 	}
-	stored, qerr := s.store.QuestionByID(ctx, rec.ID)
-	if qerr != nil {
-		slog.Warn("reloading an answered question", "question", rec.ID, "error", qerr)
+	ctx = context.WithoutCancel(ctx)
+	if uerr := s.store.UnanswerQuestion(ctx, rec.ID, p.ID); uerr != nil {
+		return 0, errors.Join(err, fmt.Errorf("clearing the undelivered answer: %w", uerr))
+	}
+	if a2aerr.ExecutionInProgress(err) {
+		return InProgress, nil
+	}
+	if waiting, werr := s.Waiting(ctx, rec); werr == nil && !waiting {
+		s.Close(ctx, rec.ID)
+		return Closed, nil
+	}
+	return 0, err
+}
+
+// AnswerTask answers q, a question of the agent's own task taskID, with
+// option on behalf of p, like Answer. It claims the record of the question
+// if there is one; without one, the task takes one answer at a time, and
+// refuses the rest.
+func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option, who string) (Outcome, error) {
+	rec, err := s.store.OpenQuestionOf(ctx, string(taskID), q.ID)
+	if err == nil {
+		return s.Answer(ctx, rec, p, option, who)
+	}
+	if !errors.Is(err, store.ErrNotFound) {
+		return 0, err
+	}
+	waits := func() (bool, error) {
+		stored, err := s.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+		if errors.Is(err, a2a.ErrTaskNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("checking task %s: %w", taskID, err)
+		}
+		if q.Type == TypePermission && !MayAnswer(p, stored.User) {
+			return false, ErrNotApprover
+		}
+		open := FromStatus(stored.Task.Status)
+		return open != nil && open.ID == q.ID, nil
+	}
+	waiting, err := waits()
+	if err != nil {
+		return 0, err
+	}
+	if !waiting {
+		return Closed, nil
+	}
+	err = s.send(ctx, taskID, contextID, q, p, option)
+	if err == nil {
+		return Answered, nil
+	}
+	if a2aerr.ExecutionInProgress(err) {
+		return InProgress, nil
+	}
+	if waiting, werr := waits(); werr == nil && !waiting {
+		return Closed, nil
+	}
+	return 0, err
+}
+
+// answeredWith returns what to show as the answer of a question that
+// another answer than option, given by who, came first to.
+func (s *Service) answeredWith(ctx context.Context, rec store.Question, option Option, who string) (label, by string) {
+	stored, err := s.store.QuestionByID(ctx, rec.ID)
+	if err != nil {
+		slog.Warn("reloading an answered question", "question", rec.ID, "error", err)
 		return option.Label, who
 	}
 	for _, o := range FromRecord(stored).Options {
@@ -494,7 +596,12 @@ func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, 
 	if rec.Contact != "" {
 		return s.remote.AnswerRemote(ctx, rec, q, option, p)
 	}
-	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
+	return s.send(ctx, a2a.TaskID(rec.TaskID), rec.ContextID, q, p, option)
+}
+
+// send sends p's answer option to q, a question of the agent's own task.
+func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option) error {
+	msg, err := AnswerMessage(taskID, contextID, q.ID, option.ID)
 	if err != nil {
 		return err
 	}
@@ -544,19 +651,18 @@ func (s *Service) HandlePage(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Unknown option.", http.StatusBadRequest)
 			return
 		}
-		err := s.Answer(r.Context(), rec, p, opt)
-		if errors.Is(err, ErrClosed) {
-			http.Error(w, "This question is no longer open.", http.StatusConflict)
-			return
-		}
-		if err != nil && !errors.Is(err, store.ErrAnswered) {
+		out, err := s.Answer(r.Context(), rec, p, opt, "web")
+		switch {
+		case err != nil:
 			slog.Error("answering question from the web", "question", rec.ID, "error", err)
 			http.Error(w, "Couldn't send the answer. Try again.", http.StatusInternalServerError)
-			return
+		case out == Closed:
+			http.Error(w, "This question is no longer open.", http.StatusConflict)
+		case out == InProgress:
+			http.Error(w, "The task is already handling another answer. Reload the page to see where it stands.", http.StatusConflict)
+		default:
+			http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		}
-		label, by := s.Outcome(r.Context(), rec, opt, "web", err)
-		s.notifier.MarkAnswered(r.Context(), rec.ID, label, by)
-		http.Redirect(w, r, r.URL.Path, http.StatusSeeOther)
 		return
 	}
 	if rec, err = s.store.QuestionByToken(r.Context(), r.PathValue("token")); err != nil {

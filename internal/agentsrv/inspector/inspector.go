@@ -31,7 +31,6 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -57,18 +56,11 @@ const (
 	fullHistory = math.MaxInt32
 )
 
-// Sender sends messages to the agent's A2A handler.
-type Sender interface {
-	// SendMessage delivers a message as the caller of ctx.
-	SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error)
-}
-
 // Deps are what the inspector reads and calls.
 type Deps struct {
 	Store     *store.Store
 	Tasks     *store.TaskStore
 	Approvals *approvals.Service
-	Sender    Sender
 	// Config returns the current config of the agent.
 	Config  func() *agentdir.Config
 	BaseURL func() string
@@ -76,8 +68,6 @@ type Deps struct {
 	ListPairings func(ctx context.Context) ([]pairings.Pairing, error)
 	// Status describes the running server.
 	Status func(ctx context.Context) (*controlapi.Status, error)
-	// MarkAnswered updates the chat message of a question that was answered.
-	MarkAnswered func(ctx context.Context, questionID, label, who string)
 }
 
 // Inspector serves a page where the owner sees what the agent is doing.
@@ -496,24 +486,24 @@ func (in *Inspector) handleAnswer(w http.ResponseWriter, r *http.Request, _ sess
 		http.Error(w, "Unknown option.", http.StatusBadRequest)
 		return
 	}
-	err = in.deps.Approvals.Answer(ctx, rec, auth.Owner(), opt)
-	if errors.Is(err, approvals.ErrClosed) {
-		in.deps.Approvals.Close(ctx, rec.ID)
-		http.Error(w, "This approval is no longer open.", http.StatusConflict)
-		return
-	}
-	if a2aerr.ExecutionInProgress(err) {
-		http.Error(w, inProgressText, http.StatusConflict)
-		return
-	}
-	if err != nil && !errors.Is(err, store.ErrAnswered) {
-		slog.Error("answering a question from the inspector", "question", rec.ID, "error", err)
+	out, err := in.deps.Approvals.Answer(ctx, rec, auth.Owner(), opt, "the inspector")
+	in.answered(w, r, out, err, "This approval is no longer open.", "question", rec.ID)
+}
+
+// answered renders out, the outcome of an answer from the inspector, or
+// err. closed is the text for a question that no longer waits.
+func (in *Inspector) answered(w http.ResponseWriter, r *http.Request, out approvals.Outcome, err error, closed string, logArgs ...any) {
+	switch {
+	case err != nil:
+		slog.Error("answering from the inspector", append(logArgs, "error", err)...)
 		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
-		return
+	case out == approvals.Closed:
+		http.Error(w, closed, http.StatusConflict)
+	case out == approvals.InProgress:
+		http.Error(w, inProgressText, http.StatusConflict)
+	default:
+		http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 	}
-	label, by := in.deps.Approvals.Outcome(ctx, rec, opt, "the inspector", err)
-	in.deps.MarkAnswered(ctx, rec.ID, label, by)
-	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
 }
 
 // inProgressText answers a post that lost to another answer of the task,
@@ -545,18 +535,6 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "Unknown option.", http.StatusBadRequest)
 		return
 	}
-	msg, err := approvals.AnswerMessage(t.ID, t.ContextID, q.ID, opt.ID)
-	if err == nil {
-		_, err = in.deps.Sender.SendMessage(auth.InProcess(ctx, auth.Owner()), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
-	}
-	if a2aerr.ExecutionInProgress(err) {
-		http.Error(w, inProgressText, http.StatusConflict)
-		return
-	}
-	if err != nil {
-		slog.Error("answering a task from the inspector", "task", t.ID, "error", err)
-		http.Error(w, "Couldn't send the answer: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-	http.Redirect(w, r, Path+"/", http.StatusSeeOther)
+	out, err := in.deps.Approvals.AnswerTask(ctx, t.ID, t.ContextID, q, auth.Owner(), opt, "the inspector")
+	in.answered(w, r, out, err, "This task no longer waits for an answer. Reload the page.", "task", t.ID)
 }

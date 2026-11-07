@@ -23,10 +23,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
-	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
-	"github.com/a2aproject/a2a-serve/internal/store"
 )
 
 // Principals that answer the approvals that waited when a rule,
@@ -80,7 +78,9 @@ func (s *Server) answerWaiting(ctx context.Context, except map[a2a.TaskID]bool) 
 		if dec.by != byRule {
 			by, who = allowedPrincipal, approvals.AlwaysLabel(dec.entry)
 		}
-		if err := s.answerByRules(ctx, t, q, opt, by, who); err != nil && s.stillWaits(ctx, t.ID, q, err) {
+		// Another answer, such as one of a concurrent run, may come first;
+		// the outcome tells, and only a failure is an error.
+		if _, err := s.approvals.AnswerTask(ctx, t.ID, t.ContextID, q, by, opt, who); err != nil {
 			errs = append(errs, fmt.Errorf("answering the approval of task %s: %w", t.ID, err))
 		}
 	}
@@ -161,57 +161,4 @@ func (s *Server) waitingApprovals(ctx context.Context) ([]*a2a.Task, error) {
 		}
 		req.PageToken = page.NextPageToken
 	}
-}
-
-// stillWaits reports whether task id still waits for the answer to q after
-// an answer failed with err. Another answer, such as the one of a
-// concurrent run of answerWaiting, may have taken its place: it runs an
-// execution of the task, or it already ended the wait.
-func (s *Server) stillWaits(ctx context.Context, id a2a.TaskID, q *approvals.Question, err error) bool {
-	if a2aerr.ExecutionInProgress(err) {
-		return false
-	}
-	stored, err := s.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), id)
-	if err != nil {
-		return true
-	}
-	now := pendingApproval(stored.Task)
-	return stored.Task.Status.State == a2a.TaskStateInputRequired && now != nil && now.ID == q.ID
-}
-
-// answerByRules answers the approval q of task t with opt as by. A
-// question shown in a chat or in the inspector is answered there, so that
-// it shows who answered. The executor logs the answer.
-func (s *Server) answerByRules(ctx context.Context, t *a2a.Task, q *approvals.Question, opt approvals.Option, by auth.Principal, who string) error {
-	ids, err := s.store.UnansweredQuestionsOf(ctx, string(t.ID))
-	if err != nil {
-		return err
-	}
-	for _, id := range ids {
-		rec, err := s.store.QuestionByID(ctx, id)
-		if err != nil {
-			return err
-		}
-		if rec.HitlID != q.ID {
-			continue
-		}
-		err = s.approvals.Answer(ctx, rec, by, opt)
-		if errors.Is(err, store.ErrAnswered) || errors.Is(err, approvals.ErrClosed) {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		s.chatApprovals.MarkAnswered(ctx, rec.ID, opt.Label, who)
-		return nil
-	}
-	msg, err := approvals.AnswerMessage(t.ID, t.ContextID, q.ID, opt.ID)
-	if err != nil {
-		return err
-	}
-	_, err = s.sender.SendMessage(auth.InProcess(ctx, by), &a2a.SendMessageRequest{
-		Message: msg,
-		Config:  &a2a.SendMessageConfig{ReturnImmediately: true},
-	})
-	return err
 }

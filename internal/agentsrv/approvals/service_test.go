@@ -131,7 +131,7 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 		t.Fatalf("NewRecord() error = %v", err)
 	}
 
-	if err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0]); err == nil {
+	if _, err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0], "owner"); err == nil {
 		t.Fatalf("Answer() with a failing delivery error = nil, want error")
 	}
 
@@ -143,8 +143,8 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 		t.Fatalf("question answered by %q after a failed delivery, want it open", got.AnsweredBy)
 	}
 	h.err = nil
-	if err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0]); err != nil {
-		t.Fatalf("Answer() again error = %v, want nil", err)
+	if out, err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0], "owner"); err != nil || out != Answered {
+		t.Fatalf("Answer() again = %v, %v, want %v", out, err, Answered)
 	}
 }
 
@@ -176,7 +176,7 @@ func TestAnswer(t *testing.T) {
 				t.Fatalf("NewRecord() error = %v", err)
 			}
 
-			err = svc.Answer(ctx, rec, tc.by, q.Options[0])
+			_, err = svc.Answer(ctx, rec, tc.by, q.Options[0], "web")
 
 			if !errors.Is(err, tc.wantErr) {
 				t.Fatalf("Answer() by %s error = %v, want %v", tc.by.ID, err, tc.wantErr)
@@ -214,10 +214,10 @@ func TestAnswerClosedQuestion(t *testing.T) {
 				t.Fatalf("NewRecord() error = %v", err)
 			}
 
-			err = svc.Answer(ctx, rec, auth.Owner(), q.Options[0])
+			out, err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0], "owner")
 
-			if !errors.Is(err, ErrClosed) {
-				t.Fatalf("Answer() error = %v, want %v", err, ErrClosed)
+			if err != nil || out != Closed {
+				t.Fatalf("Answer() = %v, %v, want %v", out, err, Closed)
 			}
 			if h.caller.ID != "" {
 				t.Fatalf("Answer() sent the answer as %q, want it not sent", h.caller.ID)
@@ -251,8 +251,8 @@ func TestCloseKeepsQuestionClosed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("QuestionByID() error = %v", err)
 	}
-	if err := svc.Answer(ctx, closed, auth.Owner(), q.Options[0]); !errors.Is(err, ErrClosed) {
-		t.Fatalf("Answer() error = %v, want %v", err, ErrClosed)
+	if out, err := svc.Answer(ctx, closed, auth.Owner(), q.Options[0], "owner"); err != nil || out != Closed {
+		t.Fatalf("Answer() = %v, %v, want %v", out, err, Closed)
 	}
 	open, err := svc.store.UnansweredQuestions(ctx)
 	if err != nil {
@@ -426,20 +426,17 @@ func TestPageURL(t *testing.T) {
 	}
 }
 
-func TestOutcome(t *testing.T) {
+func TestAnsweredWith(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
 		answered  string
 		by        string
-		err       error
 		wantLabel string
 		wantBy    string
 	}{
-		{name: "answer was recorded", err: nil, wantLabel: "Allow", wantBy: "web"},
-		{name: "another answer won", answered: "reject", by: "pair:anna", err: store.ErrAnswered, wantLabel: "reject", wantBy: "anna"},
-		{name: "same answer won", answered: "once", by: auth.OwnerID, err: store.ErrAnswered, wantLabel: "Allow", wantBy: "owner"},
-		{name: "delivery failed", err: errors.New("agent unreachable"), wantLabel: "Allow", wantBy: "web"},
+		{name: "another answer won", answered: "reject", by: "pair:anna", wantLabel: "reject", wantBy: "anna"},
+		{name: "same answer won", answered: "once", by: auth.OwnerID, wantLabel: "Allow", wantBy: "owner"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -451,20 +448,18 @@ func TestOutcome(t *testing.T) {
 			if err != nil {
 				t.Fatalf("NewRecord() error = %v", err)
 			}
-			if tc.answered != "" {
-				if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.by, tc.answered); err != nil {
-					t.Fatalf("AnswerQuestion() error = %v", err)
-				}
+			if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.by, tc.answered); err != nil {
+				t.Fatalf("AnswerQuestion() error = %v", err)
 			}
 			once, ok := q.Match("once")
 			if !ok {
 				t.Fatal("question has no option once")
 			}
 
-			label, by := svc.Outcome(ctx, rec, once, "web", tc.err)
+			label, by := svc.answeredWith(ctx, rec, once, "web")
 
 			if label != tc.wantLabel || by != tc.wantBy {
-				t.Fatalf("svc.Outcome() = %q, %q, want %q, %q", label, by, tc.wantLabel, tc.wantBy)
+				t.Fatalf("svc.answeredWith() = %q, %q, want %q, %q", label, by, tc.wantLabel, tc.wantBy)
 			}
 		})
 	}
@@ -528,5 +523,166 @@ func TestCheckAnswer(t *testing.T) {
 				t.Fatalf("CheckAnswer(%s, %s) error = %v, want %v", tc.caller.ID, tc.taskID, err, tc.want)
 			}
 		})
+	}
+}
+
+// scriptedHandler answers each SendMessage with the next of errs, and nil
+// once they run out.
+type scriptedHandler struct {
+	a2asrv.RequestHandler
+	mu    sync.Mutex
+	errs  []error
+	calls int
+}
+
+func (h *scriptedHandler) SendMessage(context.Context, *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.calls++
+	if len(h.errs) == 0 {
+		return nil, nil
+	}
+	err := h.errs[0]
+	h.errs = h.errs[1:]
+	return nil, err
+}
+
+func (h *scriptedHandler) sent() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.calls
+}
+
+var errInProgress = a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress")
+
+func TestAnswerOutcome(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name           string
+		state          a2a.TaskState
+		answeredBy     string
+		sendErr        error
+		want           Outcome
+		wantErr        bool
+		wantSent       int
+		wantAnsweredBy string
+	}{
+		{name: "delivered", state: a2a.TaskStateInputRequired, want: Answered, wantSent: 1, wantAnsweredBy: auth.OwnerID},
+		{name: "task ended", state: a2a.TaskStateCompleted, want: Closed},
+		{name: "answered before", state: a2a.TaskStateInputRequired, answeredBy: "pair:anna", want: AlreadyAnswered, wantAnsweredBy: "pair:anna"},
+		{name: "task busy with another answer", state: a2a.TaskStateInputRequired, sendErr: errInProgress, want: InProgress, wantSent: 1},
+		{name: "delivery failed", state: a2a.TaskStateInputRequired, sendErr: errors.New("agent unreachable"), wantErr: true, wantSent: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &scriptedHandler{errs: []error{tc.sendErr}}
+			svc := newService(t, h)
+			ctx := context.Background()
+			storeTask(t, svc, "t1", tc.state)
+			q := FromMessage(permissionMessage(t))
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+			if err != nil {
+				t.Fatalf("NewRecord() error = %v", err)
+			}
+			if tc.answeredBy != "" {
+				if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.answeredBy, "reject"); err != nil {
+					t.Fatalf("AnswerQuestion() error = %v", err)
+				}
+			}
+
+			got, err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0], "owner")
+
+			if (err != nil) != tc.wantErr || got != tc.want {
+				t.Fatalf("Answer() = %v, %v, want %v, error %v", got, err, tc.want, tc.wantErr)
+			}
+			if n := h.sent(); n != tc.wantSent {
+				t.Fatalf("Answer() sent %d answers, want %d", n, tc.wantSent)
+			}
+			stored, err := svc.store.QuestionByID(ctx, rec.ID)
+			if err != nil {
+				t.Fatalf("QuestionByID() error = %v", err)
+			}
+			if stored.AnsweredBy != tc.wantAnsweredBy {
+				t.Fatalf("Answer() left the question answered by %q, want %q", stored.AnsweredBy, tc.wantAnsweredBy)
+			}
+		})
+	}
+}
+
+func TestAnswerTask(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		record     bool
+		answeredBy string
+		question   string
+		sendErr    error
+		want       Outcome
+		wantSent   int
+	}{
+		{name: "no record", want: Answered, wantSent: 1},
+		{name: "open record", record: true, want: Answered, wantSent: 1},
+		{name: "record a person answered", record: true, answeredBy: "pair:anna", want: AlreadyAnswered},
+		{name: "task asks another question", question: "other", want: Closed},
+		{name: "task busy with another answer", sendErr: errInProgress, want: InProgress, wantSent: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &scriptedHandler{errs: []error{tc.sendErr}}
+			svc := newService(t, h)
+			ctx := context.Background()
+			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+			q := FromMessage(permissionMessage(t))
+			if tc.record {
+				rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+				if err != nil {
+					t.Fatalf("NewRecord() error = %v", err)
+				}
+				if tc.answeredBy != "" {
+					if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.answeredBy, "once"); err != nil {
+						t.Fatalf("AnswerQuestion() error = %v", err)
+					}
+				}
+			}
+			asked := *q
+			if tc.question != "" {
+				asked.ID = tc.question
+			}
+			reject, ok := q.Match("reject")
+			if !ok {
+				t.Fatal("question has no option to reject it")
+			}
+
+			got, err := svc.AnswerTask(ctx, "t1", "c1", &asked, timeoutPrincipal, reject, "timeout")
+
+			if err != nil || got != tc.want {
+				t.Fatalf("AnswerTask() = %v, %v, want %v", got, err, tc.want)
+			}
+			if n := h.sent(); n != tc.wantSent {
+				t.Fatalf("AnswerTask() sent %d answers, want %d", n, tc.wantSent)
+			}
+		})
+	}
+}
+
+func TestUserApprovalTimeoutRetriesWhileTheTaskIsBusy(t *testing.T) {
+	t.Parallel()
+	h := &scriptedHandler{errs: []error{errInProgress}}
+	svc := newService(t, h, func(d *Deps) {
+		d.User = func(context.Context, string) bool { return true }
+		d.UserTimeout = time.Millisecond
+	})
+	storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+
+	svc.OnQuestion(context.Background(), &a2asrv.ExecutorContext{TaskID: "t1", ContextID: "c1"}, FromMessage(permissionMessage(t)))
+
+	deadline := time.Now().Add(5 * time.Second)
+	for h.sent() < 2 {
+		if time.Now().After(deadline) {
+			t.Fatalf("timeout sent %d answers, want a second one after the task was busy", h.sent())
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }

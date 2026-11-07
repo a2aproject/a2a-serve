@@ -1131,7 +1131,7 @@ func TestChatTurnsAnswerThatFailsToRecordKeepsQuestionPending(t *testing.T) {
 
 	fx.turns.answerIn(fx.ctx, fx.ch, in, auth.Owner(), rec, q, q.Options[0])
 
-	fx.ch.WaitFor(t, "dm1", messengertest.HasText("Couldn't record the answer. Try again."))
+	fx.ch.WaitFor(t, "dm1", messengertest.HasText("Couldn't send the answer"))
 	if ids, err := fx.store.PendingQuestions(fx.ctx, "fake", "dm1"); err != nil || !slices.Contains(ids, rec.ID) {
 		t.Fatalf("PendingQuestions() = %q, %v, want %q among them", ids, err, rec.ID)
 	}

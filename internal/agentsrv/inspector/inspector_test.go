@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -72,6 +73,21 @@ func (s *fakeSender) messages() []*a2a.Message {
 	return slices.Clone(s.sent)
 }
 
+// nopNotifier shows questions nowhere.
+type nopNotifier struct{}
+
+func (nopNotifier) Ask(context.Context, approvals.Chat, string, store.Question) {}
+
+func (nopNotifier) OwnerChat(context.Context) (approvals.Chat, bool) { return approvals.Chat{}, false }
+
+func (nopNotifier) MarkAnswered(context.Context, string, string, string) {}
+
+func (nopNotifier) MarkClosed(context.Context, string) {}
+
+func (nopNotifier) Follow(_ context.Context, _ store.Question, _ auth.Principal, deliver func() error) error {
+	return deliver()
+}
+
 type testInspector struct {
 	*inspector.Inspector
 	store  *store.Store
@@ -98,17 +114,15 @@ func startInspector(t *testing.T) *testInspector {
 	in := inspector.New(inspector.Deps{
 		Store:     st,
 		Tasks:     tasks,
-		Approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Tasks: tasks})}),
+		Approvals: approvals.New(approvals.Deps{Records: approvals.NewRecords(approvals.RecordsDeps{Store: st, Tasks: tasks}), Sender: sender, Notifier: nopNotifier{}}),
 		ListPairings: func(context.Context) ([]pairings.Pairing, error) {
 			return []pairings.Pairing{{Name: "anna", Kind: "person", Role: "owner"}}, nil
 		},
-		Sender:  sender,
 		Config:  func() *agentdir.Config { return &agentdir.Config{Name: "coder"} },
 		BaseURL: func() string { return "https://coder.example.com" },
 		Status: func(context.Context) (*controlapi.Status, error) {
 			return &controlapi.Status{Name: "coder", Harness: "opencode", Started: time.Now().Add(-2 * time.Minute)}, nil
 		},
-		MarkAnswered: func(context.Context, string, string, string) {},
 	})
 	mux := http.NewServeMux()
 	in.Register(mux)

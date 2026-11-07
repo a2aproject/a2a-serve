@@ -258,8 +258,8 @@ func TestRouterAnswerElsewhereRendersInChat(t *testing.T) {
 		t.Fatalf("QuestionByID() error = %v", err)
 	}
 
-	if err := ts.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0]); err != nil {
-		t.Fatalf("Answer() error = %v", err)
+	if out, err := ts.srv.approvals.Answer(ctx, rec, auth.Owner(), approvals.FromRecord(rec).Options[0], "owner"); err != nil || out != approvals.Answered {
+		t.Fatalf("Answer() = %v, %v, want %v", out, err, approvals.Answered)
 	}
 
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Pushed (allow)."))
