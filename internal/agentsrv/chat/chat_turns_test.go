@@ -410,6 +410,9 @@ func TestChatTurnsLinkCodeLinksSender(t *testing.T) {
 
 	fx.ch.Write("telegram:9", "dm9", "join "+code)
 	fx.ch.WaitFor(t, "dm9", messengertest.HasText("Linked as owner. Write to talk to coder."))
+	if diff := cmp.Diff([]messenger.ConvKey{"dm9"}, fx.ch.Links()); diff != "" {
+		t.Fatalf("Links() before the reply wrong result (-want +got) diff = %s", diff)
+	}
 	fx.ch.Write("telegram:9", "dm9", "hello")
 
 	call := fx.sender.nextStream(t)

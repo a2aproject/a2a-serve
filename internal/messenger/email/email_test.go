@@ -515,6 +515,49 @@ func TestSendToManyStrangersKeepsNoThreads(t *testing.T) {
 	}
 }
 
+func TestLinkedThreadKeepsReplies(t *testing.T) {
+	t.Parallel()
+	srv := startSMTP(t)
+	kv := messengertest.NewKV(map[string]string{uidValidityKey: "7", lastUIDKey: "41"})
+	c := New(Config{Address: "coder@example.com", SMTP: srv.addr, TrustedAuthServ: "mx.example.com"}, kv)
+	join := "From: Bob <bob@bob.org>\r\n" +
+		"Subject: join\r\n" +
+		"Message-ID: <j1@bob.org>\r\n" +
+		"Authentication-Results: mx.example.com; dmarc=pass header.from=bob.org\r\n" +
+		"\r\n" +
+		"join abcd1234\r\n"
+	in, err := parseUnprepared(t.Context(), c, join)
+	if err != nil {
+		t.Fatalf("parseUnprepared() error = %v, want a message", err)
+	}
+	if err := c.Linked(t.Context(), in); err != nil {
+		t.Fatalf("Linked() error = %v", err)
+	}
+	ref, err := c.Send(t.Context(), messenger.Outbound{Conv: in.Conv, Text: "coder wants to push. Reply approve or deny."})
+	if err != nil {
+		t.Fatalf("Send() error = %v", err)
+	}
+	if msgs := srv.messages(); len(msgs) != 1 || !strings.Contains(msgs[0], "Subject: Re: join\r\n") {
+		t.Fatalf("Send() sent %q, want one mail with the subject %q", msgs, "Re: join")
+	}
+
+	reply := "From: Bob <bob@bob.org>\r\n" +
+		"Subject: Re: join\r\n" +
+		"Message-ID: <j2@bob.org>\r\n" +
+		"In-Reply-To: <" + ref.ID + ">\r\n" +
+		"Authentication-Results: mx.example.com; dmarc=pass header.from=bob.org\r\n" +
+		"\r\n" +
+		"approve\r\n"
+	got, err := parse(t.Context(), c, reply)
+
+	if err != nil {
+		t.Fatalf("parse(reply) error = %v, want a message", err)
+	}
+	if got.Conv != in.Conv {
+		t.Fatalf("parse(reply).Conv = %q, want %q", got.Conv, in.Conv)
+	}
+}
+
 func TestSendToLegacyConversation(t *testing.T) {
 	t.Parallel()
 	srv := startSMTP(t)

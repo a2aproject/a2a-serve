@@ -224,6 +224,11 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 			c.reply(ctx, ch, in, "Couldn't link your account. Try again.")
 			return
 		}
+		if l, ok := ch.(messenger.Linker); ok {
+			if err := l.Linked(ctx, in); err != nil {
+				slog.Warn("recording a linked chat", "messenger", in.Messenger, "error", err)
+			}
+		}
 		c.reply(ctx, ch, in, fmt.Sprintf("Linked as %s. Write to talk to %s.", p.Role, c.config().Name))
 		return
 	}

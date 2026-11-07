@@ -180,6 +180,18 @@ func (t *threads) arrived(conv messenger.ConvKey, subject string) {
 func (t *threads) received(ctx context.Context, conv messenger.ConvKey, subject string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	return t.receivedLocked(ctx, conv, subject)
+}
+
+// admit records conv, whose sender was admitted, with the subject of the
+// mail that arrived in it.
+func (t *threads) admit(ctx context.Context, conv messenger.ConvKey) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.receivedLocked(ctx, conv, t.pending[conv])
+}
+
+func (t *threads) receivedLocked(ctx context.Context, conv messenger.ConvKey, subject string) error {
 	if err := t.loadLocked(ctx); err != nil {
 		return err
 	}

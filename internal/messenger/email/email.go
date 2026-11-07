@@ -103,6 +103,7 @@ type Messenger struct {
 var (
 	_ messenger.Messenger = (*Messenger)(nil)
 	_ messenger.Describer = (*Messenger)(nil)
+	_ messenger.Linker    = (*Messenger)(nil)
 )
 
 // imapDialer connects to the IMAP server at addr. Ending ctx aborts the
@@ -141,6 +142,12 @@ func (c *Messenger) Caps() messenger.Caps { return messenger.Caps{MaxText: maxTe
 
 // Describe implements [messenger.Describer].
 func (c *Messenger) Describe() string { return c.cfg.Address }
+
+// Linked implements [messenger.Linker]: it records the thread of the join
+// mail, so that replies to the agent's mail in it stay in its conversation.
+func (c *Messenger) Linked(ctx context.Context, in messenger.Inbound) error {
+	return c.threads.admit(ctx, in.Conv)
+}
 
 // LinkHint implements [messenger.Describer].
 func (c *Messenger) LinkHint(code string) string {
