@@ -281,14 +281,16 @@ func TestConformanceStalledTurn(t *testing.T) {
 		wantState a2a.TaskState
 		wantText  string
 	}{
-		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 1s"},
-		{name: "silent tool call", prompt: "build 2s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
-		{name: "streaming agent", prompt: "slow 2s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
+		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 3s"},
+		{name: "silent tool call", prompt: "build 6s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
+		{name: "streaming agent", prompt: "slow 6s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
 	}
+	// A 3s stall timeout leaves room for a busy machine to delay the agent's
+	// updates; the turns last twice as long, so they stall without them.
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = time.Second }})
+			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = 3 * time.Second }})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
 			// A first turn starts the agent process, which the guard would count as silence.
 			warm := send(t, c, userText("hello", "", ""))
