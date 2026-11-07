@@ -214,6 +214,11 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			if err != nil && e.stopped() {
 				break
 			}
+			// A turn that the stop ended, or that waited for one, fails
+			// with the error of its canceled context.
+			if failed(ev) && e.stopped() {
+				break
+			}
 			if err == nil {
 				sent, final = true, a2aevent.IsFinal(ev)
 			}
@@ -225,6 +230,12 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			failStopped(execCtx, sent)(yield)
 		}
 	}
+}
+
+// failed reports whether ev fails its task.
+func failed(ev a2a.Event) bool {
+	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
+	return ok && up.Status.State == a2a.TaskStateFailed
 }
 
 // stopped reports whether the server stopped, which ends the turns.

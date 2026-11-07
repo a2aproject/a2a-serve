@@ -412,8 +412,8 @@ func TestApprovalOfExitedAgentFailsTask(t *testing.T) {
 	}
 
 	failed := waitState(t, c, task.ID, a2a.TaskStateFailed)
-	if text := a2atext.Message(failed.Status.Message); !strings.Contains(text, "exited") {
-		t.Fatalf("task status message = %q, want it to say the agent exited", text)
+	if got, want := a2atext.Message(failed.Status.Message), "the agent stopped unexpectedly; send the message again"; got != want {
+		t.Fatalf("task status message = %q, want %q", got, want)
 	}
 	deadline := time.Now().Add(10 * time.Second)
 	for {

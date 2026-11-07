@@ -380,6 +380,7 @@ func (s *Server) acpConfig() *a2aacp.Config {
 		Turn:         s.stalls.turn(s.claims.turn),
 		Converter:    s.stalls,
 		Abandoned:    s.abandoned,
+		Failure:      s.failure,
 	}
 }
 
@@ -409,55 +410,58 @@ func (s *Server) abandoned(ctx context.Context, ev *a2a.TaskStatusUpdateEvent) {
 	s.bus.Publish(ev.TaskID, ev)
 }
 
-// guardACP fails the stalled turns of an executor made with acpConfig, and
-// explains its failures.
+// guardACP fails the stalled turns of an executor made with acpConfig.
 func (s *Server) guardACP(acp a2asrv.AgentExecutor) a2asrv.AgentExecutor {
-	return &agentFailure{inner: s.stalls.guard(acp), config: s.rt.Config}
+	return s.stalls.guard(acp)
 }
 
-// agentFailure rewrites the failure of a turn for callers. It drops the
-// JSON-RPC code and data of the agent's error, which it logs in full, and
-// tells which key is missing when the agent doesn't know the configured
-// model: opencode lists no models of a provider without a key, so it
-// reports only that the model isn't found.
-type agentFailure struct {
-	inner  a2asrv.AgentExecutor
-	config func() *agentdir.Config
-}
-
-var _ a2asrv.AgentExecutor = (*agentFailure)(nil)
-
-func (e *agentFailure) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return func(yield func(a2a.Event, error) bool) {
-		for ev, err := range e.inner.Execute(ctx, execCtx) {
-			if !yield(e.explain(execCtx, ev), err) {
-				return
-			}
-		}
-	}
-}
-
-func (e *agentFailure) explain(execCtx *a2asrv.ExecutorContext, ev a2a.Event) a2a.Event {
-	up, ok := ev.(*a2a.TaskStatusUpdateEvent)
-	if !ok || up.Status.State != a2a.TaskStateFailed {
-		return ev
-	}
-	reported := a2atext.Message(up.Status.Message)
-	text := agentErrorText(reported)
-	if text != reported {
-		slog.Info("the agent failed the turn", "task", execCtx.TaskID, "error", reported)
-	}
-	if strings.Contains(text, "model not found") {
-		if hint := harness.MissingKey(e.config()); hint != "" {
-			text = hint + "; the agent reported: " + text
-		}
-	}
+// failure returns the status message of a turn that fails with err, for
+// callers. It drops the protocol details of the agent's error, and explains
+// the failures that have a next step. It also covers the tasks whose agent
+// stopped while they waited for an answer.
+func (s *Server) failure(_ context.Context, execCtx *a2asrv.ExecutorContext, err error) []*a2a.Part {
+	reported := err.Error()
+	text := explainFailure(s.rt.Config(), reported)
 	if text == reported {
-		return ev
+		return nil
 	}
-	out := *up
-	out.Status.Message = a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(text))
-	return &out
+	slog.Info("the agent failed the turn", "task", execCtx.TaskID, "error", reported)
+	return []*a2a.Part{a2a.NewTextPart(text)}
+}
+
+// agentExited ends the error of a turn whose agent process exited, such as
+// "acp agent error: acp agent exited".
+const agentExited = "acp agent exited"
+
+// explainFailure returns the failure text of a turn for callers. It tells
+// which key is missing when the agent doesn't know the configured model:
+// opencode lists no models of a provider without a key, so it reports only
+// that the model isn't found.
+func explainFailure(cfg *agentdir.Config, reported string) string {
+	if strings.HasSuffix(reported, agentExited) {
+		return "the agent stopped unexpectedly; send the message again"
+	}
+	text := agentErrorText(reported)
+	if !modelNotFound(text) {
+		return text
+	}
+	if hint := harness.MissingKey(cfg); hint != "" {
+		return hint + "; the agent reported: " + text
+	}
+	model := "<model>"
+	if cfg.Harness == "opencode" {
+		model = "<provider/model>"
+	}
+	return text + "; choose another model with `a2a-serve config set --model " + model + " --restart`"
+}
+
+// modelNotFound reports whether the agent or its provider doesn't know the
+// model, as in "model not found: google/x", "models/x is not found for API
+// version v1beta" or "The model `x` does not exist".
+func modelNotFound(text string) bool {
+	lower := strings.ToLower(text)
+	return strings.Contains(lower, "model") &&
+		(strings.Contains(lower, "not found") || strings.Contains(lower, "not_found") || strings.Contains(lower, "does not exist"))
 }
 
 // acpError matches a failure that a2aacp reports for an error response of
@@ -483,10 +487,6 @@ func agentErrorText(text string) string {
 		}
 	}
 	return "the agent failed: " + msg
-}
-
-func (e *agentFailure) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
-	return e.inner.Cancel(ctx, execCtx)
 }
 
 // sessionSettings selects the model of the config in every session, so that
