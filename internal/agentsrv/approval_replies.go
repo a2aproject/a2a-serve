@@ -79,11 +79,36 @@ func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskSt
 	for i, o := range q.Options {
 		ids[i] = o.ID
 	}
-	reply := []rune(strings.TrimSpace(a2atext.Message(execCtx.Message)))
-	if len(reply) > maxQuotedReply {
-		reply = append(reply[:maxQuotedReply], '…')
+	reply, ok := replyText(execCtx.Message)
+	if !ok {
+		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: its data has no \"option\" field, so the question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
 	}
-	return reask(execCtx, fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(reply), strings.Join(ids, ", ")))
+	quoted := []rune(reply)
+	if len(quoted) > maxQuotedReply {
+		quoted = append(quoted[:maxQuotedReply], '…')
+	}
+	return reask(execCtx, fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(quoted), strings.Join(ids, ", ")))
+}
+
+// replyText is what a refusal quotes of a reply: its text, or else the
+// options of its data parts. It reports false for a reply of data
+// without an option.
+func replyText(msg *a2a.Message) (string, bool) {
+	if text := strings.TrimSpace(a2atext.Message(msg)); text != "" || msg == nil {
+		return text, true
+	}
+	var options []string
+	data := false
+	for _, p := range msg.Parts {
+		if id, ok := dataOption(p); ok {
+			options = append(options, id)
+		}
+		data = data || p.Data() != nil
+	}
+	if len(options) == 0 && data {
+		return "", false
+	}
+	return strings.Join(options, " "), true
 }
 
 // reask is the status update that asks the question of the stored task
