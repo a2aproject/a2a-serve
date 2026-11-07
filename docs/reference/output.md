@@ -44,11 +44,11 @@ A failure that the running agent reports keeps its code.
 | --- | --- | --- |
 | 0 | | Success |
 | 1 | `A2ACLI_ERR_INTERNAL`, `A2ACLI_ERR_PROTOCOL` | Any other failure |
-| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags, flag combinations or settings, a missing setting such as the backup destination, or a name the agent doesn't have, such as `pair rm` of an unknown pairing or of an agent you haven't joined |
+| 2 | `A2ACLI_ERR_USAGE` | Invalid arguments, flags, flag combinations or settings, such as an agent URL without a scheme and host; a missing setting such as the backup destination; or a name or file that doesn't exist, such as `pair rm` of an unknown pairing or of an agent you haven't joined, `mailbox reply --artifact` of a missing file, or `logs` before the first log |
 | 3 | `A2ACLI_ERR_IO` | An agent or service couldn't be reached |
 | 5 | `A2ACLI_ERR_TIMEOUT` | `--timeout` or `--deadline` expired |
-| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the server, which isn't running: `a2a-serve start --detach` |
-| 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir` |
+| 6 | `A2ASERVE_ERR_NOT_RUNNING` | The command needs the server, which isn't running: `a2a-serve start --detach`. `status --url local` before the first start gives it too, since the first start picks the port |
+| 7 | `A2ASERVE_ERR_NO_AGENT` | No `.a2a` directory here, in a parent directory, or at `--dir`, including `start` without an agent outside a terminal |
 | 8 | `A2ASERVE_ERR_BUSY` | The server is starting or stopping; run the command again in a moment |
 
 ## Text columns and JSON fields

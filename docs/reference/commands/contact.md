@@ -46,6 +46,7 @@ a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4
 | Flag | Default | Description |
 |---|---|---|
 | `--code string` |  | A pairing code from the other agent's owner |
+| `--timeout duration` | `1m0s` | Timeout of the call to the running agent, which includes its request to the other agent, a duration such as 30s or 2m |
 | `--token string` |  | A token for the other agent (secret value: env:VAR, -, or the value) |
 | `--url string` |  | The agent's URL |
 

@@ -72,6 +72,11 @@ calls to it go through that agent.
 		Example: "  a2a-serve contact add coder\n  a2a-serve contact add grok@ben\n  a2a-serve contact add grok --url https://grok.example.com --code K7Q2-9XF4",
 		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			if req.URL != "" {
+				if err := checkAgentURL("--url", req.URL, "https://grok.example.com"); err != nil {
+					return err
+				}
+			}
 			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
 				return err
@@ -100,5 +105,6 @@ calls to it go through that agent.
 	cmd.Flags().StringVar(&req.URL, "url", "", "The agent's URL")
 	cmd.Flags().StringVar(&req.Code, "code", "", "A pairing code from the other agent's owner")
 	cmd.Flags().StringVar(&req.Token, "token", "", secretUsage("A token for the other agent"))
+	sf.addTimeoutFlag(cmd.Flags(), "Timeout of the call to the running agent, which includes its request to the other agent, a `duration` such as 30s or 2m")
 	return cmd
 }

@@ -15,7 +15,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 
 	"github.com/spf13/cobra"
 
@@ -76,6 +78,11 @@ func newMailboxReplyCmd(cfg *globalConfig) *cobra.Command {
 			}
 			for _, path := range artifacts {
 				art, err := mailboxapi.FileArtifact(path)
+				if errors.Is(err, fs.ErrNotExist) {
+					e := clierr.Usage(fmt.Sprintf("--artifact %s: %v", path, err))
+					e.Hint = "pass the path of an existing file to --artifact"
+					return e
+				}
 				if err != nil {
 					return err
 				}

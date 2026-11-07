@@ -45,7 +45,7 @@ func TestValidate(t *testing.T) {
 		{name: "unknown harness", modify: func(c *Config) { c.Harness = "gemini" }, wantErr: `unknown agent "gemini"`},
 		{name: "reserved agent with a command", modify: func(c *Config) { c.Harness, c.Command = "script", []string{"fakeacp"} }, wantErr: `invalid agent "script"`},
 		{name: "sandbox", modify: func(c *Config) { c.Sandbox = "vm" }, wantErr: `invalid --sandbox "vm"`},
-		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale or none`},
+		{name: "private", modify: func(c *Config) { c.Network.Private = "tailscal" }, wantErr: `invalid --private "tailscal": want tailscale, a relay URL such as https://relay.example.com, or none`},
 		{name: "removed lan", modify: func(c *Config) { c.Network.Private = "lan" }, wantErr: `invalid --private "lan": lan was removed`},
 		{name: "public", modify: func(c *Config) { c.Network.Public = "lan" }, wantErr: `invalid --public "lan"`},
 		{name: "mount", modify: func(c *Config) { c.Mounts = []string{"/a:rel"} }, wantErr: `invalid --mount "/a:rel": destination must be absolute`},
@@ -54,6 +54,14 @@ func TestValidate(t *testing.T) {
 		{name: "env", modify: func(c *Config) { c.Env = []string{"DEBUG"} }, wantErr: `invalid --env "DEBUG"`},
 		{name: "port", modify: func(c *Config) { c.Port = 70000 }, wantErr: `invalid --port "70000"`},
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
+		{name: "memory in gigabytes", modify: func(c *Config) { c.Limits.Memory = "4g" }},
+		{name: "memory in capital megabytes", modify: func(c *Config) { c.Limits.Memory = "512M" }},
+		{name: "memory at the docker minimum", modify: func(c *Config) { c.Limits.Memory = "6m" }},
+		{name: "memory in bytes", modify: func(c *Config) { c.Limits.Memory = "6291456" }},
+		{name: "memory without a unit", modify: func(c *Config) { c.Limits.Memory = "4" }, wantErr: `invalid --memory "4": want at least 6m, such as 4g or 512m`},
+		{name: "memory below the docker minimum", modify: func(c *Config) { c.Limits.Memory = "5m" }, wantErr: `invalid --memory "5m": want at least 6m, such as 4g or 512m`},
+		{name: "memory of zero", modify: func(c *Config) { c.Limits.Memory = "0g" }, wantErr: `invalid --memory "0g": want at least 6m, such as 4g or 512m`},
+		{name: "memory too large to count", modify: func(c *Config) { c.Limits.Memory = "99999999999999999999g" }, wantErr: "invalid --memory"},
 		{name: "cpus", modify: func(c *Config) { c.Limits.CPUs = "-1" }, wantErr: "invalid --cpus"},
 		{name: "tool kinds and globs", modify: func(c *Config) { c.Approvals.Allow, c.Approvals.Deny = []string{"read", "switch_mode"}, []string{"*"} }},
 		{name: "unknown allowed tool kind", modify: func(c *Config) { c.Approvals.Allow = []string{"reed"} }, wantErr: `invalid --allow-tools "reed"`},
@@ -79,10 +87,10 @@ func TestValidate(t *testing.T) {
 		{name: "access", modify: func(c *Config) {
 			c.Policy = PolicyConfig{PrivateAllowIncoming: AccessPaired, PublicAllowIncoming: AccessAnyone, PrivateAllowOutgoing: AccessContacts}
 		}},
-		{name: "private-allow-incoming", modify: func(c *Config) { c.Policy.PrivateAllowIncoming = AccessAnyone }, wantErr: `invalid --private-allow-incoming "anyone": want everyone or paired`},
-		{name: "public-allow-incoming", modify: func(c *Config) { c.Policy.PublicAllowIncoming = AccessEveryone }, wantErr: `invalid --public-allow-incoming "everyone": want paired or anyone`},
-		{name: "private-allow-outgoing", modify: func(c *Config) { c.Policy.PrivateAllowOutgoing = AccessPaired }, wantErr: `invalid --private-allow-outgoing "paired": want everyone or contacts`},
-		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale or none`},
+		{name: "private-allow-incoming", modify: func(c *Config) { c.Policy.PrivateAllowIncoming = AccessAnyone }, wantErr: `invalid --private-allow-incoming "anyone": want everyone (or anyone) or paired`},
+		{name: "public-allow-incoming", modify: func(c *Config) { c.Policy.PublicAllowIncoming = AccessEveryone }, wantErr: `invalid --public-allow-incoming "everyone": want paired or anyone (or everyone)`},
+		{name: "private-allow-outgoing", modify: func(c *Config) { c.Policy.PrivateAllowOutgoing = AccessPaired }, wantErr: `invalid --private-allow-outgoing "paired": want everyone (or anyone) or contacts`},
+		{name: "public ngrok", modify: func(c *Config) { c.Network.Public = "ngrok" }, wantErr: `invalid --public "ngrok": want tailscale, a relay URL such as https://relay.example.com, or none`},
 		{name: "google client without secret", modify: func(c *Config) {
 			c.Policy.AllowEmails = []string{"mom@example.org"}
 			c.Auth.GoogleClientID = "id"

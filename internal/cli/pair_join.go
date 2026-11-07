@@ -47,6 +47,9 @@ instead, which the a2a-serve mailbox commands use.`,
 		Example: "  a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D",
 		Args:    namedArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkAgentURL("the agent URL", args[0], "https://assistant.tail1234.ts.net"); err != nil {
+				return err
+			}
 			store, err := cfg.credentialStore()
 			if err != nil {
 				return err
@@ -73,6 +76,7 @@ instead, which the a2a-serve mailbox commands use.`,
 		},
 	}
 	cmd.Flags().BoolVar(&replace, "replace", false, "Join an agent you joined before, replacing the saved token")
+	sf.addTimeoutFlag(cmd.Flags(), "Timeout of the request to the other agent, a `duration` such as 30s or 2m")
 	// Joining another agent uses no agent directory of this one.
 	var dir string
 	cmd.Flags().StringVar(&dir, "dir", "", "")
