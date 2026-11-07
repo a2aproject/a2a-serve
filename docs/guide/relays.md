@@ -11,7 +11,7 @@ A relay admits like a tailnet: everyone it admits can call everyone else it admi
 
 A relay lives in a relay directory, like an agent: settings in `.a2a/relay.yaml`, state in `.a2a/state/relay`. A directory holds either an agent or a relay.
 
-The relay needs an address that doesn't change, since agents and pairing tokens name it. `relay run` serves plain HTTP, so put it behind a reverse proxy or a tunnel that ends TLS, and give that address as `--url`. The proxy needs to set `X-Forwarded-For`, which the relay uses to [limit each client](../reference/http-routes.md#relay-routes):
+The relay needs an address that doesn't change, since agents and pairing tokens name it. `relay run` serves plain HTTP, so put it behind a reverse proxy or a tunnel that ends TLS, and give that address as `--url`. Run the proxy on the relay's machine or private network, and have it set `X-Forwarded-For`, which the relay uses to [limit each client](../reference/http-routes.md#relay-routes):
 
 ```bash
 mkdir ~/relay && cd ~/relay

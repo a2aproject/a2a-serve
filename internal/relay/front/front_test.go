@@ -321,11 +321,12 @@ func (tr *tryer) try(t *testing.T, c client) int {
 func TestFrontLimitsEachClient(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		path  string
-		limit int
+		name    string
+		path    string
+		proxied bool
+		limit   int
 	}{
-		{name: "proxied", path: "/ingress/12D3/a2a/coder", limit: 64},
+		{name: "proxied", path: "/ingress/12D3/a2a/coder", proxied: true, limit: 64},
 		{name: "sign-in", path: "/a2a-serve/signin/token", limit: 32},
 		{name: "control", path: "/a2a-serve/control/status", limit: 32},
 	}
@@ -334,13 +335,15 @@ func TestFrontLimitsEachClient(t *testing.T) {
 			t.Parallel()
 			h := newHolder()
 			f := front.New(info, h, h)
-			mesh := httptest.NewServer(h)
-			t.Cleanup(mesh.Close)
-			u, err := url.Parse(mesh.URL)
-			if err != nil {
-				t.Fatal(err)
+			if tt.proxied {
+				mesh := httptest.NewServer(h)
+				t.Cleanup(mesh.Close)
+				u, err := url.Parse(mesh.URL)
+				if err != nil {
+					t.Fatal(err)
+				}
+				f.Open(u)
 			}
-			f.Open(u)
 			tr := newTryer(t, f, h, tt.path)
 			a := client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1"}
 			b := client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2"}
@@ -379,6 +382,17 @@ func TestFrontTellsClientsApart(t *testing.T) {
 			name: "clients behind Cloud Run",
 			held: client{remoteAddr: "169.254.1.1:1000", forwardedFor: "198.51.100.1"},
 			next: client{remoteAddr: "169.254.1.1:1001", forwardedFor: "198.51.100.2"},
+		},
+		{
+			name: "clients behind a chain of local proxies",
+			held: client{remoteAddr: "127.0.0.1:1000", forwardedFor: "198.51.100.1, 127.0.0.1"},
+			next: client{remoteAddr: "127.0.0.1:1001", forwardedFor: "198.51.100.2, 127.0.0.1"},
+		},
+		{
+			name:     "clients with headers that aren't addresses",
+			held:     client{remoteAddr: "127.0.0.1:1000", forwardedFor: "first"},
+			next:     client{remoteAddr: "127.0.0.1:1001", forwardedFor: "second"},
+			wantSame: true,
 		},
 		{
 			name:     "a client with a forged header behind a private proxy",

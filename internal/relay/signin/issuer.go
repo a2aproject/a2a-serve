@@ -91,6 +91,7 @@ type Options struct {
 // Issuer is the identity provider of a relay.
 type Issuer struct {
 	opts     Options
+	handler  http.Handler
 	url      string
 	keys     *keys
 	verifier *googleauth.Verifier
@@ -123,7 +124,7 @@ func New(opts Options) (*Issuer, error) {
 	if opts.HTTP == nil {
 		opts.HTTP = &http.Client{Timeout: 30 * time.Second}
 	}
-	return &Issuer{
+	i := &Issuer{
 		opts:        opts,
 		url:         URL(opts.URL),
 		keys:        k,
@@ -137,7 +138,9 @@ func New(opts Options) (*Issuer, error) {
 		signins:     map[string]*pendingSignIn{},
 		approvals:   map[string]*approval{},
 		lastRefresh: map[string]time.Time{},
-	}, nil
+	}
+	i.handler = jsonhttp.LimitUnauthenticatedBody(maxBody, http.HandlerFunc(i.serve))
+	return i, nil
 }
 
 // URL returns the issuer URL of the relay at relayURL.
@@ -159,7 +162,7 @@ func CallbackURL(relayURL string) string {
 
 // ServeHTTP serves the identity provider at paths with [Path] stripped.
 func (i *Issuer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	jsonhttp.LimitUnauthenticatedBody(maxBody, http.HandlerFunc(i.serve)).ServeHTTP(w, r)
+	i.handler.ServeHTTP(w, r)
 }
 
 func (i *Issuer) serve(w http.ResponseWriter, r *http.Request) {
