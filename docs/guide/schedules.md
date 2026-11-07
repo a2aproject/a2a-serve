@@ -12,7 +12,7 @@ a2a-serve schedule run morning-brief   # run it now
 a2a-serve schedule rm morning-brief
 ```
 
-- `--cron` takes five fields or a descriptor such as `@daily` or `@every 2h`. `--at` runs once and then removes the schedule. `--tz` defaults to the machine's time zone.
+- `--cron` takes five fields or a descriptor such as `@daily` or `@every 2h`; an `@every` interval is at least 1 minute. `--at` runs once and then removes the schedule. `--tz` defaults to the machine's time zone.
 - `--as` runs the schedule as a pairing; the default is the owner.
 - `--chat <messenger>[:<who>]` posts each run to that user's chat, where they can reply and answer approvals. `--thread new` (the default) starts a new conversation each run; `--thread same` continues the current one. Without `--chat`, approvals go to the owner chat.
 - `--cron` follows the wall clock of the time zone. When clocks fall back, a time in the repeated hour runs once. When clocks spring forward, a time in the skipped hour runs right after it. `@every` counts elapsed time and ignores clock changes.

@@ -111,9 +111,9 @@ func TestAddScheduleWithinLimits(t *testing.T) {
 		{name: "within the limits", limits: limits, existing: 1, req: schedule.Request{Cron: "*/5 * * * *"}},
 		{name: "one-time", limits: limits, existing: 1, req: schedule.Request{At: "2099-01-01 10:00"}},
 		{name: "too many", limits: limits, existing: 2, req: schedule.Request{Cron: "@daily"}, wantErr: "at most 2 schedules"},
-		{name: "every second", limits: limits, req: schedule.Request{Cron: "@every 1s"}, wantErr: "at least 5 minutes apart"},
+		{name: "every minute interval", limits: limits, req: schedule.Request{Cron: "@every 1m"}, wantErr: "at least 5 minutes apart"},
 		{name: "every minute", limits: limits, req: schedule.Request{Cron: "* * * * *"}, wantErr: "at least 5 minutes apart"},
-		{name: "no limits", existing: 2, req: schedule.Request{Cron: "@every 1s"}},
+		{name: "no limits", existing: 2, req: schedule.Request{Cron: "@every 1m"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
