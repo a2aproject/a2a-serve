@@ -45,7 +45,7 @@ func TestHTMLTextCapsQuoteDepth(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			got, err := htmlText(strings.NewReader(tt.in))
+			got, err := htmlText(strings.NewReader(tt.in), maxPart)
 			if err != nil {
 				t.Fatalf("htmlText() error = %v", err)
 			}
@@ -59,11 +59,19 @@ func TestHTMLTextCapsQuoteDepth(t *testing.T) {
 func TestHTMLTextGrowsLinearly(t *testing.T) {
 	t.Parallel()
 	in := strings.Repeat("<blockquote>a", 2_000) + strings.Repeat("<hr>", 20_000)
-	got, err := htmlText(strings.NewReader(in))
+	got, err := htmlText(strings.NewReader(in), maxPart)
 	if err != nil {
 		t.Fatalf("htmlText() error = %v", err)
 	}
 	if limit := 2 * maxQuoteDepth * len(in); len(got) > limit {
 		t.Fatalf("len(htmlText()) = %d for %d bytes of HTML, want at most %d", len(got), len(in), limit)
+	}
+}
+
+func TestHTMLTextFailsOnTooMuchText(t *testing.T) {
+	t.Parallel()
+	in := strings.Repeat("<blockquote>", maxQuoteDepth) + strings.Repeat("<hr>", 1_000)
+	if got, err := htmlText(strings.NewReader(in), 10_000); err == nil {
+		t.Fatalf("htmlText() = %d bytes, want an error", len(got))
 	}
 }
