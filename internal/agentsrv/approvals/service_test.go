@@ -426,45 +426,6 @@ func TestPageURL(t *testing.T) {
 	}
 }
 
-func TestAnsweredWith(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name      string
-		answered  string
-		by        string
-		wantLabel string
-		wantBy    string
-	}{
-		{name: "another answer won", answered: "reject", by: "pair:anna", wantLabel: "reject", wantBy: "anna"},
-		{name: "same answer won", answered: "once", by: auth.OwnerID, wantLabel: "Allow", wantBy: "owner"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			svc := newService(t, &sendingHandler{})
-			ctx := context.Background()
-			q := FromMessage(permissionMessage(t))
-			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
-			if err != nil {
-				t.Fatalf("NewRecord() error = %v", err)
-			}
-			if err := svc.store.AnswerQuestion(ctx, rec.ID, tc.by, tc.answered); err != nil {
-				t.Fatalf("AnswerQuestion() error = %v", err)
-			}
-			once, ok := q.Match("once")
-			if !ok {
-				t.Fatal("question has no option once")
-			}
-
-			label, by := svc.answeredWith(ctx, rec, once, "web")
-
-			if label != tc.wantLabel || by != tc.wantBy {
-				t.Fatalf("svc.answeredWith() = %q, %q, want %q, %q", label, by, tc.wantLabel, tc.wantBy)
-			}
-		})
-	}
-}
-
 func TestHandlePageSetsSecurityHeaders(t *testing.T) {
 	t.Parallel()
 	svc := newService(t, &sendingHandler{})

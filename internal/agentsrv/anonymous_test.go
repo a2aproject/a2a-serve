@@ -165,6 +165,8 @@ func TestRefusedReplyKeepsApprovalOpen(t *testing.T) {
 	if refused.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state after a refused reply = %s, want %s", refused.Status.State, a2a.TaskStateInputRequired)
 	}
+	// Questions close in the background.
+	time.Sleep(200 * time.Millisecond)
 	if got := open(); got != 1 {
 		t.Fatalf("open approvals after a refused reply = %d, want 1", got)
 	}
