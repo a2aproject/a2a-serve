@@ -44,6 +44,12 @@ jobs:
     - name: Test
       run: go test -mod=readonly -count=10 -shuffle=on ./...
 
+    # Agent Mesh support builds only with -tags agentmesh.
+    - name: Test agentmesh
+      run: |
+        go vet -mod=readonly -tags agentmesh ./...
+        go test -race -mod=readonly -count=1 -shuffle=on -tags agentmesh ./internal/network/ ./internal/relay/
+
   race:
     runs-on: ubuntu-latest
     steps:
