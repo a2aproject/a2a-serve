@@ -125,6 +125,10 @@ func isHeaderBlock(lines []string) bool {
 
 var space = regexp.MustCompile(`\s+`)
 
+// maxQuoteDepth caps the "> " marks of a line, so that deeply nested quotes
+// can't make the text grow faster than the HTML.
+const maxQuoteDepth = 20
+
 // htmlText returns the text of an HTML mail body. Block elements become
 // lines, quoted blocks are marked with "> " and horizontal rules become the
 // Outlook separator, so [StripQuoted] can cut the quoted message.
@@ -136,6 +140,7 @@ func htmlText(r io.Reader) (string, error) {
 		quote int
 		skip  int
 	)
+	prefix := func() string { return strings.Repeat("> ", min(quote, maxQuoteDepth)) }
 	flush := func() {
 		text := strings.TrimSpace(line.String())
 		line.Reset()
@@ -145,7 +150,7 @@ func htmlText(r io.Reader) (string, error) {
 			}
 			return
 		}
-		lines = append(lines, strings.Repeat("> ", quote)+text)
+		lines = append(lines, prefix()+text)
 	}
 	for {
 		tt := z.Next()
@@ -184,7 +189,7 @@ func htmlText(r io.Reader) (string, error) {
 				}
 			case atom.Hr:
 				flush()
-				lines = append(lines, strings.Repeat("> ", quote)+"__________")
+				lines = append(lines, prefix()+"__________")
 			case atom.Br, atom.P, atom.Div, atom.Li, atom.Tr, atom.Table, atom.Ul, atom.Ol, atom.Pre,
 				atom.H1, atom.H2, atom.H3, atom.H4, atom.H5, atom.H6:
 				flush()
