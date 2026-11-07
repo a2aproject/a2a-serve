@@ -510,7 +510,7 @@ func TestRelaySignIn(t *testing.T) {
 			who = append(who, m.Agent+" "+m.Who())
 		}
 		slices.Sort(who)
-		if diff := cmp.Diff([]string{"coder anna@example.com", "reviewer invite"}, who); diff != "" {
+		if diff := cmp.Diff([]string{"coder anna@example.com", "reviewer invite reviewer"}, who); diff != "" {
 			return fmt.Errorf("Members() wrong result (-want +got) diff = %s", diff)
 		}
 		return nil

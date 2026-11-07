@@ -35,6 +35,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/names"
 )
 
 // AgentMeshBuilt reports whether this a2a-serve can join Agent Mesh relays.
@@ -292,7 +293,9 @@ func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {
 	a.mu.Unlock()
 	var candidates []PeerInfo
 	for _, p := range found {
-		if p.GetPeerId() == "" || p.GetSrvName() == "" || p.GetPeerId() == self {
+		// The service name is chosen by the member and reaches the agent's
+		// prompt as the peer's name, so it has to be a valid agent name.
+		if p.GetPeerId() == "" || !names.Valid(p.GetSrvName()) || p.GetPeerId() == self {
 			continue
 		}
 		candidates = append(candidates, PeerInfo{
