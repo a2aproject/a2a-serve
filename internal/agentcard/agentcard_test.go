@@ -15,6 +15,8 @@
 package agentcard
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -65,7 +67,7 @@ func TestBuildSkills(t *testing.T) {
 			}},
 			want: []a2a.AgentSkill{
 				{ID: "release-notes", Name: "Release notes", Description: "Writes release notes from merged pull requests.", Tags: []string{"git", "docs"}},
-				{ID: "review", Name: "review"},
+				{ID: "review", Name: "review", Tags: []string{}},
 			},
 		},
 	}
@@ -78,6 +80,18 @@ func TestBuildSkills(t *testing.T) {
 				t.Fatalf("Build().Skills wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestBuildSkillTagsServeAsArray(t *testing.T) {
+	t.Parallel()
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Card: agentdir.CardConfig{Skills: []agentdir.CardSkill{{ID: "review"}}}}
+	data, err := json.Marshal(Build(cfg, Listener{Kind: network.ListenerLocal, URL: "http://127.0.0.1:9000"}).Skills)
+	if err != nil {
+		t.Fatalf("json.Marshal() error = %v", err)
+	}
+	if got := string(data); !strings.Contains(got, `"tags":[]`) || strings.Contains(got, "null") {
+		t.Fatalf("json.Marshal(Build().Skills) = %s, want tags as an empty array", got)
 	}
 }
 
