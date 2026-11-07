@@ -43,13 +43,25 @@ type fakeAPI struct {
 	msgs    []*discordgo.Message
 	// failBefore, if set, fails requests for messages before it.
 	failBefore string
+	// unavailable makes every request for messages fail with a 503.
+	unavailable atomic.Bool
+	// channelFailures is the number of lookups of the channel that fail
+	// with a 503 before it is found.
+	channelFailures atomic.Int32
 	// commandsCalled, if set, is closed when commands are registered, which
 	// waits for commandsRelease if it is set.
 	commandsCalled  chan struct{}
 	commandsRelease chan struct{}
 }
 
+func restError(code int) error {
+	return &discordgo.RESTError{Response: &http.Response{StatusCode: code, Status: strconv.Itoa(code)}}
+}
+
 func (f *fakeAPI) ChannelMessages(channelID string, limit int, beforeID, afterID, _ string, _ ...discordgo.RequestOption) ([]*discordgo.Message, error) {
+	if f.unavailable.Load() {
+		return nil, restError(http.StatusServiceUnavailable)
+	}
 	if f.failBefore != "" && beforeID != "" && compareSnowflakes(beforeID, f.failBefore) <= 0 {
 		return nil, errors.New("discord unreachable")
 	}
@@ -76,8 +88,11 @@ func (f *fakeAPI) ChannelMessages(channelID string, limit int, beforeID, afterID
 }
 
 func (f *fakeAPI) Channel(string, ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	if f.channelFailures.Add(-1) >= 0 {
+		return nil, restError(http.StatusServiceUnavailable)
+	}
 	if f.channel == nil {
-		return nil, errors.New("unknown messenger")
+		return nil, restError(http.StatusNotFound)
 	}
 	return f.channel, nil
 }
@@ -190,7 +205,9 @@ func TestCatchUp(t *testing.T) {
 			c.me = &discordgo.User{ID: botID}
 			c.in, c.ctx = in, t.Context()
 
-			c.catchUp(tc.api, discordgo.NewState(), "c1", "1000")
+			if err := c.catchUp(tc.api, discordgo.NewState(), "c1", "1000"); err != nil {
+				t.Fatalf("c.catchUp() error = %v, want nil", err)
+			}
 			close(in)
 
 			var got []delivered
@@ -636,5 +653,137 @@ func TestLiteralPiecesFitTheLimitAndKeepTheText(t *testing.T) {
 	}
 	if got := strings.Join(strings.Fields(unescaped.String()), " "); got != strings.Join(strings.Fields(text), " ") {
 		t.Fatalf("messagePieces() pieces don't add up to the text")
+	}
+}
+
+func TestCatchUpRetriesWhatMayPass(t *testing.T) {
+	t.Parallel()
+	dm := &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM}
+	tests := []struct {
+		name string
+		api  func() *fakeAPI
+		want []delivered
+	}{
+		{
+			name: "messages unavailable at first",
+			api: func() *fakeAPI {
+				api := &fakeAPI{channel: dm, msgs: []*discordgo.Message{message(1001, false)}}
+				api.unavailable.Store(true)
+				return api
+			},
+			want: []delivered{{MessageID: "1001", Direct: true, Text: "hi 1001"}},
+		},
+		{
+			name: "channel lookup fails with a server error",
+			api: func() *fakeAPI {
+				api := &fakeAPI{channel: dm, msgs: []*discordgo.Message{message(1001, false)}}
+				api.channelFailures.Store(2)
+				return api
+			},
+			want: []delivered{{MessageID: "1001", Direct: true, Text: "hi 1001"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			api := tc.api()
+			kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
+			c := newMessenger("token", kv, time.Millisecond)
+			c.me = &discordgo.User{ID: botID}
+			in := make(chan messenger.Inbound, 10)
+			c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
+
+			c.ready(api, discordgo.NewState(), botID)
+			time.AfterFunc(20*time.Millisecond, func() { api.unavailable.Store(false) })
+
+			var got []delivered
+			for len(got) < len(tc.want) {
+				select {
+				case m := <-in:
+					got = append(got, delivered{MessageID: m.MessageID, Direct: m.Direct, Text: m.Text})
+				case <-time.After(10 * time.Second):
+					t.Fatalf("delivered %v, want %v", got, tc.want)
+				}
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("ready() delivered wrong messages (-want +got) diff = %s", diff)
+			}
+			synced := make(chan struct{})
+			c.queue.do("c1", func() { close(synced) })
+			<-synced
+			if got := kv.All()[lastKey("c1")]; got != "1001" {
+				t.Fatalf("cursor = %q, want 1001", got)
+			}
+			if c.isCatchingUp("c1") {
+				t.Fatal("c.isCatchingUp() = true after the catch-up succeeded, want false")
+			}
+		})
+	}
+}
+
+func TestCatchUpTakesChannelThatIsGoneForGuildChannel(t *testing.T) {
+	t.Parallel()
+	api := &fakeAPI{msgs: []*discordgo.Message{message(1001, false)}}
+	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
+	c := newMessenger("token", kv, time.Millisecond)
+	c.me = &discordgo.User{ID: botID}
+	c.in, c.ctx, c.convs = make(chan messenger.Inbound, 10), t.Context(), []string{"c1"}
+
+	c.ready(api, discordgo.NewState(), botID)
+	synced := make(chan struct{})
+	c.queue.do("c1", func() { close(synced) })
+	<-synced
+
+	if c.isCatchingUp("c1") {
+		t.Fatal("c.isCatchingUp() = true after a permanent failure, want false")
+	}
+	if got := kv.All()[lastKey("c1")]; got != "1001" {
+		t.Fatalf("cursor = %q, want 1001", got)
+	}
+}
+
+func TestLiveMessagesKeepTheCursorUntilCatchUpSucceeds(t *testing.T) {
+	t.Parallel()
+	api := &fakeAPI{
+		channel: &discordgo.Channel{ID: "c1", Type: discordgo.ChannelTypeDM},
+		msgs:    []*discordgo.Message{message(1001, false), message(1500, false)},
+	}
+	api.unavailable.Store(true)
+	kv := messengertest.NewKV(map[string]string{lastKey("c1"): "1000"})
+	c := newMessenger("token", kv, time.Millisecond)
+	c.me = &discordgo.User{ID: botID}
+	in := make(chan messenger.Inbound, 10)
+	c.in, c.ctx, c.convs = in, t.Context(), []string{"c1"}
+
+	c.ready(api, discordgo.NewState(), botID)
+	c.onMessage(nil, &discordgo.MessageCreate{Message: message(1500, false)})
+	if m := <-in; m.MessageID != "1500" {
+		t.Fatalf("delivered %q, want the live message 1500", m.MessageID)
+	}
+	synced := make(chan struct{})
+	c.queue.do("c1", func() { close(synced) })
+	<-synced
+	if got := kv.All()[lastKey("c1")]; got != "1000" {
+		t.Fatalf("cursor = %q after a live message during a failed catch-up, want 1000", got)
+	}
+
+	api.unavailable.Store(false)
+	var got []string
+	for len(got) < 2 {
+		select {
+		case m := <-in:
+			got = append(got, m.MessageID)
+		case <-time.After(10 * time.Second):
+			t.Fatalf("caught up on %v, want 1001 and 1500", got)
+		}
+	}
+	if diff := cmp.Diff([]string{"1001", "1500"}, got); diff != "" {
+		t.Fatalf("catch-up delivered wrong messages (-want +got) diff = %s", diff)
+	}
+	synced = make(chan struct{})
+	c.queue.do("c1", func() { close(synced) })
+	<-synced
+	if got := kv.All()[lastKey("c1")]; got != "1500" {
+		t.Fatalf("cursor = %q after the catch-up succeeded, want 1500", got)
 	}
 }
