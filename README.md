@@ -51,7 +51,7 @@ a2a-serve start claude --secret ANTHROPIC_API_KEY --detach
 a2a send -a "$(a2a-serve status --url=local)" "What does this project do?"
 ```
 
-Without Docker, add `--sandbox local`. Follow [Getting Started](./docs/getting-started.md) to approve tool calls, connect Telegram, and invite callers.
+Without Docker, install the agent on your machine and add `--sandbox local`. Follow [Getting Started](./docs/getting-started.md) to approve tool calls, connect Telegram, and invite callers.
 
 ## Examples
 

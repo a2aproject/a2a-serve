@@ -254,6 +254,17 @@ func TestRecipeWithoutTerminal(t *testing.T) {
 	}
 }
 
+func TestRecipeWithoutTerminalReadsSourceFirst(t *testing.T) {
+	t.Parallel()
+	src := filepath.Join(t.TempDir(), "missing")
+
+	_, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", src, "--dir", filepath.Join(t.TempDir(), "obs"))
+
+	if err == nil || !strings.Contains(err.Error(), "recipe "+src+": ") || !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("a2a-serve recipe error = %v, want it to say that %s doesn't exist", err, src)
+	}
+}
+
 func TestRecipeRefuses(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

@@ -115,8 +115,13 @@ func TestFindWithState(t *testing.T) {
 	if got.Root != root {
 		t.Fatalf("FindWithState() = %v, want %v", got.Root, root)
 	}
-	if _, err := Find(nested); !errors.Is(err, ErrNotFound) {
+	_, err = Find(nested)
+	if !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Find() error = %v, want %v", err, ErrNotFound)
+	}
+	want := d.ConfigPath() + " is missing; create it again with `a2a-serve start <agent>` in " + root
+	if err.Error() != want {
+		t.Fatalf("Find() error = %q, want %q", err, want)
 	}
 }
 

@@ -40,8 +40,12 @@ var ErrNotFound error = clierr.NoAgent(&notFoundError{msg: "no .a2a directory fo
 // NotFoundIn returns an error, matching [ErrNotFound], for a root without
 // an agent.
 func NotFoundIn(root string) error {
-	if (Dir{Root: root}).HasRelay() {
+	d := Dir{Root: root}
+	if d.HasRelay() {
 		return relayNotAgent(root)
+	}
+	if d.HasServerState() {
+		return missingConfig(d)
 	}
 	return clierr.NoAgent(&notFoundError{msg: root + " has no .a2a/config.yaml; start an agent there with `a2a-serve start <agent>`"})
 }
@@ -50,6 +54,12 @@ func NotFoundIn(root string) error {
 // holds a relay.
 func relayNotAgent(root string) error {
 	return clierr.NoAgent(&notFoundError{msg: root + " has a relay (.a2a/relay.yaml) and no agent; manage the relay with `a2a-serve relay` commands, or pass --dir with an agent directory"})
+}
+
+// missingConfig returns an error, matching [ErrNotFound], for an agent
+// whose config.yaml is gone but whose server left its state.
+func missingConfig(d Dir) error {
+	return clierr.NoAgent(&notFoundError{msg: d.ConfigPath() + " is missing; create it again with `a2a-serve start <agent>` in " + d.Root})
 }
 
 type notFoundError struct{ msg string }
@@ -95,6 +105,7 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 	if err != nil {
 		return Dir{}, err
 	}
+	var stale *Dir
 	for {
 		d := Dir{Root: dir}
 		if match(d) {
@@ -103,7 +114,13 @@ func find(start string, match func(Dir) bool) (Dir, error) {
 		if d.HasRelay() {
 			return Dir{}, relayNotAgent(dir)
 		}
+		if stale == nil && d.HasServerState() {
+			stale = &d
+		}
 		parent := filepath.Dir(dir)
+		if parent == dir && stale != nil {
+			return Dir{}, missingConfig(*stale)
+		}
 		if parent == dir {
 			return Dir{}, ErrNotFound
 		}

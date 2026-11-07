@@ -63,6 +63,39 @@ func TestPrepareLocal(t *testing.T) {
 	}
 }
 
+func TestPrepareLocalChecksCommand(t *testing.T) {
+	t.Parallel()
+	ws := t.TempDir()
+	tests := []struct {
+		name    string
+		command string
+		wantErr string
+	}{
+		{name: "installed", command: "go"},
+		{name: "missing", command: "a2a-serve-missing-agent", wantErr: "a2a-serve-missing-agent is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			profile, err := Lookup("opencode", []string{tc.command})
+			if err != nil {
+				t.Fatalf("Lookup() error = %v", err)
+			}
+			p, err := Prepare(context.Background(), Spec{Profile: profile, Sandbox: SandboxLocal, Mounts: []agentdir.Mount{{Src: ws, Dst: ws}}, Home: t.TempDir()})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			err = p.Check()
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("Prepared.Check() error = %v, want nil", err)
+			}
+			if tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr) {
+				t.Fatalf("Prepared.Check() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestPrepareModel(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
