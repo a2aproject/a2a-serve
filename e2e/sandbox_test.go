@@ -17,10 +17,15 @@
 package e2e
 
 import (
+	"errors"
+	"net"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 )
 
 func TestDockerSandboxMounts(t *testing.T) {
@@ -58,4 +63,70 @@ func TestDockerSandboxMounts(t *testing.T) {
 	if got := resultOf(owner.mustSend(coder.url, "ls "+hidden)).Text; got != "ls: " && got != "ls error: open "+hidden+": permission denied" {
 		t.Fatalf("a2a send ls %s = %q, want it empty or unreadable", hidden, got)
 	}
+}
+
+// TestStartWhenDockerDoesNotAnswer covers start --detach with a docker
+// endpoint that accepts connections and never answers: start fails within
+// seconds and names DOCKER_HOST.
+func TestStartWhenDockerDoesNotAnswer(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("needs the docker CLI")
+	}
+	owner := newUser(t)
+	sock := filepath.Join(owner.home, "hang.sock")
+	hangingListener(t, sock)
+	owner.env = append(owner.env, "DOCKER_HOST=unix://"+sock)
+	coder := owner.newAgent("coder")
+	t.Cleanup(coder.cleanup)
+
+	start := time.Now()
+	out, err := owner.exec(coder.dir, "a2a", "serve", "start", "acp", "--name", "coder", "--detach",
+		"--sandbox", "docker", "--image", "example.invalid/fakeacp", "--command", "/usr/local/bin/fakeacp")
+	coder.stopped = true
+	want := "docker does not answer within 10s at unix://" + sock + " from DOCKER_HOST"
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("a2a-serve start --detach = %q, %v, want an error containing %q", out, err, want)
+	}
+	if elapsed := time.Since(start); elapsed > 45*time.Second {
+		t.Fatalf("a2a-serve start --detach failed after %v, want it to fail within seconds", elapsed)
+	}
+}
+
+// hangingListener listens on the Unix socket path, and accepts connections
+// without ever answering them.
+func hangingListener(t *testing.T, path string) {
+	t.Helper()
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	var mu sync.Mutex
+	var conns []net.Conn
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			t.Errorf("closing the listener: %v", err)
+		}
+		<-done
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			if err := c.Close(); err != nil {
+				t.Errorf("closing a connection: %v", err)
+			}
+		}
+	})
 }

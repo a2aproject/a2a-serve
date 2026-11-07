@@ -16,11 +16,13 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 // noImagesDocker has no images, fails every pull and docker info, and builds
@@ -113,5 +115,41 @@ func TestCheckDockerNotRunning(t *testing.T) {
 	want := "start Docker or run a2a-serve config set --sandbox local, or run a2a-serve doctor"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("CheckDocker() error = %v, want %q", err, want)
+	}
+}
+
+func TestDockerQueryWithoutAnswer(t *testing.T) {
+	tests := []struct {
+		name       string
+		dockerHost string
+		want       string
+	}{
+		{name: "DOCKER_HOST", dockerHost: "unix:///tmp/hang.sock", want: "docker does not answer within 100ms at unix:///tmp/hang.sock from DOCKER_HOST; fix or unset DOCKER_HOST"},
+		{name: "default socket", want: "docker does not answer within 100ms; restart Docker or run a2a-serve config set --sandbox local"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeDocker(t, "exec sleep 60")
+			t.Setenv("DOCKER_HOST", tc.dockerHost)
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			_, err := dockerQuery(ctx, 100*time.Millisecond, "info")
+			if !errors.Is(err, ErrDockerNoAnswer) || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("dockerQuery() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestCheckDockerWithoutAnswer(t *testing.T) {
+	fakeDocker(t, "exec sleep 60")
+	t.Setenv("DOCKER_HOST", "unix:///tmp/hang.sock")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	_, err := checkDocker(ctx, 100*time.Millisecond)
+	if !errors.Is(err, ErrDockerNoAnswer) {
+		t.Fatalf("checkDocker() error = %v, want %v", err, ErrDockerNoAnswer)
 	}
 }
