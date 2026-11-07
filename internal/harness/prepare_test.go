@@ -66,13 +66,23 @@ func TestPrepareLocal(t *testing.T) {
 func TestPrepareLocalChecksCommand(t *testing.T) {
 	t.Parallel()
 	ws := t.TempDir()
+	agent := filepath.Join(ws, "bin", "agent")
+	if err := os.MkdirAll(filepath.Dir(agent), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(agent, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const notInstalled = " is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"
 	tests := []struct {
 		name    string
 		command string
 		wantErr string
 	}{
-		{name: "installed", command: "go"},
-		{name: "missing", command: "a2a-serve-missing-agent", wantErr: "a2a-serve-missing-agent is not installed; install it, or run a2a-serve config set --sandbox docker, or run a2a-serve doctor"},
+		{name: "absolute path", command: agent},
+		{name: "path in the workspace", command: "./bin/agent"},
+		{name: "missing", command: "a2a-serve-missing-agent", wantErr: "a2a-serve-missing-agent" + notInstalled},
+		{name: "missing path", command: "./bin/missing", wantErr: "./bin/missing" + notInstalled},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

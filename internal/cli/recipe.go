@@ -99,6 +99,10 @@ version is saved next to it as <file>.recipe.
 	return cmd
 }
 
+func unconfirmedError() error {
+	return clierr.Usage("recipe asks before it changes anything; without a terminal, pass --yes or --dry-run")
+}
+
 // recipeRun creates an agent from a recipe, or updates it.
 type recipeRun struct {
 	cfg         *globalConfig
@@ -110,7 +114,7 @@ type recipeRun struct {
 	interactive bool
 	dryRun      bool
 	// unconfirmed is a run that can neither ask nor change anything, which
-	// fails once the source is read.
+	// fails once a local source is read, and before a git source is fetched.
 	unconfirmed bool
 	getenv      func(string) string
 	prompter    *wizard.Prompter
@@ -143,6 +147,9 @@ func (r *recipeRun) run(ctx context.Context) error {
 		}
 		r.src = record.Source()
 	}
+	if r.unconfirmed && !r.src.Local() {
+		return unconfirmedError()
+	}
 	work, err := os.MkdirTemp("", "a2a-recipe-*")
 	if err != nil {
 		return err
@@ -157,7 +164,7 @@ func (r *recipeRun) run(ctx context.Context) error {
 		return err
 	}
 	if r.unconfirmed {
-		return clierr.Usage("recipe asks before it changes anything; without a terminal, pass --yes or --dry-run")
+		return unconfirmedError()
 	}
 	if record != nil {
 		return r.update(ctx, d, record, fetched, rec)
