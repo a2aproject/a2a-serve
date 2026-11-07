@@ -15,12 +15,14 @@
 package cli
 
 import (
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
+	"github.com/a2aproject/a2a-serve/internal/mailboxapi"
 )
 
 func TestExitCodes(t *testing.T) {
@@ -47,6 +49,11 @@ func TestExitCodes(t *testing.T) {
 		{name: "backup list without a destination", args: []string{"backup", "list"}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "backup restore into an agent", args: []string{"backup", "restore", "backups", "--snapshot", "coder-1", "--backup-key", "k"}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "inspect on the public URL", args: []string{"inspect", "--url", "public"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "pair join of a URL without a scheme", args: []string{"pair", "join", "localhost:8080", "3MZ8-LQ0D"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "pair join of a URL without a host", args: []string{"pair", "join", "https://", "3MZ8-LQ0D"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "pair join of a URL with another scheme", args: []string{"pair", "join", "ftp://assistant.example.com", "3MZ8-LQ0D"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "contact add of a malformed URL", args: []string{"contact", "add", "grok", "--url", "notaurl"}, wantCode: clierr.CodeUsage, wantExit: 2},
+		{name: "logs before the first log", args: []string{"logs"}, wantCode: clierr.CodeUsage, wantExit: 2},
 		{name: "mailbox without a node token", args: []string{"mailbox", "list"}, noDir: true, wantCode: clierr.CodeUsage, wantExit: 2},
 	}
 	for _, tc := range tests {
@@ -80,5 +87,60 @@ func TestNotRunningSuggestsDetach(t *testing.T) {
 
 	if err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve start --detach") {
 		t.Fatalf("a2a-serve contact add error = %v, want a hint to start it with `a2a-serve start --detach`", err)
+	}
+}
+
+func TestErrorHints(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name     string
+		args     []string
+		wantHint string
+	}{
+		{name: "pair join of a malformed URL", args: []string{"pair", "join", "localhost:8080", "3MZ8-LQ0D"}, wantHint: "https://assistant.tail1234.ts.net"},
+		{name: "contact add of a malformed URL", args: []string{"contact", "add", "grok", "--url", "notaurl"}, wantHint: "https://grok.example.com"},
+		{name: "logs before the first log", args: []string{"logs"}, wantHint: "a2a-serve start"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}).Root
+
+			_, err := runCMD(t, append(slices.Clone(tc.args), "--dir", dir)...)
+
+			if got := classify(err, nil); err == nil || !strings.Contains(got.Hint, tc.wantHint) {
+				t.Fatalf("a2a-serve %s error = %v, hint %q, want a hint with %q", strings.Join(tc.args, " "), err, got.Hint, tc.wantHint)
+			}
+		})
+	}
+}
+
+func TestStartWithoutAnAgentHere(t *testing.T) {
+	t.Chdir(t.TempDir())
+
+	_, err := runCMD(t, "start")
+
+	got := classify(err, nil)
+	if err == nil || got.Code != clierr.CodeNoAgent || got.Exit != 7 {
+		t.Fatalf("a2a-serve start error = %v (%s, exit %d), want %s (exit 7)", err, got.Code, got.Exit, clierr.CodeNoAgent)
+	}
+	if !strings.Contains(got.Hint, "a2a-serve start <agent>") {
+		t.Fatalf("a2a-serve start hint = %q, want it to name `a2a-serve start <agent>`", got.Hint)
+	}
+}
+
+func TestMailboxReplyMissingArtifact(t *testing.T) {
+	t.Parallel()
+	token := mailboxapi.NewNodeToken("http://127.0.0.1:1/mailbox", "n1", "secret")
+	missing := filepath.Join(t.TempDir(), "report.pdf")
+
+	_, err := runCMD(t, "mailbox", "reply", "t1", "--token", token, "--final", "done", "--artifact", missing)
+
+	got := classify(err, nil)
+	if err == nil || got.Code != clierr.CodeUsage || got.Exit != 2 {
+		t.Fatalf("a2a-serve mailbox reply --artifact error = %v (%s, exit %d), want %s (exit 2)", err, got.Code, got.Exit, clierr.CodeUsage)
+	}
+	if !strings.Contains(got.Message, missing) || !strings.Contains(got.Hint, "--artifact") {
+		t.Fatalf("a2a-serve mailbox reply --artifact message = %q, hint = %q, want the path and a hint about --artifact", got.Message, got.Hint)
 	}
 }

@@ -128,6 +128,7 @@ a2a-serve pair join https://assistant.tail1234.ts.net 3MZ8-LQ0D
 | Flag | Default | Description |
 |---|---|---|
 | `--replace` |  | Join an agent you joined before, replacing the saved token |
+| `--timeout duration` | `1m0s` | Timeout of the request to the other agent, a duration such as 30s or 2m |
 
 ## a2a-serve pair list
 

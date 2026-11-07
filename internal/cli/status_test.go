@@ -84,6 +84,26 @@ func TestStatusURLScope(t *testing.T) {
 	}
 }
 
+func TestStatusURLLocalBeforeTheFirstStart(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+
+	_, err := runCMD(t, "status", "--url", "local", "--dir", d.Root)
+
+	got := classify(err, nil)
+	if err == nil || got.Code != clierr.CodeNotRunning {
+		t.Fatalf("a2a-serve status --url local error = %v (%s), want %s", err, got.Code, clierr.CodeNotRunning)
+	}
+	for _, want := range []string{"no port has been picked yet", "first start"} {
+		if !strings.Contains(got.Message, want) {
+			t.Fatalf("a2a-serve status --url local error = %q, want %q", got.Message, want)
+		}
+	}
+	if !strings.Contains(got.Hint, "a2a-serve start --detach") {
+		t.Fatalf("a2a-serve status --url local hint = %q, want a hint to start it", got.Hint)
+	}
+}
+
 func TestInspectScopeValidatedFirst(t *testing.T) {
 	t.Parallel()
 	empty := t.TempDir()

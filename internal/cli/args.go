@@ -16,6 +16,7 @@ package cli
 
 import (
 	"fmt"
+	"net/url"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -61,4 +62,17 @@ func joinAnd(names []string) string {
 		return strings.Join(names, "")
 	}
 	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
+}
+
+// checkAgentURL returns a usage error unless raw is an http or https URL
+// with a host, so that a typo fails before any request. what names the value
+// in the message and example is the URL the hint shows.
+func checkAgentURL(what, raw, example string) error {
+	u, err := url.Parse(raw)
+	if err == nil && (u.Scheme == "http" || u.Scheme == "https") && u.Host != "" {
+		return nil
+	}
+	e := clierr.Usage(fmt.Sprintf("%s %q is not an http or https URL with a host", what, raw))
+	e.Hint = "want a URL such as " + example
+	return e
 }

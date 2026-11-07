@@ -17,6 +17,7 @@ package agentdir
 import (
 	"errors"
 	"fmt"
+	"math"
 	"os"
 	"regexp"
 	"slices"
@@ -49,8 +50,37 @@ const (
 
 var (
 	secretName = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
-	memory     = regexp.MustCompile(`^[0-9]+[bkmgBKMG]?$`)
+	memory     = regexp.MustCompile(`^([0-9]+)([bkmgBKMG]?)$`)
 )
+
+// minMemory is the smallest memory limit that docker accepts.
+const minMemory = 6 << 20
+
+// memoryBytes returns the size of a --memory value in bytes. ok is false if
+// the value isn't a size or doesn't fit in 63 bits.
+func memoryBytes(v string) (n int64, ok bool) {
+	m := memory.FindStringSubmatch(v)
+	if m == nil {
+		return 0, false
+	}
+	n, err := strconv.ParseInt(m[1], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	unit := int64(1)
+	switch strings.ToLower(m[2]) {
+	case "k":
+		unit = 1 << 10
+	case "m":
+		unit = 1 << 20
+	case "g":
+		unit = 1 << 30
+	}
+	if n > math.MaxInt64/unit {
+		return 0, false
+	}
+	return n * unit, true
+}
 
 // Validate checks the settings which don't depend on the machine: enums,
 // mount specs, the command of an acp agent and the completeness of messengers.
@@ -77,23 +107,20 @@ func (c *Config) Validate() error {
 	if c.Name == "" {
 		add("no name: set one with --name")
 	}
-	checkEnum := func(flag, v string, want ...string) {
-		if v != "" && !slices.Contains(want, v) {
-			invalid(flag, v, "want %s or none", strings.Join(want, ", "))
+	checkNetwork := func(flag, v string) {
+		if v != "" && v != NetworkTailscale && !isRelayURL(v) {
+			invalid(flag, v, "want %s, a relay URL such as https://relay.example.com, or none", NetworkTailscale)
 		}
 	}
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
 		invalid("sandbox", c.Sandbox, "want docker or local")
 	}
-	switch {
-	case c.Network.Private == "lan":
+	if c.Network.Private == "lan" {
 		invalid("private", c.Network.Private, "lan was removed; want tailscale, a relay URL or none")
-	case !isRelayURL(c.Network.Private):
-		checkEnum("private", c.Network.Private, NetworkTailscale)
+	} else {
+		checkNetwork("private", c.Network.Private)
 	}
-	if !isRelayURL(c.Network.Public) {
-		checkEnum("public", c.Network.Public, NetworkTailscale)
-	}
+	checkNetwork("public", c.Network.Public)
 	for flag, v := range map[string]string{"private": c.Network.Private, "public": c.Network.Public} {
 		if !isRelayURL(v) {
 			continue
@@ -133,8 +160,13 @@ func (c *Config) Validate() error {
 	if c.Port < 0 || c.Port > 65535 {
 		invalid("port", strconv.Itoa(c.Port), "want 1-65535")
 	}
-	if m := c.Limits.Memory; m != "" && !memory.MatchString(m) {
-		invalid("memory", m, "want a size such as 4g or 512m")
+	if m := c.Limits.Memory; m != "" {
+		switch n, ok := memoryBytes(m); {
+		case !ok:
+			invalid("memory", m, "want a size such as 4g or 512m")
+		case n < minMemory:
+			invalid("memory", m, "want at least 6m, such as 4g or 512m")
+		}
 	}
 	if v := c.Limits.CPUs; v != "" {
 		if n, err := strconv.ParseFloat(v, 64); err != nil || n <= 0 {
@@ -219,13 +251,13 @@ var ToolKinds = toolrules.Kinds
 func (p PolicyConfig) validate() []error {
 	var errs []error
 	if v := p.PrivateAllowIncoming; v != "" && v != AccessEveryone && v != AccessPaired {
-		errs = append(errs, &FieldError{Flag: "private-allow-incoming", Entry: v, Reason: "want everyone or paired"})
+		errs = append(errs, &FieldError{Flag: "private-allow-incoming", Entry: v, Reason: "want everyone (or anyone) or paired"})
 	}
 	if v := p.PublicAllowIncoming; v != "" && v != AccessPaired && v != AccessAnyone {
-		errs = append(errs, &FieldError{Flag: "public-allow-incoming", Entry: v, Reason: "want paired or anyone"})
+		errs = append(errs, &FieldError{Flag: "public-allow-incoming", Entry: v, Reason: "want paired or anyone (or everyone)"})
 	}
 	if v := p.PrivateAllowOutgoing; v != "" && v != AccessEveryone && v != AccessContacts {
-		errs = append(errs, &FieldError{Flag: "private-allow-outgoing", Entry: v, Reason: "want everyone or contacts"})
+		errs = append(errs, &FieldError{Flag: "private-allow-outgoing", Entry: v, Reason: "want everyone (or anyone) or contacts"})
 	}
 	for _, e := range p.AllowEmails {
 		if !ValidEmailPattern(e) {

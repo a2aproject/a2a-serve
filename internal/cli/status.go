@@ -135,7 +135,7 @@ func printStatusURL(cfg *globalConfig, d agentdir.Dir, st *controlapi.Status, er
 			return cerr
 		}
 		if conf.LocalURL() == "" {
-			return err
+			return &agenterr.NotRunningError{Msg: "no port has been picked yet: the first start picks it", Hint: agenterr.HintStart}
 		}
 		st, err = &controlapi.Status{Local: conf.LocalURL()}, nil
 	}

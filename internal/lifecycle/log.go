@@ -27,6 +27,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
 // isProgress reports whether a log line is a progress line for the user
@@ -106,7 +107,9 @@ func readFrom(path string, offset int64) ([]string, int64, error) {
 func FollowLog(ctx context.Context, dir agentdir.Dir, n int, follow bool, out, notes io.Writer) error {
 	offset, err := printTail(dir.LogPath(), n, out)
 	if errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("no log yet at %s", dir.LogPath())
+		e := clierr.Usage(fmt.Sprintf("no log yet at %s", dir.LogPath()))
+		e.Hint = "the agent writes it once it starts: `a2a-serve start --detach`"
+		return e
 	}
 	if err != nil {
 		return err

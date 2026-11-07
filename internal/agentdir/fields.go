@@ -547,7 +547,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Limits.Memory }, func(s *Settings) *string { return &s.Memory }),
 		flag:   "memory", path: "limits.memory", place: placeOperational, scope: scopeAgent, section: SectionSandbox,
-		usage: "Container memory limit, such as 4g or 512m (default 4g)",
+		usage: "Container memory limit of at least 6m, such as 4g or 512m (default 4g)",
 		def:   DefaultLimits.Memory,
 	},
 	{

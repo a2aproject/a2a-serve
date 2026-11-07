@@ -58,7 +58,13 @@ func (f *serverFlags) addDirFlag(fs *pflag.FlagSet) {
 // running agent.
 func (f *serverFlags) addControlFlags(fs *pflag.FlagSet) {
 	f.addDirFlag(fs)
-	fs.DurationVar(&f.timeout, "timeout", controlapi.DefaultTimeout, "Timeout of each call to the running agent, a `duration` such as 30s or 2m")
+	f.addTimeoutFlag(fs, "Timeout of each call to the running agent, a `duration` such as 30s or 2m")
+}
+
+// addTimeoutFlag adds --timeout with usage. A command that shadows the
+// --timeout of its parent uses it to say what the timeout covers.
+func (f *serverFlags) addTimeoutFlag(fs *pflag.FlagSet, usage string) {
+	fs.DurationVar(&f.timeout, "timeout", controlapi.DefaultTimeout, usage)
 }
 
 // serveShort describes the command in its help and in `a2a plugin list`.
@@ -175,7 +181,9 @@ func runConfiguredAgent(cmd *cobra.Command, cfg *globalConfig, f *serverFlags, m
 	d, err := f.agentDir()
 	if errors.Is(err, agentdir.ErrNotFound) && f.dir == "" {
 		if !term.IsTerminal(int(os.Stdin.Fd())) {
-			return clierr.Usage("no agent here: start one with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`")
+			e := clierr.NoAgent(errors.New("no agent here"))
+			e.Hint = "start one with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "), or a test server with `a2a-serve start echo`, `proxy` or `exec`"
+			return e
 		}
 		return runWizard(cmd, cfg, m.quiet)
 	}
