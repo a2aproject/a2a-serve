@@ -328,7 +328,10 @@ func dockerQuery(ctx context.Context, timeout time.Duration, args ...string) ([]
 	if err == nil {
 		return out, nil
 	}
-	if ctx.Err() == nil && qctx.Err() != nil {
+	if ctx.Err() != nil {
+		return nil, fmt.Errorf("docker %s: %w", args[0], ctx.Err())
+	}
+	if qctx.Err() != nil {
 		return nil, noAnswer(timeout)
 	}
 	return nil, exitErr(err)

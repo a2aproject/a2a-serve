@@ -70,6 +70,7 @@ func TestDockerSandboxMounts(t *testing.T) {
 // seconds and names DOCKER_HOST.
 func TestStartWhenDockerDoesNotAnswer(t *testing.T) {
 	t.Parallel()
+	dependsOnSandbox(t)
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("needs the docker CLI")
 	}
@@ -83,7 +84,7 @@ func TestStartWhenDockerDoesNotAnswer(t *testing.T) {
 	start := time.Now()
 	out, err := owner.exec(coder.dir, "a2a", "serve", "start", "acp", "--name", "coder", "--detach",
 		"--sandbox", "docker", "--image", "example.invalid/fakeacp", "--command", "/usr/local/bin/fakeacp")
-	coder.stopped = true
+	coder.stopped = err != nil
 	want := "docker does not answer within 10s at unix://" + sock + " from DOCKER_HOST"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("a2a-serve start --detach = %q, %v, want an error containing %q", out, err, want)
