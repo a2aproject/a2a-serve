@@ -138,7 +138,9 @@ func waitNewTurn(t *testing.T, u *user, a *agent, first *a2a.Task) *a2a.Task {
 	eventually(t, "waiting for a posted turn", func() (bool, string) {
 		tasks := u.mustListTasks(a.url, "--context", first.ContextID, "--history", "1")
 		for _, task := range tasks {
-			if task.ID != first.ID && task.Status.State.Terminal() {
+			// A question task of the conversation ends too, when its
+			// question is answered elsewhere; its history is the agent's.
+			if task.ID != first.ID && task.Status.State.Terminal() && len(task.History) > 0 && task.History[0].Role == a2a.MessageRoleUser {
 				turn = task
 				return true, ""
 			}
