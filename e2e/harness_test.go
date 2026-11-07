@@ -34,6 +34,22 @@ import (
 
 const rejected = "The user rejected permission to use this specific tool call."
 
+// addEchoMCP gives the project in dir an MCP server "echo" with a tool
+// "echo".
+func addEchoMCP(t *testing.T, dir string) {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join(binDir, "mcpecho"))
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "mcpecho"), data, 0o700); err != nil {
+		t.Fatalf("os.WriteFile() error = %v", err)
+	}
+	writeJSON(t, filepath.Join(dir, ".mcp.json"), map[string]any{
+		"mcpServers": map[string]any{"echo": map[string]any{"command": filepath.Join(dir, "mcpecho")}},
+	})
+}
+
 func TestHarnessOpencodeToolApprovals(t *testing.T) {
 	t.Parallel()
 	requireHarness(t, "opencode")
@@ -97,19 +113,19 @@ func TestHarnessOpencodeToolApprovals(t *testing.T) {
 			wantResults: map[string]string{"read": rejected},
 		},
 		{
-			name: "MCP tool of the project runs without asking",
-			prepare: func(t *testing.T, dir string) {
-				data, err := os.ReadFile(filepath.Join(binDir, "mcpecho"))
-				if err != nil {
-					t.Fatalf("os.ReadFile() error = %v", err)
-				}
-				if err := os.WriteFile(filepath.Join(dir, "mcpecho"), data, 0o700); err != nil {
-					t.Fatalf("os.WriteFile() error = %v", err)
-				}
-				writeJSON(t, filepath.Join(dir, ".mcp.json"), map[string]any{
-					"mcpServers": map[string]any{"echo": map[string]any{"command": filepath.Join(dir, "mcpecho")}},
-				})
+			name:    "MCP tool of the project asks",
+			prepare: addEchoMCP,
+			calls: func(string) []toolCall {
+				return []toolCall{{name: "echo_echo", args: map[string]any{"text": "ping"}}}
 			},
+			answers:     []string{"once"},
+			wantAsked:   []string{"other"},
+			wantResults: map[string]string{"echo_echo": "echo: ping"},
+		},
+		{
+			name:    "MCP tool allowed by a rule runs without asking",
+			flags:   []string{"--allow-tools", "tool:echo.echo"},
+			prepare: addEchoMCP,
 			calls: func(string) []toolCall {
 				return []toolCall{{name: "echo_echo", args: map[string]any{"text": "ping"}}}
 			},
