@@ -25,6 +25,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
@@ -235,6 +236,28 @@ func (d Dir) Lock() (release func() error, err error) {
 		return nil, errors.Join(fmt.Errorf("removing a stale PID file: %w", err), release())
 	}
 	return release, nil
+}
+
+// ProbeWait is how long [Dir.LockWithin] waits out a command that holds the
+// lock to check that no server runs.
+const ProbeWait = 2 * time.Second
+
+// LockWithin is [Dir.Lock] retried for up to wait while a command holds
+// the lock to check that no server runs, so that such a check doesn't make
+// a starting server fail. A server writes its PID file once it holds the
+// lock, and a lock held with a PID file fails at once.
+func (d Dir) LockWithin(wait time.Duration) (release func() error, err error) {
+	deadline := time.Now().Add(wait)
+	for {
+		release, err = d.Lock()
+		if !errors.Is(err, fsutil.ErrLocked) || time.Now().After(deadline) {
+			return release, err
+		}
+		if _, statErr := os.Stat(d.PIDPath()); statErr == nil {
+			return nil, err
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
 }
 
 // maxSocketPath stays under the sun_path limit of Linux (108) and macOS (104).

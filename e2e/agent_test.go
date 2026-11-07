@@ -99,6 +99,48 @@ func TestStopWithoutState(t *testing.T) {
 	}
 }
 
+// TestConcurrentStarts covers several start --detach at once in a stopped
+// agent directory: one server comes up, and every starter either reports
+// it running or fails with "already running".
+func TestConcurrentStarts(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	coder.stop()
+
+	const starters = 3
+	type result struct {
+		out string
+		err error
+	}
+	results := make(chan result, starters)
+	for range starters {
+		go func() {
+			out, err := owner.exec(coder.dir, "a2a", "serve", "start", "--detach", "--quiet")
+			results <- result{out, err}
+		}()
+	}
+	coder.stopped = false
+	started := 0
+	for range starters {
+		r := <-results
+		switch {
+		case r.err == nil && strings.Contains(r.out, "Error"):
+			t.Errorf("a2a-serve start --detach = %q, want no error output", r.out)
+		case r.err == nil:
+			started++
+		case !strings.Contains(r.err.Error(), "already running"):
+			t.Errorf("a2a-serve start --detach error = %v, want success or an already running error", r.err)
+		}
+	}
+	if started == 0 {
+		t.Fatalf("a2a-serve start --detach succeeded for none of %d concurrent starters, want at least one", starters)
+	}
+	if !coder.running() {
+		t.Fatalf("a2a-serve status running = false after the concurrent starts, want true")
+	}
+}
+
 func TestConfigRestartAppliesPendingSettings(t *testing.T) {
 	t.Parallel()
 	tests := []struct {

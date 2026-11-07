@@ -40,6 +40,12 @@ func isProgress(line string) bool {
 // an error.
 const stopMsg = "agent server stopped"
 
+// logStop logs the stop record of the server with pid. The PID tells a
+// starter its own server's record from that of a concurrent start.
+func logStop(l *slog.Logger, pid int, err error) {
+	l.Error(stopMsg, "error", err, "pid", pid)
+}
+
 // isStop reports whether a log line is the record of a server that stopped
 // with an error.
 func isStop(line string) bool {

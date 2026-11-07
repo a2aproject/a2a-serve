@@ -17,14 +17,17 @@
 package service
 
 import (
+	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 )
 
 func TestDetachReportsExit(t *testing.T) {
 	t.Parallel()
-	exited, err := Detach(Unit{Exe: "sh", Args: []string{"-c", "exit 3"}, LogPath: filepath.Join(t.TempDir(), "log")})
+	_, exited, err := Detach(Unit{Exe: "sh", Args: []string{"-c", "exit 3"}, LogPath: filepath.Join(t.TempDir(), "log")})
 	if err != nil {
 		t.Fatalf("Detach() error = %v", err)
 	}
@@ -32,5 +35,26 @@ func TestDetachReportsExit(t *testing.T) {
 	case <-exited:
 	case <-time.After(10 * time.Second):
 		t.Fatalf("Detach() exited channel not closed after the process exited")
+	}
+}
+
+func TestDetachReturnsPID(t *testing.T) {
+	t.Parallel()
+	log := filepath.Join(t.TempDir(), "log")
+	pid, exited, err := Detach(Unit{Exe: "sh", Args: []string{"-c", "echo $$"}, LogPath: log})
+	if err != nil {
+		t.Fatalf("Detach() error = %v", err)
+	}
+	select {
+	case <-exited:
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Detach() exited channel not closed after the process exited")
+	}
+	data, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if got := strings.TrimSpace(string(data)); got != strconv.Itoa(pid) {
+		t.Fatalf("Detach() pid = %d, want the PID the process printed, %s", pid, got)
 	}
 }

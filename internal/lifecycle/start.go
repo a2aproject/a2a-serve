@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -131,7 +132,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 		srvOpts.Ready = func(*agentsrv.Server) { ready() }
 	}
 	if err := agentsrv.Run(ctx, srvOpts); err != nil {
-		slog.Error(stopMsg, "error", err)
+		logStop(slog.Default(), os.Getpid(), err)
 		return err
 	}
 	slog.Info("the server stopped")
@@ -141,7 +142,7 @@ func foreground(ctx context.Context, dir agentdir.Dir, opts StartOptions) error 
 // checkNotRunning fails if a server holds the lock of dir. The lock
 // is released at once: the server takes it again when it starts.
 func checkNotRunning(dir agentdir.Dir) error {
-	release, err := dir.Lock()
+	release, err := dir.LockWithin(agentdir.ProbeWait)
 	if errors.Is(err, fsutil.ErrLocked) {
 		return fmt.Errorf("the server is already running in %s (a2a-serve status)", dir.Root)
 	}
@@ -201,26 +202,18 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 		Env:         []string{"PATH=" + os.Getenv("PATH")},
 	}
 	var note string
-	alive := func() bool { return true }
+	var pid int
+	// A service manager restarts a server that failed, so the process of a
+	// service never counts as exited.
+	var exited <-chan struct{}
 	if asService {
 		if note, err = service.Install(u); err != nil {
 			return err
 		}
-	} else {
-		exited, err := service.Detach(u)
-		if err != nil {
-			return err
-		}
-		alive = func() bool {
-			select {
-			case <-exited:
-				return false
-			default:
-				return true
-			}
-		}
+	} else if pid, exited, err = service.Detach(u); err != nil {
+		return err
 	}
-	if err := waitReady(ctx, dir, offset, alive, out); err != nil {
+	if err := waitReady(ctx, dir, offset, pid, exited, out); err != nil {
 		if asService {
 			return fmt.Errorf("%w\n  the service stays installed; remove it with `a2a-serve stop --uninstall`", err)
 		}
@@ -238,12 +231,13 @@ func background(ctx context.Context, dir agentdir.Dir, asService, quiet bool, ou
 }
 
 // waitReady relays progress lines from the log until the control socket
-// answers or the process dies. The error output of a server that exits is
-// held back and returned, so it is reported once.
-func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func() bool, out io.Writer) error {
+// answers or the process dies, which closes exited. The error output of a
+// server that exits is held back and returned, so it is reported once. Only
+// the stop record of the server with pid counts, or any with pid zero.
+func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, pid int, exited <-chan struct{}, out io.Writer) error {
 	deadline := time.Now().Add(15 * time.Minute)
 	client := controlapi.NewClient(dir)
-	r := relay{out: out}
+	r := relay{out: out, pid: pid}
 	for {
 		next, err := r.read(dir.LogPath(), offset)
 		if err != nil {
@@ -257,13 +251,19 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 			// Print what the server logged while becoming ready.
 			if _, err := r.read(dir.LogPath(), offset); err != nil {
 				slog.Debug("reading the startup log", "error", err)
-				return nil
 			}
-			return r.flush()
+			return nil
 		}
-		// A service manager restarts a server that failed, so the process
-		// may still be alive.
-		if r.stopped || !alive() {
+		if r.stopped || isClosed(exited) {
+			// The server prints its error after the stop record, and it
+			// has printed it once it exited.
+			if pid != 0 {
+				select {
+				case <-exited:
+				case <-ctx.Done():
+				case <-time.After(exitWait):
+				}
+			}
 			if _, err := r.read(dir.LogPath(), offset); err != nil {
 				slog.Debug("reading the log of the exited server", "error", err)
 			}
@@ -280,15 +280,34 @@ func waitReady(ctx context.Context, dir agentdir.Dir, offset int64, alive func()
 	}
 }
 
+// exitWait is how long waitReady waits for a server that logged its stop
+// record to exit.
+const exitWait = 5 * time.Second
+
+func isClosed(c <-chan struct{}) bool {
+	select {
+	case <-c:
+		return true
+	default:
+		return false
+	}
+}
+
 // relay prints the progress lines of a starting server and keeps what it
 // needs to report the server's failure.
 type relay struct {
 	out io.Writer
+	// pid is the PID of the server whose stop record counts, or zero for
+	// any server.
+	pid int
 	// tail is the last log records, which aren't printed.
 	tail []string
-	// held is the error output the server printed last, such as
-	// "Error: ..." and "hint: ...".
+	// held is the error output a process printed last, such as
+	// "Error: ..." and "hint: ...". It isn't printed: a process prints it
+	// as it exits, and it may be that of a concurrent start.
 	held []string
+	// inError is whether the last progress line was error output.
+	inError bool
 	// stopErr is the error of the server's stop record.
 	stopErr string
 	stopped bool
@@ -315,31 +334,33 @@ func (r *relay) line(l string) error {
 		if len(r.tail) > 20 {
 			r.tail = r.tail[1:]
 		}
-		if isStop(l) {
+		if isStop(l) && r.own(l) {
 			r.stopped, r.stopErr = true, logAttr(l, "error")
+			// The server prints its error after the record.
+			r.held, r.inError = nil, false
 		}
 		return nil
 	}
-	if strings.HasPrefix(l, errorPrefix) || len(r.held) > 0 && strings.HasPrefix(l, hintPrefix) {
+	switch {
+	case strings.HasPrefix(l, errorPrefix):
+		// After the stop record, the first error is the server's own.
+		r.inError = !r.stopped || len(r.held) == 0
+		if r.inError {
+			r.held = []string{l}
+		}
+		return nil
+	case strings.HasPrefix(l, hintPrefix) && r.inError:
 		r.held = append(r.held, l)
 		return nil
 	}
-	if err := r.flush(); err != nil {
-		return err
-	}
+	r.inError = false
 	_, err := fmt.Fprintln(r.out, l)
 	return err
 }
 
-// flush prints held lines that turned out to be progress.
-func (r *relay) flush() error {
-	for _, l := range r.held {
-		if _, err := fmt.Fprintln(r.out, l); err != nil {
-			return err
-		}
-	}
-	r.held = nil
-	return nil
+// own reports whether the stop record l is that of the relayed server.
+func (r *relay) own(l string) bool {
+	return r.pid == 0 || logAttr(l, "pid") == strconv.Itoa(r.pid)
 }
 
 // errorPrefix and hintPrefix start the lines the CLI prints for an error.
@@ -352,8 +373,8 @@ const (
 func (r *relay) exitError() error {
 	if len(r.held) > 0 {
 		e := clierr.Wrap(clierr.CodeInternal, errors.New("the server exited: "+strings.TrimPrefix(r.held[0], errorPrefix)))
-		if len(r.held) > 1 {
-			e.Hint = strings.TrimPrefix(r.held[len(r.held)-1], hintPrefix)
+		if hint := r.held[len(r.held)-1]; strings.HasPrefix(hint, hintPrefix) {
+			e.Hint = strings.TrimPrefix(hint, hintPrefix)
 		}
 		return e
 	}
