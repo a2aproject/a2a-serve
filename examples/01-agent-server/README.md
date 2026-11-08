@@ -94,8 +94,8 @@ a2a send "Use bash to write the output of 'uname -sr' into system.txt."
 ```
 
 The agent asks first, so the task stops in `input-required`. The output shows
-the tool call, the options and how to resume. A command with one part also
-offers `always`, which allows the calls like it for the rest of the
+the tool call, the options and how to resume. A command with one part can
+also offer `always`, which allows the calls like it for the rest of the
 conversation; this one writes to a file with `>`, so it offers `once` and
 `reject`:
 
