@@ -253,7 +253,7 @@ func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.Call
 	// a2a-go streams a running task to any subscriber, so subscribers get
 	// the same scoping as GetTask.
 	if sub, ok := req.Payload.(*a2a.SubscribeToTaskRequest); ok {
-		_, err := c.tasks.Get(ctx, sub.ID)
+		_, err := c.tasks.Header(ctx, sub.ID)
 		return ctx, nil, err
 	}
 	if msg, ok := req.Payload.(*a2a.SendMessageRequest); ok && msg.Message != nil && msg.Message.TaskID != "" {

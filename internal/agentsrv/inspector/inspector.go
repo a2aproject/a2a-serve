@@ -336,26 +336,28 @@ func waitingTasks(ctx context.Context, tasks *store.TaskStore) ([]*a2a.Task, err
 
 // conversations groups the recent tasks by context, the most recent first.
 func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) {
-	history := fullHistory
-	resp, owners, err := in.deps.Tasks.ListWithOwners(ctx, &a2a.ListTasksRequest{PageSize: recentTasks, HistoryLength: &history})
+	tasks, err := in.deps.Tasks.ListSummaries(ctx, &a2a.ListTasksRequest{PageSize: recentTasks})
 	if err != nil {
 		return nil, err
 	}
 	var out []conversation
 	index := map[string]int{}
-	for i, t := range resp.Tasks {
+	for _, sum := range tasks {
+		t := sum.Task
 		if j, ok := index[t.ContextID]; ok {
 			out[j].Tasks++
-			if text, ok := prompt(t); ok {
-				out[j].Snippet = text
+			if sum.Prompt != nil {
+				out[j].Snippet = snippet(a2atext.Message(sum.Prompt))
 			}
 			continue
 		}
-		c := conversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(owners[i]), State: a2atext.StateName(t.Status.State), Tasks: 1}
+		c := conversation{ContextID: t.ContextID, User: auth.DisplayPrincipal(sum.Owner), State: a2atext.StateName(t.Status.State), Tasks: 1}
 		if t.Status.Timestamp != nil {
 			c.Updated = *t.Status.Timestamp
 		}
-		c.Snippet, _ = prompt(t)
+		if sum.Prompt != nil {
+			c.Snippet = snippet(a2atext.Message(sum.Prompt))
+		}
 		if ch, _, err := in.deps.Store.ConvOf(ctx, t.ContextID); err == nil {
 			c.Chat = ch
 		} else if !errors.Is(err, store.ErrNotFound) {
@@ -365,16 +367,6 @@ func (in *Inspector) conversations(ctx context.Context) ([]conversation, error) 
 		out = append(out, c)
 	}
 	return out, nil
-}
-
-// prompt is a snippet of the first user message of t.
-func prompt(t *a2a.Task) (string, bool) {
-	for _, m := range t.History {
-		if m.Role == a2a.MessageRoleUser {
-			return snippet(a2atext.Message(m)), true
-		}
-	}
-	return "", false
 }
 
 func snippet(s string) string {

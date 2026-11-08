@@ -876,7 +876,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 	// a2a-go streams a running task to any subscriber, so subscribers get
 	// the same scoping as GetTask.
 	if sub, ok := req.Payload.(*a2a.SubscribeToTaskRequest); ok {
-		_, err := i.tasks.Get(ctx, sub.ID)
+		_, err := i.tasks.Header(ctx, sub.ID)
 		return ctx, nil, err
 	}
 	// Anonymous callers who proved nothing share one principal, so they
@@ -913,7 +913,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		// a2a-go reports a running execution before it loads the task in
 		// the caller's scope, which tells another person's task from an
 		// unknown one.
-		if _, err := i.tasks.Get(ctx, msg.Message.TaskID); errors.Is(err, a2a.ErrTaskNotFound) {
+		if _, err := i.tasks.Header(ctx, msg.Message.TaskID); errors.Is(err, a2a.ErrTaskNotFound) {
 			return ctx, nil, err
 		}
 		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {

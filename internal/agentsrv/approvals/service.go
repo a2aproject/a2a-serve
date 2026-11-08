@@ -412,7 +412,7 @@ func (s *Service) Close(ctx context.Context, ids ...string) {
 // can't see the task gets [a2a.ErrTaskNotFound], as for an unknown task, so
 // that callers can't tell which IDs wait for approval.
 func (r *Records) CheckAnswer(ctx context.Context, p auth.Principal, taskID a2a.TaskID) error {
-	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	stored, err := r.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return nil
 	}

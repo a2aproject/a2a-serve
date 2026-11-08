@@ -149,11 +149,7 @@ func (ts *TaskStore) Update(ctx context.Context, req *taskstore.UpdateRequest) (
 	}
 	var next taskstore.TaskVersion
 	err = ts.s.inTx(ctx, func(tx *sql.Tx) error {
-		h, err := scanHeader(tx.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
-			ts.scope, string(req.Task.ID)))
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
-			return a2a.ErrTaskNotFound
-		}
+		h, err := ts.row(ctx, tx, req.Task.ID, user, all)
 		if err != nil {
 			return err
 		}
@@ -371,6 +367,40 @@ func queryEach(ctx context.Context, q querier, query string, args []any, fn func
 	return errors.Join(rows.Err(), rows.Close())
 }
 
+// rowQuerier reads one row on the read pool or in a transaction.
+type rowQuerier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
+// row reads the row of a task. A task of another user is reported as
+// [a2a.ErrTaskNotFound] unless all is true.
+func (ts *TaskStore) row(ctx context.Context, q rowQuerier, taskID a2a.TaskID, user string, all bool) (*taskHeader, error) {
+	h, err := scanHeader(q.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
+		ts.scope, string(taskID)))
+	if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
+		return nil, a2a.ErrTaskNotFound
+	}
+	return h, err
+}
+
+// Header returns a task without its history and artifacts, which is what
+// its row holds: the state, the status message and the owner. It sees the
+// tasks that [TaskStore.Get] sees and reads none of their events.
+func (ts *TaskStore) Header(ctx context.Context, taskID a2a.TaskID) (*taskstore.StoredTask, error) {
+	user, all, err := ts.viewer(ctx)
+	if err != nil {
+		return nil, err
+	}
+	h, err := ts.row(ctx, ts.s.reads, taskID, user, all)
+	if err != nil {
+		return nil, err
+	}
+	if err := ts.s.loadBlobs(ctx, h.task); err != nil {
+		return nil, err
+	}
+	return &taskstore.StoredTask{Task: h.task, Version: taskstore.TaskVersion(h.version), User: h.owner}, nil
+}
+
 // Get implements [taskstore.Store].
 func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.StoredTask, error) {
 	user, all, err := ts.viewer(ctx)
@@ -379,11 +409,7 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 	}
 	var logs []*taskLog
 	err = ts.s.readTx(ctx, func(tx *sql.Tx) error {
-		h, err := scanHeader(tx.QueryRowContext(ctx, `SELECT `+headerColumns+` FROM tasks WHERE scope = ? AND id = ?`,
-			ts.scope, string(taskID)))
-		if errors.Is(err, sql.ErrNoRows) || (err == nil && !all && h.owner != user) {
-			return a2a.ErrTaskNotFound
-		}
+		h, err := ts.row(ctx, tx, taskID, user, all)
 		if err != nil {
 			return err
 		}
@@ -416,16 +442,110 @@ func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.
 // ListWithOwners is [TaskStore.List] that also returns the owner of each
 // listed task, in the order of the tasks.
 func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, []string, error) {
-	user, all, err := ts.viewer(ctx)
+	// Lists carry history only when asked, so that large messages don't
+	// make every page large.
+	history := 0
+	if req.HistoryLength != nil {
+		history = *req.HistoryLength
+	}
+	pg, err := ts.page(ctx, req, history > 0 || req.IncludeArtifacts)
 	if err != nil {
 		return nil, nil, err
+	}
+	resp := &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, TotalSize: pg.total, PageSize: pg.size}
+	if pg.more {
+		last := pg.headers[len(pg.headers)-1]
+		resp.NextPageToken = encodePageToken(last.updated, string(last.task.ID))
+	}
+	var full []*a2a.Task
+	if pg.logs != nil {
+		if full, err = ts.materialize(ctx, pg.logs); err != nil {
+			return nil, nil, err
+		}
+	}
+	owners := make([]string, 0, len(pg.headers))
+	for i, h := range pg.headers {
+		task := h.task
+		if full != nil {
+			task = full[i]
+		}
+		owners = append(owners, h.owner)
+		switch {
+		case history <= 0:
+			task.History = []*a2a.Message{}
+		case len(task.History) > history:
+			task.History = task.History[len(task.History)-history:]
+		}
+		if !req.IncludeArtifacts {
+			task.Artifacts = nil
+		}
+		resp.Tasks = append(resp.Tasks, task)
+	}
+	if err := ts.s.loadBlobs(ctx, resp.Tasks...); err != nil {
+		return nil, nil, err
+	}
+	return resp, owners, nil
+}
+
+// TaskSummary is a listed task without its history and artifacts, with its
+// owner and the first user message of its history. Its raw parts carry no
+// bytes.
+type TaskSummary struct {
+	Task  *a2a.Task
+	Owner string
+	// Prompt is nil when the history has no user message.
+	Prompt *a2a.Message
+}
+
+// ListSummaries lists the tasks that req selects as [TaskSummary] values,
+// ignoring the history length and artifacts that req asks for. It reads no
+// attachments, so that overviews of many tasks stay cheap.
+func (ts *TaskStore) ListSummaries(ctx context.Context, req *a2a.ListTasksRequest) ([]TaskSummary, error) {
+	pg, err := ts.page(ctx, req, true)
+	if err != nil {
+		return nil, err
+	}
+	full, err := ts.materialize(ctx, pg.logs)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]TaskSummary, 0, len(pg.headers))
+	for i, h := range pg.headers {
+		sum := TaskSummary{Task: h.task, Owner: h.owner}
+		for _, m := range full[i].History {
+			if m.Role == a2a.MessageRoleUser {
+				sum.Prompt = m
+				break
+			}
+		}
+		out = append(out, sum)
+	}
+	return out, nil
+}
+
+// taskPage is a page of listed tasks.
+type taskPage struct {
+	size    int
+	total   int
+	more    bool
+	headers []*taskHeader
+	// logs is nil unless the page was read with its logs.
+	logs []*taskLog
+}
+
+// page reads the page of tasks that req selects, and their logs if withLogs
+// is true.
+func (ts *TaskStore) page(ctx context.Context, req *a2a.ListTasksRequest, withLogs bool) (*taskPage, error) {
+	user, all, err := ts.viewer(ctx)
+	if err != nil {
+		return nil, err
 	}
 	pageSize := req.PageSize
 	if pageSize == 0 {
 		pageSize = defaultPageSize
 	}
 	if pageSize < 1 || pageSize > 100 {
-		return nil, nil, fmt.Errorf("page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
+		return nil, fmt.Errorf("page size must be between 1 and 100 inclusive, got %d: %w", pageSize, a2a.ErrInvalidRequest)
 	}
 
 	where := []string{"scope = ?"}
@@ -448,20 +568,9 @@ func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksReque
 	}
 	filter := strings.Join(where, " AND ")
 
-	// Lists carry history only when asked, so that large messages don't
-	// make every page large.
-	history := 0
-	if req.HistoryLength != nil {
-		history = *req.HistoryLength
-	}
-	var (
-		total   int
-		more    bool
-		headers []*taskHeader
-		logs    []*taskLog
-	)
+	pg := &taskPage{size: pageSize}
 	err = ts.s.readTx(ctx, func(tx *sql.Tx) error {
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&total); err != nil {
+		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE "+filter, args...).Scan(&pg.total); err != nil {
 			return err
 		}
 		pageWhere, pageArgs := filter, args
@@ -476,57 +585,24 @@ func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksReque
 		err := queryEach(ctx, tx, "SELECT "+headerColumns+" FROM tasks WHERE "+pageWhere+" ORDER BY updated DESC, id LIMIT ?",
 			append(pageArgs, pageSize+1), func(rows *sql.Rows) error {
 				h, err := scanHeader(rows)
-				headers = append(headers, h)
+				pg.headers = append(pg.headers, h)
 				return err
 			})
 		if err != nil {
 			return err
 		}
-		if more = len(headers) > pageSize; more {
-			headers = headers[:pageSize]
+		if pg.more = len(pg.headers) > pageSize; pg.more {
+			pg.headers = pg.headers[:pageSize]
 		}
-		if history > 0 || req.IncludeArtifacts {
-			logs, err = ts.logs(ctx, tx, headers)
+		if withLogs {
+			pg.logs, err = ts.logs(ctx, tx, pg.headers)
 		}
 		return err
 	})
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
-
-	resp := &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, TotalSize: total, PageSize: pageSize}
-	if more {
-		last := headers[pageSize-1]
-		resp.NextPageToken = encodePageToken(last.updated, string(last.task.ID))
-	}
-	var full []*a2a.Task
-	if logs != nil {
-		if full, err = ts.materialize(ctx, logs); err != nil {
-			return nil, nil, err
-		}
-	}
-	owners := make([]string, 0, len(headers))
-	for i, h := range headers {
-		task := h.task
-		if full != nil {
-			task = full[i]
-		}
-		owners = append(owners, h.owner)
-		switch {
-		case history <= 0:
-			task.History = []*a2a.Message{}
-		case len(task.History) > history:
-			task.History = task.History[len(task.History)-history:]
-		}
-		if !req.IncludeArtifacts {
-			task.Artifacts = nil
-		}
-		resp.Tasks = append(resp.Tasks, task)
-	}
-	if err := ts.s.loadBlobs(ctx, resp.Tasks...); err != nil {
-		return nil, nil, err
-	}
-	return resp, owners, nil
+	return pg, nil
 }
 
 func encodePageToken(updated int64, id string) string {
@@ -565,7 +641,7 @@ func Interrupted(task *a2a.Task) bool {
 // the task is in a terminal state. Tasks the caller can't see pass, for
 // the handler to report.
 func (ts *TaskStore) CheckNotInterrupted(ctx context.Context, id a2a.TaskID) error {
-	stored, err := ts.Get(ctx, id)
+	stored, err := ts.Header(ctx, id)
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return nil
 	}

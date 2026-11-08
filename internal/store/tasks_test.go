@@ -21,6 +21,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -29,6 +30,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
 func applyEvents(t *testing.T, ts *TaskStore, user string, task *a2a.Task, events ...a2a.Event) {
@@ -445,5 +448,118 @@ func TestGetWhileTasksComplete(t *testing.T) {
 		if err := <-errs; err != nil {
 			t.Fatalf("Get() while tasks complete error = %v", err)
 		}
+	}
+}
+
+func TestHeader(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("draw a cat"), a2a.NewRawPart([]byte("sketch")))}
+	chunk := &a2a.TaskArtifactUpdateEvent{TaskID: "t1", ContextID: "c1", Artifact: &a2a.Artifact{ID: "a1", Parts: []*a2a.Part{a2a.NewRawPart([]byte("png"))}}}
+	asking := a2a.NewStatusUpdateEvent(task, a2a.TaskStateInputRequired,
+		a2a.NewMessageForTask(a2a.MessageRoleAgent, task, a2a.NewTextPart("which color?"), a2a.NewRawPart([]byte("palette"))))
+	applyEvents(t, ts, "alice", task, chunk, asking)
+	want := &taskstore.StoredTask{
+		Task:    &a2a.Task{ID: "t1", ContextID: "c1", Status: asking.Status},
+		Version: 3,
+		User:    "alice",
+	}
+
+	tests := []struct {
+		name    string
+		viewer  context.Context
+		id      a2a.TaskID
+		want    *taskstore.StoredTask
+		wantErr error
+	}{
+		{name: "own task", viewer: asUser("alice"), id: "t1", want: want},
+		{name: "owner sees every task", viewer: asUser("owner"), id: "t1", want: want},
+		{name: "task of someone else", viewer: asUser("bob"), id: "t1", wantErr: a2a.ErrTaskNotFound},
+		{name: "unknown task", viewer: asUser("alice"), id: "nope", wantErr: a2a.ErrTaskNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got, err := ts.Header(tc.viewer, tc.id)
+			if !errors.Is(err, tc.wantErr) {
+				t.Fatalf("TaskStore.Header() error = %v, want %v", err, tc.wantErr)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("TaskStore.Header() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestListSummaries(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	first := newTask("t1", "c1")
+	first.History = []*a2a.Message{
+		a2a.NewMessageForTask(a2a.MessageRoleAgent, first, a2a.NewTextPart("hello")),
+		a2a.NewMessageForTask(a2a.MessageRoleUser, first, a2a.NewTextPart("draw a cat"), a2a.NewRawPart([]byte("sketch"))),
+	}
+	applyEvents(t, ts, "alice", first,
+		a2a.NewMessageForTask(a2a.MessageRoleUser, first, a2a.NewTextPart("in red")),
+		a2a.NewStatusUpdateEvent(first, a2a.TaskStateCompleted, nil))
+	second := newTask("t2", "c1")
+	second.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleAgent, second, a2a.NewTextPart("done"))}
+	applyEvents(t, ts, "bob", second)
+
+	type summary struct {
+		ID     a2a.TaskID
+		State  a2a.TaskState
+		Owner  string
+		Prompt string
+		Bytes  int
+	}
+	tests := []struct {
+		name   string
+		viewer context.Context
+		want   []summary
+	}{
+		{
+			name:   "owner sees every task",
+			viewer: asUser("owner"),
+			want: []summary{
+				{ID: "t1", State: a2a.TaskStateCompleted, Owner: "alice", Prompt: "draw a cat"},
+				{ID: "t2", State: a2a.TaskStateWorking, Owner: "bob"},
+			},
+		},
+		{
+			name:   "caller sees own tasks",
+			viewer: asUser("alice"),
+			want:   []summary{{ID: "t1", State: a2a.TaskStateCompleted, Owner: "alice", Prompt: "draw a cat"}},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sums, err := ts.ListSummaries(tc.viewer, &a2a.ListTasksRequest{})
+			if err != nil {
+				t.Fatalf("TaskStore.ListSummaries() error = %v", err)
+			}
+			var got []summary
+			for _, sum := range sums {
+				if sum.Task.History != nil || sum.Task.Artifacts != nil {
+					t.Fatalf("TaskStore.ListSummaries() task %s has history or artifacts", sum.Task.ID)
+				}
+				sm := summary{ID: sum.Task.ID, State: sum.Task.Status.State, Owner: sum.Owner}
+				if sum.Prompt != nil {
+					sm.Prompt = a2atext.Message(sum.Prompt)
+					for _, p := range sum.Prompt.Parts {
+						sm.Bytes += len(p.Raw())
+					}
+				}
+				got = append(got, sm)
+			}
+			slices.SortFunc(got, func(a, b summary) int { return strings.Compare(string(a.ID), string(b.ID)) })
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("TaskStore.ListSummaries() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
