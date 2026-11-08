@@ -87,7 +87,7 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 		}
 		res.Restart = waiting
 	}
-	if err := printConfigResult(cfg, res); err != nil {
+	if err := printConfigResult(cfg, res, restart); err != nil {
 		return err
 	}
 	if !restart || len(res.Restart) == 0 {
@@ -97,8 +97,9 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 }
 
 // printConfigResult prints the diff of a change, and whether it applies now
-// or after a restart.
-func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
+// or after a restart. With restarting, the restart follows, so it doesn't
+// ask for one.
+func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool) error {
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(res)
 	}
@@ -134,10 +135,10 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 	if len(res.Applied) > 0 {
 		fmt.Fprintf(&sb, "✓ applied to the running agent: %s\n", strings.Join(res.Applied, ", "))
 	}
-	if len(res.Restart) > 0 {
+	if len(res.Restart) > 0 && !restarting {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
-	writeAccess(&sb, res.Access)
+	writeAccess(&sb, res.Access, res.Restart)
 	writeWarnings(&sb, res.Warnings)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
@@ -150,7 +151,7 @@ func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
 	if !cfg.IsJSON() {
 		shown.Restart = nil
 	}
-	if err := printConfigResult(cfg, &shown); err != nil {
+	if err := printConfigResult(cfg, &shown, false); err != nil {
 		return err
 	}
 	if len(res.Restart) > 0 {
@@ -170,13 +171,14 @@ func writeWarnings(sb *strings.Builder, warnings []string) {
 // printAccess prints who may call the agent after a change, if known.
 func printAccess(cfg *globalConfig, a *controlapi.Access) error {
 	var sb strings.Builder
-	writeAccess(&sb, a)
+	writeAccess(&sb, a, nil)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
 }
 
 // writeAccess writes who may call the agent after a change, if known.
-func writeAccess(sb *strings.Builder, a *controlapi.Access) {
+// Pending are the settings that wait for a restart.
+func writeAccess(sb *strings.Builder, a *controlapi.Access, pending []string) {
 	if a == nil {
 		return
 	}
@@ -193,6 +195,18 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 	for _, note := range a.SandboxNotes {
 		fmt.Fprintf(sb, "! %s\n", note)
 	}
+	if note := guestNote(a, pending); note != "" {
+		fmt.Fprintf(sb, "! %s\n", note)
+	}
+}
+
+// guestNote is the model-key note of guests, unless a change of their rule
+// that may give them a key waits for a restart.
+func guestNote(a *controlapi.Access, pending []string) string {
+	if slices.ContainsFunc(pending, agentdir.IsSandboxSetting) {
+		return ""
+	}
+	return a.AnonymousNote
 }
 
 // inSecretDiff reports whether the diff of --secret names the secret.

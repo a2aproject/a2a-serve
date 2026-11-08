@@ -63,11 +63,6 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
-	found, err := project.LoadMCP(ws)
-	if err != nil {
-		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
-		return a2aacp.SessionParams{Cwd: ws}, nil
-	}
 	key, err := s.keys.of(ctx, execCtx.ContextID)
 	if err != nil {
 		return a2aacp.SessionParams{}, err
@@ -75,6 +70,22 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	sb, err := s.sandboxes.of(ctx, key)
 	if err != nil {
 		return a2aacp.SessionParams{}, err
+	}
+	// The servers come from the workspace the container gets: none for an
+	// empty one, and those of its copy for its own.
+	src := ws
+	if cfg.Sandbox != agentdir.SandboxLocal {
+		switch sb.Storage {
+		case agentdir.StorageEmpty:
+			return a2aacp.SessionParams{Cwd: ws}, nil
+		case agentdir.StorageOwn:
+			src = s.workspaces.Dir(workspaceName(key), agentdir.StorageOwn)
+		}
+	}
+	found, err := project.LoadMCP(src)
+	if err != nil {
+		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
+		return a2aacp.SessionParams{Cwd: ws}, nil
 	}
 	granted, _ := sb.Values(s.rt.Secrets())
 	vars := project.EnvVars(cfg.Env, granted)

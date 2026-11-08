@@ -177,18 +177,25 @@ func TestShowSandboxRule(t *testing.T) {
 	}
 }
 
-func TestCopyLiveKeepsARuleThatNamesASecretWaitingForRestart(t *testing.T) {
+func TestCopyLiveHoldsBackOnlyGrantsOfSecretsWaitingForRestart(t *testing.T) {
 	t.Parallel()
-	running := &Config{Secrets: []string{"KEY"}}
-	saved := &Config{Secrets: []string{"KEY", "GUEST"}, Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"guests"}, Secrets: []string{"KEY=secret:GUEST"}}}}}
+	running := &Config{Secrets: []string{"KEY"}, Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"pairing:ben"}, Storage: StorageShared}}}}
+	saved := &Config{Secrets: []string{"KEY", "GUEST"}, Policy: PolicyConfig{Sandbox: []SandboxRule{
+		{Match: []string{"pairing:ben"}, Storage: StorageReadOnly, Secrets: []string{"KEY", "OTHER=secret:GUEST"}},
+		{Match: []string{"guests"}, Secrets: []string{"KEY=secret:GUEST"}},
+	}}}
 
 	CopyLive(running, saved)
 
-	if len(running.Policy.Sandbox) != 0 {
-		t.Fatalf("CopyLive() rules = %v, want none until the restart loads GUEST", running.Policy.Sandbox)
+	want := []SandboxRule{
+		{Match: []string{"pairing:ben"}, Storage: StorageReadOnly, Secrets: []string{"KEY"}},
+		{Match: []string{"guests"}, Secrets: []string{"none"}},
 	}
-	if diff := Diff(running, saved); !slices.ContainsFunc(diff, func(c Change) bool { return c.Setting == "guest-secrets" }) {
-		t.Fatalf("Diff() = %v, want guest-secrets waiting", diff)
+	if diff := cmp.Diff(want, running.Policy.Sandbox); diff != "" {
+		t.Fatalf("CopyLive() wrong rules (-want +got) diff = %s", diff)
+	}
+	if diff := Diff(running, saved); !slices.ContainsFunc(diff, func(c Change) bool { return c.Setting == SandboxSetting }) {
+		t.Fatalf("Diff() = %v, want %s waiting", diff, SandboxSetting)
 	}
 }
 

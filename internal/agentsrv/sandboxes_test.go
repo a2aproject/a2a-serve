@@ -410,7 +410,7 @@ func TestPostedTurnsDontSaveTheIdentityOfTheirUser(t *testing.T) {
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
 	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{Network: network.ListenerPrivate}}
 
-	release, err := s.admitTurn(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
+	release, err := s.admitTurn(auth.InProcess(auth.Posted(ctx), ann), agentkey.User(ann.ID), nil)
 	if err != nil {
 		t.Fatalf("admitTurn() error = %v", err)
 	}
@@ -418,5 +418,23 @@ func TestPostedTurnsDontSaveTheIdentityOfTheirUser(t *testing.T) {
 
 	if _, err := st.UserIdentity(ctx, ann.ID); !errors.Is(err, store.ErrNotFound) {
 		t.Fatalf("UserIdentity() after a posted turn error = %v, want %v", err, store.ErrNotFound)
+	}
+}
+
+func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := openStore(t)
+	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{Network: network.ListenerPrivate}}
+
+	release, err := s.admitTurn(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
+	if err != nil {
+		t.Fatalf("admitTurn() error = %v", err)
+	}
+	release()
+
+	if _, err := st.UserIdentity(ctx, ann.ID); err != nil {
+		t.Fatalf("UserIdentity() after a messenger turn error = %v, want nil", err)
 	}
 }

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -408,11 +409,19 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	if err != nil {
 		return err
 	}
-	// The server can keep a live setting waiting, such as a sandbox rule
-	// that names a secret it loads at restart.
+	// The server can keep part of a live setting waiting, such as the grant
+	// of a secret it loads at restart. When it can't say, the sandbox
+	// settings count as waiting.
 	waiting := map[string]bool{}
 	if slices.ContainsFunc(live, agentdir.IsSandboxSetting) {
-		if running, err := client.Config(ctx); err == nil {
+		running, err := client.Config(ctx)
+		switch {
+		case err != nil:
+			slog.Warn("reading the config of the running agent", "error", err)
+			for _, s := range live {
+				waiting[s] = agentdir.IsSandboxSetting(s)
+			}
+		default:
 			for _, c := range agentdir.Diff(running, next) {
 				waiting[c.Setting] = true
 			}

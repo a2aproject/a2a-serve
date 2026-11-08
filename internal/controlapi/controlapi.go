@@ -360,6 +360,12 @@ type RemovalPreview struct {
 	Allowed int `json:"allowed"`
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string `json:"agentHomes"`
+	// Workspaces are the directories of private workspaces, such as an
+	// own copy of the workspace, that would be deleted.
+	Workspaces []string `json:"workspaces"`
+	// SandboxRule is the sandbox rule of the pairing that would be deleted,
+	// as config.yaml shows it.
+	SandboxRule string `json:"sandboxRule,omitempty"`
 }
 
 // SignOutResponse tells what `pair rm --email` revoked.

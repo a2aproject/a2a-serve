@@ -198,10 +198,16 @@ func (d Dir) UserHomeDir(id string) string {
 // anonymous, or the [UserKey] of a user. Backups leave it out.
 func (d Dir) WorkspacesDir() string { return filepath.Join(d.StateDir(), "workspaces") }
 
+// UserWorkspacesDir holds the private workspaces of the agent container of
+// the user with the principal ID id.
+func (d Dir) UserWorkspacesDir(id string) string {
+	return filepath.Join(d.WorkspacesDir(), UserKey(id))
+}
+
 // RemoveUserHome deletes the home and the private workspaces of the agent
 // process of the user with the principal ID id, if there are any.
 func (d Dir) RemoveUserHome(id string) error {
-	return errors.Join(os.RemoveAll(d.UserHomeDir(id)), os.RemoveAll(filepath.Join(d.WorkspacesDir(), UserKey(id))))
+	return errors.Join(os.RemoveAll(d.UserHomeDir(id)), os.RemoveAll(d.UserWorkspacesDir(id)))
 }
 
 // UserKey is a short stable name of the principal ID id, for paths and

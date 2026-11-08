@@ -341,8 +341,9 @@ func (s Sandbox) Values(stored agentdir.Secrets) (env, missing []string) {
 // SandboxLines describe what the containers of each kind of caller get:
 // you and the owner pairings, each rule, other callers, and anonymous
 // callers if they may call. Without a sandbox the rules don't apply, so
-// there are none.
-func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []SandboxLine {
+// there are none. Without a private network, the private matcher matches
+// no one, so the lines leave it out.
+func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous, private bool) []SandboxLine {
 	if sp.Local {
 		return nil
 	}
@@ -355,9 +356,10 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 	for _, r := range sp.Rules {
 		var who []string
 		for _, m := range r.Match {
-			if m != agentdir.MatchSelf && m != agentdir.MatchGuests {
-				who = append(who, describeMatcher(m))
+			if m == agentdir.MatchSelf || m == agentdir.MatchGuests || m == auth.MemberPrivate && !private {
+				continue
 			}
+			who = append(who, describeMatcher(m))
 		}
 		if len(who) == 0 {
 			continue

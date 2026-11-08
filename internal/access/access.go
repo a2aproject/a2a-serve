@@ -80,19 +80,27 @@ func Policy(p agentdir.PolicyConfig) auth.Policy {
 // Pairings counts the pairings of an agent besides the local one.
 type Pairings struct {
 	All, Owners int
+	// Names holds the names of the pairings and webhook nodes, or is nil
+	// when they aren't known.
+	Names map[string]bool
 }
 
-// CountPairings counts the pairings of ps besides the local one.
-func CountPairings(ps []store.Pairing) Pairings {
-	var n Pairings
+// CountPairings counts the pairings of ps besides the local one, and
+// names them and the webhook nodes.
+func CountPairings(ps []store.Pairing, nodes []store.Node) Pairings {
+	n := Pairings{Names: map[string]bool{}}
 	for _, p := range ps {
 		if p.Name == auth.LocalPairing {
 			continue
 		}
 		n.All++
+		n.Names[p.Name] = true
 		if p.Role == auth.RoleOwner {
 			n.Owners++
 		}
+	}
+	for _, node := range nodes {
+		n.Names[node.ID] = true
 	}
 	return n
 }
@@ -135,7 +143,7 @@ func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description 
 	a := Describe(cfg.Policy, net, n)
 	sp := SandboxPolicyOf(cfg)
 	anonymous := len(a.Anonymous) > 0
-	for _, l := range sp.SandboxLines(n.Owners, anonymous) {
+	for _, l := range sp.SandboxLines(n.Owners, anonymous, net.Private != "") {
 		if len(cfg.Policy.Sandbox) > 0 || anonymous {
 			a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
 		}
@@ -151,7 +159,27 @@ func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description 
 	if sp.Local && (n.All > n.Owners || len(a.Others) > 0) {
 		a.SandboxNotes = append(a.SandboxNotes, LocalSandboxNote)
 	}
+	a.SandboxNotes = append(a.SandboxNotes, unknownPairings(cfg.Policy.Sandbox, n.Names)...)
 	return a
+}
+
+// unknownPairings says which pairing matchers of rules name no pairing or
+// webhook node in names.
+func unknownPairings(rules []agentdir.SandboxRule, names map[string]bool) []string {
+	if names == nil {
+		return nil
+	}
+	var notes []string
+	for _, r := range rules {
+		for _, m := range r.Match {
+			name, ok := strings.CutPrefix(m, agentdir.MatchPairingPrefix)
+			if !ok || names[name] {
+				continue
+			}
+			notes = append(notes, fmt.Sprintf("no pairing or webhook node is named %s, so the sandbox rule of %s matches no caller", name, m))
+		}
+	}
+	return notes
 }
 
 // LocalSandboxNote says what sandbox rules don't do without the Docker

@@ -161,6 +161,9 @@ type RemovalPreview struct {
 	Allowed int
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string
+	// Workspaces are the directories of private workspaces, such as an
+	// own copy of the workspace, that would be deleted.
+	Workspaces []string
 }
 
 // SignOutResult tells what [Service.SignOut] revoked.

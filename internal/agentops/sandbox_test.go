@@ -190,12 +190,53 @@ func TestPairSetOwnerDropsTheRule(t *testing.T) {
 		t.Fatalf("Pair() error = %v", err)
 	}
 
-	if _, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Owner: new(true)}); err != nil {
+	got, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Owner: new(true)})
+	if err != nil {
 		t.Fatalf("UpdatePairing() error = %v", err)
 	}
 
 	if rules := rt.Config().Policy.Sandbox; len(rules) != 0 {
 		t.Fatalf("rules after the pairing became an owner = %v, want none", rules)
+	}
+	if diff := cmp.Diff([]string{"removed ben's sandbox rule: owners share your agent container"}, got.Hints); diff != "" {
+		t.Fatalf("UpdatePairing().Hints wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPairSetWaitsForASecretStoredSinceStart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, rt, d := newSandboxService(t)
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben"}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	saved, err := d.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	saved.Secrets = append(saved.Secrets, "BEN_KEY")
+	if err := d.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	got, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Sandbox: &controlapi.SandboxChange{Storage: agentdir.StorageReadOnly, Secrets: new([]string{"KEY=secret:BEN_KEY"})}})
+	if err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+
+	wantLive := []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"none"}}}
+	if diff := cmp.Diff(wantLive, rt.Config().Policy.Sandbox); diff != "" {
+		t.Fatalf("rules in use wrong result (-want +got) diff = %s", diff)
+	}
+	if saved, err = d.LoadConfig(); err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	wantSaved := []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"KEY=secret:BEN_KEY"}}}
+	if diff := cmp.Diff(wantSaved, saved.Policy.Sandbox); diff != "" {
+		t.Fatalf("saved rules wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff([]string{"the agent loads the secrets stored since it started at a restart, so ben's agent gets them after `a2a-serve restart`"}, got.Hints); diff != "" {
+		t.Fatalf("UpdatePairing().Hints wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -208,7 +249,7 @@ func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
-	undo, err := s.setSandbox("ben", controlapi.SandboxChange{Secrets: new([]string{"none"})})
+	undo, _, err := s.setSandbox("ben", controlapi.SandboxChange{Secrets: new([]string{"none"})})
 	if err != nil {
 		t.Fatalf("setSandbox() error = %v", err)
 	}
@@ -229,5 +270,23 @@ func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, rt.Config().Policy.Sandbox); diff != "" {
 		t.Fatalf("rules after undo() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPreviewRevokeShowsTheSandboxRule(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _, _ := newSandboxService(t)
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: &controlapi.SandboxChange{Storage: agentdir.StorageOwn, Secrets: new([]string{"KEY"})}}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+
+	got, err := s.PreviewRevoke(ctx, "ben")
+	if err != nil {
+		t.Fatalf("PreviewRevoke() error = %v", err)
+	}
+
+	if want := "pairing:ben: own, secrets KEY"; got.SandboxRule != want {
+		t.Fatalf("PreviewRevoke().SandboxRule = %q, want %q", got.SandboxRule, want)
 	}
 }

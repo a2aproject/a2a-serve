@@ -130,6 +130,24 @@ func TestSandboxStorageModes(t *testing.T) {
 		}
 	}
 
+	mcp := `{"mcpServers": {"docs": {"type": "http", "url": "https://example.com/mcp"}}}`
+	if err := os.WriteFile(file(".mcp.json"), []byte(mcp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name   string
+		caller *user
+		want   bool
+	}{
+		{name: "the owner", caller: owner, want: true},
+		{name: "ben's copy from before", caller: ben},
+		{name: "cy's empty workspace", caller: cy},
+	} {
+		if got := resultOf(tc.caller.mustSend(coder.url, "mcp")).Text; strings.Contains(got, `"docs"`) != tc.want {
+			t.Fatalf("a2a send mcp (%s) = %q, want docs %v", tc.name, got, tc.want)
+		}
+	}
+
 	coder.serve("pair", "rm", "ben")
 	if entries, err := os.ReadDir(filepath.Join(coder.dir, ".a2a", "state", "workspaces")); err != nil || len(entries) != 1 {
 		t.Fatalf("private workspaces after pair rm ben = %v, %v, want only cy's", entries, err)

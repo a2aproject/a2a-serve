@@ -98,7 +98,11 @@ func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, clie
 		if err != nil {
 			return nil, err
 		}
-		n = access.CountPairings(all)
+		nodes, err := st.Nodes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		n = access.CountPairings(all, nodes)
 	}
 	return agentops.AccessInfo(access.DescribeConfig(cfg, access.NetworkOf(cfg), n)), nil
 }

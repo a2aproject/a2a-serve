@@ -48,6 +48,7 @@ type fakeServer struct {
 	pid        int
 	running    *agentdir.Config
 	noReload   bool
+	noConfig   bool
 	messengers []controlapi.MessengerStatus
 	access     *controlapi.Access
 }
@@ -94,6 +95,10 @@ func serveFake(t *testing.T, d agentdir.Dir, f *fakeServer) {
 	})
 	mux.HandleFunc("GET /config", func(w http.ResponseWriter, r *http.Request) {
 		f.record(r)
+		if f.noConfig {
+			http.Error(w, "broken", http.StatusInternalServerError)
+			return
+		}
 		jsonhttp.Write(w, http.StatusOK, f.running)
 	})
 	mux.HandleFunc("POST /messengers", func(w http.ResponseWriter, r *http.Request) {
@@ -476,6 +481,24 @@ func TestSetAccess(t *testing.T) {
 				t.Fatalf("Set().Access wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestSetSandboxRuleWaitsWhenTheServerCantSay(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	serveFake(t, d, &fakeServer{noConfig: true})
+
+	got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{GuestStorage: agentdir.StorageEmpty, Description: "x"}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string{"description"}, got.Applied); diff != "" {
+		t.Fatalf("Set().Applied wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff([]string{"guest-storage"}, got.Restart); diff != "" {
+		t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
 	}
 }
 

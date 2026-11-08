@@ -155,6 +155,24 @@ func cloneSandbox(rules []SandboxRule) []SandboxRule {
 	return out
 }
 
+// loadedRules returns rules without the grants of secrets that aren't in
+// secrets. A rule that loses all its grants gets none, so that it doesn't
+// take the secrets of a broader rule.
+func loadedRules(rules []SandboxRule, secrets []string) []SandboxRule {
+	out := cloneSandbox(rules)
+	for i, r := range out {
+		kept := slices.DeleteFunc(r.Secrets, func(e string) bool {
+			_, from, ok := ParseSecretGrant(e)
+			return ok && e != SecretsAll && e != SecretsNone && !slices.Contains(secrets, from)
+		})
+		if len(kept) < len(rules[i].Secrets) && len(kept) == 0 {
+			kept = []string{SecretsNone}
+		}
+		out[i].Secrets = kept
+	}
+	return out
+}
+
 // validSandboxMatcher reports whether m is a matcher of a sandbox rule.
 func validSandboxMatcher(m string) bool {
 	switch m {

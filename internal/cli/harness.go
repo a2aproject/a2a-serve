@@ -88,7 +88,7 @@ workspace unless --allow-broad-mount names it.
 				if !cfg.IsJSON() {
 					shown.Warnings = nil
 				}
-				if err := printConfigResult(cfg, &shown); err != nil {
+				if err := printConfigResult(cfg, &shown, false); err != nil {
 					return err
 				}
 			}

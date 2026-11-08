@@ -28,7 +28,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -862,11 +861,6 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 			s.logf("%s %s", label, line)
 			label = "          "
 		}
-	}
-	cfg := s.rt.Config()
-	guestRule := slices.ContainsFunc(cfg.Policy.Sandbox, func(r agentdir.SandboxRule) bool { return slices.Contains(r.Match, agentdir.MatchGuests) })
-	if len(a.Anonymous) > 0 && !guestRule && cfg.Sandbox != harness.SandboxLocal {
-		s.logf("! guests get a read-only workspace and no secrets in their agent container")
 	}
 	if a.AnonymousNote != "" {
 		s.logf("! %s", a.AnonymousNote)

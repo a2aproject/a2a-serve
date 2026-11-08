@@ -247,7 +247,7 @@ func TestPreviewRevoke(t *testing.T) {
 	}
 
 	want := &controlapi.RemovalPreview{
-		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{},
+		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{}, Workspaces: []string{},
 		Accounts: []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

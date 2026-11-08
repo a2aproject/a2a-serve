@@ -17,6 +17,7 @@ package agentops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -50,10 +51,11 @@ func withSandboxRule(p agentdir.PolicyConfig, name string, ch controlapi.Sandbox
 
 // setSandbox saves the change of the sandbox rule of the pairing name, and
 // returns the function that puts the pairing back in the rules it was in,
-// leaving other rules as they are then. It checks the config in use and
-// config.yaml, which may hold a change waiting for a restart, such as a
-// removed secret.
-func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo func() error, err error) {
+// leaving other rules as they are then. It checks config.yaml, which may
+// hold a change waiting for a restart, such as a secret stored or removed
+// since the agent started. It reports whether grants of secrets that the
+// agent loads at restart wait for it.
+func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo func() error, waiting bool, err error) {
 	m := agentdir.PairingMatcher(name)
 	var before []agentdir.SandboxRule
 	for _, r := range s.deps.Runtime.Config().Policy.Sandbox {
@@ -61,7 +63,7 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 			before = append(before, agentdir.SandboxRule{Match: slices.Clone(r.Match), Storage: r.Storage, Secrets: slices.Clone(r.Secrets)})
 		}
 	}
-	err = s.deps.Runtime.Update(func(c *agentdir.Config) error {
+	waiting, err = s.deps.Runtime.UpdateSandbox(func(c *agentdir.Config) error {
 		c.Policy = withSandboxRule(c.Policy, name, ch)
 		if err := c.Validate(); err != nil {
 			return agenterr.Invalidf("%v", err)
@@ -69,7 +71,7 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, false, err
 	}
 	return func() error {
 		return s.deps.Runtime.Update(func(c *agentdir.Config) error {
@@ -86,17 +88,18 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 			}
 			return nil
 		})
-	}, nil
+	}, waiting, nil
 }
 
-// removeSandbox deletes the pairing name from the sandbox rules.
-func (s *Service) removeSandbox(name string) error {
+// removeSandbox deletes the pairing name from the sandbox rules, and
+// reports whether a rule named it.
+func (s *Service) removeSandbox(name string) (bool, error) {
 	m := agentdir.PairingMatcher(name)
 	p := s.deps.Runtime.Config().Policy.Clone()
 	if !p.RemoveSandboxMatcher(m) {
-		return nil
+		return false, nil
 	}
-	return s.deps.Runtime.Update(func(c *agentdir.Config) error {
+	return true, s.deps.Runtime.Update(func(c *agentdir.Config) error {
 		c.Policy.RemoveSandboxMatcher(m)
 		return nil
 	})
@@ -136,12 +139,17 @@ func (s *Service) resolvePairing(p pairings.Pairing) access.Sandbox {
 	return access.SandboxPolicyOf(s.deps.Runtime.Config()).Resolve(auth.Principal{ID: p.Principal, Role: role, Identity: id})
 }
 
-// sandboxHints says what a change of a sandbox rule doesn't do.
-func (s *Service) sandboxHints(ch *controlapi.SandboxChange) []string {
-	if ch == nil || ch.Storage == "" || !access.SandboxPolicyOf(s.deps.Runtime.Config()).Local {
-		return nil
+// sandboxHints says what a change of the sandbox rule of the pairing name
+// doesn't do, or doesn't do yet.
+func (s *Service) sandboxHints(name string, ch *controlapi.SandboxChange, waiting bool) []string {
+	var hints []string
+	if waiting {
+		hints = append(hints, fmt.Sprintf("the agent loads the secrets stored since it started at a restart, so %s's agent gets them after `a2a-serve restart`", name))
 	}
-	return []string{"--storage has no effect without the Docker sandbox; set one with `a2a-serve config set --sandbox docker`"}
+	if ch != nil && ch.Storage != "" && access.SandboxPolicyOf(s.deps.Runtime.Config()).Local {
+		hints = append(hints, "--storage has no effect without the Docker sandbox; set one with `a2a-serve config set --sandbox docker`")
+	}
+	return hints
 }
 
 // sandboxOf describes what the agent container of the pairing p gets.

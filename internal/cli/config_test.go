@@ -776,11 +776,52 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 			t.Parallel()
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
-			if err := printConfigResult(cfg, tc.res); err != nil {
+			if err := printConfigResult(cfg, tc.res, false); err != nil {
 				t.Fatalf("printConfigResult() error = %v", err)
 			}
 			got, _, _ := strings.Cut(buf.String(), "✓")
 			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("printConfigResult() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
+	t.Parallel()
+	access := &controlapi.Access{Summary: []string{"anyone"}, Sandbox: []string{"guests: read-only workspace, no secrets"}, AnonymousNote: "guests' agent gets no key"}
+	tests := []struct {
+		name       string
+		res        *agentctl.Result
+		restarting bool
+		want       string
+	}{
+		{
+			name: "guest note",
+			res:  &agentctl.Result{Name: "coder", Access: access},
+			want: "  no changes\nwho may call:\n  anyone\nwhat their agent containers get:\n  guests: read-only workspace, no secrets\n! guests' agent gets no key\n",
+		},
+		{
+			name: "guest rule waits for a restart",
+			res:  &agentctl.Result{Name: "coder", Restart: []string{"guest-secrets"}, Access: access},
+			want: "  no changes\n! coder is running; restart to apply guest-secrets: a2a-serve restart\nwho may call:\n  anyone\nwhat their agent containers get:\n  guests: read-only workspace, no secrets\n",
+		},
+		{
+			name:       "restarting",
+			res:        &agentctl.Result{Name: "coder", Restart: []string{"secret"}},
+			restarting: true,
+			want:       "  no changes\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var buf bytes.Buffer
+			cfg := &globalConfig{Printer: output.NewPrinter(&buf, output.ModeText)}
+			if err := printConfigResult(cfg, tc.res, tc.restarting); err != nil {
+				t.Fatalf("printConfigResult() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, buf.String()); diff != "" {
 				t.Fatalf("printConfigResult() wrong result (-want +got) diff = %s", diff)
 			}
 		})

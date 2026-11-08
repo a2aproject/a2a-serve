@@ -304,7 +304,7 @@ func (r *recipeRun) printUpdated(u *recipeUpdate, res *agentctl.Result) error {
 	if len(restart) > 0 {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(restart, ", "))
 	}
-	writeAccess(&sb, res.Access)
+	writeAccess(&sb, res.Access, restart)
 	_, err := io.WriteString(r.cfg.Out, sb.String())
 	return err
 }

@@ -205,7 +205,7 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 	caller, ok := auth.Caller(ctx)
 	// A posted turn, such as a schedule run, acts for a user with what the
 	// server stored of them, which it didn't verify now.
-	if ok && !auth.IsInProcess(ctx) {
+	if ok && !auth.IsPosted(ctx) {
 		s.sandboxes.remember(ctx, caller)
 	}
 	want, err := s.sandboxes.of(ctx, key)

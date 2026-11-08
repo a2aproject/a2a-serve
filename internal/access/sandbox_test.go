@@ -158,6 +158,20 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY, GUEST", "other callers: shared workspace, secrets GEMINI_API_KEY, GUEST", "guests: read-only workspace, secrets GEMINI_API_KEY (from GUEST)"},
 		},
 		{
+			name: "private rule without a private network", pairings: Pairings{All: 1},
+			cfg: &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{
+				{Match: []string{"private"}, Storage: agentdir.StorageReadOnly},
+				{Match: []string{"pairing:ben", "private"}, Secrets: []string{"none"}},
+			}}},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets KEY"},
+		},
+		{
+			name: "rule of an unknown pairing", pairings: Pairings{All: 1, Names: map[string]bool{"ben": true}},
+			cfg:       &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"pairing:ben", "pairing:nobody"}, Storage: agentdir.StorageReadOnly}}}},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben, the pairing nobody: read-only workspace, secrets KEY", "other callers: shared workspace, secrets KEY"},
+			wantNotes: []string{"no pairing or webhook node is named nobody, so the sandbox rule of pairing:nobody matches no caller"},
+		},
+		{
 			name: "no sandbox", cfg: &agentdir.Config{Sandbox: agentdir.SandboxLocal, Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}, pairings: Pairings{All: 1},
 			wantNotes: []string{LocalSandboxNote},
 		},

@@ -23,7 +23,9 @@ package agentops
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -83,12 +85,16 @@ func (s *Service) Access(ctx context.Context) (*access.Description, error) {
 	if err != nil {
 		return nil, err
 	}
+	nodes, err := s.deps.Store.Nodes(ctx)
+	if err != nil {
+		return nil, err
+	}
 	cfg := s.deps.Runtime.Config()
 	net := access.NetworkOf(cfg)
 	if s.deps.Network != nil {
 		net = s.deps.Network()
 	}
-	return access.DescribeConfig(cfg, net, access.CountPairings(all)), nil
+	return access.DescribeConfig(cfg, net, access.CountPairings(all, nodes)), nil
 }
 
 func (s *Service) accessInfo(ctx context.Context) (*controlapi.Access, error) {
@@ -105,7 +111,7 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	undo, err := s.changeSandbox(req.Name, req.Owner || role == auth.RoleOwner, req.Sandbox)
+	undo, waiting, err := s.changeSandbox(req.Name, req.Owner || role == auth.RoleOwner, req.Sandbox)
 	if err != nil {
 		return nil, err
 	}
@@ -121,7 +127,7 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 		return nil, err
 	}
 	resp.Sandbox = s.ruledSandbox(*p)
-	resp.Hints = append(resp.Hints, s.sandboxHints(req.Sandbox)...)
+	resp.Hints = append(resp.Hints, s.sandboxHints(req.Name, req.Sandbox, waiting)...)
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
 	}
@@ -130,13 +136,14 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 
 // changeSandbox saves ch, if set, as the change of the sandbox rule of the
 // pairing name, which is an owner if owner, and returns the function that
-// undoes it. Owners refuse a rule of their own.
-func (s *Service) changeSandbox(name string, owner bool, ch *controlapi.SandboxChange) (undo func() error, err error) {
+// undoes it. Owners refuse a rule of their own. It reports whether grants
+// wait for a restart.
+func (s *Service) changeSandbox(name string, owner bool, ch *controlapi.SandboxChange) (undo func() error, waiting bool, err error) {
 	if ch == nil {
-		return func() error { return nil }, nil
+		return func() error { return nil }, false, nil
 	}
 	if owner {
-		return nil, errOwnerSandbox
+		return nil, false, errOwnerSandbox
 	}
 	return s.setSandbox(name, *ch)
 }
@@ -179,7 +186,7 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 	if req.Owner != nil {
 		owner = *req.Owner
 	}
-	undo, err := s.changeSandbox(name, owner, req.Sandbox)
+	undo, waiting, err := s.changeSandbox(name, owner, req.Sandbox)
 	if err != nil {
 		return nil, err
 	}
@@ -189,14 +196,19 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 	if err != nil {
 		return nil, errors.Join(err, undo())
 	}
+	hints := s.sandboxHints(name, req.Sandbox, waiting)
 	if req.Owner != nil && *req.Owner {
 		// Owners share your container, so a rule of the pairing would only
 		// come back if it stopped being one.
-		if err := s.removeSandbox(name); err != nil {
+		removed, err := s.removeSandbox(name)
+		if err != nil {
 			return nil, err
 		}
+		if removed {
+			hints = append(hints, fmt.Sprintf("removed %s's sandbox rule: owners share your agent container", name))
+		}
 	}
-	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing), Hints: s.sandboxHints(req.Sandbox)}
+	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing), Hints: hints}
 	resp.Pairing.Sandbox = s.sandboxOf(r.Pairing)
 	if r.Code != nil {
 		resp.Code = s.codeInfo(r.Code)
@@ -226,7 +238,7 @@ func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeRe
 	}
 	// The pairing goes first, so that its callers can't fall back to
 	// broader rules meanwhile.
-	if err := s.removeSandbox(name); err != nil {
+	if _, err := s.removeSandbox(name); err != nil {
 		return nil, err
 	}
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
@@ -244,7 +256,17 @@ func (s *Service) PreviewRevoke(ctx context.Context, name string) (*controlapi.R
 	if err != nil {
 		return nil, err
 	}
-	return removalPreview(p), nil
+	info := removalPreview(p)
+	if p.Kept {
+		return info, nil
+	}
+	m := agentdir.PairingMatcher(name)
+	for _, r := range s.deps.Runtime.Config().Policy.Sandbox {
+		if slices.Contains(r.Match, m) {
+			info.SandboxRule = agentdir.ShowSandboxRule(r)
+		}
+	}
+	return info, nil
 }
 
 // SignOut revokes the Google sign-in tokens of an email.

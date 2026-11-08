@@ -1021,17 +1021,14 @@ func MessengersDiffer(a, b *Config) bool {
 // CopyLive copies the settings a running server applies without a restart,
 // other than messengers, from src to dst.
 func CopyLive(dst, src *Config) {
-	rules := cloneSandbox(dst.Policy.Sandbox)
 	for _, f := range fields {
 		if f.liveSetting() {
 			f.put(dst, slices.Clone(f.get(src)))
 		}
 	}
-	// A rule that names a secret the running agent doesn't have yet, such
-	// as one stored with it, waits for the restart that loads the secret.
-	if len(dst.Policy.validateSandbox(dst.Secrets)) > 0 {
-		dst.Policy.Sandbox = rules
-	}
+	// The grant of a secret the running agent doesn't have yet, such as one
+	// stored with the rule, waits for the restart that loads the secret.
+	dst.Policy.Sandbox = loadedRules(dst.Policy.Sandbox, dst.Secrets)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an
