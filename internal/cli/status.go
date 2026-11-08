@@ -275,6 +275,16 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, nex
 			}
 			fmt.Fprintf(&sb, "  %-8s %s\n", label, line)
 		}
+		for i, line := range a.Sandbox {
+			label := ""
+			if i == 0 {
+				label = "sandbox"
+			}
+			fmt.Fprintf(&sb, "  %-8s %s\n", label, line)
+		}
+		for _, note := range a.SandboxNotes {
+			fmt.Fprintf(&sb, "  %-8s ! %s\n", "", note)
+		}
 	}
 	states := make([]string, 0, len(st.Tasks))
 	for _, s := range slices.Sorted(maps.Keys(st.Tasks)) {

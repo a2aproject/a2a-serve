@@ -32,6 +32,7 @@ func newPairInviteCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		req        controlapi.PairCodeRequest
 		headers    []string
 		advertised bool
+		sandbox    sandboxFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "invite <name>",
@@ -46,8 +47,10 @@ code, for another device or account; its tokens keep working. A new name has
 up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
 or digit, and differs from the existing names by more than case.
 ` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials. A paired
-caller can approve commands in their own tasks, which lets them read and
-change the workspace and read the agent's --secret environment variables.
+caller can approve commands in their own tasks, in an agent container of
+their own. --storage and --secrets set what it gets of the workspace and of
+the agent's --secret values; without them, the sandbox rules of the access
+policy decide, and by default it gets a read-only workspace and no secrets.
 
 With --webhook, <name> is a webhook node: an agent that only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
@@ -66,6 +69,7 @@ through this agent, which keeps the webhook's credentials, and it treats
 them like any other caller from the private network.`,
 		Example: `  a2a-serve pair invite grok
   a2a-serve pair invite anna --owner
+  a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY,GITHUB_TOKEN
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
@@ -82,6 +86,9 @@ them like any other caller from the private network.`,
 			req.Headers = hdrs
 			if cmd.Flags().Changed("advertised") {
 				req.Advertised = &advertised
+			}
+			if req.Sandbox, err = sandbox.change(cmd); err != nil {
+				return err
 			}
 			c, closer, err := sf.manager(cmd.Context())
 			if err != nil {
@@ -113,6 +120,7 @@ them like any other caller from the private network.`,
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
+	sandbox.register(cmd)
 	return cmd
 }
 
@@ -148,6 +156,9 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 		if resp.Messenger {
 			fmt.Fprintf(&sb, "  messenger: send \"join %s\" to the agent's bot\n", resp.Code)
 		}
+	}
+	if resp.Sandbox != nil {
+		fmt.Fprintf(&sb, "  sandbox:   %s; change it with --storage and --secrets on `a2a-serve pair set`\n", resp.Sandbox.Summary)
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")

@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
@@ -44,7 +45,7 @@ func startUsers(t *testing.T, u *userAgents, n int) []io.Closer {
 			t.Fatalf("userAgents.reserve(%d) error = %v", i, err)
 		}
 		procs[i] = &nopCloser{}
-		u.started(a, procs[i])
+		u.started(a, procs[i], access.Sandbox{})
 		release()
 	}
 	return procs

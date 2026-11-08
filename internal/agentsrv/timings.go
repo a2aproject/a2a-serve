@@ -63,6 +63,9 @@ type Timings struct {
 	// StateCheckInterval is how often the server checks that its state
 	// directory still exists.
 	StateCheckInterval time.Duration
+	// SandboxCheckInterval is how often the server stops the idle agent
+	// processes whose sandbox rules changed.
+	SandboxCheckInterval time.Duration
 	// PairReadTimeout bounds reading the whole body of a pairing request or
 	// of an approval page, which callers send before they authenticate.
 	PairReadTimeout time.Duration
@@ -93,6 +96,7 @@ func (t Timings) withDefaults() Timings {
 	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)
 	t.TurnStallTimeout = cmp.Or(t.TurnStallTimeout, 10*time.Minute)
 	t.StateCheckInterval = cmp.Or(t.StateCheckInterval, 5*time.Second)
+	t.SandboxCheckInterval = cmp.Or(t.SandboxCheckInterval, 5*time.Second)
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	return t
 }

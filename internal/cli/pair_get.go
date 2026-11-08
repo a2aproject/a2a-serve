@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -111,6 +112,13 @@ func renderPairing(p *controlapi.Pairing) string {
 	line("codes", orNone(strings.Join(codes, ", ")))
 	if len(p.Allowed) > 0 {
 		line("allowed", strings.Join(p.Allowed, ", "))
+	}
+	if box := p.Sandbox; box != nil {
+		summary := box.Summary
+		if p.Role == auth.RoleOwner {
+			summary += " (your agent container, which owners share)"
+		}
+		line("sandbox", summary)
 	}
 	return sb.String()
 }

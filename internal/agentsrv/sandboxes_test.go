@@ -1,0 +1,259 @@
+// Copyright 2026 The A2A Authors
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+package agentsrv
+
+import (
+	"context"
+	"errors"
+	"os"
+	"path/filepath"
+	"sort"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agentkey"
+	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
+)
+
+func TestSandboxMounts(t *testing.T) {
+	t.Parallel()
+	mounts := []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs"}, {Src: "/data", Dst: "/data", ReadOnly: true}}
+	tests := []struct {
+		storage string
+		want    []agentdir.Mount
+	}{
+		{storage: agentdir.StorageShared, want: mounts},
+		{storage: agentdir.StorageReadOnly, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app", ReadOnly: true}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: agentdir.StorageOwn, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}, {Src: "/data", Dst: "/data", ReadOnly: true}}},
+		{storage: agentdir.StorageEmpty, want: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.storage, func(t *testing.T) {
+			t.Parallel()
+			if diff := cmp.Diff(tt.want, sandboxMounts(tt.storage, mounts)); diff != "" {
+				t.Fatalf("sandboxMounts() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func sandboxServer(t *testing.T, rules ...agentdir.SandboxRule) *testServer {
+	t.Helper()
+	return startServer(t, serverOpts{
+		secrets: agentdir.Secrets{"KEY": "owner-key", "GUEST": "guest-key"},
+		configure: func(c *agentdir.Config) {
+			c.Secrets = []string{"KEY", "GUEST"}
+			c.Policy.Sandbox = rules
+		},
+	})
+}
+
+func TestContainersGetTheSecretsOfTheirRule(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn, Secrets: []string{"KEY=secret:GUEST"}})
+	owner := ts.client(ts.pair("phone", auth.RoleOwner))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	cy := ts.client(ts.pair("cy", auth.RoleAuthenticated))
+	tests := []struct {
+		name, prompt, want string
+		client             *a2aclient.Client
+	}{
+		{name: "owner", client: owner, prompt: "env KEY", want: "env KEY=owner-key"},
+		{name: "owner", client: owner, prompt: "env GUEST", want: "env GUEST=guest-key"},
+		{name: "rule", client: ben, prompt: "env KEY", want: "env KEY=guest-key"},
+		{name: "rule", client: ben, prompt: "env GUEST", want: "env GUEST unset"},
+		{name: "no rule", client: cy, prompt: "env KEY", want: "env KEY unset"},
+	}
+	for _, tt := range tests {
+		if got := a2atext.Result(send(t, tt.client, userText(tt.prompt, "", ""))); got != tt.want {
+			t.Fatalf("%s: SendMessage(%q) = %q, want %q", tt.name, tt.prompt, got, tt.want)
+		}
+	}
+}
+
+func TestRuleChangeAppliesToTheNextTurn(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t)
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	first := send(t, ben, userText("env KEY", "", ""))
+	if got := a2atext.Result(first); got != "env KEY unset" {
+		t.Fatalf("SendMessage() = %q, want %q", got, "env KEY unset")
+	}
+
+	if err := ts.srv.rt.Update(func(c *agentdir.Config) error {
+		c.Policy.SetSandboxRule(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"KEY"}})
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	if got := a2atext.Result(send(t, ben, userText("env KEY", "", first.ContextID))); got != "env KEY=owner-key" {
+		t.Fatalf("SendMessage() after the rule changed = %q, want %q", got, "env KEY=owner-key")
+	}
+}
+
+func TestMessageIntoARicherContainerIsRefused(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t,
+		agentdir.SandboxRule{Match: []string{"self"}, Storage: agentdir.StorageShared},
+		agentdir.SandboxRule{Match: []string{"pairing:ben"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"KEY"}},
+	)
+	owner := ts.client(ts.pair("phone", auth.RoleOwner))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	task := send(t, ben, userText("hello", "", ""))
+
+	got := send(t, owner, userText("env KEY", "", task.ContextID))
+
+	if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "start a conversation of your own") {
+		t.Fatalf("SendMessage() into a richer conversation = %v %q, want it failed with a hint to start a conversation", got.Status.State, a2atext.Message(got.Status.Message))
+	}
+}
+
+func TestMCPServersNeedTheSecretsOfTheContainer(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t)
+	mcp := `{"mcpServers": {"gh": {"type": "http", "url": "https://example.com/mcp", "headers": {"Authorization": "Bearer ${KEY}"}}}}`
+	if err := os.WriteFile(filepath.Join(ts.dir.Root, ".mcp.json"), []byte(mcp), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	owner := ts.client(ts.pair("phone", auth.RoleOwner))
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+
+	if got := a2atext.Result(send(t, owner, userText("mcp", "", ""))); !strings.Contains(got, `"gh"`) {
+		t.Fatalf("MCP servers of the owner = %s, want gh", got)
+	}
+	if got := a2atext.Result(send(t, ben, userText("mcp", "", ""))); strings.Contains(got, `"gh"`) {
+		t.Fatalf("MCP servers of a user without KEY = %s, want no gh", got)
+	}
+}
+
+func TestBusyContainerWithChangedRulesTakesOnlyAnswers(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t)
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	waiting := send(t, ben, userText("ask", "", ""))
+	if waiting.Status.State != a2a.TaskStateInputRequired {
+		t.Fatalf("SendMessage(ask) state = %v, want %v", waiting.Status.State, a2a.TaskStateInputRequired)
+	}
+	if err := ts.srv.rt.Update(func(c *agentdir.Config) error {
+		c.Policy.SetSandboxRule(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"KEY"}})
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	refused := send(t, ben, userText("env KEY", "", ""))
+	if refused.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(refused.Status.Message), "restarts with them") {
+		t.Fatalf("SendMessage() to a busy container with changed rules = %v %q, want it refused until the restart", refused.Status.State, a2atext.Message(refused.Status.Message))
+	}
+	if got := send(t, ben, userText("once", string(waiting.ID), waiting.ContextID)); got.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("SendMessage() answering the waiting task state = %v, want %v", got.Status.State, a2a.TaskStateCompleted)
+	}
+	if got := a2atext.Result(send(t, ben, userText("env KEY", "", ""))); got != "env KEY=owner-key" {
+		t.Fatalf("SendMessage() after the answer = %q, want the new rule", got)
+	}
+}
+
+func TestAdmitOther(t *testing.T) {
+	t.Parallel()
+	rules := []agentdir.SandboxRule{
+		{Match: []string{"pairing:ann"}, Storage: agentdir.StorageOwn},
+		{Match: []string{"pairing:bob"}, Storage: agentdir.StorageOwn, Secrets: []string{"KEY"}},
+		{Match: []string{"pairing:cy"}, Storage: agentdir.StorageShared},
+	}
+	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config {
+		return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
+	})}
+	user := func(name string) auth.Principal {
+		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: name}}
+	}
+	tests := []struct {
+		name    string
+		caller  auth.Principal
+		into    string
+		wantErr error
+	}{
+		{name: "owner into a private workspace", caller: auth.Owner(), into: "ann"},
+		{name: "user into another's private workspace", caller: user("bob"), into: "ann", wantErr: errSandboxPrivate},
+		{name: "user with fewer secrets", caller: user("ann"), into: "bob", wantErr: errSandboxCovers},
+		{name: "user with less storage", caller: user("ann"), into: "cy", wantErr: errSandboxCovers},
+		{name: "user into a shared container", caller: user("cy"), into: "cy"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			key := agentkey.User(auth.PairPrincipal(tt.into))
+			if err := s.admitOther(tt.caller, key, s.sandboxes.of(key)); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("admitOther() error = %v, want %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestPruneWorkspaces(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	src := t.TempDir()
+	s := &Server{
+		workspaces: workspaces.Store{Root: filepath.Join(t.TempDir(), "w")},
+		sandboxes: newSandboxes(func() *agentdir.Config {
+			return &agentdir.Config{Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly}}}}
+		}),
+	}
+	old := time.Now().Add(-2 * unusedWorkspaceTTL)
+	for _, w := range []struct {
+		key, storage string
+		used         time.Time
+	}{
+		{key: agentkey.User("email:old@example.com"), storage: agentdir.StorageOwn, used: old},
+		{key: agentkey.User("email:new@example.com"), storage: agentdir.StorageOwn, used: time.Now()},
+		{key: agentkey.User(auth.PairPrincipal("ben")), storage: agentdir.StorageOwn, used: old},
+		{key: agentkey.Anonymous, storage: agentdir.StorageOwn, used: time.Now()},
+	} {
+		id, _ := agentkey.UserOf(w.key)
+		name := workspaceName(w.key)
+		if _, err := s.workspaces.Prepare(ctx, name, id, w.storage, src); err != nil {
+			t.Fatalf("Prepare() error = %v", err)
+		}
+		if err := os.Chtimes(filepath.Join(s.workspaces.Root, name, "used"), w.used, w.used); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	s.pruneWorkspaces(ctx)
+
+	entries, err := s.workspaces.List()
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	var got []string
+	for _, e := range entries {
+		if len(e.Storage) > 0 {
+			got = append(got, e.Principal)
+		}
+	}
+	sort.Strings(got)
+	if diff := cmp.Diff([]string{"email:new@example.com", "pair:ben"}, got); diff != "" {
+		t.Fatalf("pruneWorkspaces() kept wrong workspaces (-want +got) diff = %s", diff)
+	}
+}

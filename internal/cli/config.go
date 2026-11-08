@@ -184,6 +184,15 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 	for _, line := range a.Summary {
 		fmt.Fprintf(sb, "  %s\n", line)
 	}
+	if len(a.Sandbox) > 0 {
+		sb.WriteString("what their agent containers get:\n")
+	}
+	for _, line := range a.Sandbox {
+		fmt.Fprintf(sb, "  %s\n", line)
+	}
+	for _, note := range a.SandboxNotes {
+		fmt.Fprintf(sb, "! %s\n", note)
+	}
 }
 
 // inSecretDiff reports whether the diff of --secret names the secret.

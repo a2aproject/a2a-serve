@@ -24,6 +24,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -52,6 +53,8 @@ type userAgent struct {
 	proc     io.Closer
 	starting bool
 	turns    int
+	// sandbox is what the running process got when it started.
+	sandbox access.Sandbox
 }
 
 var errAgentsBusy = fmt.Errorf("all %d agents are busy, send the message again later", maxUserAgents)
@@ -141,10 +144,75 @@ func (u *userAgents) hasRoom(key string) bool {
 	return running+u.starting < maxUserAgents || idle > 0
 }
 
-func (u *userAgents) started(a *userAgent, proc io.Closer) {
+func (u *userAgents) started(a *userAgent, proc io.Closer, sb access.Sandbox) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
-	a.proc = proc
+	a.proc, a.sandbox = proc, sb
+}
+
+// runningKeys returns the keys whose processes run.
+func (u *userAgents) runningKeys() []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []string
+	for k, a := range u.keys {
+		if a.proc != nil {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// sandboxOf returns the sandbox the process of key started with, if it
+// runs.
+func (u *userAgents) sandboxOf(key string) (access.Sandbox, bool) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	a := u.keys[key]
+	if a == nil || a.proc == nil {
+		return access.Sandbox{}, false
+	}
+	return a.sandbox, true
+}
+
+// closeStale closes the process of key if it runs with another sandbox than
+// want, no turn uses it and it doesn't start or stop now. It holds the
+// process from starting until it closed, so that a new process doesn't
+// start under the same container name. It reports whether it closed one.
+func (u *userAgents) closeStale(key string, want access.Sandbox) (bool, error) {
+	u.mu.Lock()
+	a := u.keys[key]
+	u.mu.Unlock()
+	if a == nil || !a.startMu.TryLock() {
+		return false, nil
+	}
+	defer a.startMu.Unlock()
+	u.mu.Lock()
+	if a.proc == nil || a.turns > 0 || a.sandbox.Equal(want) {
+		u.mu.Unlock()
+		return false, nil
+	}
+	proc := a.proc
+	a.proc = nil
+	u.mu.Unlock()
+	return true, proc.Close()
+}
+
+// stopIdle holds the process of key from starting until release is called,
+// unless the process runs or starts: then release is nil.
+func (u *userAgents) stopIdle(key string) (release func(), err error) {
+	a := u.get(key)
+	if !a.startMu.TryLock() {
+		return nil, nil
+	}
+	u.mu.Lock()
+	busy := a.proc != nil || a.starting
+	u.mu.Unlock()
+	if busy {
+		a.startMu.Unlock()
+		return nil, nil
+	}
+	return a.startMu.Unlock, nil
 }
 
 // exited forgets proc once it is closed.
@@ -199,10 +267,11 @@ func (u *userAgents) stop(keys ...string) (release func(), err error) {
 // and stops their agent processes, which don't start again until release
 // is called. It implements [pairings.Users].
 type stopUsers struct {
-	tasks  *store.TaskStore
-	sender *handlerSender
-	users  *userAgents
-	posted *chat.PostedTurns
+	tasks     *store.TaskStore
+	sender    *handlerSender
+	users     *userAgents
+	posted    *chat.PostedTurns
+	sandboxes *sandboxes
 }
 
 func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), error) {
@@ -223,7 +292,12 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 			}
 		}
 	}
-	return u.users.stop(keys...)
+	release, err := u.users.stop(keys...)
+	if err != nil {
+		return nil, err
+	}
+	u.sandboxes.forget(keys...)
+	return release, nil
 }
 
 // userHomes deletes the homes of users' agent processes and forgets their
@@ -232,6 +306,7 @@ type userHomes struct{ s *Server }
 
 func (h userHomes) RemoveUserHome(id string) error {
 	h.s.pins.Unpin(h.s.dir.UserHomeDir(id))
+	h.s.forgetStorageNote(h.s.dir.UserHomeDir(id))
 	return h.s.dir.RemoveUserHome(id)
 }
 

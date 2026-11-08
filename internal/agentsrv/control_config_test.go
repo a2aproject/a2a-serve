@@ -117,6 +117,11 @@ func TestStatusAccess(t *testing.T) {
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
 			"the public URL is open to anyone",
 		},
+		Sandbox: []string{"you and owner pairings: no sandbox, no secrets", "everyone else: no sandbox, no secrets"},
+		SandboxNotes: []string{
+			"without the Docker sandbox, every caller's agent can read and change your files; the storage of sandbox rules needs --sandbox docker",
+			"callers who aren't owners now get no secrets; to give them every secret as before, run `a2a-serve config set --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`",
+		},
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)

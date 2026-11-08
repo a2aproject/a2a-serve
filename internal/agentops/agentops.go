@@ -87,7 +87,7 @@ func (s *Service) Access(ctx context.Context) (*access.Description, error) {
 	if s.deps.Network != nil {
 		net = s.deps.Network()
 	}
-	return access.Describe(cfg.Policy, net, access.CountPairings(all)), nil
+	return access.DescribeConfig(cfg, net, access.CountPairings(all)), nil
 }
 
 func (s *Service) accessInfo(ctx context.Context) (*controlapi.Access, error) {
@@ -100,11 +100,35 @@ func (s *Service) accessInfo(ctx context.Context) (*controlapi.Access, error) {
 
 // Pair issues a pairing code.
 func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
-	c, err := s.deps.Pairings.Invite(ctx, pairings.InviteRequest(req))
+	if req.Sandbox != nil {
+		role, err := s.pairingRole(ctx, req.Name)
+		if err != nil {
+			return nil, err
+		}
+		if req.Owner || role == auth.RoleOwner {
+			return nil, errOwnerSandbox
+		}
+		if err := s.checkSandbox(req.Name, *req.Sandbox); err != nil {
+			return nil, err
+		}
+	}
+	c, err := s.deps.Pairings.Invite(ctx, pairings.InviteRequest{
+		Name: req.Name, Owner: req.Owner, Webhook: req.Webhook, Headers: req.Headers, Description: req.Description, Advertised: req.Advertised,
+	})
 	if err != nil {
 		return nil, err
 	}
+	if req.Sandbox != nil {
+		if err := s.setSandbox(req.Name, *req.Sandbox); err != nil {
+			return nil, err
+		}
+	}
 	resp := s.codeInfo(c)
+	p, err := s.deps.Pairings.Get(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	resp.Sandbox = s.sandboxOf(*p)
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
 	}
@@ -120,6 +144,7 @@ func (s *Service) Pairings(ctx context.Context) ([]controlapi.Pairing, error) {
 	out := make([]controlapi.Pairing, len(all))
 	for i, p := range all {
 		out[i] = pairingInfo(p)
+		out[i].Sandbox = s.sandboxOf(p)
 	}
 	return out, nil
 }
@@ -131,16 +156,37 @@ func (s *Service) Pairing(ctx context.Context, name string) (*controlapi.Pairing
 		return nil, err
 	}
 	info := pairingInfo(*p)
+	info.Sandbox = s.sandboxOf(*p)
 	return &info, nil
 }
 
 // UpdatePairing changes a pairing.
 func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
-	r, err := s.deps.Pairings.Update(ctx, name, pairings.UpdateRequest(req))
+	if req.Sandbox != nil {
+		role, err := s.pairingRole(ctx, name)
+		if err != nil {
+			return nil, err
+		}
+		if req.Owner != nil && *req.Owner || req.Owner == nil && role == auth.RoleOwner {
+			return nil, errOwnerSandbox
+		}
+		if err := s.checkSandbox(name, *req.Sandbox); err != nil {
+			return nil, err
+		}
+	}
+	r, err := s.deps.Pairings.Update(ctx, name, pairings.UpdateRequest{
+		Owner: req.Owner, Kind: req.Kind, Webhook: req.Webhook, Headers: req.Headers, Description: req.Description, Advertised: req.Advertised, Rotate: req.Rotate,
+	})
 	if err != nil {
 		return nil, err
 	}
+	if req.Sandbox != nil {
+		if err := s.setSandbox(name, *req.Sandbox); err != nil {
+			return nil, err
+		}
+	}
 	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing)}
+	resp.Pairing.Sandbox = s.sandboxOf(r.Pairing)
 	if r.Code != nil {
 		resp.Code = s.codeInfo(r.Code)
 	}
@@ -159,6 +205,13 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 // Who may still call without a pairing is reported for removed callers,
 // since it can include them.
 func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
+	// The rule goes first: a rule left behind would apply to a new pairing
+	// of the same name.
+	if name != pairings.LocalOwner {
+		if err := s.removeSandbox(name); err != nil {
+			return nil, err
+		}
+	}
 	r, err := s.deps.Pairings.Remove(ctx, name)
 	if err != nil {
 		return nil, err

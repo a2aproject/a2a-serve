@@ -183,6 +183,28 @@ type PairCodeRequest struct {
 	// Advertised, when set, advertises the webhook node to the agents of the
 	// private network, or stops advertising it.
 	Advertised *bool `json:"advertised,omitempty"`
+	// Sandbox, when set, changes the sandbox rule of the pairing.
+	Sandbox *SandboxChange `json:"sandbox,omitempty"`
+}
+
+// SandboxChange changes the sandbox rule of a pairing: the rule whose only
+// matcher is pairing:<name>.
+type SandboxChange struct {
+	// Storage, when set, replaces the storage of the rule.
+	Storage string `json:"storage,omitempty"`
+	// Secrets, when set, replace the secrets of the rule; empty gives none.
+	Secrets *[]string `json:"secrets,omitempty"`
+}
+
+// PairingSandbox is what the agent container of a pairing gets.
+type PairingSandbox struct {
+	// Storage is shared, read-only, own or empty.
+	Storage string `json:"storage"`
+	// Secrets are the variables the agent gets: NAME, or NAME=secret:OTHER
+	// for the stored secret OTHER passed as NAME.
+	Secrets []string `json:"secrets"`
+	// Summary describes both, as `a2a-serve pair get` shows it.
+	Summary string `json:"summary"`
 }
 
 // PairCodeResponse carries a pairing code and how to use it.
@@ -206,6 +228,8 @@ type PairCodeResponse struct {
 	Instructions string `json:"instructions,omitempty"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
+	// Sandbox is what the agent container of the pairing gets.
+	Sandbox *PairingSandbox `json:"sandbox,omitempty"`
 }
 
 // Pairing describes someone paired with the agent: a person, a device,
@@ -229,6 +253,9 @@ type Pairing struct {
 	// Allowed are the tool calls the pairing allowed in all its
 	// conversations.
 	Allowed []string `json:"allowed,omitempty"`
+	// Sandbox is what the agent container of the pairing gets. Owners share
+	// the container of the user running the agent.
+	Sandbox *PairingSandbox `json:"sandbox,omitempty"`
 }
 
 // PairingToken describes a token issued to a pairing.
@@ -271,6 +298,8 @@ type PairingUpdate struct {
 	Advertised  *bool             `json:"advertised,omitempty"`
 	// Rotate revokes every token of the pairing and issues a new code.
 	Rotate bool `json:"rotate,omitempty"`
+	// Sandbox, when set, changes the sandbox rule of the pairing.
+	Sandbox *SandboxChange `json:"sandbox,omitempty"`
 }
 
 // PairingUpdateResponse is the changed pairing, and the new code of a

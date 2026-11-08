@@ -126,23 +126,34 @@ var providerKeys = map[string][]string{
 // MissingKey returns how to set the key of the provider of cfg's opencode
 // model when cfg passes none of its keys to the agent, or "".
 func MissingKey(cfg *agentdir.Config) string {
+	provider, key := MissingProviderKey(cfg, cfg.Secrets)
+	if provider == "" {
+		return ""
+	}
+	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, key)
+}
+
+// MissingProviderKey returns the provider of cfg's opencode model and the
+// variable to suggest for its key, when neither the --env values of cfg nor
+// the variables secrets hold one of its keys. It returns "" otherwise.
+func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key string) {
 	provider, _, ok := strings.Cut(cfg.Model, "/")
 	keys := providerKeys[provider]
 	if cfg.Harness != "opencode" || !ok || len(keys) == 0 {
-		return ""
+		return "", ""
 	}
 	for _, kv := range cfg.Env {
 		name, _, _ := strings.Cut(kv, "=")
 		if slices.Contains(keys, name) {
-			return ""
+			return "", ""
 		}
 	}
-	for _, name := range cfg.Secrets {
+	for _, name := range secrets {
 		if slices.Contains(keys, name) {
-			return ""
+			return "", ""
 		}
 	}
-	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, keys[0])
+	return provider, keys[0]
 }
 
 // ImageRepo is where harness images are published.

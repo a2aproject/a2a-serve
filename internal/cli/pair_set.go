@@ -33,14 +33,16 @@ func newPairSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		description string
 		advertised  bool
 		owner       bool
+		sandbox     sandboxFlags
 	)
 	cmd := &cobra.Command{
 		Use:   "set <name>",
 		Short: "Change a pairing, or rotate its credentials",
 		Long: `Change a pairing in place: whether it is an owner and its kind (person,
-device or agent), or the webhook, headers, description and advertising of a
-webhook node. Its tokens keep working, and a change applies to their next
-request.
+device or agent), what its agent container gets, or the webhook, headers,
+description and advertising of a webhook node. Its tokens keep working, and
+a change applies to their next request. A change of --storage or --secrets
+applies to its agent container once its current turn ends.
 
 --rotate revokes every token of the pairing and its pending codes, and
 prints a new code. The caller joins again with the code and --replace, and
@@ -52,14 +54,19 @@ stay linked.
 		Example: `  a2a-serve pair set anna --owner
   a2a-serve pair set anna --owner=false
   a2a-serve pair set laptop --kind device
+  a2a-serve pair set ben --storage shared --secrets all
+  a2a-serve pair set ben --secrets none
   a2a-serve pair set anna --rotate
   a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
 		Args:              namedArgs,
 		ValidArgsFunction: pairingCompletions(cfg, sf),
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
-			changes := []string{"owner", "kind", "webhook", "webhook-header", "description", "advertised", "rotate"}
+			changes := []string{"owner", "kind", "webhook", "webhook-header", "description", "advertised", "rotate", "storage", "secrets"}
 			if !slices.ContainsFunc(changes, cmd.Flags().Changed) {
-				return clierr.Usage("nothing to change: pass --owner, --kind, --webhook, --webhook-header, --description, --advertised or --rotate")
+				return clierr.Usage("nothing to change: pass --owner, --kind, --webhook, --webhook-header, --description, --advertised, --rotate, --storage or --secrets")
+			}
+			if req.Sandbox, err = sandbox.change(cmd); err != nil {
+				return err
 			}
 			if cmd.Flags().Changed("owner") {
 				req.Owner = &owner
@@ -112,6 +119,7 @@ stay linked.
 	f.StringVar(&description, "description", "", "Description for the node's card")
 	f.BoolVar(&advertised, "advertised", false, "Advertise the webhook node to the agents of the private network")
 	f.BoolVar(&req.Rotate, "rotate", false, "Revoke every token of the pairing and print a new code")
+	sandbox.register(cmd)
 	must(cmd.RegisterFlagCompletionFunc("kind", fixedCompletions(pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent)))
 	return cmd
 }

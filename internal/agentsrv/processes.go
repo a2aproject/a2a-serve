@@ -131,6 +131,9 @@ type splitExecutor struct {
 	// start starts the executor of a pool. If nil, every conversation runs
 	// in main.
 	start startPool
+	// admit refuses a turn in the agent process of a key, or prepares the
+	// process for it. Optional.
+	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) error
 	// ctx ends when the server stops; pools start in it.
 	ctx context.Context
 
@@ -160,10 +163,13 @@ type splitDeps struct {
 	// Start starts the executor of a pool. If nil, every conversation runs
 	// in Main.
 	Start startPool
+	// Admit refuses a turn in the agent process of a key, or prepares the
+	// process for it. Optional.
+	Admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) error
 }
 
 func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
-	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, ctx: ctx}
+	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, admit: deps.Admit, ctx: ctx}
 	if ctx != nil {
 		context.AfterFunc(ctx, e.stopTurns)
 	}
@@ -222,8 +228,11 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			return
 		}
 		defer done()
-		exec, err := e.pick(ctx, execCtx.ContextID, true)
+		exec, key, err := e.pick(ctx, execCtx.ContextID, true)
 		defer e.keys.forget(execCtx.ContextID)
+		if err == nil && e.admit != nil {
+			err = e.admit(ctx, key, execCtx)
+		}
 		if err != nil {
 			failTask(execCtx, err)(yield)
 			return
@@ -293,7 +302,7 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 			return
 		}
 		defer done()
-		exec, err := e.pick(ctx, execCtx.ContextID, false)
+		exec, _, err := e.pick(ctx, execCtx.ContextID, false)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -306,21 +315,22 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	}
 }
 
-// pick returns the executor of a conversation, and starts its pool if
-// needed. If remember is set, the conversation keeps its agent key until
+// pick returns the executor of a conversation and its agent key, and
+// starts its pool if needed. If remember is set, the conversation keeps its agent key until
 // the keys forget it, in case its session isn't stored yet.
-func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, error) {
+func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, string, error) {
 	key, err := e.keys.of(ctx, contextID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if key == "" || e.start == nil {
-		return e.main, nil
+		return e.main, key, nil
 	}
 	if remember {
 		e.keys.remember(contextID, key)
 	}
-	return e.pool(poolOf(key))
+	exec, err := e.pool(poolOf(key))
+	return exec, key, err
 }
 
 // errServerStopping fails turns that start, or would start agent processes,
