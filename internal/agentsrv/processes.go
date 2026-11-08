@@ -20,6 +20,7 @@ import (
 	"fmt"
 	"iter"
 	"log/slog"
+	"slices"
 	"sync"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -143,7 +144,13 @@ type splitExecutor struct {
 	// after its pool closed would outlive the server.
 	closing bool
 	running turnCount
+	// turns cancels the context of each turn in progress, in the order the
+	// turns started, and canceled is set once the server stopped them.
+	turns    []*turnCancel
+	canceled bool
 }
+
+type turnCancel struct{ cancel context.CancelFunc }
 
 // splitDeps are the dependencies of [splitExecutor].
 type splitDeps struct {
@@ -156,7 +163,24 @@ type splitDeps struct {
 }
 
 func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
-	return &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, ctx: ctx}
+	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, ctx: ctx}
+	if ctx != nil {
+		context.AfterFunc(ctx, e.stopTurns)
+	}
+	return e
+}
+
+// stopTurns ends the turns in progress, the newest first. A turn that waits
+// for the turn before it in its conversation is then stopped before that
+// turn can end and let it start. Callbacks of one context.AfterFunc per
+// turn run in goroutines of their own, in any order.
+func (e *splitExecutor) stopTurns() {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.canceled = true
+	for _, t := range slices.Backward(e.turns) {
+		t.cancel()
+	}
 }
 
 type startedPool struct {
@@ -176,13 +200,16 @@ func (e *splitExecutor) track(ctx context.Context) (context.Context, func(), err
 	}
 	e.running.add()
 	ctx, cancel := context.WithCancel(ctx)
-	stop := func() bool { return true }
-	if e.ctx != nil {
-		stop = context.AfterFunc(e.ctx, cancel)
-	}
-	return ctx, func() {
-		stop()
+	if e.canceled {
 		cancel()
+	}
+	t := &turnCancel{cancel: cancel}
+	e.turns = append(e.turns, t)
+	return ctx, func() {
+		cancel()
+		e.mu.Lock()
+		e.turns = slices.DeleteFunc(e.turns, func(o *turnCancel) bool { return o == t })
+		e.mu.Unlock()
 		e.running.done()
 	}, nil
 }

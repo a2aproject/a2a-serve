@@ -248,6 +248,75 @@ func (b *blockingExecutor) Execute(ctx context.Context, _ *a2asrv.ExecutorContex
 	}
 }
 
+// lockingExecutor runs one turn at a time, as a2aacp runs the turns of a
+// conversation: a turn waits for the turn before it, and doesn't start once
+// its context ended. The first turn runs until its context ends; later ones
+// complete at once.
+type lockingExecutor struct {
+	a2asrv.AgentExecutor
+	lock    chan struct{}
+	holding chan struct{}
+	waiting chan struct{}
+}
+
+func (l *lockingExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	return func(yield func(a2a.Event, error) bool) {
+		first := execCtx.TaskID == "t1"
+		if !first {
+			close(l.waiting)
+		}
+		select {
+		case l.lock <- struct{}{}:
+		case <-ctx.Done():
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
+			return
+		}
+		defer func() { <-l.lock }()
+		if ctx.Err() != nil {
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
+			return
+		}
+		if first {
+			close(l.holding)
+			<-ctx.Done()
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, nil), nil)
+			return
+		}
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateCompleted, nil), nil)
+	}
+}
+
+func TestSplitExecutorStopEndsTheTurnsWaitingBehindARunningTurn(t *testing.T) {
+	t.Parallel()
+	for range 200 {
+		serverCtx, stopServer := context.WithCancel(context.Background())
+		inner := &lockingExecutor{lock: make(chan struct{}, 1), holding: make(chan struct{}), waiting: make(chan struct{})}
+		e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newAnonymousBudget()})
+		go func() {
+			for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
+			}
+		}()
+		<-inner.holding
+		states := make(chan []a2a.TaskState, 1)
+		go func() {
+			var got []a2a.TaskState
+			for ev := range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t2", StoredTask: &a2a.Task{}}) {
+				if st, ok := ev.(*a2a.TaskStatusUpdateEvent); ok {
+					got = append(got, st.Status.State)
+				}
+			}
+			states <- got
+		}()
+		<-inner.waiting
+
+		stopServer()
+
+		if diff := cmp.Diff([]a2a.TaskState{a2a.TaskStateFailed}, <-states); diff != "" {
+			t.Fatalf("splitExecutor.Execute() of a waiting turn after the stop wrong states (-want +got) diff = %s", diff)
+		}
+	}
+}
+
 func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
 	t.Parallel()
 	serverCtx, stopServer := context.WithCancel(context.Background())
