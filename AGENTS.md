@@ -13,6 +13,11 @@
 * Present each journey as a short sketch of the interaction: the commands with their output, the chat messages with their buttons, the `config.yaml` snippet.
 * For each decision that changes what users do, present the alternatives with their own sketches and trade-offs, and recommend one.
 * Prefer the existing commands, flags and settings to new ones, and list what users have to learn.
+* a2a-serve serves private networks of trusted devices. Harden ingress, and keep communication inside the network low-effort. When security and ease of use pull apart, make the default case work with no configuration, and let users narrow it.
+* Fix a sandbox escape in the sandbox. Don't take trust away from the user's own devices to compensate.
+* Every example in `examples/` keeps working as written. A change that breaks an example step is a regression. Make it only when the user explicitly authorizes it, even for a security fix. CI runs only some examples, so walk the others by hand when a change touches their path.
+* Make behavior opt-in when it rewrites what the agent sends or overrides the agent's own configuration, such as proxying its requests.
+* Name flags for who or what they affect. Don't reuse a prefix that already means something (`--public-*` refers to the public URL), don't start a flag that takes a value with `--no-`, and don't give a product term a second meaning ("the relay" is the Agent Mesh relay).
 
 ### Code Style
 
@@ -35,6 +40,13 @@
 * A partial failure is a failure. Don't report success for work that stopped early.
 * Shared mutable state has one owner and one way in. Don't read fields guarded by a lock without taking it.
 * Everything kept in memory or in the database has a removal path: a TTL, a cap, or cleanup when its owner goes away.
+* A hint or error that names a command must work when the user runs it as printed. Test that path.
+
+### Reviews
+
+* Report each finding as a scenario: when X happens, Y happens, though Z should, because H. Avoid internal names the reader has to look up.
+* Skip nitpicks and rare edge cases. Report a finding that breaks a documented journey or a hint users follow, whatever its severity.
+* A review covers the commit it read. After large changes, review the final head again before calling the change reviewed.
 
 ### Security
 
@@ -66,4 +78,9 @@
 * Use `receiver.Operation() error = %v, want %v` as a template for printing test error check failures.
 * Use `receiver.Operation() = %v, want %v` as a template for printing test error check failures.
 * Use `receiver.Operation() wrong result (-want +got) diff = %s` as a template for printing test errors received when using `cmp.Diff`.
-* Prefer using `t.Fatalf` over `t.Errorf` unless printing all the failed checks is justified or the method is called not from the main goroutine. 
+* Prefer using `t.Fatalf` over `t.Errorf` unless printing all the failed checks is justified or the method is called not from the main goroutine.
+
+### End-to-end Testing
+
+* Build binaries for manual checks the way releases are built, with `CGO_ENABLED=0`.
+* Walk the examples a change touches, step by step as written, and report each step as passed, failed or skipped with the reason.
