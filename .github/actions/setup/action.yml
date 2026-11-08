@@ -35,3 +35,36 @@ runs:
           sleep $((attempt * 15))
         done
         exit 1
+
+    # The agentmesh tests download the pinned agentmesh-one into the user cache.
+    # Keep it in the Actions cache so a slow release download doesn't fail them.
+    - name: Load agentmesh-one cache
+      id: agentmesh-cache
+      if: github.job == 'test' && runner.os == 'Linux' && runner.arch == 'X64'
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/a2a-serve/agentmesh-v*
+        key: ${{ runner.os }}-agentmesh-${{ hashFiles('internal/agentmesh/agentmesh.go') }}
+
+    # Downloads through the API, which stays up when the release download URL times out.
+    - name: Download agentmesh-one
+      if: steps.agentmesh-cache.outcome == 'success' && steps.agentmesh-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        src=internal/agentmesh/agentmesh.go
+        version=$(sed -n 's/^const Version = "\(.*\)"$/\1/p' "$src")
+        name=agentmesh_Linux_x86_64.tar.gz
+        sum=$(sed -n "s/^.*\"$name\": *\"\([0-9a-f]*\)\".*$/\1/p" "$src")
+        tmp=$(mktemp -d)
+        for attempt in 1 2 3; do
+          gh release download "$version" -R google/agentmesh -p "$name" -D "$tmp" --clobber && break
+          echo "::warning::downloading $name failed (attempt $attempt)"
+          if [ "$attempt" = 3 ]; then exit 1; fi
+          sleep $((attempt * 15))
+        done
+        echo "$sum  $tmp/$name" | sha256sum -c -
+        dir=~/.cache/a2a-serve/agentmesh-$version
+        mkdir -p "$dir"
+        tar -xzf "$tmp/$name" -C "$dir" agentmesh-one
