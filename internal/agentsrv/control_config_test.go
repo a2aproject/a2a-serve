@@ -113,16 +113,13 @@ func TestStatusAccess(t *testing.T) {
 		Pairings: 1, OwnerPairings: 1,
 		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL"},
 		Summary: []string{
-			"you: the local URL and your other tailnet devices",
+			"you: this machine and your tailnet devices",
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
 			"the public URL is open to anyone",
 		},
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)
-	}
-	if wantNote := "makes you an owner from your other devices; on this machine, use the local URL or an owner pairing"; st.PrivateNote != wantNote {
-		t.Fatalf("Status() private note = %q, want %q", st.PrivateNote, wantNote)
 	}
 }
 

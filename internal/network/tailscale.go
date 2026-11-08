@@ -25,16 +25,12 @@ import (
 	"net/http"
 	"net/netip"
 	"net/url"
-	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"tailscale.com/ipn"
-	"tailscale.com/ipn/ipnstate"
-	"tailscale.com/net/tsaddr"
-	"tailscale.com/tailcfg"
 	"tailscale.com/tsnet"
 	"tailscale.com/util/dnsname"
 )
@@ -302,15 +298,16 @@ func (t *Tailscale) WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
 	if err != nil {
 		return nil, err
 	}
-	n := tailnetNode{
-		id: string(who.Node.StableID), machine: who.Node.ComputedName, tagged: who.Node.IsTagged(),
-		login: who.UserProfile.LoginName, user: who.Node.User,
+	p := &Peer{Node: string(who.Node.StableID), Machine: who.Node.ComputedName}
+	// Tagged nodes belong to the tailnet, not to the user who tagged them.
+	if who.Node.IsTagged() {
+		return p, nil
 	}
-	for _, a := range who.Node.Addresses {
-		n.addrs = append(n.addrs, a.Addr())
+	if login := who.UserProfile.LoginName; IsEmail(login) {
+		p.Email = login
 	}
-	local, err := localAddrs()
-	return tailnetPeer(n, selfUser(st), local, err), nil
+	p.Self = st.Self != nil && who.Node.User == st.Self.UserID
+	return p, nil
 }
 
 // Member implements [Provider].
@@ -330,76 +327,17 @@ func (t *Tailscale) Member(ctx context.Context, node string) (*Peer, error) {
 		if string(ps.ID) != node {
 			continue
 		}
-		n := tailnetNode{
-			id: node, machine: ps.HostName, tagged: ps.Tags != nil && ps.Tags.Len() > 0,
-			login: st.User[ps.UserID].LoginName, user: ps.UserID, addrs: ps.TailscaleIPs,
+		p := &Peer{Node: node, Machine: ps.HostName}
+		if ps.Tags != nil && ps.Tags.Len() > 0 {
+			return p, nil
 		}
-		local, err := localAddrs()
-		return tailnetPeer(n, selfUser(st), local, err), nil
+		if login := st.User[ps.UserID].LoginName; IsEmail(login) {
+			p.Email = login
+		}
+		p.Self = st.Self != nil && ps.UserID == st.Self.UserID
+		return p, nil
 	}
 	return nil, ErrNoIdentity
-}
-
-// tailnetNode is what the tailnet reports of a machine.
-type tailnetNode struct {
-	id, machine string
-	tagged      bool
-	login       string
-	user        tailcfg.UserID
-	addrs       []netip.Addr
-}
-
-// tailnetPeer identifies node to a server run by the tailnet user self, on
-// a machine whose interfaces have the addresses local, or unknown ones when
-// localErr is set.
-func tailnetPeer(node tailnetNode, self tailcfg.UserID, local []netip.Addr, localErr error) *Peer {
-	p := &Peer{Node: node.id, Machine: node.machine}
-	// Tagged nodes belong to the tailnet, not to the user who tagged them.
-	if node.tagged {
-		return p
-	}
-	// The machine's own Tailscale node carries the sandbox's connections to
-	// the tailnet, so it gets neither the owner nor the owner's email. Its
-	// tailnet addresses are on a local interface; the server's tsnet node
-	// has none.
-	if localErr != nil {
-		slog.Warn("treating a tailnet caller as this machine", "node", node.id, "error", localErr)
-		return p
-	}
-	if slices.ContainsFunc(node.addrs, func(a netip.Addr) bool { return tsaddr.IsTailscaleIP(a) && slices.Contains(local, a) }) {
-		return p
-	}
-	if IsEmail(node.login) {
-		p.Email = node.login
-	}
-	p.Self = self != 0 && node.user == self
-	return p
-}
-
-// localAddrs returns the addresses of this machine's network interfaces.
-func localAddrs() ([]netip.Addr, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, fmt.Errorf("listing the addresses of this machine: %w", err)
-	}
-	var out []netip.Addr
-	for _, a := range addrs {
-		n, ok := a.(*net.IPNet)
-		if !ok {
-			continue
-		}
-		if ip, ok := netip.AddrFromSlice(n.IP); ok {
-			out = append(out, ip.Unmap())
-		}
-	}
-	return out, nil
-}
-
-func selfUser(st *ipnstate.Status) tailcfg.UserID {
-	if st.Self == nil {
-		return 0
-	}
-	return st.Self.UserID
 }
 
 // Peers implements [Provider].

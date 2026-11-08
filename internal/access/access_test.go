@@ -111,7 +111,7 @@ func TestDescribe(t *testing.T) {
 				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
 				Pairings: 2, OwnerPairings: 1, Others: []string{"everyone on the tailnet", "emails matching *@example.com"},
 				Summary: []string{
-					"you: the local URL and your other tailnet devices",
+					"you: this machine and your tailnet devices",
 					"everyone on the tailnet, emails matching *@example.com, 2 pairings (1 owner)",
 					"the public URL needs a pairing or Google sign-in",
 				},
@@ -124,7 +124,7 @@ func TestDescribe(t *testing.T) {
 				Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{"anyone"},
 				Pairings: 1, Others: []string{"anyone on the public URL"},
 				Summary: []string{
-					"you: the local URL and your other tailnet devices",
+					"you: this machine and your tailnet devices",
 					"anyone on the public URL, 1 pairing",
 					"the tailnet needs a pairing",
 					"the public URL is open to anyone",
