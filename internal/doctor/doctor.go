@@ -101,6 +101,8 @@ type Env struct {
 	// CheckLauncher checks that Docker can run the a2a-serve binary at a
 	// path as the launcher of containers, as [harness.CheckLauncher] does.
 	CheckLauncher func(exe string) (string, error)
+	// CheckTUN checks the host's TUN device, as [harness.CheckTUN] does.
+	CheckTUN func() error
 	// Run runs a command and returns its stdout.
 	Run  func(ctx context.Context, name string, args ...string) ([]byte, error)
 	HTTP *http.Client
@@ -132,6 +134,7 @@ func System() (Env, error) {
 		LookPath:      exec.LookPath,
 		Executable:    os.Executable,
 		CheckLauncher: harness.CheckLauncher,
+		CheckTUN:      harness.CheckTUN,
 		Run:           runCommand,
 		HTTP:          &http.Client{Timeout: 5 * time.Second},
 		Status: func(ctx context.Context, d agentdir.Dir) (*controlapi.Status, error) {

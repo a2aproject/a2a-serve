@@ -18,6 +18,7 @@ import (
 	"cmp"
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -36,7 +37,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
-		if w := harness.EgressWarning(cfg, launcher(env)); w != "" {
+		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg)).Warning; w != "" {
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
 	} else {
@@ -46,7 +47,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 			if r, ok := checkImage(ctx, env, cfg, online); ok {
 				results = append(results, r)
 			}
-			results = append(results, checkEgress(env, cfg))
+			results = append(results, checkEgress(ctx, env, cfg))
 		}
 	}
 	for i := range results {
@@ -148,28 +149,56 @@ func firstLine(s string) string {
 
 // checkEgress checks that the Docker sandbox's connections go through the
 // server.
-func checkEgress(env Env, cfg *agentdir.Config) Result {
+func checkEgress(ctx context.Context, env Env, cfg *agentdir.Config) Result {
 	r := Result{ID: "egress", Status: StatusOK}
-	warning := harness.EgressWarning(cfg, launcher(env))
+	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg))
 	switch {
 	case cfg.Egress.Mode == egress.ModeUnrestricted:
 		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect
 		r.Fix = "a2a-serve config unset egress --restart"
-	case warning != "":
-		r.Status, r.Message = StatusWarn, warning
+	case d.Warning != "":
+		r.Status, r.Message = StatusWarn, d.Warning
 	default:
 		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egress.ModeInternet) + ")"
 	}
 	return r
 }
 
-// launcher checks the a2a-serve of env as the launcher of containers.
-func launcher(env Env) func() (string, error) {
-	return func() (string, error) {
-		exe, err := env.Executable()
-		if err != nil {
-			return "", err
-		}
-		return env.CheckLauncher(exe)
+// egressEnv is the environment [harness.DecideEgress] decides in for env:
+// its a2a-serve, its TUN device, and the architecture of the agent's
+// image when docker has it.
+func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) harness.EgressEnv {
+	return harness.EgressEnv{
+		GOOS: runtime.GOOS,
+		Launcher: func() (string, error) {
+			exe, err := env.Executable()
+			if err != nil {
+				return "", err
+			}
+			return env.CheckLauncher(exe)
+		},
+		TUN:       env.CheckTUN,
+		ImageArch: imageArch(ctx, env, cfg),
 	}
+}
+
+// imageArch returns the CPU architecture of the agent's image, or "" when
+// docker doesn't have it.
+func imageArch(ctx context.Context, env Env, cfg *agentdir.Config) string {
+	if cfg.Sandbox == agentdir.SandboxLocal {
+		return ""
+	}
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return ""
+	}
+	for _, image := range []string{cfg.Image, profile.Image(), harness.LocalImage(profile.Name())} {
+		if image == "" {
+			continue
+		}
+		if out, err := env.Run(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", image); err == nil {
+			return strings.TrimSpace(string(out))
+		}
+	}
+	return ""
 }

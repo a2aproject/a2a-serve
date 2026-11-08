@@ -15,10 +15,12 @@
 package egress
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"net"
 	"net/netip"
+	"net/url"
 	"strconv"
 	"strings"
 
@@ -144,9 +146,9 @@ func (r Rule) matchesPort(port uint16) bool { return r.port == 0 || r.port == po
 // ParseRule parses an allow rule: a name such as nas.lan, *.example.com for
 // the names under example.com, an IP address or a CIDR range, each with an
 // optional :port. An IPv6 address takes brackets with a port, such as
-// [fd00::1]:22.
+// [fd00::1]:22. A URL gives its host and port.
 func ParseRule(s string) (Rule, error) {
-	r, err := parseRule(strings.TrimSpace(s))
+	r, err := parseRule(fromURL(strings.TrimSpace(s)))
 	if err != nil {
 		return Rule{}, fmt.Errorf("invalid egress rule %q: %w; want a host, *.domain, an IP address or a CIDR range, with an optional :port", s, err)
 	}
@@ -154,6 +156,27 @@ func ParseRule(s string) (Rule, error) {
 		return Rule{}, fmt.Errorf("invalid egress rule %q: the sandbox's resolver uses the addresses of %s; allow a tailnet host by its name, such as nas.example.ts.net", s, tailnetV4)
 	}
 	return r, nil
+}
+
+// fromURL returns the host and port of a URL, such as https://nas.lan/x
+// for nas.lan:443, or s when it isn't one. A URL without a port keeps the
+// default port of http and https.
+func fromURL(s string) string {
+	if !strings.Contains(s, "://") {
+		return s
+	}
+	u, err := url.Parse(s)
+	if err != nil || u.Hostname() == "" {
+		return s
+	}
+	port := cmp.Or(u.Port(), map[string]string{"http": "80", "https": "443"}[strings.ToLower(u.Scheme)])
+	if port == "" {
+		if strings.Contains(u.Hostname(), ":") {
+			return "[" + u.Hostname() + "]"
+		}
+		return u.Hostname()
+	}
+	return net.JoinHostPort(u.Hostname(), port)
 }
 
 // tailnetV4 holds the IPv4 addresses of the tailnet, which the resolver in

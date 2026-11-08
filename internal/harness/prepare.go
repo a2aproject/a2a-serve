@@ -99,8 +99,9 @@ type Spec struct {
 	// EgressMode is the egress setting. Unless it is unrestricted, a
 	// container gets no network but the socket OpenEgress opens, where
 	// Docker allows it. Nil OpenEgress gives containers Docker's network.
-	EgressMode string
-	OpenEgress OpenEgress
+	EgressMode  string
+	EgressAllow []string
+	OpenEgress  OpenEgress
 
 	// Progress receives the output of pulling or building the image.
 	Progress io.Writer
@@ -125,6 +126,9 @@ type Prepared struct {
 	// EgressProblem is why the container has Docker's own network although
 	// the egress setting asks for the boundary, or "".
 	EgressProblem string
+	// Egress is set when the container's connections go through the
+	// server.
+	Egress bool
 	// OnHost is set when the harness runs on the host, where the processes
 	// it starts outlive it unless they are killed; see [ProcessMark].
 	OnHost bool
@@ -272,20 +276,23 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	closeEgress := func() error { return nil }
 	var warnings []string
 	var egressProblem string
-	if spec.OpenEgress != nil && spec.EgressMode != egress.ModeUnrestricted {
-		eg, closeFn, problem, err := dockerEgress(ctx, image, spec.OpenEgress, rootless)
+	var egressOn bool
+	if spec.OpenEgress != nil {
+		eg, closeFn, decision, err := dockerEgress(ctx, spec, image)
 		if err != nil {
 			return nil, err
 		}
-		if problem != "" && spec.EgressMode == egress.ModeAllowlist {
-			return nil, errors.New(noAllowlist(problem))
+		if decision.Problem != "" && spec.EgressMode == egress.ModeAllowlist {
+			return nil, errors.New(decision.Warning)
 		}
-		if problem != "" {
-			warnings = append(warnings, noBoundary(problem))
-			egressProblem = noBoundary(problem)
+		if decision.Warning != "" {
+			warnings = append(warnings, decision.Warning)
+		}
+		if !decision.Boundary {
+			egressProblem = decision.Warning
 		}
 		if eg != nil {
-			dr.Egress, closeEgress = eg, closeFn
+			dr.Egress, closeEgress, egressOn = eg, closeFn, true
 			what += "; egress " + cmp.Or(spec.EgressMode, egress.ModeInternet) + " through the server"
 		}
 	}
@@ -294,7 +301,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		return nil, errors.Join(err, closeEgress())
 	}
 	stop := func(ctx context.Context) error { return errors.Join(dr.Stop(ctx), closeEgress()) }
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Check: func() error {
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Egress: egressOn, Check: func() error {
 		if err := checkPaths(spec); err != nil {
 			return err
 		}
@@ -302,25 +309,28 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	}}, nil
 }
 
-// dockerEgress opens the egress socket of a container of image, or
-// returns why the container can't have one.
-func dockerEgress(ctx context.Context, image string, open OpenEgress, rootless bool) (eg *DockerEgress, close func() error, problem string, err error) {
-	launcher, err := Launcher()
-	if err != nil {
-		return nil, nil, err.Error(), nil
-	}
+// dockerEgress opens the egress socket of a container of image when
+// [DecideEgress] gives it the boundary.
+func dockerEgress(ctx context.Context, spec Spec, image string) (eg *DockerEgress, close func() error, decision EgressDecision, err error) {
 	arch, entrypoint, err := imageConfig(ctx, image)
 	if err != nil {
-		return nil, nil, "", err
+		return nil, nil, EgressDecision{}, err
 	}
-	if arch != runtime.GOARCH {
-		return nil, nil, fmt.Sprintf("the image %s is for %s and this a2a-serve for %s", image, cmp.Or(arch, "an unknown CPU architecture"), runtime.GOARCH), nil
+	env := HostEgressEnv()
+	env.ImageArch = cmp.Or(arch, "an unknown CPU architecture")
+	decision = DecideEgress(&agentdir.Config{Sandbox: spec.Sandbox, Egress: agentdir.EgressConfig{Mode: spec.EgressMode, Allow: spec.EgressAllow}}, env)
+	if !decision.Boundary {
+		return nil, nil, decision, nil
 	}
-	socket, close, err := open(hostGateway(ctx, rootless))
+	launcher, err := env.Launcher()
 	if err != nil {
-		return nil, nil, "", fmt.Errorf("opening the egress socket: %w", err)
+		return nil, nil, EgressDecision{}, err
 	}
-	return &DockerEgress{Socket: socket, Launcher: launcher, Entrypoint: entrypoint}, close, "", nil
+	socket, close, err := spec.OpenEgress(hostGateway())
+	if err != nil {
+		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress socket: %w", err)
+	}
+	return &DockerEgress{Socket: socket, Launcher: launcher, Entrypoint: entrypoint}, close, decision, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.

@@ -91,6 +91,10 @@ func TestRuleString(t *testing.T) {
 		{"FD01::1", "fd01::1"},
 		{"[fd01::1]:8080", "[fd01::1]:8080"},
 		{"bücher.example", "xn--bcher-kva.example"},
+		{"http://nas.lan", "nas.lan:80"},
+		{"https://Grafana.corp:3000/d/abc?x=1", "grafana.corp:3000"},
+		{"ssh://git.lan/repo", "git.lan"},
+		{"http://[fd01::1]:8080/", "[fd01::1]:8080"},
 	}
 	for _, tc := range tests {
 		r, err := ParseRule(tc.in)

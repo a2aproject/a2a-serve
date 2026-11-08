@@ -18,8 +18,6 @@ import (
 	"cmp"
 	"errors"
 	"log/slog"
-	"net"
-	"net/netip"
 	"os"
 	"path/filepath"
 	"sync"
@@ -46,6 +44,7 @@ type egressSockets struct {
 	// why they have Docker's own network although the mode asks for the
 	// boundary.
 	mode, problem string
+	prepared      bool
 }
 
 func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets {
@@ -91,12 +90,28 @@ func (e *egressSockets) policy(mode string) egress.Policy {
 func (e *egressSockets) started(mode, problem string) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	e.mode, e.problem = cmp.Or(mode, egress.ModeInternet), problem
+	e.mode, e.problem, e.prepared = cmp.Or(mode, egress.ModeInternet), problem, true
+}
+
+// boundary reports whether the containers of cfg get the egress boundary:
+// as the last container started, or as [harness.DecideEgress] decides
+// before the first.
+func (e *egressSockets) boundary(cfg *agentdir.Config) bool {
+	if e == nil {
+		return harness.DecideEgress(cfg, harness.HostEgressEnv()).Boundary
+	}
+	e.mu.Lock()
+	prepared, problem := e.prepared, e.problem
+	e.mu.Unlock()
+	if prepared {
+		return problem == "" && cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
+	}
+	return harness.DecideEgress(cfg, harness.HostEgressEnv()).Boundary
 }
 
 // status returns what status shows about the sandbox's connections: the
 // mode the containers run with, the current allow rules, and the latest
-// refused destinations that the rules still refuse.
+// refused destinations.
 func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	if cfg.Sandbox == harness.SandboxLocal && cfg.Egress.Mode == "" && len(cfg.Egress.Allow) == 0 {
 		return nil
@@ -105,39 +120,41 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	st := &controlapi.EgressStatus{Mode: cmp.Or(e.mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Problem: e.problem}
 	e.mu.Unlock()
 	if st.Problem == "" {
-		st.Problem = harness.EgressWarning(cfg, harness.Launcher)
+		st.Problem = harness.DecideEgress(cfg, harness.HostEgressEnv()).Warning
 	}
-	var recent []string
+	var recent []sandboxnet.Block
 	st.Blocked, recent = e.blocks.Snapshot()
-	p := e.policy(st.Mode)
-	for _, dest := range recent {
-		if !allowedByRule(p, dest) {
-			st.Recent = append(st.Recent, dest)
-		}
+	for _, b := range recent {
+		st.Recent = append(st.Recent, controlapi.EgressBlock{Destination: b.Destination, Allow: b.Allow})
 	}
 	return st
-}
-
-// allowedByRule reports whether a rule of p allows the destination host:port.
-func allowedByRule(p egress.Policy, dest string) bool {
-	host, port, err := net.SplitHostPort(dest)
-	if err != nil {
-		return false
-	}
-	n, err := egress.ParsePort(port)
-	if err != nil {
-		return false
-	}
-	if addr, err := netip.ParseAddr(host); err == nil {
-		_, ok := p.AddrRule(addr, n)
-		return ok
-	}
-	_, ok := p.NameRule(host, n)
-	return ok
 }
 
 // egressSandbox gives spec the egress socket of its container.
 func (s *Server) egressSandbox(spec *harness.Spec) {
 	spec.EgressMode = s.rt.Config().Egress.Mode
+	spec.EgressAllow = s.rt.Config().Egress.Allow
 	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode)
+}
+
+// egressNoticeFile records in the state directory that start told the
+// owner that the sandbox blocks private networks.
+const egressNoticeFile = "egress-notice"
+
+// noticeEgress tells the owner once, at the first start with the egress
+// boundary, that the sandbox now blocks the LAN and the tailnet.
+func (s *Server) noticeEgress(p *harness.Prepared) {
+	cfg := s.rt.Config()
+	if !p.Egress || cfg.Egress.Mode == egress.ModeAllowlist {
+		return
+	}
+	marker := filepath.Join(s.dir.StateDir(), egressNoticeFile)
+	if _, err := os.Stat(marker); err == nil {
+		return
+	}
+	if err := fsutil.WriteAtomic(marker, nil, 0o600); err != nil {
+		slog.Warn("recording the egress notice", "error", err)
+		return
+	}
+	s.logf("! the sandbox now blocks the LAN, the tailnet and this machine; allow a host with a2a-serve config set --egress-allow <host>")
 }

@@ -71,6 +71,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	for _, w := range h.prepared.Warnings {
 		s.logf("! %s", w)
 	}
+	s.noticeEgress(h.prepared)
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
 	if err != nil {

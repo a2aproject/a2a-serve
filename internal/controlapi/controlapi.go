@@ -79,15 +79,23 @@ type Status struct {
 	Egress     *EgressStatus `json:"egress,omitempty"`
 }
 
+// EgressBlock is a refused destination and the --egress-allow rule that
+// allows it.
+type EgressBlock struct {
+	Destination string `json:"destination"`
+	Allow       string `json:"allow"`
+}
+
 // EgressStatus is where the sandbox may connect, and what it was refused.
 type EgressStatus struct {
 	// Mode is public, allowlist or unrestricted, and Allow the allowed hosts.
 	Mode  string   `json:"mode"`
 	Allow []string `json:"allow,omitempty"`
 	// Blocked counts the refused connections since the start, and Recent
-	// are the latest refused destinations, newest first.
-	Blocked int      `json:"blocked,omitempty"`
-	Recent  []string `json:"recent,omitempty"`
+	// are the latest refused destinations, newest first, until a
+	// connection to them succeeds.
+	Blocked int           `json:"blocked,omitempty"`
+	Recent  []EgressBlock `json:"recent,omitempty"`
 	// Problem is why the sandbox reaches every network, such as on Docker
 	// Desktop.
 	Problem string `json:"problem,omitempty"`

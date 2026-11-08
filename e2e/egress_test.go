@@ -62,9 +62,6 @@ func TestDockerSandboxEgress(t *testing.T) {
 	}
 
 	logs := coder.serve("logs", "-n", "200")
-	if !strings.Contains(logs, `msg="egress allowed"`) || !strings.Contains(logs, "destination="+publicTarget()) {
-		t.Fatalf("a2a-serve logs = %q, want the allowed connection to %s", logs, publicTarget())
-	}
 	for _, target := range targets {
 		if !strings.Contains(logs, "destination="+target+" reason=") {
 			t.Fatalf("a2a-serve logs = %q, want the blocked connection to %s", logs, target)

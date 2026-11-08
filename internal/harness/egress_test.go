@@ -97,30 +97,41 @@ func TestPublishes(t *testing.T) {
 	}
 }
 
-func TestEgressWarning(t *testing.T) {
+func TestDecideEgress(t *testing.T) {
 	t.Parallel()
+	fail := func() error { return errors.New("no tun") }
+	ok := func() error { return nil }
 	noLauncher := func() (string, error) { return "", errors.New("no launcher") }
 	launcher := func() (string, error) { return "/usr/bin/a2a-serve", nil }
+	linux := EgressEnv{GOOS: "linux", Launcher: launcher, TUN: ok}
+	with := func(f func(*EgressEnv)) EgressEnv { e := linux; f(&e); return e }
 	tests := []struct {
 		name     string
 		cfg      agentdir.Config
-		launcher func() (string, error)
-		want     string
+		env      EgressEnv
+		boundary bool
+		warning  string
 	}{
-		{name: "docker", launcher: launcher},
-		{name: "docker without a launcher", launcher: noLauncher, want: "egress control is off: no launcher. The agent reaches every network"},
-		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, launcher: noLauncher, want: "--egress allowlist can't apply: no launcher"},
-		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, launcher: launcher, want: "no --egress-allow rules"},
-		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, launcher: noLauncher},
-		{name: "local", cfg: agentdir.Config{Sandbox: SandboxLocal}, launcher: noLauncher},
-		{name: "local with rules", cfg: agentdir.Config{Sandbox: SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, launcher: launcher, want: "have no effect with --sandbox local"},
+		{name: "docker", env: linux, boundary: true},
+		{name: "docker without a launcher", env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "egress control is off: no launcher. The agent reaches every network"},
+		{name: "docker without a TUN device", env: with(func(e *EgressEnv) { e.TUN = fail }), warning: "egress control is off: no tun"},
+		{name: "image for another architecture", env: with(func(e *EgressEnv) { e.ImageArch = "s390x" }), warning: "the agent's image is for s390x"},
+		{name: "docker desktop", env: with(func(e *EgressEnv) { e.GOOS = "darwin" }), warning: "with Docker Desktop"},
+		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--egress allowlist can't apply: no launcher"},
+		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
+		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher })},
+		{name: "local", cfg: agentdir.Config{Sandbox: SandboxLocal}, env: linux},
+		{name: "local with rules", cfg: agentdir.Config{Sandbox: SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "have no effect with --sandbox local"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			got := EgressWarning(&tc.cfg, tc.launcher)
-			if tc.want == "" && got != "" || !strings.Contains(got, tc.want) {
-				t.Fatalf("EgressWarning() = %q, want it to contain %q", got, tc.want)
+			got := DecideEgress(&tc.cfg, tc.env)
+			if got.Boundary != tc.boundary {
+				t.Fatalf("DecideEgress().Boundary = %v, want %v", got.Boundary, tc.boundary)
+			}
+			if tc.warning == "" && got.Warning != "" || !strings.Contains(got.Warning, tc.warning) {
+				t.Fatalf("DecideEgress().Warning = %q, want it to contain %q", got.Warning, tc.warning)
 			}
 		})
 	}

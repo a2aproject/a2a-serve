@@ -52,8 +52,9 @@ type fakeMachine struct {
 	busy      map[int]bool
 	unit      string
 	messenger error
-	// launcher is why a2a-serve can't be the launcher of containers.
-	launcher error
+	// launcher is why a2a-serve can't be the launcher of containers, and
+	// tun why the host's TUN device can't be used.
+	launcher, tun error
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -104,6 +105,7 @@ func (m *fakeMachine) Env() Env {
 			return "", exec.ErrNotFound
 		},
 		Executable: func() (string, error) { return m.self, nil },
+		CheckTUN:   func() error { return m.tun },
 		CheckLauncher: func(exe string) (string, error) {
 			if m.launcher != nil {
 				return "", m.launcher
@@ -574,6 +576,14 @@ func TestAgentChecks(t *testing.T) {
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.launcher = errors.New("built with cgo")
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "docker agent without a TUN device",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.tun = errors.New("no /dev/net/tun")
 			},
 			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
 		},

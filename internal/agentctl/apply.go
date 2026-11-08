@@ -196,7 +196,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		Warnings: append(harness.Warnings(next), mcpWarnings(d, old, next)...),
 	}
 	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) {
-		if w := harness.EgressWarning(next, harness.Launcher); w != "" {
+		if w := harness.DecideEgress(next, harness.HostEgressEnv()).Warning; w != "" {
 			res.Warnings = append(res.Warnings, w)
 		}
 	}

@@ -24,8 +24,8 @@ When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `
 On Linux, with Docker or rootless Docker, every connection the agent opens goes through the server. With Docker Desktop, the sandbox keeps Docker's own network ([where it applies](#where-it-applies)). By default:
 
 - The agent reaches the public internet.
-- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, and the addresses of this machine and of its links.
-- `host.docker.internal` reaches this machine as it does from other containers. With Docker, that is the services listening on all addresses. With rootless Docker, it is the ports that other containers publish.
+- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through a route other than its default route, such as a VPN or a bridge.
+- `host.docker.internal` reaches the ports that other containers publish on this machine. `--egress-allow host.docker.internal:11434` opens another port of this machine.
 
 The server resolves each name itself and checks every address it gets, so a public name can't lead to a private address. The agent calls other agents through its socket to the server, as before. A blocked connection fails in the agent's tools like a refused one.
 
@@ -41,7 +41,7 @@ The next connection uses the new rule; the agent keeps running. A rule is one of
 - `*.corp.example.com`, for every name under that domain;
 - an IP address, such as `192.168.1.20`, or a range, such as `192.168.1.0/24`.
 
-Each can end with a port, such as `:22`. Without a port, the rule allows every port. An IPv6 address takes brackets before a port, such as `[fd00::1]:22`. Remove a rule with `a2a-serve config unset egress-allow nas.lan:22`.
+Each can end with a port, such as `:22`. Without a port, the rule allows every port. An IPv6 address takes brackets before a port, such as `[fd00::1]:22`. A pasted URL, such as `http://grafana.lan:3000/d/x`, gives its host and port. Remove a rule with `a2a-serve config unset egress-allow nas.lan:22`.
 
 A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`: the sandbox's resolver uses the tailnet's IPv4 range for its own addresses.
 
@@ -49,9 +49,9 @@ A host allowed by name may resolve to private addresses, though not to loopback,
 | --- | --- |
 | A NAS or another LAN host | `a2a-serve config set --egress-allow nas.lan:22` |
 | A model server on another machine | `a2a-serve config set --egress-allow 192.168.1.30:11434` |
-| A model server on this machine | Point the agent at `host.docker.internal:11434`. With rootless Docker, run `a2a-serve config set --egress-allow 127.0.0.1:11434` and point it at `127.0.0.1:11434`. |
+| A model server on this machine | `a2a-serve config set --egress-allow host.docker.internal:11434`, and point the agent at `host.docker.internal:11434` |
 
-A rule that names `host.docker.internal` limits it to the ports of the rules.
+A rule that names `host.docker.internal` reaches that port on this machine's loopback, and limits `host.docker.internal` to the ports of the rules.
 
 ### Allow only some hosts
 
@@ -74,26 +74,27 @@ $ a2a-serve status
 ...
   egress   the internet and nas.lan:22; other private networks blocked
            ! 2 connection(s) blocked since the server started, latest 192.168.1.10:22, files.lan:443
-             allow one with a2a-serve config set --egress-allow 192.168.1.10:22
+             allow the latest with a2a-serve config set --egress-allow 192.168.1.10:22
 ```
 
-`a2a-serve logs` has one line for each connection:
+A destination stays listed until a connection to it succeeds. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine.
+
+`a2a-serve logs` has one line for each blocked connection:
 
 ```console
 $ a2a-serve logs | grep egress
-... level=INFO msg="egress allowed" sandbox=a2a-coder-1a2b3c4d5e destination=github.com:443 address=140.82.121.4:443 rule=internet
 ... level=WARN msg="egress blocked" sandbox=a2a-coder-1a2b3c4d5e destination=192.168.1.10:22 reason=ip-not-on-allowlist
 ```
 
-A container logs at most 600 decisions a minute. The server logs the number of the others.
+Allowed connections are logged too when the server runs with `a2a-serve start --verbose`. A container logs at most 600 decisions a minute. The server logs the number of the others.
 
 | Message | Reason | Meaning |
 | --- | --- | --- |
-| `egress blocked` | `not-on-allowlist` | With `--egress allowlist`, no rule names the host. |
+| `egress blocked` | `not-on-allowlist` | With `--egress allowlist`, no rule names the host, or no container publishes the port of `host.docker.internal`. |
 | `egress blocked` | `port-not-allowed` | A rule names the host for another port. |
 | `egress blocked` | `ip-not-on-allowlist` | The address is private, and no rule allows it. |
 | `egress blocked` | `resolved-address-denied` | No address of the name may be reached. `addresses` lists them. |
-| `egress blocked` | `resolve-failed` | The name doesn't resolve, or `host.docker.internal` doesn't reach the port. |
+| `egress blocked` | `resolve-failed` | The name doesn't resolve. |
 | `egress blocked` | `busy` | The container has too many open connections. |
 | `egress failed` | `dial-failed` | The destination doesn't accept the connection. |
 

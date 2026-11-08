@@ -242,8 +242,12 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 		fmt.Fprintf(sb, "  %-8s %s\n", "", blocked)
 		return
 	}
-	fmt.Fprintf(sb, "  %-8s ! %s, latest %s\n", "", blocked, strings.Join(e.Recent, ", "))
-	fmt.Fprintf(sb, "  %-8s   allow one with a2a-serve config set --egress-allow %s\n", "", e.Recent[0])
+	latest := make([]string, len(e.Recent))
+	for i, b := range e.Recent {
+		latest[i] = b.Destination
+	}
+	fmt.Fprintf(sb, "  %-8s ! %s, latest %s\n", "", blocked, strings.Join(latest, ", "))
+	fmt.Fprintf(sb, "  %-8s   allow the latest with a2a-serve config set --egress-allow %s\n", "", e.Recent[0].Allow)
 }
 
 // writeNetworkProblem writes why the URL u of the label scope doesn't work,

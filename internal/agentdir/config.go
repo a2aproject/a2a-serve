@@ -86,7 +86,7 @@ type Config struct {
 
 // EgressConfig decides where the Docker sandbox may connect.
 type EgressConfig struct {
-	// Mode is public (default), allowlist or unrestricted.
+	// Mode is internet (default), allowlist or unrestricted.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
 	// Allow are the hosts, name suffixes, addresses and ranges the sandbox
 	// may also reach, each with an optional port.

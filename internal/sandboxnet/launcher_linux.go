@@ -98,15 +98,24 @@ func Launch(cfg LaunchConfig) (int, error) {
 	return supervise(cmd.Process.Pid, sig), nil
 }
 
-// checkInterfaces refuses a namespace with an interface besides loopback,
-// which would be a second way out.
+// checkInterfaces refuses a namespace with an interface besides loopback
+// that is up or has an address, which would be a second way out. Kernel
+// modules such as ipip and sit add fallback devices such as tunl0 and sit0
+// to every namespace, down and without addresses.
 func checkInterfaces() error {
 	ifaces, err := net.Interfaces()
 	if err != nil {
 		return fmt.Errorf("listing interfaces: %w", err)
 	}
 	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagLoopback == 0 {
+		if ifc.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := ifc.Addrs()
+		if err != nil {
+			return fmt.Errorf("listing the addresses of %s: %w", ifc.Name, err)
+		}
+		if ifc.Flags&net.FlagUp != 0 || len(addrs) > 0 {
 			return fmt.Errorf("the container has the network interface %s; it must run with --network none", ifc.Name)
 		}
 	}

@@ -68,10 +68,9 @@ type BoundaryConfig struct {
 	// [egress.HostGateway] on port reaches, or false when the host can't
 	// be reached on port.
 	HostGateway func(ctx context.Context, port uint16) (netip.AddrPort, bool)
-	// LocalPrefixes returns the addresses of this host with the prefixes
-	// of their links. The policy treats both as private. Nil uses the
-	// host's interfaces.
-	LocalPrefixes func() ([]netip.Prefix, error)
+	// Network tells the addresses and routes of this host; nil uses the
+	// host's own.
+	Network Network
 	// Resolver resolves names; nil uses the system resolver.
 	Resolver Resolver
 	// Log receives one record per decision; nil uses the default logger.
@@ -82,6 +81,16 @@ type BoundaryConfig struct {
 	// [DefaultIdleTimeout].
 	MaxTunnels  int
 	IdleTimeout time.Duration
+}
+
+// Network tells what the policy needs to know about this host's network.
+type Network interface {
+	// OwnAddr reports whether addr is an address of this host.
+	OwnAddr(addr netip.Addr) (bool, error)
+	// DefaultRoute reports whether this host reaches addr through a default
+	// route of its main routing table. A route of a link, a tunnel, a
+	// bridge or another table leads to a private network.
+	DefaultRoute(addr netip.Addr) (bool, error)
 }
 
 // Resolver resolves host names, as [net.Resolver] does.
@@ -116,8 +125,8 @@ func Listen(path string, cfg BoundaryConfig) (*Boundary, error) {
 	}
 	cfg.MaxTunnels = cmp.Or(cfg.MaxTunnels, DefaultMaxTunnels)
 	cfg.IdleTimeout = cmp.Or(cfg.IdleTimeout, DefaultIdleTimeout)
-	if cfg.LocalPrefixes == nil {
-		cfg.LocalPrefixes = interfacePrefixes
+	if cfg.Network == nil {
+		cfg.Network = hostNetwork{}
 	}
 	if cfg.Resolver == nil {
 		cfg.Resolver = net.DefaultResolver
@@ -226,6 +235,9 @@ type refusal struct {
 	reason string
 	// addrs are the resolved addresses the policy refused.
 	addrs []netip.Addr
+	// allow is the destination a rule needs to name to allow the request,
+	// when it differs from the requested one.
+	allow string
 }
 
 func (r *refusal) Error() string { return r.reason }
@@ -268,7 +280,7 @@ func (b *Boundary) handle(guest net.Conn) {
 		}
 		b.log.write(slog.LevelWarn, "egress blocked", args...)
 		if rerr.status == 403 {
-			b.cfg.Blocks.add(target)
+			b.cfg.Blocks.add(target, cmp.Or(rerr.allow, target))
 		}
 		writeRefusal(guest, rerr)
 		return
@@ -280,8 +292,13 @@ func (b *Boundary) handle(guest net.Conn) {
 		writeRefusal(guest, refuse(502, "dial-failed"))
 		return
 	}
-	defer closeConn(upstream)
-	b.log.write(slog.LevelInfo, "egress allowed", "destination", target, "address", addr, "rule", g.rule)
+	if !b.track(upstream) {
+		closeConn(upstream)
+		return
+	}
+	defer b.untrack(upstream)
+	b.cfg.Blocks.allowed(target)
+	b.log.write(slog.LevelDebug, "egress allowed", "destination", target, "address", addr, "rule", g.rule)
 	if _, err := io.WriteString(guest, "HTTP/1.1 200 OK\r\n\r\n"); err != nil {
 		return
 	}
@@ -294,7 +311,13 @@ func (b *Boundary) handle(guest net.Conn) {
 		return
 	}
 	if len(buffered) > 0 {
+		if err := upstream.SetWriteDeadline(time.Now().Add(dialTimeout)); err != nil {
+			return
+		}
 		if _, err := upstream.Write(buffered); err != nil {
+			return
+		}
+		if err := upstream.SetWriteDeadline(time.Time{}); err != nil {
 			return
 		}
 	}
@@ -351,31 +374,44 @@ func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (gra
 	if len(g.addrs) == 0 {
 		rerr := refuse(403, "resolved-address-denied")
 		rerr.addrs = refused
+		rerr.allow = b.allowFor(refused, port)
 		return grant{}, rerr
 	}
 	return g, nil
 }
 
-// authorizeHostGateway decides a request for [egress.HostGateway]. The
-// internet mode allows it on every port unless a rule names it, which
-// limits it to the ports of the rules.
+// authorizeHostGateway decides a request for [egress.HostGateway]. A rule
+// that names it reaches the port on this host's loopback. Without one, the
+// internet mode reaches the ports that containers publish, as other
+// containers do.
 func (b *Boundary) authorizeHostGateway(ctx context.Context, p egress.Policy, port uint16, r egress.Rule, named bool) (grant, *refusal) {
-	rule := "host-gateway"
-	switch {
-	case named:
-		rule = r.String()
-	case p.Mode == egress.ModeInternet && !p.NamesHost(egress.HostGateway):
-	default:
-		return grant{}, b.denied(p, egress.HostGateway, "not-on-allowlist")
+	hint := net.JoinHostPort(egress.HostGateway, strconv.Itoa(int(port)))
+	if named {
+		return grant{rule: r.String(), addrs: []netip.AddrPort{netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port)}}, nil
 	}
-	if b.cfg.HostGateway == nil {
-		return grant{}, refuse(502, "resolve-failed")
+	if p.Mode == egress.ModeInternet && !p.NamesHost(egress.HostGateway) && b.cfg.HostGateway != nil {
+		if ap, ok := b.cfg.HostGateway(ctx, port); ok {
+			return grant{rule: "published-port", addrs: []netip.AddrPort{ap}}, nil
+		}
 	}
-	ap, ok := b.cfg.HostGateway(ctx, port)
-	if !ok {
-		return grant{}, refuse(502, "resolve-failed")
+	rerr := b.denied(p, egress.HostGateway, "not-on-allowlist")
+	rerr.allow = hint
+	return grant{}, rerr
+}
+
+// allowFor returns the rule that allows refused addresses of a name on
+// port: host.docker.internal for an address of this host, or else the
+// first address.
+func (b *Boundary) allowFor(refused []netip.Addr, port uint16) string {
+	for _, a := range refused {
+		if a.IsLoopback() || b.ownAddr(a) {
+			return net.JoinHostPort(egress.HostGateway, strconv.Itoa(int(port)))
+		}
 	}
-	return grant{rule: rule, addrs: []netip.AddrPort{ap}}, nil
+	if len(refused) == 0 {
+		return ""
+	}
+	return netip.AddrPortFrom(refused[0], port).String()
 }
 
 // denied refuses host with reason, or with port-not-allowed when a rule
@@ -387,45 +423,29 @@ func (b *Boundary) denied(p egress.Policy, host, reason string) *refusal {
 	return refuse(403, reason)
 }
 
-// public reports whether addr is public and is neither an address of this
-// host nor on one of its links, such as a global IPv6 address of the LAN.
+// public reports whether addr is public, isn't an address of this host,
+// and is reached through a default route, so that networks this host
+// routes elsewhere, such as the LAN, a VPN or a bridge, stay private.
 func (b *Boundary) public(addr netip.Addr) bool {
-	if !egress.Public(addr) {
+	if !egress.Public(addr) || b.ownAddr(addr) {
 		return false
 	}
-	local, ok := b.localPrefixes()
-	if !ok {
+	ok, err := b.cfg.Network.DefaultRoute(addr)
+	if err != nil {
+		b.cfg.Log.Warn("finding the route to an address; refusing it", "address", addr, "error", err)
 		return false
 	}
-	for _, l := range local {
-		if l.Contains(addr) {
-			return false
-		}
-	}
-	return true
+	return ok
 }
 
 // ownAddr reports whether addr is an address of this host.
 func (b *Boundary) ownAddr(addr netip.Addr) bool {
-	local, ok := b.localPrefixes()
-	if !ok {
-		return true
-	}
-	for _, l := range local {
-		if l.Addr() == addr {
-			return true
-		}
-	}
-	return false
-}
-
-func (b *Boundary) localPrefixes() ([]netip.Prefix, bool) {
-	local, err := b.cfg.LocalPrefixes()
+	own, err := b.cfg.Network.OwnAddr(addr)
 	if err != nil {
 		b.cfg.Log.Warn("listing this host's addresses; refusing connections that need them", "error", err)
-		return nil, false
+		return true
 	}
-	return local, true
+	return own
 }
 
 // dial connects to the first of the checked addresses that answers.
@@ -443,25 +463,6 @@ func (b *Boundary) dial(ctx context.Context, g grant) (net.Conn, netip.AddrPort,
 		}
 	}
 	return nil, netip.AddrPort{}, errors.Join(errs...)
-}
-
-func interfacePrefixes() ([]netip.Prefix, error) {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, err
-	}
-	var out []netip.Prefix
-	for _, a := range addrs {
-		p, err := netip.ParsePrefix(a.String())
-		if err != nil {
-			continue
-		}
-		if p.Addr().Is4In6() {
-			p = netip.PrefixFrom(p.Addr().Unmap(), max(p.Bits()-96, 0))
-		}
-		out = append(out, p)
-	}
-	return out, nil
 }
 
 // writeRefusal answers a refused request. Its error is the guest's to see.
@@ -658,32 +659,46 @@ func relay(guest, upstream net.Conn, idle time.Duration) {
 const maxRecentBlocks = 5
 
 // Blocks counts the requests that boundaries refuse by policy and keeps
-// the latest destinations, so that status can show them.
+// the latest destinations, so that status can show them. A destination
+// stays until a connection to it succeeds.
 type Blocks struct {
 	mu     sync.Mutex
 	count  int
-	recent []string
+	recent []Block
 }
 
-func (b *Blocks) add(dest string) {
+// Block is a refused destination and the --egress-allow rule that allows it.
+type Block struct {
+	Destination, Allow string
+}
+
+func (b *Blocks) add(dest, allow string) {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.count++
-	if i := slices.Index(b.recent, dest); i >= 0 {
-		b.recent = slices.Delete(b.recent, i, i+1)
-	}
-	b.recent = slices.Insert(b.recent, 0, dest)
+	b.recent = slices.DeleteFunc(b.recent, func(x Block) bool { return x.Destination == dest })
+	b.recent = slices.Insert(b.recent, 0, Block{Destination: dest, Allow: allow})
 	if len(b.recent) > maxRecentBlocks {
 		b.recent = b.recent[:maxRecentBlocks]
 	}
 }
 
+// allowed forgets dest, which a connection reached.
+func (b *Blocks) allowed(dest string) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.recent = slices.DeleteFunc(b.recent, func(x Block) bool { return x.Destination == dest })
+}
+
 // Snapshot returns the number of refused requests and the latest refused
 // destinations, newest first.
-func (b *Blocks) Snapshot() (int, []string) {
+func (b *Blocks) Snapshot() (int, []Block) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.count, slices.Clone(b.recent)
@@ -704,6 +719,9 @@ type decisionLog struct {
 }
 
 func (d *decisionLog) write(level slog.Level, msg string, args ...any) {
+	if !d.log.Enabled(context.Background(), level) {
+		return
+	}
 	d.mu.Lock()
 	dropped := 0
 	if now := time.Now(); now.Sub(d.window) >= time.Minute {

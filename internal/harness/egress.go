@@ -19,10 +19,8 @@ import (
 	"debug/buildinfo"
 	"debug/elf"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
-	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
@@ -58,9 +56,6 @@ func Launcher() (string, error) {
 // resolved when Docker can run it in a container as the launcher: on a
 // Linux host, statically linked and built without cgo.
 func CheckLauncher(exe string) (string, error) {
-	if runtime.GOOS != "linux" {
-		return "", errors.New("with Docker Desktop, the sandbox can't connect to the server")
-	}
 	exe, err := filepath.EvalSymlinks(exe)
 	if err != nil {
 		return "", fmt.Errorf("finding this a2a-serve: %w", err)
@@ -102,28 +97,89 @@ func checkStatic(path string) error {
 	return nil
 }
 
-// EgressWarning returns why the egress settings of an agent's config don't
-// apply as set with the launcher, such as [Launcher], or "".
-func EgressWarning(cfg *agentdir.Config, launcher func() (string, error)) string {
+// EgressEnv is what deciding about the egress boundary needs to know
+// about this machine.
+type EgressEnv struct {
+	// GOOS is the system the server runs on.
+	GOOS string
+	// Launcher checks the binary that would run as the containers' PID 1,
+	// as [Launcher] does.
+	Launcher func() (string, error)
+	// TUN checks the host's TUN device, as [CheckTUN] does.
+	TUN func() error
+	// ImageArch is the CPU architecture of the agent's image, or "" when
+	// it isn't known.
+	ImageArch string
+}
+
+// HostEgressEnv returns the environment of this process, with an image
+// of unknown architecture.
+func HostEgressEnv() EgressEnv {
+	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN}
+}
+
+// EgressDecision is whether an agent's containers get the egress boundary.
+type EgressDecision struct {
+	// Boundary is set when the containers' connections go through the
+	// server.
+	Boundary bool
+	// Problem is why they don't although the config asks for it, or "".
+	Problem string
+	// Warning is what the user should know, or "".
+	Warning string
+}
+
+// DecideEgress decides whether the containers of cfg get the egress
+// boundary in env. It is the one place that decides it, for starting the
+// containers, doctor, status and the agent's instructions.
+func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 	if cfg.Sandbox == SandboxLocal {
 		if cfg.Egress.Mode != "" || len(cfg.Egress.Allow) > 0 {
-			return "--egress and --egress-allow have no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with a2a-serve config unset egress-allow"
+			return EgressDecision{Warning: "--egress and --egress-allow have no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with a2a-serve config unset egress-allow"}
 		}
-		return ""
+		return EgressDecision{}
 	}
 	if cfg.Egress.Mode == egress.ModeUnrestricted {
-		return ""
+		return EgressDecision{}
 	}
-	if _, err := launcher(); err != nil {
-		if cfg.Egress.Mode == egress.ModeAllowlist {
-			return noAllowlist(err.Error())
-		}
-		return noBoundary(err.Error())
+	problem := egressProblem(env)
+	switch {
+	case problem != "" && cfg.Egress.Mode == egress.ModeAllowlist:
+		return EgressDecision{Problem: problem, Warning: noAllowlist(problem)}
+	case problem != "":
+		return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
+	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0:
+		return EgressDecision{Boundary: true, Warning: "--egress allowlist with no --egress-allow rules: the agent can't reach its model provider"}
 	}
-	if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 {
-		return "--egress allowlist with no --egress-allow rules: the agent can't reach its model provider"
+	return EgressDecision{Boundary: true}
+}
+
+// egressProblem returns why the boundary can't apply in env, or "".
+func egressProblem(env EgressEnv) string {
+	if env.GOOS != "linux" {
+		return "with Docker Desktop, the sandbox can't connect to the server"
+	}
+	if _, err := env.Launcher(); err != nil {
+		return err.Error()
+	}
+	if env.ImageArch != "" && env.ImageArch != runtime.GOARCH {
+		return fmt.Sprintf("the agent's image is for %s and this a2a-serve for %s", env.ImageArch, runtime.GOARCH)
+	}
+	if err := env.TUN(); err != nil {
+		return err.Error()
 	}
 	return ""
+}
+
+// tunDevice is the host's TUN device, which the container gets.
+const tunDevice = "/dev/net/tun"
+
+// CheckTUN checks that the host has a TUN device for the containers.
+func CheckTUN() error {
+	if _, err := os.Stat(tunDevice); err != nil {
+		return fmt.Errorf("this machine has no %s; load the tun kernel module", tunDevice)
+	}
+	return nil
 }
 
 // noBoundary says that a container gets Docker's network, and why.
@@ -155,44 +211,11 @@ func imageConfig(ctx context.Context, image string) (arch string, entrypoint []s
 // to host.docker.internal on port reaches, or false when there is none.
 type HostGatewayFunc func(ctx context.Context, port uint16) (netip.AddrPort, bool)
 
-// hostGateway returns what host.docker.internal reaches from this
-// Docker's containers. Rootful Docker puts the bridge gateway on this
-// host, and a container reaches the host's services through it. Rootless
-// Docker's bridge is in a namespace of its own, where a container reaches
-// only the ports other containers publish, which are on this host's
-// loopback.
-func hostGateway(ctx context.Context, rootless bool) HostGatewayFunc {
-	if rootless {
-		return (&publishedPorts{}).lookup
-	}
-	out, err := dockerQuery(ctx, dockerTimeout, "network", "inspect", "bridge", "--format", "{{range .IPAM.Config}}{{.Gateway}} {{end}}")
-	if err != nil {
-		slog.Warn("finding Docker's bridge gateway; containers can't reach host.docker.internal", "error", err)
-		return nil
-	}
-	for f := range strings.FieldsSeq(string(out)) {
-		gw, err := netip.ParseAddr(f)
-		if err != nil || !isLocalAddr(gw) {
-			continue
-		}
-		return func(_ context.Context, port uint16) (netip.AddrPort, bool) {
-			return netip.AddrPortFrom(gw, port), true
-		}
-	}
-	return nil
-}
-
-func isLocalAddr(a netip.Addr) bool {
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return false
-	}
-	for _, ia := range addrs {
-		if p, err := netip.ParsePrefix(ia.String()); err == nil && p.Addr() == a {
-			return true
-		}
-	}
-	return false
+// hostGateway returns what host.docker.internal reaches from a container
+// without a rule that names it: the ports that containers publish on this
+// host, which are on its loopback.
+func hostGateway() HostGatewayFunc {
+	return (&publishedPorts{}).lookup
 }
 
 // publishedPorts finds the ports that containers publish on this host,

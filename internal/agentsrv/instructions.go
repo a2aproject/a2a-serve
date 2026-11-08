@@ -175,7 +175,7 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	for _, a := range agents {
 		sb.WriteString("- " + a.String() + "\n")
 	}
-	if _, err := harness.Launcher(); err == nil && egressNote(cfg.Egress.Mode) != "" {
+	if s.egress.boundary(cfg) && egressNote(cfg.Egress.Mode) != "" {
 		sb.WriteString("\n" + egressNote(cfg.Egress.Mode) + "\n")
 	}
 	var errs []error

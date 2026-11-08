@@ -38,6 +38,28 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egress"
 )
 
+// fakeNetwork is a host with the addresses and links of local, whose
+// routes to every other address are default routes.
+type fakeNetwork struct{ local []netip.Prefix }
+
+func (n fakeNetwork) OwnAddr(addr netip.Addr) (bool, error) {
+	for _, p := range n.local {
+		if p.Addr() == addr {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+func (n fakeNetwork) DefaultRoute(addr netip.Addr) (bool, error) {
+	for _, p := range n.local {
+		if p.Contains(addr) {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // fakeResolver resolves the names it holds.
 type fakeResolver map[string][]netip.Addr
 
@@ -80,7 +102,7 @@ func TestAuthorize(t *testing.T) {
 		"zero.corp":     addrs("0.0.0.0", "10.2.2.2"),
 	}
 	gateway := func(_ context.Context, port uint16) (netip.AddrPort, bool) {
-		return netip.AddrPortFrom(netip.MustParseAddr("172.17.0.1"), port), port == 3000
+		return netip.AddrPortFrom(netip.MustParseAddr("127.0.0.1"), port), port == 3000
 	}
 	tests := []struct {
 		name   string
@@ -127,13 +149,15 @@ func TestAuthorize(t *testing.T) {
 		{name: "allowlist refuses a public literal", policy: mustPolicy(t, egress.ModeAllowlist), host: "93.184.216.34", port: 443, reason: "ip-not-on-allowlist"},
 		{name: "allowlist allows a listed name", policy: mustPolicy(t, egress.ModeAllowlist, "*.example.com:443"), host: "api.example.com", port: 443, reason: "resolve-failed"},
 		{name: "allowlist refuses a listed name on another port", policy: mustPolicy(t, egress.ModeAllowlist, "nas.lan:22"), host: "nas.lan", port: 80, reason: "port-not-allowed"},
-		{name: "host gateway", policy: mustPolicy(t, ""), host: egress.HostGateway, port: 3000,
-			want: grant{rule: "host-gateway", addrs: []netip.AddrPort{netip.MustParseAddrPort("172.17.0.1:3000")}}},
-		{name: "host gateway on a port it can't reach", policy: mustPolicy(t, ""), host: egress.HostGateway, port: 22, reason: "resolve-failed"},
+		{name: "host gateway on a published port", policy: mustPolicy(t, ""), host: egress.HostGateway, port: 3000,
+			want: grant{rule: "published-port", addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:3000")}}},
+		{name: "host gateway on a port no container publishes", policy: mustPolicy(t, ""), host: egress.HostGateway, port: 22, reason: "not-on-allowlist"},
+		{name: "a rule opens a host port", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 11434,
+			want: grant{rule: egress.HostGateway + ":11434", addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:11434")}}},
 		{name: "allowlist refuses the host gateway", policy: mustPolicy(t, egress.ModeAllowlist), host: egress.HostGateway, port: 3000, reason: "not-on-allowlist"},
 		{name: "a rule limits the host gateway to its port", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 3000, reason: "port-not-allowed"},
 		{name: "allowlist allows a listed host gateway", policy: mustPolicy(t, egress.ModeAllowlist, egress.HostGateway), host: egress.HostGateway, port: 3000,
-			want: grant{rule: egress.HostGateway, addrs: []netip.AddrPort{netip.MustParseAddrPort("172.17.0.1:3000")}}},
+			want: grant{rule: egress.HostGateway, addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:3000")}}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -142,10 +166,8 @@ func TestAuthorize(t *testing.T) {
 				Policy:      func() egress.Policy { return tc.policy },
 				HostGateway: gateway,
 				Resolver:    resolver,
-				LocalPrefixes: func() ([]netip.Prefix, error) {
-					return []netip.Prefix{netip.MustParsePrefix("203.0.113.7/24"), netip.MustParsePrefix("2001:470:1::5/64")}, nil
-				},
-				Log: slog.New(slog.DiscardHandler),
+				Network:     fakeNetwork{local: []netip.Prefix{netip.MustParsePrefix("203.0.113.7/24"), netip.MustParsePrefix("2001:470:1::5/64")}},
+				Log:         slog.New(slog.DiscardHandler),
 			}}
 			got, rerr := b.authorize(context.Background(), tc.host, tc.port)
 			reason := ""
@@ -364,7 +386,8 @@ func TestBoundaryTunnels(t *testing.T) {
 		t.Fatalf("log records wrong result (-want +got) diff = %s", diff)
 	}
 	n, recent := blocks.Snapshot()
-	if diff := cmp.Diff([]string{"192.168.1.1:22", "echo.test:" + port}, recent); n != 2 || diff != "" {
+	wantRecent := []Block{{Destination: "192.168.1.1:22", Allow: "192.168.1.1:22"}, {Destination: "echo.test:" + port, Allow: "host.docker.internal:" + port}}
+	if diff := cmp.Diff(wantRecent, recent); n != 2 || diff != "" {
 		t.Fatalf("Blocks.Snapshot() = %d, %v, want 2 (-want +got) diff = %s", n, recent, diff)
 	}
 }
@@ -482,5 +505,59 @@ func TestDecisionLogLimitsLines(t *testing.T) {
 	}
 	if want := "egress decisions over the log limit count=5 limit_per_minute=600"; got[len(got)-1] != want {
 		t.Fatalf("decisionLog last record = %q, want %q", got[len(got)-1], want)
+	}
+}
+
+func TestBoundaryCloseEndsTunnelsToSilentUpstreams(t *testing.T) {
+	t.Parallel()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted := make(chan net.Conn, 1)
+	go func() {
+		c, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		accepted <- c
+	}()
+	t.Cleanup(func() {
+		if err := ln.Close(); err != nil {
+			t.Errorf("closing the upstream listener error = %v", err)
+		}
+	})
+	b, sock := listen(t, BoundaryConfig{
+		Policy: func() egress.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Log:    slog.New(slog.DiscardHandler),
+	})
+	c, _, resp := connect(t, sock, ln.Addr().String())
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT status = %d, want 200", resp.StatusCode)
+	}
+	upstream := <-accepted
+	defer func() {
+		if err := upstream.Close(); err != nil {
+			t.Errorf("closing the upstream error = %v", err)
+		}
+	}()
+	if err := c.(*net.UnixConn).CloseWrite(); err != nil {
+		t.Fatal(err)
+	}
+	closed := make(chan error, 1)
+	go func() { closed <- b.Close() }()
+	select {
+	case err := <-closed:
+		if err != nil {
+			t.Fatalf("Close() error = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("Close() didn't return with a half-closed guest and a silent upstream")
+	}
+	if err := upstream.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.ReadAll(upstream); err != nil {
+		t.Fatalf("reading the upstream after Close() error = %v, want EOF", err)
 	}
 }
