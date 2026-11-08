@@ -318,7 +318,7 @@ func (b *Boundary) handle(guest net.Conn) {
 		b.log.write(slog.LevelWarn, "egress blocked", args...)
 		switch {
 		case rerr.status == 403:
-			b.cfg.Blocks.add(Block{Destination: target, Allow: cmp.Or(rerr.allow, target)})
+			b.cfg.Blocks.add(Block{Destination: target, Allow: allowRule(rerr.allow, target)})
 		case rerr.reason == "resolve-failed":
 			b.cfg.Blocks.add(Block{Destination: target, Unresolved: true})
 		}
@@ -437,6 +437,22 @@ func (b *Boundary) authorizeHostGateway(ctx context.Context, p egress.Policy, po
 	rerr := b.denied(p, egress.HostGateway, "not-on-allowlist")
 	rerr.allow = hint
 	return grant{}, rerr
+}
+
+// allowRule returns the first of the rules that allow a refused request
+// that --egress-allow takes: the one the refusal suggests, then the
+// requested destination. It returns "" for neither, such as for an address
+// on the tailnet, which only a name can allow.
+func allowRule(suggested, target string) string {
+	for _, r := range []string{suggested, target} {
+		if r == "" {
+			continue
+		}
+		if rule, err := egress.ParseRule(r); err == nil {
+			return rule.String()
+		}
+	}
+	return ""
 }
 
 // allowFor returns the rule that allows refused addresses of a name on

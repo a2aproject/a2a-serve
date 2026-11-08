@@ -94,7 +94,7 @@ $ a2a-serve status
              allow one with a2a-serve config set --egress-allow 192.168.1.10:22
 ```
 
-A destination stays listed until a connection to it succeeds. One that a rule now allows says `(allowed, retry)`. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine.
+A destination stays listed until a connection to it succeeds. One that a rule now allows says `(allowed, retry)`. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine. An address on the tailnet gets no suggested rule: allow the host by its tailnet name.
 
 `a2a-serve logs` has one line for each blocked connection:
 

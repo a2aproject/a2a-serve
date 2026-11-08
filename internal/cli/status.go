@@ -250,6 +250,8 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 			latest[i] = b.Destination + " (doesn't resolve)"
 		case b.Allowed:
 			latest[i] = b.Destination + " (allowed, retry)"
+		case b.Allow == "":
+			latest[i] = b.Destination + " (on the tailnet; allow the host by its tailnet name)"
 		default:
 			latest[i] = b.Destination
 			hint = cmp.Or(hint, b.Allow)

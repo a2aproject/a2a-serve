@@ -566,6 +566,57 @@ func TestBoundaryCloseEndsTunnelsToSilentUpstreams(t *testing.T) {
 	}
 }
 
+func TestAllowRuleParses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		suggested, target, want string
+	}{
+		{target: "192.168.1.1:22", want: "192.168.1.1:22"},
+		{target: "100.100.100.100:80"},
+		{suggested: "100.101.102.103:443", target: "nas.example.ts.net:443", want: "nas.example.ts.net:443"},
+		{suggested: "169.254.169.254:80", target: "meta.corp:80", want: "169.254.169.254:80"},
+		{suggested: "host.docker.internal:3000", target: "me.test:3000", want: "host.docker.internal:3000"},
+		{target: "[fd7a:115c:a1e0::1]:22", want: "[fd7a:115c:a1e0::1]:22"},
+	}
+	for _, tc := range tests {
+		got := allowRule(tc.suggested, tc.target)
+		if got != tc.want {
+			t.Errorf("allowRule(%q, %q) = %q, want %q", tc.suggested, tc.target, got, tc.want)
+		}
+		if got == "" {
+			continue
+		}
+		if _, err := egress.ParseRule(got); err != nil {
+			t.Errorf("allowRule(%q, %q) = %q, which ParseRule refuses: %v", tc.suggested, tc.target, got, err)
+		}
+	}
+}
+
+func TestBlocksSuggestOnlyRulesThatParse(t *testing.T) {
+	t.Parallel()
+	blocks := &Blocks{}
+	_, sock := listen(t, BoundaryConfig{
+		Policy:   func() egress.Policy { return mustPolicy(t, "") },
+		Resolver: fakeResolver{"nas.example.ts.net": addrs("100.101.102.103"), "nas.lan": addrs("192.168.1.20"), "meta.corp": addrs("169.254.169.254")},
+		Log:      slog.New(slog.DiscardHandler),
+		Blocks:   blocks,
+	})
+	for _, target := range []string{"100.100.100.100:80", "nas.example.ts.net:443", "nas.lan:22", "meta.corp:80", "10.1.2.3:5432", "[fd7a:115c:a1e0::1]:22"} {
+		if _, _, resp := connect(t, sock, target); resp.StatusCode != http.StatusForbidden {
+			t.Fatalf("CONNECT %s status = %d, want 403", target, resp.StatusCode)
+		}
+	}
+	_, recent := blocks.Snapshot()
+	for _, b := range recent {
+		if b.Allow == "" {
+			continue
+		}
+		if _, err := egress.ParseRule(b.Allow); err != nil {
+			t.Errorf("the rule suggested for %s is %q, which ParseRule refuses: %v", b.Destination, b.Allow, err)
+		}
+	}
+}
+
 // panickingNetwork panics on every route lookup.
 type panickingNetwork struct{ fakeNetwork }
 
