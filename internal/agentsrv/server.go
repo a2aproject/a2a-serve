@@ -28,8 +28,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -856,23 +856,20 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if noSandbox != "" {
 		s.logf("! %s", noSandbox)
 	}
-	for _, line := range a.Sandbox {
-		if desc, ok := strings.CutPrefix(line, access.AnonymousCallers+": "); ok {
-			s.logf("! the agent container of anonymous callers gets: %s", desc)
-		}
-	}
-	if a.AnonymousNote != "" {
-		s.logf("! %s", a.AnonymousNote)
-	}
 	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
 		label := "✓ sandbox "
 		for _, line := range a.Sandbox {
-			if strings.HasPrefix(line, access.AnonymousCallers+":") {
-				continue
-			}
 			s.logf("%s %s", label, line)
 			label = "          "
 		}
+	}
+	cfg := s.rt.Config()
+	anyoneRule := slices.ContainsFunc(cfg.Policy.Sandbox, func(r agentdir.SandboxRule) bool { return slices.Contains(r.Match, agentdir.MatchAnyone) })
+	if len(a.Anonymous) > 0 && !anyoneRule && cfg.Sandbox != harness.SandboxLocal {
+		s.logf("! anonymous callers get a read-only workspace and no secrets in their agent container")
+	}
+	if a.AnonymousNote != "" {
+		s.logf("! %s", a.AnonymousNote)
 	}
 	for _, note := range s.sandboxNotes(a.SandboxNotes) {
 		if note != access.LocalSandboxNote || noSandbox == "" {

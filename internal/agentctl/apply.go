@@ -408,7 +408,23 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	if err != nil {
 		return err
 	}
-	res.Applied = appendNew(res.Applied, live...)
+	// The server can keep a live setting waiting, such as a sandbox rule
+	// that names a secret it loads at restart.
+	waiting := map[string]bool{}
+	if slices.ContainsFunc(live, agentdir.IsSandboxSetting) {
+		if running, err := client.Config(ctx); err == nil {
+			for _, c := range agentdir.Diff(running, next) {
+				waiting[c.Setting] = true
+			}
+		}
+	}
+	for _, s := range live {
+		if waiting[s] {
+			res.Restart = appendNew(res.Restart, s)
+		} else {
+			res.Applied = appendNew(res.Applied, s)
+		}
+	}
 	return nil
 }
 

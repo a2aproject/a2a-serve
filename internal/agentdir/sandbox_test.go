@@ -15,6 +15,7 @@
 package agentdir
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -173,5 +174,41 @@ func TestShowSandboxRule(t *testing.T) {
 		if got := ShowSandboxRule(tt.rule); got != tt.want {
 			t.Fatalf("ShowSandboxRule(%v) = %q, want %q", tt.rule, got, tt.want)
 		}
+	}
+}
+
+func TestCopyLiveKeepsARuleThatNamesASecretWaitingForRestart(t *testing.T) {
+	t.Parallel()
+	running := &Config{Secrets: []string{"KEY"}}
+	saved := &Config{Secrets: []string{"KEY", "GUEST"}, Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"KEY=secret:GUEST"}}}}}
+
+	CopyLive(running, saved)
+
+	if len(running.Policy.Sandbox) != 0 {
+		t.Fatalf("CopyLive() rules = %v, want none until the restart loads GUEST", running.Policy.Sandbox)
+	}
+	if diff := Diff(running, saved); !slices.ContainsFunc(diff, func(c Change) bool { return c.Setting == "anonymous-secrets" }) {
+		t.Fatalf("Diff() = %v, want anonymous-secrets waiting", diff)
+	}
+}
+
+func TestUnsetSecretThatARuleUses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		rule    SandboxRule
+		wantErr string
+	}{
+		{name: "anonymous", rule: SandboxRule{Match: []string{"anyone"}, Secrets: []string{"KEY=secret:G2"}}, wantErr: "G2 is used by the rule of anonymous callers; run `a2a-serve config unset anonymous-secrets` first"},
+		{name: "pairing", rule: SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"G2"}}, wantErr: "G2 is used by ben's sandbox rule; change it with `a2a-serve pair set ben --secrets` first"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			cfg := &Config{Secrets: []string{"KEY", "G2"}, Policy: PolicyConfig{Sandbox: []SandboxRule{tt.rule}}}
+			if _, err := (Dir{}).Unset(cfg, "secret", []string{"G2"}); err == nil || err.Error() != tt.wantErr {
+				t.Fatalf("Unset() error = %v, want %q", err, tt.wantErr)
+			}
+		})
 	}
 }

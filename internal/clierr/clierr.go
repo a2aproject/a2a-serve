@@ -136,6 +136,12 @@ func Timeout(err error, flag string) *Error {
 	return e
 }
 
+// UsageNoHint builds a usage error whose message says how to fix it, so it
+// gets no hint.
+func UsageNoHint(msg string) *Error {
+	return &Error{Code: CodeUsage, Message: msg, Exit: exits[CodeUsage]}
+}
+
 // Usage builds a usage error for invalid arguments, flags, or flag combinations.
 func Usage(msg string) *Error {
 	return &Error{Code: CodeUsage, Message: msg, Hint: UsageHint, Exit: exits[CodeUsage]}

@@ -147,14 +147,15 @@ func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
 // ResolveUnverified is [SandboxPolicy.Resolve] for a user whose identity
 // the server hasn't verified, rebuilt from the principal ID alone. Its
 // email might come with a proven domain and from the private network, so
-// it gets the least of what each of those identities would get.
+// it gets the least of what each of those identities would get. Any
+// principal might call from the private network.
 func (sp SandboxPolicy) ResolveUnverified(p auth.Principal) Sandbox {
-	out := sp.Resolve(p)
-	if p.Email == "" {
-		return out
+	variants := []auth.Identity{{Network: network.ListenerPrivate}}
+	if _, domain, ok := strings.Cut(p.Email, "@"); ok {
+		variants = append(variants, auth.Identity{Domain: domain}, auth.Identity{Domain: domain, Network: network.ListenerPrivate})
 	}
-	_, domain, _ := strings.Cut(p.Email, "@")
-	for _, v := range []auth.Identity{{Domain: domain}, {Network: network.ListenerPrivate}, {Domain: domain, Network: network.ListenerPrivate}} {
+	out := sp.Resolve(p)
+	for _, v := range variants {
 		q := p
 		q.Domain, q.Network = v.Domain, cmp.Or(v.Network, p.Network)
 		out = out.Meet(sp.Resolve(q))

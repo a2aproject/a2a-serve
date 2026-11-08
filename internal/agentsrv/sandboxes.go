@@ -128,48 +128,52 @@ func (s *sandboxes) forget(keys ...string) {
 // principalOf returns whom the sandbox rules match for the container of an
 // agent key: the owner for none, any anonymous caller, or the user. It
 // reports whether the server verified the user's identity; one rebuilt from
-// the principal ID alone lacks what only a request proves.
-func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal, bool) {
+// the principal ID alone lacks what only a request proves. It fails when
+// the store can't tell, so that a read error changes no container.
+func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal, bool, error) {
 	if key == "" {
-		return auth.Owner(), true
+		return auth.Owner(), true, nil
 	}
 	if key == agentkey.Anonymous {
-		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}, true
+		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}, true, nil
 	}
 	id, _ := agentkey.UserOf(key)
 	s.mu.Lock()
 	u, ok := s.users[key]
 	s.mu.Unlock()
 	if ok {
-		return u.p, true
+		return u.p, true, nil
 	}
 	rebuilt := auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
 	data, err := s.store.UserIdentity(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
-		return rebuilt, false
-	}
-	p := rebuilt
-	if err == nil {
-		err = json.Unmarshal([]byte(data), &p.Identity)
+		return rebuilt, false, nil
 	}
 	if err != nil {
+		return auth.Principal{}, false, fmt.Errorf("reading the identity of %s: %w", id, err)
+	}
+	p := rebuilt
+	if err := json.Unmarshal([]byte(data), &p.Identity); err != nil {
 		slog.Warn("reading the identity of a user", "user", id, "error", err)
-		return rebuilt, false
+		return rebuilt, false, nil
 	}
 	s.mu.Lock()
 	s.keepLocked(key, rememberedUser{p: p})
 	s.mu.Unlock()
-	return p, true
+	return p, true, nil
 }
 
 // of returns the sandbox of the container of an agent key. A user whose
 // identity the server hasn't verified gets the least that it could match.
-func (s *sandboxes) of(ctx context.Context, key string) access.Sandbox {
-	p, verified := s.principalOf(ctx, key)
-	if !verified {
-		return access.SandboxPolicyOf(s.config()).ResolveUnverified(p)
+func (s *sandboxes) of(ctx context.Context, key string) (access.Sandbox, error) {
+	p, verified, err := s.principalOf(ctx, key)
+	if err != nil {
+		return access.Sandbox{}, err
 	}
-	return s.resolve(p)
+	if !verified {
+		return access.SandboxPolicyOf(s.config()).ResolveUnverified(p), nil
+	}
+	return s.resolve(p), nil
 }
 
 // resolve returns the sandbox of the container that p's conversations run
@@ -199,10 +203,15 @@ var (
 //     restarts.
 func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
 	caller, ok := auth.Caller(ctx)
-	if ok {
+	// A posted turn, such as a schedule run, acts for a user with what the
+	// server stored of them, which it didn't verify now.
+	if ok && !auth.IsInProcess(ctx) {
 		s.sandboxes.remember(ctx, caller)
 	}
-	want := s.sandboxes.of(ctx, key)
+	want, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 	if ok && key != agentkey.Of(caller, ok) {
 		if err := s.admitOther(ctx, caller, key, want); err != nil {
 			return nil, err
@@ -271,7 +280,10 @@ func answersWaiting(execCtx *a2asrv.ExecutorContext) bool {
 // give less than it got: its tasks would keep the access they got.
 func (s *Server) endNarrowed(ctx context.Context, key string, asking a2a.TaskID) error {
 	agents := s.agentsOf(key)
-	want := s.sandboxes.of(ctx, key)
+	want, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		return err
+	}
 	if running, ok := agents.sandboxOf(key); !ok || want.Covers(running) {
 		return nil
 	}
@@ -279,14 +291,24 @@ func (s *Server) endNarrowed(ctx context.Context, key string, asking a2a.TaskID)
 	if err != nil {
 		return err
 	}
-	as := auth.InProcess(context.WithoutCancel(ctx), auth.Owner())
-	for _, t := range ids {
-		if t == asking {
-			continue
+	// An agent can take long to stop a task, or never; the container closes
+	// after the grace whatever the cancels report, which ends them.
+	canceled := make(chan struct{})
+	go func() {
+		defer close(canceled)
+		as := auth.InProcess(context.WithoutCancel(ctx), auth.Owner())
+		for _, t := range ids {
+			if t == asking {
+				continue
+			}
+			if _, err := s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: t}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
+				slog.Warn("canceling a task of an agent process whose sandbox rules now give less", "task", t, "error", err)
+			}
 		}
-		if _, err := s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: t}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
-			return fmt.Errorf("canceling task %s: %w", t, err)
-		}
+	}()
+	select {
+	case <-canceled:
+	case <-time.After(s.timings.NarrowedCancelGrace):
 	}
 	stopped, err := agents.closeNarrowed(key, want)
 	if stopped {
@@ -303,7 +325,12 @@ func (s *Server) closeStale(ctx context.Context, key string) {
 	if agents == nil {
 		return
 	}
-	stopped, err := agents.closeStale(key, s.sandboxes.of(ctx, key))
+	want, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		slog.Warn("looking up the sandbox of an agent process", "key", key, "error", err)
+		return
+	}
+	stopped, err := agents.closeStale(key, want)
 	if err != nil {
 		slog.Warn("stopping an agent process whose sandbox changed", "key", key, "error", err)
 	}
@@ -336,16 +363,22 @@ func (s *Server) sandboxLoop(ctx context.Context) {
 			return
 		case <-t.C:
 		}
+		var wg sync.WaitGroup
 		for _, agents := range []*userAgents{&s.anonymous, &s.users} {
 			for _, key := range agents.runningKeys() {
-				s.applySandboxChange(ctx, agents, key)
+				wg.Go(func() { s.applySandboxChange(ctx, agents, key) })
 			}
 		}
+		wg.Wait()
 	}
 }
 
 func (s *Server) applySandboxChange(ctx context.Context, agents *userAgents, key string) {
-	want := s.sandboxes.of(ctx, key)
+	want, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		slog.Warn("looking up the sandbox of an agent process", "key", key, "error", err)
+		return
+	}
 	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
 		if err := s.endNarrowed(ctx, key, ""); err != nil {
 			slog.Warn("stopping an agent process whose sandbox rules now give less", "key", key, "error", err)
@@ -358,7 +391,7 @@ func (s *Server) applySandboxChange(ctx context.Context, agents *userAgents, key
 // sandboxNotes returns notes with one added when the owner's container
 // runs with another sandbox than the rule of self gives now.
 func (s *Server) sandboxNotes(notes []string) []string {
-	if started := s.mainSandbox.Load(); started != nil && !started.Equal(s.sandboxes.of(context.Background(), "")) {
+	if started := s.mainSandbox.Load(); started != nil && !started.Equal(s.sandboxes.resolve(auth.Owner())) {
 		notes = append(slices.Clone(notes), "your agent container applies the changed sandbox rule of self after `a2a-serve restart`")
 	}
 	return notes
@@ -416,7 +449,10 @@ func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key strin
 	if sb.Storage != agentdir.StorageOwn && sb.Storage != agentdir.StorageEmpty {
 		return nil
 	}
-	p, _ := s.sandboxes.principalOf(ctx, key)
+	p, _, err := s.sandboxes.principalOf(ctx, key)
+	if err != nil {
+		return err
+	}
 	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), p.ID, sb.Storage, ws)
 	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
 		return errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
@@ -500,7 +536,7 @@ func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 			return err
 		}
 		defer release()
-		return s.removeStorageBut(e, s.sandboxes.of(ctx, agentkey.Anonymous).Storage)
+		return s.removeStorageBut(e, s.sandboxes.resolve(auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}).Storage)
 	}
 	key := agentkey.User(e.Principal)
 	pairing := strings.HasPrefix(e.Principal, auth.PairPrefix) || auth.IdentityOf(e.Principal).WebhookNode != ""

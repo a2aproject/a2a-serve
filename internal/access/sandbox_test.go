@@ -145,8 +145,8 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			name: "pairing without its model key", pairings: Pairings{All: 1},
 			cfg:           gemini(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}),
 			wantLines:     []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets GEMINI_API_KEY", "anonymous callers: read-only workspace, no secrets"},
-			wantNotes:     []string{"the agent containers of the pairing ben get no key of model provider google, so the agent can't reach its model for them; give them one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of their own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`"},
-			wantAnonymous: "the agent containers of anonymous callers get no key of model provider google, so the agent can't reach its model for them; give them a key of their own with `a2a-serve config set --anonymous-secrets GEMINI_API_KEY=secret:<STORED_KEY>`",
+			wantNotes:     []string{"ben's agent gets no Google key and can't reach its model. Give one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of its own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`."},
+			wantAnonymous: "Anonymous callers' agent gets no Google key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --anonymous-secrets GEMINI_API_KEY=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --anonymous-secrets GEMINI_API_KEY`.",
 		},
 		{
 			name: "anonymous callers with a guest key", pairings: Pairings{All: 1},
@@ -190,6 +190,21 @@ func TestSandboxPolicyResolveUnverified(t *testing.T) {
 	got := sp.ResolveUnverified(ann)
 
 	if diff := cmp.Diff(Sandbox{Storage: agentdir.StorageReadOnly}, got); diff != "" {
+		t.Fatalf("ResolveUnverified() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestSandboxPolicyResolveUnverifiedPairing(t *testing.T) {
+	t.Parallel()
+	sp := SandboxPolicy{Secrets: []string{"KEY"}, Rules: []agentdir.SandboxRule{
+		{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn},
+		{Match: []string{"private"}, Secrets: []string{"none"}},
+	}}
+	ben := auth.Principal{ID: "pair:ben", Role: auth.RoleAuthenticated, Identity: auth.IdentityOf("pair:ben")}
+
+	got := sp.ResolveUnverified(ben)
+
+	if diff := cmp.Diff(Sandbox{Storage: agentdir.StorageOwn}, got); diff != "" {
 		t.Fatalf("ResolveUnverified() wrong result (-want +got) diff = %s", diff)
 	}
 }

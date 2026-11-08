@@ -874,6 +874,15 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	if err := CheckUnset(setting); err != nil {
 		return nil, err
 	}
+	if setting == "secret" {
+		names := entries
+		if len(names) == 0 {
+			names = cfg.Secrets
+		}
+		if err := cfg.Policy.checkSecretsUnused(names); err != nil {
+			return nil, err
+		}
+	}
 	before := cfg.referencedSecrets()
 	var deleted []string
 	f, _ := lookupField(setting)
@@ -1012,10 +1021,16 @@ func MessengersDiffer(a, b *Config) bool {
 // CopyLive copies the settings a running server applies without a restart,
 // other than messengers, from src to dst.
 func CopyLive(dst, src *Config) {
+	rules := cloneSandbox(dst.Policy.Sandbox)
 	for _, f := range fields {
 		if f.liveSetting() {
 			f.put(dst, slices.Clone(f.get(src)))
 		}
+	}
+	// A rule that names a secret the running agent doesn't have yet, such
+	// as one stored with it, waits for the restart that loads the secret.
+	if len(dst.Policy.validateSandbox(dst.Secrets)) > 0 {
+		dst.Policy.Sandbox = rules
 	}
 }
 

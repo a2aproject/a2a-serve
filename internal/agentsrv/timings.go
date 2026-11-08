@@ -66,6 +66,10 @@ type Timings struct {
 	// SandboxCheckInterval is how often the server stops the idle agent
 	// processes whose sandbox rules changed.
 	SandboxCheckInterval time.Duration
+	// NarrowedCancelGrace is how long the server waits for the tasks of an
+	// agent process whose sandbox rules now give less to cancel before it
+	// stops the process.
+	NarrowedCancelGrace time.Duration
 	// PairReadTimeout bounds reading the whole body of a pairing request or
 	// of an approval page, which callers send before they authenticate.
 	PairReadTimeout time.Duration
@@ -97,6 +101,7 @@ func (t Timings) withDefaults() Timings {
 	t.TurnStallTimeout = cmp.Or(t.TurnStallTimeout, 10*time.Minute)
 	t.StateCheckInterval = cmp.Or(t.StateCheckInterval, 5*time.Second)
 	t.SandboxCheckInterval = cmp.Or(t.SandboxCheckInterval, 5*time.Second)
+	t.NarrowedCancelGrace = cmp.Or(t.NarrowedCancelGrace, 10*time.Second)
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
 	return t
 }

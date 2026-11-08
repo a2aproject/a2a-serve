@@ -19,6 +19,8 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 )
 
 // SandboxRule sets what the agent containers of the callers it matches get:
@@ -226,6 +228,29 @@ func orNone(names []string) string {
 	return strings.Join(names, ", ")
 }
 
+// checkSecretsUnused refuses to remove a secret of names that a sandbox
+// rule names, and says how to change that rule first.
+func (p PolicyConfig) checkSecretsUnused(names []string) error {
+	for _, r := range p.Sandbox {
+		for _, e := range r.Secrets {
+			_, from, ok := ParseSecretGrant(e)
+			if !ok || !slices.Contains(names, from) {
+				continue
+			}
+			fix := "edit it with `a2a-serve config edit` first"
+			who := "a sandbox rule"
+			switch name, pairing := strings.CutPrefix(first(r.Match), MatchPairingPrefix); {
+			case slices.Equal(r.Match, []string{MatchAnyone}):
+				who, fix = "the rule of anonymous callers", "run `a2a-serve config unset anonymous-secrets` first"
+			case pairing && len(r.Match) == 1:
+				who, fix = name+"'s sandbox rule", fmt.Sprintf("change it with `a2a-serve pair set %s --secrets` first", name)
+			}
+			return clierr.UsageNoHint(fmt.Sprintf("%s is used by %s; %s", from, who, fix))
+		}
+	}
+	return nil
+}
+
 // anonymousRule is the rule of anonymous callers, which
 // --anonymous-storage and --anonymous-secrets set.
 func anonymousRule(c *Config) SandboxRule {
@@ -325,6 +350,11 @@ func ShowSandboxRule(r SandboxRule) string {
 		out += ", secrets " + strings.Join(r.Secrets, ",")
 	}
 	return out
+}
+
+// IsSandboxSetting reports whether the setting changes the sandbox rules.
+func IsSandboxSetting(setting string) bool {
+	return setting == SandboxSetting || setting == "anonymous-storage" || setting == "anonymous-secrets"
 }
 
 // SandboxSetting names the sandbox rules, which config.yaml and the pair

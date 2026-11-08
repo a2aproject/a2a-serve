@@ -241,7 +241,11 @@ func TestAdmitOther(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			key := agentkey.User(auth.PairPrincipal(tt.into))
-			if err := s.admitOther(context.Background(), tt.caller, key, s.sandboxes.of(context.Background(), key)); !errors.Is(err, tt.wantErr) {
+			want, err := s.sandboxes.of(context.Background(), key)
+			if err != nil {
+				t.Fatalf("of() error = %v", err)
+			}
+			if err := s.admitOther(context.Background(), tt.caller, key, want); !errors.Is(err, tt.wantErr) {
 				t.Fatalf("admitOther() error = %v, want %v", err, tt.wantErr)
 			}
 		})
@@ -311,7 +315,10 @@ func TestSandboxOfUserAfterRestartMatchesTheVerifiedIdentity(t *testing.T) {
 	key := agentkey.User(ann.ID)
 	newSandboxes(config, st).remember(ctx, ann)
 
-	got := newSandboxes(config, st).of(ctx, key)
+	got, err := newSandboxes(config, st).of(ctx, key)
+	if err != nil {
+		t.Fatalf("of() error = %v", err)
+	}
 
 	if diff := cmp.Diff(access.Sandbox{Storage: agentdir.StorageReadOnly}, got); diff != "" {
 		t.Fatalf("of() after a restart wrong result (-want +got) diff = %s", diff)
@@ -340,7 +347,10 @@ func TestSandboxOfUnverifiedUserIsTheNarrowest(t *testing.T) {
 		}}}
 	}
 
-	got := newSandboxes(config, openStore(t)).of(context.Background(), agentkey.User("email:ann@example.com"))
+	got, err := newSandboxes(config, openStore(t)).of(context.Background(), agentkey.User("email:ann@example.com"))
+	if err != nil {
+		t.Fatalf("of() error = %v", err)
+	}
 
 	if diff := cmp.Diff(access.Sandbox{Storage: agentdir.StorageShared}, got); diff != "" {
 		t.Fatalf("of() of a user without a verified identity wrong result (-want +got) diff = %s", diff)
@@ -374,5 +384,39 @@ func TestAnonymousRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 		if got := a2atext.Result(send(t, ben, userText(prompt, "", ""))); got != want {
 			t.Fatalf("SendMessage(%q) by a pairing after the anonymous rule = %q, want %q", prompt, got, want)
 		}
+	}
+}
+
+func TestSandboxOfFailsWhenTheStoreCantTell(t *testing.T) {
+	t.Parallel()
+	st, err := store.Open(filepath.Join(t.TempDir(), "server.db"))
+	if err != nil {
+		t.Fatalf("store.Open() error = %v", err)
+	}
+	if err := st.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+	s := newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)
+
+	if _, err := s.of(context.Background(), agentkey.User("email:ann@example.com")); err == nil {
+		t.Fatalf("of() with a closed store error = nil, want an error")
+	}
+}
+
+func TestPostedTurnsDontSaveTheIdentityOfTheirUser(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := openStore(t)
+	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{Network: network.ListenerPrivate}}
+
+	release, err := s.admitTurn(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
+	if err != nil {
+		t.Fatalf("admitTurn() error = %v", err)
+	}
+	release()
+
+	if _, err := st.UserIdentity(ctx, ann.ID); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("UserIdentity() after a posted turn error = %v, want %v", err, store.ErrNotFound)
 	}
 }

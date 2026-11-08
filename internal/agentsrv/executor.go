@@ -304,7 +304,10 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
 	}
-	sb := s.sandboxes.of(ctx, key)
+	sb, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		return nil, err
+	}
 	if err := s.applySandbox(ctx, &spec, key, sb); err != nil {
 		return nil, err
 	}
@@ -451,9 +454,11 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 	cfg := s.rt.Config()
 	granted := cfg.Secrets
 	if key, err := s.keys.of(ctx, execCtx.ContextID); err == nil {
-		granted = nil
-		for _, g := range s.sandboxes.of(ctx, key).Secrets {
-			granted = append(granted, g.Name)
+		if sb, err := s.sandboxes.of(ctx, key); err == nil {
+			granted = nil
+			for _, g := range sb.Secrets {
+				granted = append(granted, g.Name)
+			}
 		}
 	}
 	text := explainFailure(cfg, granted, reported)
@@ -482,7 +487,7 @@ func explainFailure(cfg *agentdir.Config, granted []string, reported string) str
 		return text
 	}
 	if provider, _ := harness.ModelKeyWithheld(cfg, granted); provider != "" {
-		return fmt.Sprintf("the sandbox of this conversation gives the agent no key of model provider %s, so it can't reach its model; the owner of the agent decides which secrets it gets; the agent reported: %s", provider, text)
+		return "The owner hasn't given this agent a model key. The agent reported: " + text
 	}
 	if !modelNotFound(text) {
 		return text

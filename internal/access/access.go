@@ -170,14 +170,14 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 	if provider == "" {
 		return ""
 	}
-	lack := fmt.Sprintf("the agent containers of %s get no key of model provider %s, so the agent can't reach its model for them", l.Who, provider)
+	name := harness.ProviderName(provider)
 	switch {
 	case l.Anonymous:
-		return fmt.Sprintf("%s; give them a key of their own with `a2a-serve config set --anonymous-secrets %s=secret:<STORED_KEY>`", lack, key)
+		return fmt.Sprintf("Anonymous callers' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --anonymous-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --anonymous-secrets %s`.", name, key, key)
 	case l.Pairing != "":
-		return fmt.Sprintf("%s; give them one with `a2a-serve pair set %s --secrets %s`, or a key of their own with `--secrets %s=secret:<STORED_KEY>`", lack, l.Pairing, key, key)
+		return fmt.Sprintf("%s's agent gets no %s key and can't reach its model. Give one with `a2a-serve pair set %s --secrets %s`, or a key of its own with `--secrets %s=secret:<STORED_KEY>`.", l.Pairing, name, l.Pairing, key, key)
 	}
-	return fmt.Sprintf("%s; give them %s, or a key of their own with %s=secret:<STORED_KEY>, in their rule with `a2a-serve config edit`", lack, key, key)
+	return fmt.Sprintf("The agents of %s get no %s key and can't reach their model. Give them one in their rule with `a2a-serve config edit`.", l.Who, name)
 }
 
 // Describe says who may call an agent with the settings p on the networks

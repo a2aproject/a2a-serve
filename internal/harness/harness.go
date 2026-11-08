@@ -123,6 +123,20 @@ var providerKeys = map[string][]string{
 	"xai":        {"XAI_API_KEY"},
 }
 
+// providerNames are how the output names the model providers.
+var providerNames = map[string]string{
+	"anthropic": "Anthropic", "deepseek": "DeepSeek", "google": "Google", "groq": "Groq",
+	"mistral": "Mistral", "openai": "OpenAI", "openrouter": "OpenRouter", "xai": "xAI",
+}
+
+// ProviderName returns how the output names a model provider.
+func ProviderName(provider string) string {
+	if n, ok := providerNames[provider]; ok {
+		return n
+	}
+	return provider
+}
+
 // claudeKeys are the variables claude reads its Anthropic credentials
 // from.
 var claudeKeys = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
