@@ -380,18 +380,32 @@ func waitReady(ctx context.Context, admin *meshadmin.Client, mesh *meshProcess, 
 		if err == nil {
 			return nil
 		}
+		// A probe can outlast a tick, and select picks a ready case at
+		// random, so the exit goes first: the port of an exited
+		// agentmesh-one has to be checked while whoever took it holds it.
+		select {
+		case <-mesh.exited:
+			return meshExitError(mesh, port)
+		default:
+		}
 		select {
 		case <-ctx.Done():
 			return fmt.Errorf("agentmesh-one didn't become ready within %v", readyTimeout)
 		case <-mesh.exited:
-			err := fmt.Errorf("agentmesh-one exited while starting: %v; its log says why", mesh.err)
-			if portTaken(port) {
-				return fmt.Errorf("%w: %w", errMeshPortTaken, err)
-			}
-			return err
+			return meshExitError(mesh, port)
 		case <-tick.C:
 		}
 	}
+}
+
+// meshExitError reports that agentmesh-one exited while starting, and
+// whether another process took its port.
+func meshExitError(mesh *meshProcess, port int) error {
+	err := fmt.Errorf("agentmesh-one exited while starting: %v; its log says why", mesh.err)
+	if portTaken(port) {
+		return fmt.Errorf("%w: %w", errMeshPortTaken, err)
+	}
+	return err
 }
 
 // portTaken reports whether another process listens on port. freePort

@@ -21,17 +21,20 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
+	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
 )
 
@@ -286,5 +289,26 @@ func TestFreePortIsBelowTheEphemeralRange(t *testing.T) {
 	}
 	if err := ln.Close(); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestWaitReadyReportsAnExitWithoutProbingAgain(t *testing.T) {
+	t.Parallel()
+	var probes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		probes.Add(1)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(srv.Close)
+	mesh := &meshProcess{exited: make(chan struct{}), err: errors.New("exit status 2")}
+	close(mesh.exited)
+
+	err := waitReady(context.Background(), meshadmin.New(srv.URL, "", srv.Client()), mesh, 1)
+
+	if err == nil || !strings.Contains(err.Error(), "exited while starting") {
+		t.Fatalf("waitReady() error = %v, want agentmesh-one exited while starting", err)
+	}
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("waitReady() sent %d readiness probes after agentmesh-one exited, want 1", got)
 	}
 }
