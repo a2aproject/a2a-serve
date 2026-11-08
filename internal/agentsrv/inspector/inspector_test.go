@@ -492,6 +492,31 @@ func TestInspectorConversation(t *testing.T) {
 	}
 }
 
+func TestInspectorOverviewShowsFirstPromptOfConversation(t *testing.T) {
+	t.Parallel()
+	ti := startInspector(t)
+	ctx := context.Background()
+	first := &a2a.Task{
+		ID: "t1", ContextID: "c1",
+		Status:  a2a.TaskStatus{State: a2a.TaskStateCompleted},
+		History: []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart("review   the\nchange"), a2a.NewRawPart([]byte("diff")))},
+	}
+	followUp := &a2a.Task{
+		ID: "t2", ContextID: "c1",
+		Status:  a2a.TaskStatus{State: a2a.TaskStateWorking},
+		History: []*a2a.Message{a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("checking"))},
+	}
+	for _, task := range []*a2a.Task{first, followUp} {
+		if _, err := ti.tasks.Create(ctx, task); err != nil {
+			t.Fatalf("TaskStore.Create() error = %v", err)
+		}
+	}
+	want := "<td>2</td><td>review the change</td>"
+	if overview := ti.login(t); !strings.Contains(overview, want) {
+		t.Fatalf("overview = %q, want it to contain %q", overview, want)
+	}
+}
+
 func TestInspectorRelayedApprovalWithoutConversation(t *testing.T) {
 	t.Parallel()
 	ti := startInspector(t)
