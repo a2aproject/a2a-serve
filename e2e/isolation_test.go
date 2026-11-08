@@ -17,7 +17,9 @@
 package e2e
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -165,5 +167,18 @@ func (a *agent) agentsOf(task *a2a.Task) (url, socket string) {
 	if src == "" {
 		t.Fatalf("docker inspect %s has no mount at %s", host, filepath.Dir(socket))
 	}
-	return url, filepath.Join(src, filepath.Base(socket))
+	hostSocket := filepath.Join(src, filepath.Base(socket))
+	if len(hostSocket) < 100 {
+		return url, hostSocket
+	}
+	// A relay's socket is in a Docker volume, whose path can be too long
+	// for a Unix socket address; a short symlink leads to it.
+	link := filepath.Join(a.u.home, "run", "a2a.sock")
+	if err := os.Remove(link); err != nil && !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(hostSocket, link); err != nil {
+		t.Fatal(err)
+	}
+	return url, link
 }
