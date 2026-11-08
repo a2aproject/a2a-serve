@@ -87,9 +87,7 @@ func TestPair(t *testing.T) {
 			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
 			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
-			Sandbox: []string{"you: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 		},
-		Sandbox: &controlapi.PairingSandbox{Storage: agentdir.StorageShared, Secrets: []string{}, Summary: "shared workspace, no secrets"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Pair() wrong result (-want +got) diff = %s", diff)

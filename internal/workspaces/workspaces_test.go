@@ -172,3 +172,20 @@ func TestRemove(t *testing.T) {
 		t.Fatalf("List() = %+v, %v, want none", entries, err)
 	}
 }
+
+func TestPrepareOwnRefusesCopiesOverTheLimit(t *testing.T) {
+	t.Parallel()
+	src := t.TempDir()
+	writeFile(t, filepath.Join(src, "a"), "a")
+	s := New(filepath.Join(t.TempDir(), "w"))
+	s.MaxCopies = 1
+	if _, err := s.Prepare(context.Background(), "u1", "pair:ben", agentdir.StorageOwn, src); err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	if _, err := s.Prepare(context.Background(), "u2", "pair:cy", agentdir.StorageOwn, src); !errors.Is(err, ErrTooMany) {
+		t.Fatalf("Prepare() of a copy over the limit error = %v, want %v", err, ErrTooMany)
+	}
+	if _, err := s.Prepare(context.Background(), "u1", "pair:ben", agentdir.StorageOwn, src); err != nil {
+		t.Fatalf("Prepare() of an existing copy error = %v", err)
+	}
+}

@@ -54,9 +54,9 @@ up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
 or digit, and differs from the existing names by more than case.
 `a2a-serve pair set` changes a pairing, and rotates its credentials. A paired
 caller can approve commands in their own tasks, in an agent container of
-their own, which gets the shared workspace and the agent's --secret values.
---storage and --secrets narrow what it gets, such as to a read-only
-workspace or a key of its own.
+their own. --storage and --secrets narrow what it gets of the workspace
+and of the agent's --secret values, such as to a read-only workspace or a
+key of its own.
 
 With --webhook, &lt;name&gt; is a webhook node: an agent that only runs when woken,
 such as a Grok Bot routine. The agent hosts it at &lt;agent-url&gt;/n/&lt;name&gt;, calls

@@ -66,6 +66,11 @@ func TestSandboxPolicyResolve(t *testing.T) {
 		{name: "a rule without storage keeps the default", rules: []agentdir.SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"GITHUB_TOKEN"}}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageShared, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GITHUB_TOKEN"}}}},
 		{name: "a rule without secrets keeps the default", rules: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all}},
 		{name: "first rule of the same specificity wins", rules: []agentdir.SandboxRule{{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageOwn}, {Match: []string{"email:*@Example.com"}, Storage: agentdir.StorageEmpty}}, caller: user(auth.Identity{Email: "cy@example.com", Domain: "example.com"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all}},
+		{name: "a pairing rule falls back to broader rules for what it leaves out", rules: []agentdir.SandboxRule{
+			{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"ANTHROPIC_API_KEY=secret:GUEST_KEY"}},
+			{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn},
+		}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: []SecretGrant{{"ANTHROPIC_API_KEY", "GUEST_KEY"}}}},
+		{name: "empty secrets keep the default", rules: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn, Secrets: []string{}}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all}},
 		{name: "all with a renamed secret", rules: []agentdir.SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"GITHUB_TOKEN=secret:GUEST_KEY"}}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageShared, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GUEST_KEY"}}}},
 	}
 	for _, tt := range tests {
@@ -111,18 +116,18 @@ func TestDescribeConfigSandbox(t *testing.T) {
 		{Match: []string{"pairing:ben", "email:*@example.com"}, Storage: agentdir.StorageOwn, Secrets: []string{"GUEST"}},
 		{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly},
 	}
+	gemini := func(rules ...agentdir.SandboxRule) *agentdir.Config {
+		return &agentdir.Config{Harness: "opencode", Model: "google/gemini", Secrets: []string{"GEMINI_API_KEY"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone, Sandbox: rules}}
+	}
 	tests := []struct {
-		name      string
-		cfg       *agentdir.Config
-		policy    agentdir.PolicyConfig
-		pairings  Pairings
-		wantLines []string
-		wantNotes []string
+		name          string
+		cfg           *agentdir.Config
+		pairings      Pairings
+		wantLines     []string
+		wantNotes     []string
+		wantAnonymous string
 	}{
-		{
-			name: "defaults", cfg: &agentdir.Config{Secrets: []string{"KEY"}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "other callers: shared workspace, secrets KEY"},
-		},
+		{name: "defaults", cfg: &agentdir.Config{Secrets: []string{"KEY"}}},
 		{
 			name: "anonymous callers", cfg: &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}},
 			wantLines: []string{"you: shared workspace, secrets KEY", "other callers: shared workspace, secrets KEY", "anonymous callers: read-only workspace, no secrets"},
@@ -136,19 +141,22 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			},
 		},
 		{
-			name: "model key withheld", pairings: Pairings{All: 1},
-			cfg: &agentdir.Config{Harness: "opencode", Model: "google/gemini", Secrets: []string{"GEMINI_API_KEY"}, Policy: agentdir.PolicyConfig{
-				PublicAllowIncoming: agentdir.AccessAnyone, Sandbox: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}},
-			}},
-			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets GEMINI_API_KEY", "anonymous callers: read-only workspace, no secrets"},
-			wantNotes: []string{
-				"no key of model provider google reaches the pairing ben, so the agent can't answer them; a sandbox rule that gives them GEMINI_API_KEY, or a key of their own with GEMINI_API_KEY=secret:<STORED_KEY>, fixes it",
-				"no key of model provider google reaches anonymous callers, since they get no secrets, so the agent can't answer them",
-			},
+			name: "pairing without its model key", pairings: Pairings{All: 1},
+			cfg:           gemini(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}),
+			wantLines:     []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets GEMINI_API_KEY", "anonymous callers: read-only workspace, no secrets"},
+			wantNotes:     []string{"the agent containers of the pairing ben get no key of model provider google, so the agent can't reach its model for them; give them one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of their own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`"},
+			wantAnonymous: "anonymous callers get no secrets, so the agent can't reach its model for them",
+		},
+		{
+			name: "other callers without the model key", pairings: Pairings{All: 1},
+			cfg:           gemini(agentdir.SandboxRule{Match: []string{"anyone"}, Secrets: []string{"none"}}),
+			wantLines:     []string{"you: shared workspace, secrets GEMINI_API_KEY", "other callers: shared workspace, no secrets", "anonymous callers: read-only workspace, no secrets"},
+			wantNotes:     []string{"the agent containers of other callers get no key of model provider google, so the agent can't reach its model for them; give them one with `a2a-serve config set --caller-secrets GEMINI_API_KEY`, or a key of their own with `--caller-secrets GEMINI_API_KEY=secret:<STORED_KEY>`"},
+			wantAnonymous: "anonymous callers get no secrets, so the agent can't reach its model for them",
 		},
 		{
 			name: "no sandbox", cfg: &agentdir.Config{Sandbox: agentdir.SandboxLocal, Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}, pairings: Pairings{All: 1},
-			wantNotes: []string{"the agent runs without the Docker sandbox, so sandbox rules don't apply: every caller's agent can read and change your files and read your secrets"},
+			wantNotes: []string{LocalSandboxNote},
 		},
 	}
 	for _, tt := range tests {
@@ -161,6 +169,24 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			if diff := cmp.Diff(tt.wantNotes, got.SandboxNotes); diff != "" {
 				t.Fatalf("DescribeConfig().SandboxNotes wrong result (-want +got) diff = %s", diff)
 			}
+			if got.AnonymousNote != tt.wantAnonymous {
+				t.Fatalf("DescribeConfig().AnonymousNote = %q, want %q", got.AnonymousNote, tt.wantAnonymous)
+			}
 		})
+	}
+}
+
+func TestSandboxPolicyResolveUnverified(t *testing.T) {
+	t.Parallel()
+	sp := SandboxPolicy{Secrets: []string{"KEY"}, Rules: []agentdir.SandboxRule{
+		{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageReadOnly},
+		{Match: []string{"private"}, Secrets: []string{"none"}},
+	}}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.IdentityOf("email:ann@example.com")}
+
+	got := sp.ResolveUnverified(ann)
+
+	if diff := cmp.Diff(Sandbox{Storage: agentdir.StorageReadOnly}, got); diff != "" {
+		t.Fatalf("ResolveUnverified() wrong result (-want +got) diff = %s", diff)
 	}
 }

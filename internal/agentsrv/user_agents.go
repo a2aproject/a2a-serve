@@ -232,6 +232,25 @@ func (u *userAgents) closeStale(key string, want access.Sandbox) (bool, error) {
 	return true, proc.Close()
 }
 
+// closeNarrowed closes the process of key if it runs with a sandbox that
+// want doesn't cover, whatever its turns, while holding it from starting.
+// It keeps the entry of key, which counts the turns. It reports whether it
+// closed one.
+func (u *userAgents) closeNarrowed(key string, want access.Sandbox) (bool, error) {
+	a := u.get(key)
+	a.startMu.Lock()
+	defer a.startMu.Unlock()
+	u.mu.Lock()
+	if a.proc == nil || want.Covers(a.sandbox) {
+		u.mu.Unlock()
+		return false, nil
+	}
+	proc := a.proc
+	a.proc = nil
+	u.mu.Unlock()
+	return true, proc.Close()
+}
+
 // stopIdle holds the process of key from starting until release is called,
 // unless the process runs or starts: then release is nil.
 func (u *userAgents) stopIdle(key string) (release func(), err error) {

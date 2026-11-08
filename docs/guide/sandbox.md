@@ -36,7 +36,7 @@ Sandbox rules narrow these defaults for chosen callers, such as a read-only work
            anonymous callers: read-only workspace, no secrets
 ```
 
-`a2a-serve start` shows the same lines when others may call the agent. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:", and `pair invite` and `pair get` show what the pairing's container gets. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't answer them.
+These lines appear when sandbox rules exist or anonymous callers may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says once what anonymous callers get. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when a rule narrows it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
 
 ### Share the agent
 
@@ -46,7 +46,7 @@ Invite someone, with no extra flags:
 a2a-serve pair invite anna
 ```
 
-Anna's agent container works on the shared workspace and gets every secret, as yours does.
+Anna's agent container gets the defaults above. No rule is needed.
 
 ### Narrow what a pairing gets
 
@@ -55,7 +55,7 @@ a2a-serve pair invite ben --storage read-only --secrets none
 a2a-serve pair set ben --storage own --secrets ANTHROPIC_API_KEY
 ```
 
-`pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule, and the default when the rule has none. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
+`pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule. A part the rule leaves out comes from a broader rule that matches the pairing, such as the rule of other callers, or from the default. A pairing that becomes an owner loses its rule. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
 
 ### Give callers a separate model key
 
@@ -94,13 +94,13 @@ The server keeps at most 100 copies. A caller whose copy would be the 101st gets
 
 The agent's instructions name its storage mode and say how to return work in it.
 
-Sandbox rules need the Docker sandbox. With `--sandbox local`, every caller's agent runs on your machine as you, and `status` says that the rules don't apply.
+Storage rules need the Docker sandbox. With `--sandbox local`, every caller's agent runs on your machine as you: rules still keep secrets out of its environment, but it can read them in `.a2a/state/secrets`, and `status` says so.
 
 ### When a change applies
 
 A running agent applies every change of the rules at once, also those made with `a2a-serve config edit`.
 
-A change that gives a caller less ends the tasks in their container and stops it, so that they can't keep the access they had by keeping a task waiting. Their next message starts the container with the new rule. Another change reaches a container when its current tasks end. Until then, it takes only answers to the tasks that wait in it, and other messages get an error that asks the caller to send them again. Your own container, which the `self` rule covers, applies a change at `a2a-serve restart`, and `status` notes a change waiting for it.
+A change that gives a caller less ends the tasks in their container and stops it, so that they can't keep the access they had by keeping a task waiting. Their next message starts the container with the new rule. A secret the agent already saved in its home stays there, so rotate a secret you take away. Another change reaches a container when its current tasks end. Until then, it takes only answers to the tasks that wait in it, and other messages get an error that asks the caller to send them again. Your own container, which the `self` rule covers, applies a change at `a2a-serve restart`, and `status` notes a change waiting for it.
 
 A conversation runs in the container of the user who started it. When someone else sends a message in it and their rule gives less than that container does, the server refuses the message and suggests that they start a conversation of their own.
 

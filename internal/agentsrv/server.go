@@ -29,6 +29,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -859,12 +860,13 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 		s.logf("! anonymous callers get a read-only workspace and no secrets in their agent container")
 	}
 	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
-		for i, line := range a.Sandbox {
-			label := "✓ sandbox "
-			if i > 0 {
-				label = "          "
+		label := "✓ sandbox "
+		for _, line := range a.Sandbox {
+			if strings.HasPrefix(line, access.AnonymousCallers+":") {
+				continue
 			}
 			s.logf("%s %s", label, line)
+			label = "          "
 		}
 	}
 	for _, note := range s.sandboxNotes(a.SandboxNotes) {

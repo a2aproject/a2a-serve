@@ -120,7 +120,8 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	resp.Sandbox = s.sandboxOf(*p)
+	resp.Sandbox = s.narrowedSandbox(*p)
+	resp.Hints = append(resp.Hints, s.sandboxHints(req.Sandbox)...)
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
 	}
@@ -188,7 +189,14 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 	if err != nil {
 		return nil, errors.Join(err, undo())
 	}
-	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing)}
+	if req.Owner != nil && *req.Owner {
+		// Owners share your container, so a rule of the pairing would only
+		// come back if it stopped being one.
+		if err := s.removeSandbox(name); err != nil {
+			return nil, err
+		}
+	}
+	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing), Hints: s.sandboxHints(req.Sandbox)}
 	resp.Pairing.Sandbox = s.sandboxOf(r.Pairing)
 	if r.Code != nil {
 		resp.Code = s.codeInfo(r.Code)

@@ -20,6 +20,7 @@
 package workspaces
 
 import (
+	"cmp"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -68,13 +69,16 @@ var ErrTooMany = fmt.Errorf("the agent keeps %d copies of the workspace already"
 // Store keeps the private workspaces under Root.
 type Store struct {
 	Root string
-	// MaxBytes and MaxEntries bound a copy; zero takes the package limits.
+	// MaxBytes and MaxEntries bound a copy, and MaxCopies the copies; zero
+	// takes the package limits.
 	MaxBytes   int64
 	MaxEntries int
+	MaxCopies  int
 
-	// copyMu serializes the copies, so that concurrent first uses can't
-	// pass MaxCopies.
-	copyMu sync.Mutex
+	// copyMu guards copying, the copies in progress, so that concurrent
+	// first uses can't pass MaxCopies.
+	copyMu  sync.Mutex
+	copying int
 }
 
 // New returns the store of the private workspaces under root.
@@ -118,18 +122,41 @@ func (s *Store) Prepare(ctx context.Context, name, principal, storage, src strin
 	return dir, s.Touch(name)
 }
 
-// copyOnce copies src to dir, unless another copy made it meanwhile, while
-// no other copy runs. It refuses a new copy once the store keeps MaxCopies.
+// copyOnce copies src to dir. It refuses a new copy once the store keeps
+// MaxCopies, counting the copies in progress. The caller holds the start
+// of the container, so no other copy to dir runs.
 func (s *Store) copyOnce(ctx context.Context, src, base, dir string) error {
-	s.copyMu.Lock()
-	defer s.copyMu.Unlock()
-	if _, err := os.Lstat(dir); err == nil {
-		return nil
-	}
-	if err := s.checkCopies(); err != nil {
+	if err := s.reserveCopy(); err != nil {
 		return err
 	}
+	defer func() {
+		s.copyMu.Lock()
+		defer s.copyMu.Unlock()
+		s.copying--
+	}()
 	return s.copyTree(ctx, src, base, dir)
+}
+
+// reserveCopy counts a copy in progress, or refuses it once the store keeps
+// MaxCopies.
+func (s *Store) reserveCopy() error {
+	s.copyMu.Lock()
+	defer s.copyMu.Unlock()
+	entries, err := s.List()
+	if err != nil {
+		return err
+	}
+	n := s.copying
+	for _, e := range entries {
+		if slices.Contains(e.Storage, agentdir.StorageOwn) {
+			n++
+		}
+	}
+	if n >= cmp.Or(s.MaxCopies, MaxCopies) {
+		return ErrTooMany
+	}
+	s.copying++
+	return nil
 }
 
 // Used returns when the workspaces of the container name were last used.
@@ -139,24 +166,6 @@ func (s *Store) Used(name string) (time.Time, error) {
 		return time.Time{}, err
 	}
 	return fi.ModTime(), nil
-}
-
-// checkCopies refuses a new copy once the store keeps MaxCopies.
-func (s *Store) checkCopies() error {
-	entries, err := s.List()
-	if err != nil {
-		return err
-	}
-	n := 0
-	for _, e := range entries {
-		if slices.Contains(e.Storage, agentdir.StorageOwn) {
-			n++
-		}
-	}
-	if n >= MaxCopies {
-		return ErrTooMany
-	}
-	return nil
 }
 
 // Touch marks the workspaces of the container name as used now.
@@ -352,7 +361,7 @@ func (c *copier) copyFile(from, to *os.Root, name string, listed fs.FileInfo) (e
 	if err != nil {
 		return err
 	}
-	n, err := io.Copy(out, io.LimitReader(in, c.maxBytes-c.size+1))
+	n, err := io.Copy(out, io.LimitReader(ctxReader{ctx: c.ctx, r: in}, c.maxBytes-c.size+1))
 	c.size += n
 	if err := errors.Join(err, out.Close()); err != nil {
 		return err
@@ -361,6 +370,19 @@ func (c *copier) copyFile(from, to *os.Root, name string, listed fs.FileInfo) (e
 		return fmt.Errorf("%w: it is over %d MiB", ErrTooLarge, c.maxBytes>>20)
 	}
 	return nil
+}
+
+// ctxReader fails reads once ctx ends, so that a large file stops copying.
+type ctxReader struct {
+	ctx context.Context
+	r   io.Reader
+}
+
+func (c ctxReader) Read(p []byte) (int, error) {
+	if err := c.ctx.Err(); err != nil {
+		return 0, err
+	}
+	return c.r.Read(p)
 }
 
 // checkSame returns a check that the opened entry is the one listed as

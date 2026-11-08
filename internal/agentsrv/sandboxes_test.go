@@ -330,3 +330,18 @@ func openStore(t *testing.T) *store.Store {
 	})
 	return st
 }
+
+func TestSandboxOfUnverifiedUserIsTheNarrowest(t *testing.T) {
+	t.Parallel()
+	config := func() *agentdir.Config {
+		return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{
+			{Match: []string{"email:*@example.com"}, Secrets: []string{"none"}},
+		}}}
+	}
+
+	got := newSandboxes(config, openStore(t)).of(context.Background(), agentkey.User("email:ann@example.com"))
+
+	if diff := cmp.Diff(access.Sandbox{Storage: agentdir.StorageShared}, got); diff != "" {
+		t.Fatalf("of() of a user without a verified identity wrong result (-want +got) diff = %s", diff)
+	}
+}

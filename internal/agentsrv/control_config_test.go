@@ -118,7 +118,7 @@ func TestStatusAccess(t *testing.T) {
 			"the public URL is open to anyone",
 		},
 		SandboxNotes: []string{
-			"the agent runs without the Docker sandbox, so sandbox rules don't apply: every caller's agent can read and change your files and read your secrets",
+			"the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets",
 		},
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {

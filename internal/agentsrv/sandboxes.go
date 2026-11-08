@@ -59,7 +59,14 @@ type sandboxes struct {
 type rememberedUser struct {
 	p    auth.Principal
 	seen time.Time
+	// saved is when the identity was last saved; zero for one read from
+	// the store, whose time is unknown.
+	saved time.Time
 }
+
+// identityRefresh is how often the identity of a user who keeps calling is
+// saved again, so that the store keeps it while they call.
+const identityRefresh = 24 * time.Hour
 
 func newSandboxes(config func() *agentdir.Config, st *store.Store) *sandboxes {
 	return &sandboxes{config: config, store: st, users: map[string]rememberedUser{}}
@@ -74,9 +81,14 @@ func (s *sandboxes) remember(ctx context.Context, p auth.Principal) {
 	}
 	s.mu.Lock()
 	prev, known := s.users[key]
-	s.keepLocked(key, p)
+	save := !known || prev.p.Identity != p.Identity || time.Since(prev.saved) > identityRefresh
+	saved := prev.saved
+	if save {
+		saved = time.Now()
+	}
+	s.keepLocked(key, rememberedUser{p: p, saved: saved})
 	s.mu.Unlock()
-	if known && prev.p.Identity == p.Identity {
+	if !save {
 		return
 	}
 	data, err := json.Marshal(p.Identity)
@@ -88,9 +100,8 @@ func (s *sandboxes) remember(ctx context.Context, p auth.Principal) {
 	}
 }
 
-// keepLocked keeps p as the principal of key in memory. The caller holds
-// s.mu.
-func (s *sandboxes) keepLocked(key string, p auth.Principal) {
+// keepLocked keeps u as the user of key in memory. The caller holds s.mu.
+func (s *sandboxes) keepLocked(key string, u rememberedUser) {
 	if _, ok := s.users[key]; !ok && len(s.users) >= maxRememberedUsers {
 		oldest := ""
 		for k, u := range s.users {
@@ -100,7 +111,8 @@ func (s *sandboxes) keepLocked(key string, p auth.Principal) {
 		}
 		delete(s.users, oldest)
 	}
-	s.users[key] = rememberedUser{p: p, seen: time.Now()}
+	u.seen = time.Now()
+	s.users[key] = u
 }
 
 // forget drops the principals of the agent keys of removed users from
@@ -114,42 +126,50 @@ func (s *sandboxes) forget(keys ...string) {
 }
 
 // principalOf returns whom the sandbox rules match for the container of an
-// agent key: the owner for none, any anonymous caller, or the user.
-func (s *sandboxes) principalOf(ctx context.Context, key string) auth.Principal {
+// agent key: the owner for none, any anonymous caller, or the user. It
+// reports whether the server verified the user's identity; one rebuilt from
+// the principal ID alone lacks what only a request proves.
+func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal, bool) {
 	if key == "" {
-		return auth.Owner()
+		return auth.Owner(), true
 	}
 	if key == agentkey.Anonymous {
-		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
+		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}, true
 	}
 	id, _ := agentkey.UserOf(key)
 	s.mu.Lock()
 	u, ok := s.users[key]
 	s.mu.Unlock()
 	if ok {
-		return u.p
+		return u.p, true
 	}
-	p := auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+	rebuilt := auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
 	data, err := s.store.UserIdentity(ctx, id)
-	switch {
-	case errors.Is(err, store.ErrNotFound):
-		return p
-	case err == nil:
+	if errors.Is(err, store.ErrNotFound) {
+		return rebuilt, false
+	}
+	p := rebuilt
+	if err == nil {
 		err = json.Unmarshal([]byte(data), &p.Identity)
 	}
 	if err != nil {
 		slog.Warn("reading the identity of a user", "user", id, "error", err)
-		return auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+		return rebuilt, false
 	}
 	s.mu.Lock()
-	s.keepLocked(key, p)
+	s.keepLocked(key, rememberedUser{p: p})
 	s.mu.Unlock()
-	return p
+	return p, true
 }
 
-// of returns the sandbox of the container of an agent key.
+// of returns the sandbox of the container of an agent key. A user whose
+// identity the server hasn't verified gets the least that it could match.
 func (s *sandboxes) of(ctx context.Context, key string) access.Sandbox {
-	return s.resolve(s.principalOf(ctx, key))
+	p, verified := s.principalOf(ctx, key)
+	if !verified {
+		return access.SandboxPolicyOf(s.config()).ResolveUnverified(p)
+	}
+	return s.resolve(p)
 }
 
 // resolve returns the sandbox of the container that p's conversations run
@@ -200,7 +220,11 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 		if answer {
 			return nil, errSandboxNarrowed
 		}
-		if err := s.endNarrowed(ctx, key); err != nil {
+		var asking a2a.TaskID
+		if execCtx != nil {
+			asking = execCtx.TaskID
+		}
+		if err := s.endNarrowed(ctx, key, asking); err != nil {
 			return nil, err
 		}
 	}
@@ -243,30 +267,32 @@ func answersWaiting(execCtx *a2asrv.ExecutorContext) bool {
 }
 
 // endNarrowed cancels the unfinished tasks of the container of an agent
-// key and stops it: its rules now give less, and its tasks would keep the
-// access they got.
-func (s *Server) endNarrowed(ctx context.Context, key string) error {
-	id, _ := agentkey.UserOf(key)
-	if key == agentkey.Anonymous {
-		id = auth.AnonymousID
+// key, but the task of the turn that asks, and stops it, if its rules now
+// give less than it got: its tasks would keep the access they got.
+func (s *Server) endNarrowed(ctx context.Context, key string, asking a2a.TaskID) error {
+	agents := s.agentsOf(key)
+	want := s.sandboxes.of(ctx, key)
+	if running, ok := agents.sandboxOf(key); !ok || want.Covers(running) {
+		return nil
 	}
-	ids, err := s.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: id, AgentKey: key})
+	ids, err := s.tasks.UnfinishedIn(ctx, key)
 	if err != nil {
 		return err
 	}
 	as := auth.InProcess(context.WithoutCancel(ctx), auth.Owner())
 	for _, t := range ids {
+		if t == asking {
+			continue
+		}
 		if _, err := s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: t}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
 			return fmt.Errorf("canceling task %s: %w", t, err)
 		}
 	}
-	release, err := s.agentsOf(key).stop(key)
-	if err != nil {
-		return err
+	stopped, err := agents.closeNarrowed(key, want)
+	if stopped {
+		slog.Info("stopped an agent process whose sandbox rules now give less", "key", key, "canceled", len(ids))
 	}
-	release()
-	slog.Info("stopped an agent process whose sandbox rules now give less", "key", key, "canceled", len(ids))
-	return nil
+	return err
 }
 
 // closeStale stops the container of an agent key if no turn uses it and
@@ -321,7 +347,7 @@ func (s *Server) sandboxLoop(ctx context.Context) {
 func (s *Server) applySandboxChange(ctx context.Context, agents *userAgents, key string) {
 	want := s.sandboxes.of(ctx, key)
 	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
-		if err := s.endNarrowed(ctx, key); err != nil {
+		if err := s.endNarrowed(ctx, key, ""); err != nil {
 			slog.Warn("stopping an agent process whose sandbox rules now give less", "key", key, "error", err)
 		}
 		return
@@ -390,7 +416,8 @@ func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key strin
 	if sb.Storage != agentdir.StorageOwn && sb.Storage != agentdir.StorageEmpty {
 		return nil
 	}
-	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), s.sandboxes.principalOf(ctx, key).ID, sb.Storage, ws)
+	p, _ := s.sandboxes.principalOf(ctx, key)
+	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), p.ID, sb.Storage, ws)
 	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
 		return errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
 	}

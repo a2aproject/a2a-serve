@@ -174,8 +174,9 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 	for i, r := range p.Sandbox {
 		caller := slices.Equal(r.Match, []string{MatchAnyone})
 		label := fmt.Sprintf("policy.sandbox rule %d", i+1)
-		if len(r.Match) == 1 && strings.HasPrefix(r.Match[0], MatchPairingPrefix) {
-			label = "the sandbox rule of " + r.Match[0]
+		drop := "remove it from the rule"
+		if name, ok := strings.CutPrefix(first(r.Match), MatchPairingPrefix); ok && len(r.Match) == 1 {
+			label, drop = name+"'s sandbox rule", "drop it from --secrets"
 		}
 		invalid := func(flag, entry, format string, args ...any) {
 			if caller && flag != "" {
@@ -197,12 +198,12 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 			seen[m] = i
 		}
 		if r.Storage != "" && !slices.Contains(StorageModes, r.Storage) {
-			invalid("caller-storage", r.Storage, "unknown storage: want %s", strings.Join(StorageModes, ", "))
+			invalid("caller-storage", r.Storage, "unknown storage: want shared, read-only, own or empty")
 		}
 		for _, e := range r.Secrets {
 			if e == SecretsAll || e == SecretsNone {
 				if len(r.Secrets) > 1 {
-					invalid("caller-secrets", e, "%s goes alone: pass it without names", e)
+					invalid("caller-secrets", strings.Join(r.Secrets, ","), "%s goes alone: pass it without names", e)
 				}
 				continue
 			}
@@ -211,7 +212,7 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 			case !ok:
 				invalid("caller-secrets", e, "invalid secret: want a name from secrets, all, or NAME=secret:OTHER")
 			case !slices.Contains(secrets, from):
-				invalid("caller-secrets", e, "secret %s is not one of the agent's secrets (%s); add it with `a2a-serve config set --secret %s`, or remove it from the rule", from, orNone(secrets), from)
+				invalid("caller-secrets", e, "secret %s is not one of the agent's secrets (%s); add it with `a2a-serve config set --secret %s`, or %s", from, orNone(secrets), from, drop)
 			}
 		}
 	}
@@ -233,10 +234,24 @@ func callerRule(c *Config) SandboxRule {
 }
 
 func setCallerRule(c *Config, fn func(*SandboxRule)) {
-	r := callerRule(c)
-	r.Match = []string{MatchAnyone}
+	c.Policy = c.Policy.Clone()
+	c.Policy.SetSandboxRule(c.Policy.OwnRule(MatchAnyone, fn))
+}
+
+// OwnRule returns the rule whose only matcher is m, changed by fn. When m
+// is in a rule with other matchers, it leaves that rule, and the new rule
+// starts from it.
+func (p *PolicyConfig) OwnRule(m string, fn func(*SandboxRule)) SandboxRule {
+	r, ok := p.SandboxRuleOf(m)
+	if !ok {
+		if i := slices.IndexFunc(p.Sandbox, func(r SandboxRule) bool { return slices.Contains(r.Match, m) }); i >= 0 {
+			r = SandboxRule{Storage: p.Sandbox[i].Storage, Secrets: slices.Clone(p.Sandbox[i].Secrets)}
+			p.RemoveSandboxMatcher(m)
+		}
+	}
+	r.Match = []string{m}
 	fn(&r)
-	c.Policy.SetSandboxRule(r)
+	return r
 }
 
 // sandboxRules reads and writes the sandbox rules as one JSON entry each,
@@ -293,14 +308,19 @@ func showSandboxRule(e string) string {
 	return ShowSandboxRule(r)
 }
 
-// ShowSandboxRule shows r as its matchers, storage and secrets, such as
-// "pairing:ben: own, secrets KEY".
+// ShowSandboxRule shows r as its callers, storage and secrets, such as
+// "pairing:ben: own, secrets KEY" or "other callers: default storage,
+// secrets none".
 func ShowSandboxRule(r SandboxRule) string {
+	who := strings.Join(r.Match, ",")
+	if slices.Equal(r.Match, []string{MatchAnyone}) {
+		who = "other callers"
+	}
 	storage := r.Storage
 	if storage == "" {
-		storage = StorageReadOnly
+		storage = "default storage"
 	}
-	out := strings.Join(r.Match, ",") + ": " + storage
+	out := who + ": " + storage
 	if len(r.Secrets) > 0 {
 		out += ", secrets " + strings.Join(r.Secrets, ",")
 	}

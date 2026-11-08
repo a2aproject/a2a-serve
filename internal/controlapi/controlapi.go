@@ -118,9 +118,12 @@ type Access struct {
 	// Sandbox says what the agent containers of callers get, one line each
 	// for you, the sandbox rules and everyone else.
 	Sandbox []string `json:"sandbox,omitempty"`
-	// SandboxNotes are what the sandbox rules don't do, or how they changed
-	// what callers get.
+	// SandboxNotes are what the sandbox rules don't do, such as callers
+	// whose container gets no model key.
 	SandboxNotes []string `json:"sandboxNotes,omitempty"`
+	// AnonymousNote says that the agent can't reach its model for
+	// anonymous callers, who get no secrets, if it needs a key.
+	AnonymousNote string `json:"anonymousNote,omitempty"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.
@@ -310,6 +313,9 @@ type PairingUpdate struct {
 type PairingUpdateResponse struct {
 	Pairing Pairing           `json:"pairing"`
 	Code    *PairCodeResponse `json:"code,omitempty"`
+	// Hints are what the change doesn't do, such as storage without the
+	// Docker sandbox.
+	Hints []string `json:"hints,omitempty"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
 }

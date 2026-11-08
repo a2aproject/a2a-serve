@@ -448,13 +448,15 @@ func (s *Server) guardACP(acp a2asrv.AgentExecutor) a2asrv.AgentExecutor {
 // stopped while they waited for an answer.
 func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, err error) []*a2a.Part {
 	reported := err.Error()
-	var granted []string
+	cfg := s.rt.Config()
+	granted := cfg.Secrets
 	if key, err := s.keys.of(ctx, execCtx.ContextID); err == nil {
+		granted = nil
 		for _, g := range s.sandboxes.of(ctx, key).Secrets {
 			granted = append(granted, g.Name)
 		}
 	}
-	text := explainFailure(s.rt.Config(), granted, reported)
+	text := explainFailure(cfg, granted, reported)
 	if text == reported {
 		return nil
 	}

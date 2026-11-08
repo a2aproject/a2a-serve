@@ -39,7 +39,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		"other callers: shared workspace, secrets KEY, GUEST",
 	}
 	if sandbox != "docker" {
-		wantStatus = []string{"sandbox rules don't apply"}
+		wantStatus = []string{"storage rules don't apply"}
 	}
 	for _, want := range wantStatus {
 		if !strings.Contains(status, want) {

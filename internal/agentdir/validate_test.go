@@ -69,7 +69,7 @@ func TestValidate(t *testing.T) {
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"private"}}, {Match: []string{"anyone", "private"}}}
 		}, wantErr: "policy.sandbox rule 2: private is in rule 1 too; a matcher appears in one rule at most"},
 		{name: "sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Storage: "copy"}} }, wantErr: `invalid --caller-storage "copy": unknown storage`},
-		{name: "pairing sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Storage: "copy"}} }, wantErr: `the sandbox rule of pairing:ben: unknown storage: want`},
+		{name: "pairing sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Storage: "copy"}} }, wantErr: `ben's sandbox rule: unknown storage: want`},
 		{name: "sandbox rule unknown secret", modify: func(c *Config) {
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"KEY"}}}
 		}, wantErr: "secret KEY is not one of the agent's secrets"},
@@ -83,11 +83,11 @@ func TestValidate(t *testing.T) {
 		{name: "sandbox rule with all and a name", modify: func(c *Config) {
 			c.Secrets = []string{"KEY"}
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"all", "KEY"}}}
-		}, wantErr: `invalid --caller-secrets "all": all goes alone`},
+		}, wantErr: `invalid --caller-secrets "all,KEY": all goes alone`},
 		{name: "pairing sandbox rule with none and a name", modify: func(c *Config) {
 			c.Secrets = []string{"KEY"}
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"KEY", "none"}}}
-		}, wantErr: `the sandbox rule of pairing:ben: none goes alone`},
+		}, wantErr: `ben's sandbox rule: none goes alone`},
 		{name: "sandbox rule secret syntax", modify: func(c *Config) {
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"KEY=OTHER"}}}
 		}, wantErr: `invalid --caller-secrets "KEY=OTHER": invalid secret`},

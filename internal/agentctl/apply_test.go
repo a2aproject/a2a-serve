@@ -450,7 +450,6 @@ func TestSetAccess(t *testing.T) {
 			want: &controlapi.Access{
 				PrivateAllowIncoming: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
 				Summary: []string{"you: this machine and your tailnet devices", "nobody else", "the tailnet needs a pairing"},
-				Sandbox: []string{"you: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 			},
 		},
 		{
@@ -459,7 +458,6 @@ func TestSetAccess(t *testing.T) {
 				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
 				Pairings: 3, OwnerPairings: 1, Others: []string{"emails matching *@example.com"},
 				Summary: []string{"you: this machine", "emails matching *@example.com, 3 pairings (1 owner)"},
-				Sandbox: []string{"you and owner pairings: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 			},
 		},
 	}

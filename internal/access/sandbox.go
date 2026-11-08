@@ -15,6 +15,7 @@
 package access
 
 import (
+	"cmp"
 	"slices"
 	"strings"
 
@@ -81,7 +82,7 @@ func (s Sandbox) describe(local bool) string {
 		storage = "empty workspace"
 	}
 	if local {
-		return "no sandbox, so sandbox rules don't apply"
+		storage = "no sandbox, so storage rules don't apply"
 	}
 	if len(s.Secrets) == 0 {
 		return storage + ", no secrets"
@@ -139,12 +140,61 @@ const (
 // read-only workspace and no secrets, and every other caller the shared
 // workspace and every secret.
 func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
-	def := sp.defaultOf(p.Role == auth.RoleAnonymous)
-	if i := sp.match(p); i >= 0 {
-		return sp.narrow(def, sp.Rules[i])
-	}
-	return def
+	return sp.narrow(sp.defaultOf(p.Role == auth.RoleAnonymous), sp.ruleOf(p))
 }
+
+// ResolveUnverified is [SandboxPolicy.Resolve] for a user whose identity
+// the server hasn't verified, rebuilt from the principal ID alone. Its
+// email might come with a proven domain and from the private network, so
+// it gets the least of what each of those identities would get.
+func (sp SandboxPolicy) ResolveUnverified(p auth.Principal) Sandbox {
+	out := sp.Resolve(p)
+	if p.Email == "" {
+		return out
+	}
+	_, domain, _ := strings.Cut(p.Email, "@")
+	for _, v := range []auth.Identity{{Domain: domain}, {Network: network.ListenerPrivate}, {Domain: domain, Network: network.ListenerPrivate}} {
+		q := p
+		q.Domain, q.Network = v.Domain, cmp.Or(v.Network, p.Network)
+		out = out.Meet(sp.Resolve(q))
+	}
+	return out
+}
+
+// Meet returns what both s and o give: the storage with less access, and
+// the secrets in both.
+func (s Sandbox) Meet(o Sandbox) Sandbox {
+	out := Sandbox{Storage: s.Storage}
+	if storageRank(o.Storage) > storageRank(s.Storage) {
+		out.Storage = o.Storage
+	}
+	for _, g := range s.Secrets {
+		if slices.Contains(o.Secrets, g) {
+			out.Secrets = append(out.Secrets, g)
+		}
+	}
+	return out
+}
+
+// ruleOf returns the rule of p: the storage and the secrets of the most
+// specific matching rule that sets each.
+func (sp SandboxPolicy) ruleOf(p auth.Principal) agentdir.SandboxRule {
+	var out agentdir.SandboxRule
+	for _, i := range sp.matches(p) {
+		r := sp.Rules[i]
+		if out.Storage == "" {
+			out.Storage = r.Storage
+		}
+		if len(out.Secrets) == 0 {
+			out.Secrets = r.Secrets
+		}
+	}
+	return out
+}
+
+// Default is the sandbox of the callers who aren't owners or anonymous,
+// without a rule.
+func (sp SandboxPolicy) Default() Sandbox { return sp.defaultOf(false) }
 
 // defaultOf is the sandbox of anonymous callers, or of every other caller,
 // without a rule.
@@ -163,7 +213,7 @@ func (sp SandboxPolicy) narrow(def Sandbox, r agentdir.SandboxRule) Sandbox {
 	if r.Storage != "" && storageRank(r.Storage) > storageRank(def.Storage) {
 		out.Storage = r.Storage
 	}
-	if r.Secrets == nil {
+	if len(r.Secrets) == 0 {
 		return out
 	}
 	out.Secrets = nil
@@ -175,17 +225,26 @@ func (sp SandboxPolicy) narrow(def Sandbox, r agentdir.SandboxRule) Sandbox {
 	return out
 }
 
-// match returns the index of the rule of p, or -1.
-func (sp SandboxPolicy) match(p auth.Principal) int {
-	best, bestRank := -1, 0
+// matches returns the indexes of the rules that match p, the most specific
+// first; rules of the same specificity keep their order.
+func (sp SandboxPolicy) matches(p auth.Principal) []int {
+	type match struct{ rule, rank int }
+	var out []match
 	for i, r := range sp.Rules {
+		best := 0
 		for _, m := range r.Match {
-			if rank := matchRank(m, p); rank > bestRank {
-				best, bestRank = i, rank
-			}
+			best = max(best, matchRank(m, p))
+		}
+		if best > 0 {
+			out = append(out, match{i, best})
 		}
 	}
-	return best
+	slices.SortStableFunc(out, func(a, b match) int { return b.rank - a.rank })
+	idx := make([]int, len(out))
+	for i, m := range out {
+		idx[i] = m.rule
+	}
+	return idx
 }
 
 func matchRank(m string, p auth.Principal) int {
@@ -304,13 +363,18 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 				who = append(who, describeMatcher(m))
 			}
 		}
-		if len(who) > 0 {
-			lines = append(lines, SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.narrow(other, r)})
+		if len(who) == 0 {
+			continue
 		}
+		line := SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.narrow(other, sp.withFallback(r))}
+		if len(r.Match) == 1 {
+			line.Pairing, _ = strings.CutPrefix(r.Match[0], agentdir.MatchPairingPrefix)
+		}
+		lines = append(lines, line)
 	}
-	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAuthenticated})})
+	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAuthenticated}), Other: true})
 	if anonymous {
-		lines = append(lines, SandboxLine{Who: "anonymous callers", Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
+		lines = append(lines, SandboxLine{Who: AnonymousCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
 	}
 	return lines
 }
@@ -320,12 +384,36 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 // --caller-secrets set, applies to them.
 const OtherCallers = "other callers"
 
+// AnonymousCallers names the anonymous callers in the lines.
+const AnonymousCallers = "anonymous callers"
+
 // SandboxLine is what the containers of one kind of caller get.
 type SandboxLine struct {
 	Who     string
 	Sandbox Sandbox
-	// Anonymous is set for anonymous callers, whom no rule gives secrets.
+	// Pairing names the pairing of a rule of one pairing. Other is set for
+	// other callers, and Anonymous for anonymous callers, whom no rule
+	// gives secrets.
+	Pairing   string
+	Other     bool
 	Anonymous bool
+}
+
+// withFallback fills the parts r leaves out from the rule of anyone, the
+// rule every caller who isn't an owner falls back to.
+func (sp SandboxPolicy) withFallback(r agentdir.SandboxRule) agentdir.SandboxRule {
+	for _, o := range sp.Rules {
+		if !slices.Contains(o.Match, agentdir.MatchAnyone) {
+			continue
+		}
+		if r.Storage == "" {
+			r.Storage = o.Storage
+		}
+		if len(r.Secrets) == 0 {
+			r.Secrets = o.Secrets
+		}
+	}
+	return r
 }
 
 func describeMatcher(m string) string {

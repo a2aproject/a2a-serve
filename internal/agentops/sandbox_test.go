@@ -181,3 +181,53 @@ func TestPairSetMovesThePairingOutOfASharedRule(t *testing.T) {
 		t.Fatalf("rules wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestPairSetOwnerDropsTheRule(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, rt, _ := newSandboxService(t)
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: &controlapi.SandboxChange{Storage: agentdir.StorageOwn}}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+
+	if _, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Owner: new(true)}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+
+	if rules := rt.Config().Policy.Sandbox; len(rules) != 0 {
+		t.Fatalf("rules after the pairing became an owner = %v, want none", rules)
+	}
+}
+
+func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
+	t.Parallel()
+	s, rt, _ := newSandboxService(t)
+	if err := rt.Update(func(c *agentdir.Config) error {
+		c.Policy.Sandbox = []agentdir.SandboxRule{{Match: []string{"email:*@example.com", "pairing:ben"}, Storage: agentdir.StorageOwn}}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+	undo, err := s.setSandbox("ben", controlapi.SandboxChange{Secrets: new([]string{"none"})})
+	if err != nil {
+		t.Fatalf("setSandbox() error = %v", err)
+	}
+	if err := rt.Update(func(c *agentdir.Config) error {
+		c.Policy.SetSandboxRule(agentdir.SandboxRule{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly})
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	if err := undo(); err != nil {
+		t.Fatalf("undo() error = %v", err)
+	}
+
+	want := []agentdir.SandboxRule{
+		{Match: []string{"email:*@example.com", "pairing:ben"}, Storage: agentdir.StorageOwn},
+		{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly},
+	}
+	if diff := cmp.Diff(want, rt.Config().Policy.Sandbox); diff != "" {
+		t.Fatalf("rules after undo() wrong result (-want +got) diff = %s", diff)
+	}
+}

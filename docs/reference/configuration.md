@@ -87,7 +87,7 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
 - Anonymous callers share one container. Only the `anyone` rule applies to it, and it can only narrow their read-only workspace to an empty one.
-- Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>`, `private` and `anyone`. Among rules of the same specificity, the first one listed wins.
+- Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>`, `private` and `anyone`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
 
 In sandbox rules, `anyone` matches every caller who isn't an owner. In the [access policy](../advanced/access-model.md#policy), `anyone` means the public URL and direct chats. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
 

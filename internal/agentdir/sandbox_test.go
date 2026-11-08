@@ -147,3 +147,31 @@ func TestCallerSecretsReplaceTheList(t *testing.T) {
 		t.Fatalf("Apply() wrong rules (-want +got) diff = %s", diff)
 	}
 }
+
+func TestCallerSettingsMoveAnyoneOutOfASharedRule(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"anyone", "private"}, Storage: StorageOwn}}}}
+	if _, err := (Settings{CallerSecrets: []string{"none"}}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
+		t.Fatalf("Apply() error = %v", err)
+	}
+	want := []SandboxRule{{Match: []string{"private"}, Storage: StorageOwn}, {Match: []string{"anyone"}, Storage: StorageOwn, Secrets: []string{"none"}}}
+	if diff := cmp.Diff(want, cfg.Policy.Sandbox); diff != "" {
+		t.Fatalf("Apply() wrong rules (-want +got) diff = %s", diff)
+	}
+}
+
+func TestShowSandboxRule(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		rule SandboxRule
+		want string
+	}{
+		{rule: SandboxRule{Match: []string{"pairing:ben"}, Storage: StorageOwn, Secrets: []string{"KEY"}}, want: "pairing:ben: own, secrets KEY"},
+		{rule: SandboxRule{Match: []string{"anyone"}, Secrets: []string{"none"}}, want: "other callers: default storage, secrets none"},
+	}
+	for _, tt := range tests {
+		if got := ShowSandboxRule(tt.rule); got != tt.want {
+			t.Fatalf("ShowSandboxRule(%v) = %q, want %q", tt.rule, got, tt.want)
+		}
+	}
+}

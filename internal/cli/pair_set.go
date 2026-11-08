@@ -97,6 +97,11 @@ stay linked.
 			if _, err := fmt.Fprintf(cfg.Out, "✓ updated %s\n", args[0]); err != nil {
 				return err
 			}
+			for _, h := range resp.Hints {
+				if _, err := fmt.Fprintf(cfg.Out, "! %s\n", h); err != nil {
+					return err
+				}
+			}
 			if resp.Code != nil {
 				if _, err := fmt.Fprintln(cfg.Out, "  its tokens were revoked; pair again with the new code:"); err != nil {
 					return err

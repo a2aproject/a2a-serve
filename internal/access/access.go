@@ -123,17 +123,28 @@ type Description struct {
 	// SandboxNotes are what the sandbox rules don't do, such as callers
 	// whose container gets no model key.
 	SandboxNotes []string
+	// AnonymousNote says that the agent can't reach its model for
+	// anonymous callers, who get no secrets, if it needs a key.
+	AnonymousNote string
 }
 
 // DescribeConfig is [Describe] of the settings of cfg, with what the agent
-// containers of callers get.
+// containers of callers get when sandbox rules or anonymous callers make
+// it differ between them.
 func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
 	a := Describe(cfg.Policy, net, n)
 	sp := SandboxPolicyOf(cfg)
 	anonymous := len(a.Anonymous) > 0
 	for _, l := range sp.SandboxLines(n.Owners, anonymous) {
-		a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
-		if note := ModelKeyNote(cfg, l); note != "" {
+		if len(cfg.Policy.Sandbox) > 0 || anonymous {
+			a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
+		}
+		note := ModelKeyNote(cfg, l)
+		switch {
+		case note == "":
+		case l.Anonymous:
+			a.AnonymousNote = note
+		default:
 			a.SandboxNotes = append(a.SandboxNotes, note)
 		}
 	}
@@ -143,29 +154,32 @@ func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description 
 	return a
 }
 
-// LocalSandboxNote says that sandbox rules need the Docker sandbox.
-const LocalSandboxNote = "the agent runs without the Docker sandbox, so sandbox rules don't apply: every caller's agent can read and change your files and read your secrets"
+// LocalSandboxNote says what sandbox rules don't do without the Docker
+// sandbox.
+const LocalSandboxNote = "the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets"
 
 // ModelKeyNote warns that the containers of the callers of l have no key
-// of the agent's model provider, so the agent can't answer them, or
-// returns "".
+// of the agent's model provider, so the agent can't reach its model for
+// them, and says how to give one, or returns "".
 func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
-	if cfg.Sandbox == agentdir.SandboxLocal {
-		return ""
-	}
 	var names []string
 	for _, g := range l.Sandbox.Secrets {
 		names = append(names, g.Name)
 	}
 	provider, key := harness.ModelKeyWithheld(cfg, names)
-	switch {
-	case provider == "":
+	if provider == "" {
 		return ""
-	case l.Anonymous:
-		return fmt.Sprintf("no key of model provider %s reaches %s, since they get no secrets, so the agent can't answer them", provider, l.Who)
 	}
-	who := l.Who
-	return fmt.Sprintf("no key of model provider %s reaches %s, so the agent can't answer them; a sandbox rule that gives them %s, or a key of their own with %s=secret:<STORED_KEY>, fixes it", provider, who, key, key)
+	lack := fmt.Sprintf("the agent containers of %s get no key of model provider %s, so the agent can't reach its model for them", l.Who, provider)
+	switch {
+	case l.Anonymous:
+		return "anonymous callers get no secrets, so the agent can't reach its model for them"
+	case l.Pairing != "":
+		return fmt.Sprintf("%s; give them one with `a2a-serve pair set %s --secrets %s`, or a key of their own with `--secrets %s=secret:<STORED_KEY>`", lack, l.Pairing, key, key)
+	case l.Other:
+		return fmt.Sprintf("%s; give them one with `a2a-serve config set --caller-secrets %s`, or a key of their own with `--caller-secrets %s=secret:<STORED_KEY>`", lack, key, key)
+	}
+	return fmt.Sprintf("%s; give them %s, or a key of their own with %s=secret:<STORED_KEY>, in their rule with `a2a-serve config edit`", lack, key, key)
 }
 
 // Describe says who may call an agent with the settings p on the networks
