@@ -44,7 +44,7 @@ the user you are talking to: a reminder, or a recurring check. Each run sends
 you the prompt as a new message, and your answer reaches the user in their
 chat. Send one command per message:
 
-    a2a send -a http://a2a/k3/schedules 'add report-reminder --at "2026-11-06 17:00" --tz Europe/Zurich --prompt "Remind the user to send the weekly report."'
+    a2a send -a http://a2a/k3/schedules 'add report-reminder --at "2030-11-06 17:00" --tz Europe/Zurich --prompt "Remind the user to send the weekly report."'
     a2a send -a http://a2a/k3/schedules 'add standup --cron "0 9 * * 1-5" --tz Europe/Zurich --prompt "List the PRs waiting for review."'
     a2a send -a http://a2a/k3/schedules list
     a2a send -a http://a2a/k3/schedules 'rm standup'

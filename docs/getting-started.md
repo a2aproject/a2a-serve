@@ -55,7 +55,7 @@ a2a send -a "$(a2a-serve status --url=local)" "Write the output of 'uname -sr' t
 The agent stops and asks first. Approve it with the task ID from the output:
 
 ```bash
-a2a send -a "$(a2a-serve status --url=local)" --task-id <task-id> approve
+a2a send -a "$(a2a-serve status --url=local)" --task-id <task-id> once
 ```
 
 ## Take it with you

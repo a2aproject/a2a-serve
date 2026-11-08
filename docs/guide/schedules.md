@@ -6,7 +6,7 @@ A schedule runs a prompt at set times: a weekday briefing, triage every two hour
 a2a-serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
   --prompt "Summarize today's meetings." --chat telegram:owner
 a2a-serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
-a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
+a2a-serve schedule add report --at "2030-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
 a2a-serve schedule list
 a2a-serve schedule run morning-brief   # run it now
 a2a-serve schedule rm morning-brief

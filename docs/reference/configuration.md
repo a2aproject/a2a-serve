@@ -14,6 +14,7 @@ workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace
 model: openrouter/~google/gemini-flash-latest  # optional: the agent's own model id
 secrets: [OPENROUTER_API_KEY]    # passed to the agent as environment variables
+env: [LOG_LEVEL=debug]           # extra NAME=value environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
   private: tailscale
