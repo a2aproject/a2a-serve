@@ -38,6 +38,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv/limiter"
 
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
@@ -510,14 +511,14 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Chain:   s.chain,
 			Timings: s.timings.agentproxy(),
 		})
-		return withLimitedHistory(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}},
+		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}},
 			a2asrv.WithTaskStore(s.tasks),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),
-		))))
+		))), a2alimit.Default())
 	})
 	s.schedules = schedules.New(ctx, schedules.Deps{
 		Store:      s.store,

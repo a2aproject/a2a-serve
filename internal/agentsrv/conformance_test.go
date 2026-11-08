@@ -455,11 +455,15 @@ func TestConformanceHistoryLength(t *testing.T) {
 	tests := []struct {
 		name     string
 		wantFull int
-		call     func(t *testing.T, c *a2aclient.Client, length *int) (got, full []string)
+		// noneUnset is set for the methods that return no history unless
+		// the request asks for it.
+		noneUnset bool
+		call      func(t *testing.T, c *a2aclient.Client, length *int) (got, full []string)
 	}{
 		{
-			name:     "SendMessage",
-			wantFull: answered,
+			name:      "SendMessage",
+			wantFull:  answered,
+			noneUnset: true,
 			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
 				task := send(t, c, userText("ask", "", ""))
 				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{
@@ -473,8 +477,9 @@ func TestConformanceHistoryLength(t *testing.T) {
 			},
 		},
 		{
-			name:     "SendMessage returning immediately",
-			wantFull: 1,
+			name:      "SendMessage returning immediately",
+			wantFull:  1,
+			noneUnset: true,
 			call: func(t *testing.T, c *a2aclient.Client, length *int) ([]string, []string) {
 				res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{
 					Message: userText("ask", "", ""),
@@ -544,7 +549,11 @@ func TestConformanceHistoryLength(t *testing.T) {
 					if len(full) != tc.wantFull {
 						t.Fatalf("%s whole history = %d messages, want %d", tc.name, len(full), tc.wantFull)
 					}
-					want := full[len(full)-l.keep(len(full)):]
+					keep := l.keep(len(full))
+					if tc.noneUnset && l.length == nil {
+						keep = 0
+					}
+					want := full[len(full)-keep:]
 					if diff := cmp.Diff(want, got); diff != "" {
 						t.Fatalf("%s history wrong result (-want +got) diff = %s", tc.name, diff)
 					}

@@ -20,61 +20,10 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
-	"github.com/a2aproject/a2a-go/v2/a2asrv"
-	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
-
-type historyHandler struct {
-	a2asrv.RequestHandler
-	result a2a.SendMessageResult
-}
-
-func (f *historyHandler) SendMessage(context.Context, *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
-	return f.result, nil
-}
-
-func TestLimitedHistory(t *testing.T) {
-	t.Parallel()
-	msg := func(id string) *a2a.Message { return &a2a.Message{ID: id, Role: a2a.MessageRoleUser} }
-	length := func(n int) *a2a.SendMessageConfig { return &a2a.SendMessageConfig{HistoryLength: &n} }
-	tests := []struct {
-		name   string
-		config *a2a.SendMessageConfig
-		want   []string
-	}{
-		{name: "no config", want: []string{"m1", "m2", "m3"}},
-		{name: "no length", config: &a2a.SendMessageConfig{}, want: []string{"m1", "m2", "m3"}},
-		{name: "zero", config: length(0), want: []string{}},
-		{name: "last two", config: length(2), want: []string{"m2", "m3"}},
-		{name: "more than there are", config: length(5), want: []string{"m1", "m2", "m3"}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			stored := &a2a.Task{ID: "t1", History: []*a2a.Message{msg("m1"), msg("m2"), msg("m3")}}
-			h := withLimitedHistory(&historyHandler{result: stored})
-
-			res, err := h.SendMessage(t.Context(), &a2a.SendMessageRequest{Message: msg("m4"), Config: tt.config})
-			if err != nil {
-				t.Fatalf("withLimitedHistory().SendMessage() error = %v", err)
-			}
-
-			got := []string{}
-			for _, m := range res.(*a2a.Task).History {
-				got = append(got, m.ID)
-			}
-			if diff := cmp.Diff(tt.want, got); diff != "" {
-				t.Fatalf("withLimitedHistory().SendMessage() wrong result (-want +got) diff = %s", diff)
-			}
-			if len(stored.History) != 3 {
-				t.Fatalf("withLimitedHistory().SendMessage() changed the handler's task history to %d messages, want 3", len(stored.History))
-			}
-		})
-	}
-}
 
 func TestRejectedToolCallShowsAsRejectedInHistory(t *testing.T) {
 	t.Parallel()
