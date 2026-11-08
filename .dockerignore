@@ -1,0 +1,4 @@
+.git
+site/.out
+site/.build
+**/node_modules

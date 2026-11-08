@@ -33,11 +33,24 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/egress"
 )
 
-// OpenEgress opens the egress socket of a container: a Unix socket alone
-// in its directory, whose connections the server decides by destination.
-// close stops it and closes its connections.
-// Connections to host.docker.internal reach what hostGateway returns.
-type OpenEgress func(hostGateway HostGatewayFunc) (socket string, close func() error, err error)
+// OpenEgress opens the boundary of a container, which decides its
+// connections by destination. Connections to host.docker.internal reach
+// what hostGateway returns. With relay, a relay container reaches the
+// boundary on the container's behalf.
+type OpenEgress func(hostGateway HostGatewayFunc, relay bool) (EgressEndpoint, error)
+
+// EgressEndpoint is where a container's connections reach its boundary.
+type EgressEndpoint struct {
+	// Socket is the host path of the egress socket, alone in its
+	// directory, which the container mounts. It is empty with a relay.
+	Socket string
+	// RelayAddr is the tcp:// or unix:// address a relay connects to, and
+	// RelayKey the key it sends. RelayMount is the host directory of a
+	// unix:// address, which the relay mounts at /run/a2a-relay.
+	RelayAddr, RelayKey, RelayMount string
+	// Close stops the boundary and closes its connections.
+	Close func() error
+}
 
 // UnrestrictedEffect says what a sandbox without the egress boundary reaches.
 const UnrestrictedEffect = "the agent reaches every network this machine reaches, the LAN and the tailnet included"
@@ -110,19 +123,21 @@ type EgressEnv struct {
 	// ImageArch is the CPU architecture of the agent's image, or "" when
 	// it isn't known.
 	ImageArch string
+	// ForceRelay gives Linux containers a relay as with Docker Desktop.
+	ForceRelay bool
 }
 
 // HostEgressEnv returns the environment of this process, with an image
 // of unknown architecture.
 func HostEgressEnv() EgressEnv {
-	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN}
+	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN, ForceRelay: os.Getenv(EnvForceRelay) == "1"}
 }
 
 // EgressDecision is whether an agent's containers get the egress boundary.
 type EgressDecision struct {
 	// Boundary is set when the containers' connections go through the
-	// server.
-	Boundary bool
+	// server, and Relay when a relay container next to each forwards them.
+	Boundary, Relay bool
 	// Problem is why they don't although the config asks for it, or "".
 	Problem string
 	// Warning is what the user should know, or "".
@@ -142,6 +157,13 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 	if cfg.Egress.Mode == egress.ModeUnrestricted {
 		return EgressDecision{}
 	}
+	if env.GOOS != "linux" || env.ForceRelay {
+		d := EgressDecision{Boundary: true, Relay: true}
+		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 {
+			d.Warning = noAllowlistRules
+		}
+		return d
+	}
 	problem := egressProblem(env)
 	switch {
 	case problem != "" && cfg.Egress.Mode == egress.ModeAllowlist:
@@ -149,16 +171,17 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 	case problem != "":
 		return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
 	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0:
-		return EgressDecision{Boundary: true, Warning: "--egress allowlist with no --egress-allow rules: the agent can't reach its model provider"}
+		return EgressDecision{Boundary: true, Warning: noAllowlistRules}
 	}
 	return EgressDecision{Boundary: true}
 }
 
-// egressProblem returns why the boundary can't apply in env, or "".
+// noAllowlistRules warns about an allowlist that allows nothing.
+const noAllowlistRules = "--egress allowlist with no --egress-allow rules: the agent can't reach its model provider"
+
+// egressProblem returns why the socket of the boundary can't be mounted
+// into the containers in env, or "".
 func egressProblem(env EgressEnv) string {
-	if env.GOOS != "linux" {
-		return "with Docker Desktop, the sandbox can't connect to the server"
-	}
 	if _, err := env.Launcher(); err != nil {
 		return err.Error()
 	}

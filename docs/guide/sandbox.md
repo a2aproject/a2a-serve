@@ -21,7 +21,7 @@ When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `
 
 ## Network
 
-On Linux, with Docker or rootless Docker, every connection the agent opens goes through the server. With Docker Desktop, the sandbox keeps Docker's own network ([where it applies](#where-it-applies)). By default:
+In Docker, every connection the agent opens goes through the server ([where it applies](#where-it-applies)). By default:
 
 - The agent reaches the public internet.
 - Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through a route other than its default route, such as a VPN or a bridge.
@@ -107,10 +107,11 @@ Allowed connections are logged too when the server runs with `a2a-serve start --
 
 ### Where it applies
 
-The server routes the sandbox's connections on Linux, with Docker or rootless Docker, and an a2a-serve built without cgo, as the releases are. Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. This happens:
+The server routes the sandbox's connections with Docker, rootless Docker and Docker Desktop.
 
-- with Docker Desktop, where the sandbox can't connect to the server;
-- with an a2a-serve built with cgo;
-- with an image for a CPU architecture other than a2a-serve's.
+- On Linux, the container gets the socket of its connections and runs the server's binary to set up its network. This needs an a2a-serve built without cgo, as the releases are, an image for the same CPU architecture, and the `tun` kernel module.
+- With Docker Desktop, which can't mount the server's sockets, a relay container runs next to each agent's container and forwards its connections to the server. Its image is `ghcr.io/a2aproject/a2a-serve`, with the version of your a2a-serve. When the pull fails, the server builds the image from the a2a-serve repository at that version, which takes a few minutes the first time. `A2A_SERVE_SANDBOX_IMAGE` names an image of your own, such as one built from a work tree with `docker build -f internal/sandboxnet/Dockerfile .`.
+
+Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. With `--egress allowlist`, the agent doesn't start.
 
 `--sandbox local` has no egress rules. The agent reaches every network you reach.

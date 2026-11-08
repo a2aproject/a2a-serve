@@ -16,8 +16,11 @@ package agentsrv
 
 import (
 	"cmp"
+	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"os"
 	"path/filepath"
 	"sync"
@@ -45,32 +48,113 @@ type egressSockets struct {
 	// boundary.
 	mode, problem string
 	prepared      bool
+	// relays takes the connections of relay containers, which reach it at
+	// relayAddr, mounting relayMount on Linux.
+	relays                *sandboxnet.RelayServer
+	relayAddr, relayMount string
 }
 
 func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets {
 	return &egressSockets{dir: dir, config: config, blocks: &sandboxnet.Blocks{}}
 }
 
-// opener returns the function that opens the egress socket of the
-// container named sandbox, which keeps mode until it restarts. Changes of
-// the allow rules apply to its next connection.
+// opener returns the function that opens the boundary of the container
+// named sandbox, which keeps mode until it restarts. Changes of the allow
+// rules apply to its next connection.
 func (e *egressSockets) opener(sandbox, mode string) harness.OpenEgress {
-	return func(gateway harness.HostGatewayFunc) (string, func() error, error) {
+	return func(gateway harness.HostGatewayFunc, relay bool) (harness.EgressEndpoint, error) {
+		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode) }, HostGateway: gateway, Blocks: e.blocks}
+		if relay {
+			return e.openRelayed(cfg)
+		}
 		if err := fsutil.MkdirPrivate(e.dir); err != nil {
-			return "", nil, err
+			return harness.EgressEndpoint{}, err
 		}
 		dir := filepath.Join(e.dir, cryptoutil.RandomString(agentdir.HarnessSocketIDLen, handleAlphabet))
 		if err := os.Mkdir(dir, 0o700); err != nil {
-			return "", nil, err
+			return harness.EgressEndpoint{}, err
 		}
 		sock := filepath.Join(dir, sandboxnet.SocketName)
-		policy := func() egress.Policy { return e.policy(mode) }
-		b, err := sandboxnet.Listen(sock, sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: policy, HostGateway: gateway, Blocks: e.blocks})
+		b, err := sandboxnet.Listen(sock, cfg)
 		if err != nil {
-			return "", nil, errors.Join(err, os.RemoveAll(dir))
+			return harness.EgressEndpoint{}, errors.Join(err, os.RemoveAll(dir))
 		}
-		return sock, func() error { return errors.Join(b.Close(), os.RemoveAll(dir)) }, nil
+		return harness.EgressEndpoint{Socket: sock, Close: func() error { return errors.Join(b.Close(), os.RemoveAll(dir)) }}, nil
 	}
+}
+
+// openRelayed opens a boundary that a relay container reaches through the
+// server's relay listener, with a key of its own.
+func (e *egressSockets) openRelayed(cfg sandboxnet.BoundaryConfig) (harness.EgressEndpoint, error) {
+	relays, addr, mount, err := e.relayListener()
+	if err != nil {
+		return harness.EgressEndpoint{}, err
+	}
+	b, err := sandboxnet.New(cfg)
+	if err != nil {
+		return harness.EgressEndpoint{}, err
+	}
+	key, unregister, err := relays.Register(b)
+	if err != nil {
+		return harness.EgressEndpoint{}, errors.Join(err, b.Close())
+	}
+	return harness.EgressEndpoint{RelayAddr: addr, RelayKey: key, RelayMount: mount, Close: func() error {
+		unregister()
+		return b.Close()
+	}}, nil
+}
+
+// relayListener returns the server's listener for relay containers,
+// listening on the first call. With Docker Desktop it is a TCP port on
+// the host's loopback, which containers reach at host.docker.internal. On
+// Linux, where containers can't reach the host's loopback, it is a socket
+// that relays mount.
+func (e *egressSockets) relayListener() (relays *sandboxnet.RelayServer, addr, mount string, err error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.relays != nil {
+		return e.relays, e.relayAddr, e.relayMount, nil
+	}
+	var ln net.Listener
+	if bind, dial, tcp := harness.TCPBridge(harness.SandboxDocker); tcp {
+		if ln, err = net.Listen("tcp", net.JoinHostPort(bind, "0")); err != nil {
+			return nil, "", "", fmt.Errorf("listening for relay containers: %w", err)
+		}
+		_, port, err := net.SplitHostPort(ln.Addr().String())
+		if err != nil {
+			return nil, "", "", errors.Join(err, ln.Close())
+		}
+		addr = "tcp://" + net.JoinHostPort(dial, port)
+	} else {
+		mount = filepath.Join(e.dir, "relay")
+		if err := fsutil.MkdirPrivate(e.dir); err != nil {
+			return nil, "", "", err
+		}
+		if err := fsutil.MkdirPrivate(mount); err != nil {
+			return nil, "", "", err
+		}
+		if ln, err = net.Listen("unix", filepath.Join(mount, relaySocketName)); err != nil {
+			return nil, "", "", fmt.Errorf("listening for relay containers: %w", err)
+		}
+		addr = "unix://" + harness.RelayEgressDir + "/" + relaySocketName
+	}
+	e.relays, e.relayAddr, e.relayMount = sandboxnet.ServeRelays(ln), addr, mount
+	return e.relays, addr, mount, nil
+}
+
+// relaySocketName is the name of the socket of the relay listener on Linux.
+const relaySocketName = "relay.sock"
+
+// close stops the relay listener.
+func (e *egressSockets) close(context.Context) error {
+	e.mu.Lock()
+	relays := e.relays
+	e.relays = nil
+	e.mu.Unlock()
+	if relays == nil {
+		return nil
+	}
+	return relays.Close()
 }
 
 // policy returns the policy of mode with the allow rules of the current

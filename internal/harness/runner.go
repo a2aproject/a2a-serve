@@ -91,10 +91,12 @@ var _ Runner = (*DockerRunner)(nil)
 
 // DockerEgress gives a container no network but the egress socket.
 type DockerEgress struct {
-	// Socket is the host path of the egress socket, alone in its directory.
-	Socket string
-	// Launcher is the host path of the binary run as PID 1.
-	Launcher string
+	// Socket is the host path of the egress socket, alone in its directory,
+	// and Launcher the host path of the binary run as PID 1.
+	Socket, Launcher string
+	// Relay is the name of the relay container whose volumes have the
+	// egress socket and the launcher, in place of Socket and Launcher.
+	Relay string
 	// Entrypoint is the image's entrypoint, which the launcher replaces.
 	Entrypoint []string
 }
@@ -185,10 +187,16 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 			"--cap-drop", "ALL",
 			"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
 			"--network", "none", "--device", "/dev/net/tun",
-			"--entrypoint", sandboxnet.ContainerLauncher,
-			"-v", r.Egress.Launcher+":"+sandboxnet.ContainerLauncher+":ro",
-			"-v", filepath.Dir(r.Egress.Socket)+":"+sandboxnet.ContainerSocketDir+":ro",
 		)
+		if r.Egress.Relay != "" {
+			args = append(args, "--entrypoint", sandboxnet.RelayLauncher, "--volumes-from", r.Egress.Relay+":ro")
+		} else {
+			args = append(args,
+				"--entrypoint", sandboxnet.ContainerLauncher,
+				"-v", r.Egress.Launcher+":"+sandboxnet.ContainerLauncher+":ro",
+				"-v", filepath.Dir(r.Egress.Socket)+":"+sandboxnet.ContainerSocketDir+":ro",
+			)
+		}
 	}
 	args = append(args,
 		"--security-opt", "no-new-privileges",
@@ -319,7 +327,8 @@ func pruneContainers(ctx context.Context, labels map[string]string, timeout time
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	rm, err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f"}, ids...)...).CombinedOutput()
+	// -v removes the volumes of relay containers.
+	rm, err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f", "-v"}, ids...)...).CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("docker rm -f: %w: %s", err, bytes.TrimSpace(rm))
 	}

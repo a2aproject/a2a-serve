@@ -118,8 +118,9 @@ type Boundary struct {
 	wg     sync.WaitGroup
 }
 
-// Listen serves the boundary on a Unix socket at path.
-func Listen(path string, cfg BoundaryConfig) (*Boundary, error) {
+// New returns a boundary that serves the connections given to
+// [Boundary.ServeConn].
+func New(cfg BoundaryConfig) (*Boundary, error) {
 	if cfg.Policy == nil {
 		return nil, errors.New("the boundary needs a policy")
 	}
@@ -134,19 +135,28 @@ func Listen(path string, cfg BoundaryConfig) (*Boundary, error) {
 	if cfg.Log == nil {
 		cfg.Log = slog.Default()
 	}
-	ln, err := net.Listen("unix", path)
-	if err != nil {
-		return nil, fmt.Errorf("listening for the sandbox's connections on %s: %w", path, err)
-	}
 	b := &Boundary{
 		cfg:     cfg,
-		ln:      ln,
 		slots:   make(chan struct{}, cfg.MaxTunnels),
 		limiter: rate.NewLimiter(tunnelRate, tunnelBurst),
 		log:     &decisionLog{log: cfg.Log, sandbox: cfg.Sandbox},
 		conns:   map[net.Conn]struct{}{},
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
+	return b, nil
+}
+
+// Listen serves a new boundary on a Unix socket at path.
+func Listen(path string, cfg BoundaryConfig) (*Boundary, error) {
+	b, err := New(cfg)
+	if err != nil {
+		return nil, err
+	}
+	ln, err := net.Listen("unix", path)
+	if err != nil {
+		return nil, fmt.Errorf("listening for the sandbox's connections on %s: %w", path, err)
+	}
+	b.ln = ln
 	b.wg.Go(b.serve)
 	return b, nil
 }
@@ -156,7 +166,10 @@ func (b *Boundary) Close() error {
 	b.cancel()
 	b.mu.Lock()
 	b.closed = true
-	err := b.ln.Close()
+	var err error
+	if b.ln != nil {
+		err = b.ln.Close()
+	}
 	for c := range b.conns {
 		if cerr := c.Close(); cerr != nil && !errors.Is(cerr, net.ErrClosed) {
 			err = errors.Join(err, cerr)
@@ -180,29 +193,43 @@ func (b *Boundary) serve() {
 			}
 			return
 		}
-		select {
-		case b.slots <- struct{}{}:
-		default:
-			// The refusal comes before the head, as the wire profile
-			// says, so a guest that writes first may see a reset.
-			b.log.write(slog.LevelWarn, "egress blocked", "reason", "busy")
-			writeRefusal(c, refuse(503, "busy"))
-			closeConn(c)
-			continue
-		}
-		if !b.track(c) {
-			<-b.slots
-			closeConn(c)
-			return
-		}
-		b.wg.Go(func() {
-			defer func() {
-				b.untrack(c)
-				<-b.slots
-			}()
-			b.handle(c)
-		})
+		b.ServeConn(c)
 	}
+}
+
+// ServeConn serves the requests of one connection of the container, and
+// closes it.
+func (b *Boundary) ServeConn(c net.Conn) {
+	select {
+	case b.slots <- struct{}{}:
+	default:
+		// The refusal comes before the head, as the wire profile says, so
+		// a guest that writes first may see a reset.
+		b.log.write(slog.LevelWarn, "egress blocked", "reason", "busy")
+		writeRefusal(c, refuse(503, "busy"))
+		closeConn(c)
+		return
+	}
+	// The wait group grows under the lock that Close takes first, so that
+	// Close waits for every connection it didn't refuse.
+	b.mu.Lock()
+	if b.closed {
+		b.mu.Unlock()
+		<-b.slots
+		closeConn(c)
+		return
+	}
+	b.conns[c] = struct{}{}
+	b.wg.Add(1)
+	b.mu.Unlock()
+	go func() {
+		defer b.wg.Done()
+		defer func() {
+			b.untrack(c)
+			<-b.slots
+		}()
+		b.handle(c)
+	}()
 }
 
 func (b *Boundary) track(c net.Conn) bool {

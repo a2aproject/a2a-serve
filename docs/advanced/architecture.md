@@ -21,7 +21,7 @@ a2a-serve turns a coding agent that speaks the [Agent Client Protocol](https://a
 | Executor | Keeps one ACP session per conversation, and turns ACP updates into A2A task updates and approval requests. Each authenticated user's conversations run in an agent process of their own, and anonymous conversations share one more. |
 | Approvals | Decide who may answer a question, and deliver the answer to the task. |
 | Sandbox | Runs the agent in Docker, or on the host with `--sandbox local`. |
-| Egress boundary | Gives each container its only network path, and decides each connection by its destination. |
+| Egress boundary | Gives each container its only network path, and decides each connection by its destination. With Docker Desktop, a relay container next to each agent's container forwards its connections. |
 | Agents proxy | Lets the agent call contacts and webhook nodes, and relays their approvals and late results. |
 | Webhook nodes | Hold the tasks of agents that run only when woken, and wake them with signed POSTs. |
 | Schedules | Run prompts at set times as new turns in a conversation. |

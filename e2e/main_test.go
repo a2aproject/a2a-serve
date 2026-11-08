@@ -91,6 +91,12 @@ func run(m *testing.M) int {
 			return 1
 		}
 	}
+	if os.Getenv(harness.EnvForceRelay) == "1" {
+		if err := buildRelayImage(); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e:", err)
+			return 1
+		}
+	}
 	if harnessName != "" {
 		if err := prepareHarness(dir); err != nil {
 			fmt.Fprintln(os.Stderr, "e2e:", err)
@@ -141,6 +147,27 @@ func buildImage(dir string) error {
 		return fmt.Errorf("docker context inspect: %w", err)
 	}
 	dockerHost = strings.TrimSpace(string(out))
+	return nil
+}
+
+// relayImage is the relay image the agents' containers get with
+// A2A_SERVE_SANDBOX_RELAY=1, which runs the e2e tests through the relay
+// containers of Docker Desktop.
+var relayImage string
+
+// buildRelayImage builds the relay image from the work tree.
+func buildRelayImage() error {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		return err
+	}
+	const image = "a2a-e2e-relay:latest"
+	build := exec.Command("docker", "build", "-t", image, "-f", "internal/sandboxnet/Dockerfile", ".")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker build of the relay image: %w\n%s", err, out)
+	}
+	relayImage = image
 	return nil
 }
 

@@ -358,6 +358,7 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 		spec.Socket = ep.socket
 		return nil
 	}
+	spec.BridgeAddr = strings.TrimPrefix(s.harness.url, "http://")
 	env, err := writeHarnessHelper(spec.Home, s.harness.dial, ep.key)
 	if err != nil {
 		return fmt.Errorf("saving the agent key: %w", err)

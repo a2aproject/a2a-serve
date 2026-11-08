@@ -46,6 +46,12 @@ func TestDockerSandboxEgress(t *testing.T) {
 	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
 		t.Fatalf("a2a send dial %s = %q, want the public host reached", publicTarget(), got)
 	}
+	if relayImage != "" {
+		out, err := exec.Command("docker", "ps", "-q", "--filter", "label=a2a.dir="+coder.dir, "--filter", "label=a2a.relay").Output()
+		if err != nil || len(bytes.TrimSpace(out)) == 0 {
+			t.Fatalf("docker ps of the relay container = %q, %v, want it running", out, err)
+		}
+	}
 
 	port := hostListener(t)
 	targets := []string{"192.168.255.1:80", "10.255.255.1:22", "169.254.169.254:80", "100.100.100.100:80"}
