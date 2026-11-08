@@ -96,8 +96,8 @@ a2a-serve recipe --dry-run
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--caller-secrets names` |  | Secrets the agent containers of other callers, anonymous ones included, get: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers) (repeatable; commas also separate values) |
-| `--caller-storage string` |  | What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers) |
+| `--anonymous-secrets names` |  | Secrets the agent container of anonymous callers gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
+| `--anonymous-storage string` |  | What the agent container of anonymous callers gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |

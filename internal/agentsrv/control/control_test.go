@@ -128,7 +128,7 @@ func TestHandler(t *testing.T) {
 			name:   "reload config",
 			deps:   Deps{ReloadConfig: func(context.Context) error { return nil }},
 			method: http.MethodPost, path: "/config/reload", wantStatus: http.StatusOK,
-			want: map[string]any{"applied": []any{"description", "card-skills", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "caller-storage", "caller-secrets", "sandbox-rules", "allow-tools", "deny-tools", "disable-mcp", "owner-chat", "contact-refresh"}},
+			want: map[string]any{"applied": []any{"description", "card-skills", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "anonymous-storage", "anonymous-secrets", "sandbox-rules", "allow-tools", "deny-tools", "disable-mcp", "owner-chat", "contact-refresh"}},
 		},
 		{
 			name:   "reload config error",

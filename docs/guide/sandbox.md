@@ -25,7 +25,7 @@ Each caller's conversations run in an agent container. You and your owner pairin
 - your container and the containers of pairings, members of the private network and `--allow-email` sign-ins get the shared workspace and every `--secret` value;
 - the container of anonymous callers gets a read-only workspace and no secrets.
 
-Sandbox rules set what chosen callers get in place of these defaults, such as a read-only workspace, or a key of their own for anonymous callers. "Other callers" in commands and output are the callers who aren't owners and whom no more specific rule matches.
+Sandbox rules set what chosen callers get in place of these defaults, such as a read-only workspace for a pairing, or a key of their own for anonymous callers. "Other callers" in the output are the callers who aren't owners or anonymous and whom no rule matches; they get the default.
 
 `a2a-serve status` shows what each kind of caller gets:
 
@@ -55,22 +55,22 @@ a2a-serve pair invite ben --storage read-only --secrets none
 a2a-serve pair set ben --storage own --secrets ANTHROPIC_API_KEY
 ```
 
-`pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule. A part the rule leaves out comes from a broader rule that matches the pairing, such as the rule of other callers, or from the default. A pairing that becomes an owner loses its rule. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
+`pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule. A part the rule leaves out comes from a broader rule that matches the pairing, such as a rule of `private`, or from the default. A pairing that becomes an owner loses its rule. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
 
-### Give callers a separate model key
+### Give anonymous callers a key of their own
 
-A caller can read a key their container gets, so give callers a key of their own that you can revoke. Store it as a secret, and pass it to the agent under the name it expects:
+Anonymous callers get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so. A caller can read a key their container gets, so give them a key of their own that you can revoke. Store it as a secret, and pass it to the agent under the name it expects:
 
 ```sh
 a2a-serve config set --secret GUEST_ANTHROPIC_KEY
-a2a-serve config set --caller-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY
+a2a-serve config set --anonymous-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY
 ```
 
-The agent sees `ANTHROPIC_API_KEY` in the containers of other callers, anonymous callers included, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your own container and the pairings with rules of their own keep theirs. `--caller-secrets` replaces the list each time, and `config unset caller-secrets` resets it. Without such a rule, anonymous callers get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so.
+The agent sees `ANTHROPIC_API_KEY` in the container of anonymous callers, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the containers of other callers keep theirs. `--anonymous-secrets` replaces the list each time, and `config unset anonymous-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`.
 
 ### Rules for several callers
 
-`--caller-storage` and `--caller-secrets` set the rule for other callers, `anyone` in `config.yaml`, and `pair` sets the rule of one pairing. Write the rest, such as a rule for a whole email domain, in `a2a-serve config edit`, in the `policy.sandbox` list that the [configuration reference](../reference/configuration.md#sandbox-rules) describes. `a2a-serve config unset sandbox-rules` removes every rule except the one for other callers, including the rules of pairings and of `self`.
+`--anonymous-storage` and `--anonymous-secrets` set the rule of anonymous callers, `anyone` in `config.yaml`, and `pair` sets the rule of one pairing. Write the rest, such as a rule for a whole email domain, in `a2a-serve config edit`, in the `policy.sandbox` list that the [configuration reference](../reference/configuration.md#sandbox-rules) describes. `a2a-serve config unset sandbox-rules` removes every rule except the one of anonymous callers, including the rules of pairings and of `self`.
 
 ### Storage modes
 

@@ -464,24 +464,24 @@ var fields = []field{
 	},
 	{
 		access: access{
-			get: func(c *Config) []string { return nonEmpty(callerRule(c).Storage) },
-			put: func(c *Config, v []string) { setCallerRule(c, func(r *SandboxRule) { r.Storage = first(v) }) },
-			arg: func(s *Settings) any { return &s.CallerStorage },
+			get: func(c *Config) []string { return nonEmpty(anonymousRule(c).Storage) },
+			put: func(c *Config, v []string) { setAnonymousRule(c, func(r *SandboxRule) { r.Storage = first(v) }) },
+			arg: func(s *Settings) any { return &s.AnonymousStorage },
 		},
-		flag: "caller-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers)",
+		flag: "anonymous-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "What the agent container of anonymous callers gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only)",
 		values: StorageModes,
 	},
 	{
 		access: access{
 			list: true,
-			get:  func(c *Config) []string { return callerRule(c).Secrets },
-			put:  func(c *Config, v []string) { setCallerRule(c, func(r *SandboxRule) { r.Secrets = v }) },
-			arg:  func(s *Settings) any { return &s.CallerSecrets },
+			get:  func(c *Config) []string { return anonymousRule(c).Secrets },
+			put:  func(c *Config, v []string) { setAnonymousRule(c, func(r *SandboxRule) { r.Secrets = v }) },
+			arg:  func(s *Settings) any { return &s.AnonymousSecrets },
 		},
-		flag: "caller-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
-		key: secretGrantKey, merge: mergeCallerSecrets,
-		usage: "Secrets the agent containers of other callers, anonymous ones included, get: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers)",
+		flag: "anonymous-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
+		key: secretGrantKey, merge: mergeAnonymousSecrets,
+		usage: "Secrets the agent container of anonymous callers gets: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none)",
 	},
 	{
 		access: sandboxRules(),
@@ -1022,7 +1022,7 @@ func CopyLive(dst, src *Config) {
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "caller-storage", "caller-secrets", SandboxSetting}, setting)
+	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "anonymous-storage", "anonymous-secrets", SandboxSetting}, setting)
 }
 
 // label names the flag of f in errors.

@@ -133,7 +133,7 @@ const (
 //   - anonymous callers share one container, which the rule of anyone sets;
 //   - every other caller gets a container of their own, which the most
 //     specific rule that matches them sets: pairing:<name>, then
-//     email:<address>, then email:*@<domain>, then private, then anyone.
+//     email:<address>, then email:*@<domain>, then private.
 //     Between rules of the same specificity, the first one wins.
 //
 // A rule sets what the callers it matches get. What no matching rule sets
@@ -257,7 +257,7 @@ func matchRank(m string, p auth.Principal) int {
 	id := p.Identity
 	switch m {
 	case agentdir.MatchAnyone:
-		return rankAnyone
+		return 0
 	case auth.MemberPrivate:
 		if id.Network == network.ListenerPrivate {
 			return rankPrivate
@@ -360,22 +360,21 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 		if len(who) == 0 {
 			continue
 		}
-		line := SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.apply(other, sp.withFallback(r))}
+		line := SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.apply(other, r)}
 		if len(r.Match) == 1 {
 			line.Pairing, _ = strings.CutPrefix(r.Match[0], agentdir.MatchPairingPrefix)
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAuthenticated}), Other: true})
+	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: other})
 	if anonymous {
 		lines = append(lines, SandboxLine{Who: AnonymousCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
 	}
 	return lines
 }
 
-// OtherCallers names the callers who aren't owners and whom no more
-// specific rule matches: the rule of anyone, which --caller-storage and
-// --caller-secrets set, applies to them.
+// OtherCallers names the callers who aren't owners or anonymous and whom
+// no rule matches, who get the default.
 const OtherCallers = "other callers"
 
 // AnonymousCallers names the anonymous callers in the lines.
@@ -385,29 +384,10 @@ const AnonymousCallers = "anonymous callers"
 type SandboxLine struct {
 	Who     string
 	Sandbox Sandbox
-	// Pairing names the pairing of a rule of one pairing. Other is set for
-	// other callers, and Anonymous for anonymous callers, whom no rule
-	// gives secrets.
+	// Pairing names the pairing of a rule of one pairing, and Anonymous is
+	// set for anonymous callers.
 	Pairing   string
-	Other     bool
 	Anonymous bool
-}
-
-// withFallback fills the parts r leaves out from the rule of anyone, the
-// rule every caller who isn't an owner falls back to.
-func (sp SandboxPolicy) withFallback(r agentdir.SandboxRule) agentdir.SandboxRule {
-	for _, o := range sp.Rules {
-		if !slices.Contains(o.Match, agentdir.MatchAnyone) {
-			continue
-		}
-		if r.Storage == "" {
-			r.Storage = o.Storage
-		}
-		if len(r.Secrets) == 0 {
-			r.Secrets = o.Secrets
-		}
-	}
-	return r
 }
 
 func describeMatcher(m string) string {

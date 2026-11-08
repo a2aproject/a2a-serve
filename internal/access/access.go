@@ -173,11 +173,9 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 	lack := fmt.Sprintf("the agent containers of %s get no key of model provider %s, so the agent can't reach its model for them", l.Who, provider)
 	switch {
 	case l.Anonymous:
-		return fmt.Sprintf("%s; give them one with `a2a-serve config set --caller-secrets %s=secret:<STORED_KEY>`, which also sets the secrets of other callers", lack, key)
+		return fmt.Sprintf("%s; give them a key of their own with `a2a-serve config set --anonymous-secrets %s=secret:<STORED_KEY>`", lack, key)
 	case l.Pairing != "":
 		return fmt.Sprintf("%s; give them one with `a2a-serve pair set %s --secrets %s`, or a key of their own with `--secrets %s=secret:<STORED_KEY>`", lack, l.Pairing, key, key)
-	case l.Other:
-		return fmt.Sprintf("%s; give them one with `a2a-serve config set --caller-secrets %s`, or a key of their own with `--caller-secrets %s=secret:<STORED_KEY>`", lack, key, key)
 	}
 	return fmt.Sprintf("%s; give them %s, or a key of their own with %s=secret:<STORED_KEY>, in their rule with `a2a-serve config edit`", lack, key, key)
 }

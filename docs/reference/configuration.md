@@ -87,9 +87,9 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
 - Anonymous callers share one container. Only the `anyone` rule applies to it.
-- Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>`, `private` and `anyone`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
+- Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>` and `private`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
 
-In sandbox rules, `anyone` matches every caller who isn't an owner. In the [access policy](../advanced/access-model.md#policy), `anyone` means the public URL and direct chats. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
+`anyone` matches anonymous callers, as in the [access policy](../advanced/access-model.md#policy). `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
 
 ### Commands
 
@@ -97,9 +97,9 @@ In sandbox rules, `anyone` matches every caller who isn't an owner. In the [acce
 | --- | --- |
 | `a2a-serve pair invite <name>` and `pair set <name>` with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule. A pairing in a rule with other matchers moves to a rule of its own, which starts from that rule. |
 | `a2a-serve pair rm <name>` | Removes the pairing from the rules. |
-| `a2a-serve config set --caller-storage <mode> --caller-secrets <names>` | The rule whose only matcher is `anyone`: the rule of other callers. `--caller-secrets` replaces its list. `config unset caller-storage` and `caller-secrets` reset it. |
+| `a2a-serve config set --anonymous-storage <mode> --anonymous-secrets <names>` | The rule whose only matcher is `anyone`: the rule of anonymous callers. `--anonymous-secrets` replaces its list. `config unset anonymous-storage` and `anonymous-secrets` reset it. |
 | `a2a-serve config edit` | Any rule. |
-| `a2a-serve config unset sandbox-rules` | Removes every rule except the `anyone` rule, including the rules of pairings and of `self`. |
+| `a2a-serve config unset sandbox-rules` | Removes every rule except the rule of anonymous callers, including the rules of pairings and of `self`. |
 
 Owner pairings refuse `--storage` and `--secrets`. The `self` rule sets what their container gets. The sandbox guide says [when a change applies](../guide/sandbox.md#when-a-change-applies).
 
@@ -134,8 +134,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--public-allow-incoming` | `policy.publicAllowIncoming` | `start <agent>`, `config set` |
 | `--private-allow-outgoing` | `policy.privateAllowOutgoing` | `start <agent>`, `config set` |
 | `--allow-email` | `policy.allowEmails` | `start <agent>`, `config set` |
-| `--caller-storage` | `policy.sandbox` | `start <agent>`, `config set` |
-| `--caller-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
+| `--anonymous-storage` | `policy.sandbox` | `start <agent>`, `config set` |
+| `--anonymous-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
 |  | `policy.sandbox` | `config edit` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |

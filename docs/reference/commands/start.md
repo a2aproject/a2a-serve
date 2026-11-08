@@ -103,8 +103,8 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--caller-secrets names` |  | Secrets the agent containers of other callers, anonymous ones included, get: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers) (repeatable; commas also separate values) |
-| `--caller-storage string` |  | What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers) |
+| `--anonymous-secrets names` |  | Secrets the agent container of anonymous callers gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
+| `--anonymous-storage string` |  | What the agent container of anonymous callers gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
 | `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
@@ -191,8 +191,8 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--caller-secrets names` |  | Secrets the agent containers of other callers, anonymous ones included, get: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers) (repeatable; commas also separate values) |
-| `--caller-storage string` |  | What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers) |
+| `--anonymous-secrets names` |  | Secrets the agent container of anonymous callers gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
+| `--anonymous-storage string` |  | What the agent container of anonymous callers gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
 | `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
@@ -351,8 +351,8 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
-| `--caller-secrets names` |  | Secrets the agent containers of other callers, anonymous ones included, get: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers) (repeatable; commas also separate values) |
-| `--caller-storage string` |  | What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers) |
+| `--anonymous-secrets names` |  | Secrets the agent container of anonymous callers gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
+| `--anonymous-storage string` |  | What the agent container of anonymous callers gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
 | `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |

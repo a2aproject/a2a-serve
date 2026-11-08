@@ -91,29 +91,29 @@ func TestParseSecretGrant(t *testing.T) {
 	}
 }
 
-func TestCallerSettings(t *testing.T) {
+func TestAnonymousSettings(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}, Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"pairing:ben"}, Storage: StorageOwn}}}}
 	next := cfg.Clone()
-	f, _ := lookupField("caller-storage")
+	f, _ := lookupField("anonymous-storage")
 	f.put(next, []string{StorageShared})
-	f, _ = lookupField("caller-secrets")
+	f, _ = lookupField("anonymous-secrets")
 	f.put(next, []string{"all"})
 	want := []SandboxRule{{Match: []string{"pairing:ben"}, Storage: StorageOwn}, {Match: []string{"anyone"}, Storage: StorageShared, Secrets: []string{"all"}}}
 	if diff := cmp.Diff(want, next.Policy.Sandbox); diff != "" {
 		t.Fatalf("put() wrong result (-want +got) diff = %s", diff)
 	}
 	wantChanges := []Change{
-		{Setting: "caller-storage", New: StorageShared, Live: true},
-		{Setting: "caller-secrets", Added: []string{"all"}, Live: true},
+		{Setting: "anonymous-storage", New: StorageShared, Live: true},
+		{Setting: "anonymous-secrets", Added: []string{"all"}, Live: true},
 	}
 	if diff := cmp.Diff(wantChanges, Diff(cfg, next)); diff != "" {
 		t.Fatalf("Diff() wrong result (-want +got) diff = %s", diff)
 	}
-	if _, err := (Dir{}).Unset(next, "caller-storage", nil); err != nil {
+	if _, err := (Dir{}).Unset(next, "anonymous-storage", nil); err != nil {
 		t.Fatalf("Unset() error = %v, want nil", err)
 	}
-	if _, err := (Dir{}).Unset(next, "caller-secrets", nil); err != nil {
+	if _, err := (Dir{}).Unset(next, "anonymous-secrets", nil); err != nil {
 		t.Fatalf("Unset() error = %v, want nil", err)
 	}
 	if diff := cmp.Diff(cfg.Policy.Sandbox, next.Policy.Sandbox); diff != "" {
@@ -134,11 +134,11 @@ func TestCopyLiveSandboxRules(t *testing.T) {
 	}
 }
 
-func TestCallerSecretsReplaceTheList(t *testing.T) {
+func TestAnonymousSecretsReplaceTheList(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Secrets: []string{"KEY", "GUEST"}}
 	for _, v := range [][]string{{"KEY", "GUEST"}, {"none"}} {
-		if _, err := (Settings{CallerSecrets: v}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
+		if _, err := (Settings{AnonymousSecrets: v}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
 			t.Fatalf("Apply() error = %v", err)
 		}
 	}
@@ -148,10 +148,10 @@ func TestCallerSecretsReplaceTheList(t *testing.T) {
 	}
 }
 
-func TestCallerSettingsMoveAnyoneOutOfASharedRule(t *testing.T) {
+func TestAnonymousSettingsMoveAnyoneOutOfASharedRule(t *testing.T) {
 	t.Parallel()
 	cfg := &Config{Policy: PolicyConfig{Sandbox: []SandboxRule{{Match: []string{"anyone", "private"}, Storage: StorageOwn}}}}
-	if _, err := (Settings{CallerSecrets: []string{"none"}}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
+	if _, err := (Settings{AnonymousSecrets: []string{"none"}}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	want := []SandboxRule{{Match: []string{"private"}, Storage: StorageOwn}, {Match: []string{"anyone"}, Storage: StorageOwn, Secrets: []string{"none"}}}
@@ -167,7 +167,7 @@ func TestShowSandboxRule(t *testing.T) {
 		want string
 	}{
 		{rule: SandboxRule{Match: []string{"pairing:ben"}, Storage: StorageOwn, Secrets: []string{"KEY"}}, want: "pairing:ben: own, secrets KEY"},
-		{rule: SandboxRule{Match: []string{"anyone"}, Secrets: []string{"none"}}, want: "other callers: default storage, secrets none"},
+		{rule: SandboxRule{Match: []string{"anyone"}, Secrets: []string{"none"}}, want: "anonymous callers: default storage, secrets none"},
 	}
 	for _, tt := range tests {
 		if got := ShowSandboxRule(tt.rule); got != tt.want {

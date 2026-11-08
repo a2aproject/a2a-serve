@@ -223,7 +223,7 @@ func TestDeleteSecrets(t *testing.T) {
 
 func TestLiveSettings(t *testing.T) {
 	t.Parallel()
-	want := []string{"description", "card-skills", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "caller-storage", "caller-secrets", "sandbox-rules", "allow-tools", "deny-tools", "disable-mcp", "owner-chat", "contact-refresh"}
+	want := []string{"description", "card-skills", "private-allow-incoming", "public-allow-incoming", "private-allow-outgoing", "allow-email", "anonymous-storage", "anonymous-secrets", "sandbox-rules", "allow-tools", "deny-tools", "disable-mcp", "owner-chat", "contact-refresh"}
 	got := LiveSettings()
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("LiveSettings() wrong result (-want +got) diff = %s", diff)

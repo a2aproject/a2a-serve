@@ -175,7 +175,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 	for _, r := range c.Policy.Sandbox {
 		rules = append(rules, agentdir.ShowSandboxRule(r))
 	}
-	line("sandbox rules", strings.Join(rules, "; "), agentdir.SandboxSetting, "caller-storage", "caller-secrets")
+	line("sandbox rules", strings.Join(rules, "; "), agentdir.SandboxSetting, "anonymous-storage", "anonymous-secrets")
 	var messengers []string
 	if t := c.Messengers.Telegram; t != nil {
 		messengers = append(messengers, "telegram token "+secretState(v, t.Token))

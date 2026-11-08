@@ -64,7 +64,7 @@ const (
 	// MatchPairingPrefix starts pairing:<name>, which matches a pairing or
 	// a webhook node.
 	MatchPairingPrefix = "pairing:"
-	// MatchAnyone matches every caller who isn't an owner.
+	// MatchAnyone matches anonymous callers, as in the access policy.
 	MatchAnyone = "anyone"
 	// MatchSelf matches the owners, who share the container of the user
 	// running the agent.
@@ -166,20 +166,20 @@ func validSandboxMatcher(m string) bool {
 }
 
 // validateSandbox checks the sandbox rules of p against the agent's secrets.
-// A problem of the rule of --caller-storage and --caller-secrets names the
+// A problem of the rule of --anonymous-storage and --anonymous-secrets names the
 // flag, and that of a pairing's rule names the pairing.
 func (p PolicyConfig) validateSandbox(secrets []string) []error {
 	var errs []error
 	seen := map[string]int{}
 	for i, r := range p.Sandbox {
-		caller := slices.Equal(r.Match, []string{MatchAnyone})
+		anonymous := slices.Equal(r.Match, []string{MatchAnyone})
 		label := fmt.Sprintf("policy.sandbox rule %d", i+1)
 		drop := "remove it from the rule"
 		if name, ok := strings.CutPrefix(first(r.Match), MatchPairingPrefix); ok && len(r.Match) == 1 {
 			label, drop = name+"'s sandbox rule", "drop it from --secrets"
 		}
 		invalid := func(flag, entry, format string, args ...any) {
-			if caller && flag != "" {
+			if anonymous && flag != "" {
 				errs = append(errs, &FieldError{Flag: flag, Entry: entry, Reason: fmt.Sprintf(format, args...)})
 				return
 			}
@@ -198,21 +198,21 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 			seen[m] = i
 		}
 		if r.Storage != "" && !slices.Contains(StorageModes, r.Storage) {
-			invalid("caller-storage", r.Storage, "unknown storage: want shared, read-only, own or empty")
+			invalid("anonymous-storage", r.Storage, "unknown storage: want shared, read-only, own or empty")
 		}
 		for _, e := range r.Secrets {
 			if e == SecretsAll || e == SecretsNone {
 				if len(r.Secrets) > 1 {
-					invalid("caller-secrets", strings.Join(r.Secrets, ","), "%s goes alone: pass it without names", e)
+					invalid("anonymous-secrets", strings.Join(r.Secrets, ","), "%s goes alone: pass it without names", e)
 				}
 				continue
 			}
 			_, from, ok := ParseSecretGrant(e)
 			switch {
 			case !ok:
-				invalid("caller-secrets", e, "invalid secret: want a name from secrets, all, or NAME=secret:OTHER")
+				invalid("anonymous-secrets", e, "invalid secret: want a name from secrets, all, or NAME=secret:OTHER")
 			case !slices.Contains(secrets, from):
-				invalid("caller-secrets", e, "secret %s is not one of the agent's secrets (%s); add it with `a2a-serve config set --secret %s`, or %s", from, orNone(secrets), from, drop)
+				invalid("anonymous-secrets", e, "secret %s is not one of the agent's secrets (%s); add it with `a2a-serve config set --secret %s`, or %s", from, orNone(secrets), from, drop)
 			}
 		}
 	}
@@ -226,14 +226,14 @@ func orNone(names []string) string {
 	return strings.Join(names, ", ")
 }
 
-// callerRule is the rule of the callers who match nothing more specific,
-// which --caller-storage and --caller-secrets set.
-func callerRule(c *Config) SandboxRule {
+// anonymousRule is the rule of anonymous callers, which
+// --anonymous-storage and --anonymous-secrets set.
+func anonymousRule(c *Config) SandboxRule {
 	r, _ := c.Policy.SandboxRuleOf(MatchAnyone)
 	return r
 }
 
-func setCallerRule(c *Config, fn func(*SandboxRule)) {
+func setAnonymousRule(c *Config, fn func(*SandboxRule)) {
 	c.Policy = c.Policy.Clone()
 	c.Policy.SetSandboxRule(c.Policy.OwnRule(MatchAnyone, fn))
 }
@@ -255,7 +255,7 @@ func (p *PolicyConfig) OwnRule(m string, fn func(*SandboxRule)) SandboxRule {
 }
 
 // sandboxRules reads and writes the sandbox rules as one JSON entry each,
-// except the rule of --caller-storage and --caller-secrets.
+// except the rule of --anonymous-storage and --anonymous-secrets.
 func sandboxRules() access {
 	isCaller := func(r SandboxRule) bool { return slices.Equal(r.Match, []string{MatchAnyone}) }
 	return access{
@@ -309,12 +309,12 @@ func showSandboxRule(e string) string {
 }
 
 // ShowSandboxRule shows r as its callers, storage and secrets, such as
-// "pairing:ben: own, secrets KEY" or "other callers: default storage,
+// "pairing:ben: own, secrets KEY" or "anonymous callers: default storage,
 // secrets none".
 func ShowSandboxRule(r SandboxRule) string {
 	who := strings.Join(r.Match, ",")
 	if slices.Equal(r.Match, []string{MatchAnyone}) {
-		who = "other callers"
+		who = "anonymous callers"
 	}
 	storage := r.Storage
 	if storage == "" {
@@ -331,11 +331,11 @@ func ShowSandboxRule(r SandboxRule) string {
 // commands set.
 const SandboxSetting = "sandbox-rules"
 
-// mergeCallerSecrets replaces the secrets of the rule of --caller-secrets
+// mergeAnonymousSecrets replaces the secrets of the rule of --anonymous-secrets
 // with the entries of the flag, so that all and none can go alone.
-func mergeCallerSecrets(s *Settings, cfg *Config, _ Dir, _ Secrets) error {
+func mergeAnonymousSecrets(s *Settings, cfg *Config, _ Dir, _ Secrets) error {
 	var entries []string
-	for _, v := range s.CallerSecrets {
+	for _, v := range s.AnonymousSecrets {
 		for e := range strings.SplitSeq(v, ",") {
 			if e = strings.TrimSpace(e); e != "" {
 				entries = append(entries, e)
@@ -343,12 +343,12 @@ func mergeCallerSecrets(s *Settings, cfg *Config, _ Dir, _ Secrets) error {
 		}
 	}
 	if len(entries) > 0 {
-		setCallerRule(cfg, func(r *SandboxRule) { r.Secrets = entries })
+		setAnonymousRule(cfg, func(r *SandboxRule) { r.Secrets = entries })
 	}
 	return nil
 }
 
-// secretGrantKey is the variable name of an entry of --caller-secrets.
+// secretGrantKey is the variable name of an entry of --anonymous-secrets.
 func secretGrantKey(e string) string {
 	name, _, _ := strings.Cut(strings.TrimSpace(e), "=")
 	return name

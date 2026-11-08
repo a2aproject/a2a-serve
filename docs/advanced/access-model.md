@@ -40,7 +40,7 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 
 You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
 
-`--caller-storage`, `--caller-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
+`--anonymous-storage`, `--anonymous-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
 
 ## Whom the agent may call
 

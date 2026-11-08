@@ -63,12 +63,9 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		}
 	}
 
-	out := coder.serve("config", "set", "--caller-secrets", "GUEST")
-	if sandbox == "docker" && !strings.Contains(out, "other callers: shared workspace, secrets GUEST") {
-		t.Fatalf("a2a-serve config set --caller-secrets GUEST = %q, want it to show the narrowed sandbox", out)
-	}
-	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY unset" {
-		t.Fatalf("a2a send env KEY by ben after config set = %q, want it unset", got)
+	coder.serve("config", "set", "--anonymous-secrets", "KEY=secret:GUEST")
+	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY=owner-key" {
+		t.Fatalf("a2a send env KEY by ben after config set = %q, want the owner's key", got)
 	}
 
 	coder.serve("pair", "set", "ben", "--storage", "read-only", "--secrets", "none")

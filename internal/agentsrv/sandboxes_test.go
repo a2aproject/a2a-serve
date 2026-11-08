@@ -347,7 +347,7 @@ func TestSandboxOfUnverifiedUserIsTheNarrowest(t *testing.T) {
 	}
 }
 
-func TestRuleGivesAnonymousCallersAKey(t *testing.T) {
+func TestAnonymousRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
@@ -359,6 +359,7 @@ func TestRuleGivesAnonymousCallersAKey(t *testing.T) {
 		},
 	})
 	anon := anonymousClient(t, ts)
+	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
 	if got := a2atext.Result(send(t, anon, userText("env KEY", "", ""))); got != "env KEY unset" {
 		t.Fatalf("SendMessage() by an anonymous caller without a rule = %q, want %q", got, "env KEY unset")
 	}
@@ -367,5 +368,11 @@ func TestRuleGivesAnonymousCallersAKey(t *testing.T) {
 
 	if got := a2atext.Result(send(t, anon, userText("env KEY", "", ""))); got != "env KEY=guest-key" {
 		t.Fatalf("SendMessage() by an anonymous caller with a rule = %q, want %q", got, "env KEY=guest-key")
+	}
+	for _, prompt := range []string{"env KEY", "env GUEST"} {
+		want := map[string]string{"env KEY": "env KEY=owner-key", "env GUEST": "env GUEST=guest-key"}[prompt]
+		if got := a2atext.Result(send(t, ben, userText(prompt, "", ""))); got != want {
+			t.Fatalf("SendMessage(%q) by a pairing after the anonymous rule = %q, want %q", prompt, got, want)
+		}
 	}
 }
