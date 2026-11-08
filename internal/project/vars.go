@@ -39,3 +39,23 @@ func Vars(cfg *agentdir.Config, secrets agentdir.Secrets) func(string) (string, 
 		return v, ok && v != ""
 	}
 }
+
+// EnvVars returns the values ${VAR} in a project's .mcp.json can take in an
+// agent container that gets the --env NAME=value pairs of env and the
+// NAME=value pairs of the secrets it gets. Like [Vars], --env wins, and a
+// secret with an empty value has none.
+func EnvVars(env, secrets []string) func(string) (string, bool) {
+	return func(name string) (string, bool) {
+		for _, kv := range slices.Backward(env) {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+				return v, true
+			}
+		}
+		for _, kv := range secrets {
+			if k, v, ok := strings.Cut(kv, "="); ok && k == name {
+				return v, v != ""
+			}
+		}
+		return "", false
+	}
+}

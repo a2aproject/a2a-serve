@@ -268,6 +268,7 @@ func (c *ChatTurns) awaitTurn(ctx context.Context, contextID string, line *postL
 func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv messenger.ConvKey) {
 	msg := a2a.NewMessage(a2a.MessageRoleUser, messageParts([]*waitingMessage{{in: messenger.Inbound{Text: t.text(), Files: t.Files}}})...)
 	msg.ContextID = t.ContextID
+	ctx = auth.Posted(ctx)
 	ch := c.supervisor.Messenger(chName)
 	if ch == nil {
 		c.unattended.Add(t.ContextID)

@@ -20,6 +20,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -408,9 +409,40 @@ func reload(ctx context.Context, client *controlapi.Client, next *agentdir.Confi
 	if err != nil {
 		return err
 	}
-	res.Applied = appendNew(res.Applied, live...)
+	// The server can keep part of a live setting waiting, such as the grant
+	// of a secret it loads at restart. When it can't say, the sandbox
+	// settings count as waiting. Opening the public URL to anyone waits for
+	// a public URL that waits.
+	waiting := map[string]bool{}
+	if slices.ContainsFunc(live, func(s string) bool { return agentdir.IsSandboxSetting(s) || s == settingPublicAllowIncoming }) {
+		running, err := client.Config(ctx)
+		switch {
+		case err != nil:
+			slog.Warn("reading the config of the running agent", "error", err)
+			for _, s := range live {
+				waiting[s] = agentdir.IsSandboxSetting(s)
+			}
+		default:
+			for _, c := range agentdir.Diff(running, next) {
+				waiting[c.Setting] = true
+			}
+			if waiting["public"] && next.Policy.PublicAllowIncoming == agentdir.AccessAnyone {
+				waiting[settingPublicAllowIncoming] = true
+			}
+		}
+	}
+	for _, s := range live {
+		if waiting[s] {
+			res.Restart = appendNew(res.Restart, s)
+		} else {
+			res.Applied = appendNew(res.Applied, s)
+		}
+	}
 	return nil
 }
+
+// settingPublicAllowIncoming says who may call on the public URL.
+const settingPublicAllowIncoming = "public-allow-incoming"
 
 // mcpWarnings returns a warning for each MCP server that next turns off and
 // old didn't, which the project's .mcp.json has no server for.

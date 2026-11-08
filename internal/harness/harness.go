@@ -123,26 +123,83 @@ var providerKeys = map[string][]string{
 	"xai":        {"XAI_API_KEY"},
 }
 
+// providerNames are how the output names the model providers.
+var providerNames = map[string]string{
+	"anthropic": "Anthropic", "deepseek": "DeepSeek", "google": "Google", "groq": "Groq",
+	"mistral": "Mistral", "openai": "OpenAI", "openrouter": "OpenRouter", "xai": "xAI",
+}
+
+// ProviderName returns how the output names a model provider.
+func ProviderName(provider string) string {
+	if n, ok := providerNames[provider]; ok {
+		return n
+	}
+	return provider
+}
+
+// claudeKeys are the variables claude reads its Anthropic credentials
+// from.
+var claudeKeys = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+
 // MissingKey returns how to set the key of the provider of cfg's opencode
 // model when cfg passes none of its keys to the agent, or "".
 func MissingKey(cfg *agentdir.Config) string {
-	provider, _, ok := strings.Cut(cfg.Model, "/")
-	keys := providerKeys[provider]
-	if cfg.Harness != "opencode" || !ok || len(keys) == 0 {
+	provider, key := MissingProviderKey(cfg, cfg.Secrets)
+	if provider == "" {
 		return ""
 	}
+	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, key)
+}
+
+// MissingProviderKey returns the provider of cfg's opencode model and the
+// variable to suggest for its key, when neither the --env values of cfg nor
+// the variables secrets hold one of its keys. It returns "" otherwise.
+func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key string) {
+	provider, _, ok := strings.Cut(cfg.Model, "/")
+	keys := providerKeys[provider]
+	if cfg.Harness != "opencode" || !ok || len(keys) == 0 || hasAny(cfg, secrets, keys) {
+		return "", ""
+	}
+	return provider, keys[0]
+}
+
+// ModelKeyWithheld returns the model provider and the variable of its key
+// when the agent gets one from cfg, but a container that gets only the
+// secrets granted has none. It returns "" otherwise. It knows the keys of
+// opencode's providers and of claude.
+func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key string) {
+	keys := claudeKeys
+	provider = "anthropic"
+	if cfg.Harness == "opencode" {
+		var ok bool
+		provider, _, ok = strings.Cut(cfg.Model, "/")
+		if keys = providerKeys[provider]; !ok || len(keys) == 0 {
+			return "", ""
+		}
+	} else if cfg.Harness != "claude" {
+		return "", ""
+	}
+	if !hasAny(cfg, cfg.Secrets, keys) || hasAny(cfg, granted, keys) {
+		return "", ""
+	}
+	for _, k := range keys {
+		if slices.Contains(cfg.Secrets, k) {
+			return provider, k
+		}
+	}
+	return provider, keys[0]
+}
+
+// hasAny reports whether the --env values of cfg or the variables secrets
+// hold one of keys.
+func hasAny(cfg *agentdir.Config, secrets, keys []string) bool {
 	for _, kv := range cfg.Env {
 		name, _, _ := strings.Cut(kv, "=")
 		if slices.Contains(keys, name) {
-			return ""
+			return true
 		}
 	}
-	for _, name := range cfg.Secrets {
-		if slices.Contains(keys, name) {
-			return ""
-		}
-	}
-	return fmt.Sprintf("no key for provider %s: set one with `a2a-serve config set --secret %s`", provider, keys[0])
+	return slices.ContainsFunc(secrets, func(name string) bool { return slices.Contains(keys, name) })
 }
 
 // ImageRepo is where harness images are published.

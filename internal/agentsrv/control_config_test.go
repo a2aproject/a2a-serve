@@ -117,6 +117,9 @@ func TestStatusAccess(t *testing.T) {
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
 			"the public URL is open to anyone",
 		},
+		SandboxNotes: []string{
+			"the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets",
+		},
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)

@@ -150,6 +150,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, users ...Pairing
 				`DELETE FROM tool_preferences WHERE user_id = ?`,
 				`DELETE FROM tool_taps WHERE user_id = ?`,
 				`DELETE FROM tool_suggestions WHERE user_id = ?`,
+				`DELETE FROM user_identities WHERE user_id = ?`,
 			} {
 				if _, err := tx.ExecContext(ctx, del, u.Principal); err != nil {
 					return err

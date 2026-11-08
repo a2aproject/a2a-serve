@@ -23,6 +23,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
@@ -168,8 +169,12 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 			slog.Warn("skipped writing the instructions into an agent home", "home", home, "error", err)
 			continue
 		}
+		body := sb.String()
+		if note := s.storageNotes[home]; note != "" {
+			body += "\n" + note + "\n"
+		}
 		for _, f := range instructionFiles {
-			err := writeSection(home, f, sb.String())
+			err := writeSection(home, f, body)
 			if errors.Is(err, fsutil.ErrNotRegular) || errors.Is(err, fsutil.ErrTooLarge) {
 				slog.Warn("skipped writing the instructions into a file the server can't read", "file", filepath.Join(home, f), "error", err)
 				continue
@@ -178,6 +183,27 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// writeStorageNote writes only the storage note into the instruction files
+// of home, for an agent that calls no other agents. The caller checked
+// home. Like [Server.writeInstructionsIn], it skips a file the server can't
+// read, which the agent may have put there.
+func (s *Server) writeStorageNote(cfg *agentdir.Config, home string) {
+	if cfg.Sandbox == harness.SandboxLocal {
+		return
+	}
+	s.instructionsMu.Lock()
+	defer s.instructionsMu.Unlock()
+	note := s.storageNotes[home]
+	if note == "" {
+		return
+	}
+	for _, f := range instructionFiles {
+		if err := writeSection(home, f, note+"\n"); err != nil {
+			slog.Warn("skipped writing the storage note into an agent home", "file", filepath.Join(home, f), "error", err)
+		}
+	}
 }
 
 // refreshInstructions rewrites the instruction files after the agents the

@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -79,19 +80,27 @@ func Policy(p agentdir.PolicyConfig) auth.Policy {
 // Pairings counts the pairings of an agent besides the local one.
 type Pairings struct {
 	All, Owners int
+	// Names holds the names of the pairings and webhook nodes, or is nil
+	// when they aren't known.
+	Names map[string]bool
 }
 
-// CountPairings counts the pairings of ps besides the local one.
-func CountPairings(ps []store.Pairing) Pairings {
-	var n Pairings
+// CountPairings counts the pairings of ps besides the local one, and
+// names them and the webhook nodes.
+func CountPairings(ps []store.Pairing, nodes []store.Node) Pairings {
+	n := Pairings{Names: map[string]bool{}}
 	for _, p := range ps {
 		if p.Name == auth.LocalPairing {
 			continue
 		}
 		n.All++
+		n.Names[p.Name] = true
 		if p.Role == auth.RoleOwner {
 			n.Owners++
 		}
+	}
+	for _, node := range nodes {
+		n.Names[node.ID] = true
 	}
 	return n
 }
@@ -116,6 +125,87 @@ type Description struct {
 	// Summary says who may call, one line each for you, everyone else and
 	// the networks that need a pairing.
 	Summary []string
+	// Sandbox says what the agent containers of callers get, one line each
+	// for you, the sandbox rules and everyone else.
+	Sandbox []string
+	// SandboxNotes are what the sandbox rules don't do, such as callers
+	// whose container gets no model key.
+	SandboxNotes []string
+	// AnonymousNote says that the agent can't reach its model for
+	// guests, who get no secrets, if it needs a key.
+	AnonymousNote string
+}
+
+// DescribeConfig is [Describe] of the settings of cfg, with what the agent
+// containers of callers get when sandbox rules or guests make
+// it differ between them.
+func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
+	a := Describe(cfg.Policy, net, n)
+	sp := SandboxPolicyOf(cfg)
+	anonymous := len(a.Anonymous) > 0
+	for _, l := range sp.SandboxLines(n.Owners, anonymous, net.Private != "") {
+		if len(cfg.Policy.Sandbox) > 0 || anonymous {
+			a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
+		}
+		note := ModelKeyNote(cfg, l)
+		switch {
+		case note == "":
+		case l.Anonymous:
+			a.AnonymousNote = note
+		default:
+			a.SandboxNotes = append(a.SandboxNotes, note)
+		}
+	}
+	if sp.Local && (n.All > n.Owners || len(a.Others) > 0) {
+		a.SandboxNotes = append(a.SandboxNotes, LocalSandboxNote)
+	}
+	a.SandboxNotes = append(a.SandboxNotes, unknownPairings(cfg.Policy.Sandbox, n.Names)...)
+	return a
+}
+
+// unknownPairings says which pairing matchers of rules name no pairing or
+// webhook node in names.
+func unknownPairings(rules []agentdir.SandboxRule, names map[string]bool) []string {
+	if names == nil {
+		return nil
+	}
+	var notes []string
+	for _, r := range rules {
+		for _, m := range r.Match {
+			name, ok := strings.CutPrefix(m, agentdir.MatchPairingPrefix)
+			if !ok || names[name] {
+				continue
+			}
+			notes = append(notes, fmt.Sprintf("no pairing or webhook node is named %s, so the sandbox rule of %s matches no caller", name, m))
+		}
+	}
+	return notes
+}
+
+// LocalSandboxNote says what sandbox rules don't do without the Docker
+// sandbox.
+const LocalSandboxNote = "the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets"
+
+// ModelKeyNote warns that the containers of the callers of l have no key
+// of the agent's model provider, so the agent can't reach its model for
+// them, and says how to give one, or returns "".
+func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
+	var names []string
+	for _, g := range l.Sandbox.Secrets {
+		names = append(names, g.Name)
+	}
+	provider, key := harness.ModelKeyWithheld(cfg, names)
+	if provider == "" {
+		return ""
+	}
+	name := harness.ProviderName(provider)
+	switch {
+	case l.Anonymous:
+		return fmt.Sprintf("Guests' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets %s`.", name, key, key)
+	case l.Pairing != "":
+		return fmt.Sprintf("%s's agent gets no %s key and can't reach its model. Give one with `a2a-serve pair set %s --secrets %s`, or a key of its own with `--secrets %s=secret:<STORED_KEY>`.", l.Pairing, name, l.Pairing, key, key)
+	}
+	return fmt.Sprintf("The agents of %s get no %s key and can't reach their model. Give them one in their rule with `a2a-serve config edit`.", l.Who, name)
 }
 
 // Describe says who may call an agent with the settings p on the networks

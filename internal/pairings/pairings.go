@@ -115,6 +115,9 @@ type Homes interface {
 	RemoveUserHome(id string) error
 	// UserHomeDir is the path of the agent home of the user id.
 	UserHomeDir(id string) string
+	// UserWorkspacesDir is the path of the private workspaces of the user
+	// id, which RemoveUserHome deletes too.
+	UserWorkspacesDir(id string) string
 }
 
 func invalid(format string, args ...any) error {
@@ -478,7 +481,7 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 	if !exists {
 		return nil, notFound(name)
 	}
-	resp := &RemovalPreview{Kind: p.Kind, Accounts: []Account{}, AgentHomes: []string{}}
+	resp := &RemovalPreview{Kind: p.Kind, Accounts: []Account{}, AgentHomes: []string{}, Workspaces: []string{}}
 	links, err := s.deps.Store.LinksOf(ctx, name)
 	if err != nil {
 		return nil, err
@@ -508,17 +511,30 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 		return resp, nil
 	}
 	for _, u := range users {
-		dir := s.deps.Homes.UserHomeDir(u.Principal)
-		_, err := os.Stat(dir)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
+		home, err := existing(s.deps.Homes.UserHomeDir(u.Principal))
 		if err != nil {
 			return nil, fmt.Errorf("checking the agent home of %s: %w", name, err)
 		}
-		resp.AgentHomes = append(resp.AgentHomes, dir)
+		resp.AgentHomes = append(resp.AgentHomes, home...)
+		ws, err := existing(s.deps.Homes.UserWorkspacesDir(u.Principal))
+		if err != nil {
+			return nil, fmt.Errorf("checking the private workspaces of %s: %w", name, err)
+		}
+		resp.Workspaces = append(resp.Workspaces, ws...)
 	}
 	return resp, nil
+}
+
+// existing returns dir if it exists.
+func existing(dir string) ([]string, error) {
+	_, err := os.Stat(dir)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return []string{dir}, nil
 }
 
 // beginRemoval makes [Service.Redeem] refuse the codes of the pairing name

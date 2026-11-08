@@ -82,7 +82,7 @@ func removalPreview(p *pairings.RemovalPreview) *controlapi.RemovalPreview {
 	info := &controlapi.RemovalPreview{
 		Kind: p.Kind, Kept: p.Kept, Tokens: p.Tokens, Accounts: make([]controlapi.LinkedAccount, len(p.Accounts)), Codes: p.Codes,
 		Node: p.Node, Schedules: p.Schedules, Watches: p.Watches, Approvals: p.Approvals, Tasks: p.Tasks,
-		RunningTasks: p.RunningTasks, Conversations: p.Conversations, Allowed: p.Allowed, AgentHomes: p.AgentHomes,
+		RunningTasks: p.RunningTasks, Conversations: p.Conversations, Allowed: p.Allowed, AgentHomes: p.AgentHomes, Workspaces: p.Workspaces,
 	}
 	for i, a := range p.Accounts {
 		info.Accounts[i] = controlapi.LinkedAccount(a)

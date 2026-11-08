@@ -12,7 +12,13 @@ only while it runs. Its `access` object says who may call: `privateAllowIncoming
 and `publicAllowIncoming` as in force, the members of the `owner`, `authenticated`
 and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
-prints. `status` and `stop` add `configError` when `.a2a/config.yaml` is
+prints. With sandbox rules or guests, it adds the `sandbox` lines
+of what each kind of caller's agent container gets, `sandboxNotes` such as
+callers without a model key, and `anonymousNote` about guests. `pair get` and `pair list`
+give each pairing a `sandbox` object: its `storage`, its `secrets`, a
+`summary`, `pending` with what it gets after a restart when its rule waits for a secret that the restart loads, and a `warning` when its agent can't reach its model. `pair
+invite` adds it when rules change what the pairing gets, and `pair set`
+adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
 networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
@@ -20,7 +26,7 @@ networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `pair rm --dry-run` removes nothing and prints the same
-`kind` and `name` with `"dryRun": true` and the counts of what it would remove. `pair rm --email` prints the kind `google` and adds
+`kind` and `name` with `"dryRun": true`, the counts of what it would remove, the `agentHomes` and `workspaces` directories it would delete, and the pairing's `sandboxRule`. `pair rm --email` prints the kind `google` and adds
 `tokens`, the number of sign-in tokens it revoked. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`, where `stopped` is
 false if the agent wasn't running and `serviceInstalled` is true if it starts

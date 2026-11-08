@@ -87,7 +87,7 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 		}
 		res.Restart = waiting
 	}
-	if err := printConfigResult(cfg, res); err != nil {
+	if err := printConfigResult(cfg, res, restart); err != nil {
 		return err
 	}
 	if !restart || len(res.Restart) == 0 {
@@ -97,8 +97,9 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 }
 
 // printConfigResult prints the diff of a change, and whether it applies now
-// or after a restart.
-func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
+// or after a restart. With restarting, the restart follows, so it doesn't
+// ask for one.
+func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool) error {
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(res)
 	}
@@ -134,7 +135,7 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result) error {
 	if len(res.Applied) > 0 {
 		fmt.Fprintf(&sb, "✓ applied to the running agent: %s\n", strings.Join(res.Applied, ", "))
 	}
-	if len(res.Restart) > 0 {
+	if len(res.Restart) > 0 && !restarting {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
 	writeAccess(&sb, res.Access)
@@ -150,7 +151,7 @@ func printStartRunning(cfg *globalConfig, res *agentctl.Result) error {
 	if !cfg.IsJSON() {
 		shown.Restart = nil
 	}
-	if err := printConfigResult(cfg, &shown); err != nil {
+	if err := printConfigResult(cfg, &shown, false); err != nil {
 		return err
 	}
 	if len(res.Restart) > 0 {
@@ -183,6 +184,18 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 	sb.WriteString("who may call:\n")
 	for _, line := range a.Summary {
 		fmt.Fprintf(sb, "  %s\n", line)
+	}
+	if len(a.Sandbox) > 0 {
+		sb.WriteString("what their agent containers get:\n")
+	}
+	for _, line := range a.Sandbox {
+		fmt.Fprintf(sb, "  %s\n", line)
+	}
+	for _, note := range a.SandboxNotes {
+		fmt.Fprintf(sb, "! %s\n", note)
+	}
+	if a.AnonymousNote != "" {
+		fmt.Fprintf(sb, "! %s\n", a.AnonymousNote)
 	}
 }
 

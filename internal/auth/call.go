@@ -59,3 +59,17 @@ func IsInProcess(ctx context.Context) bool {
 	in, _ := ctx.Value(inProcessKey{}).(bool)
 	return in
 }
+
+type postedKey struct{}
+
+// Posted marks ctx as acting for a principal the server stored earlier, such
+// as the user of a schedule or a watch, and didn't verify now.
+func Posted(ctx context.Context) context.Context {
+	return context.WithValue(ctx, postedKey{}, true)
+}
+
+// IsPosted reports whether ctx comes from [Posted].
+func IsPosted(ctx context.Context) bool {
+	posted, _ := ctx.Value(postedKey{}).(bool)
+	return posted
+}

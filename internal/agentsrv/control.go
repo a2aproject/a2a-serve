@@ -148,6 +148,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		return nil, err
 	}
 	st.Access = agentops.AccessInfo(a)
+	st.Access.SandboxNotes = s.sandboxNotes(st.Access.SandboxNotes)
 	return st, nil
 }
 

@@ -463,6 +463,32 @@ var fields = []field{
 		usage: "People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
 	},
 	{
+		access: access{
+			get: func(c *Config) []string { return nonEmpty(guestRule(c).Storage) },
+			put: func(c *Config, v []string) { setGuestRule(c, func(r *SandboxRule) { r.Storage = first(v) }) },
+			arg: func(s *Settings) any { return &s.GuestStorage },
+		},
+		flag: "guest-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "What the agent container of guests, the callers without a token or account, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only)",
+		values: StorageModes,
+	},
+	{
+		access: access{
+			list: true,
+			get:  func(c *Config) []string { return guestRule(c).Secrets },
+			put:  func(c *Config, v []string) { setGuestRule(c, func(r *SandboxRule) { r.Secrets = v }) },
+			arg:  func(s *Settings) any { return &s.GuestSecrets },
+		},
+		flag: "guest-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
+		key: secretGrantKey, merge: mergeGuestSecrets,
+		usage: "Secrets the agent container of guests gets: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none)",
+	},
+	{
+		access: sandboxRules(),
+		flag:   SandboxSetting, path: "policy.sandbox", place: placeFile, scope: scopeOwner, live: true,
+		key: sandboxRuleKey, show: showSandboxRule,
+	},
+	{
 		access: str(func(c *Config) *string { return &c.Network.TailscaleControlURL }, func(s *Settings) *string { return &s.TailscaleControlURL }),
 		flag:   "tailscale-control-url", path: "network.tailscaleControlURL", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
 		usage: "Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server",
@@ -848,6 +874,15 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	if err := CheckUnset(setting); err != nil {
 		return nil, err
 	}
+	if setting == "secret" {
+		names := entries
+		if len(names) == 0 {
+			names = cfg.Secrets
+		}
+		if err := cfg.Policy.checkSecretsUnused(names); err != nil {
+			return nil, err
+		}
+	}
 	before := cfg.referencedSecrets()
 	var deleted []string
 	f, _ := lookupField(setting)
@@ -991,12 +1026,15 @@ func CopyLive(dst, src *Config) {
 			f.put(dst, slices.Clone(f.get(src)))
 		}
 	}
+	// The grant of a secret the running agent doesn't have yet, such as one
+	// stored with the rule, waits for the restart that loads the secret.
+	dst.Policy.Sandbox = loadedRules(dst.Policy.Sandbox, dst.Secrets)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email"}, setting)
+	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "guest-storage", "guest-secrets", SandboxSetting}, setting)
 }
 
 // label names the flag of f in errors.

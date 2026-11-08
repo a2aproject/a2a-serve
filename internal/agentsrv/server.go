@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,6 +63,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // Options configure [Run].
@@ -193,16 +195,27 @@ type Server struct {
 	unattended *chat.ContextSet
 	// ends does what follows the end of a task's execution.
 	ends *taskEnds
-	// users are the agent processes of users that run now.
-	users userAgents
+	// users are the agent processes of users that run now, and anonymous
+	// the one of anonymous callers.
+	users     userAgents
+	anonymous userAgents
+	// sandboxes tell what the container of each agent key gets, and
+	// mainSandbox what the owner's container got when it started.
+	sandboxes   *sandboxes
+	mainSandbox atomic.Pointer[access.Sandbox]
+	// workspaces are the private workspaces of containers with their own
+	// storage.
+	workspaces *workspaces.Store
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 	// turns counts the executions of the A2A handler, until a2a-go consumed
 	// their last events.
 	turns turnCount
 
-	// instructionsMu serializes rewrites of the harness instruction files.
+	// instructionsMu serializes rewrites of the harness instruction files,
+	// and guards storageNotes, the note on the storage of each agent home.
 	instructionsMu sync.Mutex
+	storageNotes   map[string]string
 	timings        Timings
 	// maxAgentMessage bounds a message from the agent.
 	maxAgentMessage int
@@ -280,6 +293,7 @@ func Run(ctx context.Context, opts Options) error {
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
+	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	var closers stack
 	defer func() {
 		cancel()
@@ -399,6 +413,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
+	s.sandboxes = newSandboxes(s.rt.Config, s.store)
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
@@ -480,7 +495,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Mailbox:   s.nodes.Mailbox,
 			Forget:    s.nodes.Forget,
 			Changed:   s.refreshInstructions,
-			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
+			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted, sandboxes: s.sandboxes},
 			Homes:     userHomes{s},
 			Limiter:   pairings.NewLimiter(opts.Now),
 		})
@@ -582,7 +597,7 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		s.turns.wait(ctx)
 		return nil
 	})
-	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start})
+	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start, Admit: s.admitTurn})
 	closers.push(s.split.close)
 	return nil
 }
@@ -636,6 +651,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	s.watches.Resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
 	s.background.Go(func() { s.watchState(ctx) })
+	s.background.Go(func() { s.sandboxLoop(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.background.Go(func() { s.allowed.run(ctx, s.answerWaiting) })
@@ -775,6 +791,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 			slog.Warn("pruning Google sign-ins", "error", err)
 		}
 		s.claims.forgetPruned(ctx)
+		s.pruneWorkspaces(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -834,8 +851,24 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if err != nil {
 		return err
 	}
-	if w := localSandboxWarning(s.rt.Config().Sandbox, a); w != "" {
-		s.logf("! %s", w)
+	noSandbox := localSandboxWarning(s.rt.Config().Sandbox, a)
+	if noSandbox != "" {
+		s.logf("! %s", noSandbox)
+	}
+	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
+		label := "✓ sandbox "
+		for _, line := range a.Sandbox {
+			s.logf("%s %s", label, line)
+			label = "          "
+		}
+	}
+	if a.AnonymousNote != "" {
+		s.logf("! %s", a.AnonymousNote)
+	}
+	for _, note := range s.sandboxNotes(a.SandboxNotes) {
+		if note != access.LocalSandboxNote || noSandbox == "" {
+			s.logf("! %s", note)
+		}
 	}
 	return s.supervisor.Announce(ctx)
 }

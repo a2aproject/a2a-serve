@@ -367,6 +367,33 @@ func (u *fakeUsers) Stop(ctx context.Context, principals ...string) (func(), err
 	}, nil
 }
 
+func TestPreviewRemoveListsHomesAndWorkspaces(t *testing.T) {
+	t.Parallel()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	users := &fakeUsers{t: t, homes: d}
+	s := newService(t, withUsers(users, d))
+	users.s = s
+	redeem(t, s, invite(t, s, InviteRequest{Name: "anna"}).Code, pairapi.PairingPerson)
+	for _, dir := range []string{d.UserHomeDir("pair:anna"), d.UserWorkspacesDir("pair:anna")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+
+	got, err := s.PreviewRemove(context.Background(), "anna")
+	if err != nil {
+		t.Fatalf("PreviewRemove() error = %v", err)
+	}
+
+	want := struct{ AgentHomes, Workspaces []string }{[]string{d.UserHomeDir("pair:anna")}, []string{d.UserWorkspacesDir("pair:anna")}}
+	if diff := cmp.Diff(want, struct{ AgentHomes, Workspaces []string }{got.AgentHomes, got.Workspaces}); diff != "" {
+		t.Fatalf("PreviewRemove() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

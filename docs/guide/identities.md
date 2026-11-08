@@ -33,7 +33,7 @@ a2a-serve config unset allow-email '*@example.com'
 
 - Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
-- Each authenticated caller gets a separate container for conversation history, while sharing the workspace, `--mount` directories, and `--secret` environment variables ([Access Model](../advanced/access-model.md#agent-processes)).
+- Each authenticated caller gets a separate container with a home of their own. What it gets of the workspace and the secrets follows the [sandbox defaults and rules](sandbox.md#what-each-callers-container-gets) ([Access Model](../advanced/access-model.md#agent-processes)).
 - `--private-allow-incoming` and `--public-allow-incoming` take `everyone` and `anyone` as the same word: `--private-allow-incoming anyone` is `everyone`, and `--public-allow-incoming everyone` is `anyone`.
 - [Anonymous callers](identities.md#anonymous-callers) start tasks in their own conversation and never answer approvals.
 - A caller without a credential gets 401, with the steps to pair. A caller with a token the agent doesn't recognize, such as a mistyped, revoked or replaced one, gets 401 with the same steps. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`. A refused call from another agent names that agent and gives the steps to pair agents: `pair invite` on this side and `contact add --code` on the caller's.
@@ -45,10 +45,11 @@ a2a-serve pair invite grok                        # authenticated: can talk to t
 a2a-serve pair invite anna --owner                # owner: also sees and answers every task
 a2a-serve pair invite anna                        # another code, for a second device
 a2a-serve pair list                               # kind, role, linked messengers, last use
-a2a-serve pair get anna                           # kind, role, tokens, linked accounts, pending codes
+a2a-serve pair get anna                           # kind, role, sandbox, tokens, linked accounts, pending codes
 a2a-serve pair set anna --owner=false             # change the role
 a2a-serve pair set laptop --kind device           # change the kind: person, device or agent
 a2a-serve pair set anna --rotate                  # revoke her tokens and print a new code
+a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY  # what the pairing's container gets
 a2a-serve pair rm grok                            # delete the pairing, its tokens, messenger links, schedules and tasks
 ```
 
@@ -56,7 +57,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 - The first code redeemed sets the pairing's kind: `pair join` and `join <code>` make a person, and `contact add --code` makes an agent.
 - A change of role applies to the next request of every token and messenger account of the pairing.
-- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations and agent home directory. Its conversations go with your messages in them. A new pairing with the same name starts with none of them. `pair rm <name> --dry-run` prints what it would remove and removes nothing.
+- `pair rm` also cancels the pairing's running tasks, stops its agent process, and deletes its tasks, approvals, conversations, sandbox rule, own copy of the workspace and agent home directory. Its conversations go with your messages in them. A new pairing with the same name starts with none of them. `pair rm <name> --dry-run` prints what it would remove and removes nothing.
 - `pair rm` says when the person may still call through the private network or an `--allow-email` entry.
 - The built-in `local` pairing is you. Its token works only on the local URL, and the link printed at start adds your messenger accounts to it. `pair rm local` revokes both, and the next start issues a new token. The names `local` and `owner` stand for you, so no other pairing can take them.
 
@@ -64,7 +65,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 With `--public-allow-incoming anyone`, anyone on the public URL, and anyone who writes to the agent's bot in a direct chat, can start tasks. The agent still ignores unlinked senders in group chats.
 
-- Their conversations share an agent process, separate from yours and from each authenticated user's. With Docker it is a container with its own home directory, `state/home-anonymous`, so it can't read the history of other users' conversations. It works on the same workspace and receives the same `--secret` environment variables, and it isn't backed up.
+- Their conversations share an agent process, separate from yours and from each authenticated user's. With Docker it is a container with its own home directory, `state/home-anonymous`, so it can't read the history of other users' conversations. What it gets of the workspace and the secrets follows the [sandbox defaults](sandbox.md#what-each-callers-container-gets), and it isn't backed up.
 - Their approvals go to the owner chat, or wait in the inspector. Only owners answer them. An approval that nobody answers in 10 minutes is rejected.
 - Their conversations can't call other agents or use the schedules agent.
 - The public URL and each messenger take at most 20 new anonymous tasks an hour, and run at most 2 at a time.

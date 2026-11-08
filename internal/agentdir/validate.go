@@ -216,6 +216,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	errs = append(errs, c.Policy.validate()...)
+	errs = append(errs, c.Policy.validateSandbox(c.Secrets)...)
 	for _, l := range []struct {
 		flag     string
 		patterns []string

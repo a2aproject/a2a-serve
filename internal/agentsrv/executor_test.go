@@ -885,20 +885,31 @@ func TestExplainFailure(t *testing.T) {
 	tests := []struct {
 		name     string
 		cfg      *agentdir.Config
+		granted  []string
 		reported string
 		want     string
 	}{
 		{name: "agent exited", cfg: opencode, reported: "acp agent error: acp agent exited", want: "the agent stopped unexpectedly; send the message again"},
 		{name: "agent exited during an answer", cfg: opencode, reported: "forwarding answer to acp agent: acp agent exited", want: "the agent stopped unexpectedly; send the message again"},
 		{
-			name: "unknown model", cfg: opencode, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
+			name: "sandbox without the key", cfg: opencode, granted: []string{"GITHUB_TOKEN"}, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
+			want: "The owner hasn't given this agent a model key. The agent reported: the agent failed: setting \"model\": model not found: google/x",
+		},
+		{
+			name: "claude without the key in its sandbox", cfg: &agentdir.Config{Harness: "claude", Secrets: []string{"ANTHROPIC_API_KEY"}}, granted: []string{"GITHUB_TOKEN"},
+			reported: "Invalid API key · Please run /login",
+			want:     "The owner hasn't given this agent a model key. The agent reported: Invalid API key · Please run /login",
+		},
+		{name: "claude with its key", cfg: &agentdir.Config{Harness: "claude", Secrets: []string{"ANTHROPIC_API_KEY"}}, granted: []string{"ANTHROPIC_API_KEY"}, reported: "Invalid API key · Please run /login", want: "Invalid API key · Please run /login"},
+		{
+			name: "unknown model", cfg: opencode, granted: []string{"GEMINI_API_KEY"}, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
 			want: `the agent failed: setting "model": model not found: google/x` + opencodeHint,
 		},
 		{
-			name: "retired model of a provider", cfg: opencode, reported: "acp agent error: Internal error: models/gemini-2.5-flash is not found for API version v1beta (code -32603)",
+			name: "retired model of a provider", cfg: opencode, granted: []string{"GEMINI_API_KEY"}, reported: "acp agent error: Internal error: models/gemini-2.5-flash is not found for API version v1beta (code -32603)",
 			want: "the agent failed: models/gemini-2.5-flash is not found for API version v1beta" + opencodeHint,
 		},
-		{name: "model that does not exist", cfg: opencode, reported: "The model `gpt-old` does not exist", want: "The model `gpt-old` does not exist" + opencodeHint},
+		{name: "model that does not exist", cfg: opencode, granted: []string{"GEMINI_API_KEY"}, reported: "The model `gpt-old` does not exist", want: "The model `gpt-old` does not exist" + opencodeHint},
 		{
 			name: "anthropic not found error", cfg: &agentdir.Config{Harness: "claude"}, reported: `{"type":"error","error":{"type":"not_found_error","message":"model: claude-old"}}`,
 			want: `{"type":"error","error":{"type":"not_found_error","message":"model: claude-old"}}` + claudeHint,
@@ -915,7 +926,7 @@ func TestExplainFailure(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := explainFailure(tc.cfg, tc.reported); got != tc.want {
+			if got := explainFailure(tc.cfg, tc.granted, tc.reported); got != tc.want {
 				t.Fatalf("explainFailure(%q) = %q, want %q", tc.reported, got, tc.want)
 			}
 		})

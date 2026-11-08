@@ -218,10 +218,10 @@ func TestUserAgentOfRemovedPairingDoesNotStart(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 
-	_, err := ts.srv.startUserAgent(context.Background(), agentkey.User(auth.PairPrincipal("gone")), io.Discard)
+	_, err := ts.srv.startPoolAgent(context.Background(), &ts.srv.users, agentkey.User(auth.PairPrincipal("gone")), io.Discard)
 
 	if err == nil {
-		t.Fatalf("startUserAgent() of a removed pairing error = nil, want an error")
+		t.Fatalf("startPoolAgent() of a removed pairing error = nil, want an error")
 	}
 	if _, err := os.Stat(ts.dir.UserHomeDir(auth.PairPrincipal("gone"))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of the removed pairing's agent home error = %v, want %v", err, os.ErrNotExist)

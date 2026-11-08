@@ -21,6 +21,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
@@ -201,6 +202,12 @@ func removalPreviewText(name string, p *controlapi.RemovalPreview) string {
 	line(p.Allowed, "tool call allowed in all its conversations", "tool calls allowed in all its conversations")
 	for _, dir := range p.AgentHomes {
 		fmt.Fprintf(&sb, "  the agent home directory %s\n", dir)
+	}
+	for _, dir := range p.Workspaces {
+		fmt.Fprintf(&sb, "  the private workspaces in %s\n", dir)
+	}
+	if p.SandboxRule != "" {
+		fmt.Fprintf(&sb, "  %s from the sandbox rule %s\n", agentdir.PairingMatcher(name), p.SandboxRule)
 	}
 	sb.WriteString(dryRunNote + "\n")
 	return sb.String()

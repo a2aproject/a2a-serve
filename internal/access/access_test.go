@@ -81,8 +81,8 @@ func TestCountPairings(t *testing.T) {
 		{Name: auth.LocalPairing, Role: auth.RoleOwner},
 		{Name: "phone", Role: auth.RoleOwner},
 		{Name: "anna", Role: auth.RoleAuthenticated},
-	})
-	if diff := cmp.Diff(Pairings{All: 2, Owners: 1}, got); diff != "" {
+	}, []store.Node{{ID: "grok"}})
+	if diff := cmp.Diff(Pairings{All: 2, Owners: 1, Names: map[string]bool{"phone": true, "anna": true, "grok": true}}, got); diff != "" {
 		t.Fatalf("CountPairings() wrong result (-want +got) diff = %s", diff)
 	}
 }
