@@ -83,5 +83,4 @@
 ### End-to-end Testing
 
 * Build binaries for manual checks the way releases are built, with `CGO_ENABLED=0`.
-* For a check with a real agent, run opencode in Docker with a Google model (`google/gemini-flash-latest`) and its key in `GOOGLE_GENERATIVE_AI_API_KEY`.
 * Walk the examples a change touches, step by step as written, and report each step as passed, failed or skipped with the reason.
