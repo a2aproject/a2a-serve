@@ -18,8 +18,10 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 )
@@ -76,5 +78,62 @@ func TestAgentMessageTooLargeError(t *testing.T) {
 		if got := (errAgentMessageTooLarge{tc.limit}).Error(); got != tc.want {
 			t.Fatalf("errAgentMessageTooLarge.Error() = %q, want %q", got, tc.want)
 		}
+	}
+}
+
+// slowEnd is an agent stream whose reads end some time after it is closed,
+// as a process's output does once the process exits.
+type slowEnd struct {
+	closed chan struct{}
+	delay  time.Duration
+	ended  atomic.Bool
+}
+
+func (s *slowEnd) Read([]byte) (int, error) {
+	<-s.closed
+	time.Sleep(s.delay)
+	s.ended.Store(true)
+	return 0, io.EOF
+}
+
+func (s *slowEnd) Write(p []byte) (int, error) { return len(p), nil }
+
+func (s *slowEnd) Close() error {
+	close(s.closed)
+	return nil
+}
+
+func TestAwaitedCloseWaitsForTheReader(t *testing.T) {
+	t.Parallel()
+	inner := &slowEnd{closed: make(chan struct{}), delay: 50 * time.Millisecond}
+	rwc := newAwaitedClose(inner, time.Minute)
+	go func() {
+		if _, err := rwc.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+			t.Errorf("Read() error = %v, want %v", err, io.EOF)
+		}
+	}()
+
+	if err := rwc.Close(); err != nil {
+		t.Fatalf("Close() error = %v, want nil", err)
+	}
+
+	if !inner.ended.Load() {
+		t.Fatalf("Close() returned before the reader saw the end of the output")
+	}
+}
+
+func TestAwaitedCloseWithoutReader(t *testing.T) {
+	t.Parallel()
+	rwc := newAwaitedClose(&slowEnd{closed: make(chan struct{})}, 10*time.Millisecond)
+	done := make(chan error, 1)
+	go func() { done <- rwc.Close() }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Close() error = %v, want nil", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatalf("Close() without a reader didn't return after the grace")
 	}
 }

@@ -243,7 +243,8 @@ type checkedProcess struct {
 }
 
 // Start implements [a2aacp.Agent]. A message from the agent over
-// maxMessage fails the connection.
+// maxMessage fails the connection, and Close returns once the reader saw
+// the output end.
 func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteCloser, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -253,7 +254,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 		if err != nil {
 			return nil, err
 		}
-		return newBoundedMessages(rwc, p.maxMessage), nil
+		return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
 	}
 	mark := harness.NewProcessMark()
 	proc := p.Process
@@ -262,7 +263,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 	if err != nil {
 		return nil, err
 	}
-	return newBoundedMessages(mark.Watch(rwc), p.maxMessage), nil
+	return newAwaitedClose(newBoundedMessages(mark.Watch(rwc), p.maxMessage), agentReadEndGrace), nil
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
