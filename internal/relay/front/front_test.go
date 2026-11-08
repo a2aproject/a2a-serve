@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -439,5 +440,64 @@ func TestFrontTellsClientsApart(t *testing.T) {
 				t.Fatalf("request of the second client status = %d, want %d", got, want)
 			}
 		})
+	}
+}
+
+func TestFrontReusesUpstreamConnectionsAfterABurst(t *testing.T) {
+	t.Parallel()
+	const burst = 20
+	var (
+		mu       sync.Mutex
+		waiting  int
+		release  = make(chan struct{})
+		newConns atomic.Int32
+	)
+	mesh := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		waiting++
+		ch := release
+		if waiting == burst {
+			close(release)
+			release, waiting = make(chan struct{}), 0
+		}
+		mu.Unlock()
+		<-ch
+		if _, err := io.WriteString(w, "ok"); err != nil {
+			t.Errorf("writing: %v", err)
+		}
+	}))
+	mesh.Config.ConnState = func(_ net.Conn, s http.ConnState) {
+		if s == http.StateNew {
+			newConns.Add(1)
+		}
+	}
+	mesh.Start()
+	t.Cleanup(mesh.Close)
+	u, err := url.Parse(mesh.URL)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f := front.New(info, echo(t, "control"), nil)
+	f.Open(u)
+	t.Cleanup(f.Close)
+	sendBurst := func() {
+		var wg sync.WaitGroup
+		for range burst {
+			wg.Go(func() {
+				rec := httptest.NewRecorder()
+				f.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/policies", nil))
+				if rec.Code != http.StatusOK {
+					t.Errorf("GET /policies status = %d, want %d", rec.Code, http.StatusOK)
+				}
+			})
+		}
+		wg.Wait()
+	}
+
+	sendBurst()
+	sendBurst()
+
+	if got := newConns.Load(); got != burst {
+		t.Fatalf("connections to Agent Mesh after two bursts of %d = %d, want %d", burst, got, burst)
 	}
 }

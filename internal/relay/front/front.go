@@ -45,6 +45,9 @@ type Front struct {
 	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
 	proxied *httpserver.KeyedLimiter
+	// transport is shared by the proxies of each Open, so a reopened front
+	// reuses its connections.
+	transport *http.Transport
 }
 
 // maxProxiedPerClient is how many requests to Agent Mesh one client may
@@ -60,9 +63,10 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
 	f := &Front{
-		info:    info,
-		control: unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
-		proxied: httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		info:      info,
+		control:   unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied:   httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		transport: upstreamTransport(),
 	}
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
@@ -70,9 +74,20 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 	return f
 }
 
+// maxIdleUpstream is how many idle connections to agentmesh-one the front
+// keeps, so that a burst of requests reuses them.
+const maxIdleUpstream = 64
+
+func upstreamTransport() *http.Transport {
+	t := http.DefaultTransport.(*http.Transport).Clone()
+	t.MaxIdleConnsPerHost = maxIdleUpstream
+	return t
+}
+
 // Open starts proxying to the agentmesh-one at upstream.
 func (f *Front) Open(upstream *url.URL) {
 	p := &httputil.ReverseProxy{
+		Transport: f.transport,
 		Rewrite: func(r *httputil.ProxyRequest) {
 			r.SetURL(upstream)
 			// Agent Mesh gets the path the front checked, so an escaped dot
@@ -94,7 +109,10 @@ func (f *Front) Open(upstream *url.URL) {
 }
 
 // Close answers 503 on proxied routes again, while agentmesh-one stops.
-func (f *Front) Close() { f.proxy.Store(nil) }
+func (f *Front) Close() {
+	f.proxy.Store(nil)
+	f.transport.CloseIdleConnections()
+}
 
 // methods are the methods the front passes on. Go's mux doesn't clean the
 // path of a CONNECT request, and Agent Mesh serves none of the others.

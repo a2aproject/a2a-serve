@@ -72,6 +72,7 @@ type agentMesh struct {
 	health     Health
 	probedAt   time.Time
 	stopHealth func()
+	cards      *CardCache
 }
 
 // NewRelay returns the provider of an Agent Mesh relay.
@@ -79,7 +80,7 @@ func NewRelay(cfg RelayConfig) (Provider, error) {
 	if err := agentmesh.CheckRelayURL(cfg.URL); err != nil {
 		return nil, fmt.Errorf("invalid relay URL %q: %w", cfg.URL, err)
 	}
-	return &agentMesh{cfg: cfg}, nil
+	return &agentMesh{cfg: cfg, cards: newCardCache()}, nil
 }
 
 func (a *agentMesh) Name() string { return ProviderRelay }
@@ -306,7 +307,7 @@ func (a *agentMesh) Peers(ctx context.Context) ([]PeerInfo, error) {
 			Node:        p.GetPeerId(),
 		})
 	}
-	return ProbeAgents(ctx, a.HTTPClient(), candidates, []string{a.cfg.AgentName}), nil
+	return a.cards.ProbeAgents(ctx, a.HTTPClient(), candidates, []string{a.cfg.AgentName}), nil
 }
 
 // HTTPClient sends requests to http://agentmesh.local/... over the relay's

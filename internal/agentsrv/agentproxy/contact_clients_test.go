@@ -24,6 +24,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -706,4 +707,110 @@ func TestContactClientsLimitResponseSize(t *testing.T) {
 			}
 		})
 	}
+}
+
+// blockingPeers is a private network whose discoveries wait for release,
+// and counts them.
+type blockingPeers struct {
+	network.Provider
+	entered chan struct{}
+	release chan struct{}
+	calls   atomic.Int32
+}
+
+func newBlockingPeers() *blockingPeers {
+	return &blockingPeers{entered: make(chan struct{}, 1), release: make(chan struct{})}
+}
+
+func (p *blockingPeers) Peers(ctx context.Context) ([]network.PeerInfo, error) {
+	p.calls.Add(1)
+	select {
+	case p.entered <- struct{}{}:
+	default:
+	}
+	select {
+	case <-p.release:
+		return []network.PeerInfo{{Name: "ben", URL: "http://ben.test", Online: true}}, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestContactClientsDiscoverIsSingleFlight(t *testing.T) {
+	t.Parallel()
+	peers := newBlockingPeers()
+	cc := newTestContactClients(t, nil, peers)
+	results := make([][]network.PeerInfo, 8)
+	var wg sync.WaitGroup
+	wg.Go(func() {
+		got, err := cc.Discover(context.Background())
+		if err != nil {
+			t.Errorf("ContactClients.Discover() error = %v", err)
+		}
+		results[0] = got
+	})
+	<-peers.entered
+	for i := 1; i < len(results); i++ {
+		wg.Go(func() {
+			got, err := cc.Discover(context.Background())
+			if err != nil {
+				t.Errorf("ContactClients.Discover() error = %v", err)
+			}
+			results[i] = got
+		})
+	}
+	close(peers.release)
+	wg.Wait()
+
+	if got := peers.calls.Load(); got != 1 {
+		t.Fatalf("discoveries of the private network = %d, want 1", got)
+	}
+	for _, got := range results {
+		if diff := cmp.Diff([]string{"ben"}, peerNames(got)); diff != "" {
+			t.Fatalf("ContactClients.Discover() wrong result (-want +got) diff = %s", diff)
+		}
+	}
+}
+
+func TestContactClientsDiscoverOutlivesCanceledCaller(t *testing.T) {
+	t.Parallel()
+	peers := newBlockingPeers()
+	cc := newTestContactClients(t, nil, peers)
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		_, err := cc.Discover(ctx)
+		done <- err
+	}()
+	<-peers.entered
+
+	cancel()
+	if err := <-done; !errors.Is(err, context.Canceled) {
+		t.Fatalf("ContactClients.Discover() of a canceled caller error = %v, want %v", err, context.Canceled)
+	}
+	again := make(chan []network.PeerInfo, 1)
+	go func() {
+		got, err := cc.Discover(context.Background())
+		if err != nil {
+			t.Errorf("ContactClients.Discover() error = %v", err)
+		}
+		again <- got
+	}()
+	close(peers.release)
+	got := <-again
+
+	if diff := cmp.Diff([]string{"ben"}, peerNames(got)); diff != "" {
+		t.Fatalf("ContactClients.Discover() wrong result (-want +got) diff = %s", diff)
+	}
+	if calls := peers.calls.Load(); calls != 1 {
+		t.Fatalf("discoveries of the private network = %d, want 1", calls)
+	}
+}
+
+func peerNames(peers []network.PeerInfo) []string {
+	var out []string
+	for _, p := range peers {
+		out = append(out, p.Name)
+	}
+	return out
 }

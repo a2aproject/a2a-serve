@@ -179,7 +179,8 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 }
 
 // peersRediscoverEvery bounds how often `a2a-serve peers` discovers the
-// agents on the private network, so it stops listing a stopped agent soon.
+// agents on the private network, so it stops listing an agent soon after
+// it leaves.
 const peersRediscoverEvery = time.Second
 
 func (s *Server) listPeers(ctx context.Context) ([]network.PeerInfo, error) {

@@ -48,7 +48,7 @@ A card comes from the other agent, so the server bounds its text before the agen
 
 ## Peer names
 
-`a2a-serve peers` lists each agent by the name in its agent card while that name is unique on the private network. Commands such as `a2a-serve contact add <name>` and `<pairing>@<agent>` use the listed names.
+`a2a-serve peers` lists each agent by the name in its agent card while that name is unique on the private network. Commands such as `a2a-serve contact add <name>` and `<pairing>@<agent>` use the listed names. The server keeps each peer's card for 10 minutes, so a changed card name shows up within 10 minutes. A machine that doesn't serve an agent is checked again after a minute.
 
 - When another agent's card has the same name, or another machine has it as its network name, the agent is listed by its own network name. That is its machine name on the tailnet, or the name it joined the relay with.
 - When agents share a network name, each one gets a suffix derived from its machine, such as `bob-1a2b3c4d`.

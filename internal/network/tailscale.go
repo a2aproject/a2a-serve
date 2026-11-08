@@ -60,6 +60,7 @@ type Tailscale struct {
 	private *splitListener
 	public  *splitListener
 	url     *url.URL
+	cards   *CardCache
 }
 
 var _ Provider = (*Tailscale)(nil)
@@ -112,6 +113,7 @@ func (t *Tailscale) start(ctx context.Context) error {
 	}
 	t.srv = srv
 	t.url = &url.URL{Scheme: "https", Host: domains[0]}
+	t.cards = newCardCache()
 	slog.Info("joined tailnet", "host", domains[0], "ip", st.TailscaleIPs)
 	t.started.Store(true)
 	go t.fetchCert(ctx, domains[0], logf)
@@ -370,7 +372,7 @@ func (t *Tailscale) Peers(ctx context.Context) ([]PeerInfo, error) {
 		}
 		candidates = append(candidates, PeerInfo{Name: name, URL: "https://" + host, Online: true, Node: string(p.ID)})
 	}
-	return ProbeAgents(ctx, t.HTTPClient(), candidates, taken), nil
+	return t.cards.ProbeAgents(ctx, t.HTTPClient(), candidates, taken), nil
 }
 
 // machineName returns the host of a MagicDNS name and the machine name in it.
