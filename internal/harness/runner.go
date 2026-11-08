@@ -121,10 +121,80 @@ func (r *DockerRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile)...)...)
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile, false)...)...)
 	cmd.Env = os.Environ()
 	cmd.Dir = os.TempDir()
 	return cmd, nil
+}
+
+// fallbackScript starts a container as startScript does, after a check
+// of its launcher's setup. $2, $3 and $4 are the quoted arguments of
+// docker run for the check, for the container with the egress boundary,
+// and for the fallback, which has Docker's own network. A failed check
+// writes its output to marker $1, and that and every later start get the
+// fallback. The check reads no stdin, which the container gets.
+const fallbackScript = `name=$0 marker=$1
+docker rm -f "$name" "$name-check" >/dev/null 2>&1
+if [ ! -e "$marker" ] && ! out=$(eval "docker run --name \"\$name-check\" $2" </dev/null 2>&1); then
+  printf '%s\n' "$out" >"$marker"
+  printf 'a2a-serve: egress control is off, as the container can'"'"'t set up its network: %s\n' "$out" >&2
+fi
+if [ -e "$marker" ]; then eval "exec docker run --name \"\$name\" $4"; fi
+eval "exec docker run --name \"\$name\" $3"`
+
+// CommandWithFallback returns the process which runs c in the container of
+// r once a check of its launcher's setup passes, or else in the container
+// of fallback, from then on. The failed check leaves its output in marker.
+func (r *DockerRunner) CommandWithFallback(ctx context.Context, c Command, fallback *DockerRunner, marker string) (*exec.Cmd, error) {
+	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
+	if err != nil {
+		return nil, err
+	}
+	fbEnvFile, err := fallback.writeEnvFile(append(slices.Clone(fallback.Env), c.Env...))
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", fallbackScript, r.Name, marker,
+		shellQuote(r.runArgs(c, envFile, true)), shellQuote(r.runArgs(c, envFile, false)), shellQuote(fallback.runArgs(c, fbEnvFile, false)))
+	cmd.Env = os.Environ()
+	cmd.Dir = os.TempDir()
+	return cmd, nil
+}
+
+// shellQuote joins args, each in single quotes, for sh to eval.
+func shellQuote(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
+}
+
+// probeTimeout bounds the check of a container's egress setup.
+const probeTimeout = time.Minute
+
+// Probe runs a container with the flags of r's container whose launcher
+// only sets up the network and drops its capabilities, and returns why
+// that failed.
+func (r *DockerRunner) Probe(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	envFile, err := r.writeEnvFile(slices.Clone(r.Env))
+	if err != nil {
+		return err
+	}
+	name := r.Name + "-check"
+	if err := removeContainer(ctx, name); err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, "docker", append([]string{"run", "--name", name}, r.runArgs(Command{}, envFile, true)...)...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return err
+	}
+	return errors.New(reasonOf(string(out)))
 }
 
 // writeEnvFile writes env to a file only the user can read, for docker run
@@ -159,7 +229,8 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 }
 
 // runArgs returns the arguments of docker run after --name.
-func (r *DockerRunner) runArgs(c Command, envFile string) []string {
+// With check, the launcher only checks its setup.
+func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	limits := r.Limits
 	if limits.Memory == "" {
 		limits.Memory = agentdir.DefaultLimits.Memory
@@ -232,6 +303,9 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 		args = append(args, "-w", c.Dir)
 	}
 	args = append(args, r.Image)
+	if r.Egress != nil && check {
+		return append(args, "sandbox-init", "--check", sandboxnet.ContainerSocketDir+"/"+sandboxnet.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+	}
 	if r.Egress != nil {
 		args = append(args, "sandbox-init", sandboxnet.ContainerSocketDir+"/"+sandboxnet.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
 		args = append(args, r.Egress.Entrypoint...)

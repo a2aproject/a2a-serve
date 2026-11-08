@@ -71,6 +71,9 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	for _, w := range h.prepared.Warnings {
 		s.logf("! %s", w)
 	}
+	if p := h.prepared.EgressProblem; p != "" {
+		slog.Warn(p)
+	}
 	s.noticeEgress(h.prepared)
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
@@ -336,7 +339,11 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, errors.Join(err, closeEndpoint())
 	}
 	s.egress.started(spec.EgressMode, prepared.EgressProblem)
-	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
+	forget := s.egress.watch(prepared.FellBack)
+	stop := func(ctx context.Context) error {
+		forget()
+		return errors.Join(prepared.Stop(ctx), closeEndpoint())
+	}
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage}, nil
 }
 

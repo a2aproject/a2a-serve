@@ -21,11 +21,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"maps"
 	"net"
 	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -51,16 +53,69 @@ type egressSockets struct {
 	// boundary.
 	mode, problem string
 	prepared      bool
+	// fallbacks tell whether the containers that run fell back to Docker's
+	// own network, keyed by the order they were added in.
+	fallbacks map[int]func() string
+	nextWatch int
 	// relays takes the connections of relay containers, which reach it at
 	// relayAddr, mounting relayMount on Linux.
 	relays                *sandboxnet.RelayServer
 	relayAddr, relayMount string
 	// launcherCopy is the copy of the running a2a-serve.
 	launcherCopy string
+
+	// probeMu serializes the check of the containers' egress setup, which
+	// runs once for the server, and probed and probeErr are its result.
+	probeMu  sync.Mutex
+	probed   bool
+	probeErr error
+}
+
+// probeOnce runs probe, the check of a container's egress setup, at the
+// first call, and returns its result to every call. Each start of the
+// server checks again.
+func (e *egressSockets) probeOnce(probe func() error) error {
+	e.probeMu.Lock()
+	defer e.probeMu.Unlock()
+	if !e.probed {
+		e.probeErr, e.probed = probe(), true
+	}
+	return e.probeErr
+}
+
+// watch adds fellBack, which tells whether a container fell back to
+// Docker's own network, to what status reports, until forget.
+func (e *egressSockets) watch(fellBack func() string) (forget func()) {
+	if fellBack == nil {
+		return func() {}
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	id := e.nextWatch
+	e.nextWatch++
+	e.fallbacks[id] = fellBack
+	return func() {
+		e.mu.Lock()
+		defer e.mu.Unlock()
+		delete(e.fallbacks, id)
+	}
+}
+
+// fellBack returns why a container fell back to Docker's own network, or "".
+func (e *egressSockets) fellBack() string {
+	e.mu.Lock()
+	fns := slices.Collect(maps.Values(e.fallbacks))
+	e.mu.Unlock()
+	for _, f := range fns {
+		if w := f(); w != "" {
+			return w
+		}
+	}
+	return ""
 }
 
 func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets {
-	return &egressSockets{dir: dir, config: config, blocks: &sandboxnet.Blocks{}}
+	return &egressSockets{dir: dir, config: config, blocks: &sandboxnet.Blocks{}, fallbacks: map[int]func() string{}}
 }
 
 // opener returns the function that opens the boundary of the container
@@ -189,8 +244,9 @@ func (e *egressSockets) boundary(cfg *agentdir.Config) bool {
 	if e == nil {
 		return harness.DecideEgress(cfg, harness.HostEgressEnv()).Boundary
 	}
+	fellBack := e.fellBack()
 	e.mu.Lock()
-	prepared, problem := e.prepared, e.problem
+	prepared, problem := e.prepared, cmp.Or(e.problem, fellBack)
 	e.mu.Unlock()
 	if prepared {
 		return problem == "" && cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted
@@ -205,8 +261,9 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	if cfg.Sandbox == harness.SandboxLocal && cfg.Egress.Mode == "" && len(cfg.Egress.Allow) == 0 {
 		return nil
 	}
+	fellBack := e.fellBack()
 	e.mu.Lock()
-	st := &controlapi.EgressStatus{Mode: cmp.Or(e.mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Problem: e.problem}
+	st := &controlapi.EgressStatus{Mode: cmp.Or(e.mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Problem: cmp.Or(e.problem, fellBack)}
 	e.mu.Unlock()
 	if st.Problem == "" {
 		st.Problem = harness.DecideEgress(cfg, harness.HostEgressEnv()).Warning
@@ -301,6 +358,7 @@ func (s *Server) egressSandbox(spec *harness.Spec) {
 	}
 	spec.EgressMode = s.rt.Config().Egress.Mode
 	spec.EgressAllow = s.rt.Config().Egress.Allow
+	spec.ProbeEgress = s.egress.probeOnce
 	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode)
 }
 

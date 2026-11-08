@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
@@ -107,6 +108,9 @@ type Spec struct {
 	// Launcher is the host path of the a2a-serve binary that containers run
 	// as their launcher; empty uses this binary.
 	Launcher string
+	// ProbeEgress runs the check of a container's egress setup, once for
+	// the server's lifetime; nil runs it for each Prepare.
+	ProbeEgress func(probe func() error) error
 	// BridgeAddr is the host:port through which a container reaches the
 	// server's TCP listener with Docker Desktop, or "" with a socket.
 	BridgeAddr string
@@ -137,6 +141,9 @@ type Prepared struct {
 	// Egress is set when the container's connections go through the
 	// server.
 	Egress bool
+	// FellBack returns why the container has Docker's own network after
+	// a check of its launcher's setup failed at one of its starts, or "".
+	FellBack func() string
 	// OnHost is set when the harness runs on the host, where the processes
 	// it starts outlive it unless they are killed; see [ProcessMark].
 	OnHost bool
@@ -280,31 +287,129 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	closeEgress := func() error { return nil }
 	var warnings []string
 	var egressProblem string
-	var egressOn bool
+	var fallback *DockerRunner
 	relay := false
 	if spec.OpenEgress != nil {
 		eg, closeFn, decision, err := dockerEgress(ctx, spec, image, rootless)
 		if err != nil {
 			return nil, err
 		}
-		relay = eg != nil && eg.Relay != ""
+		if eg != nil {
+			// The agent's container gets Docker's own network when its
+			// launcher can't set up the boundary, unless the allowlist
+			// asks for the boundary.
+			if spec.EgressMode != egress.ModeAllowlist {
+				fallback = clone(dr)
+			}
+			dr.Egress = eg
+			failSetup := os.Getenv(sandboxnet.EnvFailSetup)
+			if failSetup == "all" {
+				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
+			}
+			perr := probeEgress(spec, func() error { return dr.Probe(ctx) })
+			if failSetup == "agent" {
+				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
+			}
+			if perr != nil {
+				decision = probeFailed(spec.EgressMode, perr)
+				dr.Egress, fallback = nil, nil
+				if cerr := closeFn(); cerr != nil {
+					slog.Warn("closing the egress boundary", "error", cerr)
+				}
+				if err := dr.Stop(ctx); err != nil {
+					slog.Warn("removing the files of the egress check", "error", err)
+				}
+				dr.Env = cliEnv(spec.Env)
+			} else {
+				closeEgress = closeFn
+				relay = eg.Relay != ""
+			}
+		}
 		if decision.Problem != "" && spec.EgressMode == egress.ModeAllowlist {
-			return nil, errors.New(decision.Warning)
+			return nil, errors.Join(errors.New(decision.Warning), closeEgress())
 		}
 		if decision.Warning != "" {
 			warnings = append(warnings, decision.Warning)
 		}
-		if !decision.Boundary {
+		if !decision.Boundary || dr.Egress == nil {
 			egressProblem = decision.Warning
 		}
-		if eg != nil {
-			dr.Egress, closeEgress, egressOn = eg, closeFn, true
+		if dr.Egress != nil {
 			what += "; egress " + cmp.Or(spec.EgressMode, egress.ModeInternet) + " through the server"
 			if relay {
 				what += " (egress container)"
 			}
 		}
 	}
+	connectServer(dr, spec, relay)
+	c := profileCommand(spec, ws)
+	var cmd *exec.Cmd
+	var marker string
+	if fallback == nil {
+		cmd, err = dr.Command(ctx, c)
+	} else {
+		connectServer(fallback, spec, false)
+		marker, err = fallbackMarker()
+		if err == nil {
+			cmd, err = dr.CommandWithFallback(ctx, c, fallback, marker)
+		}
+	}
+	if err != nil {
+		return nil, errors.Join(err, closeEgress(), removeMarker(marker))
+	}
+	stop := func(ctx context.Context) error {
+		var fbErr error
+		if fallback != nil {
+			fbErr = fallback.Stop(ctx)
+		}
+		return errors.Join(dr.Stop(ctx), fbErr, closeEgress(), removeMarker(marker))
+	}
+	fellBack := func() string {
+		if marker == "" {
+			return ""
+		}
+		if _, err := os.Stat(marker); err != nil {
+			return ""
+		}
+		return noBoundary("the agent's container can't set up its network: " + setupReason(marker))
+	}
+	return &Prepared{FellBack: fellBack, Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Egress: dr.Egress != nil, Check: func() error {
+		if err := checkPaths(spec); err != nil {
+			return err
+		}
+		if err := checkNoNewAgents(spec); err != nil {
+			return err
+		}
+		if marker != "" {
+			if _, err := os.Stat(marker); err == nil {
+				return nil
+			}
+		}
+		if dr.Egress != nil && dr.Egress.ensure != nil {
+			return dr.Egress.ensure()
+		}
+		return nil
+	}}, nil
+}
+
+// probeFailed is the decision for a container of mode whose egress check
+// failed with err: Docker's own network, or no start with allowlist.
+func probeFailed(mode string, err error) EgressDecision {
+	return problemDecision(&agentdir.Config{Egress: agentdir.EgressConfig{Mode: mode}}, "the agent's container can't set up its network: "+err.Error())
+}
+
+// probeEgress runs probe, the check of a container's egress setup, once
+// for the server when spec says how.
+func probeEgress(spec Spec, probe func() error) error {
+	if spec.ProbeEgress == nil {
+		return probe()
+	}
+	return spec.ProbeEgress(probe)
+}
+
+// connectServer gives the container of dr the way to the server in spec:
+// the socket of its relay, or a mount of the server's socket.
+func connectServer(dr *DockerRunner, spec Spec, relay bool) {
 	switch {
 	case relay && (spec.Socket != "" || spec.BridgeAddr != ""):
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+sandboxnet.ContainerSocketDir+"/"+sandboxnet.ServerSocketName)
@@ -312,23 +417,49 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
-	cmd, err := dr.Command(ctx, profileCommand(spec, ws))
+}
+
+func clone(dr *DockerRunner) *DockerRunner {
+	c := *dr
+	c.Mounts, c.Env = slices.Clone(dr.Mounts), slices.Clone(dr.Env)
+	return &c
+}
+
+// fallbackMarker returns the path of a file, not created yet, whose
+// existence starts the container with Docker's own network.
+func fallbackMarker() (string, error) {
+	dir, err := os.MkdirTemp("", "a2a-egress-*")
 	if err != nil {
-		return nil, errors.Join(err, closeEgress())
+		return "", err
 	}
-	stop := func(ctx context.Context) error { return errors.Join(dr.Stop(ctx), closeEgress()) }
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Egress: egressOn, Check: func() error {
-		if err := checkPaths(spec); err != nil {
-			return err
+	return filepath.Join(dir, "fallback"), nil
+}
+
+// setupReason returns why the check in marker failed.
+func setupReason(marker string) string {
+	out, err := os.ReadFile(marker)
+	if err != nil {
+		return err.Error()
+	}
+	return reasonOf(string(out))
+}
+
+// reasonOf returns the launcher's setup error in the output of a check, or
+// its first line.
+func reasonOf(out string) string {
+	for line := range strings.Lines(out) {
+		if reason, ok := strings.CutPrefix(strings.TrimSpace(line), "a2a-init: setting up the sandbox's network: "); ok {
+			return reason
 		}
-		if err := checkNoNewAgents(spec); err != nil {
-			return err
-		}
-		if dr.Egress != nil && dr.Egress.ensure != nil {
-			return dr.Egress.ensure()
-		}
+	}
+	return cmp.Or(firstLine(strings.TrimSpace(out)), "it failed without output")
+}
+
+func removeMarker(marker string) error {
+	if marker == "" {
 		return nil
-	}}, nil
+	}
+	return os.RemoveAll(filepath.Dir(marker))
 }
 
 // dockerEgress opens the boundary of a container of image when

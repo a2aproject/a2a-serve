@@ -47,7 +47,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 			if r, ok := checkImage(ctx, env, cfg, online); ok {
 				results = append(results, r)
 			}
-			results = append(results, checkEgress(ctx, env, cfg))
+			results = append(results, checkEgress(ctx, env, dir, cfg))
 		}
 	}
 	for i := range results {
@@ -149,9 +149,14 @@ func firstLine(s string) string {
 
 // checkEgress checks that the Docker sandbox's connections go through the
 // server.
-func checkEgress(ctx context.Context, env Env, cfg *agentdir.Config) Result {
+func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config) Result {
 	r := Result{ID: "egress", Status: StatusOK}
 	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg))
+	if dir != nil && env.Status != nil {
+		if st, err := env.Status(ctx, *dir); err == nil && st.Egress != nil && st.Egress.Problem != "" {
+			d.Warning = st.Egress.Problem
+		}
+	}
 	switch {
 	case cfg.Egress.Mode == egress.ModeUnrestricted:
 		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect

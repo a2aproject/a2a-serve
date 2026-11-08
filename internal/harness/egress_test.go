@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"runtime/debug"
 	"strings"
 	"testing"
@@ -26,6 +27,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 func TestDockerRunnerCommandWithEgress(t *testing.T) {
@@ -198,6 +200,78 @@ func TestRelayImageRef(t *testing.T) {
 			}
 			if err != nil || image != tc.wantImage || ref != tc.wantRef {
 				t.Fatalf("relayImageRef() = %q, %q, %v, want %q, %q", image, ref, err, tc.wantImage, tc.wantRef)
+			}
+		})
+	}
+}
+
+func TestProbeFailed(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		mode, want string
+	}{
+		{mode: "", want: "egress control is off: the agent's container can't set up its network: operation not permitted. The agent reaches every network"},
+		{mode: "allowlist", want: "--egress allowlist can't apply: the agent's container can't set up its network: operation not permitted"},
+	}
+	for _, tc := range tests {
+		got := probeFailed(tc.mode, errors.New("operation not permitted"))
+		if got.Boundary || got.Problem == "" || !strings.HasPrefix(got.Warning, tc.want) {
+			t.Fatalf("probeFailed(%q) = %+v, want no boundary and a warning starting with %q", tc.mode, got, tc.want)
+		}
+	}
+}
+
+func TestCommandWithFallback(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		checkFail bool
+		want      []string
+	}{
+		{name: "check passes", want: []string{"check", "egress", "check", "egress"}},
+		{name: "check fails", checkFail: true, want: []string{"check", "fallback", "fallback"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			calls := filepath.Join(dir, "calls")
+			fail := "exit 0"
+			if tc.checkFail {
+				fail = "echo \"a2a-init: setting up the sandbox's network: no tun\" >&2; exit " + fmt.Sprint(sandboxnet.SetupFailedExit)
+			}
+			fakeDocker := "#!/bin/sh\n" +
+				"[ \"$1\" = run ] || exit 0\n" +
+				"case \"$*\" in *--check*) echo check >>" + calls + "; " + fail + ";;\n" +
+				"*sandbox-init*) echo egress >>" + calls + ";;\n" +
+				"*) echo fallback >>" + calls + ";; esac\n"
+			if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(fakeDocker), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
+			fallback := &DockerRunner{Name: "a2a-coder-1", Image: "img:1"}
+			marker := filepath.Join(dir, "fallback")
+			for range 2 {
+				cmd, err := r.CommandWithFallback(context.Background(), Command{Path: "agent", Args: []string{"it's"}}, fallback, marker)
+				if err != nil {
+					t.Fatalf("CommandWithFallback() error = %v", err)
+				}
+				cmd.Env = append(cmd.Env, "PATH="+dir+":/usr/bin:/bin")
+				if out, err := cmd.CombinedOutput(); err != nil {
+					t.Fatalf("starting the container error = %v: %s", err, out)
+				}
+			}
+			data, err := os.ReadFile(calls)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(tc.want, strings.Fields(string(data))); diff != "" {
+				t.Fatalf("docker run calls wrong result (-want +got) diff = %s", diff)
+			}
+			if tc.checkFail {
+				if got := setupReason(marker); got != "no tun" {
+					t.Fatalf("setupReason() = %q, want %q", got, "no tun")
+				}
 			}
 		})
 	}

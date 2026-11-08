@@ -23,11 +23,13 @@ import (
 	"net/netip"
 	"os"
 	"os/exec"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 // publicTarget is a public host the sandbox reaches, overridable for
@@ -206,5 +208,51 @@ func TestDockerSandboxEgressContainerComesBack(t *testing.T) {
 	}
 	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
 		t.Fatalf("a2a send dial %s after the egress container was removed = %q, want the public host reached", publicTarget(), got)
+	}
+}
+
+func TestDockerSandboxEgressFallsBackWhenSetupFails(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	owner := newUser(t)
+	env := owner.env
+	owner.env = append(slices.Clone(env), sandboxnet.EnvFailSetup+"=all")
+	coder := owner.newAgent("coder")
+	t.Cleanup(coder.cleanup)
+	out := coder.serve(append([]string{"start", "acp", "--name", "coder", "--detach"}, sandboxFlags()...)...)
+	coder.url = strings.TrimSpace(coder.serve("status", "--url=local"))
+	const warning = "egress control is off: the agent's container can't set up its network: the setup failed as the test asked"
+	if !strings.Contains(out, warning) {
+		t.Fatalf("a2a-serve start output = %q, want the warning %q", out, warning)
+	}
+	if st := coder.serve("status"); !strings.Contains(st, warning) {
+		t.Fatalf("a2a-serve status = %q, want the warning %q", st, warning)
+	}
+	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
+		t.Fatalf("a2a send dial %s with Docker's network = %q, want the public host reached", publicTarget(), got)
+	}
+
+	owner.env = env
+	coder.serve("restart")
+	if st := coder.serve("status"); strings.Contains(st, "egress control is off") || !strings.Contains(st, "private networks blocked") {
+		t.Fatalf("a2a-serve status after a start without the failure = %q, want the boundary back", st)
+	}
+	if got := resultOf(owner.mustSend(coder.url, "caps")).Text; !strings.Contains(got, "CapBnd=0000000000000000") {
+		t.Fatalf("a2a send caps after a start without the failure = %q, want no capabilities", got)
+	}
+}
+
+func TestDockerSandboxEgressFallsBackWhenTheAgentsSetupFails(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	owner := newUser(t)
+	owner.env = append(owner.env, sandboxnet.EnvFailSetup+"=agent")
+	coder := owner.startAgent("coder")
+	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
+		t.Fatalf("a2a send dial %s with Docker's network = %q, want the public host reached", publicTarget(), got)
+	}
+	const warning = "egress control is off: the agent's container can't set up its network: the setup failed as the test asked"
+	if st := coder.serve("status"); !strings.Contains(st, warning) {
+		t.Fatalf("a2a-serve status = %q, want the warning %q", st, warning)
 	}
 }

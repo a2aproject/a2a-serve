@@ -40,6 +40,11 @@ In a relay directory, check only the relay's settings, state, agentmesh-one
 and data. Every failure names the command that fixes it. Exits 1 if a
 check failed.
 
+The egress check tells whether the Docker sandbox's connections go through
+the server. While the agent runs, it reports the server's own check, which
+runs a container at each start and turns egress control off when the
+container can't set up its network.
+
 --fix enables command plugins and the credential helper in
 ~/.config/a2a-cli/config.yaml and makes credentials.json and .a2a/state
 private. It never installs software and never touches a running agent.

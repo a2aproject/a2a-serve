@@ -15,7 +15,9 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
+	"os"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -26,16 +28,25 @@ import (
 
 func newSandboxInitCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:    "sandbox-init <socket> <uid> <gid> <command> [args...]",
+		Use:    "sandbox-init [--check] <socket> <uid> <gid> [<command> [args...]]",
 		Hidden: true,
 		Short:  "Run a command in the Docker sandbox with the server as its only network path",
 		Long: `Runs as PID 1 of an agent's container, which the server starts with no
 network. It routes every connection of the container through the egress
-socket, drops every capability, and runs the command as uid:gid.`,
-		Args:               cobra.MinimumNArgs(4),
+socket, drops every capability, and runs the command as uid:gid. With
+--check, it sets up the network and drops the capabilities, then exits.
+When the setup fails, it exits with status ` + strconv.Itoa(sandboxnet.SetupFailedExit) + `.`,
+		Args:               cobra.MinimumNArgs(3),
 		DisableFlagParsing: true,
 		SilenceUsage:       true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			check := args[0] == "--check"
+			if check {
+				args = args[1:]
+			}
+			if len(args) < 3 || !check && len(args) < 4 {
+				return fmt.Errorf("want <socket> <uid> <gid> and a command, or --check")
+			}
 			uid, err := strconv.Atoi(args[1])
 			if err != nil {
 				return fmt.Errorf("invalid uid %q", args[1])
@@ -44,7 +55,16 @@ socket, drops every capability, and runs the command as uid:gid.`,
 			if err != nil {
 				return fmt.Errorf("invalid gid %q", args[2])
 			}
-			code, err := sandboxnet.Launch(sandboxnet.LaunchConfig{Boundary: args[0], UID: uid, GID: gid, Argv: args[3:]})
+			code, err := sandboxnet.Launch(sandboxnet.LaunchConfig{
+				Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Check: check,
+				FailSetup: os.Getenv(sandboxnet.EnvFailSetup) != "",
+			})
+			if setupErr, ok := errors.AsType[*sandboxnet.SetupError](err); ok {
+				if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "a2a-init: setting up the sandbox's network: %v\n", setupErr); err != nil {
+					return err
+				}
+				return clierr.Exit(sandboxnet.SetupFailedExit, "")
+			}
 			if err != nil {
 				return fmt.Errorf("starting the sandbox: %w", err)
 			}

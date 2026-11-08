@@ -28,7 +28,29 @@ type LaunchConfig struct {
 	// Argv is the agent's command, which gets the launcher's standard
 	// streams.
 	Argv []string
+	// Check sets up the network and drops the capabilities as for the
+	// agent, then returns without running a command.
+	Check bool
+	// FailSetup makes the setup fail, for tests of the fallback.
+	FailSetup bool
 }
+
+// EnvFailSetup makes the launcher's setup fail, for tests of the fallback.
+// The server passes it to the containers: all to the check at its start
+// and to the agent's containers, agent only to the latter.
+const EnvFailSetup = "A2A_SERVE_TEST_EGRESS_FAIL"
+
+// SetupFailedExit is the exit code of the launcher when it can't set up
+// the container's network or drop its capabilities, which the server
+// answers by starting the container with Docker's own network.
+const SetupFailedExit = 121
+
+// SetupError is an error of setting up the container's network or
+// dropping its capabilities.
+type SetupError struct{ Err error }
+
+func (e *SetupError) Error() string { return e.Err.Error() }
+func (e *SetupError) Unwrap() error { return e.Err }
 
 // Paths in the container.
 const (

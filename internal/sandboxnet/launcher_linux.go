@@ -49,42 +49,16 @@ const (
 // and runs the agent as cfg.UID and cfg.GID. It does the duties of PID 1
 // and returns the agent's exit code.
 func Launch(cfg LaunchConfig) (int, error) {
-	if len(cfg.Argv) == 0 {
+	if len(cfg.Argv) == 0 && !cfg.Check {
 		return 0, errors.New("no command to run")
 	}
-	if err := checkInterfaces(); err != nil {
-		return 0, err
-	}
-	fd, err := openTUN(tunDevice, tunMTU)
+	eng, err := setUp(cfg)
 	if err != nil {
-		return 0, err
-	}
-	if err := configureTUN(tunDevice); err != nil {
-		return 0, fmt.Errorf("configuring %s: %w", tunDevice, err)
-	}
-	// The engine answers DNS on every address, so the image's resolver
-	// still works when the file can't be written.
-	if err := os.WriteFile(resolvConfPath, []byte("nameserver "+resolverAddr+"\n"), 0o644); err != nil {
-		fmt.Fprintf(os.Stderr, "a2a-init: pointing %s at the sandbox resolver: %v\n", resolvConfPath, err)
-	}
-	dev, err := tun2connect.NewTUNDevice(fd, tunMTU)
-	if err != nil {
-		return 0, fmt.Errorf("opening the link endpoint: %w", err)
-	}
-	var d net.Dialer
-	eng, err := tun2connect.New(tun2connect.Config{
-		Device: dev,
-		Dialer: &tun2connect.BoundaryClient{DialBoundary: func(ctx context.Context) (net.Conn, error) {
-			return d.DialContext(ctx, "unix", cfg.Boundary)
-		}},
-		DNS: tun2connect.NewVirtualDNS(),
-	})
-	if err != nil {
-		return 0, err
+		return 0, &SetupError{Err: err}
 	}
 	defer eng.Close()
-	if err := dropPrivileges(cfg.UID, cfg.GID); err != nil {
-		return 0, fmt.Errorf("dropping privileges: %w", err)
+	if cfg.Check {
+		return 0, nil
 	}
 	cmd := exec.Command(cfg.Argv[0], cfg.Argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
@@ -96,6 +70,49 @@ func Launch(cfg LaunchConfig) (int, error) {
 		return 0, fmt.Errorf("starting %s: %w", cfg.Argv[0], err)
 	}
 	return supervise(cmd.Process.Pid, sig), nil
+}
+
+// setUp builds the TUN device and its engine, and drops the privileges of
+// the launcher.
+func setUp(cfg LaunchConfig) (*tun2connect.Engine, error) {
+	if cfg.FailSetup {
+		return nil, errors.New("the setup failed as the test asked")
+	}
+	if err := checkInterfaces(); err != nil {
+		return nil, err
+	}
+	fd, err := openTUN(tunDevice, tunMTU)
+	if err != nil {
+		return nil, err
+	}
+	if err := configureTUN(tunDevice); err != nil {
+		return nil, fmt.Errorf("configuring %s: %w", tunDevice, err)
+	}
+	// The engine answers DNS on every address, so the image's resolver
+	// still works when the file can't be written.
+	if err := os.WriteFile(resolvConfPath, []byte("nameserver "+resolverAddr+"\n"), 0o644); err != nil {
+		fmt.Fprintf(os.Stderr, "a2a-init: pointing %s at the sandbox resolver: %v\n", resolvConfPath, err)
+	}
+	dev, err := tun2connect.NewTUNDevice(fd, tunMTU)
+	if err != nil {
+		return nil, fmt.Errorf("opening the link endpoint: %w", err)
+	}
+	var d net.Dialer
+	eng, err := tun2connect.New(tun2connect.Config{
+		Device: dev,
+		Dialer: &tun2connect.BoundaryClient{DialBoundary: func(ctx context.Context) (net.Conn, error) {
+			return d.DialContext(ctx, "unix", cfg.Boundary)
+		}},
+		DNS: tun2connect.NewVirtualDNS(),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if err := dropPrivileges(cfg.UID, cfg.GID); err != nil {
+		eng.Close()
+		return nil, fmt.Errorf("dropping privileges: %w", err)
+	}
+	return eng, nil
 }
 
 // checkInterfaces refuses a namespace with an interface besides loopback

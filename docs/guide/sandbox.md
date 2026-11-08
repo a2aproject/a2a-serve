@@ -131,6 +131,8 @@ The server routes the sandbox's connections with Docker, rootless Docker and Doc
 
 Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. With `--egress allowlist`, the agent doesn't start.
 
+At each start, the server also runs a short check: a container with the agent's settings whose launcher sets up the network, drops its capabilities and exits. When that fails, egress control is off until the server stops, and the sandbox keeps Docker's own network. This happens with a runtime that refuses `NET_ADMIN` or `/dev/net/tun`, such as some Podman setups. `start` and the log say what failed, and so do `status` and `doctor`. The next start checks again, so the boundary comes back once the cause is fixed. Each start of an agent's container checks the same way. With `--egress allowlist`, the agent doesn't start, and `--egress unrestricted` skips the check.
+
 On Windows, the server doesn't read the routing table: it counts the subnets of its own interfaces as private, and misses networks that a VPN routes.
 
 `--sandbox local` has no egress rules. The agent reaches every network you reach.
