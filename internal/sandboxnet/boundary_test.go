@@ -27,6 +27,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -562,5 +563,45 @@ func TestBoundaryCloseEndsTunnelsToSilentUpstreams(t *testing.T) {
 	}
 	if _, err := io.ReadAll(upstream); err != nil {
 		t.Fatalf("reading the upstream after Close() error = %v, want EOF", err)
+	}
+}
+
+// panickingNetwork panics on every route lookup.
+type panickingNetwork struct{ fakeNetwork }
+
+func (panickingNetwork) DefaultRoute(netip.Addr) (bool, error) { panic("a bug in the route lookup") }
+
+func TestBoundarySurvivesAPanic(t *testing.T) {
+	t.Parallel()
+	echo := echoServer(t)
+	logs := &logRecords{}
+	_, sock := listen(t, BoundaryConfig{
+		Policy:  func() egress.Policy { return mustPolicy(t, "", "127.0.0.1") },
+		Network: panickingNetwork{},
+		Log:     slog.New(logs),
+	})
+	c, err := net.Dial("unix", sock)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() {
+		if err := c.Close(); err != nil {
+			t.Errorf("closing the connection error = %v", err)
+		}
+	}()
+	if _, err := fmt.Fprint(c, "CONNECT 93.184.216.34:80 HTTP/1.1\r\nHost: 93.184.216.34:80\r\n\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.SetReadDeadline(time.Now().Add(5 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := http.ReadResponse(bufio.NewReader(c), nil); err == nil {
+		t.Fatalf("CONNECT whose decision panics got a response, want the connection closed")
+	}
+	if _, _, resp := connect(t, sock, echo.String()); resp.StatusCode != http.StatusOK {
+		t.Fatalf("CONNECT after a panic status = %d, want 200", resp.StatusCode)
+	}
+	if !slices.ContainsFunc(logs.all(), func(r string) bool { return strings.HasPrefix(r, "egress connection failed; refusing it") }) {
+		t.Fatalf("log records = %q, want the panic logged", logs.all())
 	}
 }

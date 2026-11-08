@@ -80,9 +80,11 @@ func getRoute(addr netip.Addr) (darwinRoute, bool, error) {
 	if err := unix.SetsockoptTimeval(fd, unix.SOL_SOCKET, unix.SO_RCVTIMEO, &tv); err != nil {
 		return darwinRoute{}, false, err
 	}
-	var dst route.Addr = &route.Inet4Addr{IP: addr.As4()}
-	if addr.Is6() {
-		dst = &route.Inet6Addr{IP: addr.As16()}
+	var dst route.Addr
+	if ip, v6 := routeDestination(addr); v6 {
+		dst = &route.Inet6Addr{IP: [16]byte(ip)}
+	} else {
+		dst = &route.Inet4Addr{IP: [4]byte(ip)}
 	}
 	seq := int(routeSeq.Add(1))
 	pid := uintptr(unix.Getpid())
@@ -92,7 +94,7 @@ func getRoute(addr netip.Addr) (darwinRoute, bool, error) {
 		return darwinRoute{}, false, err
 	}
 	if _, err := unix.Write(fd, b); err != nil {
-		if errors.Is(err, unix.ESRCH) {
+		if errors.Is(err, unix.ESRCH) || errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EHOSTUNREACH) {
 			return darwinRoute{}, false, nil
 		}
 		return darwinRoute{}, false, err
@@ -134,6 +136,8 @@ func addrKey(a route.Addr) string {
 		return netip.AddrFrom16(a.IP).String()
 	case *route.LinkAddr:
 		return fmt.Sprintf("link %d %x", a.Index, a.Addr)
+	case nil:
+		return ""
 	}
-	return ""
+	return fmt.Sprintf("%T %v", a, a)
 }

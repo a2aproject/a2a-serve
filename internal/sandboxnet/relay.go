@@ -122,6 +122,7 @@ func forward(ln net.Listener, p RelayPair) {
 		go func() {
 			defer func() { <-slots }()
 			defer closeConn(c)
+			defer recoverConn(slog.Default(), "")
 			up, err := dialTarget(p.Target)
 			if err != nil {
 				slog.Warn("relaying a connection of the sandbox", "target", p.Target, "error", err)
@@ -211,12 +212,21 @@ func (r *RelayServer) serve() {
 		if err != nil {
 			return
 		}
-		go r.route(c)
+		go func() {
+			defer recoverConn(slog.Default(), "")
+			r.route(c)
+		}()
 	}
 }
 
 // route reads the preface of c and gives c to the boundary of its key.
 func (r *RelayServer) route(c net.Conn) {
+	defer func() {
+		if p := recover(); p != nil {
+			closeConn(c)
+			panic(p)
+		}
+	}()
 	key, err := readPreface(c)
 	if err != nil {
 		slog.Warn("refusing a relay connection", "error", err)

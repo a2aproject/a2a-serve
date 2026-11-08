@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"net"
 	"net/netip"
+	"runtime/debug"
 	"slices"
 	"strconv"
 	"strings"
@@ -228,8 +229,17 @@ func (b *Boundary) ServeConn(c net.Conn) {
 			b.untrack(c)
 			<-b.slots
 		}()
+		defer recoverConn(b.cfg.Log, b.cfg.Sandbox)
 		b.handle(c)
 	}()
+}
+
+// recoverConn logs a panic of the handling of one connection, which then
+// closes, so that a bug refuses that connection and the others go on.
+func recoverConn(log *slog.Logger, sandbox string) {
+	if r := recover(); r != nil {
+		log.Error("egress connection failed; refusing it", "sandbox", sandbox, "panic", r, "stack", string(debug.Stack()))
+	}
 }
 
 func (b *Boundary) track(c net.Conn) bool {
