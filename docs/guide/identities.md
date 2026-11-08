@@ -33,7 +33,7 @@ a2a-serve config unset allow-email '*@example.com'
 
 - Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
-- Each authenticated caller gets a separate container with a home of their own. A read-only workspace and no secrets are the default for callers who aren't owners, and [sandbox rules](sandbox.md#what-each-callers-container-gets) change that ([Access Model](../advanced/access-model.md#agent-processes)).
+- Each authenticated caller gets a separate container with a home of their own. What it gets of the workspace and the secrets follows the [sandbox defaults and rules](sandbox.md#what-each-callers-container-gets) ([Access Model](../advanced/access-model.md#agent-processes)).
 - `--private-allow-incoming` and `--public-allow-incoming` take `everyone` and `anyone` as the same word: `--private-allow-incoming anyone` is `everyone`, and `--public-allow-incoming everyone` is `anyone`.
 - [Anonymous callers](identities.md#anonymous-callers) start tasks in their own conversation and never answer approvals.
 - A caller without a credential gets 401, with the steps to pair. A caller with a token the agent doesn't recognize, such as a mistyped, revoked or replaced one, gets 401 with the same steps. A known caller the agent doesn't accept gets 403, naming who they were seen as, such as `anna@example.com on the tailnet`. A refused call from another agent names that agent and gives the steps to pair agents: `pair invite` on this side and `contact add --code` on the caller's.
@@ -65,7 +65,7 @@ A code works once, for 15 minutes. The caller redeems it with `a2a-serve pair jo
 
 With `--public-allow-incoming anyone`, anyone on the public URL, and anyone who writes to the agent's bot in a direct chat, can start tasks. The agent still ignores unlinked senders in group chats.
 
-- Their conversations share an agent process, separate from yours and from each authenticated user's. With Docker it is a container with its own home directory, `state/home-anonymous`, so it can't read the history of other users' conversations. What it gets of the workspace and the secrets follows the `anyone` [sandbox rule](sandbox.md#what-each-callers-container-gets), and it isn't backed up.
+- Their conversations share an agent process, separate from yours and from each authenticated user's. With Docker it is a container with its own home directory, `state/home-anonymous`, so it can't read the history of other users' conversations. What it gets of the workspace and the secrets follows the [sandbox defaults](sandbox.md#what-each-callers-container-gets), and it isn't backed up.
 - Their approvals go to the owner chat, or wait in the inspector. Only owners answer them. An approval that nobody answers in 10 minutes is rejected.
 - Their conversations can't call other agents or use the schedules agent.
 - The public URL and each messenger take at most 20 new anonymous tasks an hour, and run at most 2 at a time.

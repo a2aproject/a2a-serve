@@ -36,10 +36,10 @@ A changed key reaches the agent after `a2a-serve restart`, or with `--restart` o
 
 `${VAR}` in the project's `.mcp.json` also takes its value from the keys that a conversation's container gets. See [MCP and Skills](mcp-and-skills.md).
 
-Your agent container gets every key passed with `--secret`. The containers of callers who aren't owners get none by default. [Sandbox rules](sandbox.md#what-each-callers-container-gets) give them some, all, or a stored secret under another name with `NAME=secret:OTHER`. A rule may name only secrets in `secrets`.
+Agent containers get the keys passed with `--secret` as the [sandbox defaults](sandbox.md#what-each-callers-container-gets) say. Sandbox rules narrow them for chosen callers, or pass a stored secret under another name with `NAME=secret:OTHER`. A rule may name only secrets in `secrets`.
 
 > [!WARNING]
-> A tricked agent or any caller who can approve commands can read the keys that their container gets. Give callers who aren't owners a separate key. See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
+> A tricked agent or any caller who can approve commands can read the keys that their container gets. Give other callers a [separate key](sandbox.md#give-callers-a-separate-model-key). See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
 
 ## Tokens for the server
 

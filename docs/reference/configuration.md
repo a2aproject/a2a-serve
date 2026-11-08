@@ -61,7 +61,7 @@ backup:
 
 ## Sandbox rules
 
-`policy.sandbox` lists what the agent containers of callers get of the workspace and of the agent's `secrets`. The [sandbox guide](../guide/sandbox.md#what-each-callers-container-gets) explains the modes and the commands that edit the rules.
+`policy.sandbox` narrows what the agent containers of chosen callers get of the workspace and of the agent's `secrets`. A rule never gives more than the caller's default. The [sandbox guide](../guide/sandbox.md#what-each-callers-container-gets) gives the defaults, and explains the modes and the commands that edit the rules.
 
 ```yaml
 secrets: [ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY]
@@ -70,37 +70,34 @@ policy:
   sandbox:
     - match: [email:*@example.com]
       storage: own
-      secrets: [ANTHROPIC_API_KEY, GITHUB_TOKEN]
+      secrets: [ANTHROPIC_API_KEY]
     - match: [anyone]
-      storage: read-only
       secrets: [ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY]
 ```
 
 | Key | Values |
 | --- | --- |
 | `match` | A list of matchers: `self`, `private`, `anyone`, `email:<address>`, `email:*@<domain>` and `pairing:<name>`. `pairing:<name>` also matches a webhook node of that name. |
-| `storage` | `shared`, `read-only`, `own` or `empty`. Without it, `read-only`. |
-| `secrets` | Names from the agent's `secrets`, `all`, or `NAME=secret:OTHER`, which passes the stored secret `OTHER` to the agent as `NAME`. Without it, none. |
+| `storage` | `shared`, `read-only`, `own` or `empty`, from the most access to the least. It applies when it gives less than the default. Without it, the default. |
+| `secrets` | Names from the agent's `secrets`, `NAME=secret:OTHER`, which passes the stored secret `OTHER` to the agent as `NAME`, `all` or `none`. `all` and `none` go alone. A name applies when the default gives its stored secret. Without it, the default. |
 
 A matcher may appear in one rule only, and config validation refuses duplicates. A rule may name only secrets that are in `secrets`.
 
 ### Which rule applies
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
-- Anonymous callers share one container. Only the `anyone` rule applies to it.
+- Anonymous callers share one container. Only the `anyone` rule applies to it, and it can only narrow their read-only workspace to an empty one.
 - Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>`, `private` and `anyone`. Among rules of the same specificity, the first one listed wins.
 
 In sandbox rules, `anyone` matches every caller who isn't an owner. In the [access policy](../advanced/access-model.md#policy), `anyone` means the public URL and direct chats. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
-
-When no rule matches, owners get `shared` storage and all secrets. Everyone else gets `read-only` storage and no secrets.
 
 ### Commands
 
 | Command | Rule it edits |
 | --- | --- |
-| `a2a-serve pair invite <name>` and `pair set <name>` with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule, and `--secrets none` gives no secrets. |
+| `a2a-serve pair invite <name>` and `pair set <name>` with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule. A pairing in a rule with other matchers moves to a rule of its own, which starts from that rule. |
 | `a2a-serve pair rm <name>` | Removes the pairing from the rules. |
-| `a2a-serve config set --caller-storage <mode> --caller-secrets <names>` | The rule whose only matcher is `anyone`. `config unset caller-storage` and `caller-secrets` reset it. |
+| `a2a-serve config set --caller-storage <mode> --caller-secrets <names>` | The rule whose only matcher is `anyone`: the rule of other callers. `--caller-secrets` replaces its list. `config unset caller-storage` and `caller-secrets` reset it. |
 | `a2a-serve config edit` | Any rule. |
 | `a2a-serve config unset sandbox-rules` | Removes every rule except the `anyone` rule, including the rules of pairings and of `self`. |
 
