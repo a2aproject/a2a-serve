@@ -85,7 +85,7 @@ func (f *fakeMeshSession) HTTPClient() *http.Client { return f.hc }
 func (f *fakeMeshSession) Close() error { return nil }
 
 func startedMesh(s meshSession, owner, self string) *agentMesh {
-	a := &agentMesh{srv: s, owner: owner, peerID: self}
+	a := &agentMesh{srv: s, owner: owner, peerID: self, cards: newCardCache()}
 	a.started.Store(true)
 	return a
 }

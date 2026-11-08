@@ -45,7 +45,7 @@ func TestProbeAgents(t *testing.T) {
 			http.NotFound(w, r)
 			return
 		}
-		if err := json.NewEncoder(w).Encode(map[string]any{"name": "coder", "description": "opencode agent", "skills": []map[string]any{{"id": "review", "name": "Code review"}}}); err != nil {
+		if err := json.NewEncoder(w).Encode(map[string]any{"name": "coder", "description": "`opencode` agent", "skills": []map[string]any{{"id": "review", "name": "Code review"}}}); err != nil {
 			t.Error(err)
 		}
 	}))
@@ -53,13 +53,13 @@ func TestProbeAgents(t *testing.T) {
 	other := httptest.NewServer(http.NotFoundHandler())
 	defer other.Close()
 
-	got := ProbeAgents(t.Context(), testHTTP, []PeerInfo{
+	got := newCardCache().ProbeAgents(t.Context(), testHTTP, []PeerInfo{
 		{Name: "laptop", URL: agent.URL, Online: true},
 		{Name: "printer", URL: other.URL, Online: true},
 	}, nil)
-	want := []PeerInfo{{Name: "coder", CardName: "coder", URL: agent.URL, Description: "opencode agent", Online: true, Card: cardinfo.Summary{Description: "opencode agent", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
+	want := []PeerInfo{{Name: "coder", CardName: "coder", URL: agent.URL, Description: "`opencode` agent", Online: true, Card: cardinfo.Summary{Description: "opencode agent", Skills: []cardinfo.Skill{{ID: "review", Name: "Code review"}}}}}
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("CardCache.ProbeAgents() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -143,12 +143,12 @@ func TestProbeAgentsNamesAgentsUniquely(t *testing.T) {
 			}
 
 			got := map[string]string{}
-			for _, p := range ProbeAgents(t.Context(), testHTTP, candidates, tc.taken) {
+			for _, p := range newCardCache().ProbeAgents(t.Context(), testHTTP, candidates, tc.taken) {
 				got[p.Node] = p.Name
 			}
 
 			if diff := cmp.Diff(tc.want, got); diff != "" {
-				t.Fatalf("ProbeAgents() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("CardCache.ProbeAgents() wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

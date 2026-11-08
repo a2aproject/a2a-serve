@@ -55,6 +55,8 @@ type ContactClients struct {
 	// builds joins the concurrent builds of one contact's client, so that
 	// two calls don't build one each and destroy the other's.
 	builds singleflight.Group
+	// discoveries joins concurrent discoveries of the private network.
+	discoveries singleflight.Group
 
 	mu       sync.Mutex
 	cache    []network.PeerInfo
@@ -130,13 +132,39 @@ func (cc *ContactClients) discoverWithin(ctx context.Context, maxAge time.Durati
 	if err := network.HealthOf(cc.private).Err(); err != nil {
 		return nil, err
 	}
-	cc.mu.Lock()
-	if time.Since(cc.cachedAt) < maxAge {
-		out := cc.cache
-		cc.mu.Unlock()
-		return out, nil
+	if peers, ok := cc.cachedPeers(maxAge); ok {
+		return peers, nil
 	}
-	cc.mu.Unlock()
+	// The discovery outlives the call that started it, which others may wait for.
+	dctx := context.WithoutCancel(ctx)
+	ch := cc.discoveries.DoChan("", func() (any, error) { return cc.discover(dctx, maxAge) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.([]network.PeerInfo), nil
+	}
+}
+
+// discoverTimeout bounds a discovery, which no caller can cancel.
+const discoverTimeout = time.Minute
+
+func (cc *ContactClients) cachedPeers(maxAge time.Duration) ([]network.PeerInfo, bool) {
+	cc.mu.Lock()
+	defer cc.mu.Unlock()
+	return cc.cache, time.Since(cc.cachedAt) < maxAge
+}
+
+func (cc *ContactClients) discover(ctx context.Context, maxAge time.Duration) ([]network.PeerInfo, error) {
+	// A discovery that ended since the caller checked the cache filled it.
+	if peers, ok := cc.cachedPeers(maxAge); ok {
+		return peers, nil
+	}
+	ctx, cancel := context.WithTimeout(ctx, discoverTimeout)
+	defer cancel()
 	peers, err := cc.private.Peers(ctx)
 	if err != nil {
 		return nil, err

@@ -40,7 +40,6 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
-	"github.com/a2aproject/a2a-serve/internal/names"
 )
 
 // ErrUnsupported is returned by providers for capabilities they don't have.
@@ -134,40 +133,6 @@ func IsEmail(s string) bool {
 	}
 	_, domain, ok := strings.Cut(s, "@")
 	return ok && strings.Contains(strings.Trim(domain, "."), ".")
-}
-
-// ProbeAgents keeps the candidates which serve an A2A agent card, filling in
-// their description from it. Candidates come named by the network, and taken
-// are the network names of the other machines, such as this one and offline
-// ones. See [nameAgents] for the names the agents get.
-func ProbeAgents(ctx context.Context, client *http.Client, candidates []PeerInfo, taken []string) []PeerInfo {
-	var (
-		mu     sync.Mutex
-		wg     sync.WaitGroup
-		agents []PeerInfo
-	)
-	for _, c := range candidates {
-		wg.Go(func() {
-			card, err := FetchCard(ctx, client, c.URL)
-			if err != nil {
-				return
-			}
-			c.Description = card.Description
-			if names.Valid(card.Name) {
-				c.CardName = card.Name
-			}
-			c.Card = cardinfo.Of(card)
-			mu.Lock()
-			agents = append(agents, c)
-			mu.Unlock()
-		})
-	}
-	wg.Wait()
-	machines := slices.Clone(taken)
-	for _, c := range candidates {
-		machines = append(machines, c.Name)
-	}
-	return nameAgents(agents, machines)
 }
 
 // nameAgents names each agent by its network name, or by its card name when

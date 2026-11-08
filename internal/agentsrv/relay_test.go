@@ -557,7 +557,9 @@ func (f *testRelayFabric) handleIngress(w http.ResponseWriter, r *http.Request) 
 }
 
 func (f *testRelayFabric) newRelay(cfg network.RelayConfig) (network.Provider, error) {
-	return &testRelayNode{fabric: f, cfg: cfg, peerID: "peer-" + cfg.AgentName}, nil
+	// Tests start and stop agents faster than the cards would expire.
+	cards := network.NewCardCache(0, 0, time.Now)
+	return &testRelayNode{fabric: f, cfg: cfg, peerID: "peer-" + cfg.AgentName, cards: cards}, nil
 }
 
 type testRelayNode struct {
@@ -575,6 +577,7 @@ type testRelayNode struct {
 
 	healthMu sync.Mutex
 	health   network.Health
+	cards    *network.CardCache
 }
 
 func (n *testRelayNode) setHealth(h network.Health) {
@@ -697,7 +700,7 @@ func (n *testRelayNode) Peers(ctx context.Context) ([]network.PeerInfo, error) {
 		})
 	}
 	n.fabric.mu.RUnlock()
-	return network.ProbeAgents(ctx, n.HTTPClient(), candidates, []string{n.cfg.AgentName}), nil
+	return n.cards.ProbeAgents(ctx, n.HTTPClient(), candidates, []string{n.cfg.AgentName}), nil
 }
 
 func (n *testRelayNode) HTTPClient() *http.Client {
