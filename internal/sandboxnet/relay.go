@@ -122,7 +122,7 @@ func forward(ln net.Listener, p RelayPair) {
 		go func() {
 			defer func() { <-slots }()
 			defer closeConn(c)
-			defer recoverConn(slog.Default(), "")
+			defer func() { logPanic(recover(), slog.Default(), "") }()
 			up, err := dialTarget(p.Target)
 			if err != nil {
 				slog.Warn("relaying a connection of the sandbox", "target", p.Target, "error", err)
@@ -213,7 +213,7 @@ func (r *RelayServer) serve() {
 			return
 		}
 		go func() {
-			defer recoverConn(slog.Default(), "")
+			defer func() { logPanic(recover(), slog.Default(), "") }()
 			r.route(c)
 		}()
 	}
