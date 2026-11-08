@@ -32,18 +32,16 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 	anna.pairJoin(coder.url, coder.invite("anna", "--storage", "read-only", "--secrets", "KEY=secret:GUEST"))
 	ben.pairJoin(coder.url, coder.invite("ben"))
 
-	storage := func(s string) string {
-		if sandbox == "docker" {
-			return s
-		}
-		return "no sandbox"
-	}
 	status := coder.serve("status")
-	for _, want := range []string{
-		"sandbox  you: " + storage("shared workspace") + ", secrets KEY, GUEST",
-		"the pairing anna: " + storage("read-only workspace") + ", secrets KEY (from GUEST)",
-		"everyone else: " + storage("read-only workspace") + ", no secrets",
-	} {
+	wantStatus := []string{
+		"sandbox  you: shared workspace, secrets KEY, GUEST",
+		"the pairing anna: read-only workspace, secrets KEY (from GUEST)",
+		"other callers: shared workspace, secrets KEY, GUEST",
+	}
+	if sandbox != "docker" {
+		wantStatus = []string{"sandbox rules don't apply"}
+	}
+	for _, want := range wantStatus {
 		if !strings.Contains(status, want) {
 			t.Fatalf("a2a-serve status = %q, want it to contain %q", status, want)
 		}
@@ -57,7 +55,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		{name: "owner", caller: owner, prompt: "env KEY", want: "env KEY=owner-key"},
 		{name: "anna's rule", caller: anna, prompt: "env KEY", want: "env KEY=guest-key"},
 		{name: "anna's rule", caller: anna, prompt: "env GUEST", want: "env GUEST unset"},
-		{name: "default for ben", caller: ben, prompt: "env KEY", want: "env KEY unset"},
+		{name: "default for ben", caller: ben, prompt: "env KEY", want: "env KEY=owner-key"},
 	}
 	for _, tc := range tests {
 		if got := resultOf(tc.caller.mustSend(coder.url, tc.prompt)).Text; got != tc.want {
@@ -65,12 +63,12 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		}
 	}
 
-	out := coder.serve("config", "set", "--caller-storage", "shared", "--caller-secrets", "all")
-	if !strings.Contains(out, "everyone else: "+storage("shared workspace")+", secrets KEY, GUEST") {
-		t.Fatalf("a2a-serve config set --caller-storage shared --caller-secrets all = %q, want it to show the new sandbox", out)
+	out := coder.serve("config", "set", "--caller-secrets", "GUEST")
+	if sandbox == "docker" && !strings.Contains(out, "other callers: shared workspace, secrets GUEST") {
+		t.Fatalf("a2a-serve config set --caller-secrets GUEST = %q, want it to show the narrowed sandbox", out)
 	}
-	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY=owner-key" {
-		t.Fatalf("a2a send env KEY by ben after config set = %q, want the key", got)
+	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY unset" {
+		t.Fatalf("a2a send env KEY by ben after config set = %q, want it unset", got)
 	}
 
 	coder.serve("pair", "set", "ben", "--storage", "read-only", "--secrets", "none")
@@ -84,8 +82,8 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 	if p.Sandbox.Storage != "read-only" || len(p.Sandbox.Secrets) != 0 {
 		t.Fatalf("a2a-serve pair get ben sandbox = %+v, want read-only with no secrets", p.Sandbox)
 	}
-	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY unset" {
-		t.Fatalf("a2a send env KEY by ben after pair set = %q, want it unset", got)
+	if got := resultOf(ben.mustSend(coder.url, "env GUEST")).Text; got != "env GUEST unset" {
+		t.Fatalf("a2a send env GUEST by ben after pair set = %q, want it unset", got)
 	}
 
 	coder.serve("pair", "rm", "anna")
@@ -99,7 +97,7 @@ func TestSandboxStorageModes(t *testing.T) {
 	requireDocker(t)
 	owner, anna, ben, cy := newUser(t), newUser(t), newUser(t), newUser(t)
 	coder := owner.startAgent("coder")
-	anna.pairJoin(coder.url, coder.invite("anna"))
+	anna.pairJoin(coder.url, coder.invite("anna", "--storage", "read-only"))
 	ben.pairJoin(coder.url, coder.invite("ben", "--storage", "own"))
 	cy.pairJoin(coder.url, coder.invite("cy", "--storage", "empty"))
 	file := func(name string) string { return filepath.Join(coder.dir, name) }

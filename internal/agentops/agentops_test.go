@@ -86,11 +86,10 @@ func TestPair(t *testing.T) {
 		Access: &controlapi.Access{
 			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
-			Summary:      []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
-			Sandbox:      []string{"you: shared workspace, no secrets", "everyone else: read-only workspace, no secrets"},
-			SandboxNotes: []string{"callers who aren't owners now get a read-only workspace and no secrets; to give them the shared workspace and every secret as before, run `a2a-serve config set --caller-storage shared --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`"},
+			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
+			Sandbox: []string{"you: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 		},
-		Sandbox: &controlapi.PairingSandbox{Storage: agentdir.StorageReadOnly, Secrets: []string{}, Summary: "read-only workspace, no secrets"},
+		Sandbox: &controlapi.PairingSandbox{Storage: agentdir.StorageShared, Secrets: []string{}, Summary: "shared workspace, no secrets"},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Pair() wrong result (-want +got) diff = %s", diff)
@@ -196,7 +195,7 @@ func TestPairings(t *testing.T) {
 		Created: anna.Created, Tokens: []controlapi.PairingToken{},
 		Accounts:     []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 		PendingCodes: anna.PendingCodes,
-		Sandbox:      &controlapi.PairingSandbox{Storage: agentdir.StorageReadOnly, Secrets: []string{}, Summary: "read-only workspace, no secrets"},
+		Sandbox:      &controlapi.PairingSandbox{Storage: agentdir.StorageShared, Secrets: []string{}, Summary: "shared workspace, no secrets"},
 	}
 	if diff := cmp.Diff(want, *anna); diff != "" {
 		t.Fatalf("Pairing(anna) wrong result (-want +got) diff = %s", diff)

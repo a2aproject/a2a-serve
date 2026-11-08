@@ -450,7 +450,7 @@ func TestSetAccess(t *testing.T) {
 			want: &controlapi.Access{
 				PrivateAllowIncoming: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
 				Summary: []string{"you: this machine and your tailnet devices", "nobody else", "the tailnet needs a pairing"},
-				Sandbox: []string{"you: shared workspace, no secrets", "everyone else: read-only workspace, no secrets"},
+				Sandbox: []string{"you: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 			},
 		},
 		{
@@ -458,9 +458,8 @@ func TestSetAccess(t *testing.T) {
 			want: &controlapi.Access{
 				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
 				Pairings: 3, OwnerPairings: 1, Others: []string{"emails matching *@example.com"},
-				Summary:      []string{"you: this machine", "emails matching *@example.com, 3 pairings (1 owner)"},
-				Sandbox:      []string{"you and owner pairings: shared workspace, no secrets", "everyone else: read-only workspace, no secrets"},
-				SandboxNotes: []string{"callers who aren't owners now get a read-only workspace and no secrets; to give them the shared workspace and every secret as before, run `a2a-serve config set --caller-storage shared --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`"},
+				Summary: []string{"you: this machine", "emails matching *@example.com, 3 pairings (1 owner)"},
+				Sandbox: []string{"you and owner pairings: shared workspace, no secrets", "other callers: shared workspace, no secrets"},
 			},
 		},
 	}

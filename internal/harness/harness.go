@@ -123,6 +123,10 @@ var providerKeys = map[string][]string{
 	"xai":        {"XAI_API_KEY"},
 }
 
+// claudeKeys are the variables claude reads its Anthropic credentials
+// from.
+var claudeKeys = []string{"ANTHROPIC_API_KEY", "CLAUDE_CODE_OAUTH_TOKEN"}
+
 // MissingKey returns how to set the key of the provider of cfg's opencode
 // model when cfg passes none of its keys to the agent, or "".
 func MissingKey(cfg *agentdir.Config) string {
@@ -139,21 +143,49 @@ func MissingKey(cfg *agentdir.Config) string {
 func MissingProviderKey(cfg *agentdir.Config, secrets []string) (provider, key string) {
 	provider, _, ok := strings.Cut(cfg.Model, "/")
 	keys := providerKeys[provider]
-	if cfg.Harness != "opencode" || !ok || len(keys) == 0 {
+	if cfg.Harness != "opencode" || !ok || len(keys) == 0 || hasAny(cfg, secrets, keys) {
 		return "", ""
 	}
-	for _, kv := range cfg.Env {
-		name, _, _ := strings.Cut(kv, "=")
-		if slices.Contains(keys, name) {
+	return provider, keys[0]
+}
+
+// ModelKeyWithheld returns the model provider and the variable of its key
+// when the agent gets one from cfg, but a container that gets only the
+// secrets granted has none. It returns "" otherwise. It knows the keys of
+// opencode's providers and of claude.
+func ModelKeyWithheld(cfg *agentdir.Config, granted []string) (provider, key string) {
+	keys := claudeKeys
+	provider = "anthropic"
+	if cfg.Harness == "opencode" {
+		var ok bool
+		provider, _, ok = strings.Cut(cfg.Model, "/")
+		if keys = providerKeys[provider]; !ok || len(keys) == 0 {
 			return "", ""
 		}
+	} else if cfg.Harness != "claude" {
+		return "", ""
 	}
-	for _, name := range secrets {
-		if slices.Contains(keys, name) {
-			return "", ""
+	if !hasAny(cfg, cfg.Secrets, keys) || hasAny(cfg, granted, keys) {
+		return "", ""
+	}
+	for _, k := range keys {
+		if slices.Contains(cfg.Secrets, k) {
+			return provider, k
 		}
 	}
 	return provider, keys[0]
+}
+
+// hasAny reports whether the --env values of cfg or the variables secrets
+// hold one of keys.
+func hasAny(cfg *agentdir.Config, secrets, keys []string) bool {
+	for _, kv := range cfg.Env {
+		name, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(keys, name) {
+			return true
+		}
+	}
+	return slices.ContainsFunc(secrets, func(name string) bool { return slices.Contains(keys, name) })
 }
 
 // ImageRepo is where harness images are published.

@@ -132,8 +132,8 @@ type splitExecutor struct {
 	// in main.
 	start startPool
 	// admit refuses a turn in the agent process of a key, or prepares the
-	// process for it. Optional.
-	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) error
+	// process for it and counts the turn there until release. Optional.
+	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
 	// ctx ends when the server stops; pools start in it.
 	ctx context.Context
 
@@ -164,8 +164,8 @@ type splitDeps struct {
 	// in Main.
 	Start startPool
 	// Admit refuses a turn in the agent process of a key, or prepares the
-	// process for it. Optional.
-	Admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) error
+	// process for it and counts the turn there until release. Optional.
+	Admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
 }
 
 func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
@@ -231,7 +231,10 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 		exec, key, err := e.pick(ctx, execCtx.ContextID, true)
 		defer e.keys.forget(execCtx.ContextID)
 		if err == nil && e.admit != nil {
-			err = e.admit(ctx, key, execCtx)
+			var admitted func()
+			if admitted, err = e.admit(ctx, key, execCtx); err == nil {
+				defer admitted()
+			}
 		}
 		if err != nil {
 			failTask(execCtx, err)(yield)

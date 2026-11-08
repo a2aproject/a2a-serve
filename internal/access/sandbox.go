@@ -81,7 +81,7 @@ func (s Sandbox) describe(local bool) string {
 		storage = "empty workspace"
 	}
 	if local {
-		storage = "no sandbox"
+		return "no sandbox, so sandbox rules don't apply"
 	}
 	if len(s.Secrets) == 0 {
 		return storage + ", no secrets"
@@ -101,8 +101,8 @@ type SandboxPolicy struct {
 	Rules []agentdir.SandboxRule
 	// Secrets are the names of the agent's secrets.
 	Secrets []string
-	// Local is set for an agent without a sandbox, where only the secrets
-	// of a rule apply.
+	// Local is set for an agent without a sandbox, where the rules don't
+	// apply.
 	Local bool
 }
 
@@ -112,7 +112,7 @@ func SandboxPolicyOf(cfg *agentdir.Config) SandboxPolicy {
 }
 
 // Describe says what sb gives under the policy, such as "read-only
-// workspace, no secrets", or "no sandbox, no secrets" without a sandbox.
+// workspace, no secrets".
 func (sp SandboxPolicy) Describe(sb Sandbox) string { return sb.describe(sp.Local) }
 
 // Specificity of the matchers; the most specific match wins.
@@ -135,16 +135,44 @@ const (
 //     email:<address>, then email:*@<domain>, then private, then anyone.
 //     Between rules of the same specificity, the first one wins.
 //
-// With no rule, owners get the shared workspace and every secret, and
-// everyone else a read-only workspace and no secrets.
+// A rule only narrows the default of the caller: anonymous callers get a
+// read-only workspace and no secrets, and every other caller the shared
+// workspace and every secret.
 func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
+	def := sp.defaultOf(p.Role == auth.RoleAnonymous)
 	if i := sp.match(p); i >= 0 {
-		return sp.sandboxOf(sp.Rules[i])
+		return sp.narrow(def, sp.Rules[i])
 	}
-	if p.Role == auth.RoleOwner {
-		return Sandbox{Storage: agentdir.StorageShared, Secrets: sp.grants([]string{agentdir.SecretsAll})}
+	return def
+}
+
+// defaultOf is the sandbox of anonymous callers, or of every other caller,
+// without a rule.
+func (sp SandboxPolicy) defaultOf(anonymous bool) Sandbox {
+	if anonymous {
+		return Sandbox{Storage: agentdir.StorageReadOnly}
 	}
-	return Sandbox{Storage: agentdir.StorageReadOnly}
+	return Sandbox{Storage: agentdir.StorageShared, Secrets: sp.grants([]string{agentdir.SecretsAll})}
+}
+
+// narrow returns def narrowed by r: the storage of r if it gives less
+// access, and the secrets of r whose stored secret def gives. A part r
+// leaves out keeps def.
+func (sp SandboxPolicy) narrow(def Sandbox, r agentdir.SandboxRule) Sandbox {
+	out := def
+	if r.Storage != "" && storageRank(r.Storage) > storageRank(def.Storage) {
+		out.Storage = r.Storage
+	}
+	if r.Secrets == nil {
+		return out
+	}
+	out.Secrets = nil
+	for _, g := range sp.grants(r.Secrets) {
+		if slices.ContainsFunc(def.Secrets, func(d SecretGrant) bool { return d.From == g.From }) {
+			out.Secrets = append(out.Secrets, g)
+		}
+	}
+	return out
 }
 
 // match returns the index of the rule of p, or -1.
@@ -199,14 +227,6 @@ func matchRank(m string, p auth.Principal) int {
 	return rankEmail
 }
 
-func (sp SandboxPolicy) sandboxOf(r agentdir.SandboxRule) Sandbox {
-	storage := r.Storage
-	if storage == "" {
-		storage = agentdir.StorageReadOnly
-	}
-	return Sandbox{Storage: storage, Secrets: sp.grants(r.Secrets)}
-}
-
 // grants returns the secrets of a rule, in the order of the agent's
 // secrets and then of the rule. A rule names only the agent's secrets, as
 // config validation checks.
@@ -228,6 +248,9 @@ func (sp SandboxPolicy) grants(entries []string) []SecretGrant {
 		}
 	}
 	for _, e := range entries {
+		if e == agentdir.SecretsNone {
+			continue
+		}
 		if name, from, ok := agentdir.ParseSecretGrant(e); ok {
 			add(name, from)
 		}
@@ -260,14 +283,20 @@ func (s Sandbox) Values(stored agentdir.Secrets) (env, missing []string) {
 	return env, missing
 }
 
-// SandboxLines describe what the containers of each kind of caller get: you
-// and the owner pairings, each rule, and everyone else.
-func (sp SandboxPolicy) SandboxLines(ownerPairings int) []string {
+// SandboxLines describe what the containers of each kind of caller get:
+// you and the owner pairings, each rule, other callers, and anonymous
+// callers if they may call. Without a sandbox the rules don't apply, so
+// there are none.
+func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []SandboxLine {
+	if sp.Local {
+		return nil
+	}
 	you := "you"
 	if ownerPairings > 0 {
 		you = "you and owner pairings"
 	}
-	lines := []string{you + ": " + sp.Describe(sp.Resolve(auth.Owner()))}
+	lines := []SandboxLine{{Who: you, Sandbox: sp.Resolve(auth.Owner())}}
+	other := sp.defaultOf(false)
 	for _, r := range sp.Rules {
 		var who []string
 		for _, m := range r.Match {
@@ -276,10 +305,27 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int) []string {
 			}
 		}
 		if len(who) > 0 {
-			lines = append(lines, strings.Join(who, ", ")+": "+sp.Describe(sp.sandboxOf(r)))
+			lines = append(lines, SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.narrow(other, r)})
 		}
 	}
-	return append(lines, "everyone else: "+sp.Describe(sp.Resolve(auth.Principal{Role: auth.RoleAnonymous})))
+	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAuthenticated})})
+	if anonymous {
+		lines = append(lines, SandboxLine{Who: "anonymous callers", Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
+	}
+	return lines
+}
+
+// OtherCallers names the callers who aren't owners and whom no more
+// specific rule matches: the rule of anyone, which --caller-storage and
+// --caller-secrets set, applies to them.
+const OtherCallers = "other callers"
+
+// SandboxLine is what the containers of one kind of caller get.
+type SandboxLine struct {
+	Who     string
+	Sandbox Sandbox
+	// Anonymous is set for anonymous callers, whom no rule gives secrets.
+	Anonymous bool
 }
 
 func describeMatcher(m string) string {

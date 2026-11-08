@@ -25,9 +25,6 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
-// secretsNone is the value of --secrets that gives no secrets.
-const secretsNone = "none"
-
 // sandboxFlags are --storage and --secrets of `pair invite` and `pair set`,
 // which set the sandbox rule of a pairing.
 type sandboxFlags struct {
@@ -37,8 +34,8 @@ type sandboxFlags struct {
 
 func (f *sandboxFlags) register(cmd *cobra.Command) {
 	fs := cmd.Flags()
-	fs.StringVar(&f.storage, "storage", "", "What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty")
-	fs.StringSliceVar(&f.secrets, "secrets", nil, "Secrets the pairing's agent container gets: `names` from --secret, all, NAME=secret:OTHER to pass the secret OTHER as NAME, or none")
+	fs.StringVar(&f.storage, "storage", "", "Narrow what the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared)")
+	fs.StringSliceVar(&f.secrets, "secrets", nil, "Narrow the secrets the pairing's agent container gets to `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all)")
 	must(cmd.RegisterFlagCompletionFunc("storage", fixedCompletions(agentdir.StorageModes...)))
 }
 
@@ -51,19 +48,19 @@ func (f *sandboxFlags) change(cmd *cobra.Command) (*controlapi.SandboxChange, er
 	ch := &controlapi.SandboxChange{}
 	if storage {
 		if !slices.Contains(agentdir.StorageModes, f.storage) {
-			return nil, clierr.Usage("--storage must be " + strings.Join(agentdir.StorageModes, ", "))
+			return nil, clierr.Usage("--storage must be one of shared, read-only, own or empty")
 		}
 		ch.Storage = f.storage
 	}
 	if secrets {
-		names := []string{}
+		var names []string
 		for _, s := range f.secrets {
-			if s = strings.TrimSpace(s); s != "" && s != secretsNone {
+			if s = strings.TrimSpace(s); s != "" {
 				names = append(names, s)
 			}
 		}
-		if len(names) > 0 && slices.Contains(f.secrets, secretsNone) {
-			return nil, clierr.Usage("--secrets none gives no secrets, so it goes alone")
+		if len(names) == 0 {
+			return nil, clierr.Usage("--secrets needs names, all or none")
 		}
 		ch.Secrets = &names
 	}

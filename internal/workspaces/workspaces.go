@@ -31,6 +31,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -70,16 +71,23 @@ type Store struct {
 	// MaxBytes and MaxEntries bound a copy; zero takes the package limits.
 	MaxBytes   int64
 	MaxEntries int
+
+	// copyMu serializes the copies, so that concurrent first uses can't
+	// pass MaxCopies.
+	copyMu sync.Mutex
 }
+
+// New returns the store of the private workspaces under root.
+func New(root string) *Store { return &Store{Root: root} }
 
 // Dir returns the workspace of storage in the directory of the container
 // name.
-func (s Store) Dir(name, storage string) string { return filepath.Join(s.Root, name, storage) }
+func (s *Store) Dir(name, storage string) string { return filepath.Join(s.Root, name, storage) }
 
 // Prepare returns the private workspace of storage, own or empty, of the
 // container name, which belongs to principal. The first use of own copies
 // src into it. It marks the workspace as used.
-func (s Store) Prepare(ctx context.Context, name, principal, storage, src string) (string, error) {
+func (s *Store) Prepare(ctx context.Context, name, principal, storage, src string) (string, error) {
 	if storage != agentdir.StorageOwn && storage != agentdir.StorageEmpty {
 		return "", fmt.Errorf("no private workspace for storage %q", storage)
 	}
@@ -103,18 +111,38 @@ func (s Store) Prepare(ctx context.Context, name, principal, storage, src string
 			return "", err
 		}
 	default:
-		if err := s.checkCopies(); err != nil {
-			return "", err
-		}
-		if err := s.copyTree(ctx, src, base, dir); err != nil {
+		if err := s.copyOnce(ctx, src, base, dir); err != nil {
 			return "", err
 		}
 	}
 	return dir, s.Touch(name)
 }
 
+// copyOnce copies src to dir, unless another copy made it meanwhile, while
+// no other copy runs. It refuses a new copy once the store keeps MaxCopies.
+func (s *Store) copyOnce(ctx context.Context, src, base, dir string) error {
+	s.copyMu.Lock()
+	defer s.copyMu.Unlock()
+	if _, err := os.Lstat(dir); err == nil {
+		return nil
+	}
+	if err := s.checkCopies(); err != nil {
+		return err
+	}
+	return s.copyTree(ctx, src, base, dir)
+}
+
+// Used returns when the workspaces of the container name were last used.
+func (s *Store) Used(name string) (time.Time, error) {
+	fi, err := os.Stat(filepath.Join(s.Root, name, usedFile))
+	if err != nil {
+		return time.Time{}, err
+	}
+	return fi.ModTime(), nil
+}
+
 // checkCopies refuses a new copy once the store keeps MaxCopies.
-func (s Store) checkCopies() error {
+func (s *Store) checkCopies() error {
 	entries, err := s.List()
 	if err != nil {
 		return err
@@ -132,7 +160,7 @@ func (s Store) checkCopies() error {
 }
 
 // Touch marks the workspaces of the container name as used now.
-func (s Store) Touch(name string) error {
+func (s *Store) Touch(name string) error {
 	p := filepath.Join(s.Root, name, usedFile)
 	now := time.Now()
 	err := os.Chtimes(p, now, now)
@@ -143,10 +171,10 @@ func (s Store) Touch(name string) error {
 }
 
 // Remove deletes the workspaces of the container name.
-func (s Store) Remove(name string) error { return os.RemoveAll(filepath.Join(s.Root, name)) }
+func (s *Store) Remove(name string) error { return os.RemoveAll(filepath.Join(s.Root, name)) }
 
 // RemoveStorage deletes the workspace of storage of the container name.
-func (s Store) RemoveStorage(name, storage string) error { return os.RemoveAll(s.Dir(name, storage)) }
+func (s *Store) RemoveStorage(name, storage string) error { return os.RemoveAll(s.Dir(name, storage)) }
 
 // Entry is the directory of a container's workspaces.
 type Entry struct {
@@ -159,7 +187,7 @@ type Entry struct {
 }
 
 // List returns the directories of the containers' workspaces.
-func (s Store) List() ([]Entry, error) {
+func (s *Store) List() ([]Entry, error) {
 	dirs, err := os.ReadDir(s.Root)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -193,7 +221,7 @@ func (s Store) List() ([]Entry, error) {
 // copyTree copies src to dst through a temporary directory in base, so
 // that dst holds a whole copy or nothing. Symlinks are copied as they are,
 // and special files are left out.
-func (s Store) copyTree(ctx context.Context, src, base, dst string) (err error) {
+func (s *Store) copyTree(ctx context.Context, src, base, dst string) (err error) {
 	c := &copier{ctx: ctx, maxBytes: s.MaxBytes, maxEntries: s.MaxEntries}
 	if c.maxBytes == 0 {
 		c.maxBytes = MaxBytes

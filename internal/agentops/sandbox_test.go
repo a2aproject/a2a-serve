@@ -114,3 +114,70 @@ func TestPairSandboxRefusals(t *testing.T) {
 		t.Fatalf("rules = %v, want none", rules)
 	}
 }
+
+func TestPairRollsBackTheRuleWhenTheInviteFails(t *testing.T) {
+	t.Parallel()
+	s, rt, _ := newSandboxService(t)
+
+	_, err := s.Pair(context.Background(), controlapi.PairCodeRequest{Name: "-bad", Sandbox: &controlapi.SandboxChange{Storage: agentdir.StorageOwn}})
+
+	if err == nil {
+		t.Fatalf("Pair() error = nil, want the invalid name refused")
+	}
+	if rules := rt.Config().Policy.Sandbox; len(rules) != 0 {
+		t.Fatalf("rules after a failed Pair() = %v, want none", rules)
+	}
+}
+
+func TestPairSetChecksTheConfigWaitingForARestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, _, d := newSandboxService(t)
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben"}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	saved, err := d.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	saved.Secrets = []string{"KEY"}
+	if err := d.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	_, err = s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Sandbox: &controlapi.SandboxChange{Secrets: new([]string{"GUEST"})}})
+
+	if err == nil || !strings.Contains(err.Error(), "secret GUEST is not one of the agent's secrets") {
+		t.Fatalf("UpdatePairing() error = %v, want the secret refused", err)
+	}
+	if saved, err = d.LoadConfig(); err != nil || len(saved.Policy.Sandbox) != 0 {
+		t.Fatalf("saved rules = %v, %v, want none", saved.Policy.Sandbox, err)
+	}
+}
+
+func TestPairSetMovesThePairingOutOfASharedRule(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	s, rt, _ := newSandboxService(t)
+	if _, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben"}); err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	if err := rt.Update(func(c *agentdir.Config) error {
+		c.Policy.Sandbox = []agentdir.SandboxRule{{Match: []string{"email:*@example.com", "pairing:ben"}, Storage: agentdir.StorageOwn}}
+		return nil
+	}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	if _, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Sandbox: &controlapi.SandboxChange{Secrets: new([]string{"none"})}}); err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+
+	want := []agentdir.SandboxRule{
+		{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageOwn},
+		{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn, Secrets: []string{"none"}},
+	}
+	if diff := cmp.Diff(want, rt.Config().Policy.Sandbox); diff != "" {
+		t.Fatalf("rules wrong result (-want +got) diff = %s", diff)
+	}
+}

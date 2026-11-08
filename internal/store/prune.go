@@ -61,6 +61,9 @@ func (s *Store) Prune(ctx context.Context) error {
 		if _, err := tx.ExecContext(ctx, `DELETE FROM tool_taps WHERE updated < ?`, now.Add(-ToolTapRetention).UnixNano()); err != nil {
 			return err
 		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM user_identities WHERE seen < ?`, now.Add(-UserIdentityRetention).UnixNano()); err != nil {
+			return err
+		}
 		pruned, err := deleteTasks(ctx, tx, `updated < ? AND state IN (?, ?, ?, ?)`, append([]any{cutoff}, terminalStates()...)...)
 		if err != nil {
 			return err

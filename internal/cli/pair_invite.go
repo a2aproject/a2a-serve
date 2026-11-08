@@ -48,9 +48,9 @@ up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
 or digit, and differs from the existing names by more than case.
 ` + "`a2a-serve pair set`" + ` changes a pairing, and rotates its credentials. A paired
 caller can approve commands in their own tasks, in an agent container of
-their own. --storage and --secrets set what it gets of the workspace and of
-the agent's --secret values; without them, the sandbox rules of the access
-policy decide, and by default it gets a read-only workspace and no secrets.
+their own, which gets the shared workspace and the agent's --secret values.
+--storage and --secrets narrow what it gets, such as to a read-only
+workspace or a key of its own.
 
 With --webhook, <name> is a webhook node: an agent that only runs when woken,
 such as a Grok Bot routine. The agent hosts it at <agent-url>/n/<name>, calls
@@ -69,7 +69,7 @@ through this agent, which keeps the webhook's credentials, and it treats
 them like any other caller from the private network.`,
 		Example: `  a2a-serve pair invite grok
   a2a-serve pair invite anna --owner
-  a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY,GITHUB_TOKEN
+  a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
     --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
   a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised`,
@@ -158,7 +158,10 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 		}
 	}
 	if resp.Sandbox != nil {
-		fmt.Fprintf(&sb, "  sandbox:   %s; change it with --storage and --secrets on `a2a-serve pair set`\n", resp.Sandbox.Summary)
+		fmt.Fprintf(&sb, "  sandbox:   %s; narrow it with --storage and --secrets on `a2a-serve pair set`\n", resp.Sandbox.Summary)
+		if resp.Sandbox.Warning != "" {
+			fmt.Fprintf(&sb, "  ! %s\n", resp.Sandbox.Warning)
+		}
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")

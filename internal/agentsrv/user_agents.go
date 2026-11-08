@@ -175,6 +175,40 @@ func (u *userAgents) sandboxOf(key string) (access.Sandbox, bool) {
 	return a.sandbox, true
 }
 
+// admit counts a turn in the process of key, which the rules give want,
+// until release. A process that runs with another sandbox stops first if
+// no turn uses it. If one does, only an answer to a waiting task may use
+// it; other turns get errSandboxRestarting.
+func (u *userAgents) admit(key string, want access.Sandbox, answer bool) (release func(), err error) {
+	a := u.get(key)
+	u.mu.Lock()
+	if a.proc != nil && !a.sandbox.Equal(want) && !answer {
+		if a.turns > 0 || !a.startMu.TryLock() {
+			u.mu.Unlock()
+			return nil, errSandboxRestarting
+		}
+		proc := a.proc
+		a.proc = nil
+		u.mu.Unlock()
+		err := proc.Close()
+		a.startMu.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("stopping the agent process %s, whose sandbox changed: %w", key, err)
+		}
+		u.mu.Lock()
+	}
+	a.turns++
+	u.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			u.mu.Lock()
+			defer u.mu.Unlock()
+			a.turns--
+		})
+	}, nil
+}
+
 // closeStale closes the process of key if it runs with another sandbox than
 // want, no turn uses it and it doesn't start or stop now. It holds the
 // process from starting until it closed, so that a new process doesn't

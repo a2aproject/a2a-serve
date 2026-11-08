@@ -33,10 +33,18 @@ import (
 var errOwnerSandbox = agenterr.Invalidf("owners share your agent container, so --storage and --secrets don't apply to them; the sandbox rule of self in config.yaml (`a2a-serve config edit`) sets what it gets")
 
 // withSandboxRule returns cfg's policy with the rule of the pairing name
-// changed by ch.
+// changed by ch. A pairing in a rule with other matchers moves to a rule of
+// its own, which starts from that rule.
 func withSandboxRule(p agentdir.PolicyConfig, name string, ch controlapi.SandboxChange) agentdir.PolicyConfig {
 	m := agentdir.PairingMatcher(name)
-	r, _ := p.SandboxRuleOf(m)
+	p = p.Clone()
+	r, ok := p.SandboxRuleOf(m)
+	if !ok {
+		if i := slices.IndexFunc(p.Sandbox, func(r agentdir.SandboxRule) bool { return slices.Contains(r.Match, m) }); i >= 0 {
+			r = agentdir.SandboxRule{Storage: p.Sandbox[i].Storage, Secrets: slices.Clone(p.Sandbox[i].Secrets)}
+			p.RemoveSandboxMatcher(m)
+		}
+	}
 	r.Match = []string{m}
 	if ch.Storage != "" {
 		r.Storage = ch.Storage
@@ -44,28 +52,32 @@ func withSandboxRule(p agentdir.PolicyConfig, name string, ch controlapi.Sandbox
 	if ch.Secrets != nil {
 		r.Secrets = slices.Clone(*ch.Secrets)
 	}
-	p = p.Clone()
 	p.SetSandboxRule(r)
 	return p
 }
 
-// checkSandbox refuses a change of the sandbox rule of the pairing name that
-// would make the config invalid, before the pairing changes.
-func (s *Service) checkSandbox(name string, ch controlapi.SandboxChange) error {
-	cfg := s.deps.Runtime.Config().Clone()
-	cfg.Policy = withSandboxRule(cfg.Policy, name, ch)
-	if err := cfg.Validate(); err != nil {
-		return agenterr.Invalidf("%v", err)
-	}
-	return nil
-}
-
-// setSandbox saves the change of the sandbox rule of the pairing name.
-func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) error {
-	return s.deps.Runtime.Update(func(c *agentdir.Config) error {
+// setSandbox saves the change of the sandbox rule of the pairing name, and
+// returns the function that restores the rules as they were. It checks the
+// config in use and config.yaml, which may hold a change waiting for a
+// restart, such as a removed secret.
+func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo func() error, err error) {
+	before := s.deps.Runtime.Config().Policy.Clone().Sandbox
+	err = s.deps.Runtime.Update(func(c *agentdir.Config) error {
 		c.Policy = withSandboxRule(c.Policy, name, ch)
+		if err := c.Validate(); err != nil {
+			return agenterr.Invalidf("%v", err)
+		}
 		return nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return func() error {
+		return s.deps.Runtime.Update(func(c *agentdir.Config) error {
+			c.Policy.Sandbox = before
+			return nil
+		})
+	}, nil
 }
 
 // removeSandbox deletes the pairing name from the sandbox rules.
@@ -100,9 +112,13 @@ func (s *Service) sandboxOf(p pairings.Pairing) *controlapi.PairingSandbox {
 	if p.Role == auth.RoleOwner {
 		role = auth.RoleOwner
 	}
-	sp := access.SandboxPolicyOf(s.deps.Runtime.Config())
+	cfg := s.deps.Runtime.Config()
+	sp := access.SandboxPolicyOf(cfg)
 	sb := sp.Resolve(auth.Principal{ID: p.Principal, Role: role, Identity: id})
 	out := &controlapi.PairingSandbox{Storage: sb.Storage, Secrets: []string{}, Summary: sp.Describe(sb)}
+	if role != auth.RoleOwner {
+		out.Warning = access.ModelKeyNote(cfg, access.SandboxLine{Who: "the pairing " + p.Name, Sandbox: sb})
+	}
 	for _, g := range sb.Secrets {
 		e := g.Name
 		if g.From != g.Name {

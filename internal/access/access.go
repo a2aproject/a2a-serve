@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -119,8 +120,8 @@ type Description struct {
 	// Sandbox says what the agent containers of callers get, one line each
 	// for you, the sandbox rules and everyone else.
 	Sandbox []string
-	// SandboxNotes are what the sandbox rules don't do, or how they changed
-	// what callers get.
+	// SandboxNotes are what the sandbox rules don't do, such as callers
+	// whose container gets no model key.
 	SandboxNotes []string
 }
 
@@ -128,20 +129,43 @@ type Description struct {
 // containers of callers get.
 func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
 	a := Describe(cfg.Policy, net, n)
-	a.Sandbox = SandboxPolicyOf(cfg).SandboxLines(n.Owners)
-	others := n.All > n.Owners || len(a.Others) > 0
-	if cfg.Sandbox == agentdir.SandboxLocal && others {
-		a.SandboxNotes = append(a.SandboxNotes, "without the Docker sandbox, every caller's agent can read and change your files; the storage of sandbox rules needs --sandbox docker")
+	sp := SandboxPolicyOf(cfg)
+	anonymous := len(a.Anonymous) > 0
+	for _, l := range sp.SandboxLines(n.Owners, anonymous) {
+		a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
+		if note := ModelKeyNote(cfg, l); note != "" {
+			a.SandboxNotes = append(a.SandboxNotes, note)
+		}
 	}
-	_, callerRule := cfg.Policy.SandboxRuleOf(agentdir.MatchAnyone)
-	switch {
-	case callerRule || !others:
-	case cfg.Sandbox == agentdir.SandboxLocal:
-		a.SandboxNotes = append(a.SandboxNotes, "callers who aren't owners now get no secrets; to give them every secret as before, run `a2a-serve config set --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`")
-	default:
-		a.SandboxNotes = append(a.SandboxNotes, "callers who aren't owners now get a read-only workspace and no secrets; to give them the shared workspace and every secret as before, run `a2a-serve config set --caller-storage shared --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`")
+	if sp.Local && (n.All > n.Owners || len(a.Others) > 0) {
+		a.SandboxNotes = append(a.SandboxNotes, LocalSandboxNote)
 	}
 	return a
+}
+
+// LocalSandboxNote says that sandbox rules need the Docker sandbox.
+const LocalSandboxNote = "the agent runs without the Docker sandbox, so sandbox rules don't apply: every caller's agent can read and change your files and read your secrets"
+
+// ModelKeyNote warns that the containers of the callers of l have no key
+// of the agent's model provider, so the agent can't answer them, or
+// returns "".
+func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
+	if cfg.Sandbox == agentdir.SandboxLocal {
+		return ""
+	}
+	var names []string
+	for _, g := range l.Sandbox.Secrets {
+		names = append(names, g.Name)
+	}
+	provider, key := harness.ModelKeyWithheld(cfg, names)
+	switch {
+	case provider == "":
+		return ""
+	case l.Anonymous:
+		return fmt.Sprintf("no key of model provider %s reaches %s, since they get no secrets, so the agent can't answer them", provider, l.Who)
+	}
+	who := l.Who
+	return fmt.Sprintf("no key of model provider %s reaches %s, so the agent can't answer them; a sandbox rule that gives them %s, or a key of their own with %s=secret:<STORED_KEY>, fixes it", provider, who, key, key)
 }
 
 // Describe says who may call an agent with the settings p on the networks

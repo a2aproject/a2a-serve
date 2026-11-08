@@ -76,7 +76,7 @@ func TestPrepareOwnCopiesOnce(t *testing.T) {
 	if err := os.Symlink("main.go", filepath.Join(src, "link")); err != nil {
 		t.Fatal(err)
 	}
-	s := Store{Root: filepath.Join(t.TempDir(), "workspaces")}
+	s := New(filepath.Join(t.TempDir(), "workspaces"))
 	dir, err := s.Prepare(context.Background(), "u1", "pair:ben", agentdir.StorageOwn, src)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -110,7 +110,7 @@ func TestPrepareEmpty(t *testing.T) {
 	t.Parallel()
 	src := t.TempDir()
 	writeFile(t, filepath.Join(src, "main.go"), "package main")
-	s := Store{Root: filepath.Join(t.TempDir(), "w")}
+	s := New(filepath.Join(t.TempDir(), "w"))
 	dir, err := s.Prepare(context.Background(), "u1", "email:a@example.com", agentdir.StorageEmpty, src)
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -123,11 +123,12 @@ func TestPrepareEmpty(t *testing.T) {
 func TestPrepareOwnTooLarge(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name  string
-		store Store
+		name       string
+		maxBytes   int64
+		maxEntries int
 	}{
-		{name: "bytes", store: Store{MaxBytes: 10}},
-		{name: "entries", store: Store{MaxEntries: 2}},
+		{name: "bytes", maxBytes: 10},
+		{name: "entries", maxEntries: 2},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -136,8 +137,8 @@ func TestPrepareOwnTooLarge(t *testing.T) {
 			writeFile(t, filepath.Join(src, "a"), "0123456789")
 			writeFile(t, filepath.Join(src, "b"), "0123456789")
 			writeFile(t, filepath.Join(src, "c"), "0")
-			s := tt.store
-			s.Root = filepath.Join(t.TempDir(), "w")
+			s := New(filepath.Join(t.TempDir(), "w"))
+			s.MaxBytes, s.MaxEntries = tt.maxBytes, tt.maxEntries
 			_, err := s.Prepare(context.Background(), "u1", "pair:ben", agentdir.StorageOwn, src)
 			if !errors.Is(err, ErrTooLarge) {
 				t.Fatalf("Prepare() error = %v, want %v", err, ErrTooLarge)
@@ -151,7 +152,7 @@ func TestPrepareOwnTooLarge(t *testing.T) {
 
 func TestRemove(t *testing.T) {
 	t.Parallel()
-	s := Store{Root: filepath.Join(t.TempDir(), "w")}
+	s := New(filepath.Join(t.TempDir(), "w"))
 	for _, storage := range []string{agentdir.StorageOwn, agentdir.StorageEmpty} {
 		if _, err := s.Prepare(context.Background(), "u1", "pair:ben", storage, t.TempDir()); err != nil {
 			t.Fatalf("Prepare() error = %v", err)

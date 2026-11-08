@@ -27,10 +27,12 @@ type SandboxRule struct {
 	// Match lists the callers: self, private, anyone, email:<address>,
 	// email:*@<domain> or pairing:<name>.
 	Match []string `yaml:"match,flow" json:"match"`
-	// Storage is one of the Storage* modes. Empty is read-only.
+	// Storage is one of the Storage* modes. Empty keeps the caller's
+	// default. A rule only narrows the default.
 	Storage string `yaml:"storage,omitempty" json:"storage,omitempty"`
-	// Secrets are names from the agent's secrets, all, or NAME=secret:OTHER,
-	// which passes the secret OTHER as NAME.
+	// Secrets are names from the agent's secrets, all, none, or
+	// NAME=secret:OTHER, which passes the secret OTHER as NAME. Empty keeps
+	// the caller's default.
 	Secrets []string `yaml:"secrets,omitempty,flow" json:"secrets,omitempty"`
 }
 
@@ -50,8 +52,12 @@ const (
 // StorageModes are the storage modes, from the most access to the least.
 var StorageModes = []string{StorageShared, StorageOwn, StorageReadOnly, StorageEmpty}
 
-// SecretsAll in the secrets of a rule passes every secret of the agent.
-const SecretsAll = "all"
+// SecretsAll and SecretsNone in the secrets of a rule pass every secret of
+// the agent, or none. Each goes alone.
+const (
+	SecretsAll  = "all"
+	SecretsNone = "none"
+)
 
 // Sandbox rule matchers besides the members of the policy.
 const (
@@ -186,7 +192,7 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 			case !validSandboxMatcher(m):
 				invalid("", m, "unknown matcher %q: want self, private, anyone, email:<address>, email:*@<domain> or pairing:<name>", m)
 			case dup && j != i:
-				invalid("", m, "%s is in rule %d too; a caller is in one rule at most", m, j+1)
+				invalid("", m, "%s is in rule %d too; a matcher appears in one rule at most", m, j+1)
 			}
 			seen[m] = i
 		}
@@ -194,7 +200,10 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 			invalid("caller-storage", r.Storage, "unknown storage: want %s", strings.Join(StorageModes, ", "))
 		}
 		for _, e := range r.Secrets {
-			if e == SecretsAll {
+			if e == SecretsAll || e == SecretsNone {
+				if len(r.Secrets) > 1 {
+					invalid("caller-secrets", e, "%s goes alone: pass it without names", e)
+				}
 				continue
 			}
 			_, from, ok := ParseSecretGrant(e)
@@ -302,14 +311,21 @@ func ShowSandboxRule(r SandboxRule) string {
 // commands set.
 const SandboxSetting = "sandbox-rules"
 
-// parseSecretGrant refuses none as an entry of --caller-secrets, which
-// would read as a secret's name.
-func parseSecretGrant(_ Dir, v string) (string, error) {
-	v = strings.TrimSpace(v)
-	if v == "none" {
-		return "", fmt.Errorf("to give callers no secrets, run `a2a-serve config unset caller-secrets`")
+// mergeCallerSecrets replaces the secrets of the rule of --caller-secrets
+// with the entries of the flag, so that all and none can go alone.
+func mergeCallerSecrets(s *Settings, cfg *Config, _ Dir, _ Secrets) error {
+	var entries []string
+	for _, v := range s.CallerSecrets {
+		for e := range strings.SplitSeq(v, ",") {
+			if e = strings.TrimSpace(e); e != "" {
+				entries = append(entries, e)
+			}
+		}
 	}
-	return v, nil
+	if len(entries) > 0 {
+		setCallerRule(cfg, func(r *SandboxRule) { r.Secrets = entries })
+	}
+	return nil
 }
 
 // secretGrantKey is the variable name of an entry of --caller-secrets.

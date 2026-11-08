@@ -16,7 +16,9 @@ package agentsrv
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"slices"
 	"strings"
@@ -31,21 +33,24 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
-// maxRememberedUsers bounds the users whose principal [sandboxes] keeps; the
-// least recently seen is forgotten first.
+// maxRememberedUsers bounds the users whose principal [sandboxes] keeps in
+// memory; the least recently seen is forgotten first.
 const maxRememberedUsers = 1024
 
 // sandboxes tells what the agent container of each agent key gets under the
 // sandbox rules in force. The rules match the identity of a user, which
-// only a request proves, so it keeps the latest principal of each user who
-// called: a user's container can start for a turn of an owner who writes
-// into the user's conversation, or after a restart. Without one, it matches
-// the identity that the principal ID names.
+// only a request proves, so it keeps the last identity the server verified
+// for each user in the store: a user's container can start for a turn of an
+// owner who writes into the user's conversation, or a schedule, after a
+// restart. Without one, it matches the identity that the principal ID
+// names.
 type sandboxes struct {
 	config func() *agentdir.Config
+	store  *store.Store
 
 	mu    sync.Mutex
 	users map[string]rememberedUser
@@ -56,19 +61,36 @@ type rememberedUser struct {
 	seen time.Time
 }
 
-func newSandboxes(config func() *agentdir.Config) *sandboxes {
-	return &sandboxes{config: config, users: map[string]rememberedUser{}}
+func newSandboxes(config func() *agentdir.Config, st *store.Store) *sandboxes {
+	return &sandboxes{config: config, store: st, users: map[string]rememberedUser{}}
 }
 
 // remember keeps the principal of a user who called, for the sandbox of
-// their container.
-func (s *sandboxes) remember(p auth.Principal) {
+// their container, and saves its identity when it changed.
+func (s *sandboxes) remember(ctx context.Context, p auth.Principal) {
 	key := agentkey.Of(p, true)
 	if _, ok := agentkey.UserOf(key); !ok {
 		return
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	prev, known := s.users[key]
+	s.keepLocked(key, p)
+	s.mu.Unlock()
+	if known && prev.p.Identity == p.Identity {
+		return
+	}
+	data, err := json.Marshal(p.Identity)
+	if err == nil {
+		err = s.store.SaveUserIdentity(ctx, p.ID, string(data))
+	}
+	if err != nil {
+		slog.Warn("saving the identity of a user", "user", p.ID, "error", err)
+	}
+}
+
+// keepLocked keeps p as the principal of key in memory. The caller holds
+// s.mu.
+func (s *sandboxes) keepLocked(key string, p auth.Principal) {
 	if _, ok := s.users[key]; !ok && len(s.users) >= maxRememberedUsers {
 		oldest := ""
 		for k, u := range s.users {
@@ -81,7 +103,8 @@ func (s *sandboxes) remember(p auth.Principal) {
 	s.users[key] = rememberedUser{p: p, seen: time.Now()}
 }
 
-// forget drops the principals of the agent keys of removed users.
+// forget drops the principals of the agent keys of removed users from
+// memory. The store deletes their identities with the pairing.
 func (s *sandboxes) forget(keys ...string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -92,7 +115,7 @@ func (s *sandboxes) forget(keys ...string) {
 
 // principalOf returns whom the sandbox rules match for the container of an
 // agent key: the owner for none, any anonymous caller, or the user.
-func (s *sandboxes) principalOf(key string) auth.Principal {
+func (s *sandboxes) principalOf(ctx context.Context, key string) auth.Principal {
 	if key == "" {
 		return auth.Owner()
 	}
@@ -106,12 +129,27 @@ func (s *sandboxes) principalOf(key string) auth.Principal {
 	if ok {
 		return u.p
 	}
-	return auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+	p := auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+	data, err := s.store.UserIdentity(ctx, id)
+	switch {
+	case errors.Is(err, store.ErrNotFound):
+		return p
+	case err == nil:
+		err = json.Unmarshal([]byte(data), &p.Identity)
+	}
+	if err != nil {
+		slog.Warn("reading the identity of a user", "user", id, "error", err)
+		return auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+	}
+	s.mu.Lock()
+	s.keepLocked(key, p)
+	s.mu.Unlock()
+	return p
 }
 
 // of returns the sandbox of the container of an agent key.
-func (s *sandboxes) of(key string) access.Sandbox {
-	return s.resolve(s.principalOf(key))
+func (s *sandboxes) of(ctx context.Context, key string) access.Sandbox {
+	return s.resolve(s.principalOf(ctx, key))
 }
 
 // resolve returns the sandbox of the container that p's conversations run
@@ -125,54 +163,72 @@ var (
 	errSandboxCovers     = errors.New("this conversation runs in the agent container of the user who started it, which gets more storage or secrets than your sandbox rule gives you; start a conversation of your own")
 	errSandboxPrivate    = errors.New("this conversation runs in the private workspace of the user who started it; start a conversation of your own")
 	errSandboxRestarting = errors.New("the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then")
+	errSandboxNarrowed   = errors.New("the sandbox rules of this conversation changed and give less, so its waiting tasks ended; send the message again")
 )
 
 // admitTurn lets the turn of execCtx by the caller in ctx run in the
-// container of an agent key:
+// container of an agent key, and counts it there until release:
 //
 //   - a caller from another container needs a sandbox that covers what this
 //     container gets now and got when it started, and only an owner may
 //     write into another user's private workspace;
-//   - a container whose sandbox changed stops if it is idle, so that the turn
-//     starts it with the rules in force. If it is busy, only answers to its
-//     waiting tasks run in it until it restarts.
-func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) error {
-	want := s.sandboxes.of(key)
-	if caller, ok := auth.Caller(ctx); ok {
-		s.sandboxes.remember(caller)
-		want = s.sandboxes.of(key)
-		if key != agentkey.Of(caller, ok) {
-			if err := s.admitOther(caller, key, want); err != nil {
-				return err
-			}
+//   - a container whose rules now give less ends its tasks and stops, so
+//     that the turn starts it with the rules in force;
+//   - a container whose rules changed otherwise stops if it is idle. If it
+//     is busy, only answers to its waiting tasks run in it until it
+//     restarts.
+func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (func(), error) {
+	caller, ok := auth.Caller(ctx)
+	if ok {
+		s.sandboxes.remember(ctx, caller)
+	}
+	want := s.sandboxes.of(ctx, key)
+	if ok && key != agentkey.Of(caller, ok) {
+		if err := s.admitOther(ctx, caller, key, want); err != nil {
+			return nil, err
 		}
 	}
 	agents := s.agentsOf(key)
 	if agents == nil {
-		return nil
+		return func() {}, nil
 	}
-	running, ok := agents.sandboxOf(key)
-	if !ok || running.Equal(want) || answersWaiting(execCtx) {
-		return nil
+	answer := answersWaiting(execCtx)
+	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
+		// An answer fails its own task here; sandboxLoop then ends the
+		// others, since stopping the container now would fail the task
+		// without saying why.
+		if answer {
+			return nil, errSandboxNarrowed
+		}
+		if err := s.endNarrowed(ctx, key); err != nil {
+			return nil, err
+		}
 	}
-	s.closeStale(key)
-	if _, ok := agents.sandboxOf(key); ok {
-		return errSandboxRestarting
+	counted, err := agents.admit(key, want, answer)
+	if err != nil {
+		return nil, err
 	}
-	return nil
+	return func() {
+		counted()
+		s.closeStale(ctx, key)
+	}, nil
 }
 
 // admitOther checks a caller's turn in the container of another agent key,
 // which gets want under the rules in force.
-func (s *Server) admitOther(caller auth.Principal, key string, want access.Sandbox) error {
+func (s *Server) admitOther(ctx context.Context, caller auth.Principal, key string, want access.Sandbox) error {
 	mine := s.sandboxes.resolve(caller)
 	if !mine.Covers(want) {
 		return errSandboxCovers
 	}
+	running, ok := access.Sandbox{}, false
 	if agents := s.agentsOf(key); agents != nil {
-		if running, ok := agents.sandboxOf(key); ok && !mine.Covers(running) {
-			return errSandboxCovers
-		}
+		running, ok = agents.sandboxOf(key)
+	} else if started := s.mainSandbox.Load(); started != nil {
+		running, ok = *started, true
+	}
+	if ok && !mine.Covers(running) {
+		return errSandboxCovers
 	}
 	if !caller.IsOwner() && (want.Storage == agentdir.StorageOwn || want.Storage == agentdir.StorageEmpty) {
 		return errSandboxPrivate
@@ -186,15 +242,42 @@ func answersWaiting(execCtx *a2asrv.ExecutorContext) bool {
 	return execCtx != nil && execCtx.StoredTask != nil && execCtx.StoredTask.Status.State == a2a.TaskStateInputRequired
 }
 
+// endNarrowed cancels the unfinished tasks of the container of an agent
+// key and stops it: its rules now give less, and its tasks would keep the
+// access they got.
+func (s *Server) endNarrowed(ctx context.Context, key string) error {
+	id, _ := agentkey.UserOf(key)
+	if key == agentkey.Anonymous {
+		id = auth.AnonymousID
+	}
+	ids, err := s.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: id, AgentKey: key})
+	if err != nil {
+		return err
+	}
+	as := auth.InProcess(context.WithoutCancel(ctx), auth.Owner())
+	for _, t := range ids {
+		if _, err := s.sender.CancelTask(as, &a2a.CancelTaskRequest{ID: t}); err != nil && !errors.Is(err, a2a.ErrTaskNotCancelable) {
+			return fmt.Errorf("canceling task %s: %w", t, err)
+		}
+	}
+	release, err := s.agentsOf(key).stop(key)
+	if err != nil {
+		return err
+	}
+	release()
+	slog.Info("stopped an agent process whose sandbox rules now give less", "key", key, "canceled", len(ids))
+	return nil
+}
+
 // closeStale stops the container of an agent key if no turn uses it and
 // the sandbox rules changed what it gets. The owner's container keeps its
 // sandbox until the server restarts.
-func (s *Server) closeStale(key string) {
+func (s *Server) closeStale(ctx context.Context, key string) {
 	agents := s.agentsOf(key)
 	if agents == nil {
 		return
 	}
-	stopped, err := agents.closeStale(key, s.sandboxes.of(key))
+	stopped, err := agents.closeStale(key, s.sandboxes.of(ctx, key))
 	if err != nil {
 		slog.Warn("stopping an agent process whose sandbox changed", "key", key, "error", err)
 	}
@@ -215,8 +298,9 @@ func (s *Server) agentsOf(key string) *userAgents {
 	return nil
 }
 
-// sandboxLoop applies changes of the sandbox rules to the idle containers,
-// so that a removed secret leaves them without waiting for their next turn.
+// sandboxLoop applies changes of the sandbox rules to the containers that
+// no turn starts: an idle one stops, and a busy one whose rules now give
+// less ends its tasks, so that a removed secret doesn't wait for them.
 func (s *Server) sandboxLoop(ctx context.Context) {
 	t := time.NewTicker(s.timings.SandboxCheckInterval)
 	defer t.Stop()
@@ -228,16 +312,27 @@ func (s *Server) sandboxLoop(ctx context.Context) {
 		}
 		for _, agents := range []*userAgents{&s.anonymous, &s.users} {
 			for _, key := range agents.runningKeys() {
-				s.closeStale(key)
+				s.applySandboxChange(ctx, agents, key)
 			}
 		}
 	}
 }
 
+func (s *Server) applySandboxChange(ctx context.Context, agents *userAgents, key string) {
+	want := s.sandboxes.of(ctx, key)
+	if running, ok := agents.sandboxOf(key); ok && !want.Covers(running) {
+		if err := s.endNarrowed(ctx, key); err != nil {
+			slog.Warn("stopping an agent process whose sandbox rules now give less", "key", key, "error", err)
+		}
+		return
+	}
+	s.closeStale(ctx, key)
+}
+
 // sandboxNotes returns notes with one added when the owner's container
 // runs with another sandbox than the rule of self gives now.
 func (s *Server) sandboxNotes(notes []string) []string {
-	if started := s.mainSandbox.Load(); started != nil && !started.Equal(s.sandboxes.of("")) {
+	if started := s.mainSandbox.Load(); started != nil && !started.Equal(s.sandboxes.of(context.Background(), "")) {
 		notes = append(slices.Clone(notes), "your agent container applies the changed sandbox rule of self after `a2a-serve restart`")
 	}
 	return notes
@@ -279,7 +374,12 @@ func workspaceName(key string) string {
 func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key string, sb access.Sandbox) error {
 	values, missing := sb.Values(s.rt.Secrets())
 	if len(missing) > 0 {
-		return errors.New("secret " + missing[0] + " is not set; pass --secret " + missing[0] + " again with the variable set")
+		hint := fmt.Sprintf("secret %s is not set; pass --secret %s again with the variable set", missing[0], missing[0])
+		if key == "" {
+			return errors.New(hint)
+		}
+		slog.Warn("an agent process of a caller can't start: "+hint, "key", key)
+		return fmt.Errorf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", missing[0])
 	}
 	spec.Env = append(spec.Env, values...)
 	if spec.Sandbox == harness.SandboxLocal {
@@ -290,7 +390,7 @@ func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key strin
 	if sb.Storage != agentdir.StorageOwn && sb.Storage != agentdir.StorageEmpty {
 		return nil
 	}
-	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), s.sandboxes.principalOf(key).ID, sb.Storage, ws)
+	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), s.sandboxes.principalOf(ctx, key).ID, sb.Storage, ws)
 	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
 		return errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
 	}
@@ -354,16 +454,18 @@ func (s *Server) pruneWorkspaces(ctx context.Context) {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := s.pruneWorkspace(e); err != nil {
+		if err := s.pruneWorkspace(ctx, e); err != nil {
 			slog.Warn("deleting a private workspace", "name", e.Name, "error", err)
 		}
 	}
 }
 
-func (s *Server) pruneWorkspace(e workspaces.Entry) error {
+func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 	switch e.Name {
 	case workspaceName(""):
-		// The owner's container keeps its sandbox until the server restarts.
+		if started := s.mainSandbox.Load(); started != nil {
+			return s.removeStorageBut(e, started.Storage)
+		}
 		return nil
 	case workspaceName(agentkey.Anonymous):
 		release, err := s.anonymous.stopIdle(agentkey.Anonymous)
@@ -371,14 +473,7 @@ func (s *Server) pruneWorkspace(e workspaces.Entry) error {
 			return err
 		}
 		defer release()
-		storage := s.sandboxes.of(agentkey.Anonymous).Storage
-		var errs []error
-		for _, st := range e.Storage {
-			if st != storage {
-				errs = append(errs, s.workspaces.RemoveStorage(e.Name, st))
-			}
-		}
-		return errors.Join(errs...)
+		return s.removeStorageBut(e, s.sandboxes.of(ctx, agentkey.Anonymous).Storage)
 	}
 	key := agentkey.User(e.Principal)
 	pairing := strings.HasPrefix(e.Principal, auth.PairPrefix) || auth.IdentityOf(e.Principal).WebhookNode != ""
@@ -390,5 +485,20 @@ func (s *Server) pruneWorkspace(e workspaces.Entry) error {
 		return err
 	}
 	defer release()
+	// The user may have started a turn since the list was read.
+	if used, err := s.workspaces.Used(e.Name); err != nil || time.Since(used) < unusedWorkspaceTTL {
+		return err
+	}
 	return s.workspaces.Remove(e.Name)
+}
+
+// removeStorageBut deletes the workspaces of e but the one of storage.
+func (s *Server) removeStorageBut(e workspaces.Entry, storage string) error {
+	var errs []error
+	for _, st := range e.Storage {
+		if st != storage {
+			errs = append(errs, s.workspaces.RemoveStorage(e.Name, st))
+		}
+	}
+	return errors.Join(errs...)
 }

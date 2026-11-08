@@ -205,6 +205,9 @@ type PairingSandbox struct {
 	Secrets []string `json:"secrets"`
 	// Summary describes both, as `a2a-serve pair get` shows it.
 	Summary string `json:"summary"`
+	// Warning says what the pairing's agent can't do with them, such as
+	// reach its model without a key.
+	Warning string `json:"warning,omitempty"`
 }
 
 // PairCodeResponse carries a pairing code and how to use it.

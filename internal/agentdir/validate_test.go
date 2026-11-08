@@ -67,7 +67,7 @@ func TestValidate(t *testing.T) {
 		{name: "sandbox rule email matcher", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"email:ben"}}} }, wantErr: `unknown matcher "email:ben"`},
 		{name: "sandbox matcher in two rules", modify: func(c *Config) {
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"private"}}, {Match: []string{"anyone", "private"}}}
-		}, wantErr: "policy.sandbox rule 2: private is in rule 1 too"},
+		}, wantErr: "policy.sandbox rule 2: private is in rule 1 too; a matcher appears in one rule at most"},
 		{name: "sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Storage: "copy"}} }, wantErr: `invalid --caller-storage "copy": unknown storage`},
 		{name: "pairing sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Storage: "copy"}} }, wantErr: `the sandbox rule of pairing:ben: unknown storage: want`},
 		{name: "sandbox rule unknown secret", modify: func(c *Config) {
@@ -77,6 +77,17 @@ func TestValidate(t *testing.T) {
 			c.Secrets = []string{"KEY"}
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"KEY=secret:OTHER"}}}
 		}, wantErr: "secret OTHER is not one of the agent's secrets"},
+		{name: "sandbox rule with none", modify: func(c *Config) {
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}}
+		}},
+		{name: "sandbox rule with all and a name", modify: func(c *Config) {
+			c.Secrets = []string{"KEY"}
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"all", "KEY"}}}
+		}, wantErr: `invalid --caller-secrets "all": all goes alone`},
+		{name: "pairing sandbox rule with none and a name", modify: func(c *Config) {
+			c.Secrets = []string{"KEY"}
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"KEY", "none"}}}
+		}, wantErr: `the sandbox rule of pairing:ben: none goes alone`},
 		{name: "sandbox rule secret syntax", modify: func(c *Config) {
 			c.Policy.Sandbox = []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"KEY=OTHER"}}}
 		}, wantErr: `invalid --caller-secrets "KEY=OTHER": invalid secret`},

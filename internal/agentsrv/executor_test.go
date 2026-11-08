@@ -893,8 +893,14 @@ func TestExplainFailure(t *testing.T) {
 		{name: "agent exited during an answer", cfg: opencode, reported: "forwarding answer to acp agent: acp agent exited", want: "the agent stopped unexpectedly; send the message again"},
 		{
 			name: "sandbox without the key", cfg: opencode, granted: []string{"GITHUB_TOKEN"}, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
-			want: "the sandbox rule of this conversation gives the agent no key for provider google; ask the owner for a key of its own, which they can add with `--secrets GOOGLE_GENERATIVE_AI_API_KEY=secret:<STORED_KEY>` on `a2a-serve pair set` or `a2a-serve config set --caller-secrets`; the agent reported: the agent failed: setting \"model\": model not found: google/x",
+			want: "the sandbox of this conversation gives the agent no key of model provider google, so it can't reach its model; the owner of the agent decides which secrets it gets; the agent reported: the agent failed: setting \"model\": model not found: google/x",
 		},
+		{
+			name: "claude without the key in its sandbox", cfg: &agentdir.Config{Harness: "claude", Secrets: []string{"ANTHROPIC_API_KEY"}}, granted: []string{"GITHUB_TOKEN"},
+			reported: "Invalid API key · Please run /login",
+			want:     "the sandbox of this conversation gives the agent no key of model provider anthropic, so it can't reach its model; the owner of the agent decides which secrets it gets; the agent reported: Invalid API key · Please run /login",
+		},
+		{name: "claude with its key", cfg: &agentdir.Config{Harness: "claude", Secrets: []string{"ANTHROPIC_API_KEY"}}, granted: []string{"ANTHROPIC_API_KEY"}, reported: "Invalid API key · Please run /login", want: "Invalid API key · Please run /login"},
 		{
 			name: "unknown model", cfg: opencode, granted: []string{"GEMINI_API_KEY"}, reported: `configuring acp session: Invalid params: setting "model": model not found: google/x (code -32602)`,
 			want: `the agent failed: setting "model": model not found: google/x` + opencodeHint,

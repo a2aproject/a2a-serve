@@ -54,9 +54,9 @@ up to 64 letters, digits, dots, hyphens or underscores, starts with a letter
 or digit, and differs from the existing names by more than case.
 `a2a-serve pair set` changes a pairing, and rotates its credentials. A paired
 caller can approve commands in their own tasks, in an agent container of
-their own. --storage and --secrets set what it gets of the workspace and of
-the agent's --secret values; without them, the sandbox rules of the access
-policy decide, and by default it gets a read-only workspace and no secrets.
+their own, which gets the shared workspace and the agent's --secret values.
+--storage and --secrets narrow what it gets, such as to a read-only
+workspace or a key of its own.
 
 With --webhook, &lt;name&gt; is a webhook node: an agent that only runs when woken,
 such as a Grok Bot routine. The agent hosts it at &lt;agent-url&gt;/n/&lt;name&gt;, calls
@@ -86,7 +86,7 @@ a2a-serve pair invite <name> [flags]
 ```bash
 a2a-serve pair invite grok
 a2a-serve pair invite anna --owner
-a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY,GITHUB_TOKEN
+a2a-serve pair invite ben --storage own --secrets ANTHROPIC_API_KEY
 a2a-serve pair invite grok --webhook https://example.com/hooks/123 \
   --webhook-header "Authorization: Bearer env:GROK_WEBHOOK_TOKEN"
 a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
@@ -99,8 +99,8 @@ a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
 | `--owner` |  | Make the pairing an owner, who sees and approves every task; others see and approve their own |
-| `--secrets names` |  | Secrets the pairing's agent container gets: names from --secret, all, NAME=secret:OTHER to pass the secret OTHER as NAME, or none |
-| `--storage string` |  | What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty |
+| `--secrets names` |  | Narrow the secrets the pairing's agent container gets to names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all) |
+| `--storage string` |  | Narrow what the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared) |
 | `--webhook string` |  | Host a webhook node: the URL the agent POSTs wakes to |
 | `--webhook-header Name: value` |  | Header sent with every wake: Name: value, such as "Authorization: Bearer env:TOKEN"; the value may end in env:VAR or - (repeatable) |
 
@@ -227,8 +227,8 @@ a2a-serve pair set <name> [flags]
 a2a-serve pair set anna --owner
 a2a-serve pair set anna --owner=false
 a2a-serve pair set laptop --kind device
-a2a-serve pair set ben --storage shared --secrets all
-a2a-serve pair set ben --secrets none
+a2a-serve pair set ben --storage read-only --secrets none
+a2a-serve pair set ben --secrets ANTHROPIC_API_KEY=secret:BEN_ANTHROPIC_KEY
 a2a-serve pair set anna --rotate
 a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 ```
@@ -242,7 +242,7 @@ a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 | `--kind person\|device\|agent` |  | Kind of the pairing: person\|device\|agent |
 | `--owner` |  | Make the pairing an owner, who sees and approves every task, or not with --owner=false |
 | `--rotate` |  | Revoke every token of the pairing and print a new code |
-| `--secrets names` |  | Secrets the pairing's agent container gets: names from --secret, all, NAME=secret:OTHER to pass the secret OTHER as NAME, or none |
-| `--storage string` |  | What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty |
+| `--secrets names` |  | Narrow the secrets the pairing's agent container gets to names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all) |
+| `--storage string` |  | Narrow what the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared) |
 | `--webhook string` |  | The URL the agent POSTs wakes to, for a webhook node |
 | `--webhook-header Name: value` |  | Header sent with every wake, replacing the current ones: Name: value; the value may end in env:VAR or - (repeatable) |

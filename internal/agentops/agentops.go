@@ -22,6 +22,7 @@ package agentops
 
 import (
 	"context"
+	"errors"
 	"maps"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -100,28 +101,19 @@ func (s *Service) accessInfo(ctx context.Context) (*controlapi.Access, error) {
 
 // Pair issues a pairing code.
 func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*controlapi.PairCodeResponse, error) {
-	if req.Sandbox != nil {
-		role, err := s.pairingRole(ctx, req.Name)
-		if err != nil {
-			return nil, err
-		}
-		if req.Owner || role == auth.RoleOwner {
-			return nil, errOwnerSandbox
-		}
-		if err := s.checkSandbox(req.Name, *req.Sandbox); err != nil {
-			return nil, err
-		}
+	role, err := s.pairingRole(ctx, req.Name)
+	if err != nil {
+		return nil, err
+	}
+	undo, err := s.changeSandbox(req.Name, req.Owner || role == auth.RoleOwner, req.Sandbox)
+	if err != nil {
+		return nil, err
 	}
 	c, err := s.deps.Pairings.Invite(ctx, pairings.InviteRequest{
 		Name: req.Name, Owner: req.Owner, Webhook: req.Webhook, Headers: req.Headers, Description: req.Description, Advertised: req.Advertised,
 	})
 	if err != nil {
-		return nil, err
-	}
-	if req.Sandbox != nil {
-		if err := s.setSandbox(req.Name, *req.Sandbox); err != nil {
-			return nil, err
-		}
+		return nil, errors.Join(err, undo())
 	}
 	resp := s.codeInfo(c)
 	p, err := s.deps.Pairings.Get(ctx, req.Name)
@@ -133,6 +125,19 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 		return nil, err
 	}
 	return resp, nil
+}
+
+// changeSandbox saves ch, if set, as the change of the sandbox rule of the
+// pairing name, which is an owner if owner, and returns the function that
+// undoes it. Owners refuse a rule of their own.
+func (s *Service) changeSandbox(name string, owner bool, ch *controlapi.SandboxChange) (undo func() error, err error) {
+	if ch == nil {
+		return func() error { return nil }, nil
+	}
+	if owner {
+		return nil, errOwnerSandbox
+	}
+	return s.setSandbox(name, *ch)
 }
 
 // Pairings lists the pairings.
@@ -162,28 +167,26 @@ func (s *Service) Pairing(ctx context.Context, name string) (*controlapi.Pairing
 
 // UpdatePairing changes a pairing.
 func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi.PairingUpdate) (*controlapi.PairingUpdateResponse, error) {
-	if req.Sandbox != nil {
-		role, err := s.pairingRole(ctx, name)
-		if err != nil {
-			return nil, err
-		}
-		if req.Owner != nil && *req.Owner || req.Owner == nil && role == auth.RoleOwner {
-			return nil, errOwnerSandbox
-		}
-		if err := s.checkSandbox(name, *req.Sandbox); err != nil {
-			return nil, err
-		}
+	role, err := s.pairingRole(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if role == "" {
+		return nil, &agenterr.NotFoundError{Kind: "pairing", Name: name}
+	}
+	owner := role == auth.RoleOwner
+	if req.Owner != nil {
+		owner = *req.Owner
+	}
+	undo, err := s.changeSandbox(name, owner, req.Sandbox)
+	if err != nil {
+		return nil, err
 	}
 	r, err := s.deps.Pairings.Update(ctx, name, pairings.UpdateRequest{
 		Owner: req.Owner, Kind: req.Kind, Webhook: req.Webhook, Headers: req.Headers, Description: req.Description, Advertised: req.Advertised, Rotate: req.Rotate,
 	})
 	if err != nil {
-		return nil, err
-	}
-	if req.Sandbox != nil {
-		if err := s.setSandbox(name, *req.Sandbox); err != nil {
-			return nil, err
-		}
+		return nil, errors.Join(err, undo())
 	}
 	resp := &controlapi.PairingUpdateResponse{Pairing: pairingInfo(r.Pairing)}
 	resp.Pairing.Sandbox = s.sandboxOf(r.Pairing)
@@ -205,13 +208,6 @@ func (s *Service) UpdatePairing(ctx context.Context, name string, req controlapi
 // Who may still call without a pairing is reported for removed callers,
 // since it can include them.
 func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeResponse, error) {
-	// The rule goes first: a rule left behind would apply to a new pairing
-	// of the same name.
-	if name != pairings.LocalOwner {
-		if err := s.removeSandbox(name); err != nil {
-			return nil, err
-		}
-	}
 	r, err := s.deps.Pairings.Remove(ctx, name)
 	if err != nil {
 		return nil, err
@@ -219,6 +215,11 @@ func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeRe
 	resp := &controlapi.RevokeResponse{Kind: r.Kind, Kept: r.Kept}
 	if r.Kept {
 		return resp, nil
+	}
+	// The pairing goes first: its rule only narrows what it gets, so a rule
+	// left behind gives a new pairing of the same name no more.
+	if err := s.removeSandbox(name); err != nil {
+		return nil, err
 	}
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err

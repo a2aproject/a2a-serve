@@ -133,3 +133,17 @@ func TestCopyLiveSandboxRules(t *testing.T) {
 		t.Fatalf("CopyLive() wrong rules (-want +got) diff = %s", diff)
 	}
 }
+
+func TestCallerSecretsReplaceTheList(t *testing.T) {
+	t.Parallel()
+	cfg := &Config{Secrets: []string{"KEY", "GUEST"}}
+	for _, v := range [][]string{{"KEY", "GUEST"}, {"none"}} {
+		if _, err := (Settings{CallerSecrets: v}).Apply(cfg, Dir{Root: t.TempDir()}); err != nil {
+			t.Fatalf("Apply() error = %v", err)
+		}
+	}
+	want := []SandboxRule{{Match: []string{"anyone"}, Secrets: []string{"none"}}}
+	if diff := cmp.Diff(want, cfg.Policy.Sandbox); diff != "" {
+		t.Fatalf("Apply() wrong rules (-want +got) diff = %s", diff)
+	}
+}

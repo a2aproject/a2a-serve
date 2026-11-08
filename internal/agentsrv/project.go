@@ -72,7 +72,7 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
-	granted, _ := s.sandboxes.of(key).Values(s.rt.Secrets())
+	granted, _ := s.sandboxes.of(ctx, key).Values(s.rt.Secrets())
 	vars := project.EnvVars(cfg.Env, granted)
 	var servers []json.RawMessage
 	for _, srv := range found {

@@ -119,6 +119,9 @@ func renderPairing(p *controlapi.Pairing) string {
 			summary += " (your agent container, which owners share)"
 		}
 		line("sandbox", summary)
+		if box.Warning != "" {
+			fmt.Fprintf(&sb, "  ! %s\n", box.Warning)
+		}
 	}
 	return sb.String()
 }

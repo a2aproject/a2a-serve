@@ -205,7 +205,7 @@ type Server struct {
 	mainSandbox atomic.Pointer[access.Sandbox]
 	// workspaces are the private workspaces of containers with their own
 	// storage.
-	workspaces workspaces.Store
+	workspaces *workspaces.Store
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 	// turns counts the executions of the A2A handler, until a2a-go consumed
@@ -293,8 +293,7 @@ func Run(ctx context.Context, opts Options) error {
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
-	s.sandboxes = newSandboxes(s.rt.Config)
-	s.workspaces = workspaces.Store{Root: s.dir.WorkspacesDir()}
+	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	var closers stack
 	defer func() {
 		cancel()
@@ -414,6 +413,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
+	s.sandboxes = newSandboxes(s.rt.Config, s.store)
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
@@ -851,8 +851,12 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if err != nil {
 		return err
 	}
-	if w := localSandboxWarning(s.rt.Config().Sandbox, a); w != "" {
-		s.logf("! %s", w)
+	noSandbox := localSandboxWarning(s.rt.Config().Sandbox, a)
+	if noSandbox != "" {
+		s.logf("! %s", noSandbox)
+	}
+	if len(a.Anonymous) > 0 && s.rt.Config().Sandbox != harness.SandboxLocal {
+		s.logf("! anonymous callers get a read-only workspace and no secrets in their agent container")
 	}
 	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
 		for i, line := range a.Sandbox {
@@ -864,7 +868,9 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 		}
 	}
 	for _, note := range s.sandboxNotes(a.SandboxNotes) {
-		s.logf("! %s", note)
+		if note != access.LocalSandboxNote || noSandbox == "" {
+			s.logf("! %s", note)
+		}
 	}
 	return s.supervisor.Announce(ctx)
 }

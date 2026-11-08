@@ -166,7 +166,6 @@ func (s *Server) countedTurn(agents *userAgents) func(ctx context.Context, execC
 				endClaims()
 			}
 			endTurn()
-			s.closeStale(key)
 		}
 	}
 }
@@ -305,7 +304,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
 	}
-	sb := s.sandboxes.of(key)
+	sb := s.sandboxes.of(ctx, key)
 	if err := s.applySandbox(ctx, &spec, key, sb); err != nil {
 		return nil, err
 	}
@@ -451,7 +450,7 @@ func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, e
 	reported := err.Error()
 	var granted []string
 	if key, err := s.keys.of(ctx, execCtx.ContextID); err == nil {
-		for _, g := range s.sandboxes.of(key).Secrets {
+		for _, g := range s.sandboxes.of(ctx, key).Secrets {
 			granted = append(granted, g.Name)
 		}
 	}
@@ -477,14 +476,17 @@ func explainFailure(cfg *agentdir.Config, granted []string, reported string) str
 		return "the agent stopped unexpectedly; send the message again"
 	}
 	text := agentErrorText(reported)
+	if !modelNotFound(text) && !authFailed(text) {
+		return text
+	}
+	if provider, _ := harness.ModelKeyWithheld(cfg, granted); provider != "" {
+		return fmt.Sprintf("the sandbox of this conversation gives the agent no key of model provider %s, so it can't reach its model; the owner of the agent decides which secrets it gets; the agent reported: %s", provider, text)
+	}
 	if !modelNotFound(text) {
 		return text
 	}
 	if hint := harness.MissingKey(cfg); hint != "" {
 		return hint + "; the agent reported: " + text
-	}
-	if provider, key := harness.MissingProviderKey(cfg, granted); provider != "" {
-		return fmt.Sprintf("the sandbox rule of this conversation gives the agent no key for provider %s; ask the owner for a key of its own, which they can add with `--secrets %s=secret:<STORED_KEY>` on `a2a-serve pair set` or `a2a-serve config set --caller-secrets`; the agent reported: %s", provider, key, text)
 	}
 	// Other agents take their model in their command.
 	if !slices.Contains(agentdir.Harnesses, cfg.Harness) {
@@ -496,6 +498,13 @@ func explainFailure(cfg *agentdir.Config, granted []string, reported string) str
 	}
 	return text + "; choose another model with `a2a-serve config set --model " + model + " --restart`"
 }
+
+// authFailedText matches the failures of an agent or its provider that
+// got no valid credentials, as in "Invalid API key", "Authentication
+// required" or claude's "Please run /login".
+var authFailedText = regexp.MustCompile(`(?i)\bapi[ _-]?key\b|\bauthenticat|\bunauthori[sz]ed\b|/login\b`)
+
+func authFailed(text string) bool { return authFailedText.MatchString(text) }
 
 // modelNotFoundText matches the failures of an agent or its provider that
 // doesn't know the model, as in "model not found: google/x", "models/x is

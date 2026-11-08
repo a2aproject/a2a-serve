@@ -54,8 +54,8 @@ stay linked.
 		Example: `  a2a-serve pair set anna --owner
   a2a-serve pair set anna --owner=false
   a2a-serve pair set laptop --kind device
-  a2a-serve pair set ben --storage shared --secrets all
-  a2a-serve pair set ben --secrets none
+  a2a-serve pair set ben --storage read-only --secrets none
+  a2a-serve pair set ben --secrets ANTHROPIC_API_KEY=secret:BEN_ANTHROPIC_KEY
   a2a-serve pair set anna --rotate
   a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised`,
 		Args:              namedArgs,
