@@ -58,7 +58,11 @@ type Peer struct {
 	Node    string
 	Machine string
 	// Self is true when the caller belongs to the same user as this server.
+	// It is false for the machine the server runs on, because the sandbox
+	// reaches the network through that machine.
 	Self bool
+	// RunsAgent is true for the machine the server runs on.
+	RunsAgent bool
 }
 
 // PeerInfo is another agent server found on the private network.
@@ -106,6 +110,23 @@ type Joiner interface {
 	// Join joins the network. The server calls it before it starts the
 	// agent, so a refused join stops the start early.
 	Join(ctx context.Context) error
+}
+
+// HostMachine is a [Provider] that joins the network as a machine of its
+// own, apart from the machine it runs on.
+type HostMachine interface {
+	// HostNode returns the node of the machine the server runs on, as
+	// [Peer.Node] names it, or "" when that machine isn't on the network.
+	// The agent's sandbox reaches the network through it.
+	HostNode(ctx context.Context) (string, error)
+}
+
+// MemberLister is a [Provider] that lists the machines of its network at
+// once.
+type MemberLister interface {
+	// Members returns the machines of the network by node, as Member would
+	// return each.
+	Members(ctx context.Context) (map[string]*Peer, error)
 }
 
 // Provider names.

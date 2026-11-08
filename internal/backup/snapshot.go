@@ -43,7 +43,9 @@ const (
 	pathDB      = "state/server.db"
 	pathSecrets = "state/secrets"
 	pathAds     = "state/ads.json"
-	pathHome    = "state/home"
+	// pathMachines holds the machines of the private network that run agents.
+	pathMachines = "state/machines.json"
+	pathHome     = "state/home"
 	// pathUserHomes holds a home per authenticated user.
 	pathUserHomes = "state/homes"
 )
@@ -104,7 +106,7 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	if err := s.addDB(ctx, d, tmp); err != nil {
 		return err
 	}
-	for _, p := range []string{pathConfig, pathSecrets, pathAds} {
+	for _, p := range []string{pathConfig, pathSecrets, pathAds, pathMachines} {
 		if err := s.addFile(filepath.Join(d.Path(), p), p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}

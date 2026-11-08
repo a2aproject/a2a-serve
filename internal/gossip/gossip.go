@@ -22,7 +22,8 @@
 // can't hide or alter the advertisements of others. The agent that gets an
 // entry from its host records the host's machine in it, so that agents find
 // the host among the agents of the private network even when its name is
-// listed with a suffix.
+// listed with a suffix. Agents also spread the machines that run agents,
+// see [Machines].
 package gossip
 
 import (

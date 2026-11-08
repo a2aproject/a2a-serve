@@ -21,16 +21,19 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net"
 	"net/http"
 	"net/netip"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
 	"tailscale.com/tsnet"
 	"tailscale.com/util/dnsname"
 )
@@ -63,7 +66,11 @@ type Tailscale struct {
 	cards   *CardCache
 }
 
-var _ Provider = (*Tailscale)(nil)
+var (
+	_ Provider     = (*Tailscale)(nil)
+	_ HostMachine  = (*Tailscale)(nil)
+	_ MemberLister = (*Tailscale)(nil)
+)
 
 // Name implements [Provider].
 func (t *Tailscale) Name() string { return ProviderTailscale }
@@ -306,14 +313,45 @@ func (t *Tailscale) WhoIs(ctx context.Context, remoteAddr string) (*Peer, error)
 	if login := who.UserProfile.LoginName; IsEmail(login) {
 		p.Email = login
 	}
-	p.Self = st.Self != nil && who.Node.User == st.Self.UserID
+	if st.Self == nil || who.Node.User != st.Self.UserID {
+		return p, nil
+	}
+	local, err := localAddrs()
+	if err != nil {
+		return nil, err
+	}
+	addrs := []netip.Addr{}
+	if ap, err := netip.ParseAddrPort(remoteAddr); err == nil {
+		addrs = append(addrs, ap.Addr())
+	}
+	for _, a := range who.Node.Addresses {
+		addrs = append(addrs, a.Addr())
+	}
+	p.RunsAgent = onThisMachine(addrs, local)
+	p.Self = !p.RunsAgent
 	return p, nil
 }
 
 // Member implements [Provider].
 func (t *Tailscale) Member(ctx context.Context, node string) (*Peer, error) {
-	if !t.started.Load() {
+	members, err := t.Members(ctx)
+	if errors.Is(err, ErrUnsupported) {
 		return nil, ErrNoIdentity
+	}
+	if err != nil {
+		return nil, err
+	}
+	p, ok := members[node]
+	if !ok {
+		return nil, ErrNoIdentity
+	}
+	return p, nil
+}
+
+// Members implements [MemberLister].
+func (t *Tailscale) Members(ctx context.Context) (map[string]*Peer, error) {
+	if !t.started.Load() {
+		return nil, ErrUnsupported
 	}
 	lc, err := t.srv.LocalClient()
 	if err != nil {
@@ -323,21 +361,87 @@ func (t *Tailscale) Member(ctx context.Context, node string) (*Peer, error) {
 	if err != nil {
 		return nil, err
 	}
+	var local []netip.Addr
+	out := map[string]*Peer{}
 	for _, ps := range st.Peer {
-		if string(ps.ID) != node {
-			continue
-		}
-		p := &Peer{Node: node, Machine: ps.HostName}
+		p := &Peer{Node: string(ps.ID), Machine: ps.HostName}
+		out[p.Node] = p
 		if ps.Tags != nil && ps.Tags.Len() > 0 {
-			return p, nil
+			continue
 		}
 		if login := st.User[ps.UserID].LoginName; IsEmail(login) {
 			p.Email = login
 		}
-		p.Self = st.Self != nil && ps.UserID == st.Self.UserID
-		return p, nil
+		if st.Self == nil || ps.UserID != st.Self.UserID {
+			continue
+		}
+		if local == nil {
+			if local, err = localAddrs(); err != nil {
+				return nil, err
+			}
+		}
+		p.RunsAgent = onThisMachine(ps.TailscaleIPs, local)
+		p.Self = !p.RunsAgent
 	}
-	return nil, ErrNoIdentity
+	return out, nil
+}
+
+// HostNode implements [HostMachine]: the peer with a tailnet address of
+// this machine's network interfaces, which Tailscale running on this
+// machine gives it.
+func (t *Tailscale) HostNode(ctx context.Context) (string, error) {
+	if !t.started.Load() {
+		return "", nil
+	}
+	lc, err := t.srv.LocalClient()
+	if err != nil {
+		return "", err
+	}
+	st, err := lc.Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	local, err := localAddrs()
+	if err != nil {
+		return "", err
+	}
+	return hostNode(slices.Collect(maps.Values(st.Peer)), local), nil
+}
+
+func hostNode(peers []*ipnstate.PeerStatus, local []netip.Addr) string {
+	for _, p := range peers {
+		if onThisMachine(p.TailscaleIPs, local) {
+			return string(p.ID)
+		}
+	}
+	return ""
+}
+
+// localAddrs returns the addresses of this machine's network interfaces.
+// The tsnet node of the server has none of them, and Tailscale running on
+// this machine gives it its own tailnet addresses.
+func localAddrs() ([]netip.Addr, error) {
+	ifaddrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, fmt.Errorf("listing the addresses of this machine: %w", err)
+	}
+	var out []netip.Addr
+	for _, a := range ifaddrs {
+		if p, err := netip.ParsePrefix(a.String()); err == nil {
+			out = append(out, p.Addr())
+		}
+	}
+	return out, nil
+}
+
+// onThisMachine reports whether one of addrs is one of local.
+func onThisMachine(addrs, local []netip.Addr) bool {
+	for _, a := range addrs {
+		if slices.Contains(local, a.Unmap()) {
+			return true
+		}
+	}
+	return false
 }
 
 // Peers implements [Provider].

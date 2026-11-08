@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -168,9 +169,13 @@ type Server struct {
 	approvals          *approvals.Service
 	oauth              *oauth.Server
 	// ads are the advertised pairings of the private network.
-	ads       *gossip.Table
-	backups   backups
-	inspector *inspector.Inspector
+	ads      *gossip.Table
+	machines *gossip.Machines
+	// machineOnNetwork is set while the private network has the machine
+	// this agent runs on, as claimMachine last found.
+	machineOnNetwork atomic.Bool
+	backups          backups
+	inspector        *inspector.Inspector
 	// split runs the conversations of anonymous callers and of each
 	// authenticated user in their own agent processes, which keys tell,
 	// and budget limits the tasks of anonymous callers.
@@ -398,7 +403,11 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	}
 	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
-	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
+	if s.machines, err = gossip.OpenMachines(filepath.Join(s.dir.StateDir(), "machines.json"), time.Now); err != nil {
+		return err
+	}
+	closers.push(func(context.Context) error { return s.machines.Close() })
+	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy, RunsAgent: s.machines.RunsAgent}
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
@@ -613,6 +622,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	if err := s.listenNetwork(ctx, closers, errc); err != nil {
 		return nil, err
 	}
+	s.claimMachine(ctx)
 	// Commands polling the control socket for the local URL use the owner
 	// token right away, so it is saved before the socket serves.
 	var ownerErr error

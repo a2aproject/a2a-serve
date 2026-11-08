@@ -15,6 +15,7 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── tsnet/         # Tailscale identity, so the URL survives restarts
         ├── agentmesh/     # Agent Mesh identity, and the relay sign-in's refresh token
         ├── ads.json       # pairings that agents on the private network advertise
+        ├── machines.json  # machines on the private network that run agents, for a day after their last claim
         ├── home/          # the agent's home directory
         ├── homes/         # a home for the agent process of each authenticated user
         ├── home-anonymous/ # the home of the agent process for anonymous callers

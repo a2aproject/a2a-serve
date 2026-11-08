@@ -593,6 +593,101 @@ func TestChainRefresh(t *testing.T) {
 	}
 }
 
+func TestChainOwnerDeviceThatRunsAnAgent(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ctx := context.Background()
+	pair(t, s, "laptop", RoleOwner)
+	ownerToken := issueToken(t, s, "laptop", "device")
+	me := &network.Peer{Email: "me@example.com", Node: "nLaptop", Self: true}
+	net := fakeNet{name: network.ProviderTailscale, peers: map[string]*network.Peer{"100.1.1.1:5000": me}, members: map[string]*network.Peer{"nLaptop": me}}
+	fromLaptop := Identity{Network: network.ListenerPrivate, Provider: network.ProviderTailscale, Email: "me@example.com", EmailSource: EmailFromNetwork, Node: "nLaptop", RunsAgent: true}
+	runsAgent := func(node string) bool { return node == "nLaptop" }
+	thisMachine := &network.Peer{Email: "me@example.com", Node: "nLaptop", RunsAgent: true}
+
+	tests := []struct {
+		name        string
+		policy      Policy
+		header      http.Header
+		want        Principal
+		wantRefused string
+	}{
+		{
+			name:   "tailnet member while the private network is open",
+			policy: testPolicy(true, nil),
+			header: http.Header{},
+			want:   Principal{ID: "node:tailscale:nLaptop", Role: RoleAuthenticated, Identity: fromLaptop},
+		},
+		{
+			name:        "refused once the private network is closed",
+			policy:      testPolicy(false, nil),
+			header:      http.Header{},
+			wantRefused: "me@example.com from a machine that runs an agent on the tailnet",
+		},
+		{
+			name:   "owner with an owner pairing",
+			policy: testPolicy(false, nil),
+			header: header("Authorization", "Bearer "+ownerToken),
+			want: func() Principal {
+				id := fromLaptop
+				id.Pairing, id.PairingRole = "laptop", RoleOwner
+				return Principal{ID: "pair:laptop", Role: RoleOwner, Identity: id}
+			}(),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			chain := &Chain{Store: s, Net: net, Policy: func() Policy { return tc.policy }, RunsAgent: runsAgent}
+			got, err := chain.Authenticate(ctx, Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.1:5000", Header: tc.header})
+			if tc.wantRefused != "" {
+				var refused *RefusedError
+				if !errors.As(err, &refused) {
+					t.Fatalf("Authenticate() error = %v, want a refusal", err)
+				}
+				if d := refused.Identity.Describe(); d != tc.wantRefused {
+					t.Fatalf("Authenticate() refused %q, want %q", d, tc.wantRefused)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Authenticate() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Authenticate() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+
+	t.Run("machine of this server", func(t *testing.T) {
+		t.Parallel()
+		net := fakeNet{name: network.ProviderTailscale, peers: map[string]*network.Peer{"100.1.1.1:5000": thisMachine}}
+		chain := &Chain{Store: s, Net: net, Policy: func() Policy { return testPolicy(true, nil) }}
+		got, err := chain.Authenticate(ctx, Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.1:5000", Header: http.Header{}})
+		if err != nil {
+			t.Fatalf("Authenticate() error = %v", err)
+		}
+		if diff := cmp.Diff(Principal{ID: "node:tailscale:nLaptop", Role: RoleAuthenticated, Identity: fromLaptop}, got); diff != "" {
+			t.Fatalf("Authenticate() wrong result (-want +got) diff = %s", diff)
+		}
+	})
+
+	t.Run("refresh", func(t *testing.T) {
+		t.Parallel()
+		chain := &Chain{Store: s, Net: net, Policy: func() Policy { return testPolicy(true, nil) }, RunsAgent: runsAgent}
+		stored := fromLaptop
+		stored.Self = true
+		stored.RunsAgent = false
+		got, err := chain.Refresh(ctx, "node:tailscale:nLaptop", stored)
+		if err != nil {
+			t.Fatalf("Refresh() error = %v", err)
+		}
+		if diff := cmp.Diff(Principal{ID: "node:tailscale:nLaptop", Role: RoleAuthenticated, Identity: fromLaptop}, got); diff != "" {
+			t.Fatalf("Refresh() wrong result (-want +got) diff = %s", diff)
+		}
+	})
+}
+
 func TestRoleChangeAppliesToNextRequest(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

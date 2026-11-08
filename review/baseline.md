@@ -24,7 +24,9 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Remote wake URLs may use plain http and follow redirects** (from #86). #118 already refuses redirects to private or local addresses and https-to-http downgrades. Requiring https would break working wake targets.
 - **Mail doesn't have to name the agent's address in `To` or `Cc`** (from #86). Requiring it drops mail that reaches the agent through `Bcc` or a list, and replaying a signed mail needs a mail the sender addressed to someone else.
 - **The owner role works over a linked email without an opt-in** (from #86). Email identity proves only the domain; the owner links the address on purpose. At most this needs a note in the docs.
-- **The owner role is granted on the private listener to connections from the server's own machine** (from #86). The sandbox can reach its own tailnet URL. This stays until the sandbox network allowlist (#17) lands.
+- **An agent gives the owner role to a machine that runs another agent until gossip tells it about the machine** (from #354). Gossip spreads the claim within minutes of the other agent's start, agents older than #354 never learn it, and the sandbox network allowlist (#17) removes the cause.
+- **The server doesn't find its machine when Tailscale runs outside its network stack**, as on the Windows host of WSL 2, outside its container, in userspace networking mode or on a subnet router (from #354). `docs/advanced/security.md` says so. Probing through the OS network would send packets to tailnet addresses from machines without Tailscale, and #17 removes the cause.
+- **Any private-network member can claim that a machine runs an agent** (from #354), including the tsnet machine of one of your agents, whose calls your agents with `--private-allow-incoming paired` then refuse. A claim only lowers a role, and private-network members get this much trust in the access model.
 
 ### Correctness
 

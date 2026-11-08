@@ -148,6 +148,21 @@ type Chain struct {
 	Net network.Provider
 	// Policy returns the policy in force.
 	Policy func() Policy
+	// RunsAgent reports whether the machine node of the private network
+	// runs an agent. The sandbox of an agent reaches the network through
+	// its machine, so the user running this agent isn't the owner from such
+	// a machine. Optional.
+	RunsAgent func(node string) bool
+}
+
+// withPeer sets the claims the private network makes about the caller's
+// machine, peer. A machine that runs an agent is never the user running
+// this one.
+func (a *Chain) withPeer(id Identity, peer *network.Peer) Identity {
+	id.Node = peer.Node
+	id.RunsAgent = peer.RunsAgent || a.RunsAgent != nil && a.RunsAgent(peer.Node)
+	id.Self = peer.Self && !id.RunsAgent
+	return id
 }
 
 // Authenticate returns the principal of r: [ErrNoCredential] when r proves
@@ -269,14 +284,14 @@ func (a *Chain) refreshNetwork(ctx context.Context, id Identity) (Identity, erro
 			return Identity{}, err
 		}
 	}
-	id.Node, id.Self = "", false
+	id.Node, id.Self, id.RunsAgent = "", false, false
 	if id.EmailSource == EmailFromNetwork {
 		id.Email, id.EmailSource = "", ""
 	}
 	if peer == nil {
 		return id, nil
 	}
-	id.Node, id.Self = peer.Node, peer.Self
+	id = a.withPeer(id, peer)
 	if peer.Email != "" {
 		id.Email, id.EmailSource, id.Domain = peer.Email, EmailFromNetwork, ""
 	}
@@ -290,7 +305,8 @@ func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error
 		peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
 		switch {
 		case err == nil:
-			id.Email, id.Node, id.Self = peer.Email, peer.Node, peer.Self
+			id = a.withPeer(id, peer)
+			id.Email = peer.Email
 			if id.Email != "" {
 				id.EmailSource = EmailFromNetwork
 			}

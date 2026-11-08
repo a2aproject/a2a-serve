@@ -16,6 +16,7 @@ package agentsrv
 
 import (
 	"context"
+	"fmt"
 	"net"
 	"net/http"
 	"net/url"
@@ -25,6 +26,8 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+	"github.com/a2aproject/a2a-go/v2/a2aclient"
+	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -44,6 +47,8 @@ type fakeNet struct {
 	// cards and listed are the card names and listed names of the agents
 	// that have other names than their machines.
 	cards, listed map[string]string
+	// self are the machines of the user running the agents.
+	self map[string]bool
 }
 
 type fakeProvider struct {
@@ -58,6 +63,8 @@ type fakeProvider struct {
 	unidentified bool
 	// peerPerConn makes WhoIs identify each connection as its own peer.
 	peerPerConn bool
+	// host is the machine the agent runs on, as HostNode reports it.
+	host string
 }
 
 func (n *fakeNet) provider(name string) *fakeProvider { return &fakeProvider{net: n, name: name} }
@@ -97,7 +104,7 @@ func (p *fakeProvider) WhoIs(_ context.Context, remoteAddr string) (*network.Pee
 	name, ok := p.net.callers[remoteAddr]
 	p.net.mu.Unlock()
 	if ok {
-		return &network.Peer{Node: name}, nil
+		return &network.Peer{Node: name, Self: p.net.self[name]}, nil
 	}
 	if p.peerPerConn {
 		return &network.Peer{Node: remoteAddr}, nil
@@ -109,8 +116,10 @@ func (p *fakeProvider) Member(_ context.Context, node string) (*network.Peer, er
 	if p.unidentified {
 		return nil, network.ErrNoIdentity
 	}
-	return &network.Peer{Node: node}, nil
+	return &network.Peer{Node: node, Self: p.net.self[node]}, nil
 }
+
+func (p *fakeProvider) HostNode(context.Context) (string, error) { return p.host, nil }
 
 func (p *fakeProvider) Peers(context.Context) ([]network.PeerInfo, error) {
 	p.net.mu.Lock()
@@ -307,4 +316,94 @@ func TestGossipRefusesOversizedBody(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestOwnerDeviceThatRunsAnAgentIsNoOwner(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{}, self: map[string]bool{"laptop": true}}
+	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
+	ctx := context.Background()
+	send(t, anna.client(anna.pair("phone", auth.RoleAuthenticated)), userText("hello", "", ""))
+	fromLaptop := privateClient(t, anna, fnet.provider("laptop").HTTPClient())
+	visible := func() int { return visibleTasks(t, fromLaptop) }
+	if got := visible(); got != 1 {
+		t.Fatalf("ListTasks() from the laptop before ben starts = %d tasks, want the owner to see 1", got)
+	}
+
+	ben := fnet.provider("ben")
+	ben.host = "laptop"
+	startServer(t, serverOpts{name: "ben", private: ben}).srv.gossipRound(ctx)
+
+	if got := visible(); got != 0 {
+		t.Fatalf("ListTasks() from the laptop that runs ben = %d tasks, want 0 as a tailnet member", got)
+	}
+}
+
+func TestGossipFloodKeepsClaimsOfOwnerDevices(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{}, self: map[string]bool{"laptop": true}}
+	anna := startServer(t, serverOpts{name: "anna", private: fnet.provider("anna")})
+	ctx := context.Background()
+	flood := gossipRequest{Machines: make([]gossip.Claim, gossip.MaxEntries)}
+	for i := range flood.Machines {
+		flood.Machines[i] = gossip.Claim{Node: fmt.Sprintf("fake-%04d", i), TTL: 3600}
+	}
+	if err := postJSON(ctx, testHTTP, anna.srv.privateURL+gossipPath, flood, &gossipResponse{}); err != nil {
+		t.Fatalf("POST %s error = %v", gossipPath, err)
+	}
+	send(t, anna.client(anna.pair("phone", auth.RoleAuthenticated)), userText("hello", "", ""))
+
+	ben := fnet.provider("ben")
+	ben.host = "laptop"
+	startServer(t, serverOpts{name: "ben", private: ben}).srv.gossipRound(ctx)
+
+	if got := visibleTasks(t, privateClient(t, anna, fnet.provider("laptop").HTTPClient())); got != 0 {
+		t.Fatalf("ListTasks() from the laptop that runs ben = %d tasks, want 0 as a tailnet member", got)
+	}
+}
+
+func TestOwnerDeviceThatRunsThisAgentIsNoOwner(t *testing.T) {
+	t.Parallel()
+	fnet := &fakeNet{agents: map[string]string{}, self: map[string]bool{"laptop": true, "phone": true}}
+	p := fnet.provider("anna")
+	p.host = "laptop"
+	anna := startServer(t, serverOpts{name: "anna", private: p})
+	send(t, anna.client(anna.pair("guest", auth.RoleAuthenticated)), userText("hello", "", ""))
+
+	if got := visibleTasks(t, privateClient(t, anna, fnet.provider("phone").HTTPClient())); got != 1 {
+		t.Fatalf("ListTasks() from the phone = %d tasks, want the owner to see 1", got)
+	}
+	if got := visibleTasks(t, privateClient(t, anna, fnet.provider("laptop").HTTPClient())); got != 0 {
+		t.Fatalf("ListTasks() from the laptop that runs anna = %d tasks, want 0 as a tailnet member", got)
+	}
+}
+
+func visibleTasks(t *testing.T, c *a2aclient.Client) int {
+	t.Helper()
+	resp, err := c.ListTasks(context.Background(), &a2a.ListTasksRequest{})
+	if err != nil {
+		t.Fatalf("ListTasks() error = %v", err)
+	}
+	return len(resp.Tasks)
+}
+
+// privateClient returns an A2A client of the private URL of ts, which
+// connects with hc.
+func privateClient(t *testing.T, ts *testServer, hc *http.Client) *a2aclient.Client {
+	t.Helper()
+	ctx := context.Background()
+	card, err := agentcard.NewResolver(hc).Resolve(ctx, ts.srv.privateURL)
+	if err != nil {
+		t.Fatalf("Resolve() error = %v", err)
+	}
+	c, err := a2aclient.NewFromCard(ctx, card, a2aclient.WithJSONRPCTransport(hc), a2aclient.WithRESTTransport(hc))
+	if err != nil {
+		t.Fatalf("NewFromCard() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := c.Destroy(); err != nil {
+			t.Errorf("Destroy() error = %v", err)
+		}
+	})
+	return c
 }

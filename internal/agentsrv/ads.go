@@ -51,6 +51,8 @@ const (
 
 type gossipRequest struct {
 	Digest gossip.Digest `json:"digest"`
+	// Machines are the machines that run agents, as the caller knows them.
+	Machines []gossip.Claim `json:"machines,omitempty"`
 }
 
 type gossipResponse struct {
@@ -58,24 +60,28 @@ type gossipResponse struct {
 	Entries []gossip.Entry `json:"entries"`
 	// Want are the keys the caller has newer, to send to gossipEntriesPath.
 	Want []string `json:"want"`
+	// Machines are the machines that run agents, as this agent knows them.
+	Machines []gossip.Claim `json:"machines,omitempty"`
 }
 
 type gossipEntries struct {
 	Entries []gossip.Entry `json:"entries"`
 }
 
-// registerGossip serves the exchange of advertisements. Only agents on the
-// private network reach it; an advertisement only names a pairing, and a
-// call to it goes to the host found on the private network. The
-// entries a caller sends of its own host replace the ones others relayed.
+// registerGossip serves the exchange of advertisements and of the machines
+// that run agents. Only agents on the private network reach it; an
+// advertisement only names a pairing, and a call to it goes to the host
+// found on the private network. The entries a caller sends of its own host
+// replace the ones others relayed. A machine only lowers a role.
 func (s *Server) registerGossip(mux *http.ServeMux) {
 	mux.Handle("POST "+gossipPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req gossipRequest
 		if !jsonhttp.Read(w, r, &req) {
 			return
 		}
+		s.mergeMachines(r.Context(), req.Machines)
 		newer, want := s.ads.Compare(s.gossipPeer(r).Name, req.Digest)
-		jsonhttp.Write(w, http.StatusOK, gossipResponse{Entries: newer, Want: want})
+		jsonhttp.Write(w, http.StatusOK, gossipResponse{Entries: newer, Want: want, Machines: s.machines.Claims()})
 	})))
 	mux.Handle("POST "+gossipEntriesPath, jsonhttp.LimitBodyTo(maxGossipBody, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var req gossipEntries
@@ -129,8 +135,9 @@ func gossipPeerOf(p network.PeerInfo) gossip.Peer {
 	return gossip.Peer{Name: p.CardName, Node: p.Node}
 }
 
-// runGossip renews this agent's advertisements, drops stale ones and swaps
-// tables with a few random peers, until ctx ends.
+// runGossip renews this agent's advertisements and the claim of its
+// machine, drops stale ones and swaps tables with a few random peers, until
+// ctx ends.
 func (s *Server) runGossip(ctx context.Context) {
 	if s.private == nil {
 		return
@@ -141,6 +148,10 @@ func (s *Server) runGossip(ctx context.Context) {
 		}
 		if err := s.ads.Expire(); err != nil {
 			slog.Warn("expiring advertised pairings", "error", err)
+		}
+		s.claimMachine(ctx)
+		if err := s.machines.Expire(); err != nil {
+			slog.Warn("expiring the machines that run agents", "error", err)
 		}
 		s.gossipRound(ctx)
 		select {
@@ -172,14 +183,73 @@ func (s *Server) gossipRound(ctx context.Context) {
 	}
 }
 
+// claimMachineTimeout bounds the lookup of this agent's machine on the
+// private network.
+const claimMachineTimeout = 10 * time.Second
+
+// claimMachine claims the machine this agent runs on, when the private
+// network has it, as one that runs an agent.
+func (s *Server) claimMachine(ctx context.Context) {
+	hm, ok := s.private.(network.HostMachine)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, claimMachineTimeout)
+	defer cancel()
+	node, err := hm.HostNode(ctx)
+	if err != nil {
+		slog.Debug("finding this machine on the private network", "error", err)
+		return
+	}
+	s.machineOnNetwork.Store(node != "")
+	if node == "" {
+		return
+	}
+	if err := s.machines.Claim(node); err != nil {
+		slog.Warn("claiming this machine as one that runs an agent", "error", err)
+	}
+}
+
+// mergeMachines adds the claims of machines that run agents which another
+// agent sent. Once the table is full, it keeps new claims only for the
+// devices of the user running this agent, which it looks up once.
+func (s *Server) mergeMachines(ctx context.Context, claims []gossip.Claim) {
+	var (
+		members map[string]*network.Peer
+		looked  bool
+	)
+	own := func(node string) bool {
+		ml, ok := s.private.(network.MemberLister)
+		if !ok {
+			p, err := s.private.Member(ctx, node)
+			return err == nil && p.Self
+		}
+		if !looked {
+			looked = true
+			ctx, cancel := context.WithTimeout(ctx, claimMachineTimeout)
+			defer cancel()
+			var err error
+			if members, err = ml.Members(ctx); err != nil {
+				slog.Warn("listing the machines of the private network; claims of new machines that run agents are dropped while the table is full", "error", err)
+			}
+		}
+		p := members[node]
+		return p != nil && p.Self
+	}
+	if err := s.machines.Merge(claims, own); err != nil {
+		slog.Warn("saving the machines that run agents", "error", err)
+	}
+}
+
 // gossipWith swaps tables with the agent peer.
 func (s *Server) gossipWith(ctx context.Context, hc *http.Client, peer network.PeerInfo) error {
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	var resp gossipResponse
-	if err := postJSON(ctx, hc, trimSlash(peer.URL)+gossipPath, gossipRequest{Digest: s.ads.Digest()}, &resp); err != nil {
+	if err := postJSON(ctx, hc, trimSlash(peer.URL)+gossipPath, gossipRequest{Digest: s.ads.Digest(), Machines: s.machines.Claims()}, &resp); err != nil {
 		return err
 	}
+	s.mergeMachines(ctx, resp.Machines)
 	if err := s.ads.Merge(gossipPeerOf(peer), resp.Entries); err != nil {
 		return err
 	}

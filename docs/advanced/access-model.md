@@ -38,7 +38,7 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 | `--allow-email <pattern>` | People who sign in with a matching email, such as `*@example.com`, on any network. Turns on Google sign-in at the public URL | none |
 | `pair invite <name> --owner` | The pairing can also see every task and answer every approval | off |
 
-You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
+You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network that don't run an agent (see [the sandbox](security.md#the-sandbox)).
 
 ## Whom the agent may call
 
@@ -73,7 +73,7 @@ coder (opencode) running for 2h, pid 41233
   local    http://127.0.0.1:46757
   private  https://coder.tail1234.ts.net
   public   https://coder.tail1234.ts.net
-  access   you: this machine and your tailnet devices
+  access   you: this machine and your other tailnet devices that don't run an agent
            everyone on the tailnet, emails matching *@example.com, 2 pairings
            the public URL needs a pairing or Google sign-in
 ```
@@ -127,7 +127,7 @@ Every request yields one identity: verified claims, and where each came from.
 | node | tailnet `StableID` or mesh peer ID; tagged tailnet nodes have only this |
 | pairing | the pairing whose token or chat link was used |
 | chat account | `telegram:<user id>`, `discord:<user id>`, or the email address |
-| self | Tailscale: the same user on an untagged device. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
+| self | Tailscale: the same user on an untagged device that doesn't run an agent. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
 | via agent | the request came from another server, with a hop count of 1 or more |
 
 ### Roles

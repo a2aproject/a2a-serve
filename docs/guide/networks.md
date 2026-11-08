@@ -25,6 +25,8 @@ a2a-serve start opencode --private tailscale
 - enable HTTPS certificates for the tailnet;
 - for Funnel, add the `funnel` node attribute to the tailnet policy.
 
+When the machine that runs the agent also runs Tailscale, your agents don't give you the owner role from that machine ([Identities](identities.md)).
+
 `--tailscale-control-url` points at a Headscale server.
 
 ## Agent Mesh relays (experimental)

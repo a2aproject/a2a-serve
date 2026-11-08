@@ -88,6 +88,11 @@ func removeIfExists(path string) error {
 	return nil
 }
 
+// tailnetOwnerNote explains the private URL when this machine is on the
+// tailnet: the sandbox reaches the tailnet through it, so the server doesn't
+// take this machine for the user running it.
+const tailnetOwnerNote = "doesn't make you the owner from this machine; use the local URL, or an owner pairing from `a2a-serve pair invite --owner`"
+
 // status describes the running server, as `a2a-serve status` shows it.
 func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 	cfg := s.rt.Config()
@@ -96,8 +101,11 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		Name: cfg.Name, Harness: cfg.Harness, Dir: s.dir.Root, PID: pid(), Started: s.started,
 		Local: local, Private: private, Public: public, Tasks: map[string]int{},
 	}
-	if u, err := url.Parse(private); err == nil && u.Host == network.AgentMeshHost {
+	switch u, err := url.Parse(private); {
+	case err == nil && u.Host == network.AgentMeshHost:
 		st.PrivateNote = "works only from other a2a-serve agents on the relay; give people the public URL"
+	case s.machineOnNetwork.Load():
+		st.PrivateNote = tailnetOwnerNote
 	}
 	if s.private != nil {
 		st.PrivateProblem = networkProblem(network.HealthOf(s.private))

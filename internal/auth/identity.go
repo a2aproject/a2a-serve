@@ -62,6 +62,11 @@ type Identity struct {
 	// Self is true for the user running the agent: on this machine, on
 	// their own devices on the private network, or in their linked chats.
 	Self bool `json:"self,omitempty"`
+	// RunsAgent is true for a caller on the private network from a machine
+	// that runs an agent, which may be that agent's sandbox. It acts as the
+	// machine, so that it can't act as the user's agents, which call with
+	// the user's email.
+	RunsAgent bool `json:"runsAgent,omitempty"`
 	// Hops is the number of agent servers the request passed through.
 	Hops int `json:"hops,omitempty"`
 }
@@ -83,6 +88,8 @@ func (id Identity) PrincipalID() string {
 		return PairPrincipal(id.Pairing)
 	case id.WebhookNode != "":
 		return NodePrincipal(id.WebhookNode)
+	case id.RunsAgent && id.Node != "":
+		return NetworkNodePrefix + id.Provider + ":" + id.Node
 	case id.Email != "":
 		return EmailPrefix + strings.ToLower(id.Email)
 	case id.Node != "":
@@ -159,6 +166,9 @@ func (id Identity) Describe() string {
 		who = "the machine " + id.Node
 	case who == "":
 		who = "an unknown caller"
+	}
+	if id.RunsAgent && who == id.Email {
+		who += " from a machine that runs an agent"
 	}
 	switch {
 	case id.EmailSource == EmailFromGoogle && who == id.Email:

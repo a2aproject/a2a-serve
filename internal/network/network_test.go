@@ -28,6 +28,8 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 	"tailscale.com/ipn"
+	"tailscale.com/ipn/ipnstate"
+	"tailscale.com/tailcfg"
 
 	"github.com/a2aproject/a2a-serve/internal/cardinfo"
 	"github.com/a2aproject/a2a-serve/internal/names"
@@ -294,6 +296,69 @@ func TestFunnelSource(t *testing.T) {
 			got, ok := FunnelSource(tc.conn)
 			if got != tc.want || ok != tc.wantOK {
 				t.Fatalf("FunnelSource() = %q, %v, want %q, %v", got, ok, tc.want, tc.wantOK)
+			}
+		})
+	}
+}
+
+func TestOnThisMachine(t *testing.T) {
+	t.Parallel()
+	local := []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("100.64.0.7"), netip.MustParseAddr("fd7a:115c:a1e0::7")}
+	tests := []struct {
+		name  string
+		addrs []netip.Addr
+		want  bool
+	}{
+		{name: "tailnet IPv4 of this machine", addrs: []netip.Addr{netip.MustParseAddr("100.64.0.7")}, want: true},
+		{name: "tailnet IPv6 of this machine", addrs: []netip.Addr{netip.MustParseAddr("100.64.0.9"), netip.MustParseAddr("fd7a:115c:a1e0::7")}, want: true},
+		{name: "IPv4-mapped address", addrs: []netip.Addr{netip.MustParseAddr("::ffff:100.64.0.7")}, want: true},
+		{name: "another machine", addrs: []netip.Addr{netip.MustParseAddr("100.64.0.9"), netip.MustParseAddr("fd7a:115c:a1e0::9")}},
+		{name: "no address", addrs: nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := onThisMachine(tc.addrs, local); got != tc.want {
+				t.Fatalf("onThisMachine(%v) = %v, want %v", tc.addrs, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestLocalAddrsHasLoopback(t *testing.T) {
+	t.Parallel()
+	local, err := localAddrs()
+	if err != nil {
+		t.Fatalf("localAddrs() error = %v", err)
+	}
+	if !onThisMachine([]netip.Addr{netip.MustParseAddr("127.0.0.1")}, local) {
+		t.Fatalf("localAddrs() = %v, want it to hold 127.0.0.1", local)
+	}
+}
+
+func TestHostNode(t *testing.T) {
+	t.Parallel()
+	local := []netip.Addr{netip.MustParseAddr("127.0.0.1"), netip.MustParseAddr("100.64.0.7")}
+	peer := func(id string, ips ...string) *ipnstate.PeerStatus {
+		p := &ipnstate.PeerStatus{ID: tailcfg.StableNodeID(id)}
+		for _, ip := range ips {
+			p.TailscaleIPs = append(p.TailscaleIPs, netip.MustParseAddr(ip))
+		}
+		return p
+	}
+	tests := []struct {
+		name  string
+		peers []*ipnstate.PeerStatus
+		want  string
+	}{
+		{name: "this machine among the peers", peers: []*ipnstate.PeerStatus{peer("nPhone", "100.64.0.9"), peer("nLaptop", "100.64.0.7", "fd7a:115c:a1e0::7")}, want: "nLaptop"},
+		{name: "this machine isn't on the tailnet", peers: []*ipnstate.PeerStatus{peer("nPhone", "100.64.0.9")}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := hostNode(tc.peers, local); got != tc.want {
+				t.Fatalf("hostNode() = %q, want %q", got, tc.want)
 			}
 		})
 	}

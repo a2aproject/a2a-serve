@@ -86,7 +86,7 @@ func TestPair(t *testing.T) {
 		Access: &controlapi.Access{
 			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
-			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
+			Summary: []string{"you: this machine and your other tailnet devices that don't run an agent", "everyone on the tailnet, 1 pairing"},
 		},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

@@ -81,11 +81,11 @@ func TestManageStoppedAgent(t *testing.T) {
 		t.Fatalf("Stat() of anna's agent home after pair rm error = %v, want %v", err, os.ErrNotExist)
 	}
 	run("pair", "invite", "bob")
-	if out := run("config", "set", "--private", "tailscale", "--allow-email", "*@example.com"); !strings.Contains(out, "who may call:\n  you: this machine and your tailnet devices\n  everyone on the tailnet, emails matching *@example.com, 1 pairing\n") {
+	if out := run("config", "set", "--private", "tailscale", "--allow-email", "*@example.com"); !strings.Contains(out, "who may call:\n  you: this machine and your other tailnet devices that don't run an agent\n  everyone on the tailnet, emails matching *@example.com, 1 pairing\n") {
 		t.Fatalf("a2a-serve config set --private of a stopped agent = %q, want who may call afterwards", out)
 	}
 	if out := run("pair", "rm", "bob"); !strings.Contains(out, "! bob may still call the agent as one of: everyone on the tailnet; emails matching *@example.com") ||
-		!strings.Contains(out, "who may call:\n  you: this machine and your tailnet devices\n  everyone on the tailnet, emails matching *@example.com\n") {
+		!strings.Contains(out, "who may call:\n  you: this machine and your other tailnet devices that don't run an agent\n  everyone on the tailnet, emails matching *@example.com\n") {
 		t.Fatalf("a2a-serve pair rm on an open tailnet = %q, want a note that bob may still call, and who may call afterwards", out)
 	}
 	if out := run("config", "set", "--private-allow-incoming", "paired"); !strings.Contains(out, "  the tailnet needs a pairing\n") {

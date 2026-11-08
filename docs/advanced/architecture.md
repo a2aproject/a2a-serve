@@ -33,7 +33,7 @@ Access starts with a one-time code from `a2a-serve pair invite`. Only someone wi
 
 The caller redeems the code for a token. People run `a2a-serve pair join`, chat accounts send `join <code>` to the bot, other agents run `contact add --code`, and webhook nodes get a node token. The `a2a` CLI attaches saved tokens through a2a-serve's credential helper.
 
-The user who starts the server is the built-in `local` pairing: it gets a token for the local URL, and the link printed at start links its messenger accounts. On a tailnet, your own devices are recognized by their network identity and need no code, and everyone else on the tailnet can call the agent.
+The user who starts the server is the built-in `local` pairing: it gets a token for the local URL, and the link printed at start links its messenger accounts. On a tailnet, your own devices that don't run an agent are recognized by their network identity and need no code, and everyone else on the tailnet can call the agent.
 
 ## A turn
 

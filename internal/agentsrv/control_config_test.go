@@ -85,7 +85,7 @@ func TestReloadConfigKeepsPendingChanges(t *testing.T) {
 func TestStatusAccess(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
-		private: &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderTailscale},
+		private: &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderTailscale, host: "laptop"},
 		public:  publicNet(),
 	})
 	ts.pair("phone", auth.RoleOwner)
@@ -113,13 +113,16 @@ func TestStatusAccess(t *testing.T) {
 		Pairings: 1, OwnerPairings: 1,
 		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL"},
 		Summary: []string{
-			"you: this machine and your tailnet devices",
+			"you: this machine and your other tailnet devices that don't run an agent",
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
 			"the public URL is open to anyone",
 		},
 	}
 	if diff := cmp.Diff(want, st.Access); diff != "" {
 		t.Fatalf("Status() wrong access (-want +got) diff = %s", diff)
+	}
+	if st.PrivateNote != tailnetOwnerNote {
+		t.Fatalf("Status().PrivateNote = %q, want %q", st.PrivateNote, tailnetOwnerNote)
 	}
 }
 
