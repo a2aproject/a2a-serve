@@ -34,10 +34,12 @@ Your shell needs the variable only when you run the command. Later starts, resta
 
 A changed key reaches the agent after `a2a-serve restart`, or with `--restart` on `config set`.
 
-`${VAR}` in the project's `.mcp.json` also takes its value from these keys. See [MCP and Skills](mcp-and-skills.md).
+`${VAR}` in the project's `.mcp.json` also takes its value from the keys that a conversation's container gets. See [MCP and Skills](mcp-and-skills.md).
+
+Your agent container gets every key passed with `--secret`. The containers of callers who aren't owners get none by default. [Sandbox rules](sandbox.md#what-each-callers-container-gets) give them some, all, or a stored secret under another name with `NAME=secret:OTHER`. A rule may name only secrets in `secrets`.
 
 > [!WARNING]
-> Every agent container, including caller and anonymous containers, receives every key passed with `--secret` as an environment variable, so a tricked agent or any caller who can approve commands can read them. See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
+> A tricked agent or any caller who can approve commands can read the keys that their container gets. Give callers who aren't owners a separate key. See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
 
 ## Tokens for the server
 

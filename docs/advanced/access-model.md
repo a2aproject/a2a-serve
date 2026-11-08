@@ -40,6 +40,8 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 
 You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
 
+`--caller-storage`, `--caller-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
+
 ## Whom the agent may call
 
 | Flag | Values | Default |
@@ -88,7 +90,7 @@ coder (opencode) running for 2h, pid 41233
 | Caller | Can |
 |---|---|
 | **You**, and pairings made with `--owner` | See every task, answer any approval, use the inspector |
-| **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, allow tool calls in their own tasks without asking, and let their conversations call this agent's contacts. Approving tool calls lets them run commands in the shared workspace and read the agent's `--secret` environment variables |
+| **Everyone else who is allowed**: the private network, pairings, allowed emails | Start tasks, see and approve their own tasks, allow tool calls in their own tasks without asking, and let their conversations call this agent's contacts. Approving tool calls lets them run commands in their agent container, with the workspace and secrets that [sandbox rules](../guide/sandbox.md#what-each-callers-container-gets) give it: by default a read-only workspace and no secrets |
 | **Anyone**, with `--public-allow-incoming anyone` | Start tasks in their own conversation. Their approvals go to your owner chat, and are rejected when nobody answers in time. Their conversations can't call other agents |
 
 ### Messengers
@@ -108,7 +110,7 @@ The agent calls other agents through its server, which holds the credentials. Th
 
 ### Agent processes
 
-Each authenticated user's conversations run in an agent process of their own. Your conversations run in the owner's process, and all anonymous callers share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of authenticated users run at once. When all of them work on tasks or wait for approvals, a user without a running process gets an error for a new task and can send it again later. All processes share the workspace and the agent's `--secret` environment variables, so anyone who can call the agent and approve their own commands can change the workspace and read its files and the agent's secrets.
+Each authenticated user's conversations run in an agent process of their own. Your conversations run in the owner's process, and all anonymous callers share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of authenticated users run at once. When all of them work on tasks or wait for approvals, a user without a running process gets an error for a new task and can send it again later. What each process gets of the workspace and of the agent's `--secret` environment variables follows the [sandbox rules](../guide/sandbox.md#what-each-callers-container-gets). Your process and the processes of owners get the shared workspace and every secret. By default the others get a read-only workspace and no secrets, and a rule can change that, so anyone who can call the agent and approve their own commands can read what their process gets.
 
 A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
 
@@ -157,7 +159,7 @@ policy:
 | `--allow-email P` | adds `email:P` to `authenticated` |
 | `pair invite --owner` | the pairing's role is `owner` |
 
-Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
+Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
 
 `config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting bindings in [`access`](../reference/output.md).
 
