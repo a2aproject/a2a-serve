@@ -25,7 +25,7 @@ Each caller's conversations run in an agent container. You and your owner pairin
 - your container and the containers of pairings, members of the private network and `--allow-email` sign-ins get the shared workspace and every `--secret` value;
 - the container of anonymous callers gets a read-only workspace and no secrets.
 
-Sandbox rules narrow these defaults for chosen callers, such as a read-only workspace or a key of their own. They never give a caller more than the default. "Other callers" in commands and output are the callers who aren't owners and whom no more specific rule matches.
+Sandbox rules set what chosen callers get in place of these defaults, such as a read-only workspace, or a key of their own for anonymous callers. "Other callers" in commands and output are the callers who aren't owners and whom no more specific rule matches.
 
 `a2a-serve status` shows what each kind of caller gets:
 
@@ -36,7 +36,7 @@ Sandbox rules narrow these defaults for chosen callers, such as a read-only work
            anonymous callers: read-only workspace, no secrets
 ```
 
-These lines appear when sandbox rules exist or anonymous callers may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says once what anonymous callers get. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when a rule narrows it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
+These lines appear when sandbox rules exist or anonymous callers may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says once what anonymous callers get. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
 
 ### Share the agent
 
@@ -48,7 +48,7 @@ a2a-serve pair invite anna
 
 Anna's agent container gets the defaults above. No rule is needed.
 
-### Narrow what a pairing gets
+### Set what a pairing gets
 
 ```sh
 a2a-serve pair invite ben --storage read-only --secrets none
@@ -66,7 +66,7 @@ a2a-serve config set --secret GUEST_ANTHROPIC_KEY
 a2a-serve config set --caller-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY
 ```
 
-The agent sees `ANTHROPIC_API_KEY` in the containers of other callers, with the value of `GUEST_ANTHROPIC_KEY`. Your own container keeps its key. `--caller-secrets` replaces the list each time, and `config unset caller-secrets` resets it. Anonymous callers get no secrets, so the agent can't use a model that needs a key for them.
+The agent sees `ANTHROPIC_API_KEY` in the containers of other callers, anonymous callers included, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your own container and the pairings with rules of their own keep theirs. `--caller-secrets` replaces the list each time, and `config unset caller-secrets` resets it. Without such a rule, anonymous callers get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so.
 
 ### Rules for several callers
 

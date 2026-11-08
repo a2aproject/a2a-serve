@@ -34,8 +34,8 @@ type sandboxFlags struct {
 
 func (f *sandboxFlags) register(cmd *cobra.Command) {
 	fs := cmd.Flags()
-	fs.StringVar(&f.storage, "storage", "", "Narrow what the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared)")
-	fs.StringSliceVar(&f.secrets, "secrets", nil, "Narrow the secrets the pairing's agent container gets to `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all)")
+	fs.StringVar(&f.storage, "storage", "", "What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared)")
+	fs.StringSliceVar(&f.secrets, "secrets", nil, "Secrets the pairing's agent container gets: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all)")
 	must(cmd.RegisterFlagCompletionFunc("storage", fixedCompletions(agentdir.StorageModes...)))
 }
 

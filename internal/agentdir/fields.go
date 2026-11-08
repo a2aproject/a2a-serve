@@ -469,7 +469,7 @@ var fields = []field{
 			arg: func(s *Settings) any { return &s.CallerStorage },
 		},
 		flag: "caller-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "Narrow what the agent containers of other callers get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers)",
+		usage:  "What the agent containers of other callers, anonymous ones included, get of the workspace: shared, read-only, own (a private copy) or empty; other callers aren't owners, and no pairing or other sandbox rule matches them (default shared, read-only for anonymous callers)",
 		values: StorageModes,
 	},
 	{
@@ -481,7 +481,7 @@ var fields = []field{
 		},
 		flag: "caller-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
 		key: secretGrantKey, merge: mergeCallerSecrets,
-		usage: "Narrow the secrets the agent containers of other callers get to `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers)",
+		usage: "Secrets the agent containers of other callers, anonymous ones included, get: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME; replaces the list (default all, none for anonymous callers)",
 	},
 	{
 		access: sandboxRules(),

@@ -111,10 +111,10 @@ func (s *Service) pairingRole(ctx context.Context, name string) (string, error) 
 	return p.Role, err
 }
 
-// narrowedSandbox describes what the agent container of the pairing p gets
-// when its rules narrow the default, or returns nil: owners share your
-// container, and without the Docker sandbox the rules don't apply.
-func (s *Service) narrowedSandbox(p pairings.Pairing) *controlapi.PairingSandbox {
+// ruledSandbox describes what the agent container of the pairing p gets
+// when rules make it differ from the default, or returns nil: owners share
+// your container, and without the Docker sandbox the rules don't apply.
+func (s *Service) ruledSandbox(p pairings.Pairing) *controlapi.PairingSandbox {
 	sp := access.SandboxPolicyOf(s.deps.Runtime.Config())
 	if p.Role == auth.RoleOwner || sp.Local || s.resolvePairing(p).Equal(sp.Default()) {
 		return nil

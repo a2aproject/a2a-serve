@@ -856,8 +856,13 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if noSandbox != "" {
 		s.logf("! %s", noSandbox)
 	}
-	if len(a.Anonymous) > 0 && s.rt.Config().Sandbox != harness.SandboxLocal {
-		s.logf("! anonymous callers get a read-only workspace and no secrets in their agent container")
+	for _, line := range a.Sandbox {
+		if desc, ok := strings.CutPrefix(line, access.AnonymousCallers+": "); ok {
+			s.logf("! the agent container of anonymous callers gets: %s", desc)
+		}
+	}
+	if a.AnonymousNote != "" {
+		s.logf("! %s", a.AnonymousNote)
 	}
 	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
 		label := "✓ sandbox "

@@ -120,7 +120,7 @@ func (s *Service) Pair(ctx context.Context, req controlapi.PairCodeRequest) (*co
 	if err != nil {
 		return nil, err
 	}
-	resp.Sandbox = s.narrowedSandbox(*p)
+	resp.Sandbox = s.ruledSandbox(*p)
 	resp.Hints = append(resp.Hints, s.sandboxHints(req.Sandbox)...)
 	if resp.Access, err = s.accessInfo(ctx); err != nil {
 		return nil, err
@@ -224,8 +224,8 @@ func (s *Service) Revoke(ctx context.Context, name string) (*controlapi.RevokeRe
 	if r.Kept {
 		return resp, nil
 	}
-	// The pairing goes first: its rule only narrows what it gets, so a rule
-	// left behind gives a new pairing of the same name no more.
+	// The pairing goes first, so that its callers can't fall back to
+	// broader rules meanwhile.
 	if err := s.removeSandbox(name); err != nil {
 		return nil, err
 	}

@@ -61,7 +61,7 @@ backup:
 
 ## Sandbox rules
 
-`policy.sandbox` narrows what the agent containers of chosen callers get of the workspace and of the agent's `secrets`. A rule never gives more than the caller's default. The [sandbox guide](../guide/sandbox.md#what-each-callers-container-gets) gives the defaults, and explains the modes and the commands that edit the rules.
+`policy.sandbox` sets what the agent containers of chosen callers get of the workspace and of the agent's `secrets`. Callers that no rule matches get the defaults. The [sandbox guide](../guide/sandbox.md#what-each-callers-container-gets) gives the defaults, and explains the modes and the commands that edit the rules.
 
 ```yaml
 secrets: [ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY]
@@ -78,15 +78,15 @@ policy:
 | Key | Values |
 | --- | --- |
 | `match` | A list of matchers: `self`, `private`, `anyone`, `email:<address>`, `email:*@<domain>` and `pairing:<name>`. `pairing:<name>` also matches a webhook node of that name. |
-| `storage` | `shared`, `read-only`, `own` or `empty`, from the most access to the least. It applies when it gives less than the default. Without it, the default. |
-| `secrets` | Names from the agent's `secrets`, `NAME=secret:OTHER`, which passes the stored secret `OTHER` to the agent as `NAME`, `all` or `none`. `all` and `none` go alone. A name applies when the default gives its stored secret. Without it, the default. |
+| `storage` | `shared`, `read-only`, `own` or `empty`, from the most access to the least. Without it, the storage of the next matching rule that sets one, or the default. |
+| `secrets` | Names from the agent's `secrets`, `NAME=secret:OTHER`, which passes the stored secret `OTHER` to the agent as `NAME`, `all` or `none`. `all` and `none` go alone. Without it, the secrets of the next matching rule that sets them, or the default. |
 
 A matcher may appear in one rule only, and config validation refuses duplicates. A rule may name only secrets that are in `secrets`.
 
 ### Which rule applies
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
-- Anonymous callers share one container. Only the `anyone` rule applies to it, and it can only narrow their read-only workspace to an empty one.
+- Anonymous callers share one container. Only the `anyone` rule applies to it.
 - Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>`, `private` and `anyone`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
 
 In sandbox rules, `anyone` matches every caller who isn't an owner. In the [access policy](../advanced/access-model.md#policy), `anyone` means the public URL and direct chats. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.

@@ -136,11 +136,12 @@ const (
 //     email:<address>, then email:*@<domain>, then private, then anyone.
 //     Between rules of the same specificity, the first one wins.
 //
-// A rule only narrows the default of the caller: anonymous callers get a
-// read-only workspace and no secrets, and every other caller the shared
-// workspace and every secret.
+// A rule sets what the callers it matches get. What no matching rule sets
+// comes from the default of the caller: anonymous callers get a read-only
+// workspace and no secrets, and every other caller the shared workspace and
+// every secret.
 func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
-	return sp.narrow(sp.defaultOf(p.Role == auth.RoleAnonymous), sp.ruleOf(p))
+	return sp.apply(sp.defaultOf(p.Role == auth.RoleAnonymous), sp.ruleOf(p))
 }
 
 // ResolveUnverified is [SandboxPolicy.Resolve] for a user whose identity
@@ -205,22 +206,15 @@ func (sp SandboxPolicy) defaultOf(anonymous bool) Sandbox {
 	return Sandbox{Storage: agentdir.StorageShared, Secrets: sp.grants([]string{agentdir.SecretsAll})}
 }
 
-// narrow returns def narrowed by r: the storage of r if it gives less
-// access, and the secrets of r whose stored secret def gives. A part r
-// leaves out keeps def.
-func (sp SandboxPolicy) narrow(def Sandbox, r agentdir.SandboxRule) Sandbox {
+// apply returns def with the storage and the secrets that r sets. A part
+// r leaves out keeps def.
+func (sp SandboxPolicy) apply(def Sandbox, r agentdir.SandboxRule) Sandbox {
 	out := def
-	if r.Storage != "" && storageRank(r.Storage) > storageRank(def.Storage) {
+	if r.Storage != "" {
 		out.Storage = r.Storage
 	}
-	if len(r.Secrets) == 0 {
-		return out
-	}
-	out.Secrets = nil
-	for _, g := range sp.grants(r.Secrets) {
-		if slices.ContainsFunc(def.Secrets, func(d SecretGrant) bool { return d.From == g.From }) {
-			out.Secrets = append(out.Secrets, g)
-		}
+	if len(r.Secrets) > 0 {
+		out.Secrets = sp.grants(r.Secrets)
 	}
 	return out
 }
@@ -366,7 +360,7 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 		if len(who) == 0 {
 			continue
 		}
-		line := SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.narrow(other, sp.withFallback(r))}
+		line := SandboxLine{Who: strings.Join(who, ", "), Sandbox: sp.apply(other, sp.withFallback(r))}
 		if len(r.Match) == 1 {
 			line.Pairing, _ = strings.CutPrefix(r.Match[0], agentdir.MatchPairingPrefix)
 		}

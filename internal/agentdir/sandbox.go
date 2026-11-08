@@ -27,12 +27,12 @@ type SandboxRule struct {
 	// Match lists the callers: self, private, anyone, email:<address>,
 	// email:*@<domain> or pairing:<name>.
 	Match []string `yaml:"match,flow" json:"match"`
-	// Storage is one of the Storage* modes. Empty keeps the caller's
-	// default. A rule only narrows the default.
+	// Storage is one of the Storage* modes. Empty takes it from a broader
+	// matching rule, or the caller's default.
 	Storage string `yaml:"storage,omitempty" json:"storage,omitempty"`
 	// Secrets are names from the agent's secrets, all, none, or
-	// NAME=secret:OTHER, which passes the secret OTHER as NAME. Empty keeps
-	// the caller's default.
+	// NAME=secret:OTHER, which passes the secret OTHER as NAME. Empty takes
+	// them from a broader matching rule, or the caller's default.
 	Secrets []string `yaml:"secrets,omitempty,flow" json:"secrets,omitempty"`
 }
 

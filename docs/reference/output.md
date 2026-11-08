@@ -17,7 +17,7 @@ of what each kind of caller's agent container gets, `sandboxNotes` such as
 callers without a model key, and `anonymousNote`. `pair get` and `pair list`
 give each pairing a `sandbox` object: its `storage`, its `secrets`, a
 `summary`, and a `warning` when its agent can't reach its model. `pair
-invite` adds it when a rule narrows what the pairing gets, and `pair set`
+invite` adds it when rules change what the pairing gets, and `pair set`
 adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
