@@ -23,11 +23,14 @@ import (
 	"log/slog"
 	"net/netip"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/egress"
@@ -125,12 +128,21 @@ type EgressEnv struct {
 	ImageArch string
 	// ForceRelay gives Linux containers a relay as with Docker Desktop.
 	ForceRelay bool
+	// RelayImage checks the image of the relay containers, as
+	// [CheckRelayImage] does; nil skips the check.
+	RelayImage func() error
 }
 
 // HostEgressEnv returns the environment of this process, with an image
 // of unknown architecture.
 func HostEgressEnv() EgressEnv {
-	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN, ForceRelay: os.Getenv(EnvForceRelay) == "1"}
+	return EgressEnv{GOOS: runtime.GOOS, Launcher: Launcher, TUN: CheckTUN, ForceRelay: os.Getenv(EnvForceRelay) == "1", RelayImage: func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), dockerTimeout)
+		defer cancel()
+		return CheckRelayImage(ctx, func(ctx context.Context, name string, args ...string) ([]byte, error) {
+			return exec.CommandContext(ctx, name, args...).Output()
+		}, false)
+	}}
 }
 
 // EgressDecision is whether an agent's containers get the egress boundary.
@@ -158,22 +170,34 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 		return EgressDecision{}
 	}
 	if env.GOOS != "linux" || env.ForceRelay {
+		if env.RelayImage != nil {
+			if err := env.RelayImage(); err != nil {
+				return problemDecision(cfg, err.Error())
+			}
+		}
 		d := EgressDecision{Boundary: true, Relay: true}
 		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 {
 			d.Warning = noAllowlistRules
 		}
 		return d
 	}
-	problem := egressProblem(env)
+	if problem := egressProblem(env); problem != "" {
+		return problemDecision(cfg, problem)
+	}
 	switch {
-	case problem != "" && cfg.Egress.Mode == egress.ModeAllowlist:
-		return EgressDecision{Problem: problem, Warning: noAllowlist(problem)}
-	case problem != "":
-		return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
 	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0:
 		return EgressDecision{Boundary: true, Warning: noAllowlistRules}
 	}
 	return EgressDecision{Boundary: true}
+}
+
+// problemDecision is the decision for cfg when problem keeps the boundary
+// from applying.
+func problemDecision(cfg *agentdir.Config, problem string) EgressDecision {
+	if cfg.Egress.Mode == egress.ModeAllowlist {
+		return EgressDecision{Problem: problem, Warning: noAllowlist(problem)}
+	}
+	return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
 }
 
 // noAllowlistRules warns about an allowlist that allows nothing.
@@ -242,12 +266,15 @@ func hostGateway() HostGatewayFunc {
 }
 
 // publishedPorts finds the ports that containers publish on this host,
-// asking docker at most once per publishedPortsTTL.
+// asking docker at most once per publishedPortsTTL, failures included.
+// Concurrent lookups share one docker call.
 type publishedPorts struct {
-	mu      sync.Mutex
-	at      time.Time
-	ports   string
-	queried bool
+	calls singleflight.Group
+
+	mu  sync.Mutex
+	at  time.Time
+	out string
+	err error
 }
 
 // publishedPortsTTL is how long the ports containers publish are reused.
@@ -256,20 +283,42 @@ const publishedPortsTTL = 5 * time.Second
 // lookup returns the loopback address of port when a container publishes
 // it on this host.
 func (p *publishedPorts) lookup(ctx context.Context, port uint16) (netip.AddrPort, bool) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
-	if !p.queried || time.Since(p.at) > publishedPortsTTL {
-		out, err := dockerQuery(ctx, dockerTimeout, "ps", "--format", "{{.Ports}}")
-		if err != nil {
-			slog.Warn("listing the ports containers publish", "error", err)
-			return netip.AddrPort{}, false
-		}
-		p.ports, p.at, p.queried = string(out), time.Now(), true
-	}
-	if !publishes(p.ports, port) {
+	out, err := p.ports(ctx)
+	if err != nil || !publishes(out, port) {
 		return netip.AddrPort{}, false
 	}
 	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port), true
+}
+
+func (p *publishedPorts) ports(ctx context.Context) (string, error) {
+	p.mu.Lock()
+	if !p.at.IsZero() && time.Since(p.at) < publishedPortsTTL {
+		out, err := p.out, p.err
+		p.mu.Unlock()
+		return out, err
+	}
+	p.mu.Unlock()
+	ch := p.calls.DoChan("ps", func() (any, error) {
+		qctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), dockerTimeout)
+		defer cancel()
+		out, err := dockerQuery(qctx, dockerTimeout, "ps", "--format", "{{.Ports}}")
+		if err != nil {
+			slog.Warn("listing the ports containers publish", "error", err)
+		}
+		p.mu.Lock()
+		p.at, p.out, p.err = time.Now(), string(out), err
+		p.mu.Unlock()
+		return string(out), err
+	})
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case r := <-ch:
+		if r.Err != nil {
+			return "", r.Err
+		}
+		return r.Val.(string), nil
+	}
 }
 
 // publishes reports whether the Ports column of docker ps, such as

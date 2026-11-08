@@ -26,6 +26,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/a2aproject/a2a-go/v2/a2a"
 )
 
 // publicTarget is a public host the sandbox reaches, overridable for
@@ -179,4 +181,30 @@ func rootlessDocker(t *testing.T) bool {
 		t.Fatalf("docker info error = %v", err)
 	}
 	return bytes.Contains(out, []byte("rootless"))
+}
+
+func TestDockerSandboxEgressContainerComesBack(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	if relayImage == "" {
+		t.Skip("needs A2A_SERVE_SANDBOX_RELAY=1")
+	}
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
+		t.Fatalf("a2a send dial %s = %q, want the public host reached", publicTarget(), got)
+	}
+	out, err := exec.Command("docker", "ps", "-q", "--filter", "label=a2a.dir="+coder.dir, "--filter", "label=a2a.relay").Output()
+	if err != nil || len(bytes.TrimSpace(out)) == 0 {
+		t.Fatalf("docker ps of the egress container = %q, %v, want it running", out, err)
+	}
+	if out, err := exec.Command("docker", append([]string{"rm", "-f", "-v"}, strings.Fields(string(out))...)...).CombinedOutput(); err != nil {
+		t.Fatalf("docker rm of the egress container error = %v: %s", err, out)
+	}
+	if crashed := owner.mustSend(coder.url, "crash"); crashed.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("a2a send crash state = %v, want %v", crashed.Status.State, a2a.TaskStateFailed)
+	}
+	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
+		t.Fatalf("a2a send dial %s after the egress container was removed = %q, want the public host reached", publicTarget(), got)
+	}
 }

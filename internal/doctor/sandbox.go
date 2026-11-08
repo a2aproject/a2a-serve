@@ -158,6 +158,8 @@ func checkEgress(ctx context.Context, env Env, cfg *agentdir.Config) Result {
 		r.Fix = "a2a-serve config unset egress --restart"
 	case d.Warning != "":
 		r.Status, r.Message = StatusWarn, d.Warning
+	case d.Boundary && env.CheckInternetRoute() != nil:
+		r.Status, r.Message = StatusWarn, env.CheckInternetRoute().Error()
 	default:
 		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egress.ModeInternet) + ")"
 	}
@@ -177,9 +179,16 @@ func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) harness.Egres
 			}
 			return env.CheckLauncher(exe)
 		},
-		TUN:       env.CheckTUN,
-		ImageArch: imageArch(ctx, env, cfg),
+		TUN:        env.CheckTUN,
+		ImageArch:  imageArch(ctx, env, cfg),
+		ForceRelay: lookupEnv(env, harness.EnvForceRelay) == "1",
+		RelayImage: func() error { return harness.CheckRelayImage(ctx, env.Run, true) },
 	}
+}
+
+func lookupEnv(env Env, name string) string {
+	v, _ := env.LookupEnv(name)
+	return v
 }
 
 // imageArch returns the CPU architecture of the agent's image, or "" when

@@ -155,7 +155,10 @@ func TestAuthorize(t *testing.T) {
 		{name: "a rule opens a host port", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 11434,
 			want: grant{rule: egress.HostGateway + ":11434", addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:11434")}}},
 		{name: "allowlist refuses the host gateway", policy: mustPolicy(t, egress.ModeAllowlist), host: egress.HostGateway, port: 3000, reason: "not-on-allowlist"},
-		{name: "a rule limits the host gateway to its port", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 3000, reason: "port-not-allowed"},
+		{name: "a rule for another port keeps published ports", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 3000,
+			want: grant{rule: "published-port", addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:3000")}}},
+		{name: "a rule for another port doesn't open an unpublished one", policy: mustPolicy(t, "", egress.HostGateway+":11434"), host: egress.HostGateway, port: 22, reason: "port-not-allowed"},
+		{name: "allowlist limits the host gateway to its rules", policy: mustPolicy(t, egress.ModeAllowlist, egress.HostGateway+":11434"), host: egress.HostGateway, port: 3000, reason: "port-not-allowed"},
 		{name: "allowlist allows a listed host gateway", policy: mustPolicy(t, egress.ModeAllowlist, egress.HostGateway), host: egress.HostGateway, port: 3000,
 			want: grant{rule: egress.HostGateway, addrs: []netip.AddrPort{netip.MustParseAddrPort("127.0.0.1:3000")}}},
 	}

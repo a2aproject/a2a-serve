@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"os"
 	"os/exec"
@@ -29,6 +30,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/module"
+
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -36,14 +39,15 @@ import (
 // container next to each agent's container serves the agent's sockets in
 // volumes the agent's container takes with --volumes-from, and forwards
 // their connections to the server. Its image also holds the Linux
-// a2a-serve that the agent's container runs as its launcher.
+// a2a-serve that the agent's container runs as its launcher. Users know
+// it as the egress container, as "relay" names Agent Mesh relays.
 const (
 	// RelayImageRepo is where the relay image is published, tagged with
 	// the version of a2a-serve, or sha-<commit> for builds of main.
 	RelayImageRepo = "ghcr.io/a2aproject/a2a-serve"
-	// EnvRelayImage replaces the relay image, such as with one built from
-	// a work tree.
-	EnvRelayImage = "A2A_SERVE_SANDBOX_IMAGE"
+	// EnvRelayImage replaces the image of the egress containers, such as
+	// with one built from a work tree.
+	EnvRelayImage = "A2A_SERVE_EGRESS_IMAGE"
 	// EnvForceRelay set to 1 gives Linux containers a relay as with Docker
 	// Desktop, to test it there.
 	EnvForceRelay = "A2A_SERVE_SANDBOX_RELAY"
@@ -62,15 +66,14 @@ const (
 
 var releaseVersion = regexp.MustCompile(`^v\d+\.\d+\.\d+$`)
 
-// relayImageRef returns the relay image of this a2a-serve, and the git
-// ref to build it from when it can't be pulled, or "" when there is none.
-func relayImageRef() (image, ref string, err error) {
-	if v := os.Getenv(EnvRelayImage); v != "" {
-		return v, "", nil
-	}
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "", "", errors.New("this a2a-serve doesn't know its version; set " + EnvRelayImage + " to an image built with " + relayDockerfile)
+// relayImageRef returns the relay image of the a2a-serve of info, and the
+// git ref to build it from when it can't be pulled, or "" when there is
+// none. A build from a work tree records its commit, and one with go
+// install the commit in its pseudo-version.
+func relayImageRef(info *debug.BuildInfo) (image, ref string, err error) {
+	unknown := errors.New("this a2a-serve doesn't know its commit; set " + EnvRelayImage + " to an image built from a2a-serve's repository with docker build -f " + relayDockerfile)
+	if info == nil {
+		return "", "", unknown
 	}
 	if releaseVersion.MatchString(info.Main.Version) {
 		return RelayImageRepo + ":" + info.Main.Version, info.Main.Version, nil
@@ -81,36 +84,84 @@ func relayImageRef() (image, ref string, err error) {
 			rev = s.Value
 		}
 	}
+	if rev == "" && module.IsPseudoVersion(info.Main.Version) {
+		rev, _ = module.PseudoVersionRev(info.Main.Version)
+	}
 	if len(rev) < 12 {
-		return "", "", errors.New("this a2a-serve doesn't know its commit; set " + EnvRelayImage + " to an image built with " + relayDockerfile)
+		return "", "", unknown
 	}
 	return RelayImageRepo + ":sha-" + rev[:12], rev, nil
 }
 
+// thisRelayImage returns the relay image of this a2a-serve, or the one in
+// $A2A_SERVE_EGRESS_IMAGE.
+func thisRelayImage() (image, ref string, err error) {
+	if v := os.Getenv(EnvRelayImage); v != "" {
+		return v, "", nil
+	}
+	info, _ := debug.ReadBuildInfo()
+	return relayImageRef(info)
+}
+
+// CheckRelayImage checks that the relay image of this a2a-serve is on
+// this machine, or with pull that it can be pulled.
+func CheckRelayImage(ctx context.Context, run func(ctx context.Context, name string, args ...string) ([]byte, error), pull bool) error {
+	image, _, err := thisRelayImage()
+	if err != nil {
+		return err
+	}
+	if _, err := run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image); err == nil {
+		return nil
+	}
+	if pull {
+		if _, err := run(ctx, "docker", "manifest", "inspect", image); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("the egress container's image %s is neither on this machine nor in the registry; start builds it from the a2a-serve repository, and falls back when that fails", image)
+}
+
 // EnsureRelayImage makes the relay image of this a2a-serve available: it
 // uses a local copy, pulls it, or builds it from the repository at this
-// version.
-func EnsureRelayImage(ctx context.Context, progress io.Writer) (string, error) {
-	image, ref, err := relayImageRef()
+// version. Docker's output goes to log.
+func EnsureRelayImage(ctx context.Context, log io.Writer) (string, error) {
+	image, ref, err := thisRelayImage()
 	if err != nil {
 		return "", err
 	}
 	if imageExists(ctx, image) {
 		return image, nil
 	}
-	pullErr := pullImage(ctx, image, progress)
+	pullErr := pullImage(ctx, image, log)
 	if pullErr == nil {
 		return image, nil
 	}
 	if ref == "" {
-		return "", fmt.Errorf("docker pull %s: %w", image, pullErr)
+		return "", fmt.Errorf("docker pull %s: %s", image, firstLine(pullErr.Error()))
 	}
 	build := exec.CommandContext(ctx, "docker", "build", "-t", image, "-f", relayDockerfile, "--build-arg", "VERSION="+ref, relaySource+"#"+ref)
-	build.Stdout, build.Stderr = progress, progress
+	build.Stdout, build.Stderr = log, log
 	if err := build.Run(); err != nil {
-		return "", fmt.Errorf("docker pull %s failed (%v), and building it from %s#%s failed: %w", image, pullErr, relaySource, ref, err)
+		return "", fmt.Errorf("docker pull %s failed (%s), and building it from %s#%s failed: %w", image, firstLine(pullErr.Error()), relaySource, ref, err)
 	}
 	return image, nil
+}
+
+func firstLine(s string) string {
+	line, _, _ := strings.Cut(s, "\n")
+	return line
+}
+
+// logLines writes each line of Docker's output to the server log.
+type logLines struct{ msg string }
+
+func (l logLines) Write(p []byte) (int, error) {
+	for line := range strings.Lines(string(p)) {
+		if line = strings.TrimSpace(line); line != "" {
+			slog.Info(l.msg, "output", line)
+		}
+	}
+	return len(p), nil
 }
 
 // relaySpec configures a relay container.
@@ -149,7 +200,9 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 	if err := keyFile.Close(); err != nil {
 		return nil, err
 	}
-	args := []string{"run", "-d", "--rm", "--name", spec.name,
+	// A relay that crashes or outlives a restart of Docker restarts with
+	// its volumes, where the agent's container keeps its sockets.
+	args := []string{"run", "-d", "--restart", "unless-stopped", "--name", spec.name,
 		"--user", fmt.Sprintf("%d:%d", spec.uid, spec.gid),
 		"--cap-drop", "ALL", "--security-opt", "no-new-privileges",
 		"--add-host", "host.docker.internal:host-gateway",
@@ -178,7 +231,7 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 	}
 	args = append(append(args, spec.image), relayArgs...)
 	if out, err := exec.CommandContext(ctx, "docker", args...).CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("starting the relay container: %w: %s", err, bytes.TrimSpace(out))
+		return nil, fmt.Errorf("starting the egress container: %w: %s", err, firstLine(string(bytes.TrimSpace(out))))
 	}
 	if err := waitForRelay(ctx, spec.name); err != nil {
 		return nil, errors.Join(err, stop(ctx))
@@ -187,7 +240,7 @@ func startRelay(ctx context.Context, spec relaySpec) (stop func(context.Context)
 }
 
 // waitForRelay waits until the relay container name prints that it
-// listens.
+// listens, and fails at once with its output when it stops or restarts.
 func waitForRelay(ctx context.Context, name string) error {
 	deadline := time.Now().Add(relayReadyTimeout)
 	for {
@@ -195,8 +248,15 @@ func waitForRelay(ctx context.Context, name string) error {
 		if err == nil && bytes.Contains(out, []byte(sandboxnet.RelayReady)) {
 			return nil
 		}
+		state, err := dockerQuery(ctx, dockerTimeout, "inspect", "--format", "{{.State.Running}} {{.RestartCount}} {{.State.ExitCode}}", name)
+		if err != nil {
+			return fmt.Errorf("the egress container %s is gone: %w", name, err)
+		}
+		if f := strings.Fields(string(state)); len(f) == 3 && (f[0] != "true" || f[1] != "0") {
+			return fmt.Errorf("the egress container %s exited with status %s: %s", name, f[2], firstLine(string(bytes.TrimSpace(out))))
+		}
 		if time.Now().After(deadline) {
-			return fmt.Errorf("the relay container %s didn't start within %s: %s", name, relayReadyTimeout, bytes.TrimSpace(out))
+			return fmt.Errorf("the egress container %s didn't start within %s: %s", name, relayReadyTimeout, firstLine(string(bytes.TrimSpace(out))))
 		}
 		select {
 		case <-ctx.Done():
@@ -204,6 +264,18 @@ func waitForRelay(ctx context.Context, name string) error {
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
+}
+
+// ensureRelay starts the relay container of spec again when it doesn't
+// run, such as after it was removed.
+func ensureRelay(ctx context.Context, spec relaySpec) error {
+	state, err := dockerQuery(ctx, dockerTimeout, "inspect", "--format", "{{.State.Running}}", spec.name)
+	if err == nil && strings.TrimSpace(string(state)) == "true" {
+		return nil
+	}
+	slog.Warn("starting the egress container again", "container", spec.name)
+	_, err = startRelay(ctx, spec)
+	return err
 }
 
 // removeContainer removes the container name, if any, with its volumes.

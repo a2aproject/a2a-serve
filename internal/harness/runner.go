@@ -99,6 +99,8 @@ type DockerEgress struct {
 	Relay string
 	// Entrypoint is the image's entrypoint, which the launcher replaces.
 	Entrypoint []string
+	// ensure starts the relay container again when it doesn't run.
+	ensure func() error
 }
 
 // ContainerHome is the home directory of the harness in the container.

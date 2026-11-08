@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//go:build !linux
+//go:build !linux && !darwin
 
 package sandboxnet
 
@@ -33,3 +33,6 @@ func (hostNetwork) DefaultRoute(addr netip.Addr) (bool, error) {
 	}
 	return true, nil
 }
+
+// CheckInternetRoute checks nothing, as the routing table isn't read here.
+func CheckInternetRoute() error { return nil }

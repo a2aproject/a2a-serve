@@ -104,6 +104,9 @@ type Spec struct {
 	EgressMode  string
 	EgressAllow []string
 	OpenEgress  OpenEgress
+	// Launcher is the host path of the a2a-serve binary that containers run
+	// as their launcher; empty uses this binary.
+	Launcher string
 	// BridgeAddr is the host:port through which a container reaches the
 	// server's TCP listener with Docker Desktop, or "" with a socket.
 	BridgeAddr string
@@ -298,7 +301,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			dr.Egress, closeEgress, egressOn = eg, closeFn, true
 			what += "; egress " + cmp.Or(spec.EgressMode, egress.ModeInternet) + " through the server"
 			if relay {
-				what += " (relay container)"
+				what += " (egress container)"
 			}
 		}
 	}
@@ -318,7 +321,13 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		if err := checkPaths(spec); err != nil {
 			return err
 		}
-		return checkNoNewAgents(spec)
+		if err := checkNoNewAgents(spec); err != nil {
+			return err
+		}
+		if dr.Egress != nil && dr.Egress.ensure != nil {
+			return dr.Egress.ensure()
+		}
+		return nil
 	}}, nil
 }
 
@@ -332,6 +341,9 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 	}
 	env := HostEgressEnv()
 	env.ImageArch = cmp.Or(arch, "an unknown CPU architecture")
+	if spec.Launcher != "" {
+		env.Launcher = func() (string, error) { return CheckLauncher(spec.Launcher) }
+	}
 	decision = DecideEgress(&agentdir.Config{Sandbox: spec.Sandbox, Egress: agentdir.EgressConfig{Mode: spec.EgressMode, Allow: spec.EgressAllow}}, env)
 	if !decision.Boundary {
 		return nil, nil, decision, nil
@@ -351,12 +363,12 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 }
 
 // relayEgress opens the boundary of a container that reaches it through a
-// relay container, and starts the relay. When the relay image isn't
+// relay container, the egress container to users, and starts it. When the relay image isn't
 // available, the container gets Docker's own network.
 func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision) (*DockerEgress, func() error, EgressDecision, error) {
-	image, err := EnsureRelayImage(ctx, spec.Progress)
+	image, err := EnsureRelayImage(ctx, logLines{msg: "egress container image"})
 	if err != nil {
-		problem := "the relay container's image isn't available: " + err.Error()
+		problem := "the egress container's image isn't available: " + err.Error()
 		if spec.EgressMode == egress.ModeAllowlist {
 			return nil, nil, EgressDecision{Problem: problem, Warning: noAllowlist(problem)}, nil
 		}
@@ -375,13 +387,18 @@ func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless b
 		labels = map[string]string{}
 	}
 	labels["a2a.relay"] = spec.Name
-	name := spec.Name + "-relay"
-	stop, err := startRelay(ctx, relaySpec{name: name, image: image, labels: labels, uid: uid, gid: gid, egress: ep, serverSocket: spec.Socket, serverAddr: spec.BridgeAddr})
+	rs := relaySpec{name: spec.Name + "-egress", image: image, labels: labels, uid: uid, gid: gid, egress: ep, serverSocket: spec.Socket, serverAddr: spec.BridgeAddr}
+	stop, err := startRelay(ctx, rs)
 	if err != nil {
 		return nil, nil, EgressDecision{}, errors.Join(err, ep.Close())
 	}
 	closeAll := func() error { return errors.Join(stop(context.Background()), ep.Close()) }
-	return &DockerEgress{Relay: name, Entrypoint: entrypoint}, closeAll, decision, nil
+	ensure := func() error {
+		ctx, cancel := context.WithTimeout(context.Background(), relayReadyTimeout+dockerTimeout)
+		defer cancel()
+		return ensureRelay(ctx, rs)
+	}
+	return &DockerEgress{Relay: rs.name, Entrypoint: entrypoint, ensure: ensure}, closeAll, decision, nil
 }
 
 // emptyMCP is a .mcp.json with no servers.

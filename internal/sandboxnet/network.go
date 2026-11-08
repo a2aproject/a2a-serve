@@ -15,9 +15,20 @@
 package sandboxnet
 
 import (
+	"errors"
 	"net"
 	"net/netip"
 )
+
+// The public addresses whose routes the routes to other addresses are
+// compared with.
+var (
+	internetProbe4 = netip.MustParseAddr("8.8.8.8")
+	internetProbe6 = netip.MustParseAddr("2001:4860:4860::8888")
+)
+
+// errNoInternetRoute is the error of a host without a route to the internet.
+var errNoInternetRoute = errors.New("this machine has no route to the internet, so the sandbox reaches no public host")
 
 // hostNetwork is the network of the host the server runs on.
 type hostNetwork struct{}

@@ -62,9 +62,9 @@ A few checks run on every pull request. Follow these tips to pass them:
 
   This runs the linter version of `.github/workflows/go.yaml` with the Go version of `go.mod`, as CI does. A linter built with an older Go refuses the module, and one run with a newer Go can't read its standard library.
 
-### Testing the relay of Docker Desktop on Linux
+### Testing the egress containers of Docker Desktop on Linux
 
-With Docker Desktop, a relay container forwards each agent container's connections to the server. `A2A_SERVE_SANDBOX_RELAY=1` gives containers on Linux a relay too, and the e2e tests then build the relay image from the work tree:
+With Docker Desktop, an egress container forwards each agent container's connections to the server. `A2A_SERVE_SANDBOX_RELAY=1` gives containers on Linux one too, and the e2e tests then build its image from the work tree:
 
 ```sh
 E2E_SANDBOX=docker A2A_SERVE_SANDBOX_RELAY=1 go test -tags e2e ./e2e/...

@@ -19,10 +19,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
+	"net/netip"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sync"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -52,6 +55,8 @@ type egressSockets struct {
 	// relayAddr, mounting relayMount on Linux.
 	relays                *sandboxnet.RelayServer
 	relayAddr, relayMount string
+	// launcherCopy is the copy of the running a2a-serve.
+	launcherCopy string
 }
 
 func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets {
@@ -118,7 +123,7 @@ func (e *egressSockets) relayListener() (relays *sandboxnet.RelayServer, addr, m
 	var ln net.Listener
 	if bind, dial, tcp := harness.TCPBridge(harness.SandboxDocker); tcp {
 		if ln, err = net.Listen("tcp", net.JoinHostPort(bind, "0")); err != nil {
-			return nil, "", "", fmt.Errorf("listening for relay containers: %w", err)
+			return nil, "", "", fmt.Errorf("listening for egress containers: %w", err)
 		}
 		_, port, err := net.SplitHostPort(ln.Addr().String())
 		if err != nil {
@@ -134,7 +139,7 @@ func (e *egressSockets) relayListener() (relays *sandboxnet.RelayServer, addr, m
 			return nil, "", "", err
 		}
 		if ln, err = net.Listen("unix", filepath.Join(mount, relaySocketName)); err != nil {
-			return nil, "", "", fmt.Errorf("listening for relay containers: %w", err)
+			return nil, "", "", fmt.Errorf("listening for egress containers: %w", err)
 		}
 		addr = "unix://" + harness.RelayEgressDir + "/" + relaySocketName
 	}
@@ -208,14 +213,92 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	}
 	var recent []sandboxnet.Block
 	st.Blocked, recent = e.blocks.Snapshot()
+	p := e.policy(st.Mode)
 	for _, b := range recent {
-		st.Recent = append(st.Recent, controlapi.EgressBlock{Destination: b.Destination, Allow: b.Allow})
+		st.Recent = append(st.Recent, controlapi.EgressBlock{Destination: b.Destination, Allow: b.Allow, Unresolved: b.Unresolved, Allowed: !b.Unresolved && allowedByRule(p, b.Allow)})
 	}
 	return st
 }
 
+// allowedByRule reports whether a rule of p names the destination host:port.
+func allowedByRule(p egress.Policy, dest string) bool {
+	host, port, err := net.SplitHostPort(dest)
+	if err != nil {
+		return false
+	}
+	n, err := egress.ParsePort(port)
+	if err != nil {
+		return false
+	}
+	if addr, err := netip.ParseAddr(host); err == nil {
+		_, ok := p.AddrRule(addr, n)
+		return ok
+	}
+	_, ok := p.NameRule(host, n)
+	return ok
+}
+
+// launcherFile is the copy of the running a2a-serve, next to the egress
+// sockets, that containers run as their launcher, so that a binary
+// upgraded in place doesn't change under a running server. The directory
+// is emptied at each start and stays out of backups.
+const launcherFile = "a2a-init"
+
+// launcher copies the running a2a-serve once, and returns the copy, or ""
+// to use the binary itself where there is no copy.
+func (e *egressSockets) launcher() string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.launcherCopy != "" || runtime.GOOS != "linux" {
+		return e.launcherCopy
+	}
+	if err := fsutil.MkdirPrivate(e.dir); err != nil {
+		slog.Warn("copying a2a-serve for the containers; they run the installed binary", "error", err)
+		return ""
+	}
+	dst := filepath.Join(e.dir, launcherFile)
+	// /proc/self/exe is the binary this process runs, even after an upgrade
+	// replaced its file.
+	if err := copyExecutable("/proc/self/exe", dst); err != nil {
+		slog.Warn("copying a2a-serve for the containers; they run the installed binary", "error", err)
+		return ""
+	}
+	e.launcherCopy = dst
+	return dst
+}
+
+// copyExecutable copies src to dst atomically, executable by its owner.
+func copyExecutable(src, dst string) (err error) {
+	in, err := os.Open(src)
+	if err != nil {
+		return err
+	}
+	defer func() { err = errors.Join(err, in.Close()) }()
+	tmp, err := os.CreateTemp(filepath.Dir(dst), "."+filepath.Base(dst)+"-*")
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(tmp, in); err != nil {
+		return errors.Join(err, tmp.Close(), os.Remove(tmp.Name()))
+	}
+	if err := tmp.Chmod(0o700); err != nil {
+		return errors.Join(err, tmp.Close(), os.Remove(tmp.Name()))
+	}
+	if err := tmp.Close(); err != nil {
+		return errors.Join(err, os.Remove(tmp.Name()))
+	}
+	if err := os.Rename(tmp.Name(), dst); err != nil {
+		return errors.Join(err, os.Remove(tmp.Name()))
+	}
+	return nil
+}
+
 // egressSandbox gives spec the egress socket of its container.
 func (s *Server) egressSandbox(spec *harness.Spec) {
+	cfg := s.rt.Config()
+	if cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted {
+		spec.Launcher = s.egress.launcher()
+	}
 	spec.EgressMode = s.rt.Config().Egress.Mode
 	spec.EgressAllow = s.rt.Config().Egress.Allow
 	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode)
@@ -225,8 +308,9 @@ func (s *Server) egressSandbox(spec *harness.Spec) {
 // owner that the sandbox blocks private networks.
 const egressNoticeFile = "egress-notice"
 
-// noticeEgress tells the owner once, at the first start with the egress
-// boundary, that the sandbox now blocks the LAN and the tailnet.
+// noticeEgress tells the owner of an agent that an earlier version created
+// once, at the first start with the egress boundary, that the sandbox now
+// blocks the LAN and the tailnet. A new agent only records it.
 func (s *Server) noticeEgress(p *harness.Prepared) {
 	cfg := s.rt.Config()
 	if !p.Egress || cfg.Egress.Mode == egress.ModeAllowlist {
@@ -238,6 +322,9 @@ func (s *Server) noticeEgress(p *harness.Prepared) {
 	}
 	if err := fsutil.WriteAtomic(marker, nil, 0o600); err != nil {
 		slog.Warn("recording the egress notice", "error", err)
+		return
+	}
+	if !s.existed {
 		return
 	}
 	s.logf("! the sandbox now blocks the LAN, the tailnet and this machine; allow a host with a2a-serve config set --egress-allow <host>")

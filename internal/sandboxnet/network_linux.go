@@ -16,53 +16,64 @@ package sandboxnet
 
 import (
 	"errors"
+	"net"
 	"net/netip"
 
 	"github.com/vishvananda/netlink"
 	"golang.org/x/sys/unix"
 )
 
-// DefaultRoute implements [Network]: the kernel's route to addr must come
-// from the main table and leave through the gateway and device of one of
-// its default routes.
+// routeGetter returns the kernel's routes to ip, as [netlink.RouteGet]
+// does.
+type routeGetter func(ip net.IP) ([]netlink.Route, error)
+
+// DefaultRoute implements [Network].
 func (hostNetwork) DefaultRoute(addr netip.Addr) (bool, error) {
+	return viaInternetRoute(netlink.RouteGet, addr)
+}
+
+// CheckInternetRoute checks that this host has a route to the internet,
+// without which the sandbox reaches no public host.
+func CheckInternetRoute() error {
+	if _, ok, err := routeTo(netlink.RouteGet, internetProbe4); err != nil || !ok {
+		return errors.Join(errNoInternetRoute, err)
+	}
+	return nil
+}
+
+// viaInternetRoute reports whether the kernel routes addr as it routes a
+// public probe address: through the same table, device and gateway. This
+// holds for the internet behind a full-tunnel VPN or a Tailscale exit
+// node too, and fails for the LAN, a split-tunnel VPN and bridges.
+func viaInternetRoute(get routeGetter, addr netip.Addr) (bool, error) {
 	addr = addr.Unmap()
-	routes, err := netlink.RouteGet(addr.AsSlice())
+	probe := internetProbe4
+	if addr.Is6() {
+		probe = internetProbe6
+	}
+	got, ok, err := routeTo(get, addr)
+	if err != nil || !ok {
+		return false, err
+	}
+	want, ok, err := routeTo(get, probe)
+	if err != nil || !ok {
+		return false, err
+	}
+	return got.Table == want.Table && got.LinkIndex == want.LinkIndex && got.Gw.Equal(want.Gw), nil
+}
+
+// routeTo returns the route the kernel picks for addr, or false when it
+// has none.
+func routeTo(get routeGetter, addr netip.Addr) (netlink.Route, bool, error) {
+	routes, err := get(addr.AsSlice())
 	if errors.Is(err, unix.ENETUNREACH) || errors.Is(err, unix.EHOSTUNREACH) {
-		return false, nil
+		return netlink.Route{}, false, nil
 	}
 	if err != nil {
-		return false, err
+		return netlink.Route{}, false, err
 	}
 	if len(routes) == 0 {
-		return false, nil
+		return netlink.Route{}, false, nil
 	}
-	got := routes[0]
-	if got.Gw == nil || got.Table != 0 && got.Table != unix.RT_TABLE_MAIN {
-		return false, nil
-	}
-	family := netlink.FAMILY_V4
-	if addr.Is6() {
-		family = netlink.FAMILY_V6
-	}
-	main, err := netlink.RouteListFiltered(family, &netlink.Route{Table: unix.RT_TABLE_MAIN}, netlink.RT_FILTER_TABLE)
-	if err != nil {
-		return false, err
-	}
-	for _, r := range main {
-		if r.Dst != nil {
-			if ones, _ := r.Dst.Mask.Size(); ones != 0 {
-				continue
-			}
-		}
-		if r.LinkIndex == got.LinkIndex && r.Gw.Equal(got.Gw) {
-			return true, nil
-		}
-		for _, nh := range r.MultiPath {
-			if nh.LinkIndex == got.LinkIndex && nh.Gw.Equal(got.Gw) {
-				return true, nil
-			}
-		}
-	}
-	return false, nil
+	return routes[0], true, nil
 }

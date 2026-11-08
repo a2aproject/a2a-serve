@@ -140,6 +140,9 @@ type Server struct {
 	pins *harness.Pins
 	// egress opens the egress sockets of containers.
 	egress *egressSockets
+	// existed is set when the agent's database existed before this start,
+	// for an agent created by an earlier version.
+	existed bool
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -283,6 +286,9 @@ func Run(ctx context.Context, opts Options) error {
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
 	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
+	if _, err := os.Stat(s.dir.DBPath()); err == nil {
+		s.existed = true
+	}
 	var closers stack
 	defer func() {
 		cancel()

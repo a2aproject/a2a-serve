@@ -19,6 +19,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"runtime/debug"
 	"strings"
 	"testing"
 
@@ -166,6 +167,37 @@ func TestDecideEgress(t *testing.T) {
 			}
 			if tc.warning == "" && got.Warning != "" || !strings.Contains(got.Warning, tc.warning) {
 				t.Fatalf("DecideEgress().Warning = %q, want it to contain %q", got.Warning, tc.warning)
+			}
+		})
+	}
+}
+
+func TestRelayImageRef(t *testing.T) {
+	t.Parallel()
+	rev := "f871ae2e3f61aa00bb11cc22dd33ee44ff556677"
+	tests := []struct {
+		name      string
+		info      *debug.BuildInfo
+		wantImage string
+		wantRef   string
+	}{
+		{name: "release", info: &debug.BuildInfo{Main: debug.Module{Version: "v0.2.0"}}, wantImage: RelayImageRepo + ":v0.2.0", wantRef: "v0.2.0"},
+		{name: "work tree", info: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}, Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: rev}}}, wantImage: RelayImageRepo + ":sha-f871ae2e3f61", wantRef: rev},
+		{name: "go install of a commit", info: &debug.BuildInfo{Main: debug.Module{Version: "v0.0.0-20261108175548-f871ae2e3f61"}}, wantImage: RelayImageRepo + ":sha-f871ae2e3f61", wantRef: "f871ae2e3f61"},
+		{name: "unknown", info: &debug.BuildInfo{Main: debug.Module{Version: "(devel)"}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			image, ref, err := relayImageRef(tc.info)
+			if tc.wantImage == "" {
+				if err == nil {
+					t.Fatalf("relayImageRef() error = nil, want an error")
+				}
+				return
+			}
+			if err != nil || image != tc.wantImage || ref != tc.wantRef {
+				t.Fatalf("relayImageRef() = %q, %q, %v, want %q, %q", image, ref, err, tc.wantImage, tc.wantRef)
 			}
 		})
 	}

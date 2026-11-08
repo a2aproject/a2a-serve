@@ -153,7 +153,7 @@ func renderConfig(v *agentctl.View, all bool) string {
 		sandbox = fmt.Sprintf("%-23s image %s", sandbox, img)
 	}
 	line("sandbox", sandbox, "sandbox", "image")
-	egressLine := c.Egress.Mode
+	egressLine := withDefault(c.Egress.Mode, def.Egress.Mode)
 	if len(c.Egress.Allow) > 0 {
 		egressLine = strings.TrimPrefix(egressLine+", allow "+strings.Join(c.Egress.Allow, ", "), ", ")
 	}

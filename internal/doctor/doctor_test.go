@@ -55,6 +55,8 @@ type fakeMachine struct {
 	// launcher is why a2a-serve can't be the launcher of containers, and
 	// tun why the host's TUN device can't be used.
 	launcher, tun error
+	// route is why this host has no route to the internet.
+	route error
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -104,8 +106,9 @@ func (m *fakeMachine) Env() Env {
 			}
 			return "", exec.ErrNotFound
 		},
-		Executable: func() (string, error) { return m.self, nil },
-		CheckTUN:   func() error { return m.tun },
+		Executable:         func() (string, error) { return m.self, nil },
+		CheckTUN:           func() error { return m.tun },
+		CheckInternetRoute: func() error { return m.route },
 		CheckLauncher: func(exe string) (string, error) {
 			if m.launcher != nil {
 				return "", m.launcher
@@ -584,6 +587,14 @@ func TestAgentChecks(t *testing.T) {
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.tun = errors.New("no /dev/net/tun")
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "docker agent without a route to the internet",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.route = errors.New("no route")
 			},
 			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
 		},

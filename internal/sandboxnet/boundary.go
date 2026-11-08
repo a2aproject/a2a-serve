@@ -306,8 +306,11 @@ func (b *Boundary) handle(guest net.Conn) {
 			args = append(args, "addresses", rerr.addrs)
 		}
 		b.log.write(slog.LevelWarn, "egress blocked", args...)
-		if rerr.status == 403 {
-			b.cfg.Blocks.add(target, cmp.Or(rerr.allow, target))
+		switch {
+		case rerr.status == 403:
+			b.cfg.Blocks.add(Block{Destination: target, Allow: cmp.Or(rerr.allow, target)})
+		case rerr.reason == "resolve-failed":
+			b.cfg.Blocks.add(Block{Destination: target, Unresolved: true})
 		}
 		writeRefusal(guest, rerr)
 		return
@@ -408,15 +411,15 @@ func (b *Boundary) authorize(ctx context.Context, host string, port uint16) (gra
 }
 
 // authorizeHostGateway decides a request for [egress.HostGateway]. A rule
-// that names it reaches the port on this host's loopback. Without one, the
-// internet mode reaches the ports that containers publish, as other
-// containers do.
+// that names it reaches the port on this host's loopback. The internet
+// mode also reaches the ports that containers publish, as other containers
+// do; the allowlist mode reaches only the ports of its rules.
 func (b *Boundary) authorizeHostGateway(ctx context.Context, p egress.Policy, port uint16, r egress.Rule, named bool) (grant, *refusal) {
 	hint := net.JoinHostPort(egress.HostGateway, strconv.Itoa(int(port)))
 	if named {
 		return grant{rule: r.String(), addrs: []netip.AddrPort{netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port)}}, nil
 	}
-	if p.Mode == egress.ModeInternet && !p.NamesHost(egress.HostGateway) && b.cfg.HostGateway != nil {
+	if p.Mode == egress.ModeInternet && b.cfg.HostGateway != nil {
 		if ap, ok := b.cfg.HostGateway(ctx, port); ok {
 			return grant{rule: "published-port", addrs: []netip.AddrPort{ap}}, nil
 		}
@@ -694,20 +697,22 @@ type Blocks struct {
 	recent []Block
 }
 
-// Block is a refused destination and the --egress-allow rule that allows it.
+// Block is a refused destination and the --egress-allow rule that allows
+// it, or a name that doesn't resolve.
 type Block struct {
 	Destination, Allow string
+	Unresolved         bool
 }
 
-func (b *Blocks) add(dest, allow string) {
+func (b *Blocks) add(blk Block) {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.count++
-	b.recent = slices.DeleteFunc(b.recent, func(x Block) bool { return x.Destination == dest })
-	b.recent = slices.Insert(b.recent, 0, Block{Destination: dest, Allow: allow})
+	b.recent = slices.DeleteFunc(b.recent, func(x Block) bool { return x.Destination == blk.Destination })
+	b.recent = slices.Insert(b.recent, 0, blk)
 	if len(b.recent) > maxRecentBlocks {
 		b.recent = b.recent[:maxRecentBlocks]
 	}

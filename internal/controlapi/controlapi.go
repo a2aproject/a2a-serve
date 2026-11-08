@@ -83,7 +83,11 @@ type Status struct {
 // allows it.
 type EgressBlock struct {
 	Destination string `json:"destination"`
-	Allow       string `json:"allow"`
+	Allow       string `json:"allow,omitempty"`
+	// Unresolved is set for a name that doesn't resolve, and Allowed when
+	// a rule now allows the destination, which the next connection tries.
+	Unresolved bool `json:"unresolved,omitempty"`
+	Allowed    bool `json:"allowed,omitempty"`
 }
 
 // EgressStatus is where the sandbox may connect, and what it was refused.

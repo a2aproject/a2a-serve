@@ -24,10 +24,12 @@ When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `
 In Docker, every connection the agent opens goes through the server ([where it applies](#where-it-applies)). By default:
 
 - The agent reaches the public internet.
-- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through a route other than its default route, such as a VPN or a bridge.
+- Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through another route than the internet, such as a split-tunnel VPN or a bridge. Behind a full-tunnel VPN or a Tailscale exit node, the internet is still the internet.
 - `host.docker.internal` reaches the ports that other containers publish on this machine. `--egress-allow host.docker.internal:11434` opens another port of this machine.
 
 The server resolves each name itself and checks every address it gets, so a public name can't lead to a private address. The agent calls other agents through its socket to the server, as before. A blocked connection fails in the agent's tools like a refused one.
+
+`--egress-allow` decides where the agent's own network connections may go. `--private-allow-outgoing` decides which agents on the private network the agent may call through the server.
 
 ### Allow a private host
 
@@ -43,7 +45,7 @@ The next connection uses the new rule; the agent keeps running. A rule is one of
 
 Each can end with a port, such as `:22`. Without a port, the rule allows every port. An IPv6 address takes brackets before a port, such as `[fd00::1]:22`. A pasted URL, such as `http://grafana.lan:3000/d/x`, gives its host and port. Remove a rule with `a2a-serve config unset egress-allow nas.lan:22`.
 
-A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`: the sandbox's resolver uses the tailnet's IPv4 range for its own addresses.
+A host allowed by name may resolve to private addresses, though not to loopback, link-local addresses or this machine. An address rule allows those too. Allow a tailnet host by its name, such as `nas.example.ts.net`. A rule with a tailnet IPv4 address isn't accepted.
 
 | To reach | Run |
 | --- | --- |
@@ -51,7 +53,7 @@ A host allowed by name may resolve to private addresses, though not to loopback,
 | A model server on another machine | `a2a-serve config set --egress-allow 192.168.1.30:11434` |
 | A model server on this machine | `a2a-serve config set --egress-allow host.docker.internal:11434`, and point the agent at `host.docker.internal:11434` |
 
-A rule that names `host.docker.internal` reaches that port on this machine's loopback, and limits `host.docker.internal` to the ports of the rules.
+A rule that names `host.docker.internal` reaches that port on this machine's loopback. The published ports of containers stay reachable. With `--egress allowlist`, `host.docker.internal` reaches only the ports of its rules.
 
 ### Allow only some hosts
 
@@ -61,7 +63,22 @@ $ a2a-serve config set --egress allowlist \
     --egress-allow github.com:443 --restart
 ```
 
-With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts. Include the API host of the agent's model provider, or the agent can't answer. The server doesn't resolve names that no rule lists, and a range allows only connections to its addresses. A name in it needs a rule of its own. `a2a-serve config unset egress --restart` goes back to the internet.
+With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts. Include the API host of the agent's model provider, or the agent can't answer. Start from the hosts the agent needs:
+
+| Agent or provider | Hosts |
+| --- | --- |
+| opencode | `models.opencode.ai:443`, `registry.npmjs.org:443`, and the API of its provider |
+| Claude Code | `api.anthropic.com:443` |
+| Google (Gemini) | `generativelanguage.googleapis.com:443` |
+| OpenAI | `api.openai.com:443` |
+| Anthropic | `api.anthropic.com:443` |
+| OpenRouter | `openrouter.ai:443` |
+| xAI | `api.x.ai:443` |
+| Groq | `api.groq.com:443` |
+| Mistral | `api.mistral.ai:443` |
+| DeepSeek | `api.deepseek.com:443` |
+
+`a2a-serve status` lists the hosts it blocked, such as those of the agent's MCP servers. The server doesn't resolve names that no rule lists, and a range allows only connections to its addresses. A name in it needs a rule of its own. `a2a-serve config unset egress --restart` goes back to the internet.
 
 `--egress allowlist` needs the egress boundary. Where it doesn't apply, the agent doesn't start.
 
@@ -73,11 +90,11 @@ With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts. In
 $ a2a-serve status
 ...
   egress   the internet and nas.lan:22; other private networks blocked
-           ! 2 connection(s) blocked since the server started, latest 192.168.1.10:22, files.lan:443
-             allow the latest with a2a-serve config set --egress-allow 192.168.1.10:22
+           ! 3 connection(s) blocked since the server started, latest 192.168.1.10:22, nas.lan:443 (allowed, retry), nsa.lan:443 (doesn't resolve)
+             allow one with a2a-serve config set --egress-allow 192.168.1.10:22
 ```
 
-A destination stays listed until a connection to it succeeds. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine.
+A destination stays listed until a connection to it succeeds. One that a rule now allows says `(allowed, retry)`. For a name that resolves to a private address, the suggested rule names the address, or `host.docker.internal` for this machine.
 
 `a2a-serve logs` has one line for each blocked connection:
 
@@ -110,8 +127,10 @@ Allowed connections are logged too when the server runs with `a2a-serve start --
 The server routes the sandbox's connections with Docker, rootless Docker and Docker Desktop.
 
 - On Linux, the container gets the socket of its connections and runs the server's binary to set up its network. This needs an a2a-serve built without cgo, as the releases are, an image for the same CPU architecture, and the `tun` kernel module.
-- With Docker Desktop, which can't mount the server's sockets, a relay container runs next to each agent's container and forwards its connections to the server. Its image is `ghcr.io/a2aproject/a2a-serve`, with the version of your a2a-serve. When the pull fails, the server builds the image from the a2a-serve repository at that version, which takes a few minutes the first time. `A2A_SERVE_SANDBOX_IMAGE` names an image of your own, such as one built from a work tree with `docker build -f internal/sandboxnet/Dockerfile .`.
+- With Docker Desktop, which can't mount the server's sockets, an egress container runs next to each agent's container and forwards its connections to the server. Its name ends in `-egress`, and it starts again when it stops. Its image is `ghcr.io/a2aproject/a2a-serve`, with the version of your a2a-serve. When the pull fails, the server builds the image from the a2a-serve repository at that version, which takes a few minutes the first time. `A2A_SERVE_EGRESS_IMAGE` names an image of your own, such as one built from a work tree with `docker build -f internal/sandboxnet/Dockerfile .`.
 
 Otherwise the sandbox keeps Docker's own network, and `start`, `status` and `doctor` warn about it. With `--egress allowlist`, the agent doesn't start.
+
+On Windows, the server doesn't read the routing table: it counts the subnets of its own interfaces as private, and misses networks that a VPN routes.
 
 `--sandbox local` has no egress rules. The agent reaches every network you reach.
