@@ -5,7 +5,7 @@ The server recognizes each caller and gives it a role: owner, authenticated or a
 `a2a-serve status` says who can call right now:
 
 ```
-  access   you: the local URL and your other tailnet devices
+  access   you: this machine and your tailnet devices
            everyone on the tailnet, emails matching *@example.com, 2 pairings
            the public URL needs a pairing or Google sign-in
 ```
@@ -13,7 +13,7 @@ The server recognizes each caller and gives it a role: owner, authenticated or a
 | Caller | How it is recognized | Role |
 | --- | --- | --- |
 | You, on the machine running the agent | The token a2a-serve saves for you on start, listed as `local` | owner |
-| Your other devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device other than the machine running the agent | owner |
+| Your devices on the tailnet | Tailscale identity: the same user as the agent, on an untagged device | owner |
 | Everyone else on the private network, unless `--private-allow-incoming paired` | The tailnet's or relay's identity | authenticated |
 | Messenger accounts | Linked with a pairing code | the pairing's role |
 | People whose email matches `--allow-email` | A verified email: [Google sign-in](email-sign-in.md), a tailnet or relay login, or mail that passes DMARC | authenticated |
@@ -31,7 +31,6 @@ a2a-serve config set --public-allow-incoming anyone            # anyone on the p
 a2a-serve config unset allow-email '*@example.com'
 ```
 
-- On the machine running the agent, the private URL doesn't make you an owner, because the sandbox reaches the tailnet through that machine too. Use the local URL there, or pair with `a2a-serve pair invite <name> --owner` to call the private URL as an owner. `pair join` saves the token in `~/.config/a2a-serve/credentials.json`, so don't mount that directory into the sandbox.
 - Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
 - A call that comes through another agent gets at most `authenticated`, even when the calling agent is yours.
 - Each authenticated caller gets a separate container for conversation history, while sharing the workspace, `--mount` directories, and `--secret` environment variables ([Access Model](../advanced/access-model.md#agent-processes)).
