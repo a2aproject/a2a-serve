@@ -44,6 +44,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
@@ -68,6 +69,12 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 		mountDesc[i] = m.String()
 	}
 	s.logf("✓ workspace %s; config %s", strings.Join(mountDesc, ", "), s.dir.ConfigPath())
+	if keys := h.prepared.ModelKeys; len(keys) > 0 {
+		s.logf("✓ model API keys kept out of the sandbox: %s", strings.Join(keys, ", "))
+	}
+	if keys := s.mcpModelKeys(h.prepared.ModelKeys); len(keys) > 0 {
+		s.logf("! %s passes model API keys to its MCP servers in the sandbox: %s", project.MCPFile, strings.Join(keys, ", "))
+	}
 	for _, w := range h.prepared.Warnings {
 		s.logf("! %s", w)
 	}
@@ -104,7 +111,8 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 
 // newAnonymousExecutor prepares the separate harness of anonymous
 // conversations. Its agent starts on the first task, and stops when idle.
-// It gets no way to call other agents: no socket, credential helper or CLI.
+// It gets no way to call other agents: no credential helper or CLI, and a
+// socket only for its model requests, when the server keeps its keys.
 // With Docker it runs in its own container with its own home.
 func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 	h, err := s.prepareHarness(ctx, harnessLog, agentkey.Anonymous)
@@ -305,11 +313,21 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, err
 	}
 	closeEndpoint := func() error { return nil }
+	modelKeys := modelSecrets(cfg)
 	if key == agentkey.Anonymous {
 		spec.Name += "-anonymous"
 		spec.Labels["a2a.role"] = auth.RoleAnonymous
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {
 			return nil, err
+		}
+		// The endpoint serves this process only the model routes.
+		if len(modelKeys) > 0 {
+			ep, err := s.harness.open(key)
+			if err != nil {
+				return nil, err
+			}
+			closeEndpoint = ep.close
+			spec.Models = s.modelRoute(ep, modelKeys)
 		}
 	} else {
 		ep := s.mainHarness
@@ -325,15 +343,26 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		if err := s.connectHarness(&spec, ep); err != nil {
 			return nil, errors.Join(err, closeEndpoint())
 		}
+		if len(modelKeys) > 0 {
+			spec.Models = s.modelRoute(ep, modelKeys)
+		}
 		if cfg.Sandbox == harness.SandboxLocal {
 			spec.CLI = s.localCLI()
 		}
 	}
+	revokeModels := func() {}
+	if spec.Models != nil {
+		revokeModels = s.harness.grantModels(key, modelGrantOf(spec.Env, spec.Models.Keys))
+	}
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
+		revokeModels()
 		return nil, errors.Join(err, closeEndpoint())
 	}
-	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
+	stop := func(ctx context.Context) error {
+		revokeModels()
+		return errors.Join(prepared.Stop(ctx), closeEndpoint())
+	}
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage}, nil
 }
 

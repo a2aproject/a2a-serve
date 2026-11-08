@@ -108,6 +108,9 @@ type Options struct {
 	// MaxAgentMessage replaces the 64 MiB limit of a message from the
 	// agent, for tests.
 	MaxAgentMessage int
+	// ModelTransport replaces the transport of the requests the server
+	// forwards to model providers, for tests.
+	ModelTransport http.RoundTripper
 }
 
 // Server is a running server.
@@ -142,6 +145,7 @@ type Server struct {
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
 	telegramServerURL string
+	modelTransport    http.RoundTripper
 
 	urlMu      sync.Mutex
 	localURL   string
@@ -268,6 +272,7 @@ func Run(ctx context.Context, opts Options) error {
 
 		credentials:       opts.Credentials,
 		telegramServerURL: opts.TelegramServerURL,
+		modelTransport:    opts.ModelTransport,
 		setupProblems:     opts.SetupProblems,
 		private:           opts.Private,
 		public:            opts.Public,
@@ -606,7 +611,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	s.chatTurns.Start(ctx)
 	closers.push(s.chatTurns.Wait)
 	closers.push(s.supervisor.StopAll)
-	closers.push(s.harness.serve(ctx, s.proxy.Routes(s.harness.processOf), errc))
+	closers.push(s.harness.serve(ctx, s.harnessRoutes(s.harness), errc))
 	if err := s.listenLocal(ctx, closers, errc); err != nil {
 		return nil, err
 	}

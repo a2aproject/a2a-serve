@@ -1,6 +1,6 @@
 # HTTP Routes
 
-An a2a-serve agent serves these routes on every listener, and a relay serves the [relay routes](#relay-routes).
+An a2a-serve agent serves these routes on every listener, and the [agent's socket](#the-agents-socket) serves the agent's own processes. A relay serves the [relay routes](#relay-routes).
 
 | Route | |
 | --- | --- |
@@ -82,6 +82,25 @@ The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show
 ## Signatures and headers
 
 The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.
+
+## The agent's socket
+
+Each agent process reaches the server through a socket of its own, which serves the routes for calling other agents and the model routes. The socket of anonymous callers' process serves only the model routes.
+
+| Route | |
+| --- | --- |
+| `/_model/<provider>/<path>` | the API of `anthropic`, `google`, `openai` or `openrouter`, with the [model API key](../guide/secrets.md#model-api-keys) of the process. The server removes the credentials and the `key` query parameter that the agent sent, and adds the key. On Docker Desktop, the process sends its agent key as the provider's API key |
+
+The server forwards only these endpoints. A path that ends in `/` stands for the paths below it.
+
+| Provider | Endpoints |
+| --- | --- |
+| `anthropic` | `POST /v1/messages`, `POST /v1/messages/count_tokens`, `GET /v1/models`, `GET /v1/models/` |
+| `google` | `POST /v1beta/models/`, `GET /v1beta/models`, `GET /v1beta/models/`, and the same under `/v1` |
+| `openai` | `POST /v1/responses`, `POST /v1/chat/completions`, `POST /v1/completions`, `POST /v1/embeddings`, `GET /v1/models`, `GET /v1/models/` |
+| `openrouter` | `POST /api/v1/chat/completions`, `POST /api/v1/completions`, `POST /api/v1/embeddings`, `GET /api/v1/models`, `GET /api/v1/models/` |
+
+A model request may have a body of 32 MiB, sent with at most 30 seconds without progress. One process may have 16 open model requests, and all processes 192. A request over a limit gets 429 or 503. The provider has 10 minutes to start its answer, and a whole request, the streamed answer included, has 30 minutes.
 
 ## Relay routes
 

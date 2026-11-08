@@ -23,6 +23,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -40,6 +41,8 @@ type stubModel struct {
 
 	mu       sync.Mutex
 	requests []chatRequest
+	// auth has the Authorization header of each request.
+	auth []string
 }
 
 // modelScript is how a stubModel answers a turn: with the tool calls, one
@@ -137,7 +140,7 @@ func defaultRouteIP() (string, error) {
 }
 
 func (m *stubModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost || r.URL.Path != "/v1/chat/completions" {
+	if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/v1/chat/completions") {
 		http.NotFound(w, r)
 		return
 	}
@@ -148,6 +151,7 @@ func (m *stubModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	m.mu.Lock()
 	m.requests = append(m.requests, req)
+	m.auth = append(m.auth, r.Header.Get("Authorization"))
 	m.mu.Unlock()
 	if m.script.status != 0 {
 		m.write(w, m.script.status, "application/json", m.script.body)
@@ -214,6 +218,20 @@ func (m *stubModel) toolResults() map[string]string {
 		return results
 	}
 	return nil
+}
+
+// authorizations returns the distinct Authorization headers of the
+// requests so far.
+func (m *stubModel) authorizations() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []string
+	for _, a := range m.auth {
+		if !slices.Contains(out, a) {
+			out = append(out, a)
+		}
+	}
+	return out
 }
 
 // requestCount returns the number of chat completion requests so far.

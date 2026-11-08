@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -29,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/modelproxy"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -217,6 +219,49 @@ func TestHarnessOpencodeModelUsageLimitFailsTask(t *testing.T) {
 	t.Logf("failed after %s and %d model requests: %q", time.Since(start), model.requestCount(), a2atext.Message(got.Status.Message))
 	if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "usage limit") {
 		t.Fatalf("a2a task get = %v %q, want failed with the provider's message", got.Status.State, a2atext.Message(got.Status.Message))
+	}
+}
+
+func TestHarnessOpencodeModelKeyStaysOutOfSandbox(t *testing.T) {
+	t.Parallel()
+	requireHarness(t, "opencode")
+	const key = "sk-or-e2e-model-key"
+	owner := newUser(t)
+	model := newStubModel(t, modelScript{answer: "Done."})
+	owner.env = append(owner.env, modelproxy.EnvUpstream+"="+model.srv.URL)
+	coder := owner.newAgent("coder")
+	coder.start("opencode", "--sandbox", "docker", "--image", harnessImage, "--model", "openrouter/openai/gpt-4o-mini", "--secret", "OPENROUTER_API_KEY="+key)
+
+	anna := newUser(t)
+	anna.pairJoin(coder.url, coder.invite("anna"))
+	for _, u := range []*user{owner, anna} {
+		got := resultOf(u.mustSend(coder.url, "hello"))
+		if diff := cmp.Diff(taskResult{State: a2a.TaskStateCompleted, Text: "Done."}, got); diff != "" {
+			t.Fatalf("a2a send wrong result (-want +got) diff = %s", diff)
+		}
+	}
+	if diff := cmp.Diff([]string{"Bearer " + key}, model.authorizations()); diff != "" {
+		t.Fatalf("authorization of the model requests wrong result (-want +got) diff = %s", diff)
+	}
+	out, err := exec.Command("docker", "ps", "-q", "--filter", "label=a2a.dir="+coder.dir).Output()
+	if err != nil {
+		t.Fatalf("docker ps error = %v", err)
+	}
+	ids := strings.Fields(string(out))
+	if len(ids) != 2 {
+		t.Fatalf("docker ps found containers %v of %s, want those of the owner and anna", ids, coder.dir)
+	}
+	for _, id := range ids {
+		out, err := exec.Command("docker", "exec", id, "sh", "-c", "cat /proc/[0-9]*/environ; grep -rl "+key+" /home/agent /run/a2a; true").CombinedOutput()
+		if err != nil {
+			t.Fatalf("docker exec %s error = %v: %s", id, err, out)
+		}
+		if strings.Contains(string(out), key) {
+			t.Fatalf("container %s has the model key in its processes or files: %s", id, out)
+		}
+		if !strings.Contains(string(out), "OPENROUTER_API_KEY=") {
+			t.Fatalf("container %s has no OPENROUTER_API_KEY placeholder", id)
+		}
 	}
 }
 

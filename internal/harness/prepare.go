@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/modelproxy"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
@@ -78,6 +79,9 @@ type Spec struct {
 	// Model is the model of the harness, in its own format. Empty keeps
 	// the harness default.
 	Model string
+	// Models routes the model API keys of Env through the server in a
+	// sandbox. Nil, or a harness without a sandbox, gets the keys.
+	Models *ModelRoute
 
 	// Name, Image, Limits and Labels configure the container. Image
 	// defaults to the profile's.
@@ -113,6 +117,9 @@ type Prepared struct {
 	// redirected its sandbox since Prepare, or when another agent was
 	// created in a mount that the sandbox doesn't hide.
 	Check func() error
+	// ModelKeys are the variables of the model API keys that stay out of
+	// the sandbox; the server adds them to the model requests.
+	ModelKeys []string
 	// Warnings are problems of the sandbox that don't stop the harness.
 	Warnings []string
 	// OnHost is set when the harness runs on the host, where the processes
@@ -163,7 +170,7 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.Warnings = warnings
+	p.Warnings = append(warnings, p.Warnings...)
 	return p, nil
 }
 
@@ -237,13 +244,14 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	if err != nil {
 		return nil, err
 	}
+	routed := routeModels(spec.Env, spec.Models, spec.Profile.ModelProviders())
 	dr := &DockerRunner{
 		Name:     spec.Name,
 		Image:    image,
 		Mounts:   slices.Clone(spec.Mounts),
 		Hidden:   spec.Hidden,
 		Home:     spec.Home,
-		Env:      cliEnv(spec.Env),
+		Env:      cliEnv(routed.env),
 		Limits:   spec.Limits,
 		Labels:   spec.Labels,
 		Rootless: rootless,
@@ -259,11 +267,27 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
-	cmd, err := dr.Command(ctx, profileCommand(spec, ws))
+	c := profileCommand(spec, ws, routed.apis)
+	if len(routed.keys) > 0 && spec.Models.Socket != "" {
+		switch spec.Socket {
+		case spec.Models.Socket:
+		case "":
+			dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Models.Socket), Dst: SandboxDir, ReadOnly: true})
+		default:
+			return nil, fmt.Errorf("the model routes need the socket of the agent, %s, got %s", spec.Socket, spec.Models.Socket)
+		}
+		c = withModelForwarder(c, filepath.Join(SandboxDir, filepath.Base(spec.Models.Socket)))
+	}
+	cmd, err := dr.Command(ctx, c)
 	if err != nil {
 		return nil, err
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop, Check: func() error {
+	var warnings []string
+	for _, name := range routed.kept {
+		p, _ := modelproxy.ProviderOfKey(name)
+		warnings = append(warnings, fmt.Sprintf("%s is readable in the sandbox, since %s sends its requests to another server", name, p.BaseURLEnv))
+	}
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, ModelKeys: routed.keys, Warnings: warnings, Stop: dr.Stop, Check: func() error {
 		if err := checkPaths(spec); err != nil {
 			return err
 		}
@@ -307,14 +331,15 @@ func writeIfMissing(path string, data []byte) error {
 	return f.Close()
 }
 
-// profileCommand is the command of the profile, with the model of spec.
-// The model's variables replace the command's own of the same name.
-func profileCommand(spec Spec, ws Workspace) Command {
+// profileCommand is the command of the profile, with the model of spec and
+// the model APIs apis. The model's variables replace the command's own of
+// the same name.
+func profileCommand(spec Spec, ws Workspace, apis ModelAPIs) Command {
 	c := spec.Profile.Command(ws)
-	if spec.Model == "" {
+	if spec.Model == "" && len(apis.BaseURLs) == 0 {
 		return c
 	}
-	model := spec.Profile.ModelEnv(spec.Model)
+	model := spec.Profile.ModelEnv(spec.Model, apis)
 	env := slices.DeleteFunc(slices.Clone(c.Env), func(kv string) bool {
 		name, _, _ := strings.Cut(kv, "=")
 		return slices.ContainsFunc(model, func(m string) bool { return strings.HasPrefix(m, name+"=") })
@@ -332,7 +357,7 @@ func cliEnv(env []string) []string {
 }
 
 func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
-	c := profileCommand(spec, ws)
+	c := profileCommand(spec, ws, ModelAPIs{})
 	c.Env = append(c.Env, cliEnv(spec.Env)...)
 	if spec.CLI != "" {
 		c.Env = append(c.Env, "PATH="+filepath.Dir(spec.CLI)+string(os.PathListSeparator)+os.Getenv("PATH"))

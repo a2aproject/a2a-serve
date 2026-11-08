@@ -19,6 +19,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"maps"
 	"net"
 	"net/http"
 	"os"
@@ -33,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/httpserver"
+	"github.com/a2aproject/a2a-serve/internal/modelproxy"
 )
 
 // harnessListeners gives each agent process its own way to reach the
@@ -57,7 +59,13 @@ type harnessListeners struct {
 	pending []net.Listener
 	// keys has the agent key of each TCP key.
 	keys map[string]string
+	// models has the model API keys that each agent process may use.
+	models map[string]*modelGrant
 }
+
+// modelGrant has the model API keys, by variable name, that an agent
+// process may use through the model routes.
+type modelGrant struct{ keys map[string]string }
 
 // harnessEndpoint is how one agent process reaches the server.
 type harnessEndpoint struct {
@@ -80,7 +88,7 @@ func listenHarnessSockets(dir string) (*harnessListeners, error) {
 	if err := fsutil.MkdirPrivate(dir); err != nil {
 		return nil, err
 	}
-	return &harnessListeners{dir: dir}, nil
+	return &harnessListeners{dir: dir, models: map[string]*modelGrant{}}, nil
 }
 
 // listenHarnessTCP listens on bind for agent processes that reach it on
@@ -94,7 +102,7 @@ func listenHarnessTCP(bind, dial string) (*harnessListeners, error) {
 	if err != nil {
 		return nil, errors.Join(err, ln.Close())
 	}
-	return &harnessListeners{tcp: ln, url: "http://" + net.JoinHostPort(dial, port), dial: dial, keys: map[string]string{}}, nil
+	return &harnessListeners{tcp: ln, url: "http://" + net.JoinHostPort(dial, port), dial: dial, keys: map[string]string{}, models: map[string]*modelGrant{}}, nil
 }
 
 // open opens the endpoint of the agent process of agentKey. Closing it
@@ -196,6 +204,45 @@ func (hl *harnessListeners) bridge(main *harnessEndpoint) harnessBridge {
 
 type harnessProcessKey struct{}
 
+// grantModels lets the agent process of agentKey use the model API keys,
+// by variable name, in place of what it was granted before. revoke removes
+// the grant unless a later one replaced it.
+func (hl *harnessListeners) grantModels(agentKey string, keys map[string]string) (revoke func()) {
+	g := &modelGrant{keys: maps.Clone(keys)}
+	hl.mu.Lock()
+	hl.models[agentKey] = g
+	hl.mu.Unlock()
+	return func() {
+		hl.mu.Lock()
+		defer hl.mu.Unlock()
+		if hl.models[agentKey] == g {
+			delete(hl.models, agentKey)
+		}
+	}
+}
+
+// modelKey returns the API key in the variable name that the agent process
+// of agentKey may use.
+func (hl *harnessListeners) modelKey(agentKey, name string) (string, bool) {
+	hl.mu.Lock()
+	defer hl.mu.Unlock()
+	g := hl.models[agentKey]
+	if g == nil {
+		return "", false
+	}
+	v, ok := g.keys[name]
+	return v, ok
+}
+
+// modelProcessOf returns the agent key of the process a model request came
+// from, which over TCP sends its key as the API key of the provider.
+func (hl *harnessListeners) modelProcessOf(r *http.Request) (string, bool) {
+	if key, ok := r.Context().Value(harnessProcessKey{}).(string); ok {
+		return key, true
+	}
+	return hl.agentKeyOf(modelproxy.Credential(r))
+}
+
 // processOf returns the agent key of the process a request on the harness
 // listener came from, or false when it proves none.
 func (hl *harnessListeners) processOf(r *http.Request) (string, bool) {
@@ -204,6 +251,14 @@ func (hl *harnessListeners) processOf(r *http.Request) (string, bool) {
 	}
 	tok, ok := auth.BearerToken(r.Header.Get("Authorization"))
 	if !ok {
+		return "", false
+	}
+	return hl.agentKeyOf(tok)
+}
+
+// agentKeyOf returns the agent key of the TCP key tok.
+func (hl *harnessListeners) agentKeyOf(tok string) (string, bool) {
+	if tok == "" {
 		return "", false
 	}
 	hl.mu.Lock()

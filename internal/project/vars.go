@@ -22,7 +22,9 @@ import (
 )
 
 // Vars returns the values ${VAR} in a project's .mcp.json can take: the
-// --env and --secret values of the agent, which the harness sees anyway.
+// --env and --secret values of the agent, which the harness sees anyway,
+// except the model API keys that a sandbox keeps from it. Those reach the
+// MCP servers that name them, and the server warns about it on start.
 // Other secrets, such as bot tokens, stay out, because the harness can edit
 // .mcp.json.
 func Vars(cfg *agentdir.Config, secrets agentdir.Secrets) func(string) (string, bool) {

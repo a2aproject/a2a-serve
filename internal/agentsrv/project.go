@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
@@ -103,6 +104,36 @@ func (s *Server) mcpServerNames() []string {
 		names[i] = srv.Name
 	}
 	return names
+}
+
+// mcpModelKeys returns the model API keys of keys that the project's MCP
+// servers name. Those servers get the keys in the sandbox.
+func (s *Server) mcpModelKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	ws, err := s.workspace()
+	if err != nil {
+		return nil
+	}
+	found, err := project.LoadMCP(ws)
+	if err != nil {
+		return nil
+	}
+	cfg := s.rt.Config()
+	var out []string
+	for _, srv := range found {
+		if cfg.MCPDisabled(srv.Name) {
+			continue
+		}
+		srv.Resolve(func(name string) (string, bool) {
+			if slices.Contains(keys, name) && !slices.Contains(out, name) {
+				out = append(out, name)
+			}
+			return "", true
+		})
+	}
+	return out
 }
 
 // workspace returns the working directory of the agent's sessions.

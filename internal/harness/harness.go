@@ -29,6 +29,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/modelproxy"
 )
 
 // Workspace is what a harness works on.
@@ -62,14 +63,19 @@ type Profile interface {
 	// Bootstrap writes harness config into ws.Home before the first start,
 	// so that every tool permission is asked and the server's rules decide.
 	Bootstrap(ws Workspace) error
-	// ModelEnv returns the NAME=value pairs which select model, or nil for
-	// a harness without a known way to select one.
-	ModelEnv(model string) []string
+	// ModelEnv returns the NAME=value pairs which select model, when it is
+	// set, and send the requests of the harness to apis. It returns nil for
+	// a harness without a known way to set them.
+	ModelEnv(model string, apis ModelAPIs) []string
 	// SessionSettings returns the ACP session settings which select model,
 	// or nil for none. Setting the model per session makes an unknown model
 	// fail the turn; opencode falls back to its default model when the model
 	// of ModelEnv is unknown.
 	SessionSettings(model string) map[string]any
+	// ModelProviders are the providers, by name in opencode, whose base URL
+	// the harness takes from ModelEnv or the base URL variables. Only their
+	// keys stay out of the sandbox.
+	ModelProviders() []string
 }
 
 // ProfileNames lists the known harness profiles.
@@ -159,15 +165,32 @@ const opencodePermission = `{"*":"ask","glob":"allow","grep":"allow","list":"all
 	`"read":{"*":"allow","*.env":"ask","*.env.*":"ask","*.env.example":"allow"},` +
 	`"skill":"allow","task":"allow","todowrite":"allow","websearch":"allow"}`
 
+// ModelAPIs are the model APIs that a harness reaches through the server.
+type ModelAPIs struct {
+	// BaseURLs has the base URL of each provider, by its name in opencode.
+	BaseURLs map[string]string
+	// Key is the API key the harness sends to them.
+	Key string
+}
+
 // opencodeConfigEnv is opencode's inline config, which it reads on every
 // start, also in agent homes bootstrapped before a setting existed. It keeps
 // opencode working after a tool call is denied, by a rule or by the user, so
 // that it can answer another way; by default it ends the turn without an
-// answer. A non-empty model overrides the model of opencode.json.
-func opencodeConfigEnv(model string) []string {
+// answer. A non-empty model overrides the model of opencode.json. The
+// providers of apis get their base URL and key, which opencode passes to
+// the SDK only from its config.
+func opencodeConfigEnv(model string, apis ModelAPIs) []string {
 	cfg := map[string]any{"experimental": map[string]any{"continue_loop_on_deny": true}}
 	if model != "" {
 		cfg["model"] = model
+	}
+	if len(apis.BaseURLs) > 0 {
+		providers := map[string]any{}
+		for name, base := range apis.BaseURLs {
+			providers[name] = map[string]any{"options": map[string]any{"baseURL": base, "apiKey": apis.Key}}
+		}
+		cfg["provider"] = providers
 	}
 	data, err := json.Marshal(cfg)
 	if err != nil {
@@ -180,7 +203,7 @@ func opencodeConfigEnv(model string) []string {
 var opencodeEnv = append([]string{
 	"OPENCODE_PERMISSION=" + opencodePermission,
 	"CLOUDCODE_PERMISSION=" + opencodePermission,
-}, opencodeConfigEnv("")...)
+}, opencodeConfigEnv("", ModelAPIs{})...)
 
 type opencode struct{}
 
@@ -196,15 +219,25 @@ func (opencode) Command(ws Workspace) Command {
 	}
 }
 
-// ModelEnv sets the model in opencode's inline config, which overrides the
-// model of opencode.json in the harness home.
-func (opencode) ModelEnv(model string) []string { return opencodeConfigEnv(model) }
+// ModelEnv sets the model and the providers of apis in opencode's inline
+// config, which overrides those of opencode.json in the harness home.
+func (opencode) ModelEnv(model string, apis ModelAPIs) []string {
+	return opencodeConfigEnv(model, apis)
+}
 
 func (opencode) SessionSettings(model string) map[string]any {
 	if model == "" {
 		return nil
 	}
 	return map[string]any{"model": model}
+}
+
+func (opencode) ModelProviders() []string {
+	names := make([]string, len(modelproxy.Providers))
+	for i, p := range modelproxy.Providers {
+		names[i] = p.Name
+	}
+	return names
 }
 
 func (opencode) Bootstrap(ws Workspace) error {
@@ -228,9 +261,20 @@ func (claude) Command(ws Workspace) Command {
 	return Command{Path: "claude-agent-acp", Dir: ws.Dir}
 }
 
-func (claude) ModelEnv(model string) []string { return []string{"ANTHROPIC_MODEL=" + model} }
+// ModelEnv selects the model. Claude Code reads the base URL from the
+// variable that every harness gets.
+func (claude) ModelEnv(model string, _ ModelAPIs) []string {
+	if model == "" {
+		return nil
+	}
+	return []string{"ANTHROPIC_MODEL=" + model}
+}
 
 func (claude) SessionSettings(string) map[string]any { return nil }
+
+// ModelProviders is Anthropic, whose base URL Claude Code reads from
+// ANTHROPIC_BASE_URL.
+func (claude) ModelProviders() []string { return []string{"anthropic"} }
 
 func (claude) Bootstrap(ws Workspace) error {
 	settings := filepath.Join(".claude", "settings.json")
@@ -270,9 +314,9 @@ func (c custom) Command(ws Workspace) Command {
 	return cmd
 }
 
-func (c custom) ModelEnv(model string) []string {
+func (c custom) ModelEnv(model string, apis ModelAPIs) []string {
 	if c.base != nil {
-		return c.base.ModelEnv(model)
+		return c.base.ModelEnv(model, apis)
 	}
 	return nil
 }
@@ -280,6 +324,13 @@ func (c custom) ModelEnv(model string) []string {
 func (c custom) SessionSettings(model string) map[string]any {
 	if c.base != nil {
 		return c.base.SessionSettings(model)
+	}
+	return nil
+}
+
+func (c custom) ModelProviders() []string {
+	if c.base != nil {
+		return c.base.ModelProviders()
 	}
 	return nil
 }

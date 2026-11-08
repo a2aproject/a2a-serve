@@ -207,6 +207,8 @@ type serverOpts struct {
 	setupProblems  func(context.Context) []string
 	// maxAgentMessage replaces the limit of a message from the agent.
 	maxAgentMessage int
+	// modelTransport receives the requests forwarded to model providers.
+	modelTransport http.RoundTripper
 }
 
 // startServer starts a server and stops it when the test ends.
@@ -252,7 +254,7 @@ func startServer(t *testing.T, o serverOpts) *testServer {
 	})
 	ts := &testServer{t: t, dir: dir, ch: o.messenger, done: make(chan error, 1)}
 	ready := make(chan *Server, 1)
-	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, MaxAgentMessage: o.maxAgentMessage, Ready: func(s *Server) { ready <- s }}
+	opts := Options{Private: o.private, Public: o.public, NewRelay: o.newRelay, GoogleEndpoints: o.google, SharedGoogleClientID: o.sharedClientID, Dir: dir, Config: cfg, Secrets: o.secrets, Credentials: o.credentials, TelegramServerURL: o.telegramAPI, Now: o.now, HarnessLog: agentStderr, Out: o.out, SetupProblems: o.setupProblems, Timings: timings, MaxAgentMessage: o.maxAgentMessage, ModelTransport: o.modelTransport, Ready: func(s *Server) { ready <- s }}
 	if o.messenger != nil {
 		opts.Messengers = []messenger.Messenger{o.messenger}
 	}
