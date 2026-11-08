@@ -291,8 +291,10 @@ func (g *guardedHandler) sendStreamed(ctx context.Context, req *a2a.SendMessageR
 	case *a2a.Task:
 		return ev, nil
 	}
-	var history *int
-	if req.Config != nil {
+	// A blocking SendMessage returns no history unless asked, as the
+	// server's does.
+	history := new(int)
+	if req.Config != nil && req.Config.HistoryLength != nil {
 		history = req.Config.HistoryLength
 	}
 	return g.RequestHandler.GetTask(ctx, &a2a.GetTaskRequest{ID: last.TaskInfo().TaskID, HistoryLength: history})

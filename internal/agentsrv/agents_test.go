@@ -41,6 +41,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
@@ -1134,7 +1135,7 @@ func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
 				t.Fatalf("GetTask() status = %s (%s), want %s (%s)", got.Status.State, a2atext.Message(got.Status.Message), tc.wantState, tc.wantStatus)
 			}
 
-			res, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText(tc.answer, string(task.ID), task.ContextID)})
+			res, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText(tc.answer, string(task.ID), task.ContextID), Config: &a2a.SendMessageConfig{HistoryLength: new(a2alimit.MaxHistoryLength)}})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("SendMessage() = %v, %v, want error containing %q", res, err, tc.wantErr)

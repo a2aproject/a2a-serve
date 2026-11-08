@@ -40,6 +40,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2aclient"
 	"github.com/a2aproject/a2a-go/v2/a2aclient/agentcard"
 
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
@@ -449,9 +450,10 @@ func userText(text, taskID, contextID string) *a2a.Message {
 	return msg
 }
 
+// send sends msg and waits for the task, with its history.
 func send(t *testing.T, c *a2aclient.Client, msg *a2a.Message) *a2a.Task {
 	t.Helper()
-	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg})
+	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{HistoryLength: new(a2alimit.MaxHistoryLength)}})
 	if err != nil {
 		t.Fatalf("SendMessage() error = %v", err)
 	}

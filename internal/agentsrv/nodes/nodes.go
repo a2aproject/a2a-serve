@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2asrv"
 
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -183,13 +184,13 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 	if ok {
 		return h
 	}
-	h = a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
+	h = a2alimit.NewHandler(a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
 		a2asrv.WithTaskStore(ts),
 		a2asrv.WithUpdateMaterializer(ts.UpdateMaterializer()),
-		a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, &nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised, tasks: ts}),
+		a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised, tasks: ts}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 		a2asrv.WithLogger(slog.Default()),
-	)
+	), a2alimit.Default())
 	n.mu.Lock()
 	n.handlers[id] = h
 	n.mu.Unlock()

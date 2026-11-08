@@ -54,6 +54,21 @@ Each listener handles at most 1024 requests at once, including open streams. It 
 
 A body over the limit gets 413. When the time runs out, the request fails and the server closes the connection. The timeouts end once the body is read, so a response stream that follows can stay open.
 
+## Message and response limits
+
+The A2A routes and `/n/…` take a message with at most 1000 parts. File and data parts count too. The text parts of a message may have at most 1 MiB of text together. A message over a limit gets an invalid params error (JSON-RPC `-32602`) that names the limit.
+
+A response returns at most 100 history messages of a task when the request sets `historyLength`. A larger `historyLength` counts as 100.
+
+| Method | History without `historyLength` |
+| --- | --- |
+| `SendMessage` | none |
+| `SendStreamingMessage` | the whole history |
+| `GetTask` | the whole history |
+| `ListTasks` | none |
+
+`ListTasks` cuts each part longer than 16 KiB. A text part keeps its first 16 KiB, and a file or data part becomes a text note. The note names the task, and `GetTask` returns the whole part.
+
 ## Errors
 
 The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show the server's message. `POST /` answers with a JSON-RPC error and `"id": null`, and the REST paths answer with a `google.rpc.Status`. The error's `google.rpc.ErrorInfo` carries the A2A reason:
