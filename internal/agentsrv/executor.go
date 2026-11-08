@@ -329,10 +329,12 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 			spec.CLI = s.localCLI()
 		}
 	}
+	s.egressSandbox(&spec)
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
+	s.egress.started(spec.EgressMode, prepared.EgressProblem)
 	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage}, nil
 }

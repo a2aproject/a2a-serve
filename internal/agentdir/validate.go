@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -114,6 +115,14 @@ func (c *Config) Validate() error {
 	}
 	if c.Sandbox != "" && c.Sandbox != SandboxDocker && c.Sandbox != SandboxLocal {
 		invalid("sandbox", c.Sandbox, "want docker or local")
+	}
+	if c.Egress.Mode != "" && !slices.Contains(egress.Modes, c.Egress.Mode) {
+		invalid("egress", c.Egress.Mode, "want %s", strings.Join(egress.Modes, ", "))
+	}
+	for _, r := range c.Egress.Allow {
+		if _, err := egress.ParseRule(r); err != nil {
+			add("%v", err)
+		}
 	}
 	if c.Network.Private == "lan" {
 		invalid("private", c.Network.Private, "lan was removed; want tailscale, a relay URL or none")

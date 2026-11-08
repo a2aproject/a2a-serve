@@ -292,11 +292,13 @@ const HarnessSocketIDLen = 12
 
 // HarnessSocketDir returns the directory that holds a directory per agent
 // process, of [HarnessSocketIDLen] characters, with the a2a.sock through
-// which the process reaches the server. Like the control socket, it moves
+// which the process reaches the server, and one per container with its
+// egress.sock. Like the control socket, it moves
 // to the runtime directory when the path is too long for a Unix socket.
 func (d Dir) HarnessSocketDir() string {
 	p := filepath.Join(d.StateDir(), "harness")
-	if len(p)+1+HarnessSocketIDLen+len("/a2a.sock") <= maxSocketPath {
+	// egress.sock is the longest socket name in it.
+	if len(p)+1+HarnessSocketIDLen+len("/egress.sock") <= maxSocketPath {
 		return p
 	}
 	return filepath.Join(runtimeDir(), "a2a-"+d.ID()+"-harness")

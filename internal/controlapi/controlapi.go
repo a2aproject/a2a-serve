@@ -76,6 +76,21 @@ type Status struct {
 	DenyTools  []string      `json:"denyTools,omitempty"`
 	Backup     *BackupStatus `json:"backup,omitempty"`
 	Access     *Access       `json:"access,omitempty"`
+	Egress     *EgressStatus `json:"egress,omitempty"`
+}
+
+// EgressStatus is where the sandbox may connect, and what it was refused.
+type EgressStatus struct {
+	// Mode is public, allowlist or unrestricted, and Allow the allowed hosts.
+	Mode  string   `json:"mode"`
+	Allow []string `json:"allow,omitempty"`
+	// Blocked counts the refused connections since the start, and Recent
+	// are the latest refused destinations, newest first.
+	Blocked int      `json:"blocked,omitempty"`
+	Recent  []string `json:"recent,omitempty"`
+	// Problem is why the sandbox reaches every network, such as on Docker
+	// Desktop.
+	Problem string `json:"problem,omitempty"`
 }
 
 // NetworkProblem says why a network doesn't reach the agent now.

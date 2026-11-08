@@ -15,6 +15,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -29,6 +30,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -94,6 +96,11 @@ type Spec struct {
 	// CLI is the host path of the a2a binary put first on the PATH of a
 	// local harness. A harness in Docker uses the a2a of its image.
 	CLI string
+	// EgressMode is the egress setting. Unless it is unrestricted, a
+	// container gets no network but the socket OpenEgress opens, where
+	// Docker allows it. Nil OpenEgress gives containers Docker's network.
+	EgressMode string
+	OpenEgress OpenEgress
 
 	// Progress receives the output of pulling or building the image.
 	Progress io.Writer
@@ -115,6 +122,9 @@ type Prepared struct {
 	Check func() error
 	// Warnings are problems of the sandbox that don't stop the harness.
 	Warnings []string
+	// EgressProblem is why the container has Docker's own network although
+	// the egress setting asks for the boundary, or "".
+	EgressProblem string
 	// OnHost is set when the harness runs on the host, where the processes
 	// it starts outlive it unless they are killed; see [ProcessMark].
 	OnHost bool
@@ -163,7 +173,7 @@ func Prepare(ctx context.Context, spec Spec) (*Prepared, error) {
 	if err != nil {
 		return nil, err
 	}
-	p.Warnings = warnings
+	p.Warnings = append(warnings, p.Warnings...)
 	return p, nil
 }
 
@@ -259,16 +269,58 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: filepath.Dir(spec.Socket), Dst: SandboxDir, ReadOnly: true})
 		dr.Env = append(dr.Env, EnvUnixSocket+"="+filepath.Join(SandboxDir, filepath.Base(spec.Socket)))
 	}
+	closeEgress := func() error { return nil }
+	var warnings []string
+	var egressProblem string
+	if spec.OpenEgress != nil && spec.EgressMode != egress.ModeUnrestricted {
+		eg, closeFn, problem, err := dockerEgress(ctx, image, spec.OpenEgress, rootless)
+		if err != nil {
+			return nil, err
+		}
+		if problem != "" && spec.EgressMode == egress.ModeAllowlist {
+			return nil, errors.New(noAllowlist(problem))
+		}
+		if problem != "" {
+			warnings = append(warnings, noBoundary(problem))
+			egressProblem = noBoundary(problem)
+		}
+		if eg != nil {
+			dr.Egress, closeEgress = eg, closeFn
+			what += "; egress " + cmp.Or(spec.EgressMode, egress.ModeInternet) + " through the server"
+		}
+	}
 	cmd, err := dr.Command(ctx, profileCommand(spec, ws))
 	if err != nil {
-		return nil, err
+		return nil, errors.Join(err, closeEgress())
 	}
-	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: dr.Stop, Check: func() error {
+	stop := func(ctx context.Context) error { return errors.Join(dr.Stop(ctx), closeEgress()) }
+	return &Prepared{Args: cmd.Args, Env: cmd.Env, Dir: cmd.Dir, Summary: "docker: " + what, Stop: stop, Warnings: warnings, EgressProblem: egressProblem, Check: func() error {
 		if err := checkPaths(spec); err != nil {
 			return err
 		}
 		return checkNoNewAgents(spec)
 	}}, nil
+}
+
+// dockerEgress opens the egress socket of a container of image, or
+// returns why the container can't have one.
+func dockerEgress(ctx context.Context, image string, open OpenEgress, rootless bool) (eg *DockerEgress, close func() error, problem string, err error) {
+	launcher, err := Launcher()
+	if err != nil {
+		return nil, nil, err.Error(), nil
+	}
+	arch, entrypoint, err := imageConfig(ctx, image)
+	if err != nil {
+		return nil, nil, "", err
+	}
+	if arch != runtime.GOARCH {
+		return nil, nil, fmt.Sprintf("the image %s is for %s and this a2a-serve for %s", image, cmp.Or(arch, "an unknown CPU architecture"), runtime.GOARCH), nil
+	}
+	socket, close, err := open(hostGateway(ctx, rootless))
+	if err != nil {
+		return nil, nil, "", fmt.Errorf("opening the egress socket: %w", err)
+	}
+	return &DockerEgress{Socket: socket, Launcher: launcher, Entrypoint: entrypoint}, close, "", nil
 }
 
 // emptyMCP is a .mcp.json with no servers.

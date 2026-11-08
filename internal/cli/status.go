@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"cmp"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -31,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 )
@@ -208,6 +210,42 @@ func recipeOf(d agentdir.Dir) string {
 	return src.Describe() + " (" + shortCommit(rec.Commit) + ")"
 }
 
+// writeEgress writes where the sandbox may connect and what it was refused.
+func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
+	if e == nil {
+		return
+	}
+	if e.Problem != "" {
+		fmt.Fprintf(sb, "  egress   ! %s\n", e.Problem)
+		return
+	}
+	allowed := strings.Join(e.Allow, ", ")
+	var line string
+	switch e.Mode {
+	case egress.ModeAllowlist:
+		line = "only " + cmp.Or(allowed, "the --egress-allow hosts, none yet")
+	case egress.ModeUnrestricted:
+		line = "unrestricted, the LAN and the tailnet included"
+	case egress.ModeInternet:
+		if allowed == "" {
+			line = "the internet; private networks blocked"
+		} else {
+			line = "the internet and " + allowed + "; other private networks blocked"
+		}
+	}
+	fmt.Fprintf(sb, "  egress   %s\n", line)
+	if e.Blocked == 0 {
+		return
+	}
+	blocked := fmt.Sprintf("%d connection(s) blocked since the server started", e.Blocked)
+	if len(e.Recent) == 0 {
+		fmt.Fprintf(sb, "  %-8s %s\n", "", blocked)
+		return
+	}
+	fmt.Fprintf(sb, "  %-8s ! %s, latest %s\n", "", blocked, strings.Join(e.Recent, ", "))
+	fmt.Fprintf(sb, "  %-8s   allow one with a2a-serve config set --egress-allow %s\n", "", e.Recent[0])
+}
+
 // writeNetworkProblem writes why the URL u of the label scope doesn't work,
 // under u, or in its place when the server left it out.
 func writeNetworkProblem(sb *strings.Builder, label, u string, p *controlapi.NetworkProblem) {
@@ -276,6 +314,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, nex
 			fmt.Fprintf(&sb, "  %-8s %s\n", label, line)
 		}
 	}
+	writeEgress(&sb, st.Egress)
 	states := make([]string, 0, len(st.Tasks))
 	for _, s := range slices.Sorted(maps.Keys(st.Tasks)) {
 		states = append(states, fmt.Sprintf("%d %s", st.Tasks[s], s))

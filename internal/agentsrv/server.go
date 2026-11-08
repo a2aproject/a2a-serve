@@ -138,6 +138,8 @@ type Server struct {
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
 	pins *harness.Pins
+	// egress opens the egress sockets of containers.
+	egress *egressSockets
 
 	credentials       *credstore.Store
 	setupProblems     func(context.Context) []string
@@ -280,6 +282,7 @@ func Run(ctx context.Context, opts Options) error {
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
+	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
 	var closers stack
 	defer func() {
 		cancel()

@@ -25,6 +25,7 @@ import (
 
 	"github.com/google/shlex"
 
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -218,6 +219,14 @@ func mountArgKey(s string) string {
 }
 
 func trimSpace(_ Dir, v string) (string, error) { return strings.TrimSpace(v), nil }
+
+func parseEgressRule(_ Dir, v string) (string, error) {
+	r, err := egress.ParseRule(v)
+	if err != nil {
+		return "", err
+	}
+	return r.String(), nil
+}
 
 // toolValues are the completions of --allow-tools and --deny-tools.
 var toolValues = append(slices.Clone(ToolKinds), toolrules.PrefixTool, toolrules.PrefixCommand)
@@ -562,6 +571,19 @@ var fields = []field{
 		unsetTo: fmt.Sprintf("the default of %d", DefaultLimits.PIDs),
 		usage:   "Container process limit (default 512)",
 		def:     strconv.Itoa(DefaultLimits.PIDs),
+	},
+	{
+		access: str(func(c *Config) *string { return &c.Egress.Mode }, func(s *Settings) *string { return &s.Egress }),
+		flag:   "egress", path: "egress.mode", scope: scopeOwner, section: SectionSandbox,
+		usage:  "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet)",
+		values: egress.Modes,
+		def:    egress.ModeInternet,
+	},
+	{
+		access: strs(func(c *Config) *[]string { return &c.Egress.Allow }, func(s *Settings) *[]string { return &s.EgressAllow }),
+		flag:   "egress-allow", path: "egress.allow", scope: scopeOwner, live: true, section: SectionSandbox, split: true,
+		key: identity, parse: parseEgressRule,
+		usage: "Host the Docker sandbox may also reach, private ones included: a `rule` such as nas.lan, *.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Auth.GoogleClientID }, func(s *Settings) *string { return &s.GoogleClientID }),

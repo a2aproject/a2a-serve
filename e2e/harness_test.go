@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,7 +250,12 @@ func (a *agent) startOpencode(model *stubModel, flags ...string) {
 			"models":  map[string]any{"scripted": map[string]any{}},
 		}},
 	})
-	a.start("opencode", append([]string{"--sandbox", "docker", "--image", harnessImage, "--model", "stub/scripted"}, flags...)...)
+	u, err := url.Parse(model.url)
+	if err != nil {
+		a.u.t.Fatalf("url.Parse(%q) error = %v", model.url, err)
+	}
+	// The stub model listens on the host's LAN address, a private one.
+	a.start("opencode", append([]string{"--sandbox", "docker", "--image", harnessImage, "--model", "stub/scripted", "--egress-allow", u.Host}, flags...)...)
 }
 
 func writeJSON(t *testing.T, path string, v any) {

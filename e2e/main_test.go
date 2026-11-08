@@ -106,7 +106,9 @@ func buildBinaries(dir string) error {
 		return err
 	}
 	// The e2e tag lets the tests point the messengers at fake services.
-	if err := goCmd(root, nil, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
+	// a2a-serve is static, as releases are, so that the Docker sandbox runs
+	// it as the launcher of its containers.
+	if err := goCmd(root, []string{"CGO_ENABLED=0"}, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
 		return err
 	}
 	// fakeacp is static, so that it also runs in an empty image.

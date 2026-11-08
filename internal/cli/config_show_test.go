@@ -56,6 +56,7 @@ func fullConfig() *agentdir.Config {
 		Auth:      agentdir.AuthConfig{GoogleClientID: "google-id-x", GoogleClientSecret: "secret:google-client"},
 		Backup:    agentdir.BackupConfig{To: "/backups-x", Key: "secret:backup-key", Interval: "10m", Retention: "3d"},
 		MCP:       agentdir.MCPConfig{Disabled: []string{"github-x"}},
+		Egress:    agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas-x.lan"}},
 	}
 }
 

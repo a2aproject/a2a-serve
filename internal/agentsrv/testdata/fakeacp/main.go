@@ -638,6 +638,23 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		}
 		a.chunk(sid, "ls: "+strings.Join(names, " "))
 		end("end_turn")
+	case "dial":
+		c, err := net.DialTimeout("tcp", arg, 10*time.Second)
+		if err != nil {
+			a.chunk(sid, "dial error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		if err := c.Close(); err != nil {
+			a.chunk(sid, "dial error: "+err.Error())
+			end("end_turn")
+			return
+		}
+		a.chunk(sid, "dial ok")
+		end("end_turn")
+	case "caps":
+		a.chunk(sid, capabilities())
+		end("end_turn")
 	case "crash":
 		a.chunk(sid, "about to crash")
 		os.Exit(3)

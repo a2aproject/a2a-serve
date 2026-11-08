@@ -15,11 +15,13 @@
 package doctor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -34,6 +36,9 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
+		if w := harness.EgressWarning(cfg, launcher(env)); w != "" {
+			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
+		}
 	} else {
 		docker := checkDocker(ctx, env)
 		results = append(results, docker)
@@ -41,6 +46,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 			if r, ok := checkImage(ctx, env, cfg, online); ok {
 				results = append(results, r)
 			}
+			results = append(results, checkEgress(env, cfg))
 		}
 	}
 	for i := range results {
@@ -138,4 +144,32 @@ func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Resul
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
+}
+
+// checkEgress checks that the Docker sandbox's connections go through the
+// server.
+func checkEgress(env Env, cfg *agentdir.Config) Result {
+	r := Result{ID: "egress", Status: StatusOK}
+	warning := harness.EgressWarning(cfg, launcher(env))
+	switch {
+	case cfg.Egress.Mode == egress.ModeUnrestricted:
+		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect
+		r.Fix = "a2a-serve config unset egress --restart"
+	case warning != "":
+		r.Status, r.Message = StatusWarn, warning
+	default:
+		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egress.ModeInternet) + ")"
+	}
+	return r
+}
+
+// launcher checks the a2a-serve of env as the launcher of containers.
+func launcher(env Env) func() (string, error) {
+	return func() (string, error) {
+		exe, err := env.Executable()
+		if err != nil {
+			return "", err
+		}
+		return env.CheckLauncher(exe)
+	}
 }

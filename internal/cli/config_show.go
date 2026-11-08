@@ -153,6 +153,11 @@ func renderConfig(v *agentctl.View, all bool) string {
 		sandbox = fmt.Sprintf("%-23s image %s", sandbox, img)
 	}
 	line("sandbox", sandbox, "sandbox", "image")
+	egressLine := c.Egress.Mode
+	if len(c.Egress.Allow) > 0 {
+		egressLine = strings.TrimPrefix(egressLine+", allow "+strings.Join(c.Egress.Allow, ", "), ", ")
+	}
+	line("egress", egressLine, "egress", "egress-allow")
 	var secrets []string
 	for _, name := range c.Secrets {
 		secrets = append(secrets, name+" "+v.Secrets[name])

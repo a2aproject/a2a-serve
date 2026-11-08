@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 // Runner decides where a harness process runs.
@@ -79,11 +80,24 @@ type DockerRunner struct {
 	// Rootless is set for rootless Docker, where container root is the host
 	// user, so files the agent writes stay owned by you.
 	Rootless bool
+	// Egress is set when the container's only network path is the egress
+	// socket. The launcher starts the command after the image's entrypoint.
+	Egress *DockerEgress
 
 	envFiles []string
 }
 
 var _ Runner = (*DockerRunner)(nil)
+
+// DockerEgress gives a container no network but the egress socket.
+type DockerEgress struct {
+	// Socket is the host path of the egress socket, alone in its directory.
+	Socket string
+	// Launcher is the host path of the binary run as PID 1.
+	Launcher string
+	// Entrypoint is the image's entrypoint, which the launcher replaces.
+	Entrypoint []string
+}
 
 // ContainerHome is the home directory of the harness in the container.
 const ContainerHome = "/home/agent"
@@ -152,16 +166,36 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	if limits.PIDs == 0 {
 		limits.PIDs = agentdir.DefaultLimits.PIDs
 	}
-	user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	uid, gid := os.Getuid(), os.Getgid()
 	if r.Rootless {
-		user = "0:0"
+		uid, gid = 0, 0
 	}
-	args := []string{
-		"--rm", "-i", "--init",
-		"--user", user,
-		"--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+	args := []string{"--rm", "-i"}
+	if r.Egress == nil {
+		args = append(args,
+			"--init",
+			"--user", fmt.Sprintf("%d:%d", uid, gid),
+			"--cap-drop", "ALL",
+		)
+	} else {
+		// The launcher starts as root with what building the network and
+		// switching to uid:gid take, and drops it all before the agent starts.
+		args = append(args,
+			"--user", "0:0",
+			"--cap-drop", "ALL",
+			"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
+			"--network", "none", "--device", "/dev/net/tun",
+			"--entrypoint", sandboxnet.ContainerLauncher,
+			"-v", r.Egress.Launcher+":"+sandboxnet.ContainerLauncher+":ro",
+			"-v", filepath.Dir(r.Egress.Socket)+":"+sandboxnet.ContainerSocketDir+":ro",
+		)
+	}
+	args = append(args,
+		"--security-opt", "no-new-privileges",
 		"--memory", limits.Memory, "--cpus", limits.CPUs, "--pids-limit", strconv.Itoa(limits.PIDs),
-		"--add-host", "host.docker.internal:host-gateway",
+	)
+	if r.Egress == nil {
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	}
 	for _, k := range slices.Sorted(maps.Keys(r.Labels)) {
 		args = append(args, "--label", k+"="+r.Labels[k])
@@ -187,7 +221,12 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	if c.Dir != "" {
 		args = append(args, "-w", c.Dir)
 	}
-	args = append(args, r.Image, c.Path)
+	args = append(args, r.Image)
+	if r.Egress != nil {
+		args = append(args, "sandbox-init", sandboxnet.ContainerSocketDir+"/"+sandboxnet.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+		args = append(args, r.Egress.Entrypoint...)
+	}
+	args = append(args, c.Path)
 	return append(args, c.Args...)
 }
 
