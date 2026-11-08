@@ -32,14 +32,15 @@ When a tool call is rejected or denied, the status message of the finished task 
 | A shell command | the program and the next word, such as `kubectl get *` for `kubectl get pods -n prod` |
 | A call of another kind, such as an edit | that kind, such as `edit` |
 
-The next word counts only when it holds letters, digits, `.`, `_` and `-`, so `ls -R` gives `ls *`. Replies typed without buttons show what `always` covers, such as `always (allows kubectl get * in this conversation)`.
+The next word counts only when it holds letters, digits, `.`, `_` and `-`. A program called alone, such as `ls`, gives `ls *`. The `*` also allows any later arguments and flags, so `kubectl get *` allows `kubectl get pods -A`. Replies typed without buttons show what `always` covers, such as `always (allows kubectl get * in this conversation)`.
 
 Some questions have no `always` option:
 
 - A command with `;`, `&`, `|`, `` ` ``, `$(`, `<`, `>` or a line break, which has several parts.
 - A command that starts with a path or an assignment.
+- A command whose next word holds other characters, such as a path, a flag, a URL or a quoted string, as in `rm /work/b.txt`, `ls -R` or `git -C repo push`.
 - A command of a program that runs other commands, such as `sudo`, `env`, `xargs` or `find`.
-- A shell, interpreter or tool such as `bash`, `python3`, `git` or `kubectl` followed by a flag, as in `bash -c` or `git -C repo push`.
+- A shell, interpreter or tool such as `bash`, `python3`, `git` or `kubectl` called alone.
 - A call of the kinds `execute` and `other` that isn't an MCP tool.
 
 The grant covers the tasks of the person whose question it answered. A new conversation asks again. The server keeps the grant and answers the agent `once` for each call it covers, so the agent's own "always" never applies. Only an agent that offers no way to allow a call once gets its own "always" answer.

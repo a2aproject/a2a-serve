@@ -216,9 +216,10 @@ func Simple(command string) bool {
 
 // Suggest returns the narrowest useful entry that covers c and calls like
 // it, which "Always allow" grants: the MCP tool, the program of a command
-// with its next word if that is a plain word, or the kind. It returns ""
-// for calls that no such entry covers well: commands with several parts or
-// that start with a path, and calls of the kinds execute and other.
+// with its next word, or the kind. It returns "" for calls that no such
+// entry covers well: commands with several parts, that start with a path or
+// whose next word isn't plain, such as a path or a flag, and calls of the
+// kinds execute and other.
 func Suggest(c Call) string {
 	var s string
 	switch {
@@ -246,7 +247,10 @@ func suggestCommand(command string) string {
 	if runsAnything[words[0]] {
 		return ""
 	}
-	if len(words) > 1 && plainWord(words[1]) {
+	if len(words) > 1 {
+		if !plainWord(words[1]) {
+			return ""
+		}
 		return PrefixCommand + words[0] + " " + words[1] + " *"
 	}
 	if runsArguments[words[0]] {
