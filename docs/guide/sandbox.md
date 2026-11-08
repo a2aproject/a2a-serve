@@ -40,7 +40,7 @@ Sandbox rules set what chosen callers get, such as a read-only workspace for a p
            guests: read-only workspace, no secrets
 ```
 
-These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says what guests get when no rule covers them. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
+These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
 
 ### Share the agent
 
@@ -69,7 +69,7 @@ Guests get no secrets, so the agent can't reach a model that needs a key for the
 a2a-serve config set --secret GUEST_ANTHROPIC_KEY --guest-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY --restart
 ```
 
-The agent sees `ANTHROPIC_API_KEY` in the container of guests, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the containers of other callers keep theirs. A new secret loads at restart, so the rule waits for it, and `status` lists it as pending until then.
+The agent sees `ANTHROPIC_API_KEY` in the container of guests, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the other containers that get every `--secret` value also get `GUEST_ANTHROPIC_KEY`. Those callers already get your own key. A new secret loads at restart, so the rule waits for it, and `status` lists it as pending until then.
 
 To share your own key instead, which takes effect at once:
 
@@ -77,7 +77,7 @@ To share your own key instead, which takes effect at once:
 a2a-serve config set --guest-secrets ANTHROPIC_API_KEY
 ```
 
-`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`.
+`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`. When you stored the key since the agent started, the pairing gets it after `a2a-serve restart`, and `pair set` says so.
 
 ### Rules for several callers
 
@@ -99,7 +99,7 @@ An `own` copy is made once, when the caller's container first starts. Nothing is
 - leaves out every `.a2a` directory;
 - holds at most 1 GiB in at most 200,000 entries. When the workspace is larger, the container fails to start with an error that suggests `read-only`;
 - lives in `.a2a/state/workspaces/`, and [backups](backups.md) leave it out;
-- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
+- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. `pair rm --dry-run` lists the copy and the rule it would delete. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
 
 The server keeps at most 100 copies. A caller whose copy would be the 101st gets an error that suggests `read-only` storage.
 
@@ -109,12 +109,12 @@ Storage rules need the Docker sandbox. With `--sandbox local`, every caller's ag
 
 ### When a change applies
 
-A running agent applies every change of the rules at once, also those made with `a2a-serve config edit`.
+A running agent applies the changes of the rules made with `config set`, `config edit` and the `pair` commands at once. A grant of a secret stored since the agent started waits for the restart that loads the secret, and the rest of the change applies at once. A change you make to `config.yaml` in another editor applies at `a2a-serve restart`, and `status` lists it as pending until then.
 
 A change that gives a caller less ends the tasks in their container and stops it, so that they can't keep the access they had by keeping a task waiting. Their next message starts the container with the new rule. A secret the agent already saved in its home stays there, so rotate a secret you take away. Another change reaches a container when its current tasks end. Until then, it takes only answers to the tasks that wait in it, and other messages get an error that asks the caller to send them again. Your own container, which the `self` rule covers, applies a change at `a2a-serve restart`, and `status` notes a change waiting for it.
 
 A conversation runs in the container of the user who started it. When someone else sends a message in it and their rule gives less than that container does, the server refuses the message and suggests that they start a conversation of their own.
 
-`${VAR}` in `.mcp.json` takes the `--env` values and the secrets that the conversation's container gets. An MCP server that needs a variable the container doesn't get is left out of that conversation ([MCP and Skills](mcp-and-skills.md)).
+`${VAR}` in `.mcp.json` takes the `--env` values and the secrets that the conversation's container gets. An MCP server that needs a variable the container doesn't get is left out of that conversation ([MCP and Skills](mcp-and-skills.md)). A container with `own` storage gets the servers of the `.mcp.json` in its copy, and a container with `empty` storage gets none.
 
 [Security](../advanced/security.md#the-sandbox) lists what the sandbox doesn't protect yet.

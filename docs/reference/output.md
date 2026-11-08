@@ -26,7 +26,7 @@ networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `pair rm --dry-run` removes nothing and prints the same
-`kind` and `name` with `"dryRun": true` and the counts of what it would remove. `pair rm --email` prints the kind `google` and adds
+`kind` and `name` with `"dryRun": true`, the counts of what it would remove, the `agentHomes` and `workspaces` directories it would delete, and the pairing's `sandboxRule`. `pair rm --email` prints the kind `google` and adds
 `tokens`, the number of sign-in tokens it revoked. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`, where `stopped` is
 false if the agent wasn't running and `serviceInstalled` is true if it starts
