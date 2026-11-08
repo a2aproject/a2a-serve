@@ -64,7 +64,7 @@ esac
 	}
 	want := []string{
 		"ps -aq --filter label=a2a.agent=coder --filter label=a2a.dir=/work/agent",
-		"rm -f abc def",
+		"rm -f -v abc def",
 	}
 	if diff := cmp.Diff(want, strings.Split(strings.TrimSpace(string(data)), "\n")); diff != "" {
 		t.Fatalf("PruneContainers() wrong docker calls (-want +got) diff = %s", diff)

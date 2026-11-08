@@ -15,11 +15,14 @@
 package doctor
 
 import (
+	"cmp"
 	"context"
 	"fmt"
+	"runtime"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/egress"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
@@ -34,6 +37,9 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 		if r, ok := checkHarnessCommand(env, *dir, cfg); ok {
 			results = append(results, r)
 		}
+		if w := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg)).Warning; w != "" {
+			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
+		}
 	} else {
 		docker := checkDocker(ctx, env)
 		results = append(results, docker)
@@ -41,6 +47,7 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 			if r, ok := checkImage(ctx, env, cfg, online); ok {
 				results = append(results, r)
 			}
+			results = append(results, checkEgress(ctx, env, dir, cfg))
 		}
 	}
 	for i := range results {
@@ -138,4 +145,74 @@ func checkHarnessCommand(env Env, dir agentdir.Dir, cfg *agentdir.Config) (Resul
 func firstLine(s string) string {
 	line, _, _ := strings.Cut(strings.TrimSpace(s), "\n")
 	return line
+}
+
+// checkEgress checks that the Docker sandbox's connections go through the
+// server.
+func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.Config) Result {
+	r := Result{ID: "egress", Status: StatusOK}
+	d := harness.DecideEgress(cfg, egressEnv(ctx, env, cfg))
+	if dir != nil && env.Status != nil {
+		if st, err := env.Status(ctx, *dir); err == nil && st.Egress != nil && st.Egress.Problem != "" {
+			d.Warning = st.Egress.Problem
+		}
+	}
+	switch {
+	case cfg.Egress.Mode == egress.ModeUnrestricted:
+		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect
+		r.Fix = "a2a-serve config unset egress --restart"
+	case d.Warning != "":
+		r.Status, r.Message = StatusWarn, d.Warning
+	case d.Boundary && env.CheckInternetRoute() != nil:
+		r.Status, r.Message = StatusWarn, env.CheckInternetRoute().Error()
+	default:
+		r.Message = "the sandbox connects only through the server (--egress " + cmp.Or(cfg.Egress.Mode, egress.ModeInternet) + ")"
+	}
+	return r
+}
+
+// egressEnv is the environment [harness.DecideEgress] decides in for env:
+// its a2a-serve, its TUN device, and the architecture of the agent's
+// image when docker has it.
+func egressEnv(ctx context.Context, env Env, cfg *agentdir.Config) harness.EgressEnv {
+	return harness.EgressEnv{
+		GOOS: runtime.GOOS,
+		Launcher: func() (string, error) {
+			exe, err := env.Executable()
+			if err != nil {
+				return "", err
+			}
+			return env.CheckLauncher(exe)
+		},
+		TUN:        env.CheckTUN,
+		ImageArch:  imageArch(ctx, env, cfg),
+		ForceRelay: lookupEnv(env, harness.EnvForceRelay) == "1",
+		RelayImage: func() error { return harness.CheckRelayImage(ctx, env.Run, true) },
+	}
+}
+
+func lookupEnv(env Env, name string) string {
+	v, _ := env.LookupEnv(name)
+	return v
+}
+
+// imageArch returns the CPU architecture of the agent's image, or "" when
+// docker doesn't have it.
+func imageArch(ctx context.Context, env Env, cfg *agentdir.Config) string {
+	if cfg.Sandbox == agentdir.SandboxLocal {
+		return ""
+	}
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return ""
+	}
+	for _, image := range []string{cfg.Image, profile.Image(), harness.LocalImage(profile.Name())} {
+		if image == "" {
+			continue
+		}
+		if out, err := env.Run(ctx, "docker", "image", "inspect", "--format", "{{.Architecture}}", image); err == nil {
+			return strings.TrimSpace(string(out))
+		}
+	}
+	return ""
 }

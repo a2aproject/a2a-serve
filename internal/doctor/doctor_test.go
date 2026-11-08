@@ -52,6 +52,11 @@ type fakeMachine struct {
 	busy      map[int]bool
 	unit      string
 	messenger error
+	// launcher is why a2a-serve can't be the launcher of containers, and
+	// tun why the host's TUN device can't be used.
+	launcher, tun error
+	// route is why this host has no route to the internet.
+	route error
 }
 
 func newFakeMachine(t *testing.T) *fakeMachine {
@@ -101,7 +106,15 @@ func (m *fakeMachine) Env() Env {
 			}
 			return "", exec.ErrNotFound
 		},
-		Executable: func() (string, error) { return m.self, nil },
+		Executable:         func() (string, error) { return m.self, nil },
+		CheckTUN:           func() error { return m.tun },
+		CheckInternetRoute: func() error { return m.route },
+		CheckLauncher: func(exe string) (string, error) {
+			if m.launcher != nil {
+				return "", m.launcher
+			}
+			return exe, nil
+		},
 		Run: func(_ context.Context, name string, args ...string) ([]byte, error) {
 			key := strings.Join(append([]string{name}, args...), " ")
 			if m.fails[key] {
@@ -559,7 +572,41 @@ func TestAgentChecks(t *testing.T) {
 		{
 			name: "stopped docker agent",
 			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
-			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "docker agent without a launcher",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.launcher = errors.New("built with cgo")
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "docker agent without a TUN device",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.tun = errors.New("no /dev/net/tun")
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "docker agent without a route to the internet",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode"},
+			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
+				m.route = errors.New("no route")
+			},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "unrestricted docker agent",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Egress: agentdir.EgressConfig{Mode: "unrestricted"}},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+		},
+		{
+			name: "local sandbox with egress rules",
+			cfg:  agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: agentdir.SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}},
+			want: []check{{"harness-command", StatusFail}, {"egress", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name: "docker unreachable",
@@ -583,7 +630,7 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.outputs["docker image inspect --format {{.Id}} example/img"] = "sha256:1"
 			},
-			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name:   "image pullable",
@@ -592,19 +639,19 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.outputs["docker manifest inspect example/img"] = "{}"
 			},
-			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name:   "image not pullable",
 			cfg:    agentdir.Config{Name: "coder", Harness: "opencode", Image: "example/img"},
 			online: true,
-			want:   []check{{"docker", StatusOK}, {"harness-image", StatusFail}, {"config", StatusOK}, {"running", StatusWarn}},
+			want:   []check{{"docker", StatusOK}, {"harness-image", StatusFail}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name:   "profile image built locally",
 			cfg:    agentdir.Config{Name: "coder", Harness: "opencode"},
 			online: true,
-			want:   []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"config", StatusOK}, {"running", StatusWarn}},
+			want:   []check{{"docker", StatusOK}, {"harness-image", StatusWarn}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name: "profile image built before",
@@ -612,7 +659,7 @@ func TestAgentChecks(t *testing.T) {
 			setup: func(_ *testing.T, m *fakeMachine, _ agentdir.Dir) {
 				m.outputs["docker image inspect --format {{.Id}} "+harness.LocalImage("opencode")] = "sha256:1"
 			},
-			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
+			want: []check{{"docker", StatusOK}, {"harness-image", StatusOK}, {"egress", StatusOK}, {"config", StatusOK}, {"running", StatusWarn}},
 		},
 		{
 			name: "local sandbox without the harness command",

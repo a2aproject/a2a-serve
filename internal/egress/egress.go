@@ -48,6 +48,36 @@ var nonPublic = []netip.Prefix{
 	netip.MustParsePrefix("0.0.0.0/8"),
 	// Shared address space, where Tailscale puts tailnet addresses.
 	netip.MustParsePrefix("100.64.0.0/10"),
+	netip.MustParsePrefix("192.0.0.0/24"),
+	netip.MustParsePrefix("198.18.0.0/15"),
+	netip.MustParsePrefix("240.0.0.0/4"),
+	// NAT64 and 6to4 addresses embed an IPv4 address, which may be private.
+	netip.MustParsePrefix("64:ff9b::/96"),
+	netip.MustParsePrefix("64:ff9b:1::/48"),
+	netip.MustParsePrefix("2002::/16"),
+	// IPv4-compatible, IETF protocol, documentation, deprecated site-local
+	// and SRv6 addresses.
+	netip.MustParsePrefix("::/96"),
+	netip.MustParsePrefix("2001::/23"),
+	netip.MustParsePrefix("2001:db8::/32"),
+	netip.MustParsePrefix("3fff::/20"),
+	netip.MustParsePrefix("5f00::/16"),
+	netip.MustParsePrefix("fec0::/10"),
+	// The discard prefix, and IPv4-mapped addresses that a parser didn't
+	// unmap.
+	netip.MustParsePrefix("100::/64"),
+	netip.MustParsePrefix("::ffff:0:0/96"),
+}
+
+// Special reports whether ip belongs to this host or its link, or to no
+// host at all: loopback, unspecified, link-local, as cloud metadata
+// services are, multicast or reserved. A rule that allows a name never
+// reaches it.
+func Special(ip netip.Addr) bool {
+	ip = ip.Unmap()
+	return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() ||
+		ip.IsInterfaceLocalMulticast() || ip.IsMulticast() || ip == netip.AddrFrom4([4]byte{255, 255, 255, 255}) ||
+		netip.MustParsePrefix("0.0.0.0/8").Contains(ip) || netip.MustParsePrefix("240.0.0.0/4").Contains(ip)
 }
 
 // Public reports whether ip is a public unicast address: not loopback,

@@ -196,6 +196,11 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
 		Warnings: append(harness.Warnings(next), mcpWarnings(d, old, next)...),
 	}
+	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) {
+		if w := harness.DecideEgress(next, harness.HostEgressEnv()).Warning; w != "" {
+			res.Warnings = append(res.Warnings, w)
+		}
+	}
 	if dryRun {
 		return res, nil
 	}

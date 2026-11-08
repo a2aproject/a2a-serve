@@ -111,6 +111,8 @@ git finds a repository, or take --dir.`,
 		newRelayCmd(cfg),
 		newDoctorCmd(cfg, &f),
 		newCredentialCmd(cfg),
+		newSandboxInitCmd(),
+		newSandboxRelayCmd(),
 		newVersionCmd(cfg),
 		newCompletionCmd(),
 	)

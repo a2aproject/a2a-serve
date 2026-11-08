@@ -54,7 +54,7 @@ kubeconfig = "/kube/config"
 EOF
 ```
 
-The agent sees this directory at `/kube`, read-only. The cluster's API server must be reachable from the agent's container. The token expires after 30 days; create a new one and run `set-credentials` again before then.
+The agent sees this directory at `/kube`, read-only. The cluster's API server must be reachable from the agent's container. When it or Grafana has a private address, such as on your LAN or tailnet, allow it with `a2a-serve config set --egress-allow <host>` ([Network](../../docs/guide/sandbox.md#network)). The token expires after 30 days; create a new one and run `set-credentials` again before then.
 
 **GitHub (optional).** Create a fine-grained personal access token with read-only access to Contents, Pull requests and Actions of your service repositories, and export it:
 

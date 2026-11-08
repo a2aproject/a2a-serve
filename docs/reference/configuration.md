@@ -37,6 +37,9 @@ approvals:
 mcp:
   disabled: [kubernetes]         # servers of .mcp.json the agent doesn't get
 limits: {memory: 8g, cpus: "4", pids: 1024}
+egress:
+  mode: internet                 # or allowlist, or unrestricted
+  allow: [nas.lan:22, "*.corp.example.com", 192.168.1.0/24]
 taskTTL: 30d                     # finished tasks idle this long are deleted
 contactRefresh: 1h               # how often the cards of contacts and peers are fetched
 card:
@@ -160,6 +163,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--memory` | `limits.memory` | `config set` |
 | `--cpus` | `limits.cpus` | `config set` |
 | `--pids` | `limits.pids` | `config set` |
+| `--egress` | `egress.mode` | `start <agent>`, `config set` |
+| `--egress-allow` | `egress.allow` | `start <agent>`, `config set` |
 | `--google-client-id` | `auth.googleClientID` | `config set` |
 | `--google-client-secret` | `auth.googleClientSecret` | `config set` |
 | `--backup` | `backup.to` | `config set` |

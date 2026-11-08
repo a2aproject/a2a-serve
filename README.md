@@ -75,7 +75,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 ## Known Limitations
 
 - **API keys are readable inside the sandbox.** Values passed with `--secret` are environment variables in every agent container that a [sandbox rule](./docs/guide/sandbox.md#what-each-callers-container-gets) gives them to. A tricked agent or any caller allowed to approve commands can read the keys their container gets, so give callers you trust less a separate key ([#16](https://github.com/a2aproject/a2a-serve/issues/16), [#235](https://github.com/a2aproject/a2a-serve/issues/235), and [Security](./docs/advanced/security.md)).
-- **The sandbox can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)).
+- **The sandbox can reach any public host.** A tricked agent can send the files it can read to any host on the internet. It can't reach the tailnet or the LAN unless you allow them, and `--egress allowlist` limits it to the hosts you list ([Network](./docs/guide/sandbox.md#network)).
 - **A cloned repository can configure the agent you start in it.** `a2a-serve start` takes the command, image, mounts, environment variables, and MCP servers from the project's `.a2a/config.yaml` and `.mcp.json`. Read both before starting an agent in a repository you did not write.
 - **Agent images follow the latest agent releases** at publish time, so the same tag can carry different agent versions over time.
 

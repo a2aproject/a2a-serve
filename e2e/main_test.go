@@ -91,6 +91,12 @@ func run(m *testing.M) int {
 			return 1
 		}
 	}
+	if os.Getenv(harness.EnvForceRelay) == "1" {
+		if err := buildRelayImage(); err != nil {
+			fmt.Fprintln(os.Stderr, "e2e:", err)
+			return 1
+		}
+	}
 	if harnessName != "" {
 		if err := prepareHarness(dir); err != nil {
 			fmt.Fprintln(os.Stderr, "e2e:", err)
@@ -106,7 +112,9 @@ func buildBinaries(dir string) error {
 		return err
 	}
 	// The e2e tag lets the tests point the messengers at fake services.
-	if err := goCmd(root, nil, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
+	// a2a-serve is static, as releases are, so that the Docker sandbox runs
+	// it as the launcher of its containers.
+	if err := goCmd(root, []string{"CGO_ENABLED=0"}, "build", "-tags", "e2e", "-o", filepath.Join(dir, "a2a-serve"), "."); err != nil {
 		return err
 	}
 	// fakeacp is static, so that it also runs in an empty image.
@@ -139,6 +147,27 @@ func buildImage(dir string) error {
 		return fmt.Errorf("docker context inspect: %w", err)
 	}
 	dockerHost = strings.TrimSpace(string(out))
+	return nil
+}
+
+// relayImage is the relay image the agents' containers get with
+// A2A_SERVE_SANDBOX_RELAY=1, which runs the e2e tests through the relay
+// containers of Docker Desktop.
+var relayImage string
+
+// buildRelayImage builds the relay image from the work tree.
+func buildRelayImage() error {
+	root, err := filepath.Abs("..")
+	if err != nil {
+		return err
+	}
+	const image = "a2a-e2e-relay:latest"
+	build := exec.Command("docker", "build", "-t", image, "-f", "internal/sandboxnet/Dockerfile", ".")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		return fmt.Errorf("docker build of the relay image: %w\n%s", err, out)
+	}
+	relayImage = image
 	return nil
 }
 

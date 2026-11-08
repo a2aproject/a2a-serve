@@ -68,6 +68,10 @@ type Settings struct {
 	Sandbox  string
 	Image    string
 	Port     int
+	// Egress is public, allowlist or unrestricted, and EgressAllow are
+	// added to the hosts the Docker sandbox may reach.
+	Egress      string
+	EgressAllow []string
 
 	Memory     string
 	CPUs       string

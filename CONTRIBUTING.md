@@ -62,12 +62,20 @@ A few checks run on every pull request. Follow these tips to pass them:
 
   This runs the linter version of `.github/workflows/go.yaml` with the Go version of `go.mod`, as CI does. A linter built with an older Go refuses the module, and one run with a newer Go can't read its standard library.
 
-### Trying changes end to end
+### Testing the egress containers of Docker Desktop on Linux
 
-The tests drive a scripted ACP agent, `fakeacp`, which needs no Docker and no API key. Run a local build of the server with it to try a change by hand:
+With Docker Desktop, an egress container forwards each agent container's connections to the server. `A2A_SERVE_SANDBOX_RELAY=1` gives containers on Linux one too, and the e2e tests then build its image from the work tree:
 
 ```sh
-go build -o /tmp/a2a-serve . && go build -o /tmp/fakeacp ./internal/agentsrv/testdata/fakeacp
+E2E_SANDBOX=docker A2A_SERVE_SANDBOX_RELAY=1 go test -tags e2e ./e2e/...
+```
+
+### Trying changes end to end
+
+The tests drive a scripted ACP agent, `fakeacp`, which needs no Docker and no API key. Run a local build of the server with it to try a change by hand. Build a2a-serve with `CGO_ENABLED=0`, as releases are; the Docker sandbox runs it in the container to route the agent's connections through the server:
+
+```sh
+CGO_ENABLED=0 go build -o /tmp/a2a-serve . && go build -o /tmp/fakeacp ./internal/agentsrv/testdata/fakeacp
 export PATH=/tmp:$PATH   # a2a runs the a2a-serve it finds on PATH
 cd "$(mktemp -d)"
 a2a-serve start acp --sandbox local --command /tmp/fakeacp --detach

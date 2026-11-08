@@ -101,6 +101,8 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 |---|---|---|
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
 | `--cpus string` |  | Container CPU limit, such as 2 or 1.5 (default 2) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--memory string` |  | Container memory limit of at least 6m, such as 4g or 512m (default 4g) |
 | `--pids int` |  | Container process limit (default 512) |
@@ -176,7 +178,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve messenger rm`.
 
-Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, egress, egress-allow, env, google-client-id, google-client-secret, guest-secrets, guest-storage, image, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

@@ -112,6 +112,7 @@ func (s *Server) status(ctx context.Context) (*controlapi.Status, error) {
 		st.Public = ""
 	}
 	st.Messengers = s.supervisor.Status()
+	st.Egress = s.egress.status(cfg)
 	counts, err := s.tasks.TaskCounts(ctx)
 	if err != nil {
 		return nil, err

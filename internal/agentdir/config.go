@@ -78,9 +78,19 @@ type Config struct {
 	Policy     PolicyConfig     `yaml:"policy,omitempty" json:"policy,omitzero"`
 	Approvals  ApprovalsConfig  `yaml:"approvals,omitempty" json:"approvals,omitzero"`
 	Limits     LimitsConfig     `yaml:"limits,omitempty" json:"limits,omitzero"`
+	Egress     EgressConfig     `yaml:"egress,omitempty" json:"egress,omitzero"`
 	Auth       AuthConfig       `yaml:"auth,omitempty" json:"auth,omitzero"`
 	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitzero"`
 	MCP        MCPConfig        `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+}
+
+// EgressConfig decides where the Docker sandbox may connect.
+type EgressConfig struct {
+	// Mode is internet (default), allowlist or unrestricted.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Allow are the hosts, name suffixes, addresses and ranges the sandbox
+	// may also reach, each with an optional port.
+	Allow []string `yaml:"allow,omitempty" json:"allow,omitempty"`
 }
 
 // CardConfig is what the agent card tells callers about the agent besides

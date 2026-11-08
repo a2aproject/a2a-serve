@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 // Runner decides where a harness process runs.
@@ -82,11 +83,28 @@ type DockerRunner struct {
 	// Rootless is set for rootless Docker, where container root is the host
 	// user, so files the agent writes stay owned by you.
 	Rootless bool
+	// Egress is set when the container's only network path is the egress
+	// socket. The launcher starts the command after the image's entrypoint.
+	Egress *DockerEgress
 
 	envFiles []string
 }
 
 var _ Runner = (*DockerRunner)(nil)
+
+// DockerEgress gives a container no network but the egress socket.
+type DockerEgress struct {
+	// Socket is the host path of the egress socket, alone in its directory,
+	// and Launcher the host path of the binary run as PID 1.
+	Socket, Launcher string
+	// Relay is the name of the relay container whose volumes have the
+	// egress socket and the launcher, in place of Socket and Launcher.
+	Relay string
+	// Entrypoint is the image's entrypoint, which the launcher replaces.
+	Entrypoint []string
+	// ensure starts the relay container again when it doesn't run.
+	ensure func() error
+}
 
 // ContainerHome is the home directory of the harness in the container.
 const ContainerHome = "/home/agent"
@@ -106,10 +124,80 @@ func (r *DockerRunner) Command(ctx context.Context, c Command) (*exec.Cmd, error
 	if err != nil {
 		return nil, err
 	}
-	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile)...)...)
+	cmd := exec.CommandContext(ctx, "sh", append([]string{"-c", startScript, r.Name}, r.runArgs(c, envFile, false)...)...)
 	cmd.Env = os.Environ()
 	cmd.Dir = os.TempDir()
 	return cmd, nil
+}
+
+// fallbackScript starts a container as startScript does, after a check
+// of its launcher's setup. $2, $3 and $4 are the quoted arguments of
+// docker run for the check, for the container with the egress boundary,
+// and for the fallback, which has Docker's own network. A failed check
+// writes its output to marker $1, and that and every later start get the
+// fallback. The check reads no stdin, which the container gets.
+const fallbackScript = `name=$0 marker=$1
+docker rm -f "$name" "$name-check" >/dev/null 2>&1
+if [ ! -e "$marker" ] && ! out=$(eval "docker run --name \"\$name-check\" $2" </dev/null 2>&1); then
+  printf '%s\n' "$out" >"$marker"
+  printf 'a2a-serve: egress control is off, as the container can'"'"'t set up its network: %s\n' "$out" >&2
+fi
+if [ -e "$marker" ]; then eval "exec docker run --name \"\$name\" $4"; fi
+eval "exec docker run --name \"\$name\" $3"`
+
+// CommandWithFallback returns the process which runs c in the container of
+// r once a check of its launcher's setup passes, or else in the container
+// of fallback, from then on. The failed check leaves its output in marker.
+func (r *DockerRunner) CommandWithFallback(ctx context.Context, c Command, fallback *DockerRunner, marker string) (*exec.Cmd, error) {
+	envFile, err := r.writeEnvFile(append(slices.Clone(r.Env), c.Env...))
+	if err != nil {
+		return nil, err
+	}
+	fbEnvFile, err := fallback.writeEnvFile(append(slices.Clone(fallback.Env), c.Env...))
+	if err != nil {
+		return nil, err
+	}
+	cmd := exec.CommandContext(ctx, "sh", "-c", fallbackScript, r.Name, marker,
+		shellQuote(r.runArgs(c, envFile, true)), shellQuote(r.runArgs(c, envFile, false)), shellQuote(fallback.runArgs(c, fbEnvFile, false)))
+	cmd.Env = os.Environ()
+	cmd.Dir = os.TempDir()
+	return cmd, nil
+}
+
+// shellQuote joins args, each in single quotes, for sh to eval.
+func shellQuote(args []string) string {
+	quoted := make([]string, len(args))
+	for i, a := range args {
+		quoted[i] = "'" + strings.ReplaceAll(a, "'", `'\''`) + "'"
+	}
+	return strings.Join(quoted, " ")
+}
+
+// probeTimeout bounds the check of a container's egress setup.
+const probeTimeout = time.Minute
+
+// Probe runs a container with the flags of r's container whose launcher
+// only sets up the network and drops its capabilities, and returns why
+// that failed.
+func (r *DockerRunner) Probe(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, probeTimeout)
+	defer cancel()
+	envFile, err := r.writeEnvFile(slices.Clone(r.Env))
+	if err != nil {
+		return err
+	}
+	name := r.Name + "-check"
+	if err := removeContainer(ctx, name); err != nil {
+		return err
+	}
+	out, err := exec.CommandContext(ctx, "docker", append([]string{"run", "--name", name}, r.runArgs(Command{}, envFile, true)...)...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	if len(bytes.TrimSpace(out)) == 0 {
+		return err
+	}
+	return errors.New(reasonOf(string(out)))
 }
 
 // writeEnvFile writes env to a file only the user can read, for docker run
@@ -144,7 +232,8 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 }
 
 // runArgs returns the arguments of docker run after --name.
-func (r *DockerRunner) runArgs(c Command, envFile string) []string {
+// With check, the launcher only checks its setup.
+func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	limits := r.Limits
 	if limits.Memory == "" {
 		limits.Memory = agentdir.DefaultLimits.Memory
@@ -155,16 +244,42 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	if limits.PIDs == 0 {
 		limits.PIDs = agentdir.DefaultLimits.PIDs
 	}
-	user := fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	uid, gid := os.Getuid(), os.Getgid()
 	if r.Rootless {
-		user = "0:0"
+		uid, gid = 0, 0
 	}
-	args := []string{
-		"--rm", "-i", "--init",
-		"--user", user,
-		"--cap-drop", "ALL", "--security-opt", "no-new-privileges",
+	args := []string{"--rm", "-i"}
+	if r.Egress == nil {
+		args = append(args,
+			"--init",
+			"--user", fmt.Sprintf("%d:%d", uid, gid),
+			"--cap-drop", "ALL",
+		)
+	} else {
+		// The launcher starts as root with what building the network and
+		// switching to uid:gid take, and drops it all before the agent starts.
+		args = append(args,
+			"--user", "0:0",
+			"--cap-drop", "ALL",
+			"--cap-add", "NET_ADMIN", "--cap-add", "SETPCAP", "--cap-add", "SETUID", "--cap-add", "SETGID",
+			"--network", "none", "--device", "/dev/net/tun",
+		)
+		if r.Egress.Relay != "" {
+			args = append(args, "--entrypoint", sandboxnet.RelayLauncher, "--volumes-from", r.Egress.Relay+":ro")
+		} else {
+			args = append(args,
+				"--entrypoint", sandboxnet.ContainerLauncher,
+				"-v", r.Egress.Launcher+":"+sandboxnet.ContainerLauncher+":ro",
+				"-v", filepath.Dir(r.Egress.Socket)+":"+sandboxnet.ContainerSocketDir+":ro",
+			)
+		}
+	}
+	args = append(args,
+		"--security-opt", "no-new-privileges",
 		"--memory", limits.Memory, "--cpus", limits.CPUs, "--pids-limit", strconv.Itoa(limits.PIDs),
-		"--add-host", "host.docker.internal:host-gateway",
+	)
+	if r.Egress == nil {
+		args = append(args, "--add-host", "host.docker.internal:host-gateway")
 	}
 	for _, k := range slices.Sorted(maps.Keys(r.Labels)) {
 		args = append(args, "--label", k+"="+r.Labels[k])
@@ -193,7 +308,15 @@ func (r *DockerRunner) runArgs(c Command, envFile string) []string {
 	if c.Dir != "" {
 		args = append(args, "-w", c.Dir)
 	}
-	args = append(args, r.Image, c.Path)
+	args = append(args, r.Image)
+	if r.Egress != nil && check {
+		return append(args, "sandbox-init", "--check", sandboxnet.ContainerSocketDir+"/"+sandboxnet.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+	}
+	if r.Egress != nil {
+		args = append(args, "sandbox-init", sandboxnet.ContainerSocketDir+"/"+sandboxnet.SocketName, strconv.Itoa(uid), strconv.Itoa(gid))
+		args = append(args, r.Egress.Entrypoint...)
+	}
+	args = append(args, c.Path)
 	return append(args, c.Args...)
 }
 
@@ -286,7 +409,8 @@ func pruneContainers(ctx context.Context, labels map[string]string, timeout time
 	if len(ids) == 0 {
 		return 0, nil
 	}
-	rm, err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f"}, ids...)...).CombinedOutput()
+	// -v removes the volumes of relay containers.
+	rm, err := exec.CommandContext(ctx, "docker", append([]string{"rm", "-f", "-v"}, ids...)...).CombinedOutput()
 	if err != nil {
 		return 0, fmt.Errorf("docker rm -f: %w: %s", err, bytes.TrimSpace(rm))
 	}

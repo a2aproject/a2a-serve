@@ -72,6 +72,10 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	for _, w := range h.prepared.Warnings {
 		s.logf("! %s", w)
 	}
+	if p := h.prepared.EgressProblem; p != "" {
+		slog.Warn(p)
+	}
+	s.noticeEgress(h.prepared)
 
 	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), s.acpConfig())
 	if err != nil {
@@ -347,11 +351,17 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 			spec.CLI = s.localCLI()
 		}
 	}
+	s.egressSandbox(&spec)
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())
 	}
-	stop := func(ctx context.Context) error { return errors.Join(prepared.Stop(ctx), closeEndpoint()) }
+	s.egress.started(spec.EgressMode, prepared.EgressProblem)
+	forget := s.egress.watch(prepared.FellBack)
+	stop := func(ctx context.Context) error {
+		forget()
+		return errors.Join(prepared.Stop(ctx), closeEndpoint())
+	}
 	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage, sandbox: sb}, nil
 }
 
@@ -373,6 +383,7 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 		spec.Socket = ep.socket
 		return nil
 	}
+	spec.BridgeAddr = strings.TrimPrefix(s.harness.url, "http://")
 	env, err := writeHarnessHelper(spec.Home, s.harness.dial, ep.key)
 	if err != nil {
 		return fmt.Errorf("saving the agent key: %w", err)
