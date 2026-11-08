@@ -203,15 +203,16 @@ func TestOperationsOverEachTransport(t *testing.T) {
 func TestReconcile(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name       string
-		allow      []string
-		before     []string
-		wantBanned []string
+		name         string
+		allow        []string
+		before       []string
+		wantBanned   []string
+		wantPolicies []meshadmin.Policy
 	}{
 		{name: "everyone still allowed", allow: []string{"*@example.com"}, wantBanned: []string{"12D3gone"}},
 		{name: "email dropped", allow: []string{"ben@example.com"}, wantBanned: []string{"12D3coder", "12D3reviewer", "12D3gone"}},
 		{name: "sign-in off", wantBanned: []string{"12D3coder", "12D3reviewer", "12D3gone"}},
-		{name: "email allowed again", allow: []string{"anna@example.com"}, before: []string{"12D3coder", "12D3reviewer"}, wantBanned: []string{"12D3gone"}},
+		{name: "email allowed again", allow: []string{"anna@example.com"}, before: []string{"12D3coder", "12D3reviewer"}, wantBanned: []string{"12D3gone"}, wantPolicies: []meshadmin.Policy{policy}},
 		{name: "removed invite stays removed", allow: []string{"*@example.com"}, before: []string{"12D3bot"}, wantBanned: []string{"12D3bot", "12D3gone"}},
 	}
 	for _, tt := range tests {
@@ -230,6 +231,9 @@ func TestReconcile(t *testing.T) {
 
 			if diff := cmp.Diff(tt.wantBanned, m.Banned(), cmp.Transformer("sort", sorted)); diff != "" {
 				t.Fatalf("Service.Reconcile() left wrong nodes banned (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tt.wantPolicies, m.Policies()); diff != "" {
+				t.Fatalf("Service.Reconcile() wrong policies applied (-want +got) diff = %s", diff)
 			}
 		})
 	}

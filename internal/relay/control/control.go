@@ -228,17 +228,11 @@ func (s *Service) letBack(ctx context.Context, name string) (*Member, error) {
 	}
 	var back *Member
 	if i := slices.IndexFunc(all, func(m Member) bool { return m.Peer == peer }); i >= 0 && all[i].Banned && all[i].Invite {
-		if err := s.mesh.Unban(ctx, peer); err != nil {
+		ms, err := s.unban(ctx, all[i:i+1])
+		if err != nil {
 			return nil, fmt.Errorf("letting back %s: %w", name, err)
 		}
-		// Agent Mesh announces no unban, and routers and agents read the bans
-		// again at once only on a policy update.
-		if err := s.ApplyPolicy(ctx); err != nil {
-			return nil, fmt.Errorf("letting back %s: %w", name, err)
-		}
-		m := all[i]
-		m.Banned = false
-		back = &m
+		back = &ms[0]
 	}
 	if err := s.removed.update(func(peers map[string]string) { forget(peers, peer) }); err != nil {
 		return nil, err
@@ -445,14 +439,32 @@ func (s *Service) Reconcile(ctx context.Context) (removed, readmitted []Member, 
 	if removed, err = s.ban(ctx, refused); err != nil {
 		return nil, nil, err
 	}
-	for _, m := range admitted {
-		if err := s.mesh.Unban(ctx, m.Peer); err != nil {
-			return removed, readmitted, fmt.Errorf("letting back %s: %w", m.Email, err)
-		}
-		m.Banned = false
-		readmitted = append(readmitted, m)
+	if readmitted, err = s.unban(ctx, admitted); err != nil {
+		return removed, nil, fmt.Errorf("letting back the people the allowlist admits: %w", err)
 	}
 	return removed, readmitted, nil
+}
+
+// unban lifts the bans of ms and returns them unbanned. Agent Mesh
+// announces no unban: routers and agents read the bans again on a
+// control-plane sync, which a policy update starts, so it applies the
+// policy after.
+func (s *Service) unban(ctx context.Context, ms []Member) ([]Member, error) {
+	if len(ms) == 0 {
+		return nil, nil
+	}
+	back := make([]Member, 0, len(ms))
+	for _, m := range ms {
+		if err := s.mesh.Unban(ctx, m.Peer); err != nil {
+			return nil, fmt.Errorf("unbanning %s (%s): %w", m.Who(), m.Peer, err)
+		}
+		m.Banned = false
+		back = append(back, m)
+	}
+	if err := s.ApplyPolicy(ctx); err != nil {
+		return nil, err
+	}
+	return back, nil
 }
 
 // remember records the agent names of the invited members among matched,
