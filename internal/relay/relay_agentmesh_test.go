@@ -235,7 +235,13 @@ func get(ctx context.Context, hc *http.Client, rawURL string) (string, error) {
 // eventually retries fn until it succeeds or a minute passes.
 func eventually(t *testing.T, what string, fn func() error) {
 	t.Helper()
-	deadline := time.Now().Add(time.Minute)
+	eventuallyWithin(t, time.Minute, what, fn)
+}
+
+// eventuallyWithin retries fn until it succeeds or d passes.
+func eventuallyWithin(t *testing.T, d time.Duration, what string, fn func() error) {
+	t.Helper()
+	deadline := time.Now().Add(d)
 	for {
 		err := fn()
 		if err == nil {
@@ -389,7 +395,11 @@ func TestRelayLetsBackARemovedAgent(t *testing.T) {
 	if back.privateURL != reviewer.privateURL {
 		t.Fatalf("reviewer's private URL after it came back = %s, want %s", back.privateURL, reviewer.privateURL)
 	}
-	eventually(t, "coder calls reviewer after it came back", func() error {
+	// Agent Mesh announces no unban. Coder's node lifts its ban of reviewer at
+	// its next sync with the relay, which the let-back's policy update starts
+	// after a random delay of up to a tenth of meshnet's 15-minute interval.
+	const meshSyncJitter = 90 * time.Second
+	eventuallyWithin(t, meshSyncJitter+10*time.Second, "coder calls reviewer after it came back", func() error {
 		_, err := get(t.Context(), coder.provider.HTTPClient(), reviewer.privateURL+"/hello")
 		return err
 	})
