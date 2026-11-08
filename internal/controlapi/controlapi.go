@@ -49,8 +49,9 @@ type Status struct {
 	Started time.Time `json:"started"`
 	Local   string    `json:"local"`
 	Private string    `json:"private,omitempty"`
-	// PrivateNote explains a private URL people can't open, such as one on
-	// an Agent Mesh relay.
+	// PrivateNote explains a limit of the private URL, such as one on an
+	// Agent Mesh relay that people can't open, or a tailnet URL that doesn't
+	// make the owner an owner from this machine.
 	PrivateNote string `json:"privateNote,omitempty"`
 	Public      string `json:"public,omitempty"`
 	// PrivateProblem and PublicProblem say why the private or public URL
