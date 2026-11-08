@@ -126,12 +126,12 @@ func TestPrintStatusAccess(t *testing.T) {
 	cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
 	st := &controlapi.Status{
 		Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000", Private: "https://coder.tail1234.ts.net",
-		Access: &controlapi.Access{Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 2 pairings", "the public URL needs a pairing"}},
+		Access: &controlapi.Access{Summary: []string{"you: the local URL and your other tailnet devices", "everyone on the tailnet, 2 pairings", "the public URL needs a pairing"}},
 	}
 	if err := printStatus(cfg, st, nil, nil, "", ""); err != nil {
 		t.Fatalf("printStatus() error = %v", err)
 	}
-	want := "  access   you: this machine and your tailnet devices\n" +
+	want := "  access   you: the local URL and your other tailnet devices\n" +
 		"           everyone on the tailnet, 2 pairings\n" +
 		"           the public URL needs a pairing\n"
 	if !strings.Contains(out.String(), want) {

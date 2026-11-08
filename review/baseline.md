@@ -24,7 +24,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **Remote wake URLs may use plain http and follow redirects** (from #86). #118 already refuses redirects to private or local addresses and https-to-http downgrades. Requiring https would break working wake targets.
 - **Mail doesn't have to name the agent's address in `To` or `Cc`** (from #86). Requiring it drops mail that reaches the agent through `Bcc` or a list, and replaying a signed mail needs a mail the sender addressed to someone else.
 - **The owner role works over a linked email without an opt-in** (from #86). Email identity proves only the domain; the owner links the address on purpose. At most this needs a note in the docs.
-- **The owner role is granted on the private listener to connections from the server's own machine** (from #86). The sandbox can reach its own tailnet URL. This stays until the sandbox network allowlist (#17) lands.
+- **The owner role still goes to this machine's Tailscale node when its addresses aren't on the server's interfaces** (from #354), such as Tailscale on Windows with the server in WSL2, or a remote Docker host. This stays until the sandbox network allowlist (#17) lands.
 
 ### Correctness
 

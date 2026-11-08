@@ -152,7 +152,7 @@ func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 func yourDevices(provider string) string {
 	switch provider {
 	case network.ProviderTailscale:
-		return "this machine and your tailnet devices"
+		return "the local URL and your other tailnet devices"
 	case network.ProviderRelay:
 		return "this machine and your devices on the relay"
 	}
