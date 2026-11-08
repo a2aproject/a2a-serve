@@ -169,6 +169,7 @@ func TestShowSandboxRule(t *testing.T) {
 	}{
 		{rule: SandboxRule{Match: []string{"pairing:ben"}, Storage: StorageOwn, Secrets: []string{"KEY"}}, want: "pairing:ben: own, secrets KEY"},
 		{rule: SandboxRule{Match: []string{"guests"}, Secrets: []string{"none"}}, want: "guests: default storage, secrets none"},
+		{rule: SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"KEY=secret:BEN_KEY", "GH"}}, want: "pairing:ben: default storage, secrets KEY (from BEN_KEY), GH"},
 	}
 	for _, tt := range tests {
 		if got := ShowSandboxRule(tt.rule); got != tt.want {

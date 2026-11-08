@@ -502,6 +502,38 @@ func TestSetSandboxRuleWaitsWhenTheServerCantSay(t *testing.T) {
 	}
 }
 
+func TestSetPublicAllowIncomingWaitsForAPublicURLThatWaits(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name        string
+		running     agentdir.NetworkConfig
+		wantApplied []string
+		wantRestart []string
+	}{
+		{name: "public URL waits", wantRestart: []string{"public-allow-incoming"}},
+		{name: "public URL up", running: agentdir.NetworkConfig{Public: "https://relay.example.com"}, wantApplied: []string{"public-allow-incoming"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Network: agentdir.NetworkConfig{Public: "https://relay.example.com"}}, nil)
+			serveFake(t, d, &fakeServer{running: &agentdir.Config{Name: "coder", Harness: "opencode", Network: tc.running, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}}})
+
+			got, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{PublicAllowIncoming: agentdir.AccessAnyone}, false)
+			if err != nil {
+				t.Fatalf("Set() error = %v", err)
+			}
+
+			if diff := cmp.Diff(tc.wantApplied, got.Applied); diff != "" {
+				t.Fatalf("Set().Applied wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantRestart, got.Restart); diff != "" {
+				t.Fatalf("Set().Restart wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestPending(t *testing.T) {
 	t.Parallel()
 	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Sandbox: "local"}, nil)

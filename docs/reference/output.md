@@ -16,7 +16,7 @@ prints. With sandbox rules or guests, it adds the `sandbox` lines
 of what each kind of caller's agent container gets, `sandboxNotes` such as
 callers without a model key, and `anonymousNote` about guests. `pair get` and `pair list`
 give each pairing a `sandbox` object: its `storage`, its `secrets`, a
-`summary`, and a `warning` when its agent can't reach its model. `pair
+`summary`, `pending` with what it gets after a restart when its rule waits for a secret that the restart loads, and a `warning` when its agent can't reach its model. `pair
 invite` adds it when rules change what the pairing gets, and `pair set`
 adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`

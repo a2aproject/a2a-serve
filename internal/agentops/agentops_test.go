@@ -17,6 +17,7 @@ package agentops
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -41,7 +42,24 @@ const baseURL = "https://coder.example.com"
 
 func newService(t *testing.T) (*Service, *store.Store) {
 	t.Helper()
-	return newServiceWith(t, agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil), Hooks{})
+	return newServiceWith(t, newRuntime(t, &agentdir.Config{Name: "coder"}), Hooks{})
+}
+
+// newRuntime returns the runtime of an agent directory whose config.yaml
+// holds cfg, with a harness if it has none.
+func newRuntime(t *testing.T, cfg *agentdir.Config) *agentdir.Runtime {
+	t.Helper()
+	if cfg.Harness == "" {
+		cfg.Harness = "opencode"
+	}
+	d := agentdir.Dir{Root: t.TempDir()}
+	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	return agentdir.NewRuntime(d, cfg, nil)
 }
 
 func newServiceWith(t *testing.T, rt *agentdir.Runtime, hooks Hooks) (*Service, *store.Store) {
@@ -107,7 +125,7 @@ func TestPairMessenger(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _ := newServiceWith(t, agentdir.NewRuntime(agentdir.Dir{}, tc.cfg, nil), Hooks{})
+			s, _ := newServiceWith(t, newRuntime(t, tc.cfg), Hooks{})
 
 			got, err := s.Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
 

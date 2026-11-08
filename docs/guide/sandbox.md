@@ -77,7 +77,7 @@ To share your own key instead, which takes effect at once:
 a2a-serve config set --guest-secrets ANTHROPIC_API_KEY
 ```
 
-`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`. When you stored the key since the agent started, the pairing gets it after `a2a-serve restart`, and `pair set` says so.
+`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`. When you stored the key since the agent started, the pairing gets it after `a2a-serve restart`. Until then, `pair set` and `pair get` show what the pairing gets after the restart.
 
 ### Rules for several callers
 

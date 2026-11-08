@@ -17,7 +17,6 @@ package agentops
 import (
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -53,9 +52,8 @@ func withSandboxRule(p agentdir.PolicyConfig, name string, ch controlapi.Sandbox
 // returns the function that puts the pairing back in the rules it was in,
 // leaving other rules as they are then. It checks config.yaml, which may
 // hold a change waiting for a restart, such as a secret stored or removed
-// since the agent started. It reports whether grants of secrets that the
-// agent loads at restart wait for it.
-func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo func() error, waiting bool, err error) {
+// since the agent started.
+func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo func() error, err error) {
 	m := agentdir.PairingMatcher(name)
 	var before []agentdir.SandboxRule
 	for _, r := range s.deps.Runtime.Config().Policy.Sandbox {
@@ -63,7 +61,7 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 			before = append(before, agentdir.SandboxRule{Match: slices.Clone(r.Match), Storage: r.Storage, Secrets: slices.Clone(r.Secrets)})
 		}
 	}
-	waiting, err = s.deps.Runtime.UpdateSandbox(func(c *agentdir.Config) error {
+	err = s.deps.Runtime.UpdateSandbox(func(c *agentdir.Config) error {
 		c.Policy = withSandboxRule(c.Policy, name, ch)
 		if err := c.Validate(); err != nil {
 			return agenterr.Invalidf("%v", err)
@@ -71,7 +69,7 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 		return nil
 	})
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 	return func() error {
 		return s.deps.Runtime.Update(func(c *agentdir.Config) error {
@@ -88,7 +86,7 @@ func (s *Service) setSandbox(name string, ch controlapi.SandboxChange) (undo fun
 			}
 			return nil
 		})
-	}, waiting, nil
+	}, nil
 }
 
 // removeSandbox deletes the pairing name from the sandbox rules, and
@@ -115,19 +113,25 @@ func (s *Service) pairingRole(ctx context.Context, name string) (string, error) 
 }
 
 // ruledSandbox describes what the agent container of the pairing p gets
-// when rules make it differ from the default, or returns nil: owners share
-// your container, and without the Docker sandbox the rules don't apply.
+// when rules make it differ from the default, now or after a restart, or
+// returns nil: owners share your container, and without the Docker sandbox
+// the rules don't apply.
 func (s *Service) ruledSandbox(p pairings.Pairing) *controlapi.PairingSandbox {
-	sp := access.SandboxPolicyOf(s.deps.Runtime.Config())
-	if p.Role == auth.RoleOwner || sp.Local || s.resolvePairing(p).Equal(sp.Default()) {
+	cfg := s.deps.Runtime.Config()
+	sp := access.SandboxPolicyOf(cfg)
+	if p.Role == auth.RoleOwner || sp.Local {
 		return nil
 	}
-	return s.sandboxOf(p)
+	out := s.sandboxOf(p)
+	if out.Pending == "" && resolvePairing(cfg, p).Equal(sp.Default()) {
+		return nil
+	}
+	return out
 }
 
 // resolvePairing returns the sandbox of the agent container of the pairing
-// p.
-func (s *Service) resolvePairing(p pairings.Pairing) access.Sandbox {
+// p under cfg.
+func resolvePairing(cfg *agentdir.Config, p pairings.Pairing) access.Sandbox {
 	id := auth.Identity{Pairing: p.Name, PairingRole: p.Role}
 	if p.Kind == pairapi.PairingWebhook {
 		id = auth.Identity{WebhookNode: p.Name}
@@ -136,37 +140,46 @@ func (s *Service) resolvePairing(p pairings.Pairing) access.Sandbox {
 	if p.Role == auth.RoleOwner {
 		role = auth.RoleOwner
 	}
-	return access.SandboxPolicyOf(s.deps.Runtime.Config()).Resolve(auth.Principal{ID: p.Principal, Role: role, Identity: id})
+	return access.SandboxPolicyOf(cfg).Resolve(auth.Principal{ID: p.Principal, Role: role, Identity: id})
 }
 
-// sandboxHints says what a change of the sandbox rule of the pairing name
-// doesn't do, or doesn't do yet.
-func (s *Service) sandboxHints(name string, ch *controlapi.SandboxChange, waiting bool) []string {
-	var hints []string
-	if waiting {
-		hints = append(hints, fmt.Sprintf("the agent loads the secrets stored since it started at a restart, so %s's agent gets them after `a2a-serve restart`", name))
+// sandboxHints says what a change of a sandbox rule doesn't do.
+func (s *Service) sandboxHints(ch *controlapi.SandboxChange) []string {
+	if ch == nil || ch.Storage == "" || !access.SandboxPolicyOf(s.deps.Runtime.Config()).Local {
+		return nil
 	}
-	if ch != nil && ch.Storage != "" && access.SandboxPolicyOf(s.deps.Runtime.Config()).Local {
-		hints = append(hints, "--storage has no effect without the Docker sandbox; set one with `a2a-serve config set --sandbox docker`")
-	}
-	return hints
+	return []string{"--storage has no effect without the Docker sandbox; set one with `a2a-serve config set --sandbox docker`"}
 }
 
-// sandboxOf describes what the agent container of the pairing p gets.
+// sandboxOf describes what the agent container of the pairing p gets, and
+// what it gets after a restart if rules wait for it. The warning is about
+// the sandbox after the restart, so a fix that waits for it hides it.
 func (s *Service) sandboxOf(p pairings.Pairing) *controlapi.PairingSandbox {
 	cfg := s.deps.Runtime.Config()
-	sp := access.SandboxPolicyOf(cfg)
-	sb := s.resolvePairing(p)
-	out := &controlapi.PairingSandbox{Storage: sb.Storage, Secrets: []string{}, Summary: sp.Describe(sb)}
-	if p.Role != auth.RoleOwner {
-		out.Warning = access.ModelKeyNote(cfg, access.SandboxLine{Who: "the pairing " + p.Name, Sandbox: sb, Pairing: p.Name})
+	sb := resolvePairing(cfg, p)
+	out := &controlapi.PairingSandbox{Storage: sb.Storage, Secrets: shownGrants(sb), Summary: access.SandboxPolicyOf(cfg).Describe(sb)}
+	final, finalSB := cfg, sb
+	if saved := s.savedSandbox(cfg); saved != nil {
+		if after := resolvePairing(saved, p); !after.Equal(sb) {
+			final, finalSB = saved, after
+			out.Pending = access.SandboxPolicyOf(saved).Describe(after)
+		}
 	}
+	if p.Role != auth.RoleOwner {
+		out.Warning = access.ModelKeyNote(final, access.SandboxLine{Who: "the pairing " + p.Name, Sandbox: finalSB, Pairing: p.Name})
+	}
+	return out
+}
+
+// shownGrants returns the secrets of sb as the --secrets flag takes them.
+func shownGrants(sb access.Sandbox) []string {
+	out := []string{}
 	for _, g := range sb.Secrets {
 		e := g.Name
 		if g.From != g.Name {
 			e += "=secret:" + g.From
 		}
-		out.Secrets = append(out.Secrets, e)
+		out = append(out, e)
 	}
 	return out
 }

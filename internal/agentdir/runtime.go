@@ -16,7 +16,6 @@ package agentdir
 
 import (
 	"maps"
-	"reflect"
 	"sync"
 	"sync/atomic"
 )
@@ -73,9 +72,9 @@ func (r *Runtime) Update(fn func(*Config) error) error {
 }
 
 // UpdateSandbox applies fn to config.yaml, then uses its sandbox rules,
-// which fn may change. It reports whether some grants wait for the restart
-// that loads their secrets, which the rules in use leave out until then.
-func (r *Runtime) UpdateSandbox(fn func(*Config) error) (waiting bool, err error) {
+// which fn may change. The grants of secrets that the agent loads at
+// restart wait for it, and the rules in use leave them out until then.
+func (r *Runtime) UpdateSandbox(fn func(*Config) error) error {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	var saved []SandboxRule
@@ -86,13 +85,13 @@ func (r *Runtime) UpdateSandbox(fn func(*Config) error) (waiting bool, err error
 		saved = cloneSandbox(c.Policy.Sandbox)
 		return nil
 	}); err != nil {
-		return false, err
+		return err
 	}
 	cur := r.cur.Load()
 	next := *cur.cfg
 	next.Policy.Sandbox = loadedRules(saved, next.Secrets)
 	r.cur.Store(&runtimeState{cfg: &next, secrets: cur.secrets})
-	return !reflect.DeepEqual(saved, next.Policy.Sandbox), nil
+	return nil
 }
 
 // Reload applies the live settings of config.yaml, which [CopyLive]
@@ -110,6 +109,10 @@ func (r *Runtime) Reload() error {
 	r.cur.Store(&runtimeState{cfg: &next, secrets: cur.secrets})
 	return nil
 }
+
+// SavedConfig reads config.yaml, which can hold changes waiting for a
+// restart.
+func (r *Runtime) SavedConfig() (*Config, error) { return r.dir.LoadConfig() }
 
 // SavedSecrets reads the secrets file, which can hold secrets saved since
 // the agent started.

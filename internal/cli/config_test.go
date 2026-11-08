@@ -802,11 +802,6 @@ func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 			want: "  no changes\nwho may call:\n  anyone\nwhat their agent containers get:\n  guests: read-only workspace, no secrets\n! guests' agent gets no key\n",
 		},
 		{
-			name: "guest rule waits for a restart",
-			res:  &agentctl.Result{Name: "coder", Restart: []string{"guest-secrets"}, Access: access},
-			want: "  no changes\n! coder is running; restart to apply guest-secrets: a2a-serve restart\nwho may call:\n  anyone\nwhat their agent containers get:\n  guests: read-only workspace, no secrets\n",
-		},
-		{
 			name:       "restarting",
 			res:        &agentctl.Result{Name: "coder", Restart: []string{"secret"}},
 			restarting: true,

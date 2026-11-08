@@ -138,7 +138,7 @@ func printConfigResult(cfg *globalConfig, res *agentctl.Result, restarting bool)
 	if len(res.Restart) > 0 && !restarting {
 		fmt.Fprintf(&sb, "! %s is running; restart to apply %s: a2a-serve restart\n", res.Name, strings.Join(res.Restart, ", "))
 	}
-	writeAccess(&sb, res.Access, res.Restart)
+	writeAccess(&sb, res.Access)
 	writeWarnings(&sb, res.Warnings)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
@@ -171,14 +171,13 @@ func writeWarnings(sb *strings.Builder, warnings []string) {
 // printAccess prints who may call the agent after a change, if known.
 func printAccess(cfg *globalConfig, a *controlapi.Access) error {
 	var sb strings.Builder
-	writeAccess(&sb, a, nil)
+	writeAccess(&sb, a)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
 }
 
 // writeAccess writes who may call the agent after a change, if known.
-// Pending are the settings that wait for a restart.
-func writeAccess(sb *strings.Builder, a *controlapi.Access, pending []string) {
+func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 	if a == nil {
 		return
 	}
@@ -195,18 +194,9 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access, pending []string) {
 	for _, note := range a.SandboxNotes {
 		fmt.Fprintf(sb, "! %s\n", note)
 	}
-	if note := guestNote(a, pending); note != "" {
-		fmt.Fprintf(sb, "! %s\n", note)
+	if a.AnonymousNote != "" {
+		fmt.Fprintf(sb, "! %s\n", a.AnonymousNote)
 	}
-}
-
-// guestNote is the model-key note of guests, unless a change of their rule
-// that may give them a key waits for a restart.
-func guestNote(a *controlapi.Access, pending []string) string {
-	if slices.ContainsFunc(pending, agentdir.IsSandboxSetting) {
-		return ""
-	}
-	return a.AnonymousNote
 }
 
 // inSecretDiff reports whether the diff of --secret names the secret.

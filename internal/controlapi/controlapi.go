@@ -208,6 +208,9 @@ type PairingSandbox struct {
 	Secrets []string `json:"secrets"`
 	// Summary describes both, as `a2a-serve pair get` shows it.
 	Summary string `json:"summary"`
+	// Pending describes what the pairing gets after a restart, when its
+	// rule waits for secrets that the restart loads.
+	Pending string `json:"pending,omitempty"`
 	// Warning says what the pairing's agent can't do with them, such as
 	// reach its model without a key.
 	Warning string `json:"warning,omitempty"`

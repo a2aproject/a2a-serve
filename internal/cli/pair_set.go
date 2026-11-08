@@ -97,6 +97,11 @@ stay linked.
 			if _, err := fmt.Fprintf(cfg.Out, "✓ updated %s\n", args[0]); err != nil {
 				return err
 			}
+			if box := resp.Pairing.Sandbox; box != nil && req.Sandbox != nil {
+				if _, err := fmt.Fprint(cfg.Out, renderSandboxChange(box)); err != nil {
+					return err
+				}
+			}
 			for _, h := range resp.Hints {
 				if _, err := fmt.Fprintf(cfg.Out, "! %s\n", h); err != nil {
 					return err
@@ -127,4 +132,14 @@ stay linked.
 	sandbox.register(cmd)
 	must(cmd.RegisterFlagCompletionFunc("kind", fixedCompletions(pairapi.PairingPerson, pairapi.PairingDevice, pairapi.PairingAgent)))
 	return cmd
+}
+
+// renderSandboxChange describes the sandbox of a pairing after its rule
+// changed. The access lines that follow carry its warnings.
+func renderSandboxChange(box *controlapi.PairingSandbox) string {
+	out := fmt.Sprintf("  sandbox: %s\n", box.Summary)
+	if box.Pending != "" {
+		out += fmt.Sprintf("           %s\n", afterRestart(box.Pending))
+	}
+	return out
 }

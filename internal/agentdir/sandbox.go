@@ -365,10 +365,17 @@ func ShowSandboxRule(r SandboxRule) string {
 		storage = "default storage"
 	}
 	out := who + ": " + storage
-	if len(r.Secrets) > 0 {
-		out += ", secrets " + strings.Join(r.Secrets, ",")
+	if len(r.Secrets) == 0 {
+		return out
 	}
-	return out
+	shown := make([]string, len(r.Secrets))
+	for i, e := range r.Secrets {
+		shown[i] = e
+		if name, from, ok := ParseSecretGrant(e); ok && name != from {
+			shown[i] = name + " (from " + from + ")"
+		}
+	}
+	return out + ", secrets " + strings.Join(shown, ", ")
 }
 
 // IsSandboxSetting reports whether the setting changes the sandbox rules.

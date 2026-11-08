@@ -119,11 +119,19 @@ func renderPairing(p *controlapi.Pairing) string {
 			summary += " (your agent container, which owners share)"
 		}
 		line("sandbox", summary)
+		if box.Pending != "" {
+			line("", afterRestart(box.Pending))
+		}
 		if box.Warning != "" {
 			fmt.Fprintf(&sb, "  ! %s\n", box.Warning)
 		}
 	}
 	return sb.String()
+}
+
+// afterRestart describes the pending sandbox of a pairing.
+func afterRestart(pending string) string {
+	return "after `a2a-serve restart`: " + pending
 }
 
 func yesNo(b bool) string {

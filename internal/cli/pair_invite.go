@@ -157,8 +157,11 @@ func printPairCode(cfg *globalConfig, resp *controlapi.PairCodeResponse) error {
 			fmt.Fprintf(&sb, "  messenger: send \"join %s\" to the agent's bot\n", resp.Code)
 		}
 	}
-	if resp.Sandbox != nil {
-		fmt.Fprintf(&sb, "  sandbox:   %s\n", resp.Sandbox.Summary)
+	if box := resp.Sandbox; box != nil {
+		fmt.Fprintf(&sb, "  sandbox:   %s\n", box.Summary)
+		if box.Pending != "" {
+			fmt.Fprintf(&sb, "             %s\n", afterRestart(box.Pending))
+		}
 	}
 	for _, h := range resp.Hints {
 		sb.WriteString("  " + h + "\n")

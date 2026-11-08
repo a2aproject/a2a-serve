@@ -235,8 +235,19 @@ func TestPairSetWaitsForASecretStoredSinceStart(t *testing.T) {
 	if diff := cmp.Diff(wantSaved, saved.Policy.Sandbox); diff != "" {
 		t.Fatalf("saved rules wrong result (-want +got) diff = %s", diff)
 	}
-	if diff := cmp.Diff([]string{"the agent loads the secrets stored since it started at a restart, so ben's agent gets them after `a2a-serve restart`"}, got.Hints); diff != "" {
-		t.Fatalf("UpdatePairing().Hints wrong result (-want +got) diff = %s", diff)
+	want := &controlapi.PairingSandbox{Storage: agentdir.StorageReadOnly, Secrets: []string{}, Summary: "read-only workspace, no secrets", Pending: "read-only workspace, secrets KEY (from BEN_KEY)"}
+	if diff := cmp.Diff(want, got.Pairing.Sandbox); diff != "" {
+		t.Fatalf("UpdatePairing() wrong sandbox (-want +got) diff = %s", diff)
+	}
+	if got.Hints != nil {
+		t.Fatalf("UpdatePairing().Hints = %v, want none", got.Hints)
+	}
+	preview, err := s.PreviewRevoke(ctx, "ben")
+	if err != nil {
+		t.Fatalf("PreviewRevoke() error = %v", err)
+	}
+	if want := "pairing:ben: read-only, secrets KEY (from BEN_KEY)"; preview.SandboxRule != want {
+		t.Fatalf("PreviewRevoke().SandboxRule = %q, want %q", preview.SandboxRule, want)
 	}
 }
 
@@ -249,7 +260,7 @@ func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Update() error = %v", err)
 	}
-	undo, _, err := s.setSandbox("ben", controlapi.SandboxChange{Secrets: new([]string{"none"})})
+	undo, err := s.setSandbox("ben", controlapi.SandboxChange{Secrets: new([]string{"none"})})
 	if err != nil {
 		t.Fatalf("setSandbox() error = %v", err)
 	}
@@ -288,5 +299,46 @@ func TestPreviewRevokeShowsTheSandboxRule(t *testing.T) {
 
 	if want := "pairing:ben: own, secrets KEY"; got.SandboxRule != want {
 		t.Fatalf("PreviewRevoke().SandboxRule = %q, want %q", got.SandboxRule, want)
+	}
+}
+
+func TestModelKeyWarningHidesWhileItsFixWaitsForRestart(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	d := agentdir.Dir{Root: t.TempDir()}
+	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Model: "google/gemini", Secrets: []string{"GEMINI_API_KEY"}}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	s, _ := newServiceWith(t, agentdir.NewRuntime(d, cfg, agentdir.Secrets{"GEMINI_API_KEY": "k"}), Hooks{})
+	invited, err := s.Pair(ctx, controlapi.PairCodeRequest{Name: "ben", Sandbox: &controlapi.SandboxChange{Secrets: new([]string{"none"})}})
+	if err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	if invited.Sandbox == nil || invited.Sandbox.Warning == "" || len(invited.Access.SandboxNotes) != 1 {
+		t.Fatalf("Pair() sandbox = %+v, notes = %v, want a model-key warning", invited.Sandbox, invited.Access.SandboxNotes)
+	}
+	saved, err := d.LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	saved.Secrets = append(saved.Secrets, "BEN_KEY")
+	if err := d.SaveConfig(saved); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	got, err := s.UpdatePairing(ctx, "ben", controlapi.PairingUpdate{Sandbox: &controlapi.SandboxChange{Secrets: new([]string{"GEMINI_API_KEY=secret:BEN_KEY"})}})
+	if err != nil {
+		t.Fatalf("UpdatePairing() error = %v", err)
+	}
+
+	if box := got.Pairing.Sandbox; box.Warning != "" || box.Pending == "" {
+		t.Fatalf("UpdatePairing() sandbox = %+v, want a pending rule and no warning", box)
+	}
+	if len(got.Access.SandboxNotes) != 0 {
+		t.Fatalf("UpdatePairing().Access.SandboxNotes = %v, want none", got.Access.SandboxNotes)
 	}
 }
