@@ -137,6 +137,9 @@ type PolicyConfig struct {
 	// PrivateAllowOutgoing is whom on the private network the agent may
 	// call: everyone or contacts. Empty is contacts.
 	PrivateAllowOutgoing string `yaml:"privateAllowOutgoing,omitempty" json:"privateAllowOutgoing,omitempty"`
+	// Sandbox sets what the agent containers of callers get. The most
+	// specific rule that matches a caller applies.
+	Sandbox []SandboxRule `yaml:"sandbox,omitempty" json:"sandbox,omitempty"`
 }
 
 // Values of --private-allow-incoming, --public-allow-incoming and
@@ -165,6 +168,7 @@ func (p *PolicyConfig) normalize() {
 
 func (p PolicyConfig) clone() PolicyConfig {
 	p.AllowEmails = slices.Clone(p.AllowEmails)
+	p.Sandbox = cloneSandbox(p.Sandbox)
 	return p
 }
 

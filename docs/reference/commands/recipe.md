@@ -96,6 +96,8 @@ a2a-serve recipe --dry-run
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--caller-secrets names` |  | Secrets the agent containers of callers who aren't owners get, unless a pairing or another sandbox rule says otherwise: names from --secret, all, or NAME=secret:OTHER to pass the secret OTHER as NAME (default none) (repeatable; commas also separate values) |
+| `--caller-storage string` |  | What the agent containers of callers who aren't owners get of the workspace, unless a pairing or another sandbox rule says otherwise: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |

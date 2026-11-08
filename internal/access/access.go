@@ -116,6 +116,32 @@ type Description struct {
 	// Summary says who may call, one line each for you, everyone else and
 	// the networks that need a pairing.
 	Summary []string
+	// Sandbox says what the agent containers of callers get, one line each
+	// for you, the sandbox rules and everyone else.
+	Sandbox []string
+	// SandboxNotes are what the sandbox rules don't do, or how they changed
+	// what callers get.
+	SandboxNotes []string
+}
+
+// DescribeConfig is [Describe] of the settings of cfg, with what the agent
+// containers of callers get.
+func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
+	a := Describe(cfg.Policy, net, n)
+	a.Sandbox = SandboxPolicyOf(cfg).SandboxLines(n.Owners)
+	others := n.All > n.Owners || len(a.Others) > 0
+	if cfg.Sandbox == agentdir.SandboxLocal && others {
+		a.SandboxNotes = append(a.SandboxNotes, "without the Docker sandbox, every caller's agent can read and change your files; the storage of sandbox rules needs --sandbox docker")
+	}
+	_, callerRule := cfg.Policy.SandboxRuleOf(agentdir.MatchAnyone)
+	switch {
+	case callerRule || !others:
+	case cfg.Sandbox == agentdir.SandboxLocal:
+		a.SandboxNotes = append(a.SandboxNotes, "callers who aren't owners now get no secrets; to give them every secret as before, run `a2a-serve config set --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`")
+	default:
+		a.SandboxNotes = append(a.SandboxNotes, "callers who aren't owners now get a read-only workspace and no secrets; to give them the shared workspace and every secret as before, run `a2a-serve config set --caller-storage shared --caller-secrets all`; to keep the new default and hide this note, run `a2a-serve config set --caller-storage read-only`")
+	}
+	return a
 }
 
 // Describe says who may call an agent with the settings p on the networks

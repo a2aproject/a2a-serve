@@ -115,6 +115,12 @@ type Access struct {
 	// Summary says who may call, one line each for you, everyone else and
 	// the networks that need a pairing, as `a2a-serve status` shows it.
 	Summary []string `json:"summary"`
+	// Sandbox says what the agent containers of callers get, one line each
+	// for you, the sandbox rules and everyone else.
+	Sandbox []string `json:"sandbox,omitempty"`
+	// SandboxNotes are what the sandbox rules don't do, or how they changed
+	// what callers get.
+	SandboxNotes []string `json:"sandboxNotes,omitempty"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.

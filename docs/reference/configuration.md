@@ -86,6 +86,9 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--public-allow-incoming` | `policy.publicAllowIncoming` | `start <agent>`, `config set` |
 | `--private-allow-outgoing` | `policy.privateAllowOutgoing` | `start <agent>`, `config set` |
 | `--allow-email` | `policy.allowEmails` | `start <agent>`, `config set` |
+| `--caller-storage` | `policy.sandbox` | `start <agent>`, `config set` |
+| `--caller-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
+|  | `policy.sandbox` | `config edit` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |
 | `--relay-token` | the secret `RELAY_TOKEN` in `state/secrets` | `config set` |

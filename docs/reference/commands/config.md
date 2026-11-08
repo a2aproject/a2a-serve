@@ -122,6 +122,8 @@ a2a-serve config set --mount ~/docs:/docs:ro --dry-run
 | Flag | Default | Description |
 |---|---|---|
 | `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--caller-secrets names` |  | Secrets the agent containers of callers who aren't owners get, unless a pairing or another sandbox rule says otherwise: names from --secret, all, or NAME=secret:OTHER to pass the secret OTHER as NAME (default none) (repeatable; commas also separate values) |
+| `--caller-storage string` |  | What the agent containers of callers who aren't owners get of the workspace, unless a pairing or another sandbox rule says otherwise: shared, read-only, own (a private copy) or empty (default read-only) |
 | `--google-client-id string` |  | Client ID of your own Google app for sign-in (optional) |
 | `--google-client-secret string` |  | Client secret of your own Google app (secret value: env:VAR, -, or the value) |
 | `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
@@ -174,7 +176,7 @@ Entries are named by their key: a secret or env by name, a mount by its
 destination, others by value. Unsetting a secret also deletes its value
 from .a2a/state/secrets. Messengers are removed with `a2a-serve messenger rm`.
 
-Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
+Settings: agent, allow-broad-mount, allow-email, allow-tools, backup, backup-interval, backup-key, backup-retention, caller-secrets, caller-storage, card-skills, command, contact-refresh, cpus, deny-tools, description, disable-mcp, env, google-client-id, google-client-secret, image, memory, model, mount, name, owner-chat, pids, port, private, private-allow-incoming, private-allow-outgoing, public, public-allow-incoming, relay-token, sandbox, sandbox-rules, secret, tailscale-authkey, tailscale-control-url, task-ttl, workspace
 
 ```
 a2a-serve config unset <setting> [<entry>...] [flags]

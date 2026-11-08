@@ -161,6 +161,29 @@ func TestDockerRunnerHidden(t *testing.T) {
 	}
 }
 
+func TestDockerRunnerWorkspaceSrc(t *testing.T) {
+	t.Parallel()
+	r := &DockerRunner{
+		Name: "n", Image: "img", WorkspaceSrc: "/state/workspaces/u/own",
+		Mounts: []agentdir.Mount{{Src: "/src/app", Dst: "/src/app"}, {Src: "/docs", Dst: "/docs", ReadOnly: true}},
+		Hidden: []string{"/src/app/.a2a"},
+	}
+	cmd, err := r.Command(context.Background(), Command{Path: "opencode"})
+	if err != nil {
+		t.Fatalf("Command() error = %v", err)
+	}
+	var got []string
+	for i, a := range cmd.Args {
+		if a == "-v" || a == "--mount" {
+			got = append(got, cmd.Args[i+1])
+		}
+	}
+	want := []string{"/state/workspaces/u/own:/src/app", "/docs:/docs:ro", "type=tmpfs,dst=/src/app/.a2a,readonly"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("Command() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestDockerRunnerHiddenThroughSymlinks(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()

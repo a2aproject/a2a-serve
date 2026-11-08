@@ -463,6 +463,32 @@ var fields = []field{
 		usage: "People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
 	},
 	{
+		access: access{
+			get: func(c *Config) []string { return nonEmpty(callerRule(c).Storage) },
+			put: func(c *Config, v []string) { setCallerRule(c, func(r *SandboxRule) { r.Storage = first(v) }) },
+			arg: func(s *Settings) any { return &s.CallerStorage },
+		},
+		flag: "caller-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "What the agent containers of callers who aren't owners get of the workspace, unless a pairing or another sandbox rule says otherwise: shared, read-only, own (a private copy) or empty (default read-only)",
+		values: StorageModes,
+	},
+	{
+		access: access{
+			list: true,
+			get:  func(c *Config) []string { return callerRule(c).Secrets },
+			put:  func(c *Config, v []string) { setCallerRule(c, func(r *SandboxRule) { r.Secrets = v }) },
+			arg:  func(s *Settings) any { return &s.CallerSecrets },
+		},
+		flag: "caller-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
+		key: secretGrantKey, parse: parseSecretGrant,
+		usage: "Secrets the agent containers of callers who aren't owners get, unless a pairing or another sandbox rule says otherwise: `names` from --secret, all, or NAME=secret:OTHER to pass the secret OTHER as NAME (default none)",
+	},
+	{
+		access: sandboxRules(),
+		flag:   SandboxSetting, path: "policy.sandbox", place: placeFile, scope: scopeOwner, live: true,
+		key: sandboxRuleKey, show: showSandboxRule,
+	},
+	{
 		access: str(func(c *Config) *string { return &c.Network.TailscaleControlURL }, func(s *Settings) *string { return &s.TailscaleControlURL }),
 		flag:   "tailscale-control-url", path: "network.tailscaleControlURL", place: placeOperational, scope: scopeOwner, section: SectionNetwork,
 		usage: "Headscale URL, such as https://headscale.example.com, instead of Tailscale's control server",
@@ -996,7 +1022,7 @@ func CopyLive(dst, src *Config) {
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email"}, setting)
+	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "caller-storage", "caller-secrets", SandboxSetting}, setting)
 }
 
 // label names the flag of f in errors.
