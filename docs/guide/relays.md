@@ -116,7 +116,7 @@ To let a removed invited agent back, invite its name again:
 a2a-serve relay invite reviewer
 ```
 
-The agent comes back with its identity when it restarts. It keeps its URLs, so pairings and contacts that saved them keep working. The relay remembers the names of removed agents in its relay directory, so a relay in a container forgets them when the container goes away. `relay members --banned` lists the removed agents.
+The agent comes back with its identity when it restarts. The other agents on the relay reach it again within about a minute and a half. It keeps its URLs, so pairings and contacts that saved them keep working. The relay remembers the names of removed agents in its relay directory, so a relay in a container forgets them when the container goes away. `relay members --banned` lists the removed agents.
 
 ## Manage a relay elsewhere
 
