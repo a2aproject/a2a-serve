@@ -128,10 +128,10 @@ type Access struct {
 	// PublicAllowIncoming is paired or anyone, set with a public URL.
 	PrivateAllowIncoming string `json:"privateAllowIncoming,omitempty"`
 	PublicAllowIncoming  string `json:"publicAllowIncoming,omitempty"`
-	// Owner, Authenticated and Anonymous are the members of each role.
-	Owner         []string `json:"owner"`
-	Authenticated []string `json:"authenticated"`
-	Anonymous     []string `json:"anonymous"`
+	// Owner, Member and Guest are the callers each role holds.
+	Owner  []string `json:"owner"`
+	Member []string `json:"member"`
+	Guest  []string `json:"guest"`
 	// Pairings counts the pairings besides the local one, and OwnerPairings
 	// those of them that are owners.
 	Pairings      int `json:"pairings"`
@@ -142,6 +142,15 @@ type Access struct {
 	// Summary says who may call, one line each for you, everyone else and
 	// the networks that need a pairing, as `a2a-serve status` shows it.
 	Summary []string `json:"summary"`
+	// Sandbox says what the agent containers of callers get, one line each
+	// for you, the sandbox rules and everyone else.
+	Sandbox []string `json:"sandbox,omitempty"`
+	// SandboxNotes are what the sandbox rules don't do, such as callers
+	// whose container gets no model key.
+	SandboxNotes []string `json:"sandboxNotes,omitempty"`
+	// GuestNote says that the agent can't reach its model for guests, who
+	// get no secrets, if it needs a key.
+	GuestNote string `json:"guestNote,omitempty"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.
@@ -204,6 +213,34 @@ type PairCodeRequest struct {
 	// Advertised, when set, advertises the webhook node to the agents of the
 	// private network, or stops advertising it.
 	Advertised *bool `json:"advertised,omitempty"`
+	// Sandbox, when set, changes the sandbox rule of the pairing.
+	Sandbox *SandboxChange `json:"sandbox,omitempty"`
+}
+
+// SandboxChange changes the sandbox rule of a pairing: the rule whose only
+// matcher is pairing:<name>.
+type SandboxChange struct {
+	// Storage, when set, replaces the storage of the rule.
+	Storage string `json:"storage,omitempty"`
+	// Secrets, when set, replace the secrets of the rule; empty gives none.
+	Secrets *[]string `json:"secrets,omitempty"`
+}
+
+// PairingSandbox is what the agent container of a pairing gets.
+type PairingSandbox struct {
+	// Storage is shared, read-only, own or empty.
+	Storage string `json:"storage"`
+	// Secrets are the variables the agent gets: NAME, or NAME=secret:OTHER
+	// for the stored secret OTHER passed as NAME.
+	Secrets []string `json:"secrets"`
+	// Summary describes both, as `a2a-serve pair get` shows it.
+	Summary string `json:"summary"`
+	// Pending describes what the pairing gets after a restart, when its
+	// rule waits for secrets that the restart loads.
+	Pending string `json:"pending,omitempty"`
+	// Warning says what the pairing's agent can't do with them, such as
+	// reach its model without a key.
+	Warning string `json:"warning,omitempty"`
 }
 
 // PairCodeResponse carries a pairing code and how to use it.
@@ -227,6 +264,8 @@ type PairCodeResponse struct {
 	Instructions string `json:"instructions,omitempty"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
+	// Sandbox is what the agent container of the pairing gets.
+	Sandbox *PairingSandbox `json:"sandbox,omitempty"`
 }
 
 // Pairing describes someone paired with the agent: a person, a device,
@@ -236,7 +275,7 @@ type Pairing struct {
 	// Kind is one of the pairapi.Pairing* kinds, or empty until the first
 	// code is redeemed.
 	Kind string `json:"kind"`
-	// Role is authenticated or owner.
+	// Role is member or owner.
 	Role      string          `json:"role"`
 	Principal string          `json:"principal"`
 	Created   time.Time       `json:"created,omitzero"`
@@ -250,6 +289,9 @@ type Pairing struct {
 	// Allowed are the tool calls the pairing allowed in all its
 	// conversations.
 	Allowed []string `json:"allowed,omitempty"`
+	// Sandbox is what the agent container of the pairing gets. Owners share
+	// the container of the user running the agent.
+	Sandbox *PairingSandbox `json:"sandbox,omitempty"`
 }
 
 // PairingToken describes a token issued to a pairing.
@@ -292,6 +334,8 @@ type PairingUpdate struct {
 	Advertised  *bool             `json:"advertised,omitempty"`
 	// Rotate revokes every token of the pairing and issues a new code.
 	Rotate bool `json:"rotate,omitempty"`
+	// Sandbox, when set, changes the sandbox rule of the pairing.
+	Sandbox *SandboxChange `json:"sandbox,omitempty"`
 }
 
 // PairingUpdateResponse is the changed pairing, and the new code of a
@@ -299,6 +343,9 @@ type PairingUpdate struct {
 type PairingUpdateResponse struct {
 	Pairing Pairing           `json:"pairing"`
 	Code    *PairCodeResponse `json:"code,omitempty"`
+	// Hints are what the change doesn't do, such as storage without the
+	// Docker sandbox.
+	Hints []string `json:"hints,omitempty"`
 	// Access is who may call the agent afterwards.
 	Access *Access `json:"access,omitempty"`
 }
@@ -343,6 +390,12 @@ type RemovalPreview struct {
 	Allowed int `json:"allowed"`
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string `json:"agentHomes"`
+	// Workspaces are the directories of private workspaces, such as an
+	// own copy of the workspace, that would be deleted.
+	Workspaces []string `json:"workspaces"`
+	// SandboxRule is the sandbox rule of the pairing that would be deleted,
+	// as config.yaml shows it.
+	SandboxRule string `json:"sandboxRule,omitempty"`
 }
 
 // SignOutResponse tells what `pair rm --email` revoked.

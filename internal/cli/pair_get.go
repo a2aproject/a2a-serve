@@ -23,6 +23,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
@@ -112,7 +113,25 @@ func renderPairing(p *controlapi.Pairing) string {
 	if len(p.Allowed) > 0 {
 		line("allowed", strings.Join(p.Allowed, ", "))
 	}
+	if box := p.Sandbox; box != nil {
+		summary := box.Summary
+		if p.Role == auth.RoleOwner {
+			summary += " (your agent container, which owners share)"
+		}
+		line("sandbox", summary)
+		if box.Pending != "" {
+			line("", afterRestart(box.Pending))
+		}
+		if box.Warning != "" {
+			fmt.Fprintf(&sb, "  ! %s\n", box.Warning)
+		}
+	}
 	return sb.String()
+}
+
+// afterRestart describes the pending sandbox of a pairing.
+func afterRestart(pending string) string {
+	return "after `a2a-serve restart`: " + pending
 }
 
 func yesNo(b bool) string {

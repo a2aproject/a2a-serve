@@ -17,6 +17,7 @@ package agentops
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 
@@ -41,7 +42,24 @@ const baseURL = "https://coder.example.com"
 
 func newService(t *testing.T) (*Service, *store.Store) {
 	t.Helper()
-	return newServiceWith(t, agentdir.NewRuntime(agentdir.Dir{}, &agentdir.Config{Name: "coder"}, nil), Hooks{})
+	return newServiceWith(t, newRuntime(t, &agentdir.Config{Name: "coder"}), Hooks{})
+}
+
+// newRuntime returns the runtime of an agent directory whose config.yaml
+// holds cfg, with a harness if it has none.
+func newRuntime(t *testing.T, cfg *agentdir.Config) *agentdir.Runtime {
+	t.Helper()
+	if cfg.Harness == "" {
+		cfg.Harness = "opencode"
+	}
+	d := agentdir.Dir{Root: t.TempDir()}
+	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+	return agentdir.NewRuntime(d, cfg, nil)
 }
 
 func newServiceWith(t *testing.T, rt *agentdir.Runtime, hooks Hooks) (*Service, *store.Store) {
@@ -84,7 +102,7 @@ func TestPair(t *testing.T) {
 		},
 		Instructions: "You are the webhook node \"grok\" of the agent at " + baseURL + ".\nRead " + baseURL + "/mailbox/skill.md and follow it.\nYour pairing code is " + got.Code + ".",
 		Access: &controlapi.Access{
-			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
+			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Member: []string{auth.MemberPrivate}, Guest: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
 			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
 		},
@@ -107,7 +125,7 @@ func TestPairMessenger(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			s, _ := newServiceWith(t, agentdir.NewRuntime(agentdir.Dir{}, tc.cfg, nil), Hooks{})
+			s, _ := newServiceWith(t, newRuntime(t, tc.cfg), Hooks{})
 
 			got, err := s.Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
 
@@ -189,10 +207,11 @@ func TestPairings(t *testing.T) {
 	}
 
 	want := controlapi.Pairing{
-		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated, Principal: auth.PairingPrincipal("anna"),
+		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember, Principal: auth.PairingPrincipal("anna"),
 		Created: anna.Created, Tokens: []controlapi.PairingToken{},
 		Accounts:     []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 		PendingCodes: anna.PendingCodes,
+		Sandbox:      &controlapi.PairingSandbox{Storage: agentdir.StorageShared, Secrets: []string{}, Summary: "shared workspace, no secrets"},
 	}
 	if diff := cmp.Diff(want, *anna); diff != "" {
 		t.Fatalf("Pairing(anna) wrong result (-want +got) diff = %s", diff)
@@ -246,7 +265,7 @@ func TestPreviewRevoke(t *testing.T) {
 	}
 
 	want := &controlapi.RemovalPreview{
-		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{},
+		Kind: pairapi.PairingPerson, Codes: 1, AgentHomes: []string{}, Workspaces: []string{},
 		Accounts: []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {

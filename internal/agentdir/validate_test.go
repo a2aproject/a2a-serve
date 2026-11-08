@@ -54,6 +54,43 @@ func TestValidate(t *testing.T) {
 		{name: "env", modify: func(c *Config) { c.Env = []string{"DEBUG"} }, wantErr: `invalid --env "DEBUG"`},
 		{name: "port", modify: func(c *Config) { c.Port = 70000 }, wantErr: `invalid --port "70000"`},
 		{name: "memory", modify: func(c *Config) { c.Limits.Memory = "lots" }, wantErr: "invalid --memory"},
+		{name: "sandbox rules", modify: func(c *Config) {
+			c.Secrets = []string{"KEY", "GUEST_KEY"}
+			c.Policy.Sandbox = []SandboxRule{
+				{Match: []string{"email:*@example.com", "pairing:ben"}, Storage: StorageOwn, Secrets: []string{"KEY"}},
+				{Match: []string{"guests"}, Storage: StorageReadOnly, Secrets: []string{"KEY=secret:GUEST_KEY"}},
+				{Match: []string{"self"}, Secrets: []string{"all"}},
+			}
+		}},
+		{name: "sandbox rule without matchers", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Storage: StorageOwn}} }, wantErr: "policy.sandbox rule 1: want at least one matcher"},
+		{name: "sandbox rule matcher", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"owner"}}} }, wantErr: `policy.sandbox rule 1: unknown matcher "owner"`},
+		{name: "sandbox rule email matcher", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"email:ben"}}} }, wantErr: `unknown matcher "email:ben"`},
+		{name: "sandbox matcher in two rules", modify: func(c *Config) {
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"private"}}, {Match: []string{"guests", "private"}}}
+		}, wantErr: "policy.sandbox rule 2: private is in rule 1 too; a matcher appears in one rule at most"},
+		{name: "sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"guests"}, Storage: "copy"}} }, wantErr: `invalid --guest-storage "copy": unknown storage`},
+		{name: "pairing sandbox rule storage", modify: func(c *Config) { c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Storage: "copy"}} }, wantErr: `ben's sandbox rule: unknown storage: want`},
+		{name: "sandbox rule unknown secret", modify: func(c *Config) {
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"guests"}, Secrets: []string{"KEY"}}}
+		}, wantErr: "secret KEY is not one of the agent's secrets"},
+		{name: "sandbox rule unknown secret source", modify: func(c *Config) {
+			c.Secrets = []string{"KEY"}
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"guests"}, Secrets: []string{"KEY=secret:OTHER"}}}
+		}, wantErr: "secret OTHER is not one of the agent's secrets"},
+		{name: "sandbox rule with none", modify: func(c *Config) {
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}}
+		}},
+		{name: "sandbox rule with all and a name", modify: func(c *Config) {
+			c.Secrets = []string{"KEY"}
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"guests"}, Secrets: []string{"all", "KEY"}}}
+		}, wantErr: `invalid --guest-secrets "all,KEY": all goes alone`},
+		{name: "pairing sandbox rule with none and a name", modify: func(c *Config) {
+			c.Secrets = []string{"KEY"}
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"KEY", "none"}}}
+		}, wantErr: `ben's sandbox rule: none goes alone`},
+		{name: "sandbox rule secret syntax", modify: func(c *Config) {
+			c.Policy.Sandbox = []SandboxRule{{Match: []string{"guests"}, Secrets: []string{"KEY=OTHER"}}}
+		}, wantErr: `invalid --guest-secrets "KEY=OTHER": invalid secret`},
 		{name: "memory in gigabytes", modify: func(c *Config) { c.Limits.Memory = "4g" }},
 		{name: "memory in capital megabytes", modify: func(c *Config) { c.Limits.Memory = "512M" }},
 		{name: "memory at the docker minimum", modify: func(c *Config) { c.Limits.Memory = "6m" }},

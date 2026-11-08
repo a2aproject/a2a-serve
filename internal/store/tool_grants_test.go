@@ -73,7 +73,7 @@ func TestDeletePairingDeletesItsGrants(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "member"})
 	ts := s.Tasks("", testViewer)
 	for user, id := range map[string]string{"pair:anna": "anna-1", "pair:bob": "bob-1"} {
 		if _, err := ts.Create(asUser(user), newTask(id, "c-group")); err != nil {

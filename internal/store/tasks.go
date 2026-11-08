@@ -711,6 +711,12 @@ func (ts *TaskStore) UnfinishedOf(ctx context.Context, user string) ([]a2a.TaskI
 	return ts.unfinished(ctx, `owner = ?`, user)
 }
 
+// UnfinishedIn returns the unfinished tasks of the conversations that run
+// in the agent process of agentKey.
+func (ts *TaskStore) UnfinishedIn(ctx context.Context, agentKey string) ([]a2a.TaskID, error) {
+	return ts.unfinished(ctx, `context_id IN (SELECT context_id FROM sessions WHERE agent_key = ? AND agent_key != '')`, agentKey)
+}
+
 // UnfinishedRemoved returns the IDs of the tasks of the scope that
 // [Store.DeletePairing] deletes with u and that aren't in a terminal state.
 func (ts *TaskStore) UnfinishedRemoved(ctx context.Context, u PairingUser) ([]a2a.TaskID, error) {

@@ -49,7 +49,7 @@ The [access model](access-model.md) has the same entities on every network. On a
 Every request passes three steps:
 
 1. **Agent Mesh admits.** The router delivers only requests from enrolled nodes, or from ingress. The relay's policy decides who may enroll and publish.
-2. **a2a-serve resolves.** It builds the caller's identity from `WhoIs`, or from a pairing token or sign-in on the public URL, and gives it a role: `owner`, `authenticated` or `anonymous`.
+2. **a2a-serve resolves.** It builds the caller's identity from `WhoIs`, or from a pairing token or sign-in on the public URL, and gives it a [role](../guide/identities.md#roles): `owner`, `member` or `guest`.
 3. **a2a-serve acts.** The role decides what the caller may do with tasks and approvals.
 
 `--private-allow-incoming paired` narrows step 2 to you and your pairings while the relay still admits everyone else to the network. Removing someone from the private network happens at the relay, with `a2a-serve relay remove`, which bans their nodes.
@@ -58,7 +58,7 @@ A relay admits like a tailnet: everyone it admits can call everyone else it admi
 
 ## Calls between agents
 
-The agent calls other agents with the `a2a` CLI, through the server. On a relay the server dials contacts through `meshnet`, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most `authenticated`, whoever started it.
+The agent calls other agents with the `a2a` CLI, through the server. On a relay the server dials contacts through `meshnet`, so the callee sees this agent's node identity, and no credential enters the sandbox. The callee gives a call that came through another agent at most the member role, whoever started it.
 
 Advertised webhook nodes become directory entries: Ben's agent publishes `a2a://grok@ben`, and Anna's agent finds it with `peers` and adds it with `contact add grok@ben`. Calls still go through Ben's agent, which keeps the webhook's credentials and checks Anna's agent against its own policy (planned; on a tailnet, advertisements spread by gossip today).
 

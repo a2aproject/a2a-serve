@@ -16,8 +16,8 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── agentmesh/     # Agent Mesh identity, and the relay sign-in's refresh token
         ├── ads.json       # pairings that agents on the private network advertise
         ├── home/          # the agent's home directory
-        ├── homes/         # a home for the agent process of each authenticated user
-        ├── home-anonymous/ # the home of the agent process for anonymous callers
+        ├── homes/         # a home for the agent process of each member
+        ├── home-anonymous/ # the home of the agent process for guests, named as in older versions
         ├── mcp-mask.json  # the .mcp.json with no servers that the sandbox shows the agent
         ├── server.log     # rotated at 10 MB; the previous log is server.log.1
         ├── server.pid     # PID of the running server, so that stop works while it starts

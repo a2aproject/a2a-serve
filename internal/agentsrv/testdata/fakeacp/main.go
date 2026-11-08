@@ -36,6 +36,8 @@
 //	agents           replies with the agents URL and the socket that
 //	                 reaches it
 //	ls <dir>         replies with the entries of dir
+//	env <name>       replies with the variable name and its value, or unset
+//	write <file>     writes file and replies whether it could
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	markdown         replies with Markdown that uses most of the syntax
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
@@ -45,7 +47,8 @@
 //	                 exists, a call like call, whose output goes to
 //	                 <dir>/result
 //
-// Sessions are kept in .fakeacp in the working directory, so session/load
+// Sessions are kept in .fakeacp in the working directory, or in the home
+// directory when the workspace is read-only, so session/load
 // works after a restart. Like opencode, sessions have a model config option
 // that refuses models other than fakeModels.
 package main
@@ -280,7 +283,43 @@ func (a *agent) askTool(sessionID, toolCallID, title, command string) (string, b
 	return r.Outcome.OptionID, true
 }
 
-func (a *agent) sessionPath(id string) string { return filepath.Join(a.dir, ".fakeacp", id+".json") }
+// sessionDirs are where sessions are kept: the working directory, or the
+// home directory when the workspace is read-only.
+func (a *agent) sessionDirs() []string {
+	dirs := []string{filepath.Join(a.dir, ".fakeacp")}
+	if home, err := os.UserHomeDir(); err == nil {
+		dirs = append(dirs, filepath.Join(home, ".fakeacp"))
+	}
+	return dirs
+}
+
+func (a *agent) sessionPath(id string) string {
+	dirs := a.sessionDirs()
+	for _, d := range dirs {
+		if _, err := os.Stat(filepath.Join(d, id+".json")); err == nil {
+			return filepath.Join(d, id+".json")
+		}
+	}
+	for _, d := range dirs {
+		if writable(d) {
+			return filepath.Join(d, id+".json")
+		}
+	}
+	return filepath.Join(dirs[0], id+".json")
+}
+
+// writable reports whether files can be created in dir, creating it if
+// needed.
+func writable(dir string) bool {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return false
+	}
+	f, err := os.CreateTemp(dir, ".probe-*")
+	if err != nil {
+		return false
+	}
+	return f.Close() == nil && os.Remove(f.Name()) == nil
+}
 
 func (a *agent) load(id string) (*session, error) {
 	data, err := os.ReadFile(a.sessionPath(id))
@@ -292,9 +331,6 @@ func (a *agent) load(id string) (*session, error) {
 }
 
 func (a *agent) save(id string, s *session) error {
-	if err := os.MkdirAll(filepath.Dir(a.sessionPath(id)), 0o700); err != nil {
-		return err
-	}
 	data, err := json.Marshal(s)
 	if err != nil {
 		return err
@@ -637,6 +673,20 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			names = append(names, e.Name())
 		}
 		a.chunk(sid, "ls: "+strings.Join(names, " "))
+		end("end_turn")
+	case "env":
+		if v, ok := os.LookupEnv(arg); ok {
+			a.chunk(sid, "env "+arg+"="+v)
+		} else {
+			a.chunk(sid, "env "+arg+" unset")
+		}
+		end("end_turn")
+	case "write":
+		if err := os.WriteFile(arg, []byte("written by fakeacp\n"), 0o644); err != nil {
+			a.chunk(sid, "write error: "+err.Error())
+		} else {
+			a.chunk(sid, "write ok")
+		}
 		end("end_turn")
 	case "dial":
 		c, err := net.DialTimeout("tcp", arg, 10*time.Second)

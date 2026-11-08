@@ -335,10 +335,10 @@ func (cc *ContactClients) isNode(ctx context.Context, name string) (bool, error)
 
 // nodeCaller is the principal this agent calls its nodes as, for user hops
 // agents deep. Its harness is another agent to the node, so it is capped
-// at authenticated; the node admits the agent hosting it explicitly.
+// at member; the node admits the agent hosting it explicitly.
 func (cc *ContactClients) nodeCaller(user auth.Principal, hops int) auth.Principal {
 	return auth.Principal{
-		ID: "agent:" + cc.config().Name, Role: auth.RoleAuthenticated, OnBehalfOf: user.ID,
+		ID: "agent:" + cc.config().Name, Role: auth.RoleMember, OnBehalfOf: user.ID,
 		Identity: auth.Identity{Network: network.ListenerHarness, Hops: hops + 1},
 	}
 }

@@ -30,6 +30,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -62,6 +63,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairings"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
 
 // Options configure [Run].
@@ -176,12 +178,12 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector.Inspector
-	// split runs the conversations of anonymous callers and of each
-	// authenticated user in their own agent processes, which keys tell,
-	// and budget limits the tasks of anonymous callers.
+	// split runs the conversations of guests and of each member in their
+	// own agent processes, which keys tell, and budget limits the tasks of
+	// guests.
 	split  *splitExecutor
 	keys   *agentKeys
-	budget *anonymousBudget
+	budget *guestBudget
 	// notes are the notes on tool calls for the results of tasks.
 	notes *toolNotes
 	// decider answers tool permissions without asking.
@@ -198,16 +200,27 @@ type Server struct {
 	unattended *chat.ContextSet
 	// ends does what follows the end of a task's execution.
 	ends *taskEnds
-	// users are the agent processes of users that run now.
-	users userAgents
+	// users are the agent processes of members that run now, and guests
+	// the one of guests.
+	users  userAgents
+	guests userAgents
+	// sandboxes tell what the container of each agent key gets, and
+	// mainSandbox what the owner's container got when it started.
+	sandboxes   *sandboxes
+	mainSandbox atomic.Pointer[access.Sandbox]
+	// workspaces are the private workspaces of containers with their own
+	// storage.
+	workspaces *workspaces.Store
 	// background runs the server's loops, which Run waits for.
 	background sync.WaitGroup
 	// turns counts the executions of the A2A handler, until a2a-go consumed
 	// their last events.
 	turns turnCount
 
-	// instructionsMu serializes rewrites of the harness instruction files.
+	// instructionsMu serializes rewrites of the harness instruction files,
+	// and guards storageNotes, the note on the storage of each agent home.
 	instructionsMu sync.Mutex
+	storageNotes   map[string]string
 	timings        Timings
 	// maxAgentMessage bounds a message from the agent.
 	maxAgentMessage int
@@ -285,6 +298,7 @@ func Run(ctx context.Context, opts Options) error {
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
+	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {
 		s.existed = true
@@ -409,6 +423,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	closers.push(func(context.Context) error { return ads.Close() })
 	s.ads = ads
 	s.chain = &auth.Chain{Store: s.store, Net: s.private, Policy: s.policy}
+	s.sandboxes = newSandboxes(s.rt.Config, s.store)
 	google := googleauth.Google
 	if opts.GoogleEndpoints != nil {
 		google = *opts.GoogleEndpoints
@@ -463,23 +478,23 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Supervisor: s.supervisor,
 		Bus:        s.bus,
 		Config:     s.rt.Config,
-		Anonymous:  s.keys.anonymous,
+		Guest:      s.keys.guest,
 		Timings:    s.timings.chat(),
 	})
 	s.unattended = &chat.ContextSet{}
 	posted := &chat.PostedTurns{}
 	s.sender, s.handler = bindHandler(func(sender *handlerSender) a2asrv.RequestHandler {
 		s.approvals = approvals.New(approvals.Deps{
-			Records:          records,
-			Sender:           sender,
-			Notifier:         s.chatApprovals,
-			Remote:           s.clients,
-			Unattended:       s.unattended.Has,
-			Anonymous:        s.keys.anonymous,
-			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
-			User:             s.keys.user,
-			UserTimeout:      s.timings.UserQuestionTimeout,
-			Config:           s.rt.Config,
+			Records:      records,
+			Sender:       sender,
+			Notifier:     s.chatApprovals,
+			Remote:       s.clients,
+			Unattended:   s.unattended.Has,
+			Guest:        s.keys.guest,
+			GuestTimeout: s.timings.GuestQuestionTimeout,
+			User:         s.keys.user,
+			UserTimeout:  s.timings.UserQuestionTimeout,
+			Config:       s.rt.Config,
 		})
 		s.ends = newTaskEnds(s.bus, s.approvals, s.unattended)
 		s.pairings = pairings.New(pairings.Deps{
@@ -490,7 +505,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 			Mailbox:   s.nodes.Mailbox,
 			Forget:    s.nodes.Forget,
 			Changed:   s.refreshInstructions,
-			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted},
+			Users:     stopUsers{tasks: s.tasks, sender: sender, users: &s.users, posted: posted, sandboxes: s.sandboxes},
 			Homes:     userHomes{s},
 			Limiter:   pairings.NewLimiter(opts.Now),
 		})
@@ -565,7 +580,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	return nil
 }
 
-// buildExecutor starts the harness, and the executor which runs anonymous
+// buildExecutor starts the harness, and the executor which runs guests'
 // conversations in their own agent process.
 func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options) error {
 	exec := opts.Executor
@@ -581,7 +596,7 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		closers.push(closeACP)
 		exec = acp
 	}
-	s.budget = newAnonymousBudget()
+	s.budget = newGuestBudget()
 	var start startPool
 	if opts.Executor == nil {
 		start = s.poolStarter(opts.HarnessLog)
@@ -592,17 +607,17 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		s.turns.wait(ctx)
 		return nil
 	})
-	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start})
+	s.split = newSplitExecutor(ctx, splitDeps{Main: exec, Keys: s.keys, Budget: s.budget, Start: start, Admit: s.admitTurn})
 	closers.push(s.split.close)
 	return nil
 }
 
-// poolStarter starts the agent processes of anonymous callers in one pool,
-// and those of authenticated users in another.
+// poolStarter starts the agent processes of guests in one pool,
+// and those of members in another.
 func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 	return func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-		if pool == anonymousPool {
-			return s.newAnonymousExecutor(ctx, harnessLog)
+		if pool == guestPool {
+			return s.newGuestExecutor(ctx, harnessLog)
 		}
 		return s.newUsersExecutor(ctx, harnessLog)
 	}
@@ -646,6 +661,7 @@ func (s *Server) serve(ctx context.Context, closers *stack, chans []messenger.Me
 	s.watches.Resume(ctx)
 	s.background.Go(func() { s.pruneLoop(ctx) })
 	s.background.Go(func() { s.watchState(ctx) })
+	s.background.Go(func() { s.sandboxLoop(ctx) })
 	s.background.Go(func() { s.schedules.Run(ctx) })
 	s.background.Go(func() { s.runGossip(ctx) })
 	s.background.Go(func() { s.allowed.run(ctx, s.answerWaiting) })
@@ -785,6 +801,7 @@ func (s *Server) pruneLoop(ctx context.Context) {
 			slog.Warn("pruning Google sign-ins", "error", err)
 		}
 		s.claims.forgetPruned(ctx)
+		s.pruneWorkspaces(ctx)
 		select {
 		case <-ctx.Done():
 			return
@@ -844,8 +861,24 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 	if err != nil {
 		return err
 	}
-	if w := localSandboxWarning(s.rt.Config().Sandbox, a); w != "" {
-		s.logf("! %s", w)
+	noSandbox := localSandboxWarning(s.rt.Config().Sandbox, a)
+	if noSandbox != "" {
+		s.logf("! %s", noSandbox)
+	}
+	if a.Pairings > a.OwnerPairings || len(a.Others) > 0 {
+		label := "✓ sandbox "
+		for _, line := range a.Sandbox {
+			s.logf("%s %s", label, line)
+			label = "          "
+		}
+	}
+	if a.GuestNote != "" {
+		s.logf("! %s", a.GuestNote)
+	}
+	for _, note := range s.sandboxNotes(a.SandboxNotes) {
+		if note != access.LocalSandboxNote || noSandbox == "" {
+			s.logf("! %s", note)
+		}
 	}
 	return s.supervisor.Announce(ctx)
 }

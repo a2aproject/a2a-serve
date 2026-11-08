@@ -286,7 +286,7 @@ func TestPairings(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "anna", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "anna", Role: "member"})
 	if _, err := s.EnsurePairing(ctx, Pairing{Name: "anna", Kind: "agent", Role: "owner"}); err != nil {
 		t.Fatalf("EnsurePairing() of an existing pairing error = %v", err)
 	}
@@ -311,7 +311,7 @@ func TestDeletePairing(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutLink(ctx, Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
@@ -375,8 +375,8 @@ func TestPairingRemoval(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
-	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "member"})
+	ensurePairing(t, s, Pairing{Name: "bob", Kind: "person", Role: "member"})
 	ts := s.Tasks("", testViewer)
 	finished := newTask("anna-done", "c-anna")
 	finished.Status.State = a2a.TaskStateCompleted
@@ -450,7 +450,7 @@ func TestDeletePairingForgetsItsConversations(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "member"})
 	ts := s.Tasks("", testViewer)
 	owner := asUser("owner")
 	photo := newTask("anna-1", "c-anna")
@@ -573,7 +573,7 @@ func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "anna", Kind: "person", Role: "member"})
 	ts := s.Tasks("", testViewer)
 	owner := asUser("owner")
 	for _, c := range []struct {
@@ -648,7 +648,7 @@ func TestCodes(t *testing.T) {
 	ctx := context.Background()
 	now := time.Now()
 	s.now = func() time.Time { return now }
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 
 	if err := s.PutCode(ctx, "K7Q29XF4", Code{Pairing: "grok", Expires: now.Add(time.Minute)}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
@@ -736,7 +736,7 @@ func TestRedeemCode(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			s := openStore(t)
-			ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+			ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 			if tc.existingToken != "" {
 				if err := s.PutToken(ctx, tc.existingToken, Token{URL: "https://agent"}, ""); err != nil {
 					t.Fatalf("PutToken() error = %v", err)
@@ -805,7 +805,7 @@ func TestTokens(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutLink(ctx, Link{Messenger: "telegram", Identity: "telegram:1", Pairing: "grok"}, "person"); err != nil {
 		t.Fatalf("PutLink() error = %v", err)
 	}
@@ -876,7 +876,7 @@ func TestDeleteSignIns(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
@@ -906,7 +906,7 @@ func TestPruneSignIns(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
@@ -930,7 +930,7 @@ func TestPutNodeNeedsWebhookPairing(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "anna", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "anna", Role: "member"})
 
 	if err := s.PutNode(ctx, Node{ID: "anna", Name: "anna", Webhook: "https://x"}); !errors.Is(err, ErrExists) {
 		t.Fatalf("PutNode() over a person pairing error = %v, want %v", err, ErrExists)
@@ -939,8 +939,8 @@ func TestPutNodeNeedsWebhookPairing(t *testing.T) {
 		t.Fatalf("PutNode() error = %v", err)
 	}
 	p, err := s.Pairing(ctx, "grok")
-	if err != nil || p.Kind != "webhook" || p.Role != "authenticated" {
-		t.Fatalf("Pairing() of a node = %+v, %v, want an authenticated webhook pairing", p, err)
+	if err != nil || p.Kind != "webhook" || p.Role != "member" {
+		t.Fatalf("Pairing() of a node = %+v, %v, want a member webhook pairing", p, err)
 	}
 	if err := s.DeletePairing(ctx, "grok"); err != nil {
 		t.Fatalf("DeletePairing() error = %v", err)
@@ -1702,8 +1702,8 @@ func TestPrune(t *testing.T) {
 			t.Fatalf("Sessions().Put() error = %v", err)
 		}
 	}
-	ensurePairing(t, s, Pairing{Name: "invited", Role: "authenticated"})
-	ensurePairing(t, s, Pairing{Name: "joined", Kind: "person", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "invited", Role: "member"})
+	ensurePairing(t, s, Pairing{Name: "joined", Kind: "person", Role: "member"})
 	for code, pairing := range map[string]string{"EXPIRED": "invited", "JOINED": "joined"} {
 		if err := s.PutCode(ctx, code, Code{Pairing: pairing, Expires: start.Add(time.Minute)}); err != nil {
 			t.Fatalf("PutCode() error = %v", err)
@@ -1783,7 +1783,7 @@ func TestPruneKeepsPairingOfTakenCode(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	if err := s.InviteCode(ctx, Pairing{Name: "invited", Role: "authenticated"}, "CODE", time.Now().Add(time.Minute)); err != nil {
+	if err := s.InviteCode(ctx, Pairing{Name: "invited", Role: "member"}, "CODE", time.Now().Add(time.Minute)); err != nil {
 		t.Fatalf("InviteCode() error = %v", err)
 	}
 	if _, err := s.TakeCode(ctx, "CODE", AnyCode); err != nil {
@@ -1893,7 +1893,7 @@ func TestReplaceCode(t *testing.T) {
 	s := openStore(t)
 	ctx := context.Background()
 	expires := time.Now().Add(time.Minute)
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutCode(ctx, "OTHER", Code{Pairing: "grok", Expires: expires}); err != nil {
 		t.Fatalf("PutCode() error = %v", err)
 	}
@@ -2066,7 +2066,7 @@ func TestLookupTokenRecordsUseOncePerMinute(t *testing.T) {
 	start := time.Now()
 	now := start
 	s.now = func() time.Time { return now }
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
@@ -2143,7 +2143,7 @@ func TestSignInTokenExpiresWhenIdle(t *testing.T) {
 			ctx := context.Background()
 			now := start
 			s.now = func() time.Time { return now }
-			ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+			ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 			kind := ""
 			if tc.token.Pairing != "" {
 				kind = "agent"
@@ -2175,7 +2175,7 @@ func TestPruneDeletesIdleSignInTokens(t *testing.T) {
 	start := time.Now()
 	now := start
 	s.now = func() time.Time { return now }
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutToken(ctx, "a2p_pairing", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}
@@ -2202,7 +2202,7 @@ func TestLookupTokenSucceedsWhenRecordingUseFails(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
 	ctx := context.Background()
-	ensurePairing(t, s, Pairing{Name: "grok", Role: "authenticated"})
+	ensurePairing(t, s, Pairing{Name: "grok", Role: "member"})
 	if err := s.PutToken(ctx, "a2p_secret", Token{Pairing: "grok", URL: "http://x"}, "agent"); err != nil {
 		t.Fatalf("PutToken() error = %v", err)
 	}

@@ -62,7 +62,7 @@ func TestBackupRestoreKeepsConversationAndPairings(t *testing.T) {
 	}
 	var paired pairing
 	restored.serveJSON(&paired, "pair", "get", "anna")
-	if paired.Kind != "person" || paired.Role != "authenticated" || len(paired.Tokens) != 1 {
+	if paired.Kind != "person" || paired.Role != "member" || len(paired.Tokens) != 1 {
 		t.Fatalf("a2a-serve pair get anna on the restored agent = %+v, want anna's pairing with her token", paired)
 	}
 	if got := resultOf(anna.mustSend(restored.url, "hello")); got.Text != "Hello from fakeacp." {

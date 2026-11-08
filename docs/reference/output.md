@@ -9,10 +9,16 @@ a `side`: `invited` for a pairing of the agent, `joined` for an agent you joined
 object with the same schema whether the agent runs or not: `running` is
 always set, and the fields of the running server, such as `pid` and `local`,
 only while it runs. Its `access` object says who may call: `privateAllowIncoming`
-and `publicAllowIncoming` as in force, the members of the `owner`, `authenticated`
-and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
+and `publicAllowIncoming` as in force, the callers each of the `owner`, `member`
+and `guest` [roles](../guide/identities.md#roles) holds, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
-prints. `status` and `stop` add `configError` when `.a2a/config.yaml` is
+prints. With sandbox rules or guests, it adds the `sandbox` lines
+of what each kind of caller's agent container gets, `sandboxNotes` such as
+callers without a model key, and `guestNote` about guests. `pair get` and `pair list`
+give each pairing a `sandbox` object: its `storage`, its `secrets`, a
+`summary`, `pending` with what it gets after a restart when its rule waits for a secret that the restart loads, and a `warning` when its agent can't reach its model. `pair
+invite` adds it when rules change what the pairing gets, and `pair set`
+adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
 invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
 add the same `access` object after a change to who may call or to the
 networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
@@ -20,7 +26,7 @@ networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
 `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `pair rm --dry-run` removes nothing and prints the same
-`kind` and `name` with `"dryRun": true` and the counts of what it would remove. `pair rm --email` prints the kind `google` and adds
+`kind` and `name` with `"dryRun": true`, the counts of what it would remove, the `agentHomes` and `workspaces` directories it would delete, and the pairing's `sandboxRule`. `pair rm --email` prints the kind `google` and adds
 `tokens`, the number of sign-in tokens it revoked. `stop` prints
 `{"name", "stopped", "serviceInstalled", "serviceRemoved"}`, where `stopped` is
 false if the agent wasn't running and `serviceInstalled` is true if it starts
@@ -30,6 +36,8 @@ agent, without `pending`. `messenger add` prints the messenger's `name` and
 that makes you its owner, until you link an account. Progress lines of `restart`, `config set --restart` and `config unset --restart` go to stderr with
 `-o json`. `config show` prints an invalid config with the reason in `invalid`, and exits 1. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
+
+The role names `member` and `guest` are planned for the next release. Earlier versions call the member role `authenticated` and the guest role `anonymous`. They write `authenticated` in the `role` of the pairings that `pair get`, `pair list`, `pair invite` and `pair set` print, and they name the keys of `access` `authenticated` and `anonymous`. Their `sandbox` lines say `other callers` for members that no rule matches. A script that talks to agents of both versions needs to accept both names.
 
 Commands that call the running agent take `--timeout`, the timeout of each
 call (default 60s); the `mailbox` commands take their own, with a default of 30s. The `backup` commands take `--deadline`, the time limit of

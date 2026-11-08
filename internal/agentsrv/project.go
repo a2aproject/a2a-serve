@@ -54,20 +54,41 @@ func ProjectStatus(d agentdir.Dir, cfg *agentdir.Config, secrets agentdir.Secret
 // sessionParams passes the MCP servers of the project's .mcp.json to each
 // new ACP session. It reads the file for every session, so edits apply to
 // the next conversation. Servers the config turns off are left out, and so
-// is a server with a variable that has no value, since it would only fail
-// inside the harness.
-func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
+// is a server with a variable that has no value in the container of the
+// conversation, such as a secret its sandbox rule doesn't give, since it
+// would only fail inside the harness.
+func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorContext) (a2aacp.SessionParams, error) {
 	cfg := s.rt.Config()
 	ws, err := s.workspace()
 	if err != nil {
 		return a2aacp.SessionParams{}, err
 	}
-	found, err := project.LoadMCP(ws)
+	key, err := s.keys.of(ctx, execCtx.ContextID)
+	if err != nil {
+		return a2aacp.SessionParams{}, err
+	}
+	sb, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		return a2aacp.SessionParams{}, err
+	}
+	// The servers come from the workspace the container gets: none for an
+	// empty one, and those of its copy for its own.
+	src := ws
+	if cfg.Sandbox != agentdir.SandboxLocal {
+		switch sb.Storage {
+		case agentdir.StorageEmpty:
+			return a2aacp.SessionParams{Cwd: ws}, nil
+		case agentdir.StorageOwn:
+			src = s.workspaces.Dir(workspaceName(key), agentdir.StorageOwn)
+		}
+	}
+	found, err := project.LoadMCP(src)
 	if err != nil {
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
 		return a2aacp.SessionParams{Cwd: ws}, nil
 	}
-	vars := project.Vars(cfg, s.rt.Secrets())
+	granted, _ := sb.Values(s.rt.Secrets())
+	vars := project.EnvVars(cfg.Env, granted)
 	var servers []json.RawMessage
 	for _, srv := range found {
 		if cfg.MCPDisabled(srv.Name) {
@@ -75,7 +96,7 @@ func (s *Server) sessionParams(ctx context.Context, _ *a2asrv.ExecutorContext) (
 		}
 		resolved, missing := srv.Resolve(vars)
 		if len(missing) > 0 {
-			slog.WarnContext(ctx, "leaving out an MCP server with unset variables; pass them with --secret", "server", srv.Name, "missing", missing)
+			slog.WarnContext(ctx, "leaving out an MCP server with variables that the conversation's container doesn't get; pass them with --secret, or give them in the sandbox rule of its user", "server", srv.Name, "missing", missing)
 			continue
 		}
 		raw, err := resolved.ACP()

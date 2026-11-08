@@ -76,7 +76,7 @@ func TestAgentCallsContact(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
+	addContact(t, assistant, coder, "coder", auth.RoleMember)
 
 	c := assistant.client(assistant.pair("me", auth.RoleOwner))
 	task := send(t, c, userText("call coder hello", "", ""))
@@ -97,7 +97,7 @@ func TestCancelingTaskCancelsItsCalls(t *testing.T) {
 	ctx := context.Background()
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
+	addContact(t, assistant, coder, "coder", auth.RoleMember)
 	c := assistant.client(assistant.pair("me", auth.RoleOwner))
 
 	task := sendAsync(t, c, userText("call coder slow", "", ""))
@@ -130,7 +130,7 @@ func TestAgentCallsContactWhileWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
 	assistant := startServer(t, serverOpts{name: "assistant"})
-	addContact(t, assistant, coder, "coder", auth.RoleAuthenticated)
+	addContact(t, assistant, coder, "coder", auth.RoleMember)
 	c := assistant.client(assistant.pair("me", auth.RoleOwner))
 	signals := t.TempDir()
 
@@ -532,7 +532,7 @@ func TestAgentsURLHandles(t *testing.T) {
 		t.Fatalf("claimsOf() before a turn error = %v, want %v", err, agentproxy.ErrNoTurn)
 	}
 
-	turn := agentproxy.Claims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}}
+	turn := agentproxy.Claims{ContextID: "ctx1", User: auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: 1}}}
 	end := p.beginTurn(turn)
 	got, err := p.ClaimsOf(ctx, h, "")
 	if err != nil {
@@ -668,9 +668,9 @@ func TestAgentsProxyServesOnlyTheConversationsOfItsProcess(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	annaContext := send(t, anna, userText("hello", "", "")).ContextID
-	annaURL := turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
+	annaURL := turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleMember})
 	ownerURL := turnURL(t, ts, "c1")
 	annaSocket, err := ts.srv.harness.open(agentkey.User("pair:anna"))
 	if err != nil {
@@ -709,9 +709,9 @@ func TestHarnessEndpointsOverTCP(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	annaContext := send(t, anna, userText("hello", "", "")).ContextID
-	annaHandle := strings.TrimPrefix(turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}), socketHost+"/")
+	annaHandle := strings.TrimPrefix(turnURLOf(t, ts, annaContext, auth.Principal{ID: "pair:anna", Role: auth.RoleMember}), socketHost+"/")
 	ownerHandle := strings.TrimPrefix(turnURL(t, ts, "c1"), socketHost+"/")
 	hl, err := listenHarnessTCP("127.0.0.1", "127.0.0.1")
 	if err != nil {
@@ -765,7 +765,7 @@ func TestAgentsProxyChecksTheTurnsRole(t *testing.T) {
 	coder := startServer(t, serverOpts{name: "coder"})
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	addContact(t, ts, coder, "coder", auth.RoleAuthenticated)
+	addContact(t, ts, coder, "coder", auth.RoleMember)
 	tests := []struct {
 		name    string
 		user    auth.Principal
@@ -773,10 +773,10 @@ func TestAgentsProxyChecksTheTurnsRole(t *testing.T) {
 		wantErr bool
 	}{
 		{name: "owner calls a node", user: auth.Owner(), agent: "grok"},
-		{name: "authenticated calls a node", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, agent: "grok"},
-		{name: "anonymous calls a node", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "grok", wantErr: true},
-		{name: "anonymous calls a contact", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantErr: true},
-		{name: "anonymous calls the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: pairings.SchedulesAgent, wantErr: true},
+		{name: "member calls a node", user: auth.Principal{ID: "pair:anna", Role: auth.RoleMember}, agent: "grok"},
+		{name: "guest calls a node", user: auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}, agent: "grok", wantErr: true},
+		{name: "guest calls a contact", user: auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}, agent: "coder", wantErr: true},
+		{name: "guest calls the schedules agent", user: auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}, agent: pairings.SchedulesAgent, wantErr: true},
 		{name: "user without a role calls a node", user: auth.Principal{ID: "pair:gone"}, agent: "grok", wantErr: true},
 	}
 	for i, tc := range tests {
@@ -910,7 +910,7 @@ func TestRemoteApprovalOfMemberGoesToMember(t *testing.T) {
 	assistant := startServer(t, serverOpts{name: "assistant", messenger: messengertest.NewMessenger("fake")})
 	addContact(t, assistant, coder, "coder", auth.RoleOwner)
 	linkOwner(t, assistant, "telegram:1", "dm1")
-	linkAs(t, assistant, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
+	linkAs(t, assistant, "anna", auth.RoleMember, "telegram:2", "dm2")
 
 	assistant.ch.Write("telegram:2", "dm2", "call coder ask")
 	ref, q := assistant.ch.WaitFor(t, "dm2", messengertest.HasQuestion)
@@ -1007,7 +1007,7 @@ func TestAgentsURLReachesOnlyItsTasks(t *testing.T) {
 
 func TestTurnOpensAgentsURLForItsCaller(t *testing.T) {
 	t.Parallel()
-	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember}
 	tests := []struct {
 		name    string
 		ctx     context.Context

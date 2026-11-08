@@ -62,7 +62,7 @@ and ` + "`a2a-serve messenger rm`" + `.`,
 			if err != nil {
 				return err
 			}
-			return printConfigResult(cfg, res)
+			return printConfigResult(cfg, res, false)
 		},
 	}
 	markTextOnly(cmd)

@@ -81,11 +81,12 @@ a2a-serve recipe https://github.com/a2aproject/a2a-serve/tree/main/examples/04-o
 
 ## 3. Describe your environment
 
-The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment:
+The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENVIRONMENT.md` with your services, datasources, label conventions, dashboards and SLOs. Or start the agent and ask it to learn the environment. An investigation can take a few minutes, so give `a2a` time to wait for the answer:
 
 ```bash
 cd ~/o11y
 a2a-serve start --detach
+export A2ACLI_TIMEOUT=5m
 a2a send --history 0 -a "$(a2a-serve status --url)" "Learn the environment."
 ```
 

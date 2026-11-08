@@ -37,9 +37,9 @@ import (
 const waitTimeout = 10 * time.Second
 
 var testTimings = Timings{
-	EditInterval:             50 * time.Millisecond,
-	AnonymousQuestionTimeout: 5 * time.Second,
-	SendRetry:                time.Millisecond,
+	EditInterval:         50 * time.Millisecond,
+	GuestQuestionTimeout: 5 * time.Second,
+	SendRetry:            time.Millisecond,
 }
 
 func openTestStore(t *testing.T) *store.Store {
@@ -171,8 +171,8 @@ func newChatFixture(t *testing.T, ownerChat string, chs ...messenger.Messenger) 
 		Config: func() *agentdir.Config {
 			return &agentdir.Config{Name: "coder", Approvals: agentdir.ApprovalsConfig{OwnerChat: ownerChat}}
 		},
-		Anonymous: func(context.Context, string) bool { return false },
-		Timings:   fx.timings,
+		Guest:   func(context.Context, string) bool { return false },
+		Timings: fx.timings,
 	})
 	for _, ch := range chs {
 		fx.supervisor.Add(ch)

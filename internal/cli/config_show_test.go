@@ -50,6 +50,10 @@ func fullConfig() *agentdir.Config {
 		Policy: agentdir.PolicyConfig{
 			PrivateAllowIncoming: "paired", PublicAllowIncoming: "anyone",
 			AllowEmails: []string{"anna-x@example.com"}, PrivateAllowOutgoing: "everyone",
+			Sandbox: []agentdir.SandboxRule{
+				{Match: []string{"pairing:ben-x"}, Storage: "own", Secrets: []string{"API_KEY"}},
+				{Match: []string{"guests"}, Storage: "read-only", Secrets: []string{"API_KEY"}},
+			},
 		},
 		Approvals: agentdir.ApprovalsConfig{Allow: []string{"read-x"}, Deny: []string{"execute-x"}, OwnerChat: "telegram:anna-x"},
 		Limits:    agentdir.LimitsConfig{Memory: "8g-x", CPUs: "3-x", PIDs: 1234},

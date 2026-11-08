@@ -114,7 +114,7 @@ func TestPairRmPreviewChangesNothing(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	pid := pidOf(t, send(t, anna, userText("pid", "", "")))
 	home := ts.dir.UserHomeDir("pair:anna")
 
@@ -144,7 +144,7 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	pid := pidOf(t, send(t, anna, userText("pid", "", "")))
 	home := ts.dir.UserHomeDir("pair:anna")
 	marker := filepath.Join(home, "history")
@@ -166,7 +166,7 @@ func TestPairRmStopsTheUsersAgentAndDeletesItsHome(t *testing.T) {
 	if _, err := os.Stat(home); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of anna's agent home error = %v, want %v", err, os.ErrNotExist)
 	}
-	newAnna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	newAnna := ts.client(ts.pair("anna", auth.RoleMember))
 	if got := pidOf(t, send(t, newAnna, userText("pid", "", ""))); got == pid {
 		t.Fatalf("the new anna ran in process %d, want a new process", got)
 	}
@@ -179,7 +179,7 @@ func TestPairRmDeletesTheOwnersTasksInTheUsersConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	boss := ts.client(ts.pair("boss", auth.RoleOwner))
 	started := send(t, anna, userText("pid", "", ""))
 	joined := send(t, boss, userText("pid", "", started.ContextID))
@@ -194,7 +194,7 @@ func TestPairRmDeletesTheOwnersTasksInTheUsersConversation(t *testing.T) {
 	if _, err := boss.GetTask(ctx, &a2a.GetTaskRequest{ID: joined.ID}); !errors.Is(err, a2a.ErrTaskNotFound) {
 		t.Fatalf("GetTask() of the owner's task in anna's conversation error = %v, want %v", err, a2a.ErrTaskNotFound)
 	}
-	newAnna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	newAnna := ts.client(ts.pair("anna", auth.RoleMember))
 	newPid := pidOf(t, send(t, newAnna, userText("pid", "", "")))
 	if got := pidOf(t, send(t, boss, userText("pid", "", started.ContextID))); got == newPid {
 		t.Fatalf("the owner's message in the old anna's conversation ran in the new anna's process %d", got)
@@ -218,10 +218,10 @@ func TestUserAgentOfRemovedPairingDoesNotStart(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 
-	_, err := ts.srv.startUserAgent(context.Background(), agentkey.User(auth.PairPrincipal("gone")), io.Discard)
+	_, err := ts.srv.startPoolAgent(context.Background(), &ts.srv.users, agentkey.User(auth.PairPrincipal("gone")), io.Discard)
 
 	if err == nil {
-		t.Fatalf("startUserAgent() of a removed pairing error = nil, want an error")
+		t.Fatalf("startPoolAgent() of a removed pairing error = nil, want an error")
 	}
 	if _, err := os.Stat(ts.dir.UserHomeDir(auth.PairPrincipal("gone"))); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("Stat() of the removed pairing's agent home error = %v, want %v", err, os.ErrNotExist)

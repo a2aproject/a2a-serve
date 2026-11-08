@@ -18,6 +18,8 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sync"
+	"time"
 )
 
 // maxAgentMessage bounds one JSON-RPC message from the agent, as the email
@@ -130,4 +132,42 @@ func (b *boundedMessages) scan(p []byte) (int, bool) {
 		}
 	}
 	return len(p), false
+}
+
+// agentReadEndGrace bounds how long closing an agent's stream waits for its
+// reader to see the output end.
+const agentReadEndGrace = 5 * time.Second
+
+// awaitedClose closes an agent's stream and waits, up to grace, until its
+// reader saw the output end. The ACP pool notices that an agent exited only
+// once its reader does, and until then sends new prompts to the closed
+// agent, which fail.
+type awaitedClose struct {
+	io.ReadWriteCloser
+	grace time.Duration
+	ended chan struct{}
+	once  sync.Once
+}
+
+func newAwaitedClose(rwc io.ReadWriteCloser, grace time.Duration) *awaitedClose {
+	return &awaitedClose{ReadWriteCloser: rwc, grace: grace, ended: make(chan struct{})}
+}
+
+func (a *awaitedClose) Read(p []byte) (int, error) {
+	n, err := a.ReadWriteCloser.Read(p)
+	if err != nil {
+		a.once.Do(func() { close(a.ended) })
+	}
+	return n, err
+}
+
+func (a *awaitedClose) Close() error {
+	err := a.ReadWriteCloser.Close()
+	t := time.NewTimer(a.grace)
+	defer t.Stop()
+	select {
+	case <-a.ended:
+	case <-t.C:
+	}
+	return err
 }

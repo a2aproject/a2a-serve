@@ -309,6 +309,18 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 		_, err := tx.ExecContext(ctx, schemaV21)
 		return err
 	},
+	// 22: the last identity the server verified for each user, which the
+	// sandbox rules of the user's agent container match.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `CREATE TABLE user_identities (
+	user_id TEXT PRIMARY KEY, identity TEXT NOT NULL, seen INTEGER NOT NULL)`)
+		return err
+	},
+	// 23: the authenticated role is called member.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE pairings SET role = 'member' WHERE role = 'authenticated'`)
+		return err
+	},
 }
 
 const schemaV21 = `

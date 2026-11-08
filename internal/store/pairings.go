@@ -150,6 +150,7 @@ func (s *Store) DeletePairing(ctx context.Context, name string, users ...Pairing
 				`DELETE FROM tool_preferences WHERE user_id = ?`,
 				`DELETE FROM tool_taps WHERE user_id = ?`,
 				`DELETE FROM tool_suggestions WHERE user_id = ?`,
+				`DELETE FROM user_identities WHERE user_id = ?`,
 			} {
 				if _, err := tx.ExecContext(ctx, del, u.Principal); err != nil {
 					return err
@@ -622,7 +623,7 @@ func (s *Store) PendingCodes(ctx context.Context) (map[string][]Code, error) {
 // putWebhookPairing creates the webhook pairing of a node, and fails with
 // [ErrExists] if a pairing of another kind has its name.
 func (s *Store) putWebhookPairing(ctx context.Context, tx *sql.Tx, name string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, 'authenticated', ?) ON CONFLICT DO NOTHING`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, 'member', ?) ON CONFLICT DO NOTHING`,
 		name, pairapi.PairingWebhook, s.now().UnixNano()); err != nil {
 		return err
 	}

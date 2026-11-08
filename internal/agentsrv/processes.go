@@ -35,13 +35,13 @@ import (
 
 // Pools of agent processes besides the main one.
 const (
-	anonymousPool = "anonymous"
-	usersPool     = "users"
+	guestPool = "guest"
+	usersPool = "users"
 )
 
 func poolOf(key string) string {
-	if key == agentkey.Anonymous {
-		return anonymousPool
+	if key == agentkey.Guest {
+		return guestPool
 	}
 	return usersPool
 }
@@ -97,18 +97,16 @@ func (k *agentKeys) forget(contextID string) {
 	delete(k.pending, contextID)
 }
 
-// anonymous reports whether a conversation runs in the agent process of
-// anonymous callers.
-func (k *agentKeys) anonymous(ctx context.Context, contextID string) bool {
+// guest reports whether a conversation runs in the agent process of guests.
+func (k *agentKeys) guest(ctx context.Context, contextID string) bool {
 	key, err := k.of(ctx, contextID)
 	if err != nil {
 		slog.Warn("looking up the session of a conversation", "context", contextID, "error", err)
 	}
-	return key == agentkey.Anonymous
+	return key == agentkey.Guest
 }
 
-// user reports whether a conversation runs in the agent process of an
-// authenticated user.
+// user reports whether a conversation runs in the agent process of a member.
 func (k *agentKeys) user(ctx context.Context, contextID string) bool {
 	key, err := k.of(ctx, contextID)
 	if err != nil {
@@ -127,10 +125,13 @@ type startPool func(ctx context.Context, pool string) (a2asrv.AgentExecutor, fun
 type splitExecutor struct {
 	main   a2asrv.AgentExecutor
 	keys   *agentKeys
-	budget *anonymousBudget
+	budget *guestBudget
 	// start starts the executor of a pool. If nil, every conversation runs
 	// in main.
 	start startPool
+	// admit refuses a turn in the agent process of a key, or prepares the
+	// process for it and counts the turn there until release. Optional.
+	admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
 	// ctx ends when the server stops; pools start in it.
 	ctx context.Context
 
@@ -156,14 +157,17 @@ type turnCancel struct{ cancel context.CancelFunc }
 type splitDeps struct {
 	Main   a2asrv.AgentExecutor
 	Keys   *agentKeys
-	Budget *anonymousBudget
+	Budget *guestBudget
 	// Start starts the executor of a pool. If nil, every conversation runs
 	// in Main.
 	Start startPool
+	// Admit refuses a turn in the agent process of a key, or prepares the
+	// process for it and counts the turn there until release. Optional.
+	Admit func(ctx context.Context, key string, execCtx *a2asrv.ExecutorContext) (release func(), err error)
 }
 
 func newSplitExecutor(ctx context.Context, deps splitDeps) *splitExecutor {
-	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, ctx: ctx}
+	e := &splitExecutor{main: deps.Main, keys: deps.Keys, budget: deps.Budget, start: deps.Start, admit: deps.Admit, ctx: ctx}
 	if ctx != nil {
 		context.AfterFunc(ctx, e.stopTurns)
 	}
@@ -222,13 +226,19 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			return
 		}
 		defer done()
-		exec, err := e.pick(ctx, execCtx.ContextID, true)
+		exec, key, err := e.pick(ctx, execCtx.ContextID, true)
 		defer e.keys.forget(execCtx.ContextID)
+		if err == nil && e.admit != nil {
+			var admitted func()
+			if admitted, err = e.admit(ctx, key, execCtx); err == nil {
+				defer admitted()
+			}
+		}
 		if err != nil {
 			failTask(execCtx, err)(yield)
 			return
 		}
-		if p, ok := auth.Caller(ctx); ok && p.Role == auth.RoleAnonymous {
+		if p, ok := auth.Caller(ctx); ok && p.Role == auth.RoleGuest {
 			release, err := e.budget.run(budgetListener(p))
 			if err != nil {
 				failTask(execCtx, err)(yield)
@@ -293,7 +303,7 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 			return
 		}
 		defer done()
-		exec, err := e.pick(ctx, execCtx.ContextID, false)
+		exec, _, err := e.pick(ctx, execCtx.ContextID, false)
 		if err != nil {
 			yield(nil, err)
 			return
@@ -306,21 +316,22 @@ func (e *splitExecutor) Cancel(ctx context.Context, execCtx *a2asrv.ExecutorCont
 	}
 }
 
-// pick returns the executor of a conversation, and starts its pool if
-// needed. If remember is set, the conversation keeps its agent key until
+// pick returns the executor of a conversation and its agent key, and
+// starts its pool if needed. If remember is set, the conversation keeps its agent key until
 // the keys forget it, in case its session isn't stored yet.
-func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, error) {
+func (e *splitExecutor) pick(ctx context.Context, contextID string, remember bool) (a2asrv.AgentExecutor, string, error) {
 	key, err := e.keys.of(ctx, contextID)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if key == "" || e.start == nil {
-		return e.main, nil
+		return e.main, key, nil
 	}
 	if remember {
 		e.keys.remember(contextID, key)
 	}
-	return e.pool(poolOf(key))
+	exec, err := e.pool(poolOf(key))
+	return exec, key, err
 }
 
 // errServerStopping fails turns that start, or would start agent processes,
@@ -397,9 +408,9 @@ func roleRank(role string) int {
 	switch role {
 	case auth.RoleOwner:
 		return 3
-	case auth.RoleAuthenticated:
+	case auth.RoleMember:
 		return 2
-	case auth.RoleAnonymous:
+	case auth.RoleGuest:
 		return 1
 	}
 	return 0

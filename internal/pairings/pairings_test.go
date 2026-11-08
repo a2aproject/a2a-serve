@@ -117,7 +117,7 @@ func TestInvite(t *testing.T) {
 		{name: "new caller", req: InviteRequest{Name: "bob"}},
 		{name: "another device of a caller", req: InviteRequest{Name: "anna"}},
 		{name: "new owner", req: InviteRequest{Name: "bob", Owner: true}},
-		{name: "owner for an authenticated pairing", req: InviteRequest{Name: "anna", Owner: true}, wantKind: Invalid},
+		{name: "owner for a member pairing", req: InviteRequest{Name: "anna", Owner: true}, wantKind: Invalid},
 		{name: "node code", req: InviteRequest{Name: "grok"}},
 		{name: "webhook of an existing node", req: InviteRequest{Name: "grok", Webhook: "https://example.com/new"}, wantKind: Invalid},
 		{name: "webhook for a person's name", req: InviteRequest{Name: "anna", Webhook: "https://example.com/hook"}, wantKind: Conflict},
@@ -187,12 +187,12 @@ func TestGetAndList(t *testing.T) {
 	}
 	want := []summary{
 		{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleOwner, Principal: "pair:anna", Tokens: 2, Codes: 1},
-		{Name: "grok", Kind: pairapi.PairingWebhook, Role: auth.RoleAuthenticated, Principal: "node:grok", Codes: 1, Node: &NodeDetails{
+		{Name: "grok", Kind: pairapi.PairingWebhook, Role: auth.RoleMember, Principal: "node:grok", Codes: 1, Node: &NodeDetails{
 			URL: "https://coder.example.com/n/grok", Webhook: "https://example.com/hook?…", Description: "searches",
 			HeaderNames: []string{"Authorization"}, Advertised: true,
 		}},
 		{Name: LocalOwner, Kind: pairapi.PairingPerson, Role: auth.RoleOwner, Principal: auth.OwnerID},
-		{Name: "reviewer", Kind: pairapi.PairingAgent, Role: auth.RoleAuthenticated, Principal: "pair:reviewer", Tokens: 1},
+		{Name: "reviewer", Kind: pairapi.PairingAgent, Role: auth.RoleMember, Principal: "pair:reviewer", Tokens: 1},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
@@ -221,8 +221,8 @@ func TestUpdate(t *testing.T) {
 	if p := resp.Pairing; p.Role != auth.RoleOwner || p.Kind != pairapi.PairingDevice || p.Principal != "pair:anna" || len(p.Tokens) != 1 || resp.Code != nil {
 		t.Fatalf("Update(owner, kind) = %+v, want anna as an owner device with her token", resp)
 	}
-	if resp, err = s.Update(ctx, "anna", UpdateRequest{Owner: &off}); err != nil || resp.Pairing.Role != auth.RoleAuthenticated {
-		t.Fatalf("Update(owner=false) = %+v, %v, want anna authenticated", resp, err)
+	if resp, err = s.Update(ctx, "anna", UpdateRequest{Owner: &off}); err != nil || resp.Pairing.Role != auth.RoleMember {
+		t.Fatalf("Update(owner=false) = %+v, %v, want anna member", resp, err)
 	}
 
 	resp, err = s.Update(ctx, "anna", UpdateRequest{Rotate: true})
@@ -365,6 +365,33 @@ func (u *fakeUsers) Stop(ctx context.Context, principals ...string) (func(), err
 		}
 		u.released = true
 	}, nil
+}
+
+func TestPreviewRemoveListsHomesAndWorkspaces(t *testing.T) {
+	t.Parallel()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	users := &fakeUsers{t: t, homes: d}
+	s := newService(t, withUsers(users, d))
+	users.s = s
+	redeem(t, s, invite(t, s, InviteRequest{Name: "anna"}).Code, pairapi.PairingPerson)
+	for _, dir := range []string{d.UserHomeDir("pair:anna"), d.UserWorkspacesDir("pair:anna")} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
+		}
+	}
+
+	got, err := s.PreviewRemove(context.Background(), "anna")
+	if err != nil {
+		t.Fatalf("PreviewRemove() error = %v", err)
+	}
+
+	want := struct{ AgentHomes, Workspaces []string }{[]string{d.UserHomeDir("pair:anna")}, []string{d.UserWorkspacesDir("pair:anna")}}
+	if diff := cmp.Diff(want, struct{ AgentHomes, Workspaces []string }{got.AgentHomes, got.Workspaces}); diff != "" {
+		t.Fatalf("PreviewRemove() wrong result (-want +got) diff = %s", diff)
+	}
 }
 
 func TestRemoveStopsUsersAndDeletesTheirHomes(t *testing.T) {

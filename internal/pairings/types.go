@@ -63,7 +63,7 @@ type Pairing struct {
 	// Kind is one of the pairapi.Pairing* kinds, or empty until the first
 	// code is redeemed.
 	Kind string
-	// Role is authenticated or owner.
+	// Role is member or owner.
 	Role      string
 	Principal string
 	Created   time.Time
@@ -161,6 +161,9 @@ type RemovalPreview struct {
 	Allowed int
 	// AgentHomes are the agent home directories that would be deleted.
 	AgentHomes []string
+	// Workspaces are the directories of private workspaces, such as an
+	// own copy of the workspace, that would be deleted.
+	Workspaces []string
 }
 
 // SignOutResult tells what [Service.SignOut] revoked.

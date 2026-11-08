@@ -357,8 +357,8 @@ func TestCallerAnswersOwnApprovalInline(t *testing.T) {
 	ch.Write("telegram:1", "dm1", "/start "+ownerCode(t, ts))
 	ch.WaitFor(t, "dm1", messengertest.HasText("Linked as owner"))
 
-	member := ts.client(ts.pair("grok", auth.RoleAuthenticated))
-	other := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	member := ts.client(ts.pair("grok", auth.RoleMember))
+	other := ts.client(ts.pair("bob", auth.RoleMember))
 	task := send(t, member, userText("ask", "", ""))
 	if task.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state = %s, want input-required", task.Status.State)

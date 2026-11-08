@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/a2acli"
 	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
@@ -106,44 +107,43 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 	return nil
 }
 
-// newAnonymousExecutor prepares the separate harness of anonymous
-// conversations. Its agent starts on the first task, and stops when idle.
-// It gets no way to call other agents: no socket, credential helper or CLI.
-// With Docker it runs in its own container with its own home.
-func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-	h, err := s.prepareHarness(ctx, harnessLog, agentkey.Anonymous)
-	if err != nil {
-		return nil, nil, err
-	}
+// newGuestExecutor runs the conversations of guests in one
+// agent process of their own. It starts on the first task, and stops when
+// idle. It gets no way to call other agents: no socket, credential helper or
+// CLI. With Docker it runs in its own container with its own home.
+func (s *Server) newGuestExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
+		return s.startPoolAgent(ctx, &s.guests, key, harnessLog)
+	})
 	cfg := s.acpConfig()
 	cfg.Pool = &a2aacp.PoolConfig{
-		Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
+		Key: func(context.Context, string) (string, error) { return agentkey.Guest, nil },
 	}
-	// Approvals reject questions after AnonymousQuestionTimeout; this stops
+	cfg.Turn = s.stalls.turn(s.countedTurn(&s.guests))
+	// Approvals reject questions after GuestQuestionTimeout; this stops
 	// the turn if that answer doesn't arrive.
-	cfg.QuestionTimeout = s.timings.AnonymousQuestionTimeout + time.Minute
-	acp, err := a2aacp.NewExecutor(ctx, h.process(harnessLog), cfg)
+	cfg.QuestionTimeout = s.timings.GuestQuestionTimeout + time.Minute
+	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("preparing %s for anonymous callers: %w", h.profile.Name(), err), h.stop(ctx))
+		return nil, nil, fmt.Errorf("preparing the agent of guests: %w", err)
 	}
-	slog.Info("prepared the agent of anonymous callers", "sandbox", h.prepared.Summary)
-	return s.guardACP(acp), func(ctx context.Context) error { return errors.Join(acp.Close(), h.stop(ctx)) }, nil
+	return s.guardACP(acp), func(context.Context) error { return acp.Close() }, nil
 }
 
-// maxUserAgents limits the agent processes of authenticated users that run
+// maxUserAgents limits the agent processes of members that run
 // at once; the least recently used idle one stops to start another.
 const maxUserAgents = 10
 
-// newUsersExecutor runs the conversations of each authenticated user in an
+// newUsersExecutor runs the conversations of each member in an
 // agent process of their own, with its own home and, with Docker, its own
 // container. A process starts on the user's first task, and stops when idle.
 func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
-		return s.startUserAgent(ctx, key, harnessLog)
+		return s.startPoolAgent(ctx, &s.users, key, harnessLog)
 	})
 	cfg := s.acpConfig()
 	cfg.Pool = &a2aacp.PoolConfig{Key: s.keys.of, MaxAgents: maxUserAgents}
-	cfg.Turn = s.stalls.turn(s.userTurn)
+	cfg.Turn = s.stalls.turn(s.countedTurn(&s.users))
 	// Approvals reject questions after UserQuestionTimeout; this stops the
 	// turn if that answer doesn't arrive.
 	cfg.QuestionTimeout = s.timings.UserQuestionTimeout + time.Minute
@@ -154,37 +154,42 @@ func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2
 	return s.guardACP(acp), func(context.Context) error { return acp.Close() }, nil
 }
 
-// userTurn counts a turn in the agent process of its user, so that new
-// tasks are refused while all processes are busy.
-func (s *Server) userTurn(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
-	key, err := s.keys.of(ctx, execCtx.ContextID)
-	if err != nil {
-		slog.Warn("looking up the session of a conversation", "context", execCtx.ContextID, "error", err)
-	}
-	endUser := s.users.turn(key)
-	endClaims := s.claims.turn(ctx, execCtx)
-	return func() {
-		if endClaims != nil {
-			endClaims()
+// countedTurn counts each turn in the agent process of its conversation
+// among agents, so that new tasks are refused while all processes are busy.
+// A process whose sandbox rules changed stops once its last turn ends.
+func (s *Server) countedTurn(agents *userAgents) func(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
+	return func(ctx context.Context, execCtx *a2asrv.ExecutorContext) (end func()) {
+		key, err := s.keys.of(ctx, execCtx.ContextID)
+		if err != nil {
+			slog.Warn("looking up the session of a conversation", "context", execCtx.ContextID, "error", err)
 		}
-		endUser()
+		endTurn := agents.turn(key)
+		endClaims := s.claims.turn(ctx, execCtx)
+		return func() {
+			if endClaims != nil {
+				endClaims()
+			}
+			endTurn()
+		}
 	}
 }
 
-// startUserAgent starts the agent process of a user's agent key, unless
-// the user's pairing was removed.
-func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
-	id, ok := agentkey.UserOf(key)
-	if !ok {
+// startPoolAgent starts the agent process of an agent key among agents:
+// guests', or a user's unless the user's pairing was removed.
+func (s *Server) startPoolAgent(ctx context.Context, agents *userAgents, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
+	id, isUser := agentkey.UserOf(key)
+	if !isUser && key != agentkey.Guest {
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
-	ua := s.users.get(key)
+	ua := agents.get(key)
 	ua.startMu.Lock()
 	defer ua.startMu.Unlock()
-	if err := s.checkUser(ctx, id); err != nil {
-		return nil, err
+	if isUser {
+		if err := s.checkUser(ctx, id); err != nil {
+			return nil, err
+		}
 	}
-	release, err := s.users.reserve(ua)
+	release, err := agents.reserve(ua)
 	if err != nil {
 		return nil, err
 	}
@@ -197,13 +202,13 @@ func (s *Server) startUserAgent(ctx context.Context, key string, harnessLog io.W
 	if err != nil {
 		return nil, errors.Join(err, h.stop(context.WithoutCancel(ctx)))
 	}
-	slog.Info("started the agent process of a user", "user", id, "sandbox", h.prepared.Summary)
+	slog.Info("started an agent process", "key", key, "sandbox", h.prepared.Summary, "storage", h.sandbox.Storage)
 	var proc io.ReadWriteCloser
 	proc = a2aacp.WithCleanup(rwc, func() error {
-		s.users.exited(ua, proc)
+		agents.exited(ua, proc)
 		return h.stop(context.Background())
 	})
-	s.users.started(ua, proc)
+	agents.started(ua, proc, h.sandbox)
 	return proc, nil
 }
 
@@ -216,6 +221,8 @@ type preparedHarness struct {
 	stop func(context.Context) error
 	// maxMessage bounds a message from the agent.
 	maxMessage int
+	// sandbox is what the sandbox rules give its container.
+	sandbox access.Sandbox
 }
 
 func (h *preparedHarness) process(stderr io.Writer) checkedProcess {
@@ -240,7 +247,8 @@ type checkedProcess struct {
 }
 
 // Start implements [a2aacp.Agent]. A message from the agent over
-// maxMessage fails the connection.
+// maxMessage fails the connection, and Close returns once the reader saw
+// the output end.
 func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteCloser, error) {
 	if err := p.check(); err != nil {
 		return nil, err
@@ -250,7 +258,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 		if err != nil {
 			return nil, err
 		}
-		return newBoundedMessages(rwc, p.maxMessage), nil
+		return newAwaitedClose(newBoundedMessages(rwc, p.maxMessage), agentReadEndGrace), nil
 	}
 	mark := harness.NewProcessMark()
 	proc := p.Process
@@ -259,11 +267,11 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 	if err != nil {
 		return nil, err
 	}
-	return newBoundedMessages(mark.Watch(rwc), p.maxMessage), nil
+	return newAwaitedClose(newBoundedMessages(mark.Watch(rwc), p.maxMessage), agentReadEndGrace), nil
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
-// key: the owner's for no key, anonymous callers' or a user's.
+// key: the owner's for no key, guests' or a user's.
 func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
 	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
@@ -275,13 +283,6 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		return nil, err
 	}
 	env := append([]string{}, cfg.Env...)
-	for _, name := range cfg.Secrets {
-		v, ok := s.rt.Secrets()[name]
-		if !ok {
-			return nil, fmt.Errorf("secret %s is not set; pass --secret %s again with the variable set", name, name)
-		}
-		env = append(env, name+"="+v)
-	}
 	spec := harness.Spec{
 		Profile:  profile,
 		Sandbox:  cfg.Sandbox,
@@ -300,21 +301,33 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	id, isUser := agentkey.UserOf(key)
 	switch {
-	case key == agentkey.Anonymous:
-		spec.Home = s.dir.AnonymousHomeDir()
+	case key == agentkey.Guest:
+		spec.Home = s.dir.GuestHomeDir()
 	case isUser:
 		spec.Home = s.dir.UserHomeDir(id)
 	}
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
 	}
+	sb, err := s.sandboxes.of(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.applySandbox(ctx, &spec, key, sb); err != nil {
+		return nil, err
+	}
+	s.setStorageNote(spec.Home, sb.Storage)
+	if key == "" {
+		s.mainSandbox.Store(&sb)
+	}
 	closeEndpoint := func() error { return nil }
-	if key == agentkey.Anonymous {
-		spec.Name += "-anonymous"
-		spec.Labels["a2a.role"] = auth.RoleAnonymous
+	if key == agentkey.Guest {
+		spec.Name += "-guest"
+		spec.Labels["a2a.role"] = auth.RoleGuest
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {
 			return nil, err
 		}
+		s.writeStorageNote(cfg, spec.Home)
 	} else {
 		ep := s.mainHarness
 		if isUser {
@@ -328,6 +341,11 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		}
 		if err := s.connectHarness(&spec, ep); err != nil {
 			return nil, errors.Join(err, closeEndpoint())
+		}
+		if !isUser {
+			if err := s.writeInstructionsIn(ctx, spec.Home); err != nil {
+				s.logf("! updating the agent instructions: %v", err)
+			}
 		}
 		if cfg.Sandbox == harness.SandboxLocal {
 			spec.CLI = s.localCLI()
@@ -344,7 +362,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		forget()
 		return errors.Join(prepared.Stop(ctx), closeEndpoint())
 	}
-	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage}, nil
+	return &preparedHarness{profile: profile, mounts: mounts, prepared: prepared, stop: stop, maxMessage: s.maxAgentMessage, sandbox: sb}, nil
 }
 
 // checkHome makes home a real directory and pins it, after the sandbox
@@ -378,7 +396,7 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 // the user id, and its home the instructions of the owner's home.
 func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
 	spec.Name += "-" + agentdir.UserKey(id)
-	spec.Labels["a2a.role"] = auth.RoleAuthenticated
+	spec.Labels["a2a.role"] = auth.RoleMember
 	for _, dir := range []string{s.dir.UserHomesDir(), spec.Home} {
 		if err := fsutil.CheckPrivate(dir); err != nil {
 			return err
@@ -443,9 +461,19 @@ func (s *Server) guardACP(acp a2asrv.AgentExecutor) a2asrv.AgentExecutor {
 // callers. It drops the protocol details of the agent's error, and explains
 // the failures that have a next step. It also covers the tasks whose agent
 // stopped while they waited for an answer.
-func (s *Server) failure(_ context.Context, execCtx *a2asrv.ExecutorContext, err error) []*a2a.Part {
+func (s *Server) failure(ctx context.Context, execCtx *a2asrv.ExecutorContext, err error) []*a2a.Part {
 	reported := err.Error()
-	text := explainFailure(s.rt.Config(), reported)
+	cfg := s.rt.Config()
+	granted := cfg.Secrets
+	if key, err := s.keys.of(ctx, execCtx.ContextID); err == nil {
+		if sb, err := s.sandboxes.of(ctx, key); err == nil {
+			granted = nil
+			for _, g := range sb.Secrets {
+				granted = append(granted, g.Name)
+			}
+		}
+	}
+	text := explainFailure(cfg, granted, reported)
 	if text == reported {
 		return nil
 	}
@@ -457,15 +485,22 @@ func (s *Server) failure(_ context.Context, execCtx *a2asrv.ExecutorContext, err
 // "acp agent error: acp agent exited".
 const agentExited = "acp agent exited"
 
-// explainFailure returns the failure text of a turn for callers. It tells
-// which key is missing when the agent doesn't know the configured model:
-// opencode lists no models of a provider without a key, so it reports only
-// that the model isn't found.
-func explainFailure(cfg *agentdir.Config, reported string) string {
+// explainFailure returns the failure text of a turn for callers, in an
+// agent container that gets the secrets granted. It tells which key is
+// missing when the agent doesn't know the configured model: opencode lists
+// no models of a provider without a key, so it reports only that the model
+// isn't found.
+func explainFailure(cfg *agentdir.Config, granted []string, reported string) string {
 	if strings.HasSuffix(reported, agentExited) {
 		return "the agent stopped unexpectedly; send the message again"
 	}
 	text := agentErrorText(reported)
+	if !modelNotFound(text) && !authFailed(text) {
+		return text
+	}
+	if provider, _ := harness.ModelKeyWithheld(cfg, granted); provider != "" {
+		return "The owner hasn't given this agent a model key. The agent reported: " + text
+	}
 	if !modelNotFound(text) {
 		return text
 	}
@@ -482,6 +517,13 @@ func explainFailure(cfg *agentdir.Config, reported string) string {
 	}
 	return text + "; choose another model with `a2a-serve config set --model " + model + " --restart`"
 }
+
+// authFailedText matches the failures of an agent or its provider that
+// got no valid credentials, as in "Invalid API key", "Authentication
+// required" or claude's "Please run /login".
+var authFailedText = regexp.MustCompile(`(?i)\bapi[ _-]?key\b|\bauthenticat|\bunauthori[sz]ed\b|/login\b`)
+
+func authFailed(text string) bool { return authFailedText.MatchString(text) }
 
 // modelNotFoundText matches the failures of an agent or its provider that
 // doesn't know the model, as in "model not found: google/x", "models/x is
@@ -862,12 +904,12 @@ func eventState(ev a2a.Event) (a2a.TaskState, bool) {
 
 // callerInterceptor makes the authenticated principal the A2A user and
 // enforces who may join a conversation, who may answer approvals, how deep
-// agent chains go and the budget of anonymous callers.
+// agent chains go and the budget of guests.
 type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
 	tasks     *store.TaskStore
-	budget    *anonymousBudget
+	budget    *guestBudget
 	keys      *agentKeys
 	users     *userAgents
 }
@@ -890,9 +932,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		_, err := i.tasks.Header(ctx, sub.ID)
 		return ctx, nil, err
 	}
-	// Anonymous callers who proved nothing share one principal, so they
+	// Guests who proved nothing share one principal, so they
 	// list only the conversation they name, whose ID proves it is theirs.
-	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.AnonymousID && list.ContextID == "" {
+	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.GuestID && list.ContextID == "" {
 		return ctx, &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, PageSize: list.PageSize}, nil
 	}
 	msg, ok := req.Payload.(*a2a.SendMessageRequest)
@@ -915,7 +957,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 			return ctx, nil, err
 		}
 	}
-	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
+	if p.Role == auth.RoleGuest && msg.Message.TaskID == "" {
 		if err := i.budget.admit(budgetListener(p)); err != nil {
 			return ctx, nil, fmt.Errorf("%w: %w", a2a.ErrUnauthorized, err)
 		}
@@ -1006,8 +1048,8 @@ func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principa
 	return nil
 }
 
-// checkUserAgents refuses a new task in a conversation of an authenticated
-// user while that user's agent process can't run, so that the caller gets
+// checkUserAgents refuses a new task in a conversation of a member while
+// that member's agent process can't run, so that the caller gets
 // an error to retry on and no failed task is stored.
 func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID string) error {
 	key, err := i.keys.of(ctx, contextID)

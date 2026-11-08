@@ -82,8 +82,8 @@ func TestPairingsOnBothSides(t *testing.T) {
 
 	var got pairing
 	coder.serveJSON(&got, "pair", "get", "anna")
-	if got.Kind != "person" || got.Role != "authenticated" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
-		t.Fatalf("a2a-serve pair get anna = %+v, want an authenticated person with the token of the first code and the second code pending", got)
+	if got.Kind != "person" || got.Role != "member" || len(got.Tokens) != 1 || len(got.PendingCodes) != 1 {
+		t.Fatalf("a2a-serve pair get anna = %+v, want a member person with the token of the first code and the second code pending", got)
 	}
 
 	coder.serve("pair", "set", "anna", "--owner", "--kind", "device")
@@ -187,8 +187,8 @@ func TestAccessSettings(t *testing.T) {
 	coder := owner.startAgent("coder")
 
 	type access struct {
-		Owner         []string `json:"owner"`
-		Authenticated []string `json:"authenticated"`
+		Owner  []string `json:"owner"`
+		Member []string `json:"member"`
 	}
 	var set struct {
 		Applied []string `json:"applied"`
@@ -200,7 +200,7 @@ func TestAccessSettings(t *testing.T) {
 	}
 	coder.serveJSON(&status, "status")
 
-	wantAccess := access{Owner: []string{"self"}, Authenticated: []string{"email:*@example.com"}}
+	wantAccess := access{Owner: []string{"self"}, Member: []string{"email:*@example.com"}}
 	if diff := cmp.Diff([]string{"private-allow-incoming", "allow-email"}, set.Applied); diff != "" {
 		t.Fatalf("a2a-serve config set -o json applied wrong result (-want +got) diff = %s", diff)
 	}

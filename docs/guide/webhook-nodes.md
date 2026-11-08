@@ -17,7 +17,7 @@ The node reads its instructions at `<agent-url>/mailbox/skill.md` and answers wi
 
 Give every webhook a credential that only the server sends, such as a `--webhook-header` token or a secret in the webhook URL. Anyone who learns an unprotected webhook URL can send the node a wake. A node that runs code on each wake can also check it with `a2a-serve mailbox verify`, which needs only the node token.
 
-Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as an authenticated caller.
+Your agent calls the node as `grok`. You can call it at `<agent-url>/n/grok`. The node can also call your agent with its token, as a [member](identities.md#roles).
 
 The server follows redirects of the webhook. It sends the webhook headers and the signature only to the host of the webhook URL, and drops them when a redirect leads to another host. A wake that takes longer than 20 seconds fails and is retried. [Security](../advanced/security.md#calls-to-other-agents-and-webhooks) lists the redirects the server refuses.
 

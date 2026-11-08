@@ -176,6 +176,11 @@ func renderConfig(v *agentctl.View, all bool) string {
 	}
 	line("network", strings.Join(network, ", "), "private", "public", "tailscale-control-url")
 	line("access", formatPolicy(c.Policy), "private-allow-incoming", "public-allow-incoming", "allow-email", "private-allow-outgoing")
+	var rules []string
+	for _, r := range c.Policy.Sandbox {
+		rules = append(rules, agentdir.ShowSandboxRule(r))
+	}
+	line("sandbox rules", strings.Join(rules, "; "), agentdir.SandboxSetting, "guest-storage", "guest-secrets")
 	var messengers []string
 	if t := c.Messengers.Telegram; t != nil {
 		messengers = append(messengers, "telegram token "+secretState(v, t.Token))

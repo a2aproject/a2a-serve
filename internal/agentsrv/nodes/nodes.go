@@ -74,7 +74,7 @@ type Config struct {
 	// nil uses the default retries.
 	WebhookRetries []time.Duration
 	// Advertised reports whether the node is advertised to the private
-	// network, which lets authenticated callers call it too. Nil
+	// network, which lets members call it too. Nil
 	// advertises none.
 	Advertised func(id string) bool
 }
@@ -225,7 +225,7 @@ func (n *Host) Forget(id string) {
 
 // nodeCallerInterceptor lets owners and the hosting agent call nodes; the
 // agent calls them in-process from its harness. An advertised node also
-// takes authenticated callers, such as the agents of other people on the
+// takes members, such as the agents of other people on the
 // private network.
 type nodeCallerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
@@ -239,7 +239,7 @@ const errNodeCaller = "webhook nodes are reachable by the hosting agent and its 
 // mayCallNode reports whether p may call node.
 func mayCallNode(p auth.Principal, advertised func(id string) bool, node string) bool {
 	hosting := p.Network == network.ListenerHarness
-	return p.IsOwner() || hosting || (p.Role == auth.RoleAuthenticated && advertised != nil && advertised(node))
+	return p.IsOwner() || hosting || (p.Role == auth.RoleMember && advertised != nil && advertised(node))
 }
 
 func (c *nodeCallerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {

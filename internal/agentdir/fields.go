@@ -447,14 +447,14 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PrivateAllowIncoming }, func(s *Settings) *string { return &s.PrivateAllowIncoming }),
 		flag:   "private-allow-incoming", path: "policy.privateAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)",
+		usage:  "Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone)",
 		values: []string{AccessEveryone, AccessPaired},
 		def:    AccessEveryone,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PublicAllowIncoming }, func(s *Settings) *string { return &s.PublicAllowIncoming }),
 		flag:   "public-allow-incoming", path: "policy.publicAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)",
+		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired)",
 		values: []string{AccessPaired, AccessAnyone},
 		def:    AccessPaired,
 	},
@@ -469,7 +469,33 @@ var fields = []field{
 		access: strs(func(c *Config) *[]string { return &c.Policy.AllowEmails }, func(s *Settings) *[]string { return &s.AllowEmails }),
 		flag:   "allow-email", path: "policy.allowEmails", scope: scopeOwner, live: true, section: SectionAccess, split: true,
 		key: strings.ToLower, parse: trimSpace,
-		usage: "People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
+		usage: "People who may call the agent as members by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
+	},
+	{
+		access: access{
+			get: func(c *Config) []string { return nonEmpty(guestRule(c).Storage) },
+			put: func(c *Config, v []string) { setGuestRule(c, func(r *SandboxRule) { r.Storage = first(v) }) },
+			arg: func(s *Settings) any { return &s.GuestStorage },
+		},
+		flag: "guest-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
+		usage:  "What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only)",
+		values: StorageModes,
+	},
+	{
+		access: access{
+			list: true,
+			get:  func(c *Config) []string { return guestRule(c).Secrets },
+			put:  func(c *Config, v []string) { setGuestRule(c, func(r *SandboxRule) { r.Secrets = v }) },
+			arg:  func(s *Settings) any { return &s.GuestSecrets },
+		},
+		flag: "guest-secrets", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess, split: true,
+		key: secretGrantKey, merge: mergeGuestSecrets,
+		usage: "Secrets the agent container of guests gets: `names` from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none)",
+	},
+	{
+		access: sandboxRules(),
+		flag:   SandboxSetting, path: "policy.sandbox", place: placeFile, scope: scopeOwner, live: true,
+		key: sandboxRuleKey, show: showSandboxRule,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Network.TailscaleControlURL }, func(s *Settings) *string { return &s.TailscaleControlURL }),
@@ -870,6 +896,15 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	if err := CheckUnset(setting); err != nil {
 		return nil, err
 	}
+	if setting == "secret" {
+		names := entries
+		if len(names) == 0 {
+			names = cfg.Secrets
+		}
+		if err := cfg.Policy.checkSecretsUnused(names); err != nil {
+			return nil, err
+		}
+	}
 	before := cfg.referencedSecrets()
 	var deleted []string
 	f, _ := lookupField(setting)
@@ -1013,12 +1048,15 @@ func CopyLive(dst, src *Config) {
 			f.put(dst, slices.Clone(f.get(src)))
 		}
 	}
+	// The grant of a secret the running agent doesn't have yet, such as one
+	// stored with the rule, waits for the restart that loads the secret.
+	dst.Policy.Sandbox = loadedRules(dst.Policy.Sandbox, dst.Secrets)
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an
 // access setting, or a network.
 func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email"}, setting)
+	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "guest-storage", "guest-secrets", SandboxSetting}, setting)
 }
 
 // label names the flag of f in errors.

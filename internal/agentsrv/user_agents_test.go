@@ -23,6 +23,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
@@ -44,7 +45,7 @@ func startUsers(t *testing.T, u *userAgents, n int) []io.Closer {
 			t.Fatalf("userAgents.reserve(%d) error = %v", i, err)
 		}
 		procs[i] = &nopCloser{}
-		u.started(a, procs[i])
+		u.started(a, procs[i], access.Sandbox{})
 		release()
 	}
 	return procs
@@ -125,15 +126,15 @@ func TestNewTaskRefusedWhileAllUserAgentsAreBusy(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	first := ts.client(ts.pair("u0", auth.RoleAuthenticated))
+	first := ts.client(ts.pair("u0", auth.RoleMember))
 	asked := send(t, first, userText("ask", "", ""))
 	for i := 1; i < maxUserAgents; i++ {
-		c := ts.client(ts.pair(fmt.Sprintf("u%d", i), auth.RoleAuthenticated))
+		c := ts.client(ts.pair(fmt.Sprintf("u%d", i), auth.RoleMember))
 		if task := send(t, c, userText("ask", "", "")); task.Status.State != a2a.TaskStateInputRequired {
 			t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
 		}
 	}
-	late := ts.client(ts.pair("late", auth.RoleAuthenticated))
+	late := ts.client(ts.pair("late", auth.RoleMember))
 
 	if _, err := late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")}); !errors.Is(err, a2a.ErrServerError) {
 		t.Fatalf("SendMessage() while all agents are busy error = %v, want %v", err, a2a.ErrServerError)
@@ -155,5 +156,58 @@ func TestNewTaskRefusedWhileAllUserAgentsAreBusy(t *testing.T) {
 	})
 	if task, ok := res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateCompleted {
 		t.Fatalf("SendMessage() after a process became idle = %v, want a completed task", res)
+	}
+}
+
+type countingCloser struct{ closed int }
+
+func (c *countingCloser) Close() error {
+	c.closed++
+	return nil
+}
+
+func TestUserAgentsAdmit(t *testing.T) {
+	t.Parallel()
+	old, next := access.Sandbox{Storage: "shared"}, access.Sandbox{Storage: "read-only"}
+	tests := []struct {
+		name       string
+		busy       bool
+		answer     bool
+		want       access.Sandbox
+		wantErr    error
+		wantClosed int
+	}{
+		{name: "same sandbox", want: old},
+		{name: "idle with another sandbox stops first", want: next, wantClosed: 1},
+		{name: "busy with another sandbox refuses a turn", busy: true, want: next, wantErr: errSandboxRestarting},
+		{name: "busy with another sandbox takes an answer", busy: true, answer: true, want: next},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			u := &userAgents{}
+			key := userKey(0)
+			proc := &countingCloser{}
+			u.started(u.get(key), proc, old)
+			if tt.busy {
+				defer u.turn(key)()
+			}
+
+			release, err := u.admit(key, tt.want, tt.answer)
+
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("userAgents.admit() error = %v, want %v", err, tt.wantErr)
+			}
+			if proc.closed != tt.wantClosed {
+				t.Fatalf("userAgents.admit() closed the process %d times, want %d", proc.closed, tt.wantClosed)
+			}
+			if err != nil {
+				return
+			}
+			if stopped, err := u.closeStale(key, access.Sandbox{Storage: "empty"}); stopped || err != nil {
+				t.Fatalf("userAgents.closeStale() during an admitted turn = %v, %v, want false, nil", stopped, err)
+			}
+			release()
+		})
 	}
 }

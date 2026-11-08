@@ -71,6 +71,29 @@ func (r *Runtime) Update(fn func(*Config) error) error {
 	return nil
 }
 
+// UpdateSandbox applies fn to config.yaml, then uses its sandbox rules,
+// which fn may change. The grants of secrets that the agent loads at
+// restart wait for it, and the rules in use leave them out until then.
+func (r *Runtime) UpdateSandbox(fn func(*Config) error) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var saved []SandboxRule
+	if err := r.dir.UpdateConfig(func(c *Config) error {
+		if err := fn(c); err != nil {
+			return err
+		}
+		saved = cloneSandbox(c.Policy.Sandbox)
+		return nil
+	}); err != nil {
+		return err
+	}
+	cur := r.cur.Load()
+	next := *cur.cfg
+	next.Policy.Sandbox = loadedRules(saved, next.Secrets)
+	r.cur.Store(&runtimeState{cfg: &next, secrets: cur.secrets})
+	return nil
+}
+
 // Reload applies the live settings of config.yaml, which [CopyLive]
 // copies, to the config in use.
 func (r *Runtime) Reload() error {
@@ -86,6 +109,10 @@ func (r *Runtime) Reload() error {
 	r.cur.Store(&runtimeState{cfg: &next, secrets: cur.secrets})
 	return nil
 }
+
+// SavedConfig reads config.yaml, which can hold changes waiting for a
+// restart.
+func (r *Runtime) SavedConfig() (*Config, error) { return r.dir.LoadConfig() }
 
 // SavedSecrets reads the secrets file, which can hold secrets saved since
 // the agent started.

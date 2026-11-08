@@ -34,12 +34,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
-func TestAuthenticatedUsersRunInTheirOwnProcesses(t *testing.T) {
+func TestMembersRunInTheirOwnProcesses(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 
 	annaTask := send(t, anna, userText("pid", "", ""))
 	ownerPID, annaPID, benPID := a2atext.Result(send(t, owner, userText("pid", "", ""))), a2atext.Result(annaTask), a2atext.Result(send(t, ben, userText("pid", "", "")))
@@ -58,7 +58,7 @@ func TestOwnerTurnInUserProcessActsAsTheUser(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	annaTask := send(t, anna, userText("hello", "", ""))
 
 	task := send(t, owner, userText(`call schedules add mine --cron @daily --prompt "x"`, "", annaTask.ContextID))
@@ -75,9 +75,9 @@ func TestOwnerTurnInUserProcessActsAsTheUser(t *testing.T) {
 func TestCapToProcessUser(t *testing.T) {
 	t.Parallel()
 	owner := auth.Owner()
-	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
-	ben := auth.Principal{ID: "pair:ben", Role: auth.RoleAuthenticated}
-	anon := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember}
+	ben := auth.Principal{ID: "pair:ben", Role: auth.RoleMember}
+	anon := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}
 	tests := []struct {
 		name    string
 		turn    auth.Principal
@@ -87,8 +87,8 @@ func TestCapToProcessUser(t *testing.T) {
 		{name: "same user", turn: anna, process: anna, want: anna},
 		{name: "owner in a user's process", turn: owner, process: anna, want: anna},
 		{name: "another user in a user's process", turn: ben, process: anna, want: anna},
-		{name: "anonymous in a user's process", turn: anon, process: anna, want: anon},
-		{name: "owner in the anonymous process", turn: owner, process: anon, want: anon},
+		{name: "guest in a user's process", turn: anon, process: anna, want: anon},
+		{name: "owner in the guest process", turn: owner, process: anon, want: anon},
 		{name: "user in a process without a role", turn: anna, process: auth.Principal{ID: "pair:gone"}, want: auth.Principal{ID: "pair:gone"}},
 	}
 	for _, tc := range tests {
@@ -166,8 +166,8 @@ func TestSplitExecutorClosePoolsInParallel(t *testing.T) {
 		}
 	}
 	e := &splitExecutor{pools: map[string]*startedPool{
-		anonymousPool: {stop: stop},
-		usersPool:     {stop: stop},
+		guestPool: {stop: stop},
+		usersPool: {stop: stop},
 	}}
 
 	if err := e.close(context.Background()); err != nil {
@@ -189,12 +189,12 @@ func TestSplitExecutorForgetsPendingKeyAfterTurnWithoutSession(t *testing.T) {
 	e := newSplitExecutor(context.Background(), splitDeps{
 		Main:   emptyExecutor{},
 		Keys:   keys,
-		Budget: newAnonymousBudget(),
+		Budget: newGuestBudget(),
 		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 			return emptyExecutor{}, func(context.Context) error { return nil }, nil
 		},
 	})
-	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated})
+	ctx := auth.WithPrincipal(context.Background(), auth.Principal{ID: "pair:anna", Role: auth.RoleMember})
 
 	for range e.Execute(ctx, &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 	}
@@ -212,7 +212,7 @@ func TestSplitExecutorStartsNoPoolAfterClose(t *testing.T) {
 	e := newSplitExecutor(context.Background(), splitDeps{
 		Main:   emptyExecutor{},
 		Keys:   newAgentKeys(openTestStore(t).Sessions()),
-		Budget: newAnonymousBudget(),
+		Budget: newGuestBudget(),
 		Start: func(context.Context, string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 			started = true
 			return emptyExecutor{}, func(context.Context) error { return nil }, nil
@@ -291,7 +291,7 @@ func TestSplitExecutorStopEndsTheTurnsWaitingBehindARunningTurn(t *testing.T) {
 	for range 200 {
 		serverCtx, stopServer := context.WithCancel(context.Background())
 		inner := &lockingExecutor{lock: make(chan struct{}, 1), holding: make(chan struct{}), waiting: make(chan struct{})}
-		e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newAnonymousBudget()})
+		e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newGuestBudget()})
 		go func() {
 			for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 			}
@@ -321,7 +321,7 @@ func TestSplitExecutorCloseStopsTurnsFirst(t *testing.T) {
 	t.Parallel()
 	serverCtx, stopServer := context.WithCancel(context.Background())
 	inner := &blockingExecutor{started: make(chan struct{})}
-	e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newAnonymousBudget()})
+	e := newSplitExecutor(serverCtx, splitDeps{Main: inner, Keys: newAgentKeys(openTestStore(t).Sessions()), Budget: newGuestBudget()})
 	go func() {
 		for range e.Execute(context.Background(), &a2asrv.ExecutorContext{ContextID: "c1", TaskID: "t1"}) {
 		}

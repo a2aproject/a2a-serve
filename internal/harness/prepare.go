@@ -67,6 +67,11 @@ type Spec struct {
 	// Mounts are the directories the harness works on. The first is the
 	// workspace and must keep its path in the sandbox.
 	Mounts []agentdir.Mount
+	// WorkspaceSrc is the host directory a container mounts at the path of
+	// the workspace in its place, such as a private copy of it. Empty
+	// mounts the workspace. A sandbox still hides the paths of Hidden and
+	// masks .mcp.json at the workspace's path.
+	WorkspaceSrc string
 	// Home is the host directory holding the harness home.
 	Home string
 	// Hidden are host paths a sandbox hides even where a mount exposes them.
@@ -267,15 +272,16 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		return nil, err
 	}
 	dr := &DockerRunner{
-		Name:     spec.Name,
-		Image:    image,
-		Mounts:   slices.Clone(spec.Mounts),
-		Hidden:   spec.Hidden,
-		Home:     spec.Home,
-		Env:      cliEnv(spec.Env),
-		Limits:   spec.Limits,
-		Labels:   spec.Labels,
-		Rootless: rootless,
+		Name:         spec.Name,
+		Image:        image,
+		Mounts:       slices.Clone(spec.Mounts),
+		WorkspaceSrc: spec.WorkspaceSrc,
+		Hidden:       spec.Hidden,
+		Home:         spec.Home,
+		Env:          cliEnv(spec.Env),
+		Limits:       spec.Limits,
+		Labels:       spec.Labels,
+		Rootless:     rootless,
 	}
 	if spec.MCPMask != "" {
 		masks, err := maskMCP(spec.MCPMask, spec.Mounts)

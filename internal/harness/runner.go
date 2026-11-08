@@ -65,6 +65,9 @@ type DockerRunner struct {
 	Name   string
 	Image  string
 	Mounts []agentdir.Mount
+	// WorkspaceSrc is the host directory mounted at the destination of the
+	// first mount in its place. Empty mounts the first mount's source.
+	WorkspaceSrc string
 	// Hidden are host paths which appear as empty read-only directories
 	// wherever a mount exposes them, such as the agent's .a2a directory.
 	Hidden []string
@@ -281,7 +284,10 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	for _, k := range slices.Sorted(maps.Keys(r.Labels)) {
 		args = append(args, "--label", k+"="+r.Labels[k])
 	}
-	for _, m := range r.Mounts {
+	for i, m := range r.Mounts {
+		if i == 0 && r.WorkspaceSrc != "" {
+			m.Src = r.WorkspaceSrc
+		}
 		spec := m.Src + ":" + m.Dst
 		if m.ReadOnly {
 			spec += ":ro"

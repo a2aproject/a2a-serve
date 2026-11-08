@@ -37,8 +37,8 @@ import (
 )
 
 var (
-	anna = auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: "anna", Hops: 1}}
-	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleAuthenticated}
+	anna = auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Pairing: "anna", Hops: 1}}
+	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleMember}
 )
 
 func newTestCallClaims(t *testing.T, bridge harnessBridge) *CallClaims {
@@ -301,7 +301,7 @@ func TestCallClaimsTurnRecordsAgentsLineWhenItBegins(t *testing.T) {
 
 func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 	t.Parallel()
-	anonymous := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous, Identity: auth.Identity{Hops: anna.Hops}}
+	guest := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest, Identity: auth.Identity{Hops: anna.Hops}}
 	tests := []struct {
 		name     string
 		agentKey func(context.Context, string) (string, error)
@@ -311,7 +311,7 @@ func TestCallClaimsTurnCapsToProcessUser(t *testing.T) {
 	}{
 		{name: "no processes", want: anna},
 		{name: "main process", agentKey: func(context.Context, string) (string, error) { return "", nil }, want: anna},
-		{name: "anonymous process", agentKey: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil }, process: agentkey.Anonymous, want: anonymous},
+		{name: "guest process", agentKey: func(context.Context, string) (string, error) { return agentkey.Guest, nil }, process: agentkey.Guest, want: guest},
 		{name: "unknown process", agentKey: func(context.Context, string) (string, error) { return "", errors.New("boom") }, wantErr: true},
 	}
 	for _, tc := range tests {
@@ -472,7 +472,7 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 			wantLine: true,
 		},
 		{
-			name:     "authenticated",
+			name:     "member",
 			ctx:      auth.WithPrincipal(context.Background(), bob),
 			bridge:   harnessBridge{socket: "/tmp/h.sock"},
 			execCtx:  &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
@@ -492,8 +492,8 @@ func TestCallClaimsWithAgentsLine(t *testing.T) {
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt(), StoredTask: inputRequiredTask("t1", "ctx1")},
 		},
 		{
-			name:    "anonymous",
-			ctx:     auth.WithPrincipal(context.Background(), auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}),
+			name:    "guest",
+			ctx:     auth.WithPrincipal(context.Background(), auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}),
 			bridge:  harnessBridge{socket: "/tmp/h.sock"},
 			execCtx: &a2asrv.ExecutorContext{ContextID: "ctx1", TaskID: "t1", Message: prompt()},
 		},

@@ -220,7 +220,7 @@ func TestInspectorShowsConversationsAndAnswersApprovals(t *testing.T) {
 func TestInspectorAnswersMembersApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	member := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	member := ts.client(ts.pair("anna", auth.RoleMember))
 	task := send(t, member, userText("ask", "", ""))
 	if task.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state = %s, want input-required", task.Status.State)

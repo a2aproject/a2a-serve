@@ -207,7 +207,7 @@ func (cl *CallClaims) callerIn(ctx context.Context, contextID string, user auth.
 	if err != nil || key == "" {
 		return user, err
 	}
-	process := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
+	process := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}
 	if id, ok := agentkey.UserOf(key); ok {
 		if process, err = cl.chain.Refresh(ctx, id, auth.Identity{}); err != nil {
 			slog.Warn("resolving the user of an agent process", "user", id, "error", err)

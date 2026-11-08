@@ -73,7 +73,7 @@ func settingsTable() string {
 		}
 		flag := "`--" + s.Flag + "`"
 		if s.FileOnly {
-			flag = ""
+			flag = "no flag (`" + s.Flag + "` in `config unset`)"
 		}
 		fmt.Fprintf(&sb, "| %s | %s | %s |\n", flag, key, strings.Join(commands, ", "))
 	}

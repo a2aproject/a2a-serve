@@ -450,7 +450,7 @@ func TestContactClientsTargetSharesTheContactClient(t *testing.T) {
 		t.Fatalf("ContactClients.contactClient() error = %v", err)
 	}
 
-	for _, user := range []auth.Principal{auth.Owner(), {ID: "pair:anna", Role: auth.RoleAuthenticated}} {
+	for _, user := range []auth.Principal{auth.Owner(), {ID: "pair:anna", Role: auth.RoleMember}} {
 		tg, err := cc.target(ctx, "coder", user, 1)
 		if err != nil {
 			t.Fatalf("ContactClients.target() error = %v", err)
@@ -494,7 +494,7 @@ func TestContactClientsNodeCaller(t *testing.T) {
 	got := cc.nodeCaller(auth.Principal{ID: "pair:anna", Role: auth.RoleOwner}, 1)
 
 	want := auth.Principal{
-		ID: "agent:assistant", Role: auth.RoleAuthenticated, OnBehalfOf: "pair:anna",
+		ID: "agent:assistant", Role: auth.RoleMember, OnBehalfOf: "pair:anna",
 		Identity: auth.Identity{Network: network.ListenerHarness, Hops: 2},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
