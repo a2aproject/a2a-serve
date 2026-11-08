@@ -109,7 +109,7 @@ func TestStatusAccess(t *testing.T) {
 	}
 	want := &controlapi.Access{
 		PrivateAllowIncoming: agentdir.AccessEveryone, PublicAllowIncoming: agentdir.AccessAnyone,
-		Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{"anyone"},
+		Owner: []string{"self"}, Member: []string{"private", "email:*@example.com"}, Guest: []string{"anyone"},
 		Pairings: 1, OwnerPairings: 1,
 		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL"},
 		Summary: []string{
@@ -191,7 +191,7 @@ func TestDenyToolsAnswersPendingApprovalsAndEndsPreferences(t *testing.T) {
 func TestPreferenceAnswersPendingApprovals(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	bob := ts.client(ts.pair("bob", auth.RoleMember))
 	waiting := send(t, bob, userText("ask", "", ""))
 
 	if err := ts.srv.prefs.Allow(context.Background(), "pair:bob", "command:git push *"); err != nil {

@@ -453,14 +453,14 @@ func TestSetAccess(t *testing.T) {
 		{
 			name: "stopped agent", s: agentdir.Settings{Private: "tailscale", PrivateAllowIncoming: agentdir.AccessPaired},
 			want: &controlapi.Access{
-				PrivateAllowIncoming: agentdir.AccessPaired, Owner: []string{"self"}, Authenticated: []string{}, Anonymous: []string{},
+				PrivateAllowIncoming: agentdir.AccessPaired, Owner: []string{"self"}, Member: []string{}, Guest: []string{},
 				Summary: []string{"you: this machine and your tailnet devices", "nobody else", "the tailnet needs a pairing"},
 			},
 		},
 		{
 			name: "running agent", running: true, s: agentdir.Settings{AllowEmails: []string{"*@example.com"}},
 			want: &controlapi.Access{
-				Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{},
+				Owner: []string{"self"}, Member: []string{"private", "email:*@example.com"}, Guest: []string{},
 				Pairings: 3, OwnerPairings: 1, Others: []string{"emails matching *@example.com"},
 				Summary: []string{"you: this machine", "emails matching *@example.com, 3 pairings (1 owner)"},
 			},

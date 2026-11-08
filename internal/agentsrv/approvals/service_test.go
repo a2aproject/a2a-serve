@@ -59,7 +59,7 @@ func newService(t *testing.T, h a2asrv.RequestHandler, opts ...func(*Deps)) *Ser
 		}
 	})
 	all := func(context.Context) (string, bool, error) { return "", true, nil }
-	policy := auth.Policy{Anonymous: []string{auth.MemberAnyone}}
+	policy := auth.Policy{Guests: []string{auth.MemberAnyone}}
 	deps := Deps{
 		Records: NewRecords(RecordsDeps{
 			Store:   s,
@@ -150,7 +150,7 @@ func TestAnswerUndeliveredStaysOpen(t *testing.T) {
 
 func TestAnswer(t *testing.T) {
 	t.Parallel()
-	member := func(id string) auth.Principal { return auth.Principal{ID: id, Role: auth.RoleAuthenticated} }
+	member := func(id string) auth.Principal { return auth.Principal{ID: id, Role: auth.RoleMember} }
 	tests := []struct {
 		name       string
 		by         auth.Principal
@@ -159,9 +159,9 @@ func TestAnswer(t *testing.T) {
 	}{
 		{name: "starter", by: member("pair:anna"), wantCaller: member("pair:anna")},
 		{name: "owner", by: auth.Owner(), wantCaller: auth.Owner()},
-		{name: "agent naming the starter", by: auth.Principal{ID: "agent:assistant", Role: auth.RoleAuthenticated, OnBehalfOf: "pair:anna"}, wantErr: ErrNotApprover},
-		{name: "starter as anonymous", by: auth.Principal{ID: "pair:anna", Role: auth.RoleAnonymous}, wantErr: ErrNotApprover},
-		{name: "another authenticated caller", by: member("pair:bob"), wantErr: ErrNotApprover},
+		{name: "agent naming the starter", by: auth.Principal{ID: "agent:assistant", Role: auth.RoleMember, OnBehalfOf: "pair:anna"}, wantErr: ErrNotApprover},
+		{name: "starter as guest", by: auth.Principal{ID: "pair:anna", Role: auth.RoleGuest}, wantErr: ErrNotApprover},
+		{name: "another member", by: member("pair:bob"), wantErr: ErrNotApprover},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -335,8 +335,8 @@ func TestHandlePage(t *testing.T) {
 		wantAnswerBy string
 	}{
 		{name: "owner's task", user: auth.OwnerID, wantGet: http.StatusOK, wantPost: http.StatusSeeOther, wantAnswerBy: auth.OwnerID},
-		{name: "authenticated pairing's task", user: "pair:anna", wantGet: http.StatusOK, wantPost: http.StatusSeeOther, wantAnswerBy: "pair:anna"},
-		{name: "anonymous sender's task", user: "email:stranger@example.org", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
+		{name: "member pairing's task", user: "pair:anna", wantGet: http.StatusOK, wantPost: http.StatusSeeOther, wantAnswerBy: "pair:anna"},
+		{name: "guest sender's task", user: "email:stranger@example.org", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
 		{name: "unlinked chat account's task", user: "telegram:9", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
 		{name: "removed pairing's task", user: "pair:gone", wantGet: http.StatusForbidden, wantPost: http.StatusForbidden},
 	}
@@ -346,7 +346,7 @@ func TestHandlePage(t *testing.T) {
 			h := &sendingHandler{}
 			svc := newService(t, h)
 			ctx := context.Background()
-			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleMember}); err != nil {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
 			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
@@ -393,8 +393,8 @@ func TestPageURL(t *testing.T) {
 		want bool
 	}{
 		{name: "owner's task", user: auth.OwnerID, want: true},
-		{name: "authenticated pairing's task", user: "pair:anna", want: true},
-		{name: "anonymous sender's task", user: "email:stranger@example.org"},
+		{name: "member pairing's task", user: "pair:anna", want: true},
+		{name: "guest sender's task", user: "email:stranger@example.org"},
 		{name: "unlinked chat account's task", user: "telegram:9"},
 	}
 	for _, tc := range tests {
@@ -402,7 +402,7 @@ func TestPageURL(t *testing.T) {
 			t.Parallel()
 			svc := newService(t, &sendingHandler{})
 			ctx := context.Background()
-			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+			if _, err := svc.store.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleMember}); err != nil {
 				t.Fatalf("EnsurePairing() error = %v", err)
 			}
 			rec, err := svc.NewRecord(ctx, "t1", "c1", "", tc.user, FromMessage(permissionMessage(t)))
@@ -450,8 +450,8 @@ func TestHandlePageSetsSecurityHeaders(t *testing.T) {
 
 func TestCheckAnswer(t *testing.T) {
 	t.Parallel()
-	anonymous := auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}
-	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}
+	guest := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember}
 	starterScope := func(ctx context.Context) (string, bool, error) {
 		p, _ := auth.Caller(ctx)
 		return p.ID, false, nil
@@ -463,10 +463,10 @@ func TestCheckAnswer(t *testing.T) {
 		taskID  a2a.TaskID
 		want    error
 	}{
-		{name: "owner", starter: anonymous, caller: auth.Owner(), taskID: "t1"},
+		{name: "owner", starter: guest, caller: auth.Owner(), taskID: "t1"},
 		{name: "starter", starter: anna, caller: anna, taskID: "t1"},
-		{name: "another user's task", starter: anonymous, caller: anna, taskID: "t1", want: a2a.ErrTaskNotFound},
-		{name: "anonymous starter", starter: anonymous, caller: anonymous, taskID: "t1", want: a2a.ErrUnauthorized},
+		{name: "another user's task", starter: guest, caller: anna, taskID: "t1", want: a2a.ErrTaskNotFound},
+		{name: "guest starter", starter: guest, caller: guest, taskID: "t1", want: a2a.ErrUnauthorized},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

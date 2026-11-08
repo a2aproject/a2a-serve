@@ -22,20 +22,20 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
-// The budget of anonymous callers on each listener.
+// The budget of guests on each listener.
 const (
-	anonymousTasksPerHour    = 20
-	anonymousConcurrentTasks = 2
+	guestTasksPerHour    = 20
+	guestConcurrentTasks = 2
 )
 
 var (
-	errAnonymousBusy = errors.New("this agent is busy with other anonymous callers; try again in a few minutes")
-	errAnonymousRate = errors.New("this agent took all the anonymous tasks it takes in an hour; try again later")
+	errGuestsBusy = errors.New("this agent is busy with other guests; try again in a few minutes")
+	errGuestRate  = errors.New("this agent took all the guest tasks it takes in an hour; try again later")
 )
 
-// anonymousBudget limits the new and the running tasks of anonymous
-// callers on each listener.
-type anonymousBudget struct {
+// guestBudget limits the new and the running tasks of guests on each
+// listener.
+type guestBudget struct {
 	perHour    int
 	concurrent int
 	now        func() time.Time
@@ -50,11 +50,11 @@ type listenerBudget struct {
 	running int
 }
 
-func newAnonymousBudget() *anonymousBudget {
-	return &anonymousBudget{perHour: anonymousTasksPerHour, concurrent: anonymousConcurrentTasks, now: time.Now, listeners: map[string]*listenerBudget{}}
+func newGuestBudget() *guestBudget {
+	return &guestBudget{perHour: guestTasksPerHour, concurrent: guestConcurrentTasks, now: time.Now, listeners: map[string]*listenerBudget{}}
 }
 
-// budgetListener is where an anonymous caller arrived: a listener, or a
+// budgetListener is where a guest arrived: a listener, or a
 // messenger.
 func budgetListener(p auth.Principal) string {
 	if p.Network == auth.NetworkChat {
@@ -65,45 +65,45 @@ func budgetListener(p auth.Principal) string {
 
 // admit counts a new task on a listener, or refuses it when the listener
 // used up its budget.
-func (b *anonymousBudget) admit(listener string) error {
+func (b *guestBudget) admit(listener string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	l := b.listener(listener)
 	switch {
 	case l.running >= b.concurrent:
-		return errAnonymousBusy
+		return errGuestsBusy
 	case len(l.starts) >= b.perHour:
-		return errAnonymousRate
+		return errGuestRate
 	}
 	l.starts = append(l.starts, b.now())
 	return nil
 }
 
-// CheckRate is checkRate of the listener of the anonymous caller p. It
+// CheckRate is checkRate of the listener of the guest p. It
 // implements [messenger.Budget].
-func (b *anonymousBudget) CheckRate(p auth.Principal) error {
+func (b *guestBudget) CheckRate(p auth.Principal) error {
 	return b.checkRate(budgetListener(p))
 }
 
 // checkRate reports the error admit would return because the listener
 // started all the tasks it may in an hour, without counting a task.
-func (b *anonymousBudget) checkRate(listener string) error {
+func (b *guestBudget) checkRate(listener string) error {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.listener(listener).starts) >= b.perHour {
-		return errAnonymousRate
+		return errGuestRate
 	}
 	return nil
 }
 
 // run counts a running task on a listener until release is called, or
 // refuses it when the listener runs as many as it may.
-func (b *anonymousBudget) run(listener string) (release func(), err error) {
+func (b *guestBudget) run(listener string) (release func(), err error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	l := b.listener(listener)
 	if l.running >= b.concurrent {
-		return nil, errAnonymousBusy
+		return nil, errGuestsBusy
 	}
 	l.running++
 	var once sync.Once
@@ -118,7 +118,7 @@ func (b *anonymousBudget) run(listener string) (release func(), err error) {
 
 // listener returns the budget of a listener, without the starts older than
 // an hour. b.mu must be held.
-func (b *anonymousBudget) listener(name string) *listenerBudget {
+func (b *guestBudget) listener(name string) *listenerBudget {
 	l := b.listeners[name]
 	if l == nil {
 		l = &listenerBudget{}

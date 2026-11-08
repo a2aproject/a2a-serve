@@ -356,8 +356,8 @@ func TestStartReportsOutdatedA2AOnce(t *testing.T) {
 func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 	contextID := send(t, anna, userText("hello", "", "")).ContextID
 	tests := []struct {
@@ -382,8 +382,8 @@ func TestMessageJoinsOnlyItsSendersConversation(t *testing.T) {
 func TestOwnerMessageKeepsConversationWithItsUser(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 	contextID := send(t, anna, userText("hello", "", "")).ContextID
 	send(t, owner, userText("hello", "", contextID))
@@ -400,7 +400,7 @@ func TestOwnerMessageKeepsConversationWithItsUser(t *testing.T) {
 func TestUserApprovalTimesOut(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.UserQuestionTimeout = time.Second }})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	task := send(t, anna, userText("ask", "", ""))
 	if task.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
@@ -507,7 +507,7 @@ func TestApprovalOfStoppedServerFailsTaskAsRestarted(t *testing.T) {
 func TestCallerLimitCountsTasksWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 	for range maxCallerExecutions {
 		if task := send(t, anna, userText("ask", "", "")); task.Status.State != a2a.TaskStateInputRequired {
@@ -542,7 +542,7 @@ func TestMessageToConversationWaitingForApprovalIsRefused(t *testing.T) {
 func TestUserMessageToConversationWaitingForOwnerApprovalIsRefused(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
 	started := send(t, anna, userText("hello", "", ""))
 	if asked := send(t, owner, userText("ask", "", started.ContextID)); asked.Status.State != a2a.TaskStateInputRequired {
@@ -599,7 +599,7 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 		key  string
 	}{
 		{name: "owner", key: ""},
-		{name: "anonymous", key: agentkey.Anonymous},
+		{name: "guest", key: agentkey.Guest},
 		{name: "user", key: agentkey.User("pair:anna")},
 	}
 	for _, tc := range tests {

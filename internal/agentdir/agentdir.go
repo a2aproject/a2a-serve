@@ -179,23 +179,23 @@ func (d Dir) AgentMeshDir() string { return filepath.Join(d.StateDir(), "agentme
 // HomeDir returns the harness home, mounted at /home/agent in a container.
 func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }
 
-// AnonymousHomeDir is the home of the separate agent process of anonymous
-// callers.
-func (d Dir) AnonymousHomeDir() string { return filepath.Join(d.StateDir(), "home-anonymous") }
+// GuestHomeDir is the home of the separate agent process of guests. It
+// keeps the name it had before guests were called guests.
+func (d Dir) GuestHomeDir() string { return filepath.Join(d.StateDir(), "home-anonymous") }
 
-// UserHomesDir holds the homes of the agent processes of authenticated
-// users, one per user.
+// UserHomesDir holds the homes of the agent processes of members, one per
+// member.
 func (d Dir) UserHomesDir() string { return filepath.Join(d.StateDir(), "homes") }
 
-// UserHomeDir is the home of the agent process of the authenticated user
-// with the principal ID id.
+// UserHomeDir is the home of the agent process of the member with the
+// principal ID id.
 func (d Dir) UserHomeDir(id string) string {
 	return filepath.Join(d.UserHomesDir(), UserKey(id))
 }
 
 // WorkspacesDir holds the private workspaces of the agent containers whose
 // sandbox gives them their own storage, one directory each: owner,
-// anonymous, or the [UserKey] of a user. Backups leave it out.
+// anonymous for guests, or the [UserKey] of a member. Backups leave it out.
 func (d Dir) WorkspacesDir() string { return filepath.Join(d.StateDir(), "workspaces") }
 
 // UserWorkspacesDir holds the private workspaces of the agent container of

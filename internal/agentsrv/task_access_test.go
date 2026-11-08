@@ -121,8 +121,8 @@ func wantNoAccessToTask(t *testing.T, c *a2aclient.Client, id a2a.TaskID) {
 func TestCallerCantReachRunningTaskOfOthers(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	task := sendAsync(t, anna, userText("slow", "", ""))
 	waitState(t, anna, task.ID, a2a.TaskStateWorking)
 
@@ -142,8 +142,8 @@ func TestNodeCallerCantReachRunningTaskOfOthers(t *testing.T) {
 		t.Fatalf("UpdatePairing() error = %v", err)
 	}
 	url := ts.localURL() + "/n/grok"
-	anna := urlClient(t, url, ts.pair("anna", auth.RoleAuthenticated))
-	ben := urlClient(t, url, ts.pair("ben", auth.RoleAuthenticated))
+	anna := urlClient(t, url, ts.pair("anna", auth.RoleMember))
+	ben := urlClient(t, url, ts.pair("ben", auth.RoleMember))
 	task := sendAsync(t, anna, userText("hello", "", ""))
 	waitState(t, anna, task.ID, a2a.TaskStateSubmitted)
 
@@ -154,8 +154,8 @@ func TestNodeCallerCantReachRunningTaskOfOthers(t *testing.T) {
 func TestMessageToAnotherUsersTaskLooksUnknown(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	anna := ts.client(ts.pair("anna", auth.RoleAuthenticated))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	anna := ts.client(ts.pair("anna", auth.RoleMember))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	running := sendAsync(t, anna, userText("slow 3s", "", ""))
 	ctx := context.Background()
 

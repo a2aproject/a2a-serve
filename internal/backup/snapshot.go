@@ -44,7 +44,7 @@ const (
 	pathSecrets = "state/secrets"
 	pathAds     = "state/ads.json"
 	pathHome    = "state/home"
-	// pathUserHomes holds a home per authenticated user.
+	// pathUserHomes holds a home per member.
 	pathUserHomes = "state/homes"
 )
 

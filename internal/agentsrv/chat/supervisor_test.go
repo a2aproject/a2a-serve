@@ -373,7 +373,7 @@ func TestMessengerSupervisorOwnerLink(t *testing.T) {
 		{name: "nobody is linked", messenger: described("fake"), wantLink: true},
 		{name: "owner is linked on the messenger", messenger: described("fake"), links: []linkSpec{{pairing: auth.LocalPairing, messenger: "fake", identity: "telegram:1", conv: "dm1"}}},
 		{name: "owner is linked on another messenger", messenger: described("fake"), links: []linkSpec{{pairing: auth.LocalPairing, messenger: "other", identity: "telegram:1", conv: "dm1"}}, wantLink: true},
-		{name: "member is linked on the messenger", messenger: described("fake"), links: []linkSpec{{pairing: "anna", role: auth.RoleAuthenticated, messenger: "fake", identity: "telegram:2", conv: "dm2"}}, wantLink: true},
+		{name: "member is linked on the messenger", messenger: described("fake"), links: []linkSpec{{pairing: "anna", role: auth.RoleMember, messenger: "fake", identity: "telegram:2", conv: "dm2"}}, wantLink: true},
 		{name: "messenger can't tell how to link", messenger: plain("fake")},
 	}
 	for _, tc := range tests {

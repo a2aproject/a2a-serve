@@ -103,34 +103,34 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 	return nil
 }
 
-// newAnonymousExecutor runs the conversations of anonymous callers in one
+// newGuestExecutor runs the conversations of guests in one
 // agent process of their own. It starts on the first task, and stops when
 // idle. It gets no way to call other agents: no socket, credential helper or
 // CLI. With Docker it runs in its own container with its own home.
-func (s *Server) newAnonymousExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
+func (s *Server) newGuestExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
 	start := a2aacp.AgentFunc(func(ctx context.Context, key string) (io.ReadWriteCloser, error) {
-		return s.startPoolAgent(ctx, &s.anonymous, key, harnessLog)
+		return s.startPoolAgent(ctx, &s.guests, key, harnessLog)
 	})
 	cfg := s.acpConfig()
 	cfg.Pool = &a2aacp.PoolConfig{
-		Key: func(context.Context, string) (string, error) { return agentkey.Anonymous, nil },
+		Key: func(context.Context, string) (string, error) { return agentkey.Guest, nil },
 	}
-	cfg.Turn = s.stalls.turn(s.countedTurn(&s.anonymous))
-	// Approvals reject questions after AnonymousQuestionTimeout; this stops
+	cfg.Turn = s.stalls.turn(s.countedTurn(&s.guests))
+	// Approvals reject questions after GuestQuestionTimeout; this stops
 	// the turn if that answer doesn't arrive.
-	cfg.QuestionTimeout = s.timings.AnonymousQuestionTimeout + time.Minute
+	cfg.QuestionTimeout = s.timings.GuestQuestionTimeout + time.Minute
 	acp, err := a2aacp.NewExecutor(ctx, start, cfg)
 	if err != nil {
-		return nil, nil, fmt.Errorf("preparing the agent of anonymous callers: %w", err)
+		return nil, nil, fmt.Errorf("preparing the agent of guests: %w", err)
 	}
 	return s.guardACP(acp), func(context.Context) error { return acp.Close() }, nil
 }
 
-// maxUserAgents limits the agent processes of authenticated users that run
+// maxUserAgents limits the agent processes of members that run
 // at once; the least recently used idle one stops to start another.
 const maxUserAgents = 10
 
-// newUsersExecutor runs the conversations of each authenticated user in an
+// newUsersExecutor runs the conversations of each member in an
 // agent process of their own, with its own home and, with Docker, its own
 // container. A process starts on the user's first task, and stops when idle.
 func (s *Server) newUsersExecutor(ctx context.Context, harnessLog io.Writer) (a2asrv.AgentExecutor, func(context.Context) error, error) {
@@ -171,10 +171,10 @@ func (s *Server) countedTurn(agents *userAgents) func(ctx context.Context, execC
 }
 
 // startPoolAgent starts the agent process of an agent key among agents:
-// anonymous callers', or a user's unless the user's pairing was removed.
+// guests', or a user's unless the user's pairing was removed.
 func (s *Server) startPoolAgent(ctx context.Context, agents *userAgents, key string, harnessLog io.Writer) (io.ReadWriteCloser, error) {
 	id, isUser := agentkey.UserOf(key)
-	if !isUser && key != agentkey.Anonymous {
+	if !isUser && key != agentkey.Guest {
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
 	ua := agents.get(key)
@@ -266,7 +266,7 @@ func (p checkedProcess) Start(ctx context.Context, key string) (io.ReadWriteClos
 }
 
 // prepareHarness prepares the harness of the agent process of an agent
-// key: the owner's for no key, anonymous callers' or a user's.
+// key: the owner's for no key, guests' or a user's.
 func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, key string) (*preparedHarness, error) {
 	cfg := s.rt.Config()
 	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
@@ -296,8 +296,8 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	id, isUser := agentkey.UserOf(key)
 	switch {
-	case key == agentkey.Anonymous:
-		spec.Home = s.dir.AnonymousHomeDir()
+	case key == agentkey.Guest:
+		spec.Home = s.dir.GuestHomeDir()
 	case isUser:
 		spec.Home = s.dir.UserHomeDir(id)
 	}
@@ -316,9 +316,9 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		s.mainSandbox.Store(&sb)
 	}
 	closeEndpoint := func() error { return nil }
-	if key == agentkey.Anonymous {
-		spec.Name += "-anonymous"
-		spec.Labels["a2a.role"] = auth.RoleAnonymous
+	if key == agentkey.Guest {
+		spec.Name += "-guest"
+		spec.Labels["a2a.role"] = auth.RoleGuest
 		if err := fsutil.CheckPrivate(spec.Home); err != nil {
 			return nil, err
 		}
@@ -384,7 +384,7 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 // the user id, and its home the instructions of the owner's home.
 func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
 	spec.Name += "-" + agentdir.UserKey(id)
-	spec.Labels["a2a.role"] = auth.RoleAuthenticated
+	spec.Labels["a2a.role"] = auth.RoleMember
 	for _, dir := range []string{s.dir.UserHomesDir(), spec.Home} {
 		if err := fsutil.CheckPrivate(dir); err != nil {
 			return err
@@ -892,12 +892,12 @@ func eventState(ev a2a.Event) (a2a.TaskState, bool) {
 
 // callerInterceptor makes the authenticated principal the A2A user and
 // enforces who may join a conversation, who may answer approvals, how deep
-// agent chains go and the budget of anonymous callers.
+// agent chains go and the budget of guests.
 type callerInterceptor struct {
 	a2asrv.PassthroughCallInterceptor
 	approvals *approvals.Service
 	tasks     *store.TaskStore
-	budget    *anonymousBudget
+	budget    *guestBudget
 	keys      *agentKeys
 	users     *userAgents
 }
@@ -920,9 +920,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		_, err := i.tasks.Header(ctx, sub.ID)
 		return ctx, nil, err
 	}
-	// Anonymous callers who proved nothing share one principal, so they
+	// Guests who proved nothing share one principal, so they
 	// list only the conversation they name, whose ID proves it is theirs.
-	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.AnonymousID && list.ContextID == "" {
+	if list, ok := req.Payload.(*a2a.ListTasksRequest); ok && p.ID == auth.GuestID && list.ContextID == "" {
 		return ctx, &a2a.ListTasksResponse{Tasks: []*a2a.Task{}, PageSize: list.PageSize}, nil
 	}
 	msg, ok := req.Payload.(*a2a.SendMessageRequest)
@@ -945,7 +945,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 			return ctx, nil, err
 		}
 	}
-	if p.Role == auth.RoleAnonymous && msg.Message.TaskID == "" {
+	if p.Role == auth.RoleGuest && msg.Message.TaskID == "" {
 		if err := i.budget.admit(budgetListener(p)); err != nil {
 			return ctx, nil, fmt.Errorf("%w: %w", a2a.ErrUnauthorized, err)
 		}
@@ -1036,8 +1036,8 @@ func (i *callerInterceptor) checkUnfinished(ctx context.Context, p auth.Principa
 	return nil
 }
 
-// checkUserAgents refuses a new task in a conversation of an authenticated
-// user while that user's agent process can't run, so that the caller gets
+// checkUserAgents refuses a new task in a conversation of a member while
+// that member's agent process can't run, so that the caller gets
 // an error to retry on and no failed task is stored.
 func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID string) error {
 	key, err := i.keys.of(ctx, contextID)

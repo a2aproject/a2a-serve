@@ -126,7 +126,7 @@ func (s *sandboxes) forget(keys ...string) {
 }
 
 // principalOf returns whom the sandbox rules match for the container of an
-// agent key: the owner for none, any anonymous caller, or the user. It
+// agent key: the owner for none, any guest, or the user. It
 // reports whether the server verified the user's identity; one rebuilt from
 // the principal ID alone lacks what only a request proves. It fails when
 // the store can't tell, so that a read error changes no container.
@@ -134,8 +134,8 @@ func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal
 	if key == "" {
 		return auth.Owner(), true, nil
 	}
-	if key == agentkey.Anonymous {
-		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}, true, nil
+	if key == agentkey.Guest {
+		return auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}, true, nil
 	}
 	id, _ := agentkey.UserOf(key)
 	s.mu.Lock()
@@ -144,7 +144,7 @@ func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal
 	if ok {
 		return u.p, true, nil
 	}
-	rebuilt := auth.Principal{ID: id, Role: auth.RoleAuthenticated, Identity: auth.IdentityOf(id)}
+	rebuilt := auth.Principal{ID: id, Role: auth.RoleMember, Identity: auth.IdentityOf(id)}
 	data, err := s.store.UserIdentity(ctx, id)
 	if errors.Is(err, store.ErrNotFound) {
 		return rebuilt, false, nil
@@ -342,8 +342,8 @@ func (s *Server) closeStale(ctx context.Context, key string) {
 // agentsOf returns the processes that the agent key runs in, or nil for the
 // owner's.
 func (s *Server) agentsOf(key string) *userAgents {
-	if key == agentkey.Anonymous {
-		return &s.anonymous
+	if key == agentkey.Guest {
+		return &s.guests
 	}
 	if _, ok := agentkey.UserOf(key); ok {
 		return &s.users
@@ -364,7 +364,7 @@ func (s *Server) sandboxLoop(ctx context.Context) {
 		case <-t.C:
 		}
 		var wg sync.WaitGroup
-		for _, agents := range []*userAgents{&s.anonymous, &s.users} {
+		for _, agents := range []*userAgents{&s.guests, &s.users} {
 			for _, key := range agents.runningKeys() {
 				wg.Go(func() { s.applySandboxChange(ctx, agents, key) })
 			}
@@ -504,7 +504,7 @@ const unusedWorkspaceTTL = 30 * 24 * time.Hour
 
 // pruneWorkspaces deletes the private workspaces that are no longer needed:
 // those of users without a pairing unused for unusedWorkspaceTTL, and those
-// of the owner's and the anonymous container whose sandbox no longer has
+// of the owner's and the guests' container whose sandbox no longer has
 // their storage. `pair rm` deletes those of pairings. The sandbox of a
 // user's container depends on how they call, so it isn't checked here.
 func (s *Server) pruneWorkspaces(ctx context.Context) {
@@ -530,13 +530,13 @@ func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 			return s.removeStorageBut(e, started.Storage)
 		}
 		return nil
-	case workspaceName(agentkey.Anonymous):
-		release, err := s.anonymous.stopIdle(agentkey.Anonymous)
+	case workspaceName(agentkey.Guest):
+		release, err := s.guests.stopIdle(agentkey.Guest)
 		if err != nil || release == nil {
 			return err
 		}
 		defer release()
-		return s.removeStorageBut(e, s.sandboxes.resolve(auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous}).Storage)
+		return s.removeStorageBut(e, s.sandboxes.resolve(auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}).Storage)
 	}
 	key := agentkey.User(e.Principal)
 	pairing := strings.HasPrefix(e.Principal, auth.PairPrefix) || auth.IdentityOf(e.Principal).WebhookNode != ""

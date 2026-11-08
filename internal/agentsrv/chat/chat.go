@@ -26,7 +26,7 @@ type Timings struct {
 	// SendRetry is the first delay before a message that must reach the
 	// chat, such as a question, is sent again; it doubles on each failure.
 	SendRetry time.Duration
-	// AnonymousQuestionTimeout is how long the approvals of anonymous
-	// callers wait for an owner.
-	AnonymousQuestionTimeout time.Duration
+	// GuestQuestionTimeout is how long the approvals of guests wait for an
+	// owner.
+	GuestQuestionTimeout time.Duration
 }

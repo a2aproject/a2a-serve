@@ -154,15 +154,15 @@ func filesUnder(t *testing.T, dir string) []string {
 func TestWithAgentsLine(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
-	ts.pair("anna", auth.RoleAuthenticated)
+	ts.pair("anna", auth.RoleMember)
 	tests := []struct {
 		name     string
 		caller   *auth.Principal
 		wantLine bool
 	}{
 		{name: "owner", caller: &auth.Principal{ID: auth.OwnerID, Role: auth.RoleOwner}, wantLine: true},
-		{name: "authenticated", caller: &auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated}, wantLine: true},
-		{name: "anonymous", caller: &auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}},
+		{name: "member", caller: &auth.Principal{ID: "pair:anna", Role: auth.RoleMember}, wantLine: true},
+		{name: "guest", caller: &auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}},
 		{name: "no caller"},
 	}
 	for _, tc := range tests {

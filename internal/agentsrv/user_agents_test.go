@@ -126,15 +126,15 @@ func TestNewTaskRefusedWhileAllUserAgentsAreBusy(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	ctx := context.Background()
-	first := ts.client(ts.pair("u0", auth.RoleAuthenticated))
+	first := ts.client(ts.pair("u0", auth.RoleMember))
 	asked := send(t, first, userText("ask", "", ""))
 	for i := 1; i < maxUserAgents; i++ {
-		c := ts.client(ts.pair(fmt.Sprintf("u%d", i), auth.RoleAuthenticated))
+		c := ts.client(ts.pair(fmt.Sprintf("u%d", i), auth.RoleMember))
 		if task := send(t, c, userText("ask", "", "")); task.Status.State != a2a.TaskStateInputRequired {
 			t.Fatalf("task state = %s, want %s", task.Status.State, a2a.TaskStateInputRequired)
 		}
 	}
-	late := ts.client(ts.pair("late", auth.RoleAuthenticated))
+	late := ts.client(ts.pair("late", auth.RoleMember))
 
 	if _, err := late.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")}); !errors.Is(err, a2a.ErrServerError) {
 		t.Fatalf("SendMessage() while all agents are busy error = %v, want %v", err, a2a.ErrServerError)

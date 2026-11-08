@@ -119,13 +119,13 @@ The person who started a task answers its approvals, in the place the task start
 | A webhook node | the node | in the task |
 | A schedule with `--chat` | the schedule's `--as` user | that chat |
 | A schedule without `--chat` | an owner | the owner chat |
-| An [anonymous caller](identities.md#anonymous-callers) | an owner, within 10 minutes | the owner chat |
+| A [guest](identities.md#guests) | an owner, within 10 minutes | the owner chat |
 
 - Set the **owner chat** with `--owner-chat <messenger>[:<who>]`, on a messenger the agent has. Without it, a2a-serve picks the first messenger with a linked owner. Without one, questions wait in the [inspector](inspector.md).
 - In a group chat, only the person who started the task, or an owner, can answer.
 - A message that isn't an answer doesn't reach the agent while a question waits for you in that chat. Answer the question first, or send `/stop`.
 - A typed answer such as `approve` answers the question whose message it replies to. When several questions wait in one chat, reply to the message of the one you answer. A typed answer that replies to none of them gets a prompt to do so.
-- Authenticated callers approve their own tasks, so use `--deny-tools` to limit what they can run.
-- An approval in a conversation of an authenticated caller is rejected after 4 hours without an answer. Until then, it keeps the caller's agent process running.
+- [Members](identities.md#roles) approve their own tasks, so use `--deny-tools` to limit what they can run.
+- An approval in a conversation of a member is rejected after 4 hours without an answer. Until then, it keeps the member's agent process running.
 - Other approvals, such as those of owners' tasks and schedules, are rejected after 24 hours without an answer. A message that waits behind an approval waits as long.
 - Email approvals link to a web page where the person who started the task answers. Approvals that only an owner can answer have no link.

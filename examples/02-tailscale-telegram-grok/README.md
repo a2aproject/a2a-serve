@@ -185,7 +185,7 @@ wakes. Each wake is a JSON body with `kind`, `taskId`, `text` and
 a2a-serve mailbox reply <taskId> --final "Here is what I found: ..."
 ```
 
-The same token lets the bot call your agent, as an authenticated caller, for example from a
+The same token lets the bot call your agent, as a member, for example from a
 scheduled routine:
 
 ```bash

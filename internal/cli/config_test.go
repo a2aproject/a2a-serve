@@ -789,7 +789,7 @@ func TestPrintConfigResultSecrets(t *testing.T) {
 
 func TestPrintConfigResultRestartAndGuestNote(t *testing.T) {
 	t.Parallel()
-	access := &controlapi.Access{Summary: []string{"anyone"}, Sandbox: []string{"guests: read-only workspace, no secrets"}, AnonymousNote: "guests' agent gets no key"}
+	access := &controlapi.Access{Summary: []string{"anyone"}, Sandbox: []string{"guests: read-only workspace, no secrets"}, GuestNote: "guests' agent gets no key"}
 	tests := []struct {
 		name       string
 		res        *agentctl.Result

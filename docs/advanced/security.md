@@ -11,7 +11,7 @@ By default the agent runs in Docker with:
 - your user ID (container root under rootless Docker, which maps to you), all capabilities dropped, `no-new-privileges`, and limits of 4 GB of memory, 2 CPUs and 512 processes;
 - a socket to the server, through which it calls other agents. The server makes those calls with its own credentials, so contact tokens never enter the sandbox. Each container gets a socket of its own in a read-only directory, and the socket serves only the conversations of that container. On Docker Desktop the socket is a TCP port on the host's loopback, and each container sends a key of its own.
 
-Each authenticated user gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Anonymous callers](../guide/identities.md#anonymous-callers) share one more container, with `state/home-anonymous` as its home and no socket to the server.
+Each [member](../guide/identities.md#roles) gets a container of their own, with a home in `state/homes`, so their conversations can't read the history of other users' conversations. [Guests](../guide/identities.md#guests) share one more container, with `state/home-anonymous` as its home and no socket to the server.
 
 What each container gets of the workspace, the `--mount` directories and the `--secret` values follows the [sandbox defaults](../guide/sandbox.md#what-each-callers-container-gets). Sandbox rules set what chosen callers get, such as a read-only workspace, a private copy of it, an empty workspace, only some secrets, or a stored secret under another name. A rule change that gives a caller less ends the tasks of their container, since a task would keep what the container got.
 
@@ -21,7 +21,7 @@ Every tool call that changes something waits for approval from the person who st
 
 What the sandbox doesn't protect yet:
 
-- **API keys are readable inside it.** Values passed with `--secret` are environment variables of every container that a rule gives them to, so a tricked agent can read them and send them anywhere. They are readable until the server injects them ([#16](https://github.com/a2aproject/a2a-serve/issues/16)). Until then, give guests and other callers you trust less a [separate key](../guide/sandbox.md#give-guests-a-key-of-their-own).
+- **API keys are readable inside it.** Values passed with `--secret` are environment variables of every container that a rule gives them to, so a tricked agent can read them and send them anywhere. They are readable until the server injects them ([#16](https://github.com/a2aproject/a2a-serve/issues/16)). Until then, give guests and members you trust less a [separate key](../guide/sandbox.md#give-guests-a-key-of-their-own).
 - **It can reach any host.** A tricked agent can send the files it can read anywhere ([#17](https://github.com/a2aproject/a2a-serve/issues/17)). Callers with `read-only` or `own` storage can still read the workspace, so the agent can send its files anywhere for them too.
 - **It reaches the tailnet as you.** The tailnet is a trusted private network. When the machine running the agent is on it, the agent's connections to tailnet addresses go out through that machine's Tailscale node, so this agent's private URL, your other agents and other tailnet services see your device and grant your rights, whoever started the task.
 - **A shared workspace is writable** unless mounted `:ro`, including `.git` and skills. A change the agent makes there applies to the next conversation, and to you when you run tools in the project. The [sandbox defaults](../guide/sandbox.md#what-each-callers-container-gets) say who gets it, and rules can change that.
@@ -34,7 +34,7 @@ What the sandbox doesn't protect yet:
 
 Every A2A request needs a known caller. These routes are public: the agent card, `/pair` (which redeems codes), `/skill.md`, `/download/…` and `/hitl/<token>`.
 
-The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Anonymous callers through the relay, and callers over their limit, share one short backoff. A valid code from an address over its limit goes through after that backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
+The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Callers that the relay doesn't identify, and callers over their limit, share one short backoff. A valid code from an address over its limit goes through after that backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
 The public routes also limit the open requests of each caller and the size and send time of their bodies. This keeps capacity free for callers who authenticate ([request limits](../reference/http-routes.md#request-limits)).
 
@@ -45,17 +45,17 @@ A web page open in your browser can't make requests that change state on the age
 | localhost | Callers with a token. On start, the server saves a token of the built-in `local` pairing for the user running it, which works only on the local URL. The server removes the saved token when it stops, so a program that later listens on the same port isn't sent it. A loopback connection alone grants nothing, because tunnels also reach the server from loopback. |
 | Tailscale | Everyone on the tailnet, or with `--private-allow-incoming paired` only callers with a token. Your own untagged devices, identified by Tailscale as your user, are owners. The tailnet's admin console and access controls decide who is on it. |
 | Agent Mesh relay | Everyone the relay admits, or with `--private-allow-incoming paired` only callers with a token. The relay's enrollment decides who is on it ([who a relay admits](agent-mesh.md#how-the-access-model-maps)). |
-| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-allow-incoming anyone`, also anyone, as an anonymous caller. |
-| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-allow-incoming anyone`, also anyone in a direct chat, as an anonymous caller. Only verified senders count: for email, mail that passes DMARC, or DKIM of the sender's exact domain, at the trusted server. Email proves only the sender's domain. |
+| Public URL (Funnel, relay) | Callers with a token, including people on the `--allow-email` list after Google sign-in, which only the public URL serves. With `--public-allow-incoming anyone`, also anyone, as a guest. |
+| Messengers | Accounts linked with a pairing code, and email senders on the `--allow-email` list. With `--public-allow-incoming anyone`, also anyone in a direct chat, as a guest. Only verified senders count: for email, mail that passes DMARC, or DKIM of the sender's exact domain, at the trusted server. Email proves only the sender's domain. |
 | The agent's socket | Only the agent, while it answers a message. A call there acts for the user who sent that message, and reaches only the tasks its conversation started. |
 
 Only the host agent and its owners can call a webhook node, unless it is advertised with `pair invite --advertised`. Then other agents on the private network can call it through the host, which checks them like any other caller. Agents share only the names of advertised nodes and the machines of their hosts. Calls always go to the host agent found on the private network. The card of a node that isn't advertised goes only to callers who may call the node.
 
-A call that comes through another agent gets at most the authenticated role, even from your own agents, so someone who can steer one of your agents can't act as you on the others. The calling server keeps the user a call is for, and relays the callee's approvals to them.
+A call that comes through another agent gets at most the member role, even from your own agents, so someone who can steer one of your agents can't act as you on the others. The calling server keeps the user a call is for, and relays the callee's approvals to them.
 
-What a role allows:
+What each [role](../guide/identities.md#roles) allows:
 
-| | Owner | Authenticated | Anonymous |
+| | Owner | Member | Guest |
 | --- | --- | --- | --- |
 | Talk to the agent and start tasks | yes | yes | yes, within a budget per listener |
 | See tasks | all | their own | their own; on the public URL, the tasks whose task or conversation ID they have |
@@ -83,8 +83,8 @@ The agent's instructions list the description and skills from the cards of conta
 | Caller token (`a2p_…`) | Calls to this agent with the pairing's current role | Hashed in `server.db`; with the caller in `~/.config/a2a-serve/credentials.json` (mode 0600) | `a2a-serve pair rm <name>`, or `pair set <name> --rotate` for a new code. The caller forgets it with `a2a-serve pair rm <agent-url>` |
 | Token of the `local` pairing | Calls to the local URL as the owner | Like a caller token, for the user running the server, while the server runs | `a2a-serve pair rm local`, which also unlinks your messenger accounts; the next start issues a new token |
 | Messenger link | Messages from that account with the pairing's current role | `server.db` | `a2a-serve pair rm <name>` |
-| Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as an authenticated caller | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
-| Google sign-in token (`a2p_…`) | Calls to this agent as an authenticated caller, while the email stays on the allowlist | Hashed in `server.db`; with the caller | Expires after 90 days without use. `a2a-serve pair rm --email <address>`, or `a2a-serve config unset allow-email <entry>`, which deletes them within an hour |
+| Webhook node token (`a2rn.…`) | The node's mailbox, and calls to the agent as a member | Hashed in `server.db`; with the node, in its credentials or `A2A_NODE_TOKEN` | `a2a-serve pair rm <node>` or `pair set <node> --rotate` |
+| Google sign-in token (`a2p_…`) | Calls to this agent as a member, while the email stays on the allowlist | Hashed in `server.db`; with the caller | Expires after 90 days without use. `a2a-serve pair rm --email <address>`, or `a2a-serve config unset allow-email <entry>`, which deletes them within an hour |
 | Wake signing key | Proves that wakes come from this agent. Derived from the node token, so the node needs no other secret | `server.db` | `a2a-serve pair set <node> --rotate` |
 | Contact token | Calls to another agent, made by this server | Plain in `server.db` | `a2a-serve contact rm <name>`, and revoke it on the other agent |
 | Agent key (Docker Desktop) | The agent's socket, for the conversations of one container | Generated when the container starts, in its home | Restart |

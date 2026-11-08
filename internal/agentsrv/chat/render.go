@@ -55,7 +55,7 @@ type renderer struct {
 	timer     *time.Timer
 	done      bool
 	// waitsForOwner is set once the task waits for an owner to answer its
-	// question elsewhere, as for anonymous conversations.
+	// question elsewhere, as for guests' conversations.
 	waitsForOwner bool
 
 	// showMu serializes what is shown in the conversation, and guards the
@@ -404,7 +404,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 		rd.send(ctx, a2atext.Message(msg))
 		return
 	}
-	if rd.p.Role == auth.RoleAnonymous || rd.a.anonymous(ctx, contextID) {
+	if rd.p.Role == auth.RoleGuest || rd.a.guest(ctx, contextID) {
 		rd.mu.Lock()
 		rd.waitsForOwner = true
 		rd.mu.Unlock()
@@ -412,7 +412,7 @@ func (rd *renderer) question(ctx context.Context, msg *a2a.Message) {
 			rd.onWaitForOwner(taskID)
 		}
 		rd.send(ctx, fmt.Sprintf("⏳ This needs the owner's approval, which I asked for. Without an answer in %s, it is rejected:\n\n%s",
-			approvals.ApprovalTimeout(rd.a.timings.AnonymousQuestionTimeout), q.Display()))
+			approvals.ApprovalTimeout(rd.a.timings.GuestQuestionTimeout), q.Display()))
 		return
 	}
 	// An owner who answered an earlier question may be rendering the task,

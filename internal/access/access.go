@@ -59,20 +59,20 @@ func PrivateAllowIncoming(p agentdir.PolicyConfig) string {
 }
 
 // Policy is the policy of the settings p: the private network with
-// --private-allow-incoming everyone and --allow-email are authenticated; with
-// --public-allow-incoming anyone, anyone is anonymous.
+// --private-allow-incoming everyone and --allow-email are members; with
+// --public-allow-incoming anyone, anyone is a guest.
 func Policy(p agentdir.PolicyConfig) auth.Policy {
 	var out auth.Policy
 	if PrivateAllowIncoming(p) == agentdir.AccessEveryone {
-		out.Authenticated = append(out.Authenticated, auth.MemberPrivate)
+		out.Members = append(out.Members, auth.MemberPrivate)
 	}
 	for _, e := range p.AllowEmails {
 		if e = strings.TrimSpace(e); e != "" {
-			out.Authenticated = append(out.Authenticated, auth.MemberEmailPrefix+e)
+			out.Members = append(out.Members, auth.MemberEmailPrefix+e)
 		}
 	}
 	if p.PublicAllowIncoming == agentdir.AccessAnyone {
-		out.Anonymous = []string{auth.MemberAnyone}
+		out.Guests = []string{auth.MemberAnyone}
 	}
 	return out
 }
@@ -111,10 +111,10 @@ type Description struct {
 	// PublicAllowIncoming is paired or anyone, set with a public URL.
 	PrivateAllowIncoming string
 	PublicAllowIncoming  string
-	// Owner, Authenticated and Anonymous are the members of each role.
-	Owner         []string
-	Authenticated []string
-	Anonymous     []string
+	// Owner, Member and Guest are the members of each role.
+	Owner  []string
+	Member []string
+	Guest  []string
 	// Pairings counts the pairings besides the local one, and OwnerPairings
 	// those of them that are owners.
 	Pairings      int
@@ -131,9 +131,9 @@ type Description struct {
 	// SandboxNotes are what the sandbox rules don't do, such as callers
 	// whose container gets no model key.
 	SandboxNotes []string
-	// AnonymousNote says that the agent can't reach its model for
-	// guests, who get no secrets, if it needs a key.
-	AnonymousNote string
+	// GuestNote says that the agent can't reach its model for guests, who
+	// get no secrets, if it needs a key.
+	GuestNote string
 }
 
 // DescribeConfig is [Describe] of the settings of cfg, with what the agent
@@ -142,16 +142,16 @@ type Description struct {
 func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
 	a := Describe(cfg.Policy, net, n)
 	sp := SandboxPolicyOf(cfg)
-	anonymous := len(a.Anonymous) > 0
-	for _, l := range sp.SandboxLines(n.Owners, anonymous, net.Private != "") {
-		if len(cfg.Policy.Sandbox) > 0 || anonymous {
+	guests := len(a.Guest) > 0
+	for _, l := range sp.SandboxLines(n.Owners, guests, net.Private != "") {
+		if len(cfg.Policy.Sandbox) > 0 || guests {
 			a.Sandbox = append(a.Sandbox, l.Who+": "+sp.Describe(l.Sandbox))
 		}
 		note := ModelKeyNote(cfg, l)
 		switch {
 		case note == "":
-		case l.Anonymous:
-			a.AnonymousNote = note
+		case l.Guest:
+			a.GuestNote = note
 		default:
 			a.SandboxNotes = append(a.SandboxNotes, note)
 		}
@@ -200,7 +200,7 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 	}
 	name := harness.ProviderName(provider)
 	switch {
-	case l.Anonymous:
+	case l.Guest:
 		return fmt.Sprintf("Guests' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets %s`.", name, key, key)
 	case l.Pairing != "":
 		return fmt.Sprintf("%s's agent gets no %s key and can't reach its model. Give one with `a2a-serve pair set %s --secrets %s`, or a key of its own with `--secrets %s=secret:<STORED_KEY>`.", l.Pairing, name, l.Pairing, key, key)
@@ -213,7 +213,7 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 	pol := Policy(p)
 	a := &Description{
-		Owner: []string{auth.MemberSelf}, Authenticated: nonNil(pol.Authenticated), Anonymous: nonNil(pol.Anonymous),
+		Owner: []string{auth.MemberSelf}, Member: nonNil(pol.Members), Guest: nonNil(pol.Guests),
 		Pairings: n.All, OwnerPairings: n.Owners, Others: pol.Others(net.Private, net.Public, net.Messenger),
 	}
 	if net.Private != "" {

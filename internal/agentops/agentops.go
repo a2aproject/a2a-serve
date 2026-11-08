@@ -106,8 +106,8 @@ func (s *Service) Access(ctx context.Context) (*access.Description, error) {
 	// their grants wait only for the secrets that the restart loads.
 	after := access.DescribeConfig(saved, net, n)
 	a.SandboxNotes = slices.DeleteFunc(a.SandboxNotes, func(note string) bool { return !slices.Contains(after.SandboxNotes, note) })
-	if after.AnonymousNote == "" {
-		a.AnonymousNote = ""
+	if after.GuestNote == "" {
+		a.GuestNote = ""
 	}
 	return a, nil
 }

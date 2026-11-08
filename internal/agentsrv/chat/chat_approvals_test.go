@@ -90,7 +90,7 @@ func TestChatApprovalsAsk(t *testing.T) {
 			ch.Buttons = tc.buttons
 			fx := newChatFixture(t, "", ch)
 			if tc.member {
-				fx.link(t, linkSpec{pairing: "anna", role: auth.RoleAuthenticated, messenger: "fake", identity: "telegram:2", conv: "dm2"})
+				fx.link(t, linkSpec{pairing: "anna", role: auth.RoleMember, messenger: "fake", identity: "telegram:2", conv: "dm2"})
 			}
 			rec := fx.newQuestion(t, "t1", "c1", tc.user)
 
@@ -197,7 +197,7 @@ func TestChatApprovalsOwnerChat(t *testing.T) {
 	local := func(ch, conv string) linkSpec {
 		return linkSpec{pairing: auth.LocalPairing, messenger: ch, identity: "telegram:1", conv: conv}
 	}
-	anna := linkSpec{pairing: "anna", role: auth.RoleAuthenticated, messenger: "telegram", identity: "telegram:2", conv: "dm2"}
+	anna := linkSpec{pairing: "anna", role: auth.RoleMember, messenger: "telegram", identity: "telegram:2", conv: "dm2"}
 	ben := linkSpec{pairing: "ben", role: auth.RoleOwner, messenger: "telegram", identity: "telegram:3", conv: "dm3"}
 	tests := []struct {
 		name      string
@@ -254,17 +254,17 @@ func TestChatApprovalsFollowDelivers(t *testing.T) {
 	tests := []struct {
 		name string
 		// conv is the conversation of context c1; it has none if empty.
-		conv      string
-		runs      bool
-		anonymous bool
-		contact   string
-		deliver   error
+		conv    string
+		runs    bool
+		guest   bool
+		contact string
+		deliver error
 	}{
 		{name: "context without a conversation"},
 		{name: "context without a conversation fails to deliver", deliver: deliverErr},
 		{name: "conversation on a messenger that doesn't run", conv: "dm1"},
 		{name: "question of another agent's task", conv: "dm1", runs: true, contact: "peer"},
-		{name: "anonymous conversation", conv: "dm1", runs: true, anonymous: true},
+		{name: "guest conversation", conv: "dm1", runs: true, guest: true},
 		{name: "conversation fails to deliver", conv: "dm1", runs: true, deliver: deliverErr},
 	}
 	for _, tc := range tests {
@@ -276,7 +276,7 @@ func TestChatApprovalsFollowDelivers(t *testing.T) {
 				chs = append(chs, ch)
 			}
 			fx := newChatFixture(t, "", chs...)
-			fx.chat.anonymous = func(context.Context, string) bool { return tc.anonymous }
+			fx.chat.guest = func(context.Context, string) bool { return tc.guest }
 			if tc.conv != "" {
 				if err := fx.store.SetContext(fx.ctx, "fake", tc.conv, "c1"); err != nil {
 					t.Fatalf("SetContext() error = %v", err)

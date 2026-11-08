@@ -86,10 +86,10 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 ### Which rule applies
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
-- [Guests](../guide/sandbox.md#guests) share one container. Only the `guests` rule applies to it.
-- Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>` and `private`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
+- [Guests](../guide/identities.md#guests) share one container. Only the `guests` rule applies to it.
+- Each [member](../guide/identities.md#roles) gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>` and `private`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
 
-`guests` matches the callers that the [access policy](../advanced/access-model.md#policy) admits as anonymous. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
+`guests` matches the callers that the [access policy](../advanced/access-model.md#policy) gives the guest role. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
 
 ### Commands
 

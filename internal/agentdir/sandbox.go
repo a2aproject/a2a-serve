@@ -66,8 +66,8 @@ const (
 	// MatchPairingPrefix starts pairing:<name>, which matches a pairing or
 	// a webhook node.
 	MatchPairingPrefix = "pairing:"
-	// MatchGuests matches guests: the callers without a token or account,
-	// which the access policy calls anonymous.
+	// MatchGuests matches guests: the callers nobody vouched for, whom the
+	// guest role holds.
 	MatchGuests = "guests"
 	// MatchSelf matches the owners, who share the container of the user
 	// running the agent.
@@ -193,14 +193,14 @@ func (p PolicyConfig) validateSandbox(secrets []string) []error {
 	var errs []error
 	seen := map[string]int{}
 	for i, r := range p.Sandbox {
-		anonymous := slices.Equal(r.Match, []string{MatchGuests})
+		guests := slices.Equal(r.Match, []string{MatchGuests})
 		label := fmt.Sprintf("policy.sandbox rule %d", i+1)
 		drop := "remove it from the rule"
 		if name, ok := strings.CutPrefix(first(r.Match), MatchPairingPrefix); ok && len(r.Match) == 1 {
 			label, drop = name+"'s sandbox rule", "drop it from --secrets"
 		}
 		invalid := func(flag, entry, format string, args ...any) {
-			if anonymous && flag != "" {
+			if guests && flag != "" {
 				errs = append(errs, &FieldError{Flag: flag, Entry: entry, Reason: fmt.Sprintf(format, args...)})
 				return
 			}

@@ -107,14 +107,14 @@ type Deps struct {
 	// such as the runs of a schedule without a chat. Their questions go to
 	// the owner chat.
 	Unattended func(contextID string) bool
-	// Anonymous reports whether a conversation is anonymous. Its starter
+	// Guest reports whether a conversation is a guest's. Its starter
 	// can't answer its questions, so they go to the owner chat, and are
-	// rejected after AnonymousTimeout.
-	Anonymous        func(ctx context.Context, contextID string) bool
-	AnonymousTimeout time.Duration
-	// User reports whether a conversation runs in the agent process of an
-	// authenticated user. An open question keeps that process busy, so its
-	// questions are rejected after UserTimeout.
+	// rejected after GuestTimeout.
+	Guest        func(ctx context.Context, contextID string) bool
+	GuestTimeout time.Duration
+	// User reports whether a conversation runs in the agent process of a
+	// member. An open question keeps that process busy, so its questions
+	// are rejected after UserTimeout.
 	User        func(ctx context.Context, contextID string) bool
 	UserTimeout time.Duration
 	// Config returns the current config of the agent.
@@ -124,30 +124,30 @@ type Deps struct {
 // Service handles the questions of the agent and of agents it calls.
 type Service struct {
 	*Records
-	sender           Sender
-	notifier         Notifier
-	remote           RemoteAnswerer
-	unattended       func(contextID string) bool
-	anonymous        func(ctx context.Context, contextID string) bool
-	anonymousTimeout time.Duration
-	user             func(ctx context.Context, contextID string) bool
-	userTimeout      time.Duration
-	config           func() *agentdir.Config
+	sender       Sender
+	notifier     Notifier
+	remote       RemoteAnswerer
+	unattended   func(contextID string) bool
+	guest        func(ctx context.Context, contextID string) bool
+	guestTimeout time.Duration
+	user         func(ctx context.Context, contextID string) bool
+	userTimeout  time.Duration
+	config       func() *agentdir.Config
 }
 
 // New returns the approvals service of deps.
 func New(deps Deps) *Service {
 	return &Service{
-		Records:          deps.Records,
-		sender:           deps.Sender,
-		notifier:         deps.Notifier,
-		remote:           deps.Remote,
-		unattended:       deps.Unattended,
-		anonymous:        deps.Anonymous,
-		anonymousTimeout: deps.AnonymousTimeout,
-		user:             deps.User,
-		userTimeout:      deps.UserTimeout,
-		config:           deps.Config,
+		Records:      deps.Records,
+		sender:       deps.Sender,
+		notifier:     deps.Notifier,
+		remote:       deps.Remote,
+		unattended:   deps.Unattended,
+		guest:        deps.Guest,
+		guestTimeout: deps.GuestTimeout,
+		user:         deps.User,
+		userTimeout:  deps.UserTimeout,
+		config:       deps.Config,
 	}
 }
 
@@ -177,12 +177,12 @@ func (r *Records) NewRecord(ctx context.Context, taskID a2a.TaskID, contextID, c
 }
 
 // MayAnswer reports whether p may answer a permission question of a task
-// user started: user themselves, or an owner. Anonymous callers never do.
+// user started: user themselves, or an owner. Guests never do.
 func MayAnswer(p auth.Principal, user string) bool {
 	switch p.Role {
 	case auth.RoleOwner:
 		return true
-	case auth.RoleAuthenticated:
+	case auth.RoleMember:
 		return user != "" && p.ID == user
 	}
 	return false
@@ -210,20 +210,20 @@ func (r *Records) pageUser(ctx context.Context, rec store.Question) (auth.Princi
 }
 
 // OnQuestion sends a permission question of a task nobody watches, or of
-// an anonymous conversation, to the owner chat. Whoever started any other
+// a guest's conversation, to the owner chat. Whoever started any other
 // task answers in the place it came from: inline in an A2A task, or in its
-// conversation. Questions of authenticated users are rejected after
+// conversation. Questions of members are rejected after
 // UserTimeout.
 func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContext, q *Question) {
 	if q.Type != TypePermission {
 		return
 	}
-	anonymous := s.anonymous != nil && s.anonymous(ctx, execCtx.ContextID)
-	if !anonymous && s.user != nil && s.user(ctx, execCtx.ContextID) {
+	guest := s.guest != nil && s.guest(ctx, execCtx.ContextID)
+	if !guest && s.user != nil && s.user(ctx, execCtx.ContextID) {
 		taskID, contextID := execCtx.TaskID, execCtx.ContextID
 		time.AfterFunc(s.userTimeout, func() { s.expireTask(context.WithoutCancel(ctx), taskID, contextID, q) })
 	}
-	if !anonymous && (s.unattended == nil || !s.unattended(execCtx.ContextID)) {
+	if !guest && (s.unattended == nil || !s.unattended(execCtx.ContextID)) {
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
@@ -235,9 +235,9 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 			return
 		}
 		header := fmt.Sprintf("%s needs your approval", auth.DisplayPrincipal(starter))
-		if anonymous {
-			time.AfterFunc(s.anonymousTimeout, func() { s.expire(ctx, rec.ID) })
-			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", anonymousName(starter), ApprovalTimeout(s.anonymousTimeout))
+		if guest {
+			time.AfterFunc(s.guestTimeout, func() { s.expire(ctx, rec.ID) })
+			header = fmt.Sprintf("%s needs your approval, or it is rejected in %s", guestName(starter), ApprovalTimeout(s.guestTimeout))
 		}
 		to, ok := s.notifier.OwnerChat(ctx)
 		if !ok {
@@ -249,12 +249,12 @@ func (s *Service) OnQuestion(ctx context.Context, execCtx *a2asrv.ExecutorContex
 	}()
 }
 
-// anonymousName names an anonymous caller in the owner chat.
-func anonymousName(id string) string {
-	if id == auth.AnonymousID || id == "" {
-		return "An anonymous caller"
+// guestName names a guest in the owner chat.
+func guestName(id string) string {
+	if id == auth.GuestID || id == "" {
+		return "A guest"
 	}
-	return id + ", an anonymous caller,"
+	return id + ", a guest,"
 }
 
 // ApprovalTimeout describes how long an approval waits, such as "10 min".

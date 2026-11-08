@@ -264,7 +264,7 @@ INSERT INTO nodes (id, name, webhook, secret, token_hash, created) VALUES ('grok
 	if err != nil {
 		t.Fatalf("Pairings() error = %v", err)
 	}
-	want := []Pairing{{Name: "grok", Kind: "webhook", Role: "authenticated"}, {Name: LocalPairing, Kind: "person", Role: "owner"}}
+	want := []Pairing{{Name: "grok", Kind: "webhook", Role: "member"}, {Name: LocalPairing, Kind: "person", Role: "owner"}}
 	if diff := cmp.Diff(want, all, cmpopts.IgnoreFields(Pairing{}, "Created")); diff != "" {
 		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
 	}
@@ -324,5 +324,39 @@ INSERT INTO schedules (name, cron, prompt, user_id, deliver_channel, deliver_use
 	want := []users{{"anna", "pair:anna", "user:owner"}, {"local", "user:owner", "user:owner"}}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("Schedules() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestMigrateAuthenticatedPairingsToMembers(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "server.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatalf("sql.Open() error = %v", err)
+	}
+	ctx := context.Background()
+	old := &Store{db: db, now: time.Now}
+	for v := range 22 {
+		if err := old.runMigration(ctx, v); err != nil {
+			t.Fatalf("runMigration(%d) error = %v", v, err)
+		}
+	}
+	if _, err := db.Exec(`
+INSERT INTO pairings (name, kind, role, created) VALUES ('anna', 'person', 'authenticated', 1), ('phone', 'device', 'owner', 1);
+`); err != nil {
+		t.Fatalf("inserting pairings: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("Close() error = %v", err)
+	}
+
+	s := openStoreAt(t, path)
+	all, err := s.Pairings(ctx)
+	if err != nil {
+		t.Fatalf("Pairings() error = %v", err)
+	}
+	want := []Pairing{{Name: "anna", Kind: "person", Role: "member"}, {Name: LocalPairing, Kind: "person", Role: "owner"}, {Name: "phone", Kind: "device", Role: "owner"}}
+	if diff := cmp.Diff(want, all, cmpopts.IgnoreFields(Pairing{}, "Created")); diff != "" {
+		t.Fatalf("Pairings() wrong result (-want +got) diff = %s", diff)
 	}
 }

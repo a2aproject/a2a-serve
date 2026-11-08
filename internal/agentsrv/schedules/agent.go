@@ -80,7 +80,7 @@ func (e *agentExecutor) Cancel(_ context.Context, execCtx *a2asrv.ExecutorContex
 }
 
 // user is who the commands act for: the user of the conversation's turn.
-// Conversations started through another agent and anonymous callers can't
+// Conversations started through another agent and guests can't
 // manage schedules.
 func (e *agentExecutor) user() (auth.Principal, error) {
 	u := e.turnUser

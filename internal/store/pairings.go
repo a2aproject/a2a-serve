@@ -623,7 +623,7 @@ func (s *Store) PendingCodes(ctx context.Context) (map[string][]Code, error) {
 // putWebhookPairing creates the webhook pairing of a node, and fails with
 // [ErrExists] if a pairing of another kind has its name.
 func (s *Store) putWebhookPairing(ctx context.Context, tx *sql.Tx, name string) error {
-	if _, err := tx.ExecContext(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, 'authenticated', ?) ON CONFLICT DO NOTHING`,
+	if _, err := tx.ExecContext(ctx, `INSERT INTO pairings (name, kind, role, created) VALUES (?, ?, 'member', ?) ON CONFLICT DO NOTHING`,
 		name, pairapi.PairingWebhook, s.now().UnixNano()); err != nil {
 		return err
 	}

@@ -102,12 +102,12 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--allow-email email` |  | People who may call the agent as members by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
 | `--guest-secrets names` |  | Secrets the agent container of guests gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
-| `--guest-storage string` |  | What the agent container of guests, the callers without a token or account, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
-| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--guest-storage string` |  | What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
+| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
-| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
+| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired) |
 
 **Approvals flags**
 
@@ -190,12 +190,12 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--allow-email email` |  | People who may call the agent as members by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
 | `--guest-secrets names` |  | Secrets the agent container of guests gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
-| `--guest-storage string` |  | What the agent container of guests, the callers without a token or account, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
-| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--guest-storage string` |  | What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
+| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
-| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
+| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired) |
 
 **Approvals flags**
 
@@ -350,12 +350,12 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 
 | Flag | Default | Description |
 |---|---|---|
-| `--allow-email email` |  | People who may call the agent by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
+| `--allow-email email` |  | People who may call the agent as members by a verified email, on any network: an email, or \*@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL (repeatable; commas also separate values) |
 | `--guest-secrets names` |  | Secrets the agent container of guests gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME, such as a guest key of its own; replaces the list (default none) (repeatable; commas also separate values) |
-| `--guest-storage string` |  | What the agent container of guests, the callers without a token or account, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
-| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone) |
+| `--guest-storage string` |  | What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only) |
+| `--private-allow-incoming string` |  | Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone) |
 | `--private-allow-outgoing string` |  | Whom on the private network the agent may call: everyone, or contacts for only its contacts (default contacts) |
-| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired) |
+| `--public-allow-incoming string` |  | Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired) |
 
 **Approvals flags**
 

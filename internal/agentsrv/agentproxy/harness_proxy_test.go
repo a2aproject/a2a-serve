@@ -180,14 +180,14 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 		wantError string
 	}{
 		{name: "owner calls a contact", user: auth.Owner(), agent: "coder", wantCode: http.StatusOK},
-		{name: "authenticated calls a contact", user: bob, agent: "coder", wantCode: http.StatusOK},
+		{name: "member calls a contact", user: bob, agent: "coder", wantCode: http.StatusOK},
 		{name: "owner calls a node", user: auth.Owner(), agent: "grok", wantCode: http.StatusOK},
 		{name: "owner calls the schedules agent", user: auth.Owner(), agent: pairings.SchedulesAgent, wantCode: http.StatusOK},
 		{name: "unknown handle", user: auth.Owner(), handle: "unknownhandle", agent: "coder", wantCode: http.StatusNotFound, wantError: ErrUnknownHandle.Error()},
 		{name: "conversation without a running turn", user: auth.Owner(), noTurn: true, agent: "coder", wantCode: http.StatusForbidden, wantError: ErrNoTurn.Error()},
-		{name: "anonymous user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}, agent: "coder", wantCode: http.StatusOK},
-		{name: "user at the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}, agent: "coder", wantCode: http.StatusOK},
-		{name: "user below the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops - 1}}, agent: "coder", wantCode: http.StatusOK},
+		{name: "guest user", user: auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}, agent: "coder", wantCode: http.StatusOK},
+		{name: "user at the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: auth.MaxHops}}, agent: "coder", wantCode: http.StatusOK},
+		{name: "user below the hop limit", user: auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: auth.MaxHops - 1}}, agent: "coder", wantCode: http.StatusOK},
 		{name: "name that isn't callable", user: auth.Owner(), agent: "nobody", wantCode: http.StatusOK},
 		{name: "harness key", key: "harness-key", header: "Bearer harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusOK},
 		{name: "no harness key", key: "harness-key", user: auth.Owner(), agent: "coder", wantCode: http.StatusUnauthorized, wantError: "agent key required"},
@@ -225,8 +225,8 @@ func TestHarnessProxyRoutesAgentCard(t *testing.T) {
 
 func TestHarnessProxyRefusesTheCall(t *testing.T) {
 	t.Parallel()
-	anonymous := auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous}
-	atHopLimit := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: auth.MaxHops}}
+	guest := auth.Principal{ID: "telegram:9", Role: auth.RoleGuest}
+	atHopLimit := auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: auth.MaxHops}}
 	tests := []struct {
 		name      string
 		user      auth.Principal
@@ -234,8 +234,8 @@ func TestHarnessProxyRefusesTheCall(t *testing.T) {
 		transport a2a.TransportProtocol
 		want      string
 	}{
-		{name: "anonymous user", user: anonymous, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
-		{name: "anonymous user and the schedules agent", user: anonymous, agent: pairings.SchedulesAgent, transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
+		{name: "guest user", user: guest, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
+		{name: "guest user and the schedules agent", user: guest, agent: pairings.SchedulesAgent, transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
 		{name: "user without a role", user: auth.Principal{ID: "pair:gone"}, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "the user of this conversation can't call other agents; answer without calling one"},
 		{name: "user at the hop limit", user: atHopLimit, agent: "coder", transport: a2a.TransportProtocolJSONRPC, want: "too many agents in this chain (3); answer without calling another agent"},
 		{name: "user at the hop limit over REST", user: atHopLimit, agent: "coder", transport: a2a.TransportProtocolHTTPJSON, want: "too many agents in this chain (3); answer without calling another agent"},
@@ -343,7 +343,7 @@ func TestHarnessProxyCallsContactForTheUserOfTheTurn(t *testing.T) {
 	f := newProxyFixture(t)
 	putContact(t, f.store, store.Contact{Name: "coder", URL: f.remote.URL, Token: "a2p_agent"})
 	srv := f.serve(t, "")
-	user := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Hops: 1}}
+	user := auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: 1}}
 	own := f.runTurn(t, "c1", user)
 	otherHandle := f.runTurn(t, "c2", auth.Owner())
 	client := proxyClient(t, srv.URL+"/"+own+"/coder")
@@ -796,7 +796,7 @@ func TestGuardedHandlerListsOnlyItsTasks(t *testing.T) {
 func TestGuardedHandlerWatchesTasksTheHarnessDoesNotWaitFor(t *testing.T) {
 	t.Parallel()
 	identity := auth.Identity{Pairing: "anna", Hops: 1}
-	user := auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: identity}
+	user := auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: identity}
 	withStatus := func(state a2a.TaskState, msg *a2a.Message) *a2a.Task {
 		return &a2a.Task{ID: "t9", ContextID: "r9", Status: a2a.TaskStatus{State: state, Message: msg}}
 	}

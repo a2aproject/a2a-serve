@@ -285,7 +285,7 @@ func TestOpenTaskCaps(t *testing.T) {
 		return err
 	}
 	caller := func(i int) auth.Principal {
-		return auth.Principal{ID: fmt.Sprintf("pair:caller%d", i), Role: auth.RoleAuthenticated}
+		return auth.Principal{ID: fmt.Sprintf("pair:caller%d", i), Role: auth.RoleMember}
 	}
 	for i := range maxNodeOpenTasks / maxCallerOpenTasks {
 		for range maxCallerOpenTasks {

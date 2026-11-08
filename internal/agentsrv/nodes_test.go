@@ -229,7 +229,7 @@ func TestPairNodeOrCaller(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	ts.pair("anna", auth.RoleAuthenticated)
+	ts.pair("anna", auth.RoleMember)
 	tests := []struct {
 		name     string
 		req      controlapi.PairCodeRequest
@@ -259,7 +259,7 @@ func TestPairRmRemovesNodeOrCaller(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	ts.pair("anna", auth.RoleAuthenticated)
+	ts.pair("anna", auth.RoleMember)
 	ctx := context.Background()
 	for name, want := range map[string]string{"grok": pairapi.PairingWebhook, "anna": pairapi.PairingPerson} {
 		resp, err := controlapi.NewClient(ts.dir).Revoke(ctx, name)
@@ -282,7 +282,7 @@ func TestWebhookNodeRejectsMembers(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{name: "assistant"})
 	addNode(t, ts, "grok", 0)
-	tok := ts.pair("grok-caller", auth.RoleAuthenticated)
+	tok := ts.pair("grok-caller", auth.RoleMember)
 	req, err := http.NewRequest(http.MethodPost, ts.localURL()+"/n/grok/", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"SendMessage","params":{"message":{"messageId":"m","role":"ROLE_USER","parts":[{"text":"hi"}]}}}`))
 	if err != nil {
 		t.Fatal(err)
@@ -337,7 +337,7 @@ func TestNodeCardIsServedToCallersWhoMayCallTheNode(t *testing.T) {
 		t.Fatalf("UpdatePairing() error = %v", err)
 	}
 	owner := ts.pair("me", auth.RoleOwner)
-	member := ts.pair("anna", auth.RoleAuthenticated)
+	member := ts.pair("anna", auth.RoleMember)
 	tests := []struct {
 		name  string
 		path  string
