@@ -259,7 +259,7 @@ func TestPruneWorkspaces(t *testing.T) {
 	s := &Server{
 		workspaces: workspaces.New(filepath.Join(t.TempDir(), "w")),
 		sandboxes: newSandboxes(func() *agentdir.Config {
-			return &agentdir.Config{Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"anyone"}, Storage: agentdir.StorageEmpty}}}}
+			return &agentdir.Config{Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"guests"}, Storage: agentdir.StorageEmpty}}}}
 		}, openStore(t)),
 	}
 	old := time.Now().Add(-2 * unusedWorkspaceTTL)
@@ -357,7 +357,7 @@ func TestSandboxOfUnverifiedUserIsTheNarrowest(t *testing.T) {
 	}
 }
 
-func TestAnonymousRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
+func TestGuestRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
@@ -371,13 +371,13 @@ func TestAnonymousRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 	anon := anonymousClient(t, ts)
 	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
 	if got := a2atext.Result(send(t, anon, userText("env KEY", "", ""))); got != "env KEY unset" {
-		t.Fatalf("SendMessage() by an anonymous caller without a rule = %q, want %q", got, "env KEY unset")
+		t.Fatalf("SendMessage() by a guest without a rule = %q, want %q", got, "env KEY unset")
 	}
 
-	setRule(t, ts, agentdir.SandboxRule{Match: []string{"anyone"}, Secrets: []string{"KEY=secret:GUEST"}})
+	setRule(t, ts, agentdir.SandboxRule{Match: []string{"guests"}, Secrets: []string{"KEY=secret:GUEST"}})
 
 	if got := a2atext.Result(send(t, anon, userText("env KEY", "", ""))); got != "env KEY=guest-key" {
-		t.Fatalf("SendMessage() by an anonymous caller with a rule = %q, want %q", got, "env KEY=guest-key")
+		t.Fatalf("SendMessage() by a guest with a rule = %q, want %q", got, "env KEY=guest-key")
 	}
 	for _, prompt := range []string{"env KEY", "env GUEST"} {
 		want := map[string]string{"env KEY": "env KEY=owner-key", "env GUEST": "env GUEST=guest-key"}[prompt]

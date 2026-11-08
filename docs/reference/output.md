@@ -12,9 +12,9 @@ only while it runs. Its `access` object says who may call: `privateAllowIncoming
 and `publicAllowIncoming` as in force, the members of the `owner`, `authenticated`
 and `anonymous` roles, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
-prints. With sandbox rules or anonymous callers, it adds the `sandbox` lines
+prints. With sandbox rules or guests, it adds the `sandbox` lines
 of what each kind of caller's agent container gets, `sandboxNotes` such as
-callers without a model key, and `anonymousNote`. `pair get` and `pair list`
+callers without a model key, and `anonymousNote` about guests. `pair get` and `pair list`
 give each pairing a `sandbox` object: its `storage`, its `secrets`, a
 `summary`, and a `warning` when its agent can't reach its model. `pair
 invite` adds it when rules change what the pairing gets, and `pair set`

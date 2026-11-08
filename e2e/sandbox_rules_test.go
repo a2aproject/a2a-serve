@@ -63,7 +63,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 		}
 	}
 
-	coder.serve("config", "set", "--anonymous-secrets", "KEY=secret:GUEST")
+	coder.serve("config", "set", "--guest-secrets", "KEY=secret:GUEST")
 	if got := resultOf(ben.mustSend(coder.url, "env KEY")).Text; got != "env KEY=owner-key" {
 		t.Fatalf("a2a send env KEY by ben after config set = %q, want the owner's key", got)
 	}

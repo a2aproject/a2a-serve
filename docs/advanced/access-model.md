@@ -40,7 +40,7 @@ a2a-serve contact add reviewer --url <reviewer-url> --code <code> --dir ~/coder
 
 You can always call the agent and answer its approvals: on this machine, and from your own devices on the private network.
 
-`--anonymous-storage`, `--anonymous-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
+`--guest-storage`, `--guest-secrets` and `pair invite --storage --secrets` set what the agent containers of callers get ([sandbox rules](../guide/sandbox.md#what-each-callers-container-gets)).
 
 ## Whom the agent may call
 
@@ -159,7 +159,7 @@ policy:
 | `--allow-email P` | adds `email:P` to `authenticated` |
 | `pair invite --owner` | the pairing's role is `owner` |
 
-Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
+Members are `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>`, and name `anyone` `guests` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
 
 `config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting bindings in [`access`](../reference/output.md).
 

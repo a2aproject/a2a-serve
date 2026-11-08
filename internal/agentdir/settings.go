@@ -57,10 +57,10 @@ type Settings struct {
 	PrivateAllowOutgoing string
 	// AllowEmails are added to the people who may call by a verified email.
 	AllowEmails []string
-	// AnonymousStorage and AnonymousSecrets set the sandbox rule of the callers
+	// GuestStorage and GuestSecrets set the sandbox rule of the callers
 	// that no more specific rule matches.
-	AnonymousStorage string
-	AnonymousSecrets []string
+	GuestStorage string
+	GuestSecrets []string
 	// Telegram and Discord are bot tokens: env:VAR, secret:NAME or the value.
 	Telegram string
 	Discord  string

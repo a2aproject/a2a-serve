@@ -124,12 +124,12 @@ type Description struct {
 	// whose container gets no model key.
 	SandboxNotes []string
 	// AnonymousNote says that the agent can't reach its model for
-	// anonymous callers, who get no secrets, if it needs a key.
+	// guests, who get no secrets, if it needs a key.
 	AnonymousNote string
 }
 
 // DescribeConfig is [Describe] of the settings of cfg, with what the agent
-// containers of callers get when sandbox rules or anonymous callers make
+// containers of callers get when sandbox rules or guests make
 // it differ between them.
 func DescribeConfig(cfg *agentdir.Config, net Network, n Pairings) *Description {
 	a := Describe(cfg.Policy, net, n)
@@ -173,7 +173,7 @@ func ModelKeyNote(cfg *agentdir.Config, l SandboxLine) string {
 	name := harness.ProviderName(provider)
 	switch {
 	case l.Anonymous:
-		return fmt.Sprintf("Anonymous callers' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --anonymous-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --anonymous-secrets %s`.", name, key, key)
+		return fmt.Sprintf("Guests' agent gets no %s key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets %s=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets %s`.", name, key, key)
 	case l.Pairing != "":
 		return fmt.Sprintf("%s's agent gets no %s key and can't reach its model. Give one with `a2a-serve pair set %s --secrets %s`, or a key of its own with `--secrets %s=secret:<STORED_KEY>`.", l.Pairing, name, l.Pairing, key, key)
 	}

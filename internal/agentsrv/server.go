@@ -864,9 +864,9 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 		}
 	}
 	cfg := s.rt.Config()
-	anyoneRule := slices.ContainsFunc(cfg.Policy.Sandbox, func(r agentdir.SandboxRule) bool { return slices.Contains(r.Match, agentdir.MatchAnyone) })
-	if len(a.Anonymous) > 0 && !anyoneRule && cfg.Sandbox != harness.SandboxLocal {
-		s.logf("! anonymous callers get a read-only workspace and no secrets in their agent container")
+	guestRule := slices.ContainsFunc(cfg.Policy.Sandbox, func(r agentdir.SandboxRule) bool { return slices.Contains(r.Match, agentdir.MatchGuests) })
+	if len(a.Anonymous) > 0 && !guestRule && cfg.Sandbox != harness.SandboxLocal {
+		s.logf("! guests get a read-only workspace and no secrets in their agent container")
 	}
 	if a.AnonymousNote != "" {
 		s.logf("! %s", a.AnonymousNote)

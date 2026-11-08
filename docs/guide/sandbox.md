@@ -9,7 +9,7 @@ By default the agent runs in Docker:
 - The server refuses a workspace or a mount that is your home directory, `/` or a directory that holds your home directory, because the agent could read your credentials and the secrets of every agent in it. Use a project directory. `--allow-broad-mount <path>` mounts that path anyway, and the agents in it stay visible to the agent.
 - The server checks the mount sources, `.a2a` and the agent home directory before it starts each container. It refuses a path that goes through a symlink inside a writable mount, because the agent can repoint that symlink. The error names the resolved path to configure.
 - The server also remembers the agent directory, `.a2a`, `state` and each agent home directory when it first uses them. When the agent renames one of them through a writable mount and creates another in its place, the server refuses to start a container until you check the directory and restart the server.
-- `state/home` is the agent's home directory. Each authenticated user gets a container with a home of their own, and [anonymous callers](identities.md#anonymous-callers) share one more. [Sandbox rules](#what-each-callers-container-gets) set how much of the workspace and which secrets those containers get.
+- `state/home` is the agent's home directory. Each authenticated user gets a container with a home of their own, and [guests](#guests) share one more. [Sandbox rules](#what-each-callers-container-gets) set how much of the workspace and which secrets those containers get.
 - The container runs as your user, with all capabilities dropped and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 
 The image is pulled from `ghcr.io/a2aproject`. If the pull fails, a2a-serve builds it from a Dockerfile in its binary. `--image` uses another image, which needs a compatible `a2a` CLI.
@@ -20,12 +20,16 @@ When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `
 
 ## What each caller's container gets
 
-Each caller's conversations run in an agent container. You and your owner pairings share yours, every other caller gets one of their own, and [anonymous callers](identities.md#anonymous-callers) share one. Without sandbox rules:
+Each caller's conversations run in an agent container. You and your owner pairings share yours, guests share one, and every other caller gets one of their own.
+
+<a id="guests"></a>Guests are the callers without a token or account: anonymous visitors on the public URL with `--public-allow-incoming anyone`, and strangers in open chats. [Identities](identities.md#anonymous-callers) calls them anonymous callers.
+
+Without sandbox rules:
 
 - your container and the containers of pairings, members of the private network and `--allow-email` sign-ins get the shared workspace and every `--secret` value;
-- the container of anonymous callers gets a read-only workspace and no secrets.
+- the container of guests gets a read-only workspace and no secrets.
 
-Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for anonymous callers. "Other callers" in the output are the callers who aren't owners or anonymous and whom no rule matches; they get the default.
+Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. "Other callers" in the output are the callers who aren't owners or guests and whom no rule matches; they get the default.
 
 `a2a-serve status` shows what each kind of caller gets:
 
@@ -33,10 +37,10 @@ Sandbox rules set what chosen callers get, such as a read-only workspace for a p
   sandbox  you: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
            emails matching *@example.com: own copy of the workspace, secrets ANTHROPIC_API_KEY
            other callers: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
-           anonymous callers: read-only workspace, no secrets
+           guests: read-only workspace, no secrets
 ```
 
-These lines appear when sandbox rules exist or anonymous callers may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says once what anonymous callers get. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
+These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent, and says what guests get when no rule covers them. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
 
 ### Share the agent
 
@@ -57,27 +61,27 @@ a2a-serve pair set ben --storage own --secrets ANTHROPIC_API_KEY
 
 `pair invite` and `pair set` add or replace the sandbox rule of the pairing. A flag you leave out keeps that part of the rule. A part the rule leaves out comes from a broader rule that matches the pairing, such as a rule of `private`, or from the default. A pairing that becomes an owner loses its rule. `--secrets` takes names from the agent's [`--secret`](secrets.md) list, `all` or `none`. `pair rm ben` removes the rule with the pairing. Owner pairings refuse `--storage` and `--secrets`, because owners share your container. The [`self` rule](../reference/configuration.md#sandbox-rules) in `config.yaml` sets what that container gets.
 
-### Give anonymous callers a key of their own
+### Give guests a key of their own
 
-Anonymous callers get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so. A caller can read a key their container gets, so give them a key of their own that you can revoke. Store it and pass it to the agent under the name it expects, in one command:
+Guests get no secrets, so the agent can't reach a model that needs a key for them, and `start` and `status` say so. A caller can read a key their container gets, so give them a key of their own that you can revoke. Store it and pass it to the agent under the name it expects, in one command:
 
 ```sh
-a2a-serve config set --secret GUEST_ANTHROPIC_KEY --anonymous-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY --restart
+a2a-serve config set --secret GUEST_ANTHROPIC_KEY --guest-secrets ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY --restart
 ```
 
-The agent sees `ANTHROPIC_API_KEY` in the container of anonymous callers, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the containers of other callers keep theirs. A new secret loads at restart, so the rule waits for it, and `status` lists it as pending until then.
+The agent sees `ANTHROPIC_API_KEY` in the container of guests, with the value of `GUEST_ANTHROPIC_KEY`, and no other secrets. Your container and the containers of other callers keep theirs. A new secret loads at restart, so the rule waits for it, and `status` lists it as pending until then.
 
 To share your own key instead, which takes effect at once:
 
 ```sh
-a2a-serve config set --anonymous-secrets ANTHROPIC_API_KEY
+a2a-serve config set --guest-secrets ANTHROPIC_API_KEY
 ```
 
-`--anonymous-secrets` replaces the list each time, and `config unset anonymous-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`.
+`--guest-secrets` replaces the list each time, and `config unset guest-secrets` resets it. A pairing gets a key of its own the same way, with `a2a-serve pair set <name> --secrets ANTHROPIC_API_KEY=secret:<STORED_KEY>`.
 
 ### Rules for several callers
 
-`--anonymous-storage` and `--anonymous-secrets` set the rule of anonymous callers, `anyone` in `config.yaml`, and `pair` sets the rule of one pairing. Write the rest, such as a rule for a whole email domain, in `a2a-serve config edit`, in the `policy.sandbox` list that the [configuration reference](../reference/configuration.md#sandbox-rules) describes. `a2a-serve config unset sandbox-rules` removes every rule except the one of anonymous callers, including the rules of pairings and of `self`.
+`--guest-storage` and `--guest-secrets` set the rule of guests, `guests` in `config.yaml`, and `pair` sets the rule of one pairing. Write the rest, such as a rule for a whole email domain, in `a2a-serve config edit`, in the `policy.sandbox` list that the [configuration reference](../reference/configuration.md#sandbox-rules) describes. `a2a-serve config unset sandbox-rules` removes every rule except the one of guests, including the rules of pairings and of `self`.
 
 ### Storage modes
 
@@ -95,7 +99,7 @@ An `own` copy is made once, when the caller's container first starts. Nothing is
 - leaves out every `.a2a` directory;
 - holds at most 1 GiB in at most 200,000 entries. When the workspace is larger, the container fails to start with an error that suggests `read-only`;
 - lives in `.a2a/state/workspaces/`, and [backups](backups.md) leave it out;
-- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. The copies of anonymous callers and of your container are deleted once their rule no longer gives them `own` storage.
+- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
 
 The server keeps at most 100 copies. A caller whose copy would be the 101st gets an error that suggests `read-only` storage.
 

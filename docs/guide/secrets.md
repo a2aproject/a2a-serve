@@ -39,7 +39,7 @@ A changed key reaches the agent after `a2a-serve restart`, or with `--restart` o
 Agent containers get the keys passed with `--secret` as the [sandbox defaults](sandbox.md#what-each-callers-container-gets) say. Sandbox rules set them for chosen callers, or pass a stored secret under another name with `NAME=secret:OTHER`. A rule may name only secrets in `secrets`.
 
 > [!WARNING]
-> A tricked agent or any caller who can approve commands can read the keys that their container gets. Give anonymous callers and other callers you trust less a [separate key](sandbox.md#give-anonymous-callers-a-key-of-their-own). See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
+> A tricked agent or any caller who can approve commands can read the keys that their container gets. Give guests and other callers you trust less a [separate key](sandbox.md#give-guests-a-key-of-their-own). See [Security](../advanced/security.md#the-sandbox) and [Access Model](../advanced/access-model.md#agent-processes).
 
 ## Tokens for the server
 

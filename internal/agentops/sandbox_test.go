@@ -213,7 +213,7 @@ func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
 		t.Fatalf("setSandbox() error = %v", err)
 	}
 	if err := rt.Update(func(c *agentdir.Config) error {
-		c.Policy.SetSandboxRule(agentdir.SandboxRule{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly})
+		c.Policy.SetSandboxRule(agentdir.SandboxRule{Match: []string{"guests"}, Storage: agentdir.StorageReadOnly})
 		return nil
 	}); err != nil {
 		t.Fatalf("Update() error = %v", err)
@@ -225,7 +225,7 @@ func TestUndoOfARuleKeepsOtherChanges(t *testing.T) {
 
 	want := []agentdir.SandboxRule{
 		{Match: []string{"email:*@example.com", "pairing:ben"}, Storage: agentdir.StorageOwn},
-		{Match: []string{"anyone"}, Storage: agentdir.StorageReadOnly},
+		{Match: []string{"guests"}, Storage: agentdir.StorageReadOnly},
 	}
 	if diff := cmp.Diff(want, rt.Config().Policy.Sandbox); diff != "" {
 		t.Fatalf("rules after undo() wrong result (-want +got) diff = %s", diff)

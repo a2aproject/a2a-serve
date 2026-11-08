@@ -71,13 +71,13 @@ policy:
     - match: [email:*@example.com]
       storage: own
       secrets: [ANTHROPIC_API_KEY]
-    - match: [anyone]
+    - match: [guests]
       secrets: [ANTHROPIC_API_KEY=secret:GUEST_ANTHROPIC_KEY]
 ```
 
 | Key | Values |
 | --- | --- |
-| `match` | A list of matchers: `self`, `private`, `anyone`, `email:<address>`, `email:*@<domain>` and `pairing:<name>`. `pairing:<name>` also matches a webhook node of that name. |
+| `match` | A list of matchers: `self`, `private`, `guests`, `email:<address>`, `email:*@<domain>` and `pairing:<name>`. `pairing:<name>` also matches a webhook node of that name. |
 | `storage` | `shared`, `read-only`, `own` or `empty`, from the most access to the least. Without it, the storage of the next matching rule that sets one, or the default. |
 | `secrets` | Names from the agent's `secrets`, `NAME=secret:OTHER`, which passes the stored secret `OTHER` to the agent as `NAME`, `all` or `none`. `all` and `none` go alone. Without it, the secrets of the next matching rule that sets them, or the default. |
 
@@ -86,10 +86,10 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 ### Which rule applies
 
 - Owners, which are you and the owner pairings, share your agent container. Only the `self` rule applies to it.
-- Anonymous callers share one container. Only the `anyone` rule applies to it.
+- [Guests](../guide/sandbox.md#guests) share one container. Only the `guests` rule applies to it.
 - Every other caller gets a container of their own, and the most specific matching rule applies. From most to least specific, the matchers are `pairing:<name>`, `email:<address>`, `email:*@<domain>` and `private`. Among rules of the same specificity, the first one listed wins. A part that rule leaves out, `storage` or `secrets`, comes from the next matching rule that sets it.
 
-`anyone` matches anonymous callers, as in the [access policy](../advanced/access-model.md#policy). `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
+`guests` matches the callers that the [access policy](../advanced/access-model.md#policy) admits as anonymous. `email:*@<domain>` matches only emails whose domain is proven, which are Google Workspace sign-ins and mail that passed DMARC, as `--allow-email` does.
 
 ### Commands
 
@@ -97,9 +97,9 @@ A matcher may appear in one rule only, and config validation refuses duplicates.
 | --- | --- |
 | `a2a-serve pair invite <name>` and `pair set <name>` with `--storage` and `--secrets` | The rule whose only matcher is `pairing:<name>`. A flag left out keeps that part of the rule. A pairing in a rule with other matchers moves to a rule of its own, which starts from that rule. |
 | `a2a-serve pair rm <name>` | Removes the pairing from the rules. |
-| `a2a-serve config set --anonymous-storage <mode> --anonymous-secrets <names>` | The rule whose only matcher is `anyone`: the rule of anonymous callers. `--anonymous-secrets` replaces its list. `config unset anonymous-storage` and `anonymous-secrets` reset it. |
+| `a2a-serve config set --guest-storage <mode> --guest-secrets <names>` | The rule whose only matcher is `guests`. `--guest-secrets` replaces its list. `config unset guest-storage` and `guest-secrets` reset it. |
 | `a2a-serve config edit` | Any rule. |
-| `a2a-serve config unset sandbox-rules` | Removes every rule except the rule of anonymous callers, including the rules of pairings and of `self`. |
+| `a2a-serve config unset sandbox-rules` | Removes every rule except the rule of guests, including the rules of pairings and of `self`. |
 
 Owner pairings refuse `--storage` and `--secrets`. The `self` rule sets what their container gets. The sandbox guide says [when a change applies](../guide/sandbox.md#when-a-change-applies).
 
@@ -134,8 +134,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--public-allow-incoming` | `policy.publicAllowIncoming` | `start <agent>`, `config set` |
 | `--private-allow-outgoing` | `policy.privateAllowOutgoing` | `start <agent>`, `config set` |
 | `--allow-email` | `policy.allowEmails` | `start <agent>`, `config set` |
-| `--anonymous-storage` | `policy.sandbox` | `start <agent>`, `config set` |
-| `--anonymous-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
+| `--guest-storage` | `policy.sandbox` | `start <agent>`, `config set` |
+| `--guest-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
 | no flag (`sandbox-rules` in `config unset`) | `policy.sandbox` | `config edit` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |

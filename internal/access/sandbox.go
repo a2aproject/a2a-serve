@@ -130,14 +130,15 @@ const (
 //
 //   - owners share the container of the user running the agent, which the
 //     rule of self sets;
-//   - anonymous callers share one container, which the rule of anyone sets;
+//   - guests, the anonymous callers, share one container, which the rule of
+//     guests sets;
 //   - every other caller gets a container of their own, which the most
 //     specific rule that matches them sets: pairing:<name>, then
 //     email:<address>, then email:*@<domain>, then private.
 //     Between rules of the same specificity, the first one wins.
 //
 // A rule sets what the callers it matches get. What no matching rule sets
-// comes from the default of the caller: anonymous callers get a read-only
+// comes from the default of the caller: guests get a read-only
 // workspace and no secrets, and every other caller the shared workspace and
 // every secret.
 func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
@@ -198,7 +199,7 @@ func (sp SandboxPolicy) ruleOf(p auth.Principal) agentdir.SandboxRule {
 // without a rule.
 func (sp SandboxPolicy) Default() Sandbox { return sp.defaultOf(false) }
 
-// defaultOf is the sandbox of anonymous callers, or of every other caller,
+// defaultOf is the sandbox of guests, or of every other caller,
 // without a rule.
 func (sp SandboxPolicy) defaultOf(anonymous bool) Sandbox {
 	if anonymous {
@@ -250,14 +251,14 @@ func matchRank(m string, p auth.Principal) int {
 		}
 		return 0
 	case auth.RoleAnonymous:
-		if m == agentdir.MatchAnyone {
+		if m == agentdir.MatchGuests {
 			return rankAnyone
 		}
 		return 0
 	}
 	id := p.Identity
 	switch m {
-	case agentdir.MatchAnyone:
+	case agentdir.MatchGuests:
 		return 0
 	case auth.MemberPrivate:
 		if id.Network == network.ListenerPrivate {
@@ -354,7 +355,7 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 	for _, r := range sp.Rules {
 		var who []string
 		for _, m := range r.Match {
-			if m != agentdir.MatchSelf && m != agentdir.MatchAnyone {
+			if m != agentdir.MatchSelf && m != agentdir.MatchGuests {
 				who = append(who, describeMatcher(m))
 			}
 		}
@@ -369,7 +370,7 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 	}
 	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: other})
 	if anonymous {
-		lines = append(lines, SandboxLine{Who: AnonymousCallers, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
+		lines = append(lines, SandboxLine{Who: Guests, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
 	}
 	return lines
 }
@@ -378,15 +379,16 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous bool) []Sandbo
 // no rule matches, who get the default.
 const OtherCallers = "other callers"
 
-// AnonymousCallers names the anonymous callers in the lines.
-const AnonymousCallers = "anonymous callers"
+// Guests names the guests in the lines: the callers without a token or
+// account, which the access policy calls anonymous.
+const Guests = "guests"
 
 // SandboxLine is what the containers of one kind of caller get.
 type SandboxLine struct {
 	Who     string
 	Sandbox Sandbox
 	// Pairing names the pairing of a rule of one pairing, and Anonymous is
-	// set for anonymous callers.
+	// set for guests.
 	Pairing   string
 	Anonymous bool
 }
