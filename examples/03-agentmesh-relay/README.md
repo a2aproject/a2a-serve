@@ -114,7 +114,7 @@ Approve it on the task that the output names:
 
 ```bash
 a2a send -a "$(a2a-serve status --url=local --dir ~/a2a-example3/coder)" \
-  --task-id <task-id> approve
+  --task-id <task-id> once
 ```
 
 coder's call goes through its server, over the relay, to reviewer. No

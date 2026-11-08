@@ -3,7 +3,7 @@
 Every tool call that changes something waits for approval, unless a rule or an earlier "Always allow" decides it. The task pauses in `input-required` and shows the tool call with three options: `once`, `always` and `reject`. Answer on the same task:
 
 ```sh
-a2a send --task-id <task-id> approve      # or: once, always, reject, deny
+a2a send --task-id <task-id> once          # or: always, reject, deny
 ```
 
 In a chat, the options are buttons:

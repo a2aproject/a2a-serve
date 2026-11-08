@@ -92,7 +92,7 @@ func parseCron(expr string) (cron.Schedule, error) {
 var atLayouts = []string{"2006-01-02 15:04", "2006-01-02T15:04", "2006-01-02 15:04:05", "2006-01-02T15:04:05"}
 
 // ParseAt parses the time of a one-time schedule: RFC 3339, or a date and
-// time such as 2026-11-06 17:00 in loc.
+// time such as 2030-11-06 17:00 in loc.
 func ParseAt(v string, loc *time.Location) (time.Time, error) {
 	if t, err := time.Parse(time.RFC3339, v); err == nil {
 		return t, nil
@@ -238,7 +238,7 @@ type Request struct {
 // only the owner can set.
 func (r *Request) RegisterFlags(fs *pflag.FlagSet, owner bool) {
 	fs.StringVar(&r.Cron, "cron", "", "Run on a cron `expression` of five fields, such as \"0 7 * * 1-5\", or a descriptor such as @daily or @every 2h")
-	fs.StringVar(&r.At, "at", "", "Run once, at a `time` such as \"2026-11-06 17:00\" or RFC 3339")
+	fs.StringVar(&r.At, "at", "", "Run once, at a `time` such as \"2030-11-06 17:00\" or RFC 3339")
 	fs.StringVar(&r.TZ, "tz", "", "Time `zone` of --cron and --at, such as Europe/Zurich (default: the server's)")
 	fs.StringVar(&r.Prompt, "prompt", "", "The prompt each run sends to the agent")
 	if !owner {

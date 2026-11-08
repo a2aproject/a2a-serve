@@ -37,7 +37,7 @@ a2a-serve schedule add <name> [flags]
 a2a-serve schedule add morning-brief --cron "0 7 * * 1-5" --tz Europe/Zurich \
   --prompt "Summarize today's meetings." --chat telegram:owner
 a2a-serve schedule add triage --cron "@every 2h" --prompt "Triage new issues." --thread same
-a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
+a2a-serve schedule add report --at "2030-11-06 17:00" --prompt "Remind me to send the report." --chat telegram
 ```
 
 **Flags**
@@ -45,7 +45,7 @@ a2a-serve schedule add report --at "2026-11-06 17:00" --prompt "Remind me to sen
 | Flag | Default | Description |
 |---|---|---|
 | `--as string` |  | Run as the owner or a pairing name (default: owner) |
-| `--at time` |  | Run once, at a time such as "2026-11-06 17:00" or RFC 3339 |
+| `--at time` |  | Run once, at a time such as "2030-11-06 17:00" or RFC 3339 |
 | `--chat messenger[:who]` |  | Show the runs, and ask their approvals, in a chat: messenger[:who], such as telegram:owner (default: no chat; approvals go to the owner chat) |
 | `--cron expression` |  | Run on a cron expression of five fields, such as "0 7 \* \* 1-5", or a descriptor such as @daily or @every 2h |
 | `--prompt string` |  | The prompt each run sends to the agent |

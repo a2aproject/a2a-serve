@@ -106,7 +106,7 @@ Resume:     a2a send --task-id <task-id> "<reply>"
 Approve it on the same task:
 
 ```bash
-a2a send --task-id <task-id> approve
+a2a send --task-id <task-id> once
 ```
 
 The agent runs the command and finishes. `system.txt` is now in the workspace.
@@ -152,7 +152,7 @@ Status:   input-required
 Approve it:
 
 ```bash
-a2a send --task-id <task-id> approve
+a2a send --task-id <task-id> once
 ```
 
 Coder's server makes the call with the token it just stored, so no credential

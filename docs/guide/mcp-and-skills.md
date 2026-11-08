@@ -18,7 +18,7 @@ The agent gets the MCP servers and skills of its project.
   To turn a server off, run `a2a-serve config set --disable-mcp github`. `config set` warns about a name that .mcp.json has no server for, and suggests the closest one. To turn it back on, run `a2a-serve config unset disable-mcp github`. The change applies to the next conversation, and `status` shows the server as off. The first-run wizard turns off the servers whose variables you skip.
 
   The server passes these servers to the agent when a conversation starts. The Docker sandbox shows the agent a `.mcp.json` with no servers, so the agent can't start servers from the file on its own. On the first start, a workspace without `.mcp.json` gets one with no servers.
-- **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. When two skills share a name, the one in `.claude/skills` wins. With `--sandbox local`, only the folders your agent reads on its own work.
+- **Skills** in `.claude/skills`, `.opencode/skills` and `.agents/skills` work with both opencode and Claude Code. Claude Code reads `.claude/skills` itself, so the server links the skills from the other two folders for it. When two skills share a name, Claude Code uses the one in `.claude/skills`, then `.opencode/skills`, then `.agents/skills`. opencode reads all three folders itself and decides which skill wins; `status` lists both skills and doesn't flag the clash. With `--sandbox local`, only the folders your agent reads on its own work.
 
 The server reads both inside the workspace only. It refuses a `.mcp.json` that is a symlink to a file outside the workspace, and leaves out skills behind such symlinks, because the agent can create them.
 
