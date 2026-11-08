@@ -46,6 +46,7 @@ func TestDockerSandboxEgress(t *testing.T) {
 	requireDocker(t)
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
+	requireBoundary(t, coder)
 
 	if got := resultOf(owner.mustSend(coder.url, "dial "+publicTarget())).Text; got != "dial ok" {
 		t.Fatalf("a2a send dial %s = %q, want the public host reached", publicTarget(), got)
@@ -98,6 +99,7 @@ func TestDockerSandboxDropsCapabilities(t *testing.T) {
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
 
+	requireBoundary(t, coder)
 	uid := os.Getuid()
 	if rootlessDocker(t) {
 		uid = 0
@@ -254,5 +256,42 @@ func TestDockerSandboxEgressFallsBackWhenTheAgentsSetupFails(t *testing.T) {
 	const warning = "egress control is off: the agent's container can't set up its network: the setup failed as the test asked"
 	if st := coder.serve("status"); !strings.Contains(st, warning) {
 		t.Fatalf("a2a-serve status = %q, want the warning %q", st, warning)
+	}
+}
+
+// requireBoundary fails the test when the server turned egress control
+// off, which tests of the boundary don't expect.
+func requireBoundary(t *testing.T, a *agent) {
+	t.Helper()
+	if st := a.serve("status"); strings.Contains(st, "egress control is off") {
+		t.Fatalf("a2a-serve status = %q, want the egress boundary on", st)
+	}
+}
+
+// TestDockerSandboxLauncherRunsAsAnotherUser runs the launcher of an
+// agent's container as a user that doesn't own it, with no capabilities,
+// as container root runs it on rootful Docker.
+func TestDockerSandboxLauncherRunsAsAnotherUser(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	if relayImage != "" {
+		t.Skip("with an egress container, the launcher comes from its image")
+	}
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	requireBoundary(t, coder)
+	ids, err := exec.Command("docker", "ps", "-q", "--filter", "label=a2a.dir="+coder.dir).Output()
+	if err != nil || len(bytes.TrimSpace(ids)) == 0 {
+		t.Fatalf("docker ps of the agent's container = %q, %v", ids, err)
+	}
+	id := strings.Fields(string(ids))[0]
+	src, err := exec.Command("docker", "inspect", "--format", `{{range .Mounts}}{{if eq .Destination "/run/a2a-init"}}{{.Source}}{{end}}{{end}}`, id).Output()
+	if err != nil || len(bytes.TrimSpace(src)) == 0 {
+		t.Fatalf("docker inspect of the launcher mount = %q, %v", src, err)
+	}
+	out, err := exec.Command("docker", "run", "--rm", "--user", "4242:4242", "--cap-drop", "ALL",
+		"-v", strings.TrimSpace(string(src))+":/run/a2a-init:ro", "--entrypoint", "/run/a2a-init", fakeacpImage, "version").CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "a2a-serve") {
+		t.Fatalf("running the launcher as another user = %q, %v, want its version", out, err)
 	}
 }

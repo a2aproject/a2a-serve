@@ -295,11 +295,16 @@ func allowedByRule(p egress.Policy, dest string) bool {
 	return ok
 }
 
-// launcherFile is the copy of the running a2a-serve, next to the egress
-// sockets, that containers run as their launcher, so that a binary
-// upgraded in place doesn't change under a running server. The directory
-// is emptied at each start and stays out of backups.
-const launcherFile = "a2a-init"
+// launcherDir and launcherFile are the copy of the running a2a-serve, next
+// to the egress sockets, that containers run as their launcher, so that a
+// binary upgraded in place doesn't change under a running server. The
+// directory is emptied at each start and stays out of backups. The copy is
+// executable by everyone: with Docker, container root runs it without
+// CAP_DAC_OVERRIDE, as another user than its owner. It holds no secret.
+const (
+	launcherDir  = "launcher"
+	launcherFile = "a2a-init"
+)
 
 // launcher copies the running a2a-serve once, and returns the copy, or ""
 // to use the binary itself where there is no copy.
@@ -313,7 +318,16 @@ func (e *egressSockets) launcher() string {
 		slog.Warn("copying a2a-serve for the containers; they run the installed binary", "error", err)
 		return ""
 	}
-	dst := filepath.Join(e.dir, launcherFile)
+	dir := filepath.Join(e.dir, launcherDir)
+	if err := os.Mkdir(dir, 0o755); err != nil && !errors.Is(err, os.ErrExist) {
+		slog.Warn("copying a2a-serve for the containers; they run the installed binary", "error", err)
+		return ""
+	}
+	if err := os.Chmod(dir, 0o755); err != nil {
+		slog.Warn("copying a2a-serve for the containers; they run the installed binary", "error", err)
+		return ""
+	}
+	dst := filepath.Join(dir, launcherFile)
 	// /proc/self/exe is the binary this process runs, even after an upgrade
 	// replaced its file.
 	if err := copyExecutable("/proc/self/exe", dst); err != nil {
@@ -324,7 +338,7 @@ func (e *egressSockets) launcher() string {
 	return dst
 }
 
-// copyExecutable copies src to dst atomically, executable by its owner.
+// copyExecutable copies src to dst atomically, executable by everyone.
 func copyExecutable(src, dst string) (err error) {
 	in, err := os.Open(src)
 	if err != nil {
@@ -338,7 +352,7 @@ func copyExecutable(src, dst string) (err error) {
 	if _, err := io.Copy(tmp, in); err != nil {
 		return errors.Join(err, tmp.Close(), os.Remove(tmp.Name()))
 	}
-	if err := tmp.Chmod(0o700); err != nil {
+	if err := tmp.Chmod(0o755); err != nil {
 		return errors.Join(err, tmp.Close(), os.Remove(tmp.Name()))
 	}
 	if err := tmp.Close(); err != nil {
