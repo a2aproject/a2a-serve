@@ -163,12 +163,11 @@ completes with reviewer's answer.
 ## 8. Clean up
 
 ```bash
-cd ~/a2a-example1/coder
-a2a-serve pair rm "$(a2a-serve status --url=local)"   # the owner token of this machine
-a2a-serve stop
+cd ~/a2a-example1/coder && a2a-serve stop
 cd ~/a2a-example1/reviewer && a2a-serve stop
 ```
 
+Stopping an agent also removes the owner token that it saved for this machine.
 Everything an agent keeps is in `.a2a/` in its workspace; delete the
 directories to start over.
 
