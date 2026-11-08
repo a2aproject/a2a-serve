@@ -117,7 +117,7 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--agent` | `agent` | `config set` |
 | `--name` | `name` | `start <agent>`, `config set` |
 | `--description` | `description` | `start <agent>`, `config set` |
-|  | `card.skills` | `config edit` |
+| no flag (`card-skills` in `config unset`) | `card.skills` | `config edit` |
 | `--command` | `command` | `start <agent>`, `config set` |
 | `--model` | `model` | `start <agent>`, `config set` |
 | `--image` | `image` | `start <agent>`, `config set` |
@@ -136,7 +136,7 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--allow-email` | `policy.allowEmails` | `start <agent>`, `config set` |
 | `--anonymous-storage` | `policy.sandbox` | `start <agent>`, `config set` |
 | `--anonymous-secrets` | `policy.sandbox` | `start <agent>`, `config set` |
-|  | `policy.sandbox` | `config edit` |
+| no flag (`sandbox-rules` in `config unset`) | `policy.sandbox` | `config edit` |
 | `--tailscale-control-url` | `network.tailscaleControlURL` | `config set` |
 | `--tailscale-authkey` | the secret `TS_AUTHKEY` in `state/secrets` | `config set` |
 | `--relay-token` | the secret `RELAY_TOKEN` in `state/secrets` | `config set` |
