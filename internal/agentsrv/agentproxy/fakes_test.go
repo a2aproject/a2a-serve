@@ -49,8 +49,8 @@ import (
 // Prompts a fakeContact runs. A message to a task that waits for input is
 // the answer, which completes the task.
 var (
-	anna = auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: "anna", Hops: 1}}
-	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleAuthenticated}
+	anna = auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Pairing: "anna", Hops: 1}}
+	bob  = auth.Principal{ID: "pair:bob", Role: auth.RoleMember}
 )
 
 // testHTTP has a transport of its own: httptest.Server.Close closes the idle

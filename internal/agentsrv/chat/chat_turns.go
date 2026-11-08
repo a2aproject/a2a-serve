@@ -76,7 +76,7 @@ type ChatTurnsDeps struct {
 	Sender      turnSender
 	Bus         *Bus
 	Unattended  *ContextSet
-	// Budget is the budget of anonymous callers, which is checked before
+	// Budget is the budget of guests, which is checked before
 	// their attachments are downloaded.
 	Budget Budget
 	// Posted are the turns posted into contexts, waiting to be sent.
@@ -89,9 +89,9 @@ type ChatTurnsDeps struct {
 // across messengers.
 const maxDownloads = 4
 
-// Budget limits the tasks of anonymous callers.
+// Budget limits the tasks of guests.
 type Budget interface {
-	// CheckRate refuses a message of the anonymous caller p when its
+	// CheckRate refuses a message of the guest p when its
 	// listener started all the tasks it may in an hour.
 	CheckRate(p auth.Principal) error
 }
@@ -265,7 +265,7 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	}
 	// --public-allow-incoming anyone admits unlinked senders in direct chats only;
 	// groups keep ignoring them.
-	if p.Role == auth.RoleAnonymous && !in.Direct {
+	if p.Role == auth.RoleGuest && !in.Direct {
 		return
 	}
 	if !c.firstSeen(ctx, in) {
@@ -360,11 +360,11 @@ func (m *waitingMessage) joins(next *waitingMessage) bool {
 }
 
 // prepare finishes an inbound message and tells its sender what couldn't be
-// done. It reports whether the message is still to be handled. An
-// anonymous sender's message is refused first if the budget of anonymous
-// callers is used up, so that it costs no download.
+// done. It reports whether the message is still to be handled. A guest's
+// message is refused first if the budget of guests is used up, so that it
+// costs no download.
 func (c *ChatTurns) prepare(ctx context.Context, ch messenger.Messenger, in *messenger.Inbound, p auth.Principal) bool {
-	if p.Role == auth.RoleAnonymous {
+	if p.Role == auth.RoleGuest {
 		if err := c.budget.CheckRate(p); err != nil {
 			c.reply(ctx, ch, *in, "⚠ "+err.Error())
 			return false
@@ -409,7 +409,7 @@ func (c *ChatTurns) prepare(ctx context.Context, ch messenger.Messenger, in *mes
 // canContinue reports whether p's message continues the task: p started it
 // or is an owner, and may answer its question. Others start a task of their
 // own, so that a group member's message doesn't land in another member's
-// pending task, and an anonymous caller's message doesn't answer an
+// pending task, and a guest's message doesn't answer an
 // approval. approval is the permission question the task waits on, which
 // only an answer continues.
 func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) (approval *approvals.Question, ok bool) {

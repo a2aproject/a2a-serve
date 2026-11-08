@@ -316,6 +316,11 @@ CREATE INDEX call_tasks_origin_task ON call_tasks (context_id, origin_task_id)`)
 	user_id TEXT PRIMARY KEY, identity TEXT NOT NULL, seen INTEGER NOT NULL)`)
 		return err
 	},
+	// 23: the authenticated role is called member.
+	func(ctx context.Context, tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, `UPDATE pairings SET role = 'member' WHERE role = 'authenticated'`)
+		return err
+	},
 }
 
 const schemaV21 = `

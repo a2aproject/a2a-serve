@@ -44,7 +44,7 @@ On every route, the server refuses state-changing requests that a browser marks 
 
 Each listener handles at most 1024 requests at once, including open streams. It answers requests over this limit with 503 and `Retry-After`.
 
-`/pair`, `/oauth/…`, `/hitl/<token>` and `/download/…` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so anonymous callers through the relay share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
+`/pair`, `/oauth/…`, `/hitl/<token>` and `/download/…` serve callers before they authenticate. They share 256 of those slots, and one client may hold 32 of them. The server tells clients apart as it does for failed pairing attempts, so callers that the relay doesn't identify share one client. A request over the client's limit gets 429, and a request over the shared limit gets 503. Both carry `Retry-After`.
 
 | Route | Largest body | Time to send the body |
 | --- | --- | --- |
@@ -81,7 +81,7 @@ The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show
 
 ## Signatures and headers
 
-The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the authenticated role.
+The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the member role.
 
 ## Relay routes
 

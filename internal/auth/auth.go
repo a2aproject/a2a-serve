@@ -39,11 +39,12 @@ import (
 // they arrive.
 const OwnerID = "user:owner"
 
-// AnonymousID is the principal of anonymous callers who proved nothing
-// about themselves, such as callers on the public URL without a token. They
-// share it, so the IDs of their tasks and conversations, which the server
-// generates, prove what is theirs.
-const AnonymousID = "anonymous"
+// GuestID is the principal of guests who proved nothing about themselves,
+// such as callers on the public URL without a token. They share it, so the
+// IDs of their tasks and conversations, which the server generates, prove
+// what is theirs. Tasks and conversations store it, so it keeps the name
+// of the role before guests were called guests.
+const GuestID = "anonymous"
 
 // OwnerName names the user running the agent where a pairing name is
 // expected, such as in the owner chat setting and schedules. No pairing can
@@ -77,9 +78,8 @@ type Principal struct {
 func (p Principal) IsOwner() bool { return p.Role == RoleOwner }
 
 // MayCallAgents reports whether the conversations of the principal may
-// call other agents. Anonymous callers can't use the agent's contacts and
-// nodes.
-func (p Principal) MayCallAgents() bool { return p.Role == RoleOwner || p.Role == RoleAuthenticated }
+// call other agents. Guests can't use the agent's contacts and nodes.
+func (p Principal) MayCallAgents() bool { return p.Role == RoleOwner || p.Role == RoleMember }
 
 // Owner is the principal of the user running the agent.
 func Owner() Principal {
@@ -180,8 +180,8 @@ func (a *Chain) Resolve(id Identity) (Principal, error) {
 		return Principal{}, &RefusedError{Identity: id}
 	}
 	pid := id.PrincipalID()
-	if pid == "" && role == RoleAnonymous {
-		pid = AnonymousID
+	if pid == "" && role == RoleGuest {
+		pid = GuestID
 	}
 	if role == "" || pid == "" {
 		return Principal{}, ErrNoCredential
@@ -345,7 +345,7 @@ func PairingRole(role string) string {
 	if role == RoleOwner {
 		return RoleOwner
 	}
-	return RoleAuthenticated
+	return RoleMember
 }
 
 // NodePrincipal is the principal of the webhook node id.

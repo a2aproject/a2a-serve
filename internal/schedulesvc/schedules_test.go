@@ -47,7 +47,7 @@ func openStore(t *testing.T) *store.Store {
 func TestResolveUser(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
-	if _, err := s.EnsurePairing(context.Background(), store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleAuthenticated}); err != nil {
+	if _, err := s.EnsurePairing(context.Background(), store.Pairing{Name: "anna", Kind: "person", Role: auth.RoleMember}); err != nil {
 		t.Fatalf("EnsurePairing() error = %v", err)
 	}
 	tests := []struct {

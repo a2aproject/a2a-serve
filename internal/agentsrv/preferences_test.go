@@ -97,7 +97,7 @@ func TestAlwaysAllowInThreeConversationsOffersAPreference(t *testing.T) {
 		t.Fatalf("offer wrong options (-want +got) diff = %s", diff)
 	}
 	chat.write("hello", "Hello from fakeacp.", 1)
-	linkAs(t, ts, "anna", auth.RoleAuthenticated, "telegram:2", "dm2")
+	linkAs(t, ts, "anna", auth.RoleMember, "telegram:2", "dm2")
 	ts.ch.Click("telegram:2", "dm1", ref, offer, 0)
 	chat.waitCount("can answer this.", 1)
 	chat.click(ref, offer, 0)
@@ -148,7 +148,7 @@ func TestOwnerAnswersDontCountForOthers(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
-	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	bob := ts.client(ts.pair("bob", auth.RoleMember))
 	ctx := context.Background()
 
 	asked := send(t, bob, userText("ask", "", ""))
@@ -164,7 +164,7 @@ func TestPreferencesCoverTheirPersonOnly(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 	owner := ts.client(ts.pair("me", auth.RoleOwner))
-	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	bob := ts.client(ts.pair("bob", auth.RoleMember))
 	if err := ts.srv.prefs.Allow(context.Background(), "pair:bob", "command:git push *"); err != nil {
 		t.Fatalf("Preferences.Allow() error = %v", err)
 	}

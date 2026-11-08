@@ -46,7 +46,7 @@ func TestUserIdentities(t *testing.T) {
 		t.Fatalf("UserIdentity() = %q, %v, want the last one saved", got, err)
 	}
 
-	if _, err := s.EnsurePairing(ctx, Pairing{Name: "ben", Role: "authenticated"}); err != nil {
+	if _, err := s.EnsurePairing(ctx, Pairing{Name: "ben", Role: "member"}); err != nil {
 		t.Fatalf("EnsurePairing() error = %v", err)
 	}
 	if err := s.DeletePairing(ctx, "ben", PairingUser{Principal: "pair:ben", AgentKey: "user:pair:ben"}); err != nil {

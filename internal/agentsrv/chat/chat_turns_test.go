@@ -186,13 +186,13 @@ func newTurnsFixture(t *testing.T) *turnsFixture {
 	return newTurnsFixtureWith(t, auth.Policy{}, fakeBudget{})
 }
 
-// fakeBudget refuses every message of an anonymous caller with err.
+// fakeBudget refuses every message of a guest caller with err.
 type fakeBudget struct{ err error }
 
 func (b fakeBudget) CheckRate(auth.Principal) error { return b.err }
 
 // newTurnsFixtureWith is newTurnsFixture with an access policy and a budget
-// of anonymous callers.
+// of guests.
 func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turnsFixture {
 	t.Helper()
 	ch := messengertest.NewMessenger("fake")
@@ -201,13 +201,13 @@ func newTurnsFixtureWith(t *testing.T, policy auth.Policy, budget Budget) *turns
 	unattended := &ContextSet{}
 	config := func() *agentdir.Config { return &agentdir.Config{Name: "coder"} }
 	svc := approvals.New(approvals.Deps{
-		Records:          fx.records,
-		Sender:           sender,
-		Notifier:         fx.chat,
-		Unattended:       unattended.Has,
-		Anonymous:        func(context.Context, string) bool { return false },
-		AnonymousTimeout: fx.timings.AnonymousQuestionTimeout,
-		Config:           config,
+		Records:      fx.records,
+		Sender:       sender,
+		Notifier:     fx.chat,
+		Unattended:   unattended.Has,
+		Guest:        func(context.Context, string) bool { return false },
+		GuestTimeout: fx.timings.GuestQuestionTimeout,
+		Config:       config,
 	})
 	turns := NewChatTurns(ChatTurnsDeps{
 		Store:      fx.store,
@@ -894,7 +894,7 @@ func TestChatTurnsTypedAnswerToClosedQuestionIsAMessage(t *testing.T) {
 func TestChatTurnsMemberCantAnswerPermissionOfOthers(t *testing.T) {
 	t.Parallel()
 	fx := newTurnsFixture(t)
-	fx.link(t, linkSpec{pairing: "anna", role: auth.RoleAuthenticated, messenger: "fake", identity: "telegram:2", conv: "dm2"})
+	fx.link(t, linkSpec{pairing: "anna", role: auth.RoleMember, messenger: "fake", identity: "telegram:2", conv: "dm2"})
 	rec := fx.askPendingQuestion(t, "dm2", a2a.TaskStateInputRequired)
 
 	fx.ch.Write("telegram:2", "dm2", "approve")
@@ -1047,10 +1047,10 @@ func TestChatTurnsLimitsConcurrentDownloads(t *testing.T) {
 	}
 }
 
-func TestChatTurnsChecksAnonymousBudgetBeforeDownloading(t *testing.T) {
+func TestChatTurnsChecksGuestBudgetBeforeDownloading(t *testing.T) {
 	t.Parallel()
-	used := errors.New("this agent took all the anonymous tasks it takes in an hour")
-	fx := newTurnsFixtureWith(t, auth.Policy{Anonymous: []string{auth.MemberAnyone}}, fakeBudget{err: used})
+	used := errors.New("this agent took all the guest tasks it takes in an hour")
+	fx := newTurnsFixtureWith(t, auth.Policy{Guests: []string{auth.MemberAnyone}}, fakeBudget{err: used})
 	in := fx.ch.Message("telegram:9", "dm9", "look")
 	prepared := make(chan struct{}, 1)
 	in.Prepare = func(context.Context, *messenger.Inbound) error {

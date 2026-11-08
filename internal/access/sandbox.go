@@ -130,19 +130,17 @@ const (
 //
 //   - owners share the container of the user running the agent, which the
 //     rule of self sets;
-//   - guests, the anonymous callers, share one container, which the rule of
-//     guests sets;
-//   - every other caller gets a container of their own, which the most
+//   - guests share one container, which the rule of guests sets;
+//   - each member gets a container of their own, which the most
 //     specific rule that matches them sets: pairing:<name>, then
 //     email:<address>, then email:*@<domain>, then private.
 //     Between rules of the same specificity, the first one wins.
 //
 // A rule sets what the callers it matches get. What no matching rule sets
-// comes from the default of the caller: guests get a read-only
-// workspace and no secrets, and every other caller the shared workspace and
-// every secret.
+// comes from the default of the caller: guests get a read-only workspace
+// and no secrets, and members the shared workspace and every secret.
 func (sp SandboxPolicy) Resolve(p auth.Principal) Sandbox {
-	return sp.apply(sp.defaultOf(p.Role == auth.RoleAnonymous), sp.ruleOf(p))
+	return sp.apply(sp.defaultOf(p.Role == auth.RoleGuest), sp.ruleOf(p))
 }
 
 // ResolveUnverified is [SandboxPolicy.Resolve] for a user whose identity
@@ -195,14 +193,12 @@ func (sp SandboxPolicy) ruleOf(p auth.Principal) agentdir.SandboxRule {
 	return out
 }
 
-// Default is the sandbox of the callers who aren't owners or anonymous,
-// without a rule.
+// Default is the sandbox of members without a rule.
 func (sp SandboxPolicy) Default() Sandbox { return sp.defaultOf(false) }
 
-// defaultOf is the sandbox of guests, or of every other caller,
-// without a rule.
-func (sp SandboxPolicy) defaultOf(anonymous bool) Sandbox {
-	if anonymous {
+// defaultOf is the sandbox of guests, or of members, without a rule.
+func (sp SandboxPolicy) defaultOf(guest bool) Sandbox {
+	if guest {
 		return Sandbox{Storage: agentdir.StorageReadOnly}
 	}
 	return Sandbox{Storage: agentdir.StorageShared, Secrets: sp.grants([]string{agentdir.SecretsAll})}
@@ -250,7 +246,7 @@ func matchRank(m string, p auth.Principal) int {
 			return rankPairing
 		}
 		return 0
-	case auth.RoleAnonymous:
+	case auth.RoleGuest:
 		if m == agentdir.MatchGuests {
 			return rankAnyone
 		}
@@ -339,11 +335,11 @@ func (s Sandbox) Values(stored agentdir.Secrets) (env, missing []string) {
 }
 
 // SandboxLines describe what the containers of each kind of caller get:
-// you and the owner pairings, each rule, other callers, and anonymous
-// callers if they may call. Without a sandbox the rules don't apply, so
+// you and the owner pairings, each rule, members, and guests if they may
+// call. Without a sandbox the rules don't apply, so
 // there are none. Without a private network, the private matcher matches
 // no one, so the lines leave it out.
-func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous, private bool) []SandboxLine {
+func (sp SandboxPolicy) SandboxLines(ownerPairings int, guests, private bool) []SandboxLine {
 	if sp.Local {
 		return nil
 	}
@@ -370,29 +366,35 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, anonymous, private bool)
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, SandboxLine{Who: OtherCallers, Sandbox: other})
-	if anonymous {
-		lines = append(lines, SandboxLine{Who: Guests, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleAnonymous}), Anonymous: true})
+	members := Members
+	if len(lines) > 1 {
+		members = OtherMembers
+	}
+	lines = append(lines, SandboxLine{Who: members, Sandbox: other})
+	if guests {
+		lines = append(lines, SandboxLine{Who: Guests, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleGuest}), Guest: true})
 	}
 	return lines
 }
 
-// OtherCallers names the callers who aren't owners or anonymous and whom
-// no rule matches, who get the default.
-const OtherCallers = "other callers"
+// Members and OtherMembers name the members whom no rule matches in the
+// lines, who get the default: OtherMembers when lines of rules precede.
+const (
+	Members      = "members"
+	OtherMembers = "other members"
+)
 
-// Guests names the guests in the lines: the callers without a token or
-// account, which the access policy calls anonymous.
+// Guests names the guests in the lines.
 const Guests = "guests"
 
 // SandboxLine is what the containers of one kind of caller get.
 type SandboxLine struct {
 	Who     string
 	Sandbox Sandbox
-	// Pairing names the pairing of a rule of one pairing, and Anonymous is
-	// set for guests.
-	Pairing   string
-	Anonymous bool
+	// Pairing names the pairing of a rule of one pairing, and Guest is set
+	// for guests.
+	Pairing string
+	Guest   bool
 }
 
 func describeMatcher(m string) string {

@@ -14,9 +14,9 @@
 
 // Package agentkey names the agent process a conversation runs in. a2aacp
 // stores the key with the session of each conversation: the owner's
-// conversations run in the main agent process, which has no key, all
-// anonymous conversations in one process, and the conversations of each
-// authenticated user in a process of their own. Processes don't share a
+// conversations run in the main agent process, which has no key, the
+// conversations of guests in one process, and the conversations of each
+// member in a process of their own. Processes don't share a
 // home, so a conversation can't read what another user's left there.
 package agentkey
 
@@ -26,8 +26,9 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 )
 
-// Anonymous is the key of the agent process of anonymous callers.
-const Anonymous = "anonymous"
+// Guest is the key of the agent process of guests. Sessions store it, so
+// it keeps the name of the role before guests were called guests.
+const Guest = "anonymous"
 
 const userPrefix = "user:"
 
@@ -38,9 +39,9 @@ func Of(p auth.Principal, ok bool) string {
 		return ""
 	}
 	switch p.Role {
-	case auth.RoleAnonymous:
-		return Anonymous
-	case auth.RoleAuthenticated:
+	case auth.RoleGuest:
+		return Guest
+	case auth.RoleMember:
 		return User(p.ID)
 	}
 	return ""

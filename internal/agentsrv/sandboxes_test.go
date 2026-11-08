@@ -76,8 +76,8 @@ func TestContainersGetTheSecretsOfTheirRule(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn, Secrets: []string{"KEY=secret:GUEST"}})
 	owner := ts.client(ts.pair("phone", auth.RoleOwner))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
-	cy := ts.client(ts.pair("cy", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
+	cy := ts.client(ts.pair("cy", auth.RoleMember))
 	tests := []struct {
 		name, prompt, want string
 		client             *a2aclient.Client
@@ -98,7 +98,7 @@ func TestContainersGetTheSecretsOfTheirRule(t *testing.T) {
 func TestRuleChangeAppliesToTheNextTurn(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t)
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	first := send(t, ben, userText("env KEY", "", ""))
 	if got := a2atext.Result(first); got != "env KEY=owner-key" {
 		t.Fatalf("SendMessage() = %q, want %q", got, "env KEY=owner-key")
@@ -117,7 +117,7 @@ func TestMessageIntoARicherContainerIsRefused(t *testing.T) {
 		agentdir.SandboxRule{Match: []string{"self"}, Secrets: []string{"none"}},
 	)
 	owner := ts.client(ts.pair("phone", auth.RoleOwner))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	task := send(t, ben, userText("hello", "", ""))
 
 	got := send(t, owner, userText("env KEY", "", task.ContextID))
@@ -135,7 +135,7 @@ func TestMCPServersNeedTheSecretsOfTheContainer(t *testing.T) {
 		t.Fatal(err)
 	}
 	owner := ts.client(ts.pair("phone", auth.RoleOwner))
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 
 	if got := a2atext.Result(send(t, owner, userText("mcp", "", ""))); !strings.Contains(got, `"gh"`) {
 		t.Fatalf("MCP servers of the owner = %s, want gh", got)
@@ -158,7 +158,7 @@ func setRule(t *testing.T, ts *testServer, r agentdir.SandboxRule) {
 func TestBusyContainerWithWiderRulesTakesOnlyAnswers(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	waiting := send(t, ben, userText("ask", "", ""))
 	if waiting.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("SendMessage(ask) state = %v, want %v", waiting.Status.State, a2a.TaskStateInputRequired)
@@ -180,7 +180,7 @@ func TestBusyContainerWithWiderRulesTakesOnlyAnswers(t *testing.T) {
 func TestNarrowedRulesEndTheWaitingTasksOfTheContainer(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t)
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	waiting := send(t, ben, userText("ask", "", ""))
 	if waiting.Status.State != a2a.TaskStateInputRequired {
 		t.Fatalf("SendMessage(ask) state = %v, want %v", waiting.Status.State, a2a.TaskStateInputRequired)
@@ -198,7 +198,7 @@ func TestNarrowedRulesEndTheWaitingTasksOfTheContainer(t *testing.T) {
 func TestAnswerIntoANarrowedContainerIsRefused(t *testing.T) {
 	t.Parallel()
 	ts := sandboxServer(t)
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	waiting := send(t, ben, userText("ask", "", ""))
 	setRule(t, ts, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
 
@@ -223,7 +223,7 @@ func TestAdmitOther(t *testing.T) {
 		return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
 	}, openStore(t))}
 	user := func(name string) auth.Principal {
-		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: name}}
+		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
 	}
 	tests := []struct {
 		name    string
@@ -270,7 +270,7 @@ func TestPruneWorkspaces(t *testing.T) {
 		{key: agentkey.User("email:old@example.com"), storage: agentdir.StorageOwn, used: old},
 		{key: agentkey.User("email:new@example.com"), storage: agentdir.StorageOwn, used: time.Now()},
 		{key: agentkey.User(auth.PairPrincipal("ben")), storage: agentdir.StorageOwn, used: old},
-		{key: agentkey.Anonymous, storage: agentdir.StorageOwn, used: time.Now()},
+		{key: agentkey.Guest, storage: agentdir.StorageOwn, used: time.Now()},
 	} {
 		id, _ := agentkey.UserOf(w.key)
 		name := workspaceName(w.key)
@@ -309,7 +309,7 @@ func TestSandboxOfUserAfterRestartMatchesTheVerifiedIdentity(t *testing.T) {
 			{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageReadOnly, Secrets: []string{"none"}},
 		}}}
 	}
-	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.Identity{
 		Network: network.ListenerPublic, Email: "ann@example.com", EmailSource: auth.EmailFromGoogle, Domain: "example.com",
 	}}
 	key := agentkey.User(ann.ID)
@@ -369,7 +369,7 @@ func TestGuestRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 		},
 	})
 	anon := anonymousClient(t, ts)
-	ben := ts.client(ts.pair("ben", auth.RoleAuthenticated))
+	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	if got := a2atext.Result(send(t, anon, userText("env KEY", "", ""))); got != "env KEY unset" {
 		t.Fatalf("SendMessage() by a guest without a rule = %q, want %q", got, "env KEY unset")
 	}
@@ -382,7 +382,7 @@ func TestGuestRuleGivesAGuestKeyAndKeepsPairingsAsTheyAre(t *testing.T) {
 	for _, prompt := range []string{"env KEY", "env GUEST"} {
 		want := map[string]string{"env KEY": "env KEY=owner-key", "env GUEST": "env GUEST=guest-key"}[prompt]
 		if got := a2atext.Result(send(t, ben, userText(prompt, "", ""))); got != want {
-			t.Fatalf("SendMessage(%q) by a pairing after the anonymous rule = %q, want %q", prompt, got, want)
+			t.Fatalf("SendMessage(%q) by a pairing after the guest rule = %q, want %q", prompt, got, want)
 		}
 	}
 }
@@ -408,7 +408,7 @@ func TestPostedTurnsDontSaveTheIdentityOfTheirUser(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
-	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{Network: network.ListenerPrivate}}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.Identity{Network: network.ListenerPrivate}}
 
 	release, err := s.admitTurn(auth.InProcess(auth.Posted(ctx), ann), agentkey.User(ann.ID), nil)
 	if err != nil {
@@ -426,7 +426,7 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 	ctx := context.Background()
 	st := openStore(t)
 	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, st)}
-	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.Identity{Network: network.ListenerPrivate}}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.Identity{Network: network.ListenerPrivate}}
 
 	release, err := s.admitTurn(auth.InProcess(ctx, ann), agentkey.User(ann.ID), nil)
 	if err != nil {

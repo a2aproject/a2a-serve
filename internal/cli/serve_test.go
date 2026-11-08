@@ -262,7 +262,7 @@ func TestServerPairAndSend(t *testing.T) {
 		t.Fatalf("a2a-serve pair invite anna = %q, want a code", out)
 	}
 	if _, err := runCMDWithCreds(t, creds, "pair", "invite", "anna", "--owner", "--dir", dir); err == nil || !strings.Contains(classify(err, nil).Hint, "a2a-serve pair set anna --owner") {
-		t.Fatalf("a2a-serve pair invite --owner of an authenticated pairing error = %v, want a hint to pair set", err)
+		t.Fatalf("a2a-serve pair invite --owner of a member pairing error = %v, want a hint to pair set", err)
 	}
 	annaCreds := &credstore.Store{Path: filepath.Join(t.TempDir(), "anna.json")}
 	if _, err := runCMDWithCreds(t, annaCreds, "pair", "join", status.Local, annaCode[1]); err != nil {
@@ -317,7 +317,7 @@ func TestServerPairAndSend(t *testing.T) {
 		t.Fatalf("send after pairing a node error = %v", err)
 	}
 
-	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+person\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+webhook\s+authenticated`).MatchString(out) {
+	if out, err := runCMDWithCreds(t, creds, "pair", "list", "--dir", dir); err != nil || !regexp.MustCompile(`me\s+person\s+owner`).MatchString(out) || !regexp.MustCompile(`grok\s+webhook\s+member`).MatchString(out) {
 		t.Fatalf("a2a-serve pair list = %q, %v, want me and grok", out, err)
 	}
 	if out, err := runCMDWithCreds(t, creds, "-o", "jsonl", "pair", "rm", "grok", "--dir", dir); err != nil || !strings.HasPrefix(out, `{"access":{`) || !strings.HasSuffix(out, `"kind":"webhook","name":"grok","removed":true}`+"\n") {

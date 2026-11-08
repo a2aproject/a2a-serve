@@ -50,11 +50,11 @@ type Timings struct {
 	// FirstBackupDelay keeps the first snapshot of a run, when one is due,
 	// from slowing down the start.
 	FirstBackupDelay time.Duration
-	// AnonymousQuestionTimeout is how long the approvals of anonymous
-	// callers wait for an owner.
-	AnonymousQuestionTimeout time.Duration
-	// UserQuestionTimeout is how long the approvals of authenticated users
-	// wait for an answer. An open approval keeps the user's agent process
+	// GuestQuestionTimeout is how long the approvals of guests wait for an
+	// owner.
+	GuestQuestionTimeout time.Duration
+	// UserQuestionTimeout is how long the approvals of members wait for an
+	// answer. An open approval keeps the user's agent process
 	// busy, so the pool of these processes fills up if nobody answers.
 	UserQuestionTimeout time.Duration
 	// TurnStallTimeout fails a turn in which the agent sent nothing this
@@ -79,7 +79,7 @@ type Timings struct {
 }
 
 func (t Timings) chat() chat.Timings {
-	return chat.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, AnonymousQuestionTimeout: t.AnonymousQuestionTimeout}
+	return chat.Timings{EditInterval: t.EditInterval, SendRetry: t.SendRetry, GuestQuestionTimeout: t.GuestQuestionTimeout}
 }
 
 func (t Timings) agentproxy() agentproxy.Timings {
@@ -96,7 +96,7 @@ func (t Timings) withDefaults() Timings {
 	t.ScheduleMinWait = cmp.Or(t.ScheduleMinWait, time.Second)
 	t.MessengerRetryMin = cmp.Or(t.MessengerRetryMin, 5*time.Second)
 	t.FirstBackupDelay = cmp.Or(t.FirstBackupDelay, time.Minute)
-	t.AnonymousQuestionTimeout = cmp.Or(t.AnonymousQuestionTimeout, 10*time.Minute)
+	t.GuestQuestionTimeout = cmp.Or(t.GuestQuestionTimeout, 10*time.Minute)
 	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)
 	t.TurnStallTimeout = cmp.Or(t.TurnStallTimeout, 10*time.Minute)
 	t.StateCheckInterval = cmp.Or(t.StateCheckInterval, 5*time.Second)

@@ -63,7 +63,7 @@ type Pairing struct {
 	// Kind is one of the pairapi.Pairing* kinds, or empty until the first
 	// code is redeemed.
 	Kind string
-	// Role is authenticated or owner.
+	// Role is member or owner.
 	Role      string
 	Principal string
 	Created   time.Time

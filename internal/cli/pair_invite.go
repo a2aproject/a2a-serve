@@ -115,7 +115,7 @@ them like any other caller from the private network.`,
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVar(&req.Owner, "owner", false, "Make the pairing an owner, who sees and approves every task; others see and approve their own")
+	f.BoolVar(&req.Owner, "owner", false, "Make the pairing an owner, who sees and approves every task; without it the pairing is a member, who sees and approves its own")
 	f.StringVar(&req.Webhook, "webhook", "", "Host a webhook node: the URL the agent POSTs wakes to")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake: `Name: value`, such as \"Authorization: Bearer env:TOKEN\"; the value may end in env:VAR or - (repeatable)")
 	f.StringVar(&req.Description, "description", "", "Description for the node's card")

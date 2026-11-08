@@ -45,7 +45,7 @@ type ChatApprovals struct {
 	supervisor *MessengerSupervisor
 	bus        *Bus
 	config     func() *agentdir.Config
-	anonymous  func(ctx context.Context, contextID string) bool
+	guest      func(ctx context.Context, contextID string) bool
 	timings    Timings
 	// ctx ends when the server stops; tasks followed after an answer
 	// render in it.
@@ -61,10 +61,10 @@ type ChatApprovalsDeps struct {
 	Bus        *Bus
 	// Config returns the current config of the agent.
 	Config func() *agentdir.Config
-	// Anonymous reports whether a conversation is anonymous, so that an
+	// Guest reports whether a conversation is a guest's, so that an
 	// owner answers its questions in the owner chat.
-	Anonymous func(ctx context.Context, contextID string) bool
-	Timings   Timings
+	Guest   func(ctx context.Context, contextID string) bool
+	Timings Timings
 }
 
 var _ approvals.Notifier = (*ChatApprovals)(nil)
@@ -79,7 +79,7 @@ func NewChatApprovals(ctx context.Context, deps ChatApprovalsDeps) *ChatApproval
 		supervisor: deps.Supervisor,
 		bus:        deps.Bus,
 		config:     deps.Config,
-		anonymous:  deps.Anonymous,
+		guest:      deps.Guest,
 		timings:    deps.Timings,
 		ctx:        ctx,
 	}
@@ -94,7 +94,7 @@ func (a *ChatApprovals) followOwnerAnswer(ctx context.Context, ch messenger.Mess
 		defer unsubscribe()
 		for {
 			rd := newRenderer(a, ch, conv, messenger.Ref{}, p)
-			if !renderUntilStop(ctx, rd, events, a.timings.AnonymousQuestionTimeout+time.Minute) {
+			if !renderUntilStop(ctx, rd, events, a.timings.GuestQuestionTimeout+time.Minute) {
 				return
 			}
 			if _, waits := rd.waitingForOwner(); !waits {
@@ -121,10 +121,10 @@ func renderUntilStop(ctx context.Context, rd *renderer, events *Subscription, ti
 }
 
 // Follow delivers an answer to a question of the agent's task and renders
-// the rest of the task in the conversation of its context. Anonymous
+// the rest of the task in the conversation of its context. Guests'
 // conversations follow owner answers on their own.
 func (a *ChatApprovals) Follow(ctx context.Context, rec store.Question, p auth.Principal, deliver func() error) error {
-	if rec.Contact != "" || a.anonymous(ctx, rec.ContextID) {
+	if rec.Contact != "" || a.guest(ctx, rec.ContextID) {
 		return deliver()
 	}
 	chName, conv, err := a.store.ConvOf(ctx, rec.ContextID)

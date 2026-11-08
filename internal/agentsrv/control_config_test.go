@@ -109,13 +109,13 @@ func TestStatusAccess(t *testing.T) {
 	}
 	want := &controlapi.Access{
 		PrivateAllowIncoming: agentdir.AccessEveryone, PublicAllowIncoming: agentdir.AccessAnyone,
-		Owner: []string{"self"}, Authenticated: []string{"private", "email:*@example.com"}, Anonymous: []string{"anyone"},
+		Owner: []string{"self"}, Member: []string{"private", "email:*@example.com"}, Guest: []string{"anyone"},
 		Pairings: 1, OwnerPairings: 1,
 		Others: []string{"everyone on the tailnet", "emails matching *@example.com", "anyone on the public URL"},
 		Summary: []string{
 			"you: this machine and your tailnet devices",
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
-			"the public URL is open to anyone",
+			"the public URL is open to anyone, as guests",
 		},
 		SandboxNotes: []string{
 			"the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets",
@@ -191,7 +191,7 @@ func TestDenyToolsAnswersPendingApprovalsAndEndsPreferences(t *testing.T) {
 func TestPreferenceAnswersPendingApprovals(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
-	bob := ts.client(ts.pair("bob", auth.RoleAuthenticated))
+	bob := ts.client(ts.pair("bob", auth.RoleMember))
 	waiting := send(t, bob, userText("ask", "", ""))
 
 	if err := ts.srv.prefs.Allow(context.Background(), "pair:bob", "command:git push *"); err != nil {

@@ -36,7 +36,7 @@ func TestSandboxRulesGiveCallersTheirSecrets(t *testing.T) {
 	wantStatus := []string{
 		"sandbox  you: shared workspace, secrets KEY, GUEST",
 		"the pairing anna: read-only workspace, secrets KEY (from GUEST)",
-		"other callers: shared workspace, secrets KEY, GUEST",
+		"other members: shared workspace, secrets KEY, GUEST",
 	}
 	if sandbox != "docker" {
 		wantStatus = []string{"storage rules don't apply"}

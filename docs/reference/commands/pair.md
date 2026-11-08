@@ -98,7 +98,7 @@ a2a-serve pair invite grok --webhook https://example.com/hooks/123 --advertised
 |---|---|---|
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
-| `--owner` |  | Make the pairing an owner, who sees and approves every task; others see and approve their own |
+| `--owner` |  | Make the pairing an owner, who sees and approves every task; without it the pairing is a member, who sees and approves its own |
 | `--secrets names` |  | Secrets the pairing's agent container gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all) |
 | `--storage string` |  | What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared) |
 | `--webhook string` |  | Host a webhook node: the URL the agent POSTs wakes to |
@@ -240,7 +240,7 @@ a2a-serve pair set grok --webhook https://example.com/hooks/456 --advertised
 | `--advertised` |  | Advertise the webhook node to the agents of the private network |
 | `--description string` |  | Description for the node's card |
 | `--kind person\|device\|agent` |  | Kind of the pairing: person\|device\|agent |
-| `--owner` |  | Make the pairing an owner, who sees and approves every task, or not with --owner=false |
+| `--owner` |  | Make the pairing an owner, who sees and approves every task, or a member with --owner=false |
 | `--rotate` |  | Revoke every token of the pairing and print a new code |
 | `--secrets names` |  | Secrets the pairing's agent container gets: names from --secret, all, none, or NAME=secret:OTHER to pass the secret OTHER as NAME (default all) |
 | `--storage string` |  | What the pairing's agent container gets of the workspace: shared, read-only, own (a private copy) or empty (default shared) |

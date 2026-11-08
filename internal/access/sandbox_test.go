@@ -34,10 +34,10 @@ func TestSandboxPolicyResolve(t *testing.T) {
 		{Match: []string{"private"}, Storage: agentdir.StorageEmpty, Secrets: []string{"none"}},
 	}
 	user := func(id auth.Identity) auth.Principal {
-		return auth.Principal{ID: id.PrincipalID(), Role: auth.RoleAuthenticated, Identity: id}
+		return auth.Principal{ID: id.PrincipalID(), Role: auth.RoleMember, Identity: id}
 	}
-	anonymous := func(id auth.Identity) auth.Principal {
-		return auth.Principal{ID: auth.AnonymousID, Role: auth.RoleAnonymous, Identity: id}
+	guest := func(id auth.Identity) auth.Principal {
+		return auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest, Identity: id}
 	}
 	all := []SecretGrant{{"ANTHROPIC_API_KEY", "ANTHROPIC_API_KEY"}, {"GITHUB_TOKEN", "GITHUB_TOKEN"}, {"GUEST_KEY", "GUEST_KEY"}}
 	shared := Sandbox{Storage: agentdir.StorageShared, Secrets: all}
@@ -52,7 +52,7 @@ func TestSandboxPolicyResolve(t *testing.T) {
 		{name: "owner pairing by default", caller: auth.Principal{ID: "pair:ann", Role: auth.RoleOwner, Identity: auth.Identity{Pairing: "ann", PairingRole: auth.RoleOwner}}, want: shared},
 		{name: "pairing by default", caller: user(auth.Identity{Pairing: "ben"}), want: shared},
 		{name: "private network member by default", caller: user(auth.Identity{Network: network.ListenerPrivate, Node: "n1"}), want: shared},
-		{name: "anonymous by default", caller: anonymous(auth.Identity{}), want: readOnly},
+		{name: "guest by default", caller: guest(auth.Identity{}), want: readOnly},
 		{name: "owner ignores rules for others", rules: rules, caller: auth.Owner(), want: shared},
 		{name: "self rule narrows the owner", rules: []agentdir.SandboxRule{{Match: []string{"self"}, Secrets: []string{"GITHUB_TOKEN"}}}, caller: auth.Owner(), want: Sandbox{Storage: agentdir.StorageShared, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GITHUB_TOKEN"}}}},
 		{name: "pairing beats domain", rules: rules, caller: user(auth.Identity{Pairing: "ben", Email: "ben@example.com", Domain: "example.com"}), want: shared},
@@ -61,9 +61,9 @@ func TestSandboxPolicyResolve(t *testing.T) {
 		{name: "domain", rules: rules, caller: user(auth.Identity{Email: "cy@example.com", Domain: "example.com", Network: network.ListenerPrivate}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all[:2]}},
 		{name: "domain needs a proven domain", rules: rules, caller: user(auth.Identity{Email: "cy@example.com", Network: network.ListenerPrivate}), want: Sandbox{Storage: agentdir.StorageEmpty}},
 		{name: "anyone doesn't match pairings", rules: rules, caller: user(auth.Identity{Network: network.ListenerPublic, Pairing: "dan"}), want: shared},
-		{name: "anonymous callers get the rule of anyone", rules: rules, caller: anonymous(auth.Identity{Email: "cy@example.com", Domain: "example.com"}), want: Sandbox{Storage: agentdir.StorageReadOnly, Secrets: []SecretGrant{{"ANTHROPIC_API_KEY", "GUEST_KEY"}}}},
-		{name: "a rule widens anonymous callers", rules: []agentdir.SandboxRule{{Match: []string{"guests"}, Secrets: []string{"GITHUB_TOKEN"}}}, caller: anonymous(auth.Identity{}), want: Sandbox{Storage: agentdir.StorageReadOnly, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GITHUB_TOKEN"}}}},
-		{name: "anonymous callers narrowed to empty", rules: []agentdir.SandboxRule{{Match: []string{"guests"}, Storage: agentdir.StorageEmpty}}, caller: anonymous(auth.Identity{}), want: Sandbox{Storage: agentdir.StorageEmpty}},
+		{name: "guests get the rule of anyone", rules: rules, caller: guest(auth.Identity{Email: "cy@example.com", Domain: "example.com"}), want: Sandbox{Storage: agentdir.StorageReadOnly, Secrets: []SecretGrant{{"ANTHROPIC_API_KEY", "GUEST_KEY"}}}},
+		{name: "a rule widens guests", rules: []agentdir.SandboxRule{{Match: []string{"guests"}, Secrets: []string{"GITHUB_TOKEN"}}}, caller: guest(auth.Identity{}), want: Sandbox{Storage: agentdir.StorageReadOnly, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GITHUB_TOKEN"}}}},
+		{name: "guests narrowed to empty", rules: []agentdir.SandboxRule{{Match: []string{"guests"}, Storage: agentdir.StorageEmpty}}, caller: guest(auth.Identity{}), want: Sandbox{Storage: agentdir.StorageEmpty}},
 		{name: "a rule without storage keeps the default", rules: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Secrets: []string{"GITHUB_TOKEN"}}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageShared, Secrets: []SecretGrant{{"GITHUB_TOKEN", "GITHUB_TOKEN"}}}},
 		{name: "a rule without secrets keeps the default", rules: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn}}, caller: user(auth.Identity{Pairing: "ben"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all}},
 		{name: "first rule of the same specificity wins", rules: []agentdir.SandboxRule{{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageOwn}, {Match: []string{"email:*@Example.com"}, Storage: agentdir.StorageEmpty}}, caller: user(auth.Identity{Email: "cy@example.com", Domain: "example.com"}), want: Sandbox{Storage: agentdir.StorageOwn, Secrets: all}},
@@ -121,41 +121,41 @@ func TestDescribeConfigSandbox(t *testing.T) {
 		return &agentdir.Config{Harness: "opencode", Model: "google/gemini", Secrets: []string{"GEMINI_API_KEY"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone, Sandbox: rules}}
 	}
 	tests := []struct {
-		name          string
-		cfg           *agentdir.Config
-		pairings      Pairings
-		wantLines     []string
-		wantNotes     []string
-		wantAnonymous string
+		name      string
+		cfg       *agentdir.Config
+		pairings  Pairings
+		wantLines []string
+		wantNotes []string
+		wantGuest string
 	}{
 		{name: "defaults", cfg: &agentdir.Config{Secrets: []string{"KEY"}}},
 		{
-			name: "anonymous callers", cfg: &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "other callers: shared workspace, secrets KEY", "guests: read-only workspace, no secrets"},
+			name: "guests", cfg: &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}},
+			wantLines: []string{"you: shared workspace, secrets KEY", "members: shared workspace, secrets KEY", "guests: read-only workspace, no secrets"},
 		},
 		{
 			name: "rules", cfg: &agentdir.Config{Secrets: []string{"KEY", "GUEST"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}, pairings: Pairings{All: 2, Owners: 1},
 			wantLines: []string{
 				"you and owner pairings: shared workspace, secrets KEY, GUEST",
 				"the pairing ben, emails matching *@example.com: own copy of the workspace, secrets GUEST",
-				"other callers: shared workspace, secrets KEY, GUEST",
+				"other members: shared workspace, secrets KEY, GUEST",
 			},
 		},
 		{
 			name: "pairing without its model key", pairings: Pairings{All: 1},
-			cfg:           gemini(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}),
-			wantLines:     []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets GEMINI_API_KEY", "guests: read-only workspace, no secrets"},
-			wantNotes:     []string{"ben's agent gets no Google key and can't reach its model. Give one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of its own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`."},
-			wantAnonymous: "Guests' agent gets no Google key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets GEMINI_API_KEY=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets GEMINI_API_KEY`.",
+			cfg:       gemini(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}),
+			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other members: shared workspace, secrets GEMINI_API_KEY", "guests: read-only workspace, no secrets"},
+			wantNotes: []string{"ben's agent gets no Google key and can't reach its model. Give one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of its own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`."},
+			wantGuest: "Guests' agent gets no Google key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets GEMINI_API_KEY=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets GEMINI_API_KEY`.",
 		},
 		{
-			name: "anonymous callers with a guest key", pairings: Pairings{All: 1},
+			name: "guests with a guest key", pairings: Pairings{All: 1},
 			cfg: func() *agentdir.Config {
 				c := gemini(agentdir.SandboxRule{Match: []string{"guests"}, Secrets: []string{"GEMINI_API_KEY=secret:GUEST"}})
 				c.Secrets = append(c.Secrets, "GUEST")
 				return c
 			}(),
-			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY, GUEST", "other callers: shared workspace, secrets GEMINI_API_KEY, GUEST", "guests: read-only workspace, secrets GEMINI_API_KEY (from GUEST)"},
+			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY, GUEST", "members: shared workspace, secrets GEMINI_API_KEY, GUEST", "guests: read-only workspace, secrets GEMINI_API_KEY (from GUEST)"},
 		},
 		{
 			name: "private rule without a private network", pairings: Pairings{All: 1},
@@ -163,12 +163,12 @@ func TestDescribeConfigSandbox(t *testing.T) {
 				{Match: []string{"private"}, Storage: agentdir.StorageReadOnly},
 				{Match: []string{"pairing:ben", "private"}, Secrets: []string{"none"}},
 			}}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben: shared workspace, no secrets", "other callers: shared workspace, secrets KEY"},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben: shared workspace, no secrets", "other members: shared workspace, secrets KEY"},
 		},
 		{
 			name: "rule of an unknown pairing", pairings: Pairings{All: 1, Names: map[string]bool{"ben": true}},
 			cfg:       &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"pairing:ben", "pairing:nobody"}, Storage: agentdir.StorageReadOnly}}}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben, the pairing nobody: read-only workspace, secrets KEY", "other callers: shared workspace, secrets KEY"},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben, the pairing nobody: read-only workspace, secrets KEY", "other members: shared workspace, secrets KEY"},
 			wantNotes: []string{"no pairing or webhook node is named nobody, so the sandbox rule of pairing:nobody matches no caller"},
 		},
 		{
@@ -186,8 +186,8 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			if diff := cmp.Diff(tt.wantNotes, got.SandboxNotes); diff != "" {
 				t.Fatalf("DescribeConfig().SandboxNotes wrong result (-want +got) diff = %s", diff)
 			}
-			if got.AnonymousNote != tt.wantAnonymous {
-				t.Fatalf("DescribeConfig().AnonymousNote = %q, want %q", got.AnonymousNote, tt.wantAnonymous)
+			if got.GuestNote != tt.wantGuest {
+				t.Fatalf("DescribeConfig().GuestNote = %q, want %q", got.GuestNote, tt.wantGuest)
 			}
 		})
 	}
@@ -199,7 +199,7 @@ func TestSandboxPolicyResolveUnverified(t *testing.T) {
 		{Match: []string{"email:*@example.com"}, Storage: agentdir.StorageReadOnly},
 		{Match: []string{"private"}, Secrets: []string{"none"}},
 	}}
-	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleAuthenticated, Identity: auth.IdentityOf("email:ann@example.com")}
+	ann := auth.Principal{ID: "email:ann@example.com", Role: auth.RoleMember, Identity: auth.IdentityOf("email:ann@example.com")}
 
 	got := sp.ResolveUnverified(ann)
 
@@ -214,7 +214,7 @@ func TestSandboxPolicyResolveUnverifiedPairing(t *testing.T) {
 		{Match: []string{"pairing:ben"}, Storage: agentdir.StorageOwn},
 		{Match: []string{"private"}, Secrets: []string{"none"}},
 	}}
-	ben := auth.Principal{ID: "pair:ben", Role: auth.RoleAuthenticated, Identity: auth.IdentityOf("pair:ben")}
+	ben := auth.Principal{ID: "pair:ben", Role: auth.RoleMember, Identity: auth.IdentityOf("pair:ben")}
 
 	got := sp.ResolveUnverified(ben)
 

@@ -85,7 +85,7 @@ func TestPairRmDryRun(t *testing.T) {
 		t.Fatalf("store.Open() error = %v", err)
 	}
 	ctx := context.Background()
-	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: "authenticated"}); err != nil {
+	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: "anna", Kind: "person", Role: "member"}); err != nil {
 		t.Fatalf("EnsurePairing() error = %v", err)
 	}
 	if err := st.PutToken(ctx, "a2p_laptop", store.Token{Pairing: "anna", URL: "https://coder.example.com"}, "person"); err != nil {

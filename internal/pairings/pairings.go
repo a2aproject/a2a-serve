@@ -200,7 +200,7 @@ func (s *Service) Invite(ctx context.Context, req InviteRequest) (*Code, error) 
 	case exists && req.Owner && p.Role != auth.RoleOwner:
 		return nil, agenterr.WithHint(invalid("%s is paired as %s", req.Name, p.Role), agenterr.HintPairSetOwner, req.Name)
 	}
-	role := auth.RoleAuthenticated
+	role := auth.RoleMember
 	if req.Owner {
 		role = auth.RoleOwner
 	}
@@ -338,7 +338,7 @@ func (s *Service) Update(ctx context.Context, name string, req UpdateRequest) (*
 		next.Kind = req.Kind
 	}
 	if req.Owner != nil {
-		next.Role = auth.RoleAuthenticated
+		next.Role = auth.RoleMember
 		if *req.Owner {
 			next.Role = auth.RoleOwner
 		}

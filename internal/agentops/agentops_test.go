@@ -102,7 +102,7 @@ func TestPair(t *testing.T) {
 		},
 		Instructions: "You are the webhook node \"grok\" of the agent at " + baseURL + ".\nRead " + baseURL + "/mailbox/skill.md and follow it.\nYour pairing code is " + got.Code + ".",
 		Access: &controlapi.Access{
-			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Authenticated: []string{auth.MemberPrivate}, Anonymous: []string{},
+			PrivateAllowIncoming: "everyone", Owner: []string{auth.MemberSelf}, Member: []string{auth.MemberPrivate}, Guest: []string{},
 			Pairings: 1, Others: []string{"everyone on the tailnet"},
 			Summary: []string{"you: this machine and your tailnet devices", "everyone on the tailnet, 1 pairing"},
 		},
@@ -207,7 +207,7 @@ func TestPairings(t *testing.T) {
 	}
 
 	want := controlapi.Pairing{
-		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated, Principal: auth.PairingPrincipal("anna"),
+		Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember, Principal: auth.PairingPrincipal("anna"),
 		Created: anna.Created, Tokens: []controlapi.PairingToken{},
 		Accounts:     []controlapi.LinkedAccount{{Messenger: agentdir.MessengerTelegram, Account: "telegram:1"}},
 		PendingCodes: anna.PendingCodes,

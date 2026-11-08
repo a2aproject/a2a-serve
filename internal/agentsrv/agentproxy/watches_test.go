@@ -327,7 +327,7 @@ func TestWatchesWatchPostsAsItsUser(t *testing.T) {
 		},
 		{
 			name: "member with the role they have now", user: "pair:anna", pairing: "anna", wantPost: true,
-			want: auth.Principal{ID: "pair:anna", Role: auth.RoleAuthenticated, Identity: auth.Identity{Pairing: "anna", PairingRole: auth.RoleAuthenticated}},
+			want: auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Pairing: "anna", PairingRole: auth.RoleMember}},
 		},
 		{
 			name: "member whose pairing was removed", user: "pair:gone",
@@ -338,7 +338,7 @@ func TestWatchesWatchPostsAsItsUser(t *testing.T) {
 			t.Parallel()
 			f := newWatchesFixture(t)
 			if tc.pairing != "" {
-				if _, err := f.store.EnsurePairing(context.Background(), store.Pairing{Name: tc.pairing, Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated}); err != nil {
+				if _, err := f.store.EnsurePairing(context.Background(), store.Pairing{Name: tc.pairing, Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
 					t.Fatalf("store.EnsurePairing() error = %v", err)
 				}
 			}
@@ -869,7 +869,7 @@ func TestWatchesWatchEndsQuestionTasksOnceTheTaskMovesOn(t *testing.T) {
 func linkChat(t *testing.T, st *store.Store, pairing, messengerName, identity, conv string) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: pairing, Kind: pairapi.PairingPerson, Role: auth.RoleAuthenticated}); err != nil {
+	if _, err := st.EnsurePairing(ctx, store.Pairing{Name: pairing, Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
 		t.Fatalf("store.EnsurePairing() error = %v", err)
 	}
 	if err := st.PutLink(ctx, store.Link{Messenger: messengerName, Identity: identity, Pairing: pairing, Conv: conv}, pairapi.PairingPerson); err != nil {

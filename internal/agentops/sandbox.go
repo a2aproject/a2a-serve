@@ -136,7 +136,7 @@ func resolvePairing(cfg *agentdir.Config, p pairings.Pairing) access.Sandbox {
 	if p.Kind == pairapi.PairingWebhook {
 		id = auth.Identity{WebhookNode: p.Name}
 	}
-	role := auth.RoleAuthenticated
+	role := auth.RoleMember
 	if p.Role == auth.RoleOwner {
 		role = auth.RoleOwner
 	}

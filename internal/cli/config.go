@@ -194,8 +194,8 @@ func writeAccess(sb *strings.Builder, a *controlapi.Access) {
 	for _, note := range a.SandboxNotes {
 		fmt.Fprintf(sb, "! %s\n", note)
 	}
-	if a.AnonymousNote != "" {
-		fmt.Fprintf(sb, "! %s\n", a.AnonymousNote)
+	if a.GuestNote != "" {
+		fmt.Fprintf(sb, "! %s\n", a.GuestNote)
 	}
 }
 

@@ -122,7 +122,7 @@ stay linked.
 		},
 	}
 	f := cmd.Flags()
-	f.BoolVar(&owner, "owner", false, "Make the pairing an owner, who sees and approves every task, or not with --owner=false")
+	f.BoolVar(&owner, "owner", false, "Make the pairing an owner, who sees and approves every task, or a member with --owner=false")
 	f.StringVar(&req.Kind, "kind", "", "Kind of the pairing: `person|device|agent`")
 	f.StringVar(&req.Webhook, "webhook", "", "The URL the agent POSTs wakes to, for a webhook node")
 	f.StringArrayVar(&headers, "webhook-header", nil, "Header sent with every wake, replacing the current ones: `Name: value`; the value may end in env:VAR or - (repeatable)")

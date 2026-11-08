@@ -61,7 +61,7 @@ func anonymousClient(t *testing.T, ts *testServer) *a2aclient.Client {
 	return c
 }
 
-func TestAnonymousConversationsRunInTheirOwnProcess(t *testing.T) {
+func TestGuestConversationsRunInTheirOwnProcess(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, nil)
 	anon := anonymousClient(t, ts)
@@ -70,14 +70,14 @@ func TestAnonymousConversationsRunInTheirOwnProcess(t *testing.T) {
 	task := send(t, anon, userText("pid", "", ""))
 	anonPID, ownerPID := a2atext.Result(task), a2atext.Result(send(t, owner, userText("pid", "", "")))
 	if anonPID == ownerPID {
-		t.Fatalf("anonymous and owner conversations both ran in %q, want separate processes", anonPID)
+		t.Fatalf("guest and owner conversations both ran in %q, want separate processes", anonPID)
 	}
 	if got := a2atext.Result(send(t, owner, userText("pid", "", task.ContextID))); got != anonPID {
-		t.Fatalf("owner message in an anonymous conversation ran in %q, want %q", got, anonPID)
+		t.Fatalf("owner message in a guest conversation ran in %q, want %q", got, anonPID)
 	}
 }
 
-func TestAnonymousCallerSeesOnlyNamedConversation(t *testing.T) {
+func TestGuestCallerSeesOnlyNamedConversation(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, nil)
 	anon := anonymousClient(t, ts)
@@ -113,19 +113,19 @@ func TestAnonymousCallerSeesOnlyNamedConversation(t *testing.T) {
 	}
 }
 
-func TestAnonymousConversationCallsNoAgents(t *testing.T) {
+func TestGuestConversationCallsNoAgents(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, nil)
 	wantResult(t, send(t, anonymousClient(t, ts), userText("call coder hi", "", "")), a2a.TaskStateCompleted, "no agents URL in the prompt")
 }
 
-func TestAnonymousApprovalTimesOut(t *testing.T) {
+func TestGuestApprovalTimesOut(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{
 		public:    publicNet(),
 		messenger: messengertest.NewMessenger("fake"),
 		configure: func(c *agentdir.Config) { c.Policy.PublicAllowIncoming = agentdir.AccessAnyone },
-		timings:   func(tm *Timings) { tm.AnonymousQuestionTimeout = time.Second },
+		timings:   func(tm *Timings) { tm.GuestQuestionTimeout = time.Second },
 	})
 	anon := anonymousClient(t, ts)
 	task := send(t, anon, userText("ask", "", ""))
@@ -173,14 +173,14 @@ func TestRefusedReplyKeepsApprovalOpen(t *testing.T) {
 	wantResult(t, send(t, owner, userText("deny", string(task.ID), task.ContextID)), a2a.TaskStateCompleted, "Push denied.")
 }
 
-func TestAnonymousApprovalInOwnerChat(t *testing.T) {
+func TestGuestApprovalInOwnerChat(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, func(c *agentdir.Config) { c.Approvals.OwnerChat = "fake" })
 	linkOwner(t, ts, "telegram:1", "dm1")
 
 	ts.ch.Write("telegram:9", "dm9", "ask")
 	ts.ch.WaitFor(t, "dm9", messengertest.HasText("This needs the owner's approval"))
-	ref, q := ts.ch.WaitFor(t, "dm1", messengertest.HasText("telegram:9, an anonymous caller, needs your approval"))
+	ref, q := ts.ch.WaitFor(t, "dm1", messengertest.HasText("telegram:9, a guest, needs your approval"))
 	if n := ts.ch.Questions(); n != 1 {
 		t.Fatalf("questions with buttons = %d, want 1, in the owner chat only", n)
 	}
@@ -188,10 +188,10 @@ func TestAnonymousApprovalInOwnerChat(t *testing.T) {
 	ts.ch.WaitFor(t, "dm9", messengertest.HasText("Pushed (allow)."))
 }
 
-func TestAnonymousBudget(t *testing.T) {
+func TestGuestBudget(t *testing.T) {
 	t.Parallel()
 	now := time.Unix(1_000_000, 0)
-	b := &anonymousBudget{perHour: 2, concurrent: 1, now: func() time.Time { return now }, listeners: map[string]*listenerBudget{}}
+	b := &guestBudget{perHour: 2, concurrent: 1, now: func() time.Time { return now }, listeners: map[string]*listenerBudget{}}
 
 	if err := b.admit("public"); err != nil {
 		t.Fatalf("admit() error = %v, want nil", err)
@@ -200,11 +200,11 @@ func TestAnonymousBudget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run() error = %v, want nil", err)
 	}
-	if err := b.admit("public"); !errors.Is(err, errAnonymousBusy) {
-		t.Fatalf("admit() while a task runs error = %v, want %v", err, errAnonymousBusy)
+	if err := b.admit("public"); !errors.Is(err, errGuestsBusy) {
+		t.Fatalf("admit() while a task runs error = %v, want %v", err, errGuestsBusy)
 	}
-	if _, err := b.run("public"); !errors.Is(err, errAnonymousBusy) {
-		t.Fatalf("run() while a task runs error = %v, want %v", err, errAnonymousBusy)
+	if _, err := b.run("public"); !errors.Is(err, errGuestsBusy) {
+		t.Fatalf("run() while a task runs error = %v, want %v", err, errGuestsBusy)
 	}
 	if err := b.admit("chat:telegram"); err != nil {
 		t.Fatalf("admit() on another listener error = %v, want nil", err)
@@ -214,8 +214,8 @@ func TestAnonymousBudget(t *testing.T) {
 	if err := b.admit("public"); err != nil {
 		t.Fatalf("admit() after release error = %v, want nil", err)
 	}
-	if err := b.admit("public"); !errors.Is(err, errAnonymousRate) {
-		t.Fatalf("admit() over the hourly budget error = %v, want %v", err, errAnonymousRate)
+	if err := b.admit("public"); !errors.Is(err, errGuestRate) {
+		t.Fatalf("admit() over the hourly budget error = %v, want %v", err, errGuestRate)
 	}
 	now = now.Add(time.Hour)
 	if err := b.admit("public"); err != nil {
@@ -223,20 +223,20 @@ func TestAnonymousBudget(t *testing.T) {
 	}
 }
 
-func TestAnonymousBudgetCheckRate(t *testing.T) {
+func TestGuestBudgetCheckRate(t *testing.T) {
 	t.Parallel()
-	b := newAnonymousBudget()
-	p := auth.Principal{ID: "telegram:9", Role: auth.RoleAnonymous, Identity: auth.Identity{Network: auth.NetworkChat, Provider: "fake"}}
+	b := newGuestBudget()
+	p := auth.Principal{ID: "telegram:9", Role: auth.RoleGuest, Identity: auth.Identity{Network: auth.NetworkChat, Provider: "fake"}}
 	if err := b.CheckRate(p); err != nil {
-		t.Fatalf("anonymousBudget.CheckRate() of a fresh budget error = %v", err)
+		t.Fatalf("guestBudget.CheckRate() of a fresh budget error = %v", err)
 	}
 	for range b.perHour {
 		if err := b.admit(budgetListener(p)); err != nil {
-			t.Fatalf("anonymousBudget.admit() error = %v", err)
+			t.Fatalf("guestBudget.admit() error = %v", err)
 		}
 	}
 
-	if err := b.CheckRate(p); !errors.Is(err, errAnonymousRate) {
-		t.Fatalf("anonymousBudget.CheckRate() of a used-up budget error = %v, want %v", err, errAnonymousRate)
+	if err := b.CheckRate(p); !errors.Is(err, errGuestRate) {
+		t.Fatalf("guestBudget.CheckRate() of a used-up budget error = %v, want %v", err, errGuestRate)
 	}
 }

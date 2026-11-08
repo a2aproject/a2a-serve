@@ -9,7 +9,7 @@ By default the agent runs in Docker:
 - The server refuses a workspace or a mount that is your home directory, `/` or a directory that holds your home directory, because the agent could read your credentials and the secrets of every agent in it. Use a project directory. `--allow-broad-mount <path>` mounts that path anyway, and the agents in it stay visible to the agent.
 - The server checks the mount sources, `.a2a` and the agent home directory before it starts each container. It refuses a path that goes through a symlink inside a writable mount, because the agent can repoint that symlink. The error names the resolved path to configure.
 - The server also remembers the agent directory, `.a2a`, `state` and each agent home directory when it first uses them. When the agent renames one of them through a writable mount and creates another in its place, the server refuses to start a container until you check the directory and restart the server.
-- `state/home` is the agent's home directory. Each authenticated user gets a container with a home of their own, and [guests](#guests) share one more. [Sandbox rules](#what-each-callers-container-gets) set how much of the workspace and which secrets those containers get.
+- `state/home` is the agent's home directory. Each [member](identities.md#roles) gets a container with a home of their own, and [guests](identities.md#guests) share one more. [Sandbox rules](#what-each-callers-container-gets) set how much of the workspace and which secrets those containers get.
 - The container runs as your user, with all capabilities dropped and limits of 4 GB of memory, 2 CPUs and 512 processes (`--memory`, `--cpus`, `--pids`).
 
 The image is pulled from `ghcr.io/a2aproject`. If the pull fails, a2a-serve builds it from a Dockerfile in its binary. `--image` uses another image, which needs a compatible `a2a` CLI.
@@ -20,23 +20,21 @@ When the agent calls another agent, `a2a` waits up to 5 minutes for the reply. `
 
 ## What each caller's container gets
 
-Each caller's conversations run in an agent container. You and your owner pairings share yours, guests share one, and every other caller gets one of their own.
-
-<a id="guests"></a>Guests are the callers without a token or account: anonymous visitors on the public URL with `--public-allow-incoming anyone`, and strangers in open chats. [Identities](identities.md#anonymous-callers) calls them anonymous callers.
+Each caller's conversations run in an agent container. You and your owner pairings share yours, guests share one, and each member gets one of their own. [Identities](identities.md#roles) defines the roles.
 
 Without sandbox rules:
 
-- your container and the containers of pairings, members of the private network and `--allow-email` sign-ins get the shared workspace and every `--secret` value;
+- your container and the containers of members get the shared workspace and every `--secret` value;
 - the container of guests gets a read-only workspace and no secrets.
 
-Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. "Other callers" in the output are the callers who aren't owners or guests and whom no rule matches; they get the default.
+Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. The `members` line, or `other members` after rule lines, covers the members that no rule matches. They get the default.
 
 `a2a-serve status` shows what each kind of caller gets:
 
 ```
   sandbox  you: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
            emails matching *@example.com: own copy of the workspace, secrets ANTHROPIC_API_KEY
-           other callers: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
+           other members: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
            guests: read-only workspace, no secrets
 ```
 

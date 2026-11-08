@@ -101,10 +101,10 @@ type Access struct {
 	// PublicAllowIncoming is paired or anyone, set with a public URL.
 	PrivateAllowIncoming string `json:"privateAllowIncoming,omitempty"`
 	PublicAllowIncoming  string `json:"publicAllowIncoming,omitempty"`
-	// Owner, Authenticated and Anonymous are the members of each role.
-	Owner         []string `json:"owner"`
-	Authenticated []string `json:"authenticated"`
-	Anonymous     []string `json:"anonymous"`
+	// Owner, Member and Guest are the callers each role holds.
+	Owner  []string `json:"owner"`
+	Member []string `json:"member"`
+	Guest  []string `json:"guest"`
 	// Pairings counts the pairings besides the local one, and OwnerPairings
 	// those of them that are owners.
 	Pairings      int `json:"pairings"`
@@ -121,9 +121,9 @@ type Access struct {
 	// SandboxNotes are what the sandbox rules don't do, such as callers
 	// whose container gets no model key.
 	SandboxNotes []string `json:"sandboxNotes,omitempty"`
-	// AnonymousNote says that the agent can't reach its model for
-	// anonymous callers, who get no secrets, if it needs a key.
-	AnonymousNote string `json:"anonymousNote,omitempty"`
+	// GuestNote says that the agent can't reach its model for guests, who
+	// get no secrets, if it needs a key.
+	GuestNote string `json:"guestNote,omitempty"`
 }
 
 // MCPServerStatus describes an MCP server of the project's .mcp.json.
@@ -248,7 +248,7 @@ type Pairing struct {
 	// Kind is one of the pairapi.Pairing* kinds, or empty until the first
 	// code is redeemed.
 	Kind string `json:"kind"`
-	// Role is authenticated or owner.
+	// Role is member or owner.
 	Role      string          `json:"role"`
 	Principal string          `json:"principal"`
 	Created   time.Time       `json:"created,omitzero"`

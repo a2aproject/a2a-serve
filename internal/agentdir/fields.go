@@ -438,14 +438,14 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PrivateAllowIncoming }, func(s *Settings) *string { return &s.PrivateAllowIncoming }),
 		flag:   "private-allow-incoming", path: "policy.privateAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "Who on the private network may call: everyone (or anyone), or paired for only you and your pairings (default everyone)",
+		usage:  "Who on the private network may call: everyone (or anyone) as members, or paired for only you and your pairings (default everyone)",
 		values: []string{AccessEveryone, AccessPaired},
 		def:    AccessEveryone,
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Policy.PublicAllowIncoming }, func(s *Settings) *string { return &s.PublicAllowIncoming }),
 		flag:   "public-allow-incoming", path: "policy.publicAllowIncoming", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone (everyone works too) (default paired)",
+		usage:  "Who on the public URL and in direct chats may call: paired for only you and your pairings, or anyone as guests (everyone works too) (default paired)",
 		values: []string{AccessPaired, AccessAnyone},
 		def:    AccessPaired,
 	},
@@ -460,7 +460,7 @@ var fields = []field{
 		access: strs(func(c *Config) *[]string { return &c.Policy.AllowEmails }, func(s *Settings) *[]string { return &s.AllowEmails }),
 		flag:   "allow-email", path: "policy.allowEmails", scope: scopeOwner, live: true, section: SectionAccess, split: true,
 		key: strings.ToLower, parse: trimSpace,
-		usage: "People who may call the agent by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
+		usage: "People who may call the agent as members by a verified email, on any network: an `email`, or *@domain for Google Workspace sign-in or mail that passes DMARC; turns on Google sign-in at the public URL",
 	},
 	{
 		access: access{
@@ -469,7 +469,7 @@ var fields = []field{
 			arg: func(s *Settings) any { return &s.GuestStorage },
 		},
 		flag: "guest-storage", path: "policy.sandbox", scope: scopeOwner, live: true, section: SectionAccess,
-		usage:  "What the agent container of guests, the callers without a token or account, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only)",
+		usage:  "What the agent container of guests, the callers nobody vouched for, gets of the workspace: shared, read-only, own (a private copy) or empty (default read-only)",
 		values: StorageModes,
 	},
 	{

@@ -23,16 +23,22 @@ import (
 
 // Roles, from the most rights to the fewest.
 const (
-	// RoleOwner sees every task, answers any approval and uses the inspector.
+	// RoleOwner is the user running the agent: the local token, their
+	// devices and their linked chats. It sees every task, answers any
+	// approval and uses the inspector.
 	RoleOwner = "owner"
-	// RoleAuthenticated starts tasks, and sees and approves its own.
-	RoleAuthenticated = "authenticated"
-	// RoleAnonymous starts tasks in its own conversation, and never answers
-	// approvals, calls agents or uses the schedules agent.
-	RoleAnonymous = "anonymous"
+	// RoleMember is a caller the owner let in: pairings, private-network
+	// members and --allow-email sign-ins. It starts tasks, and sees and
+	// approves its own.
+	RoleMember = "member"
+	// RoleGuest is a caller nobody vouched for, such as an anonymous caller
+	// on the public URL or a stranger in a direct chat. It starts tasks in
+	// its own conversation, and never answers approvals, calls agents or
+	// uses the schedules agent.
+	RoleGuest = "guest"
 )
 
-// Members of a role.
+// Callers a role can hold.
 const (
 	// MemberSelf is the user running the agent.
 	MemberSelf = "self"
@@ -44,35 +50,35 @@ const (
 	MemberEmailPrefix = "email:"
 )
 
-// Policy gives the authenticated and anonymous roles a list of members, as
-// an Agent Mesh binding does. The owner role holds only the user running the
+// Policy gives the member and guest roles a list of the callers they hold,
+// as an Agent Mesh binding does. The owner role holds only the user running the
 // agent and owner pairings.
 type Policy struct {
-	Authenticated []string
-	Anonymous     []string
+	Members []string
+	Guests  []string
 }
 
 // Resolve returns the role of an identity, or "" if the policy refuses it:
 //
 //  1. the highest role it matches, across the bindings and its pairing;
-//  2. at most authenticated through another agent;
-//  3. anonymous for an identified caller that matches nothing, if anonymous
-//     has members.
+//  2. at most member through another agent;
+//  3. guest for an identified caller that matches nothing, if guest holds
+//     anyone.
 func (p Policy) Resolve(id Identity) string {
 	role := ""
 	switch {
 	case matches(MemberSelf, id) || id.PairingRole == RoleOwner:
 		role = RoleOwner
-	case matchesAny(p.Authenticated, id) || id.PairingRole == RoleAuthenticated || id.WebhookNode != "":
-		role = RoleAuthenticated
-	case matchesAny(p.Anonymous, id):
-		role = RoleAnonymous
+	case matchesAny(p.Members, id) || id.PairingRole == RoleMember || id.WebhookNode != "":
+		role = RoleMember
+	case matchesAny(p.Guests, id):
+		role = RoleGuest
 	}
 	if role == RoleOwner && id.Hops > 0 {
-		role = RoleAuthenticated
+		role = RoleMember
 	}
-	if role == "" && id.identified() && len(p.Anonymous) > 0 {
-		role = RoleAnonymous
+	if role == "" && id.identified() && len(p.Guests) > 0 {
+		role = RoleGuest
 	}
 	return role
 }
@@ -80,7 +86,7 @@ func (p Policy) Resolve(id Identity) string {
 // AllowsSignIn reports whether one of the policy's email members matches
 // a Google sign-in of email, with domain its Workspace domain or empty.
 func (p Policy) AllowsSignIn(email, domain string) bool {
-	for _, m := range slices.Concat(p.Authenticated, p.Anonymous) {
+	for _, m := range slices.Concat(p.Members, p.Guests) {
 		if pattern, ok := strings.CutPrefix(m, MemberEmailPrefix); ok && EmailMatches(pattern, email, domain) {
 			return true
 		}
@@ -160,7 +166,7 @@ func (p Policy) Others(provider string, public, chat bool) []string {
 			}
 		}
 	}
-	add(p.Authenticated)
-	add(p.Anonymous)
+	add(p.Members)
+	add(p.Guests)
 	return out
 }

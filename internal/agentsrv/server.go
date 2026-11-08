@@ -173,12 +173,12 @@ type Server struct {
 	ads       *gossip.Table
 	backups   backups
 	inspector *inspector.Inspector
-	// split runs the conversations of anonymous callers and of each
-	// authenticated user in their own agent processes, which keys tell,
-	// and budget limits the tasks of anonymous callers.
+	// split runs the conversations of guests and of each member in their
+	// own agent processes, which keys tell, and budget limits the tasks of
+	// guests.
 	split  *splitExecutor
 	keys   *agentKeys
-	budget *anonymousBudget
+	budget *guestBudget
 	// notes are the notes on tool calls for the results of tasks.
 	notes *toolNotes
 	// decider answers tool permissions without asking.
@@ -195,10 +195,10 @@ type Server struct {
 	unattended *chat.ContextSet
 	// ends does what follows the end of a task's execution.
 	ends *taskEnds
-	// users are the agent processes of users that run now, and anonymous
-	// the one of anonymous callers.
-	users     userAgents
-	anonymous userAgents
+	// users are the agent processes of members that run now, and guests
+	// the one of guests.
+	users  userAgents
+	guests userAgents
 	// sandboxes tell what the container of each agent key gets, and
 	// mainSandbox what the owner's container got when it started.
 	sandboxes   *sandboxes
@@ -468,23 +468,23 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		Supervisor: s.supervisor,
 		Bus:        s.bus,
 		Config:     s.rt.Config,
-		Anonymous:  s.keys.anonymous,
+		Guest:      s.keys.guest,
 		Timings:    s.timings.chat(),
 	})
 	s.unattended = &chat.ContextSet{}
 	posted := &chat.PostedTurns{}
 	s.sender, s.handler = bindHandler(func(sender *handlerSender) a2asrv.RequestHandler {
 		s.approvals = approvals.New(approvals.Deps{
-			Records:          records,
-			Sender:           sender,
-			Notifier:         s.chatApprovals,
-			Remote:           s.clients,
-			Unattended:       s.unattended.Has,
-			Anonymous:        s.keys.anonymous,
-			AnonymousTimeout: s.timings.AnonymousQuestionTimeout,
-			User:             s.keys.user,
-			UserTimeout:      s.timings.UserQuestionTimeout,
-			Config:           s.rt.Config,
+			Records:      records,
+			Sender:       sender,
+			Notifier:     s.chatApprovals,
+			Remote:       s.clients,
+			Unattended:   s.unattended.Has,
+			Guest:        s.keys.guest,
+			GuestTimeout: s.timings.GuestQuestionTimeout,
+			User:         s.keys.user,
+			UserTimeout:  s.timings.UserQuestionTimeout,
+			Config:       s.rt.Config,
 		})
 		s.ends = newTaskEnds(s.bus, s.approvals, s.unattended)
 		s.pairings = pairings.New(pairings.Deps{
@@ -570,7 +570,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	return nil
 }
 
-// buildExecutor starts the harness, and the executor which runs anonymous
+// buildExecutor starts the harness, and the executor which runs guests'
 // conversations in their own agent process.
 func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options) error {
 	exec := opts.Executor
@@ -586,7 +586,7 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 		closers.push(closeACP)
 		exec = acp
 	}
-	s.budget = newAnonymousBudget()
+	s.budget = newGuestBudget()
 	var start startPool
 	if opts.Executor == nil {
 		start = s.poolStarter(opts.HarnessLog)
@@ -602,12 +602,12 @@ func (s *Server) buildExecutor(ctx context.Context, closers *stack, opts Options
 	return nil
 }
 
-// poolStarter starts the agent processes of anonymous callers in one pool,
-// and those of authenticated users in another.
+// poolStarter starts the agent processes of guests in one pool,
+// and those of members in another.
 func (s *Server) poolStarter(harnessLog io.Writer) startPool {
 	return func(ctx context.Context, pool string) (a2asrv.AgentExecutor, func(context.Context) error, error) {
-		if pool == anonymousPool {
-			return s.newAnonymousExecutor(ctx, harnessLog)
+		if pool == guestPool {
+			return s.newGuestExecutor(ctx, harnessLog)
 		}
 		return s.newUsersExecutor(ctx, harnessLog)
 	}
@@ -862,8 +862,8 @@ func (s *Server) printSummary(ctx context.Context, ownerErr error) error {
 			label = "          "
 		}
 	}
-	if a.AnonymousNote != "" {
-		s.logf("! %s", a.AnonymousNote)
+	if a.GuestNote != "" {
+		s.logf("! %s", a.GuestNote)
 	}
 	for _, note := range s.sandboxNotes(a.SandboxNotes) {
 		if note != access.LocalSandboxNote || noSandbox == "" {

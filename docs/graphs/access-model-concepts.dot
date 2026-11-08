@@ -12,7 +12,7 @@ digraph concepts {
     Pairing [label="Pairing\n(trusted)", fillcolor="#fdf1e6", color="#e0b48a"];
   }
   Identity [fillcolor="#f4f4f4"];
-  Policy   [label="Policy\n(owner, authenticated,\nanonymous)", fillcolor="#e3f4e3", color="#9ccc9c"];
+  Policy   [label="Policy\n(owner, member, guest)", fillcolor="#e3f4e3", color="#9ccc9c"];
   Agent    [fillcolor="#f3eefb", color="#b9a4dd"];
   Contact  [label="Contact\n(untrusted)", shape=ellipse, fillcolor="#e3f4e3"];
 

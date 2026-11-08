@@ -26,8 +26,8 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **The owner role works over a linked email without an opt-in** (from #86). Email identity proves only the domain; the owner links the address on purpose. At most this needs a note in the docs.
 - **The sandbox reaches the tailnet as the user's device** (from #86 and #354). Its connections leave through the host's Tailscale node, so this agent and the user's other agents give it the owner role. The private network is a network of the user's trusted devices. The fix belongs in the sandbox, which #17 cuts off from the tailnet and the LAN. A fix in the receiving agent takes the owner role away from the user's machines that run agents and breaks the examples, so #371 was reverted.
 - **A process on one of the user's own tailnet devices acts as the owner.** The access model trusts the user's devices. A compromised device is out of scope.
-- **Tailnet members get the authenticated role by default, so they run tools and approve their own tool calls.** Setup on a trusted network takes no extra steps. `--private-allow-incoming paired` and `--deny-tools` narrow it.
-- **Defaults give trusted callers broad access** (from #355). Pairings and private-network members get what the owner's agent gets unless a rule narrows it. Only anonymous callers start narrowed. Ease of setup outweighs least privilege for callers the owner chose.
+- **Tailnet members get the member role by default, so they run tools and approve their own tool calls.** Setup on a trusted network takes no extra steps. `--private-allow-incoming paired` and `--deny-tools` narrow it.
+- **Defaults give trusted callers broad access** (from #355). Pairings and private-network members get what the owner's agent gets unless a rule narrows it. Only guests start narrowed. Ease of setup outweighs least privilege for callers the owner chose.
 - **Values passed with `--secret` are readable inside the sandbox.** The docs say so, and #16 tracks keeping model keys on the server.
 - **With `--sandbox local`, secrets and storage rules don't confine the agent.** Local mode runs the agent on the host as the user, and the docs say so. At most the output needs to say that a rule doesn't apply there.
 - **Many callers with private workspace copies can fill the disk** (from #355). Sizing the shared directory and the disk is the owner's job. The copy cap and its error are enough.
@@ -59,6 +59,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **`restart`, `config set --restart` and `config unset --restart` all restart the agent.** The flags apply a change and restart in one step, and each form is documented.
 - **A2A request bodies have a 30-second idle timeout and no total read deadline.** #115 chose this.
 - **`card-skills` can be set only with `config edit`, and `config unset` can clear it.** `docs/reference/configuration.md` documents this.
+- **The guests' home directory and stored IDs keep the name `anonymous`** (from the role rename: `state/home-anonymous`, `auth.GuestID`, `agentkey.Guest`). Tasks, conversations, ACP sessions and existing agent directories store them. Renaming them needs a migration of each and changes no behavior.
 
 ### User simulation
 
