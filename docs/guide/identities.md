@@ -6,7 +6,7 @@ The server recognizes each caller and gives it one of three roles: owner, member
 
 - **Owner**: you. Your local token, your own devices on the private network and your linked chat accounts are owners. Pairings made with `--owner` add more owners. Owners see every task and answer every approval.
 - **Member**: a caller you let in. Other pairings, everyone else on the private network, people whose email matches `--allow-email` and webhook nodes are members. Members start tasks, and see and approve their own.
-- **Guest**: a caller nobody vouched for. With `--public-allow-incoming anyone`, anyone on the public URL and strangers in direct chats are guests. A guest may carry an identity, such as a chat account, that nobody vouched for. Guests start tasks in their own conversation and never answer approvals ([more](#guests)).
+- **Guest**: a caller nobody vouched for. With `--public-allow-incoming anyone`, anyone on the public URL and strangers in direct chats are guests. A guest in a direct chat has a chat account, but nobody linked it to a pairing or allowed it. Guests start tasks in their own conversation and never answer approvals. See [Guests](#guests).
 
 `a2a-serve status` says who can call right now:
 

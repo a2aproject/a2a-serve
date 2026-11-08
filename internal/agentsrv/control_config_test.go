@@ -115,7 +115,7 @@ func TestStatusAccess(t *testing.T) {
 		Summary: []string{
 			"you: this machine and your tailnet devices",
 			"everyone on the tailnet, emails matching *@example.com, anyone on the public URL, 1 pairing (1 owner)",
-			"the public URL is open to anyone",
+			"the public URL is open to anyone, as guests",
 		},
 		SandboxNotes: []string{
 			"the agent runs without the Docker sandbox: storage rules don't apply, and a caller's agent can read the secrets that rules keep out of its environment in .a2a/state/secrets",

@@ -9,8 +9,8 @@ a `side`: `invited` for a pairing of the agent, `joined` for an agent you joined
 object with the same schema whether the agent runs or not: `running` is
 always set, and the fields of the running server, such as `pid` and `local`,
 only while it runs. Its `access` object says who may call: `privateAllowIncoming`
-and `publicAllowIncoming` as in force, the members of the `owner`, `member`
-and `guest` roles ([roles](../guide/identities.md#roles)), the counts of `pairings` and `ownerPairings`,
+and `publicAllowIncoming` as in force, the callers each of the `owner`, `member`
+and `guest` [roles](../guide/identities.md#roles) holds, the counts of `pairings` and `ownerPairings`,
 `others` who may call without a pairing, and the `summary` lines `status`
 prints. With sandbox rules or guests, it adds the `sandbox` lines
 of what each kind of caller's agent container gets, `sandboxNotes` such as
@@ -37,7 +37,7 @@ that makes you its owner, until you link an account. Progress lines of `restart`
 `-o json`. `config show` prints an invalid config with the reason in `invalid`, and exits 1. Commands that
 only print text, `start`, `logs`, `config edit`, `completion` and `help`, reject `-o`.
 
-The role names `member` and `guest` are planned for the next release. Earlier versions write `authenticated` and `anonymous` in the `role` of `pair get` and `pair list` and in the role keys of `access`.
+The role names `member` and `guest` are planned for the next release. Earlier versions call the member role `authenticated` and the guest role `anonymous`. They write `authenticated` in the `role` of the pairings that `pair get`, `pair list`, `pair invite` and `pair set` print, and they name the keys of `access` `authenticated` and `anonymous`. Their `sandbox` lines say `other callers` for members that no rule matches. A script that talks to agents of both versions needs to accept both names.
 
 Commands that call the running agent take `--timeout`, the timeout of each
 call (default 60s); the `mailbox` commands take their own, with a default of 30s. The `backup` commands take `--deadline`, the time limit of

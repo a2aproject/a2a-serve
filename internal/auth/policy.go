@@ -38,7 +38,7 @@ const (
 	RoleGuest = "guest"
 )
 
-// Members of a role.
+// Callers a role can hold.
 const (
 	// MemberSelf is the user running the agent.
 	MemberSelf = "self"
@@ -50,8 +50,8 @@ const (
 	MemberEmailPrefix = "email:"
 )
 
-// Policy gives the member and guest roles a list of members, as an Agent
-// Mesh binding does. The owner role holds only the user running the
+// Policy gives the member and guest roles a list of the callers they hold,
+// as an Agent Mesh binding does. The owner role holds only the user running the
 // agent and owner pairings.
 type Policy struct {
 	Members []string
@@ -62,14 +62,14 @@ type Policy struct {
 //
 //  1. the highest role it matches, across the bindings and its pairing;
 //  2. at most member through another agent;
-//  3. guest for an identified caller that matches nothing, if guest has
-//     members.
+//  3. guest for an identified caller that matches nothing, if guest holds
+//     anyone.
 func (p Policy) Resolve(id Identity) string {
 	role := ""
 	switch {
 	case matches(MemberSelf, id) || id.PairingRole == RoleOwner:
 		role = RoleOwner
-	case matchesAny(p.Members, id) || id.PairingRole != "" || id.WebhookNode != "":
+	case matchesAny(p.Members, id) || id.PairingRole == RoleMember || id.WebhookNode != "":
 		role = RoleMember
 	case matchesAny(p.Guests, id):
 		role = RoleGuest

@@ -27,14 +27,14 @@ Without sandbox rules:
 - your container and the containers of members get the shared workspace and every `--secret` value;
 - the container of guests gets a read-only workspace and no secrets.
 
-Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. "Members" in the output are the members whom no rule matches; they get the default.
+Sandbox rules set what chosen callers get, such as a read-only workspace for a pairing, or a key of their own for guests. The `members` line, or `other members` after rule lines, covers the members that no rule matches. They get the default.
 
 `a2a-serve status` shows what each kind of caller gets:
 
 ```
   sandbox  you: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
            emails matching *@example.com: own copy of the workspace, secrets ANTHROPIC_API_KEY
-           members: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
+           other members: shared workspace, secrets ANTHROPIC_API_KEY, GITHUB_TOKEN, GUEST_ANTHROPIC_KEY
            guests: read-only workspace, no secrets
 ```
 

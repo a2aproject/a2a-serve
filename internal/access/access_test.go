@@ -127,7 +127,7 @@ func TestDescribe(t *testing.T) {
 					"you: this machine and your tailnet devices",
 					"anyone on the public URL, 1 pairing",
 					"the tailnet needs a pairing",
-					"the public URL is open to anyone",
+					"the public URL is open to anyone, as guests",
 				},
 			},
 		},

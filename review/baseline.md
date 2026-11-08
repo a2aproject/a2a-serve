@@ -59,6 +59,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **`restart`, `config set --restart` and `config unset --restart` all restart the agent.** The flags apply a change and restart in one step, and each form is documented.
 - **A2A request bodies have a 30-second idle timeout and no total read deadline.** #115 chose this.
 - **`card-skills` can be set only with `config edit`, and `config unset` can clear it.** `docs/reference/configuration.md` documents this.
+- **The guests' home directory and stored IDs keep the name `anonymous`** (from the role rename: `state/home-anonymous`, `auth.GuestID`, `agentkey.Guest`). Tasks, conversations, ACP sessions and existing agent directories store them. Renaming them needs a migration of each and changes no behavior.
 
 ### User simulation
 

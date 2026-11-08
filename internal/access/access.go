@@ -111,7 +111,7 @@ type Description struct {
 	// PublicAllowIncoming is paired or anyone, set with a public URL.
 	PrivateAllowIncoming string
 	PublicAllowIncoming  string
-	// Owner, Member and Guest are the members of each role.
+	// Owner, Member and Guest are the callers each role holds.
 	Owner  []string
 	Member []string
 	Guest  []string
@@ -229,7 +229,7 @@ func Describe(p agentdir.PolicyConfig, net Network, n Pairings) *Description {
 	switch {
 	case !net.Public:
 	case a.PublicAllowIncoming == agentdir.AccessAnyone:
-		a.Summary = append(a.Summary, "the public URL is open to anyone")
+		a.Summary = append(a.Summary, "the public URL is open to anyone, as guests")
 	case len(p.AllowEmails) > 0:
 		a.Summary = append(a.Summary, "the public URL needs a pairing or Google sign-in")
 	default:

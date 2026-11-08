@@ -101,7 +101,7 @@ type Access struct {
 	// PublicAllowIncoming is paired or anyone, set with a public URL.
 	PrivateAllowIncoming string `json:"privateAllowIncoming,omitempty"`
 	PublicAllowIncoming  string `json:"publicAllowIncoming,omitempty"`
-	// Owner, Member and Guest are the members of each role.
+	// Owner, Member and Guest are the callers each role holds.
 	Owner  []string `json:"owner"`
 	Member []string `json:"member"`
 	Guest  []string `json:"guest"`

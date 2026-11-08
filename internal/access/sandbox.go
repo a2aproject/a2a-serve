@@ -366,16 +366,23 @@ func (sp SandboxPolicy) SandboxLines(ownerPairings int, guests, private bool) []
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, SandboxLine{Who: Members, Sandbox: other})
+	members := Members
+	if len(lines) > 1 {
+		members = OtherMembers
+	}
+	lines = append(lines, SandboxLine{Who: members, Sandbox: other})
 	if guests {
 		lines = append(lines, SandboxLine{Who: Guests, Sandbox: sp.Resolve(auth.Principal{Role: auth.RoleGuest}), Guest: true})
 	}
 	return lines
 }
 
-// Members names the members whom no rule matches in the lines, who get
-// the default.
-const Members = "members"
+// Members and OtherMembers name the members whom no rule matches in the
+// lines, who get the default: OtherMembers when lines of rules precede.
+const (
+	Members      = "members"
+	OtherMembers = "other members"
+)
 
 // Guests names the guests in the lines.
 const Guests = "guests"

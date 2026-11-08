@@ -144,7 +144,7 @@ Every request yields one identity: verified claims, and where each came from.
 
 ### Policy
 
-The policy binds each role to a list of callers, as an Agent Mesh binding does. The `owner` role holds only `self`; owner pairings add other owners.
+The policy gives each role a list of the callers it holds, as an Agent Mesh binding does. The `owner` role holds only `self`; owner pairings add other owners. With the default settings, the roles hold these lists:
 
 ```yaml
 owner: [self]
@@ -160,15 +160,15 @@ guest: []
 | `--allow-email P` | adds `email:P` to `member` |
 | `pair invite --owner` | the pairing's role is `owner` |
 
-A binding lists `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>`. The sandbox matcher for the callers with the guest role is `guests` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
+A role's list can hold `self`, `private`, `email:<address>`, `email:*@<domain>` and `anyone`. Sandbox rules match callers with the same names and `pairing:<name>`. The sandbox matcher for the callers with the guest role is `guests` ([sandbox rules](../reference/configuration.md#sandbox-rules)). Domain wildcards match Google Workspace sign-in and mail that passes DMARC, which prove the domain. Emails from the tailnet or a relay match full addresses only, because those networks can't tell a company account from a personal account at the same domain.
 
-`config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting bindings in [`access`](../reference/output.md).
+`config.yaml` keeps the flags under [`policy:`](../reference/configuration.md), and `a2a-serve status -o json` shows the resulting lists in [`access`](../reference/output.md).
 
 A request is resolved in this order:
 
-1. It gets the highest role it matches, across the bindings and its pairing.
+1. It gets the highest role whose list it matches, or its pairing's role if that is higher.
 2. A request via another agent gets at most `member`.
-3. An identified caller that matches nothing gets `guest`, if `guest` binds anyone.
+3. An identified caller that matches nothing gets `guest`, if the `guest` list isn't empty.
 4. Anyone else is rejected.
 
 ### Pairings

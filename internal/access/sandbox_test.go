@@ -138,13 +138,13 @@ func TestDescribeConfigSandbox(t *testing.T) {
 			wantLines: []string{
 				"you and owner pairings: shared workspace, secrets KEY, GUEST",
 				"the pairing ben, emails matching *@example.com: own copy of the workspace, secrets GUEST",
-				"members: shared workspace, secrets KEY, GUEST",
+				"other members: shared workspace, secrets KEY, GUEST",
 			},
 		},
 		{
 			name: "pairing without its model key", pairings: Pairings{All: 1},
 			cfg:       gemini(agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}}),
-			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "members: shared workspace, secrets GEMINI_API_KEY", "guests: read-only workspace, no secrets"},
+			wantLines: []string{"you: shared workspace, secrets GEMINI_API_KEY", "the pairing ben: shared workspace, no secrets", "other members: shared workspace, secrets GEMINI_API_KEY", "guests: read-only workspace, no secrets"},
 			wantNotes: []string{"ben's agent gets no Google key and can't reach its model. Give one with `a2a-serve pair set ben --secrets GEMINI_API_KEY`, or a key of its own with `--secrets GEMINI_API_KEY=secret:<STORED_KEY>`."},
 			wantGuest: "Guests' agent gets no Google key and can't reach its model. Give it a key of its own with `a2a-serve config set --secret GUEST_KEY --guest-secrets GEMINI_API_KEY=secret:GUEST_KEY --restart`, or share yours with `a2a-serve config set --guest-secrets GEMINI_API_KEY`.",
 		},
@@ -163,12 +163,12 @@ func TestDescribeConfigSandbox(t *testing.T) {
 				{Match: []string{"private"}, Storage: agentdir.StorageReadOnly},
 				{Match: []string{"pairing:ben", "private"}, Secrets: []string{"none"}},
 			}}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben: shared workspace, no secrets", "members: shared workspace, secrets KEY"},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben: shared workspace, no secrets", "other members: shared workspace, secrets KEY"},
 		},
 		{
 			name: "rule of an unknown pairing", pairings: Pairings{All: 1, Names: map[string]bool{"ben": true}},
 			cfg:       &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"pairing:ben", "pairing:nobody"}, Storage: agentdir.StorageReadOnly}}}},
-			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben, the pairing nobody: read-only workspace, secrets KEY", "members: shared workspace, secrets KEY"},
+			wantLines: []string{"you: shared workspace, secrets KEY", "the pairing ben, the pairing nobody: read-only workspace, secrets KEY", "other members: shared workspace, secrets KEY"},
 			wantNotes: []string{"no pairing or webhook node is named nobody, so the sandbox rule of pairing:nobody matches no caller"},
 		},
 		{
