@@ -161,7 +161,7 @@ func TestDecideEgress(t *testing.T) {
 		{name: "relay image to pull", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) {
 			e.ForceRelay = true
 			e.RelayImage = func() error { return &missingRelayImage{image: "img", pull: true} }
-		}), boundary: true, warning: "the egress container's image img isn't on this machine; the next start pulls it"},
+		}), boundary: true, warning: "the egress container's image img isn't on this machine"},
 		{name: "relay image unknown", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) {
 			e.ForceRelay = true
 			e.RelayImage = func() error { return errors.New("no commit") }
@@ -221,15 +221,16 @@ func TestRelayImageRef(t *testing.T) {
 func TestCheckRelayImage(t *testing.T) {
 	t.Setenv(EnvRelayImage, "example.com/egress:test")
 	tests := []struct {
-		name    string
-		have    []string
-		pull    bool
-		wantErr string
+		name        string
+		have        []string
+		pull        bool
+		wantErr     string
+		wantMissing bool
 	}{
 		{name: "on this machine", have: []string{"image"}},
-		{name: "missing", wantErr: "isn't on this machine; the next start pulls it, or builds it"},
+		{name: "missing", wantErr: "isn't on this machine; the next start of the agent's container pulls it", wantMissing: true},
 		{name: "in the registry", have: []string{"manifest"}, pull: true},
-		{name: "nowhere", pull: true, wantErr: "is neither on this machine nor in the registry; the next start builds it"},
+		{name: "nowhere", pull: true, wantErr: "is neither on this machine nor in the registry"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -242,6 +243,73 @@ func TestCheckRelayImage(t *testing.T) {
 			err := CheckRelayImage(context.Background(), run, tc.pull)
 			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("CheckRelayImage() error = %v, want %q", err, tc.wantErr)
+			}
+			var missing *missingRelayImage
+			if got := errors.As(err, &missing); got != tc.wantMissing {
+				t.Fatalf("CheckRelayImage() error is missingRelayImage = %v, want %v", got, tc.wantMissing)
+			}
+		})
+	}
+}
+
+func TestMissingRelayImage(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		missing missingRelayImage
+		want    string
+	}{
+		{name: "pull or build", missing: missingRelayImage{image: "img", pull: true, build: true}, want: "the egress container's image img isn't on this machine; the next start of the agent's container pulls it, or builds it from the a2a-serve repository"},
+		{name: "pull only", missing: missingRelayImage{image: "img", pull: true}, want: "the egress container's image img isn't on this machine; the next start of the agent's container pulls it"},
+		{name: "build", missing: missingRelayImage{image: "img", build: true}, want: "the egress container's image img is neither on this machine nor in the registry; the next start of the agent's container builds it from the a2a-serve repository, which takes a few minutes"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := tc.missing.Error(); got != tc.want {
+				t.Fatalf("missingRelayImage.Error() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// noRelayPullDocker has no images and can't pull, but builds.
+const noRelayPullDocker = `case "$1" in
+build) ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+
+func TestEnsureRelayImageBuilds(t *testing.T) {
+	full := "f871ae2e3f61aa00bb11cc22dd33ee44ff556677"
+	resolve := func(_ context.Context, short string) (string, error) {
+		if !strings.HasPrefix(full, short) {
+			return "", fmt.Errorf("unknown commit %s", short)
+		}
+		return full, nil
+	}
+	tests := []struct {
+		name      string
+		ref       string
+		wantBuild string
+	}{
+		{name: "release", ref: "v0.2.0", wantBuild: "--build-arg VERSION=0.2.0 " + relaySource + "#v0.2.0"},
+		{name: "work tree", ref: full, wantBuild: "--build-arg VERSION=" + full + " " + relaySource + "#" + full},
+		{name: "go install of a commit", ref: "f871ae2e3f61", wantBuild: "--build-arg VERSION=" + full + " " + relaySource + "#" + full},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			log := fakeDocker(t, noRelayPullDocker)
+			if _, err := ensureRelayImage(context.Background(), io.Discard, "example.com/egress:test", tc.ref, resolve); err != nil {
+				t.Fatalf("ensureRelayImage() error = %v", err)
+			}
+			calls, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatalf("os.ReadFile() error = %v", err)
+			}
+			want := "build -t example.com/egress:test -f " + relayDockerfile + " " + tc.wantBuild
+			if !strings.Contains(string(calls), want) {
+				t.Fatalf("ensureRelayImage() docker calls = %q, want them to contain %q", calls, want)
 			}
 		})
 	}

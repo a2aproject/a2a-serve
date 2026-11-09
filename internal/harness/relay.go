@@ -109,36 +109,45 @@ func thisRelayImage() (image, ref string, err error) {
 }
 
 // CheckRelayImage checks that the relay image of this a2a-serve is on
-// this machine, or with pull that it can be pulled.
+// this machine, or with pull that it can be pulled. An image that the next
+// start of a container can pull or build is a [missingRelayImage].
 func CheckRelayImage(ctx context.Context, run func(ctx context.Context, name string, args ...string) ([]byte, error), pull bool) error {
-	image, _, err := thisRelayImage()
+	image, ref, err := thisRelayImage()
 	if err != nil {
 		return err
 	}
 	if _, err := run(ctx, "docker", "image", "inspect", "--format", "{{.Id}}", image); err == nil {
 		return nil
 	}
-	if !pull {
-		return &missingRelayImage{image: image, pull: true}
+	missing := &missingRelayImage{image: image, pull: !pull, build: ref != ""}
+	if pull {
+		if _, err := run(ctx, "docker", "manifest", "inspect", image); err == nil {
+			return nil
+		}
+		if ref == "" {
+			return fmt.Errorf("the egress container's image %s is neither on this machine nor in the registry", image)
+		}
 	}
-	if _, err := run(ctx, "docker", "manifest", "inspect", image); err == nil {
-		return nil
-	}
-	return &missingRelayImage{image: image}
+	return missing
 }
 
-// missingRelayImage is a relay image that the next start pulls, or builds
-// when it isn't in the registry.
+// missingRelayImage is a relay image that isn't on this machine, which the
+// next start of a container pulls, when pull is set, or builds, when build
+// is set.
 type missingRelayImage struct {
-	image string
-	pull  bool
+	image       string
+	pull, build bool
 }
 
 func (e *missingRelayImage) Error() string {
-	if e.pull {
-		return fmt.Sprintf("the egress container's image %s isn't on this machine; the next start pulls it, or builds it from the a2a-serve repository", e.image)
+	const next = "the next start of the agent's container"
+	switch {
+	case e.pull && e.build:
+		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it, or builds it from the a2a-serve repository", e.image, next)
+	case e.pull:
+		return fmt.Sprintf("the egress container's image %s isn't on this machine; %s pulls it", e.image, next)
 	}
-	return fmt.Sprintf("the egress container's image %s is neither on this machine nor in the registry; the next start builds it from the a2a-serve repository, which takes a few minutes", e.image)
+	return fmt.Sprintf("the egress container's image %s is neither on this machine nor in the registry; %s builds it from the a2a-serve repository, which takes a few minutes", e.image, next)
 }
 
 // EnsureRelayImage makes the relay image of this a2a-serve available: it
@@ -149,6 +158,15 @@ func EnsureRelayImage(ctx context.Context, log io.Writer) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	resolve := func(ctx context.Context, short string) (string, error) {
+		return resolveCommit(ctx, http.DefaultClient, relayCommits, short)
+	}
+	return ensureRelayImage(ctx, log, image, ref, resolve)
+}
+
+// ensureRelayImage makes image available, building it from the git ref
+// when it can't be pulled. resolve returns the full commit of a short one.
+func ensureRelayImage(ctx context.Context, log io.Writer, image, ref string, resolve func(ctx context.Context, short string) (string, error)) (string, error) {
 	if imageExists(ctx, image) {
 		return image, nil
 	}
@@ -160,7 +178,7 @@ func EnsureRelayImage(ctx context.Context, log io.Writer) (string, error) {
 		return "", fmt.Errorf("docker pull %s: %s", image, firstLine(pullErr.Error()))
 	}
 	if !releaseVersion.MatchString(ref) && !fullCommit.MatchString(ref) {
-		full, err := resolveCommit(ctx, http.DefaultClient, relayCommits, ref)
+		full, err := resolve(ctx, ref)
 		if err != nil {
 			return "", fmt.Errorf("docker pull %s failed (%s), and finding the commit %s to build it from failed: %w", image, firstLine(pullErr.Error()), ref, err)
 		}
