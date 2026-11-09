@@ -166,6 +166,18 @@ func TestCheckServeBinaryMissingFix(t *testing.T) {
 	}
 }
 
+func TestCheckRelayWithoutAgentMeshFix(t *testing.T) {
+	t.Parallel()
+	if network.AgentMeshBuilt {
+		t.Skip("this build has Agent Mesh")
+	}
+	cfg := &agentdir.Config{Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}}
+	got := checkRelay(context.Background(), newFakeMachine(t).Env(), cfg, false)
+	if want := "CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"; len(got) != 1 || got[0].Fix != want {
+		t.Fatalf("checkRelay() = %+v, want one result with the fix %q", got, want)
+	}
+}
+
 var healthyCLI = []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusOK}}
 
 func TestCLIChecks(t *testing.T) {
