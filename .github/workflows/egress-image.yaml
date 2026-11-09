@@ -1,0 +1,57 @@
+# Publishes the egress container image that a2a-serve runs next to each agent's
+# container on Docker Desktop, ghcr.io/a2aproject/a2a-serve:<version>. Without
+# it every first start on Docker Desktop builds the image locally.
+name: Egress image
+
+on:
+  push:
+    tags: [ "v[0-9]+.[0-9]+.[0-9]+" ]
+  pull_request:
+    paths:
+      - 'internal/sandboxnet/Dockerfile'
+      - '.github/workflows/egress-image.yaml'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, such as v0.1.0
+        required: true
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ inputs.tag || github.ref }}
+
+    - name: Build
+      if: github.event_name == 'pull_request'
+      run: docker build -t egress -f internal/sandboxnet/Dockerfile .
+
+    - name: Check the image runs the relay and the launcher
+      if: github.event_name == 'pull_request'
+      run: |
+        docker run --rm egress version
+        docker run --rm egress sandbox-relay --help >/dev/null
+
+    - name: Build and push
+      if: github.event_name != 'pull_request'
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/a2a-serve
+        TOKEN: ${{ github.token }}
+      run: |
+        set -eu
+        case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "not a release tag: $TAG" >&2; exit 1 ;; esac
+        printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        docker run --privileged --rm tonistiigi/binfmt --install arm64
+        docker buildx create --use
+        docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg "VERSION=${TAG#v}" \
+          -t "$IMAGE:$TAG" \
+          -f internal/sandboxnet/Dockerfile .

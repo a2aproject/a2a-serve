@@ -18,9 +18,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"slices"
 	"strings"
 	"testing"
 
@@ -154,6 +158,14 @@ func TestDecideEgress(t *testing.T) {
 		{name: "image for another architecture", env: with(func(e *EgressEnv) { e.ImageArch = "s390x" }), warning: "the agent's image is for s390x"},
 		{name: "docker desktop", env: with(func(e *EgressEnv) { e.GOOS = "darwin"; e.Launcher = noLauncher; e.TUN = fail }), boundary: true},
 		{name: "forced relay", env: with(func(e *EgressEnv) { e.ForceRelay = true; e.Launcher = noLauncher }), boundary: true},
+		{name: "relay image to pull", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) {
+			e.ForceRelay = true
+			e.RelayImage = func() error { return &missingRelayImage{image: "img", pull: true} }
+		}), boundary: true, warning: "the egress container's image img isn't on this machine; the next start pulls it"},
+		{name: "relay image unknown", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) {
+			e.ForceRelay = true
+			e.RelayImage = func() error { return errors.New("no commit") }
+		}), warning: "--egress allowlist can't apply: no commit"},
 		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--egress allowlist can't apply: no launcher"},
 		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
 		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
@@ -201,6 +213,78 @@ func TestRelayImageRef(t *testing.T) {
 			}
 			if err != nil || image != tc.wantImage || ref != tc.wantRef {
 				t.Fatalf("relayImageRef() = %q, %q, %v, want %q, %q", image, ref, err, tc.wantImage, tc.wantRef)
+			}
+		})
+	}
+}
+
+func TestCheckRelayImage(t *testing.T) {
+	t.Setenv(EnvRelayImage, "example.com/egress:test")
+	tests := []struct {
+		name    string
+		have    []string
+		pull    bool
+		wantErr string
+	}{
+		{name: "on this machine", have: []string{"image"}},
+		{name: "missing", wantErr: "isn't on this machine; the next start pulls it, or builds it"},
+		{name: "in the registry", have: []string{"manifest"}, pull: true},
+		{name: "nowhere", pull: true, wantErr: "is neither on this machine nor in the registry; the next start builds it"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			run := func(_ context.Context, _ string, args ...string) ([]byte, error) {
+				if slices.Contains(tc.have, args[0]) {
+					return nil, nil
+				}
+				return nil, errors.New("not found")
+			}
+			err := CheckRelayImage(context.Background(), run, tc.pull)
+			if tc.wantErr == "" && err != nil || tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("CheckRelayImage() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestResolveCommit(t *testing.T) {
+	t.Parallel()
+	full := "f871ae2e3f61aa00bb11cc22dd33ee44ff556677"
+	tests := []struct {
+		name    string
+		status  int
+		body    string
+		want    string
+		wantErr string
+	}{
+		{name: "found", status: http.StatusOK, body: full + "\n", want: full},
+		{name: "unknown", status: http.StatusUnprocessableEntity, body: `{"message":"No commit found"}`, wantErr: "422"},
+		{name: "another commit", status: http.StatusOK, body: "0000000000000000000000000000000000000000", wantErr: "isn't the commit"},
+		{name: "not a commit", status: http.StatusOK, body: "<html>", wantErr: "isn't the commit"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/commits/f871ae2e3f61" || r.Header.Get("Accept") != "application/vnd.github.sha" {
+					http.NotFound(w, r)
+					return
+				}
+				w.WriteHeader(tc.status)
+				if _, err := io.WriteString(w, tc.body); err != nil {
+					t.Errorf("writing the response: %v", err)
+				}
+			}))
+			t.Cleanup(srv.Close)
+			got, err := resolveCommit(context.Background(), srv.Client(), srv.URL+"/commits/", "f871ae2e3f61")
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("resolveCommit() error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil || got != tc.want {
+				t.Fatalf("resolveCommit() = %q, %v, want %q", got, err, tc.want)
 			}
 		})
 	}

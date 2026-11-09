@@ -496,6 +496,8 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 	}
 	env := HostEgressEnv()
 	env.ImageArch = cmp.Or(arch, "an unknown CPU architecture")
+	// relayEgress pulls or builds a missing relay image.
+	env.RelayImage = nil
 	if spec.Launcher != "" {
 		env.Launcher = func() (string, error) { return CheckLauncher(spec.Launcher) }
 	}

@@ -19,6 +19,7 @@ import (
 	"debug/buildinfo"
 	"debug/elf"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -130,7 +131,8 @@ type EgressEnv struct {
 	// ForceRelay gives Linux containers a relay as with Docker Desktop.
 	ForceRelay bool
 	// RelayImage checks the image of the relay containers, as
-	// [CheckRelayImage] does; nil skips the check.
+	// [CheckRelayImage] does; nil skips the check. A missing image is a
+	// warning, since the next start pulls or builds it.
 	RelayImage func() error
 }
 
@@ -171,16 +173,20 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 		return EgressDecision{}
 	}
 	if env.GOOS != "linux" || env.ForceRelay {
+		var warnings []string
 		if env.RelayImage != nil {
-			if err := env.RelayImage(); err != nil {
+			var missing *missingRelayImage
+			switch err := env.RelayImage(); {
+			case errors.As(err, &missing):
+				warnings = append(warnings, err.Error())
+			case err != nil:
 				return problemDecision(cfg, err.Error())
 			}
 		}
-		d := EgressDecision{Boundary: true, Relay: true}
 		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 && len(cfg.Inject) == 0 {
-			d.Warning = noAllowlistRules
+			warnings = append(warnings, noAllowlistRules)
 		}
-		return d
+		return EgressDecision{Boundary: true, Relay: true, Warning: strings.Join(warnings, "; ")}
 	}
 	if problem := egressProblem(env); problem != "" {
 		return problemDecision(cfg, problem)
