@@ -440,7 +440,7 @@ func TestDeleteMessenger(t *testing.T) {
 			var stopped []string
 			s, _ := newServiceWith(t, rt, Hooks{MessengerRemoved: func(kind string) { stopped = append(stopped, kind) }})
 
-			err := s.DeleteMessenger(context.Background(), tc.kind)
+			_, err := s.DeleteMessenger(context.Background(), tc.kind)
 
 			if tc.wantErr != nil {
 				if !tc.wantErr(err) {

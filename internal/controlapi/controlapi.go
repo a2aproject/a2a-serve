@@ -193,6 +193,17 @@ type MessengerStatus struct {
 	// OwnerLink is set when a messenger is added and nobody is linked on it
 	// as owner yet.
 	OwnerLink *OwnerLink `json:"ownerLink,omitempty"`
+	// Access is who may call the agent after the messenger is added, set
+	// when that changed.
+	Access *Access `json:"access,omitempty"`
+}
+
+// MessengerRemoval describes a removed messenger.
+type MessengerRemoval struct {
+	Removed string `json:"removed"`
+	// Access is who may call the agent after the messenger is removed, set
+	// when that changed.
+	Access *Access `json:"access,omitempty"`
 }
 
 // OwnerLink is how the user running the agent links a messenger account as
@@ -686,8 +697,9 @@ func (c *Client) AddMessenger(ctx context.Context, req MessengerRequest) (*Messe
 }
 
 // DeleteMessenger removes a messenger.
-func (c *Client) DeleteMessenger(ctx context.Context, kind string) error {
-	return c.do(ctx, http.MethodDelete, "/messengers/"+url.PathEscape(kind), nil, nil)
+func (c *Client) DeleteMessenger(ctx context.Context, kind string) (*MessengerRemoval, error) {
+	var out MessengerRemoval
+	return &out, c.do(ctx, http.MethodDelete, "/messengers/"+url.PathEscape(kind), nil, &out)
 }
 
 // ScheduleInfo describes a schedule.

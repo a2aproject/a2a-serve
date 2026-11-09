@@ -19,11 +19,11 @@ give each pairing a `sandbox` object: its `storage`, its `secrets`, a
 `summary`, `pending` with what it gets after a restart when its rule waits for a secret that the restart loads, and a `warning` when its agent can't reach its model. `pair
 invite` adds it when rules change what the pairing gets, and `pair set`
 adds `hints`. `status` and `stop` add `configError` when `.a2a/config.yaml` is
-invalid or missing. `config set`, `config unset`, `pair invite`, `pair set` and `pair rm`
-add the same `access` object after a change to who may call or to the
-networks. Removals (`messenger rm`, `contact rm`, `pair rm`,
-`schedule rm`, each also called `delete`) print
-`{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
+invalid or missing. `pair invite`, `pair set` and `pair rm` add the same `access` object.
+`config set`, `config unset`, `messenger add` and `messenger rm` add it when
+the change alters who may call or what their agent containers get. Removals
+(`messenger rm`, `contact rm`, `pair rm`, `schedule rm`, each also called
+`delete`) print `{"removed": true, "kind": …, "name": …}`. `pair rm` adds `stillAllowed`, who
 may still call the agent without the pairing, and `kept` for the `local`
 pairing, which stays. `pair rm --dry-run` removes nothing and prints the same
 `kind` and `name` with `"dryRun": true`, the counts of what it would remove, the `agentHomes` and `workspaces` directories it would delete, and the pairing's `sandboxRule`. `pair rm --email` prints the kind `google` and adds

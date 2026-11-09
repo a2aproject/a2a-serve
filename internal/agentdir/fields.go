@@ -1091,12 +1091,6 @@ func unsetEntriesError(why, purpose, setting string, entries []string) error {
 	return fmt.Errorf("%s, and unset takes one setting: run %s and %s", why, strings.Join(cmds[:last], ", "), cmds[last])
 }
 
-// IsAccess reports whether the setting changes who may call the agent: an
-// access setting, or a network.
-func IsAccess(setting string) bool {
-	return slices.Contains([]string{"private", "public", "private-allow-incoming", "public-allow-incoming", "allow-email", "guest-storage", "guest-secrets", SandboxSetting}, setting)
-}
-
 // label names the flag of f in errors.
 func (f field) label() string {
 	if f.flag == MessengerTelegram || f.flag == MessengerDiscord {

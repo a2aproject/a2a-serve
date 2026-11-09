@@ -22,7 +22,7 @@ func newMessengerCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "messenger",
 		Short: "Manage the messengers the agent is reachable from",
-		Long:  "Manage the messengers the agent is reachable from.",
+		Long:  "Manage the messengers the agent is reachable from. Adding or removing a\nmessenger prints who may call the agent afterwards when that changes.",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return cmd.Help()

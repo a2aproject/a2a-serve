@@ -65,7 +65,7 @@ type Manager interface {
 	// AddMessenger checks the messenger's credentials and saves it.
 	AddMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error)
 	// DeleteMessenger removes a messenger.
-	DeleteMessenger(ctx context.Context, kind string) error
+	DeleteMessenger(ctx context.Context, kind string) (*controlapi.MessengerRemoval, error)
 }
 
 // Open returns the Manager of the agent in d. While the agent runs, it

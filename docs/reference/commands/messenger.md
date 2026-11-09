@@ -2,7 +2,8 @@
 
 <!-- Generated from the command definitions; do not edit. -->
 
-Manage the messengers the agent is reachable from.
+Manage the messengers the agent is reachable from. Adding or removing a
+messenger prints who may call the agent afterwards when that changes.
 
 ```
 a2a-serve messenger <command>

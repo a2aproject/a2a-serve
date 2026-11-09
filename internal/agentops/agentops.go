@@ -406,6 +406,27 @@ func (s *Service) DeleteSchedule(ctx context.Context, name string) error {
 // AddMessenger checks the messenger's credentials, saves it and its secrets,
 // and starts it on a running agent.
 func (s *Service) AddMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error) {
+	before := s.reportedAccess(ctx)
+	st, err := s.addMessenger(ctx, req)
+	if err != nil {
+		return nil, err
+	}
+	st.Access = ChangedAccess(before, s.reportedAccess(ctx))
+	return st, nil
+}
+
+// reportedAccess describes who may call the agent for the report after a
+// change, or returns nil when that fails, which leaves the report out.
+func (s *Service) reportedAccess(ctx context.Context) *access.Description {
+	a, err := s.Access(ctx)
+	if err != nil {
+		slog.Warn("describing who may call the agent", "error", err)
+		return nil
+	}
+	return a
+}
+
+func (s *Service) addMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error) {
 	secrets, err := s.deps.Runtime.SavedSecrets()
 	if err != nil {
 		return nil, err
@@ -443,18 +464,19 @@ func (s *Service) newMessenger(cfg *agentdir.Config, secrets agentdir.Secrets, k
 
 // DeleteMessenger removes a messenger from the config, and stops it on a
 // running agent.
-func (s *Service) DeleteMessenger(_ context.Context, kind string) error {
+func (s *Service) DeleteMessenger(ctx context.Context, kind string) (*controlapi.MessengerRemoval, error) {
 	if err := (&agentdir.Config{}).SetMessenger(kind, "", nil); err != nil {
-		return agenterr.Invalid(err)
+		return nil, agenterr.Invalid(err)
 	}
 	if !s.deps.Runtime.Config().HasMessenger(kind) {
-		return &agenterr.NotFoundError{Kind: "messenger", Name: kind}
+		return nil, &agenterr.NotFoundError{Kind: "messenger", Name: kind}
 	}
+	before := s.reportedAccess(ctx)
 	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(kind, "", nil) }); err != nil {
-		return err
+		return nil, err
 	}
 	if s.deps.Hooks.MessengerRemoved != nil {
 		s.deps.Hooks.MessengerRemoved(kind)
 	}
-	return nil
+	return &controlapi.MessengerRemoval{Removed: kind, Access: ChangedAccess(before, s.reportedAccess(ctx))}, nil
 }

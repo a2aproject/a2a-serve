@@ -61,3 +61,27 @@ func TestMessengerRmOffline(t *testing.T) {
 		})
 	}
 }
+
+func TestMessengerRmReportsAccess(t *testing.T) {
+	t.Parallel()
+	d, err := agentdir.Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("agentdir.Open() error = %v", err)
+	}
+	cfg := &agentdir.Config{Name: "coder", Harness: "opencode", Network: agentdir.NetworkConfig{Public: "https://relay.example.com"}, Policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}}
+	if err := cfg.SetMessenger("telegram", "secret:TELEGRAM_TOKEN", nil); err != nil {
+		t.Fatalf("SetMessenger() error = %v", err)
+	}
+	if err := d.SaveConfig(cfg); err != nil {
+		t.Fatalf("SaveConfig() error = %v", err)
+	}
+
+	out, err := runCMD(t, "messenger", "rm", "telegram", "--dir", d.Root)
+
+	if err != nil {
+		t.Fatalf("messenger rm error = %v", err)
+	}
+	if !strings.HasPrefix(out, "✓ removed telegram\nwho may call:\n") {
+		t.Fatalf("messenger rm output = %q, want who may call after the removal", out)
+	}
+}

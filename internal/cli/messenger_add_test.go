@@ -94,6 +94,7 @@ func TestPrintMessengerAdded(t *testing.T) {
 		mode    output.Mode
 		running bool
 		link    *controlapi.OwnerLink
+		access  *controlapi.Access
 		want    string
 	}{
 		{name: "text", mode: output.ModeText, running: true, want: "✓ telegram @coder_bot\n"},
@@ -103,6 +104,11 @@ func TestPrintMessengerAdded(t *testing.T) {
 			want: "✓ telegram @coder_bot\n→ link yourself as owner: https://t.me/coder_bot?start=K7Q2   (15 min)\n",
 		},
 		{name: "text of a stopped agent", mode: output.ModeText, want: "✓ saved telegram; it starts with the agent (a2a-serve start)\n"},
+		{
+			name: "text with a change of access", mode: output.ModeText, running: true,
+			access: &controlapi.Access{Summary: []string{"you: this machine", "anyone on the public URL and telegram"}},
+			want:   "✓ telegram @coder_bot\nwho may call:\n  you: this machine\n  anyone on the public URL and telegram\n",
+		},
 		{name: "json", mode: output.ModeJson, want: "{\n  \"name\": \"telegram\",\n  \"account\": \"@coder_bot\"\n}\n"},
 		{name: "jsonl", mode: output.ModeJSONL, want: "{\"name\":\"telegram\",\"account\":\"@coder_bot\"}\n"},
 	}
@@ -112,7 +118,7 @@ func TestPrintMessengerAdded(t *testing.T) {
 			var buf bytes.Buffer
 			cfg := &globalConfig{Printer: output.NewPrinter(&buf, tc.mode)}
 
-			err := printMessengerAdded(cfg, &controlapi.MessengerStatus{Name: "telegram", Account: "@coder_bot", OwnerLink: tc.link}, tc.running)
+			err := printMessengerAdded(cfg, &controlapi.MessengerStatus{Name: "telegram", Account: "@coder_bot", OwnerLink: tc.link, Access: tc.access}, tc.running)
 
 			if err != nil {
 				t.Fatalf("printMessengerAdded() error = %v", err)
