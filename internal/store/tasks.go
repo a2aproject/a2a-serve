@@ -436,18 +436,29 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 
 const defaultPageSize = 50
 
-// List implements [taskstore.Store]. It cuts each part longer than
-// [a2alimit.MaxListPart], with a note that names the task, as it reads the
-// page, so that large tasks don't make the page large in memory.
+// List implements [taskstore.Store].
 func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
-	resp, _, err := ts.list(ctx, req, a2alimit.MaxListPart)
+	resp, _, err := ts.list(ctx, req, 0)
 	return resp, err
 }
 
-// ListWithOwners is [TaskStore.List] with whole parts, that also returns
-// the owner of each listed task, in the order of the tasks.
+// ListWithOwners is [TaskStore.List] that also returns the owner of each
+// listed task, in the order of the tasks.
 func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, []string, error) {
 	return ts.list(ctx, req, 0)
+}
+
+// CutLists returns ts for A2A handlers. Its List cuts each part longer than
+// [a2alimit.MaxListPart], with a note that names the task, as it reads the
+// page, so that large tasks don't make the page large in memory. The
+// server's own reads keep whole parts.
+func (ts *TaskStore) CutLists() taskstore.Store { return cutLists{ts} }
+
+type cutLists struct{ *TaskStore }
+
+func (c cutLists) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
+	resp, _, err := c.list(ctx, req, a2alimit.MaxListPart)
+	return resp, err
 }
 
 // list lists the tasks that req selects, with parts cut to partLimit
@@ -579,24 +590,26 @@ const firstPrompt = `(SELECT m.value FROM json_each(t.data, '$.history') m
 // headers, or nil for a task without one. It looks in the snapshot, which
 // holds the history up to its version, and then in the events in order.
 // SQLite picks the message out of the stored JSON, so that the messages
-// after it aren't read into memory.
+// after it aren't read into memory. The first user message of a task never
+// changes, so the log may be newer than headers, as when a task finished
+// and lost its events since.
 func (ts *TaskStore) prompts(ctx context.Context, headers []*taskHeader) ([]*a2a.Message, error) {
 	if len(headers) == 0 {
 		return nil, nil
 	}
 	index := make(map[string]int, len(headers))
-	args := make([]any, 0, 2*len(headers)+7)
+	args := make([]any, 0, len(headers)+7)
 	for i, h := range headers {
 		index[string(h.task.ID)] = i
-		args = append(args, string(h.task.ID), h.version)
+		args = append(args, string(h.task.ID))
 	}
 	user := string(a2a.MessageRoleUser)
 	out := make([]*a2a.Message, len(headers))
-	err := queryEach(ctx, ts.s.reads, pageValues(len(headers), 2)+`SELECT page.id, COALESCE(
-		(SELECT `+firstPrompt+` FROM task_snapshots t WHERE t.scope = ? AND t.task_id = page.id AND t.version <= page.v1),
+	err := queryEach(ctx, ts.s.reads, pageValues(len(headers), 1)+`SELECT page.id, COALESCE(
+		(SELECT `+firstPrompt+` FROM task_snapshots t WHERE t.scope = ? AND t.task_id = page.id),
 		(SELECT CASE WHEN t.kind = ? THEN (CASE WHEN json_extract(t.data, '$.role') = ? THEN t.data END)
 			WHEN t.kind = ? THEN `+firstPrompt+` END AS prompt
-			FROM task_events t WHERE t.scope = ? AND t.task_id = page.id AND t.version <= page.v1 AND prompt IS NOT NULL
+			FROM task_events t WHERE t.scope = ? AND t.task_id = page.id AND prompt IS NOT NULL
 			ORDER BY t.version LIMIT 1)
 		) FROM page`,
 		append(args, user, ts.scope, kindMessage, user, kindTask, user, ts.scope), func(rows *sql.Rows) error {

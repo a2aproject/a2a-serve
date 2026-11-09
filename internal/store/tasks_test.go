@@ -207,9 +207,9 @@ func TestListCutsLongParts(t *testing.T) {
 	history := 10
 	req := &a2a.ListTasksRequest{HistoryLength: &history, IncludeArtifacts: true}
 
-	resp, err := ts.List(asUser("owner"), req)
+	resp, err := ts.CutLists().List(asUser("owner"), req)
 	if err != nil {
-		t.Fatalf("List() error = %v", err)
+		t.Fatalf("CutLists().List() error = %v", err)
 	}
 
 	cutText := a2a.NewTextPart(long[:limit] + fmt.Sprintf("\n[cut: %d of %d bytes shown; get task t1 for the whole text]", limit, len(long)))
@@ -230,19 +230,19 @@ func TestListCutsLongParts(t *testing.T) {
 		Artifacts: []*a2a.Artifact{{ID: "story", Parts: a2a.ContentParts{cutText}}},
 	}
 	if diff := cmp.Diff([]*a2a.Task{want}, resp.Tasks); diff != "" {
-		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("CutLists().List() wrong result (-want +got) diff = %s", diff)
 	}
 
-	whole, _, err := ts.ListWithOwners(asUser("owner"), req)
+	whole, err := ts.List(asUser("owner"), req)
 	if err != nil {
-		t.Fatalf("ListWithOwners() error = %v", err)
+		t.Fatalf("List() error = %v", err)
 	}
 	stored, err := ts.Get(asUser("owner"), "t1")
 	if err != nil {
 		t.Fatalf("Get() error = %v", err)
 	}
 	if diff := cmp.Diff([]*a2a.Task{stored.Task}, whole.Tasks); diff != "" {
-		t.Fatalf("ListWithOwners() wrong result (-want +got) diff = %s", diff)
+		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
 	}
 }
 
@@ -585,6 +585,31 @@ func TestHeader(t *testing.T) {
 				t.Fatalf("TaskStore.Header() wrong result (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestPromptsOfTaskFinishedAfterItsHeader(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("draw a cat"))}
+	applyEvents(t, ts, "owner", task)
+	h, err := ts.row(t.Context(), s.reads, "t1", "owner", true)
+	if err != nil {
+		t.Fatalf("row() error = %v", err)
+	}
+	if _, err := ts.Update(asUser("owner"), &taskstore.UpdateRequest{Task: task, Event: a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil), PrevVersion: 1}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	got, err := ts.prompts(t.Context(), []*taskHeader{h})
+
+	if err != nil {
+		t.Fatalf("prompts() error = %v", err)
+	}
+	if len(got) != 1 || a2atext.Message(got[0]) != "draw a cat" {
+		t.Fatalf("prompts() = %v, want the first user message", got)
 	}
 }
 
