@@ -34,7 +34,6 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
-	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 )
 
 // Limits of the requests to the hosts that get headers, per boundary.
@@ -208,7 +207,15 @@ func (b *Boundary) forward(w http.ResponseWriter, r *http.Request, inj Injection
 			w.WriteHeader(status)
 		},
 	}
-	jsonhttp.LimitBodyTo(maxInjectBody, proxy).ServeHTTP(w, r.WithContext(ctx))
+	// The total time bounds a slow body. A read deadline of the connection,
+	// as the server's own routes set, would also end the response when the
+	// upstream transport closes the body early.
+	if r.ContentLength > maxInjectBody {
+		http.Error(w, "request body too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxInjectBody)
+	proxy.ServeHTTP(w, r.WithContext(ctx))
 }
 
 // apply puts the header of inj on the outgoing request r.
