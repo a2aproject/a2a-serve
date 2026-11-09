@@ -310,17 +310,22 @@ func imageConfig(ctx context.Context, image string) (arch string, entrypoint []s
 type HostGatewayFunc func(ctx context.Context, port uint16) (netip.AddrPort, bool)
 
 // hostGateway returns what host.docker.internal reaches from a container
-// without a rule that names it: the ports that containers publish on this
-// host, which are on its loopback.
-func hostGateway() HostGatewayFunc {
-	return (&publishedPorts{}).lookup
+// on goos without a rule that names it: the ports that containers publish
+// on this host, which are on its loopback. On Linux, these are the ports
+// published on every address, which Docker's own network reaches too; a
+// port published on loopback keeps a service private to the machine. With
+// Docker Desktop, host.docker.internal reaches loopback ports anyway.
+func hostGateway(goos string) HostGatewayFunc {
+	return (&publishedPorts{loopback: goos != "linux"}).lookup
 }
 
 // publishedPorts finds the ports that containers publish on this host,
 // asking docker at most once per publishedPortsTTL, failures included.
-// Concurrent lookups share one docker call.
+// Concurrent lookups share one docker call. With loopback, ports published
+// only on loopback count too.
 type publishedPorts struct {
-	calls singleflight.Group
+	loopback bool
+	calls    singleflight.Group
 
 	mu  sync.Mutex
 	at  time.Time
@@ -335,7 +340,7 @@ const publishedPortsTTL = 5 * time.Second
 // it on this host.
 func (p *publishedPorts) lookup(ctx context.Context, port uint16) (netip.AddrPort, bool) {
 	out, err := p.ports(ctx)
-	if err != nil || !publishes(out, port) {
+	if err != nil || !publishes(out, port, p.loopback) {
 		return netip.AddrPort{}, false
 	}
 	return netip.AddrPortFrom(netip.AddrFrom4([4]byte{127, 0, 0, 1}), port), true
@@ -374,8 +379,8 @@ func (p *publishedPorts) ports(ctx context.Context) (string, error) {
 
 // publishes reports whether the Ports column of docker ps, such as
 // "0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp", publishes port over TCP
-// on every address or on loopback.
-func publishes(ports string, port uint16) bool {
+// on every address, or with loopback on loopback.
+func publishes(ports string, port uint16, loopback bool) bool {
 	for entry := range strings.FieldsFuncSeq(ports, func(r rune) bool { return r == ',' || r == '\n' }) {
 		host, target, ok := strings.Cut(strings.TrimSpace(entry), "->")
 		if !ok || !strings.HasSuffix(target, "/tcp") {
@@ -385,7 +390,7 @@ func publishes(ports string, port uint16) bool {
 		if err != nil || ap.Port() != port {
 			continue
 		}
-		if a := ap.Addr(); a.IsUnspecified() || a.IsLoopback() {
+		if a := ap.Addr(); a.IsUnspecified() || loopback && a.IsLoopback() {
 			return true
 		}
 	}

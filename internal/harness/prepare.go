@@ -506,13 +506,13 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 		return nil, nil, decision, nil
 	}
 	if decision.Relay {
-		return relayEgress(ctx, spec, entrypoint, rootless, decision)
+		return relayEgress(ctx, spec, entrypoint, rootless, decision, hostGateway(env.GOOS))
 	}
 	launcher, err := env.Launcher()
 	if err != nil {
 		return nil, nil, EgressDecision{}, err
 	}
-	ep, err := spec.OpenEgress(hostGateway(), false)
+	ep, err := spec.OpenEgress(hostGateway(env.GOOS), false)
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress socket: %w", err)
 	}
@@ -522,12 +522,12 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 // relayEgress opens the boundary of a container that reaches it through a
 // relay container, the egress container to users, and starts it. When the relay image isn't
 // available, the container gets Docker's own network.
-func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision) (*DockerEgress, func() error, EgressDecision, error) {
+func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision, gateway HostGatewayFunc) (*DockerEgress, func() error, EgressDecision, error) {
 	image, err := EnsureRelayImage(ctx, logLines{msg: "egress container image"})
 	if err != nil {
 		return nil, nil, problemDecision(spec.egressConfig(), "the egress container's image isn't available: "+err.Error()), nil
 	}
-	ep, err := spec.OpenEgress(hostGateway(), true)
+	ep, err := spec.OpenEgress(gateway, true)
 	if err != nil {
 		return nil, nil, EgressDecision{}, fmt.Errorf("opening the egress boundary: %w", err)
 	}
