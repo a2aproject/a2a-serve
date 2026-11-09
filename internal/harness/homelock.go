@@ -15,7 +15,9 @@
 package harness
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -26,10 +28,11 @@ import (
 
 // The configuration of the agents in their homes which can change what they
 // run and approve: settings, and definitions that grant tools or run code.
-// Directories end with a slash.
+// opencode also merges the config of the servers that "wellknown" entries
+// of its auth.json name. Directories end with a slash.
 var (
 	claudeHomeConfig   = []string{".claude/settings.json", ".claude/agents/", ".claude/commands/", ".claude/skills/"}
-	opencodeHomeConfig = []string{".config/opencode/", ".opencode/"}
+	opencodeHomeConfig = []string{".config/opencode/", ".opencode/", ".local/share/opencode/auth.json"}
 )
 
 // claudePolicyPath is where Claude Code reads the managed settings, which
@@ -47,6 +50,9 @@ const opencodeGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lo
 // homeConfigReader is a profile with configuration in its home.
 type homeConfigReader interface {
 	homeConfig() []string
+	// resetPermissions puts the server's permission settings back into the
+	// config file of home that the server writes.
+	resetPermissions(home string) error
 	// policy returns the container path and content of settings that
 	// override those of the home, or "" for none.
 	policy() (path, content string)
@@ -60,7 +66,9 @@ func (claude) policy() (string, string)   { return claudePolicyPath, claudePolic
 // lockHomeConfig returns the mounts that make the agent's configuration in
 // its home read-only. It creates the missing entries, since docker would
 // otherwise create them as root, and refuses symlinks on the way, which the
-// agent could have planted in an earlier container.
+// agent could have planted in an earlier container. It resets the
+// permission settings that the server writes, which an agent could have
+// changed before its home was locked.
 //
 // The folders between the home and an entry are mounted onto themselves,
 // so that the agent can't rename them and put its own configuration in
@@ -100,6 +108,9 @@ func lockHomeConfig(spec Spec) ([]agentdir.Mount, error) {
 				add(filepath.Join(parts[:i]...), false)
 			}
 			add(name, true)
+		}
+		if err := r.resetPermissions(spec.Home); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("resetting the permissions in %s: %w", spec.Home, err)
 		}
 		path, content := r.policy()
 		if path == "" {

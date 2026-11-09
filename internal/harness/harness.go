@@ -17,6 +17,7 @@
 package harness
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -264,16 +265,30 @@ func (opencode) SessionSettings(model string) map[string]any {
 	return map[string]any{"model": model}
 }
 
+// opencodeHomeFile is the config file in the opencode home that the server
+// writes.
+var opencodeHomeFile = filepath.Join(".config", "opencode", "opencode.json")
+
 func (opencode) Bootstrap(ws Workspace) error {
 	var permission map[string]any
 	if err := json.Unmarshal([]byte(opencodePermission), &permission); err != nil {
 		return err
 	}
-	return writeJSONIfMissing(ws.Home, filepath.Join(".config", "opencode", "opencode.json"), map[string]any{
+	return writeJSONIfMissing(ws.Home, opencodeHomeFile, map[string]any{
 		"$schema":    "https://opencode.ai/config.json",
 		"permission": permission,
 		"autoupdate": false,
 	})
+}
+
+// resetPermissions puts the server's permission block back into the
+// opencode config of home.
+func (opencode) resetPermissions(home string) error {
+	var permission map[string]any
+	if err := json.Unmarshal([]byte(opencodePermission), &permission); err != nil {
+		return err
+	}
+	return setJSONKey(home, opencodeHomeFile, "permission", permission)
 }
 
 type claude struct{}
@@ -289,17 +304,30 @@ func (claude) ModelEnv(model string) []string { return []string{"ANTHROPIC_MODEL
 
 func (claude) SessionSettings(string) map[string]any { return nil }
 
+// claudeHomeFile is the settings file in the Claude Code home that the
+// server writes.
+var claudeHomeFile = filepath.Join(".claude", "settings.json")
+
+// claudePermissions are the permission settings of Claude Code that make it
+// ask before the tools that change things.
+func claudePermissions() map[string]any { return map[string]any{"defaultMode": "default"} }
+
 func (claude) Bootstrap(ws Workspace) error {
-	settings := filepath.Join(".claude", "settings.json")
-	if err := writeJSONIfMissing(ws.Home, settings, map[string]any{
-		"permissions": map[string]any{"defaultMode": "default"},
+	if err := writeJSONIfMissing(ws.Home, claudeHomeFile, map[string]any{
+		"permissions": claudePermissions(),
 	}); err != nil {
 		return err
 	}
 	// The server passes the project's MCP servers over ACP, leaving out the
 	// ones the config turns off. A sandbox hides .mcp.json; this covers a
 	// .mcp.json the mask doesn't, such as one replaced while the agent runs.
-	return setJSONKey(ws.Home, settings, "enableAllProjectMcpServers", false)
+	return setJSONKey(ws.Home, claudeHomeFile, "enableAllProjectMcpServers", false)
+}
+
+// resetPermissions puts the server's permission settings back into the
+// Claude Code settings of home.
+func (claude) resetPermissions(home string) error {
+	return setJSONKey(home, claudeHomeFile, "permissions", claudePermissions())
 }
 
 // custom is a harness started with an explicit command line. It keeps the
@@ -395,8 +423,14 @@ func setJSONKey(home, name, key string, v any) (err error) {
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return fmt.Errorf("parsing %s: %w", filepath.Join(home, name), err)
 	}
-	if cur, ok := obj[key]; ok && cur == v {
-		return nil
+	want, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	if cur, ok := obj[key]; ok {
+		if got, err := json.Marshal(cur); err == nil && bytes.Equal(got, want) {
+			return nil
+		}
 	}
 	obj[key] = v
 	if data, err = json.MarshalIndent(obj, "", "  "); err != nil {

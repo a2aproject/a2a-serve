@@ -100,7 +100,11 @@ func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
 	anna.pairJoin(coder.url, coder.invite("anna"))
 	home := harness.ContainerHome
 
-	for _, name := range []string{filepath.Join(".claude", "settings.json"), filepath.Join(".config", "opencode", "opencode.json")} {
+	for _, name := range []string{
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".config", "opencode", "opencode.json"),
+		filepath.Join(".local", "share", "opencode", "auth.json"),
+	} {
 		path := filepath.Join(home, name)
 		if got := resultOf(anna.mustSend(coder.url, "write "+path)).Text; !strings.HasPrefix(got, "write error: ") {
 			t.Fatalf("a2a send write %s as a member = %q, want a write error", name, got)

@@ -16,6 +16,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -760,6 +761,10 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			filepath.Join(home, ".config") + ":" + filepath.Join(ContainerHome, ".config"),
 			filepath.Join(home, ".config", "opencode") + ":" + filepath.Join(ContainerHome, ".config", "opencode") + ":ro",
 			filepath.Join(home, ".opencode") + ":" + filepath.Join(ContainerHome, ".opencode") + ":ro",
+			filepath.Join(home, ".local") + ":" + filepath.Join(ContainerHome, ".local"),
+			filepath.Join(home, ".local", "share") + ":" + filepath.Join(ContainerHome, ".local", "share"),
+			filepath.Join(home, ".local", "share", "opencode") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode"),
+			filepath.Join(home, ".local", "share", "opencode", "auth.json") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode", "auth.json") + ":ro",
 		}
 	}
 	claudePolicy := func(policy string) string { return policy + ":/etc/claude-code/managed-settings.json:ro" }
@@ -779,6 +784,7 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 			wantCreated: []string{
 				filepath.Join(".config", "opencode", ".gitignore"),
 				filepath.Join(".opencode", ".gitignore"),
+				filepath.Join(".local", "share", "opencode", "auth.json"),
 			},
 		},
 		{
@@ -843,6 +849,78 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 				if _, err := os.Lstat(filepath.Join(home, name)); err != nil {
 					t.Fatalf("Prepare() didn't create %s in the home: %v", name, err)
 				}
+			}
+		})
+	}
+}
+
+func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	tests := []struct {
+		name    string
+		profile Profile
+		file    string
+		content string
+		key     string
+		want    string
+		kept    string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: `{"permission": {"*": "ask", "bash": "allow"}, "provider": {"stub": {}}}`,
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			file:    filepath.Join(".claude", "settings.json"),
+			content: `{"permissions": {"defaultMode": "acceptEdits", "allow": ["Bash"]}, "model": "opus"}`,
+			key:     "permissions",
+			want:    `{"defaultMode": "default"}`,
+			kept:    "model",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			writeTestFile(t, filepath.Join(home, tc.file), tc.content)
+
+			p, err := Prepare(context.Background(), Spec{
+				Profile:    tc.profile,
+				Name:       "a2a-test",
+				Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:       home,
+				HomePolicy: filepath.Join(t.TempDir(), "home-policy.json"),
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+
+			data, err := os.ReadFile(filepath.Join(home, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("json.Unmarshal(%s) error = %v", tc.file, err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, got[tc.key]); diff != "" {
+				t.Fatalf("Prepare() %s of %s wrong result (-want +got) diff = %s", tc.key, tc.file, diff)
+			}
+			if _, ok := got[tc.kept]; !ok {
+				t.Fatalf("Prepare() left %s = %s, want %s kept", tc.file, data, tc.kept)
 			}
 		})
 	}
