@@ -398,3 +398,30 @@ func TestEditKeepsEditWhenFileChangedMeanwhile(t *testing.T) {
 		t.Fatalf("draft wrong result (-want +got) diff = %s", diff)
 	}
 }
+
+func TestEditStoresNoSecretWhenFileChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	edit := func(path string) error {
+		if err := d.UpdateConfig(func(cfg *agentdir.Config) error {
+			cfg.Description = "saved meanwhile"
+			return nil
+		}); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("name: coder\nagent: opencode\nbackup:\n    to: /backups\n    key: hunter2\n"), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if !errors.Is(err, ErrConfigChanged) {
+		t.Fatalf("Edit() error = %v, want %v", err, ErrConfigChanged)
+	}
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatalf("LoadSecrets() error = %v", err)
+	}
+	if len(secrets) != 0 {
+		t.Fatalf("stored secrets = %v, want none", secrets)
+	}
+}

@@ -232,13 +232,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 			return nil, err
 		}
 	}
-	if err := d.SaveSecrets(store); err != nil {
-		return nil, err
-	}
-	if err := d.DeleteSecrets(del...); err != nil {
-		return nil, err
-	}
-	if err := saveConfig(d, mutate, raw); err != nil {
+	if err := saveConfig(d, mutate, raw, store, del); err != nil {
 		return nil, err
 	}
 	if then != nil {
@@ -297,11 +291,12 @@ func CheckEnclosing(ctx context.Context, d agentdir.Dir) error {
 	}
 }
 
-// saveConfig saves the hand edit raw as config.yaml, or the config on disk
-// with mutate applied. The config is read again under its lock, so that
-// changes saved since apply read it, by other commands or the running
-// server, are kept, or refuse the hand edit.
-func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit) error {
+// saveConfig stores the secrets store, deletes the secrets del, and saves
+// the hand edit raw as config.yaml, or the config on disk with mutate
+// applied. The config is read again under its lock, so that changes saved
+// since apply read it, by other commands or the running server, are kept,
+// or refuse the hand edit before anything is saved.
+func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit, store agentdir.Secrets, del []string) error {
 	if raw != nil {
 		return d.LockConfig(func() error {
 			cur, err := os.ReadFile(d.ConfigPath())
@@ -311,8 +306,14 @@ func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit) error {
 			if !bytes.Equal(cur, raw.base) {
 				return ErrConfigChanged
 			}
+			if err := saveSecrets(d, store, del); err != nil {
+				return err
+			}
 			return fsutil.WriteAtomic(d.ConfigPath(), raw.data, 0o644)
 		})
+	}
+	if err := saveSecrets(d, store, del); err != nil {
+		return err
 	}
 	return d.UpdateConfig(func(cfg *agentdir.Config) error {
 		if _, _, err := mutate(cfg); err != nil {
@@ -320,6 +321,13 @@ func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit) error {
 		}
 		return nil
 	})
+}
+
+func saveSecrets(d agentdir.Dir, store agentdir.Secrets, del []string) error {
+	if err := d.SaveSecrets(store); err != nil {
+		return err
+	}
+	return d.DeleteSecrets(del...)
 }
 
 func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange {
