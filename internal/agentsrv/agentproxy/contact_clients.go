@@ -275,15 +275,16 @@ func viaAgent(ctx context.Context, hops int, caller string) context.Context {
 	return a2aclient.AttachServiceParams(ctx, params)
 }
 
-// callerID is the opaque, stable ID that calls to other agents give user.
-// It covers the caller ID of an agent that called this one, so that the
-// people behind that agent stay apart too.
-func (cc *ContactClients) callerID(user auth.Principal) string {
+// callerID is the opaque, stable ID that calls to the agent name give
+// user. Each agent gets other IDs, so that two agents can't tell that one
+// person called both. It covers the caller ID of an agent that called this
+// one, so that the people behind that agent stay apart too.
+func (cc *ContactClients) callerID(name string, user auth.Principal) string {
 	if len(cc.callerKey) == 0 || user.ID == "" {
 		return ""
 	}
 	mac := hmac.New(sha256.New, cc.callerKey)
-	mac.Write([]byte(user.ID + "\x00" + user.Caller))
+	mac.Write([]byte(strings.ToLower(name) + "\x00" + user.ID + "\x00" + user.Caller))
 	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
 
@@ -349,7 +350,7 @@ func (cc *ContactClients) target(ctx context.Context, name string, user auth.Pri
 	if err != nil {
 		return nil, err
 	}
-	return remoteTarget{c: client, hops: hops, caller: cc.callerID(user)}, nil
+	return remoteTarget{c: client, hops: hops, caller: cc.callerID(name, user)}, nil
 }
 
 // isNode reports whether name is a webhook node hosted here.
@@ -446,7 +447,7 @@ func (cc *ContactClients) agentHandler(ctx context.Context, c Claims, name strin
 		return nil, nil, err
 	}
 	return &a2aproxy.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
-		return viaAgent(ctx, c.User.Hops, cc.callerID(c.User))
+		return viaAgent(ctx, c.User.Hops, cc.callerID(name, c.User))
 	}}, nil, nil
 }
 

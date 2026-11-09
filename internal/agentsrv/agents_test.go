@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -160,29 +162,56 @@ func TestCalledAgentKeepsThePeopleBehindACallerApart(t *testing.T) {
 
 func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
 	t.Parallel()
-	coder := startServer(t, serverOpts{name: "coder"})
-	token := coder.pair("assistant", auth.RoleMember)
-	for i := range maxCallerHomes {
-		if err := os.MkdirAll(coder.dir.CallerHomeDir(auth.PairPrincipal("assistant"), fmt.Sprintf("%016x", i)), 0o700); err != nil {
-			t.Fatalf("MkdirAll() error = %v", err)
-		}
+	tests := []struct {
+		name    string
+		running bool
+		wantErr string
+	}{
+		{name: "the least recently used home makes room"},
+		{name: "all homes in use", running: true, wantErr: fmt.Sprintf("all %d people", maxCallerHomes)},
 	}
-	c := coder.client(token)
-	viaAssistant := func(caller string) context.Context {
-		return a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {"1"}, auth.HeaderCaller: {caller}})
-	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			coder := startServer(t, serverOpts{name: "coder"})
+			id := auth.PairPrincipal("assistant")
+			c := coder.client(coder.pair("assistant", auth.RoleMember))
+			start := time.Now().Add(-time.Hour)
+			for i := range maxCallerHomes {
+				caller := fmt.Sprintf("%016x", i)
+				home := coder.dir.CallerHomeDir(id, caller)
+				if err := os.MkdirAll(home, 0o700); err != nil {
+					t.Fatalf("MkdirAll() error = %v", err)
+				}
+				used := start.Add(time.Duration(i) * time.Minute)
+				if err := os.Chtimes(home, used, used); err != nil {
+					t.Fatalf("Chtimes() error = %v", err)
+				}
+				if tc.running {
+					a := coder.srv.users.get(agentkey.CallerKey(id, caller))
+					coder.srv.users.started(a, io.NopCloser(nil), access.Sandbox{})
+				}
+			}
+			ctx := a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {"1"}, auth.HeaderCaller: {"new-person"}})
 
-	_, err := c.SendMessage(viaAssistant("new-person"), &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+			_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")})
 
-	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d people", maxCallerHomes)) {
-		t.Fatalf("SendMessage() for one person too many error = %v, want the limit of agent homes", err)
-	}
-	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")})
-	if err != nil {
-		t.Fatalf("SendMessage() without a caller error = %v", err)
-	}
-	if task, ok := res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateCompleted {
-		t.Fatalf("SendMessage() without a caller = %#v, want a completed task", res)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("SendMessage() for one person too many error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SendMessage() for one person too many error = %v", err)
+			}
+			if _, err := os.Stat(coder.dir.CallerHomeDir(id, fmt.Sprintf("%016x", 0))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Stat() of the least recently used home error = %v, want %v", err, os.ErrNotExist)
+			}
+			if homes, err := coder.dir.CallerHomeDirs(id); err != nil || len(homes) != maxCallerHomes {
+				t.Fatalf("CallerHomeDirs() = %d homes, %v, want %d", len(homes), err, maxCallerHomes)
+			}
+		})
 	}
 }
 

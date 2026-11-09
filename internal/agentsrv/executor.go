@@ -925,6 +925,9 @@ type callerInterceptor struct {
 	users     *userAgents
 	// dir holds the agent homes of members.
 	dir agentdir.Dir
+	// removeHome forgets what the server keeps about an agent home that
+	// goes.
+	removeHome func(home string)
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -1081,30 +1084,6 @@ func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID strin
 		return nil
 	}
 	return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
-}
-
-// maxCallerHomes limits the agent homes that a member that is another
-// agent gets for the people behind its calls.
-const maxCallerHomes = 32
-
-var errCallerHomes = fmt.Errorf("this agent keeps agent homes for at most %d people behind one calling agent", maxCallerHomes)
-
-// checkCallerHomes refuses a new caller of another agent once that agent
-// has maxCallerHomes homes for its callers.
-func (i *callerInterceptor) checkCallerHomes(key string) error {
-	caller := agentkey.CallerOf(key)
-	if caller == "" {
-		return nil
-	}
-	id, _ := agentkey.UserOf(key)
-	homes, err := i.dir.CallerHomeDirs(id)
-	if err != nil {
-		return fmt.Errorf("listing the agent homes of %s: %w", id, err)
-	}
-	if len(homes) < maxCallerHomes || slices.Contains(homes, i.dir.CallerHomeDir(id, caller)) {
-		return nil
-	}
-	return fmt.Errorf("%w: %w", a2a.ErrUnauthorized, errCallerHomes)
 }
 
 // checkConversation refuses a message into a conversation that another

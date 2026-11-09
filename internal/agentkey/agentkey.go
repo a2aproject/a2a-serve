@@ -64,7 +64,7 @@ const callerLen = 16
 // agent, gets for the person it names caller.
 func Caller(id, caller string) string {
 	sum := sha256.Sum256([]byte(caller))
-	return User(id) + "#" + hex.EncodeToString(sum[:])[:callerLen]
+	return CallerKey(id, hex.EncodeToString(sum[:])[:callerLen])
 }
 
 // UserOf returns the principal ID of a user's agent key, also of one that
@@ -90,6 +90,9 @@ func CallerOf(key string) string {
 	_, caller, _ := splitCaller(rest)
 	return caller
 }
+
+// CallerKey returns the key whose CallerOf is caller.
+func CallerKey(id, caller string) string { return CallerPrefix(id) + caller }
 
 // CallerPrefix starts the keys of the agent processes that the principal
 // id gets for the people behind its calls.

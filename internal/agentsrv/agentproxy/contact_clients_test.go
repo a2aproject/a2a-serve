@@ -493,17 +493,22 @@ func TestContactClientsTargetNamesTheCaller(t *testing.T) {
 	remote := newFakeContact(t)
 	st := openTestStore(t)
 	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	putContact(t, st, store.Contact{Name: "reviewer", URL: remote.URL})
 	cc := newTestContactClients(t, st, nil)
 	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember}
-	users := []auth.Principal{
-		anna,
-		{ID: "pair:ben", Role: auth.RoleMember},
-		anna,
-		{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: 1, Caller: "m13"}},
+	calls := []struct {
+		agent string
+		user  auth.Principal
+	}{
+		{"coder", anna},
+		{"coder", auth.Principal{ID: "pair:ben", Role: auth.RoleMember}},
+		{"coder", anna},
+		{"coder", auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: 1, Caller: "m13"}}},
+		{"reviewer", anna},
 	}
 
-	for _, user := range users {
-		tg, err := cc.target(context.Background(), "coder", user, user.Hops)
+	for _, call := range calls {
+		tg, err := cc.target(context.Background(), call.agent, call.user, call.user.Hops)
 		if err != nil {
 			t.Fatalf("ContactClients.target() error = %v", err)
 		}
@@ -518,16 +523,16 @@ func TestContactClientsTargetNamesTheCaller(t *testing.T) {
 			got = append(got, r.Caller)
 		}
 	}
-	if len(got) != len(users) {
-		t.Fatalf("calls to the contact = %d, want %d", len(got), len(users))
+	if len(got) != len(calls) {
+		t.Fatalf("calls to the contact = %d, want %d", len(got), len(calls))
 	}
 	for _, c := range got {
 		if !regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`).MatchString(c) || strings.Contains(c, "anna") {
 			t.Fatalf("caller header = %q, want an opaque ID", c)
 		}
 	}
-	if got[0] != got[2] || got[0] == got[1] || got[0] == got[3] {
-		t.Fatalf("caller headers = %q, want one stable ID per person", got)
+	if got[0] != got[2] || got[0] == got[1] || got[0] == got[3] || got[0] == got[4] {
+		t.Fatalf("caller headers = %q, want one stable ID per person and agent", got)
 	}
 }
 

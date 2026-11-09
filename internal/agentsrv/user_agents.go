@@ -88,6 +88,16 @@ func (u *userAgents) callerKeys(id string) []string {
 	return out
 }
 
+// forget drops the entry of key if no process of it runs or starts and no
+// turn uses it.
+func (u *userAgents) forget(key string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if a := u.keys[key]; a != nil && a.proc == nil && !a.starting && a.turns == 0 {
+		delete(u.keys, key)
+	}
+}
+
 // started records proc as the running process of a.
 // reserve counts a process of a as starting until release, or returns
 // errAgentsBusy if maxUserAgents processes run or start.
@@ -355,11 +365,10 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	// its agent process to start would keep its cancellation waiting.
 	u.posted.DropUsers(principals)
 	as := auth.InProcess(ctx, auth.Owner())
-	var keys []string
-	for _, p := range principals {
-		keys = append(keys, agentkey.User(p))
-		keys = append(keys, u.users.callerKeys(p)...)
-		ids, err := u.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: p, AgentKey: agentkey.User(p), CallerKeys: agentkey.CallerPrefix(p)})
+	keys := make([]string, len(principals))
+	for i, p := range principals {
+		keys[i] = agentkey.User(p)
+		ids, err := u.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: p, AgentKey: keys[i], CallerKeys: agentkey.CallerPrefix(p)})
 		if err != nil {
 			return nil, err
 		}
@@ -373,8 +382,22 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	if err != nil {
 		return nil, err
 	}
+	// The processes of the users' callers start while holding the start of
+	// the user's own process, so none starts after this list is read.
+	var callers []string
+	for _, p := range principals {
+		callers = append(callers, u.users.callerKeys(p)...)
+	}
+	releaseCallers, err := u.users.stop(callers...)
+	if err != nil {
+		release()
+		return nil, err
+	}
 	u.sandboxes.forget(keys...)
-	return release, nil
+	return func() {
+		releaseCallers()
+		release()
+	}, nil
 }
 
 // userHomes deletes the homes of users' agent processes and forgets their
@@ -384,10 +407,16 @@ type userHomes struct{ s *Server }
 func (h userHomes) RemoveUserHome(id string) error {
 	homes, err := h.s.dir.CallerHomeDirs(id)
 	for _, home := range append(homes, h.s.dir.UserHomeDir(id)) {
-		h.s.pins.Unpin(home)
-		h.s.forgetStorageNote(home)
+		h.s.forgetHome(home)
 	}
 	return errors.Join(err, h.s.dir.RemoveUserHome(id))
+}
+
+// forgetHome forgets the pins and the storage note of an agent home that
+// goes.
+func (s *Server) forgetHome(home string) {
+	s.pins.Unpin(home)
+	s.forgetStorageNote(home)
 }
 
 func (h userHomes) UserHomeDir(id string) string { return h.s.dir.UserHomeDir(id) }
