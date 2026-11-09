@@ -175,7 +175,7 @@ func checkSnapshot(ctx context.Context, dest Dest, name string) error {
 // committedFiles are the files a repository can hold in .a2a without the
 // agent's state. Restore keeps recipe.lock and .gitignore, since they belong
 // to the files of the repository's commit. It replaces config.yaml with the
-// snapshot's, which holds the settings changed after the commit.
+// snapshot's, which usually holds the settings changed after the commit.
 var committedFiles = []string{pathConfig, pathRecipeLock, ".gitignore"}
 
 // Restore recreates an agent's .a2a directory in root from a snapshot. It
@@ -249,7 +249,7 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		}
 		if f.name == pathConfig && inSnapshot {
 			if !bytes.Equal(restored, f.data) {
-				notes = append(notes, "replaced "+filepath.Join(agentdir.Name, f.name)+" with the snapshot's, which holds the settings changed after the commit; review the change with `git -C "+shellquote.Quote(root)+" diff "+filepath.Join(agentdir.Name, f.name)+"`")
+				notes = append(notes, configNote(ctx, root))
 			}
 			continue
 		}
@@ -264,6 +264,17 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return nil, err
 	}
 	return notes, moveIntoPlace(tmp, d.Path(), committed)
+}
+
+// configNote says that a restore replaced the committed config.yaml in
+// root, and names the command that shows the change when git tracks it.
+func configNote(ctx context.Context, root string) string {
+	path := filepath.Join(agentdir.Name, pathConfig)
+	note := "replaced " + path + " with the snapshot's, which differs from it"
+	if err := ExecRunner(ctx, nil, io.Discard, "git", "-C", root, "ls-files", "--error-unmatch", "--", path); err != nil {
+		return note
+	}
+	return note + "; review the change with `git -C " + shellquote.Quote(root) + " diff " + path + "`"
 }
 
 // committedFile is a file of committedFiles in .a2a before a restore.

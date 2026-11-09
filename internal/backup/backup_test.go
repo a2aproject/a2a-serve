@@ -317,7 +317,7 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 			name:      "config.yaml of another commit",
 			committed: map[string]string{"config.yaml": "name: coder\nharness: claude\n", ".gitignore": "state/\n"},
 			want:      map[string]string{"recipe.lock": "lock", ".gitignore": "state/\n"},
-			wantNotes: []string{"git -C "},
+			wantNotes: []string{"replaced .a2a/config.yaml with the snapshot's"},
 		},
 	}
 	for _, tc := range tests {
@@ -366,7 +366,7 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 	}
 }
 
-func TestRestoreConfigNoteCommandWorks(t *testing.T) {
+func TestRestoreConfigNoteNamesGitDiffOfTrackedConfig(t *testing.T) {
 	t.Parallel()
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")
@@ -380,44 +380,65 @@ func TestRestoreConfigNoteCommandWorks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
 	}
-	root := filepath.Join(t.TempDir(), "my app")
-	if err := os.MkdirAll(filepath.Join(root, agentdir.Name), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	writeFiles(t, filepath.Join(root, agentdir.Name), map[string]string{"config.yaml": "name: coder\nharness: claude\n", ".gitignore": "state/\n"})
-	git := func(dir string, args ...string) string {
+	gitEnv := append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat")
+	git := func(t *testing.T, dir string, args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
-		cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("git %v error = %v: %s", args, err, out)
 		}
-		return string(out)
-	}
-	git(root, "init", "-q")
-	git(root, "add", "-A")
-	git(root, "commit", "-q", "-m", "agent")
-
-	notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
-	if err != nil {
-		t.Fatalf("Restore() error = %v", err)
 	}
 
-	if len(notes) != 1 {
-		t.Fatalf("Restore() notes = %q, want one note about config.yaml", notes)
+	tests := []struct {
+		name     string
+		commit   bool
+		wantHint bool
+	}{
+		{name: "committed config.yaml", commit: true, wantHint: true},
+		{name: "untracked config.yaml", commit: false, wantHint: false},
 	}
-	_, rest, _ := strings.Cut(notes[0], "`")
-	command, _, _ := strings.Cut(rest, "`")
-	cmd := exec.Command("sh", "-c", command)
-	cmd.Dir = t.TempDir()
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("running the note's command %q error = %v: %s", command, err, out)
-	}
-	if !strings.Contains(string(out), "-harness: claude") {
-		t.Fatalf("the note's command %q = %s, want the diff of config.yaml", command, out)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := filepath.Join(t.TempDir(), "my app")
+			if err := os.MkdirAll(filepath.Join(root, agentdir.Name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFiles(t, filepath.Join(root, agentdir.Name), map[string]string{"config.yaml": "name: coder\nharness: claude\n", ".gitignore": "state/\n"})
+			git(t, root, "init", "-q")
+			if tc.commit {
+				git(t, root, "add", "-A")
+				git(t, root, "commit", "-q", "-m", "agent")
+			}
+
+			notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
+			if err != nil {
+				t.Fatalf("Restore() error = %v", err)
+			}
+
+			if len(notes) != 1 {
+				t.Fatalf("Restore() notes = %q, want one note about config.yaml", notes)
+			}
+			_, rest, gotHint := strings.Cut(notes[0], "`")
+			if gotHint != tc.wantHint {
+				t.Fatalf("Restore() notes = %q, want a command in it: %v", notes, tc.wantHint)
+			}
+			if !gotHint {
+				return
+			}
+			command, _, _ := strings.Cut(rest, "`")
+			cmd := exec.Command("sh", "-c", command)
+			cmd.Dir = t.TempDir()
+			cmd.Env = gitEnv
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running the note's command %q error = %v: %s", command, err, out)
+			}
+			if !strings.Contains(string(out), "-harness: claude") {
+				t.Fatalf("the note's command %q = %s, want the diff of config.yaml", command, out)
+			}
+		})
 	}
 }
 
