@@ -284,7 +284,7 @@ func (a *Chain) refreshNetwork(ctx context.Context, id Identity) (Identity, erro
 }
 
 func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error) {
-	id := Identity{Network: r.Listener, Hops: hops(r.Header)}
+	id := Identity{Network: r.Listener, Hops: Hops(r.Header)}
 	if r.Listener == network.ListenerPrivate && a.Net != nil {
 		id.Provider = a.Net.Name()
 		peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
@@ -396,10 +396,10 @@ func (a *Chain) messengerIdentity(ctx context.Context, in *messenger.Inbound) (I
 	return a.withPairing(ctx, id, l.Pairing)
 }
 
-// hops returns the hop count the caller sent. A caller can leave it out,
+// Hops returns the hop count the caller sent. A caller can leave it out,
 // so it only lowers a role, and guards against loops of agents calling
 // each other.
-func hops(h http.Header) int {
+func Hops(h http.Header) int {
 	n, err := strconv.Atoi(h.Get(HeaderHops))
 	if err != nil || n < 0 {
 		return 0

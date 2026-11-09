@@ -936,11 +936,11 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	f, _ := lookupField(setting)
 	switch {
 	case f.secretOnly && len(entries) > 0:
-		return nil, fmt.Errorf("%s takes no entries: run `a2a-serve config unset %s`", setting, setting)
+		return nil, unsetEntriesError(setting+" takes no entries", "", setting, entries)
 	case f.secretOnly:
 		deleted = append(deleted, f.secret)
 	case !f.list && len(entries) > 0:
-		return nil, fmt.Errorf("%s is not a list: run `a2a-serve config unset %s` to reset it", setting, setting)
+		return nil, unsetEntriesError(setting+" is not a list", " to reset it", setting, entries)
 	case setting == "name":
 		cfg.Name = d.DefaultName()
 	case f.list && len(entries) > 0:
@@ -1082,6 +1082,21 @@ func CopyLive(dst, src *Config) {
 	// The grant of a secret the running agent doesn't have yet, such as one
 	// stored with the rule, waits for the restart that loads the secret.
 	dst.Policy.Sandbox = loadedRules(dst.Policy.Sandbox, dst.Secrets)
+}
+
+// unsetEntriesError refuses the entries of setting, which takes none, for
+// the reason why. When every entry is a setting too, it names the command
+// that resets each.
+func unsetEntriesError(why, purpose, setting string, entries []string) error {
+	cmds := []string{"`a2a-serve config unset " + setting + "`"}
+	for _, e := range entries {
+		if CheckUnset(e) != nil {
+			return fmt.Errorf("%s: run %s%s", why, cmds[0], purpose)
+		}
+		cmds = append(cmds, "`a2a-serve config unset "+e+"`")
+	}
+	last := len(cmds) - 1
+	return fmt.Errorf("%s, and unset takes one setting: run %s and %s", why, strings.Join(cmds[:last], ", "), cmds[last])
 }
 
 // IsAccess reports whether the setting changes who may call the agent: an

@@ -91,6 +91,7 @@ func TestA2AErrorBodies(t *testing.T) {
 	tests := []struct {
 		name      string
 		auth      string
+		hops      string
 		body      string
 		chunked   bool
 		wantRPC   a2aErrorBody
@@ -111,6 +112,15 @@ func TestA2AErrorBodies(t *testing.T) {
 			wantRPC:   a2aErrorBody{Status: http.StatusUnauthorized, Code: -31401, Reason: "UNAUTHENTICATED"},
 			wantREST:  a2aErrorBody{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Reason: "UNAUTHENTICATED"},
 			wantInMsg: "this agent doesn't recognize the token, which may be mistyped, revoked or replaced; ask the agent's owner for a pairing code",
+		},
+		{
+			name:      "unknown token of an agent",
+			auth:      "Bearer " + auth.TokenPrefix + "revoked",
+			hops:      "1",
+			body:      listTasksRPC,
+			wantRPC:   a2aErrorBody{Status: http.StatusUnauthorized, Code: -31401, Reason: "UNAUTHENTICATED"},
+			wantREST:  a2aErrorBody{Status: http.StatusUnauthorized, Code: http.StatusUnauthorized, Reason: "UNAUTHENTICATED"},
+			wantInMsg: "which may be mistyped, revoked or replaced; to pair, this agent's owner runs `a2a-serve pair invite <name>`, and the calling agent's owner adds the code with `a2a-serve contact add " + ts.srv.rt.Config().Name + " --url " + ts.localURL() + " --code <code>`",
 		},
 		{
 			name:      "body too large",
@@ -141,6 +151,9 @@ func TestA2AErrorBodies(t *testing.T) {
 				header := http.Header{"Content-Type": {"application/json"}}
 				if tc.auth != "" {
 					header.Set("Authorization", tc.auth)
+				}
+				if tc.hops != "" {
+					header.Set(auth.HeaderHops, tc.hops)
 				}
 				var resp *http.Response
 				if len(tc.body) > jsonhttp.MaxBody && !tc.chunked {

@@ -173,8 +173,13 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			proto.writeError(w, http.StatusForbidden, a2a.ErrUnauthorized, s.refusal(r.Context(), refused, base(s.listenerURL(kind), r)))
 			return
 		case errors.Is(err, auth.ErrUnknownToken):
-			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
-			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, err.Error()+", which may be mistyped, revoked or replaced; "+pairHint)
+			agentURL := base(s.listenerURL(kind), r)
+			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, agentURL))
+			hint := pairHint
+			if auth.Hops(r.Header) > 0 {
+				hint = s.contactSteps("<name>", agentURL)
+			}
+			proto.writeError(w, http.StatusUnauthorized, a2a.ErrUnauthenticated, err.Error()+", which may be mistyped, revoked or replaced; "+hint)
 			return
 		case errors.Is(err, auth.ErrNoCredential):
 			w.Header().Set("WWW-Authenticate", s.oauth.ChallengeHeader(kind, base(s.listenerURL(kind), r)))
@@ -185,8 +190,28 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			proto.writeError(w, http.StatusInternalServerError, a2a.ErrInternalError, "authentication failed")
 			return
 		}
-		next.ServeHTTP(w, r.WithContext(auth.WithPrincipal(r.Context(), p)))
+		agentURL := base(s.listenerURL(kind), r)
+		if auth.Hops(r.Header) > 0 {
+			// An agent calls through its server, at a URL only that server knows.
+			agentURL = "<agent URL>"
+		}
+		ctx := context.WithValue(auth.WithPrincipal(r.Context(), p), agentURLKey{}, agentURL)
+		next.ServeHTTP(w, r.WithContext(ctx))
 	})
+}
+
+// agentURLKey is the context key of the URL a caller reached the agent at,
+// as the caller can pass it to the a2a CLI.
+type agentURLKey struct{}
+
+// a2aCommand words the a2a CLI command `a2a <args>` for the caller of ctx,
+// with the agent URL the caller used inserted after the subcommand words.
+func a2aCommand(ctx context.Context, sub, args string) string {
+	cmd := "a2a " + sub
+	if u, _ := ctx.Value(agentURLKey{}).(string); u != "" {
+		cmd += " -a " + u
+	}
+	return "`" + cmd + " " + args + "`"
 }
 
 const pairHint = "ask the agent's owner for a pairing code and run `a2a-serve pair join <agent-url> <code>`"
@@ -202,8 +227,14 @@ func (s *Server) refusal(ctx context.Context, refused *auth.RefusedError, agentU
 	if name := s.peerName(ctx, id.Node); name != "" {
 		who, invitee = name+", "+who, name
 	}
-	return fmt.Sprintf("this agent doesn't accept %s; to pair, this agent's owner runs `a2a-serve pair invite %s`, and the calling agent's owner adds the code with `a2a-serve contact add %s --url %s --code <code>`",
-		who, invitee, s.rt.Config().Name, agentURL)
+	return fmt.Sprintf("this agent doesn't accept %s; %s", who, s.contactSteps(invitee, agentURL))
+}
+
+// contactSteps words how the calling agent becomes a contact of this agent
+// at agentURL, under the pairing name invitee.
+func (s *Server) contactSteps(invitee, agentURL string) string {
+	return fmt.Sprintf("to pair, this agent's owner runs `a2a-serve pair invite %s`, and the calling agent's owner adds the code with `a2a-serve contact add %s --url %s --code <code>`",
+		invitee, s.rt.Config().Name, agentURL)
 }
 
 // peerNameTimeout bounds looking up the name of a refused agent.

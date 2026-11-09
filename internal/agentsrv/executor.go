@@ -1033,11 +1033,12 @@ func (i *callerInterceptor) After(ctx context.Context, _ *a2asrv.CallContext, re
 	if !ok || auth.IsInProcess(ctx) || !a2aerr.ExecutionInProgress(resp.Err) {
 		return nil
 	}
+	get := a2aCommand(ctx, "task get", string(r.task))
 	if r.approval {
-		resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s already got an answer to this question; see where it stands with a2a task get %s", r.task, r.task))
+		resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s already got an answer to this question; see where it stands with %s", r.task, get))
 		return nil
 	}
-	resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s is still working on an earlier message; check it with a2a task get %s, and once it is done, continue with a2a send --context-id %s", r.task, r.task, r.contextID))
+	resp.Err = a2aerr.InProgress(fmt.Sprintf("task %s is still working on an earlier message; check it with %s, and once it is done, continue with %s", r.task, get, a2aCommand(ctx, "send", "--context-id "+r.contextID)))
 	return nil
 }
 
@@ -1121,8 +1122,12 @@ func (i *callerInterceptor) checkWaiting(ctx context.Context, p auth.Principal, 
 		for i, o := range q.Options {
 			ids[i] = o.ID
 		}
-		return fmt.Errorf("%w: task %s in conversation %s waits for an answer to %q; answer it first with a2a send --task-id %s and one of: %s, or leave out the context ID to start a new conversation",
-			a2a.ErrInvalidRequest, t.ID, contextID, q.Title, t.ID, strings.Join(ids, ", "))
+		answer := "with " + a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" <answer>")
+		if len(ids) > 0 {
+			answer = fmt.Sprintf("with one of %s, as in %s", strings.Join(ids, ", "), a2aCommand(ctx, "send", "--task-id "+string(t.ID)+" "+ids[0]))
+		}
+		return fmt.Errorf("%w: task %s in conversation %s waits for an answer to %q; answer it first %s, or leave out the context ID to start a new conversation",
+			a2a.ErrInvalidRequest, t.ID, contextID, q.Title, answer)
 	}
 	return nil
 }

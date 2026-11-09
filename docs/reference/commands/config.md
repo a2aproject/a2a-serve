@@ -31,9 +31,10 @@ a2a-serve config [flags]
 
 Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
 it is validated and applied like `a2a-serve config set`; if it is invalid,
-the file reopens with the errors on top, like crontab -e. If config.yaml
-changed while the editor was open, your edit is saved in
-.a2a/state/config-draft.yaml and the current file reopens. A value typed into
+the file reopens with the errors on top, like crontab -e. A rejected edit is
+saved in .a2a/state/config-draft.yaml, and the next edit opens it until a
+save succeeds. If config.yaml changed while the editor was open, your edit is
+saved there too and the current file reopens. A value typed into
 a secret setting is stored in .a2a/state/secrets, and the file keeps a
 secret:NAME reference. Messengers are changed with `a2a-serve messenger add`
 and `a2a-serve messenger rm`.

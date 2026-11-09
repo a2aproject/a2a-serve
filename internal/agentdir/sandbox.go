@@ -262,12 +262,25 @@ func (p PolicyConfig) checkSecretsUnused(names []string) error {
 			case slices.Equal(r.Match, []string{MatchGuests}):
 				who, fix = "the rule of guests", "run `a2a-serve config unset guest-secrets` first"
 			case pairing && len(r.Match) == 1:
-				who, fix = name+"'s sandbox rule", fmt.Sprintf("change it with `a2a-serve pair set %s --secrets` first", name)
+				who, fix = name+"'s sandbox rule", fmt.Sprintf("change it with `a2a-serve pair set %s --secrets %s` first", name, strings.Join(secretsWithout(r.Secrets, names), ","))
 			}
 			return clierr.UsageNoHint(fmt.Sprintf("%s is used by %s; %s", from, who, fix))
 		}
 	}
 	return nil
+}
+
+// secretsWithout returns the secrets of a rule without the grants of the
+// stored secrets names, or none if no grant is left.
+func secretsWithout(secrets, names []string) []string {
+	kept := slices.DeleteFunc(slices.Clone(secrets), func(e string) bool {
+		_, from, ok := ParseSecretGrant(e)
+		return ok && slices.Contains(names, from)
+	})
+	if len(kept) == 0 {
+		return []string{SecretsNone}
+	}
+	return kept
 }
 
 // guestRule is the rule of guests, which

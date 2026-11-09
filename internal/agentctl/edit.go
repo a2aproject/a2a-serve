@@ -29,20 +29,29 @@ import (
 )
 
 // errorPrefix marks the lines Edit puts on top of the file to show why the
-// last edit was rejected.
-const errorPrefix = "# ERROR: "
+// last edit was rejected, and notePrefix the line that names a resumed draft.
+const (
+	errorPrefix = "# ERROR: "
+	notePrefix  = "# NOTE: "
+)
 
-// Edit lets edit change a copy of config.yaml, like crontab -e. A valid
-// result is applied as by [Apply]. For an invalid one, retry decides
-// whether to edit again, with the error on top of the file. If config.yaml
-// changed during the edit, the edit is kept as a draft and retry decides
-// whether to edit the current file. An unchanged file returns an empty
-// result.
+// Edit lets edit change a copy of config.yaml, like crontab -e, or the
+// draft of an earlier rejected edit if there is one. A valid result is
+// applied as by [Apply]. For an invalid one, retry decides whether to edit
+// again, with the error on top of the file. If config.yaml changed since
+// the edit, or its draft, started from it, the edit is kept as the draft
+// and retry decides whether to edit the current file. A result that
+// equals config.yaml returns an empty result.
 func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit func(path string) error, retry func(error) (bool, error)) (*Result, error) {
-	orig, err := os.ReadFile(d.ConfigPath())
+	cur, err := os.ReadFile(d.ConfigPath())
 	if err != nil {
 		return nil, err
 	}
+	base, content, err := startOf(d, cur)
+	if err != nil {
+		return nil, err
+	}
+	resumed := !bytes.Equal(content, cur)
 	tmp, err := os.CreateTemp(d.Path(), "config-*.yaml")
 	if err != nil {
 		return nil, err
@@ -56,7 +65,6 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 	if err := tmp.Close(); err != nil {
 		return nil, err
 	}
-	content := orig
 	drafted := false
 	for {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
@@ -70,13 +78,13 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			return nil, err
 		}
 		edited = stripErrors(edited)
-		if bytes.Equal(edited, orig) {
+		if bytes.Equal(edited, cur) {
 			if !drafted {
 				removeDraft(d)
 			}
 			return withUnknownKeys(&Result{Path: d.ConfigPath()}, edited), nil
 		}
-		res, err := Replace(ctx, d, client, edited, orig, false)
+		res, err := Replace(ctx, d, client, edited, base, false)
 		var se *agentdir.SettingsError
 		if err == nil {
 			removeDraft(d)
@@ -84,7 +92,11 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		if errors.Is(err, ErrConfigChanged) {
 			drafted = true
-			err = errors.Join(err, keepDraft(d, edited))
+			why := fmt.Errorf("%w while you edited it", err)
+			if resumed {
+				why = fmt.Errorf("%w since your edit was saved; to apply the edit to the current file, run `a2a-serve config edit` in a terminal and edit again, or discard it with `rm %s`", err, d.ConfigDraftPath())
+			}
+			err = errors.Join(why, keepDraft(d, edited, base))
 			again, rerr := retry(err)
 			if rerr != nil {
 				return nil, rerr
@@ -92,11 +104,10 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			if !again {
 				return nil, err
 			}
-			cur, rerr := os.ReadFile(d.ConfigPath())
-			if rerr != nil {
+			if cur, rerr = os.ReadFile(d.ConfigPath()); rerr != nil {
 				return nil, rerr
 			}
-			orig, content = cur, withErrors(cur, err)
+			base, content, resumed = cur, withErrors(cur, err), false
 			continue
 		}
 		if !errors.As(err, &se) {
@@ -107,17 +118,44 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			return nil, rerr
 		}
 		if !again {
-			return nil, &agentdir.SettingsError{Err: errors.Join(err, keepDraft(d, edited))}
+			return nil, &agentdir.SettingsError{Err: errors.Join(err, keepDraft(d, edited, base))}
 		}
-		content = withErrors(edited, err)
+		content, resumed = withErrors(edited, err), false
 	}
 }
 
-// keepDraft saves the rejected edit, so that the work isn't lost, and returns
-// the note that config.yaml stayed as it was.
-func keepDraft(d agentdir.Dir, edited []byte) error {
+// startOf returns the content an edit starts from, and the content of
+// config.yaml that it is based on: the draft of an earlier rejected edit
+// if there is one, else cur, the current config.yaml.
+func startOf(d agentdir.Dir, cur []byte) (base, content []byte, err error) {
+	draft, err := os.ReadFile(d.ConfigDraftPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return cur, cur, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	base, err = os.ReadFile(d.ConfigDraftBasePath())
+	if errors.Is(err, os.ErrNotExist) {
+		base, err = cur, nil
+	}
+	if err != nil {
+		return nil, nil, err
+	}
+	path := d.ConfigDraftPath()
+	note := fmt.Sprintf("%sthis is your edit saved in %s; to discard it, quit, run `rm %s`, and run `a2a-serve config edit` again\n", notePrefix, path, path)
+	return base, append([]byte(note), draft...), nil
+}
+
+// keepDraft saves the rejected edit, and base, the content of config.yaml
+// it started from, so that the work isn't lost, and returns the note that
+// config.yaml stayed as it was.
+func keepDraft(d agentdir.Dir, edited, base []byte) error {
 	path := d.ConfigDraftPath()
 	err := fsutil.MkdirPrivate(d.StateDir())
+	if err == nil {
+		err = fsutil.WriteAtomic(d.ConfigDraftBasePath(), base, 0o600)
+	}
 	if err == nil {
 		err = fsutil.WriteAtomic(path, edited, 0o600)
 	}
@@ -130,8 +168,10 @@ func keepDraft(d agentdir.Dir, edited []byte) error {
 // removeDraft deletes the draft of an earlier rejected edit, which a
 // finished edit replaces.
 func removeDraft(d agentdir.Dir) {
-	if err := os.Remove(d.ConfigDraftPath()); err != nil && !errors.Is(err, os.ErrNotExist) {
-		slog.Warn("removing the draft of config.yaml", "path", d.ConfigDraftPath(), "error", err)
+	for _, path := range []string{d.ConfigDraftPath(), d.ConfigDraftBasePath()} {
+		if err := os.Remove(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			slog.Warn("removing the draft of config.yaml", "path", path, "error", err)
+		}
 	}
 }
 
@@ -157,7 +197,7 @@ func withErrors(data []byte, err error) []byte {
 }
 
 func stripErrors(data []byte) []byte {
-	for bytes.HasPrefix(data, []byte(errorPrefix)) {
+	for bytes.HasPrefix(data, []byte(errorPrefix)) || bytes.HasPrefix(data, []byte(notePrefix)) {
 		i := bytes.IndexByte(data, '\n')
 		if i < 0 {
 			return nil

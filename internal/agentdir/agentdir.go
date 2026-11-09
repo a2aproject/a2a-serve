@@ -160,6 +160,12 @@ func (d Dir) ConfigPath() string { return filepath.Join(d.Path(), configFile) }
 // `config edit` rejected.
 func (d Dir) ConfigDraftPath() string { return filepath.Join(d.StateDir(), "config-draft.yaml") }
 
+// ConfigDraftBasePath returns the path of the content of config.yaml that
+// the draft at [Dir.ConfigDraftPath] started from.
+func (d Dir) ConfigDraftBasePath() string {
+	return filepath.Join(d.StateDir(), "config-draft-base.yaml")
+}
+
 // StateDir returns the directory which is never committed.
 func (d Dir) StateDir() string { return filepath.Join(d.Path(), "state") }
 
