@@ -43,6 +43,9 @@ const (
 	earlierHistory = 20
 	// maxEarlierBytes bounds the earlier messages; the latest are kept.
 	maxEarlierBytes = 16 << 10
+	// maxEarlierReplyBytes bounds each reply of the agent among them, so
+	// that a long reply doesn't push out the user's messages.
+	maxEarlierReplyBytes = 2 << 10
 )
 
 // movedConversations continues the conversations whose ACP session was
@@ -89,7 +92,7 @@ func (m *movedConversations) withEarlier(ctx context.Context, execCtx *a2asrv.Ex
 // before this one, at most maxEarlierBytes of them.
 func (m *movedConversations) earlier(ctx context.Context, execCtx *a2asrv.ExecutorContext) (string, error) {
 	history := earlierHistory
-	resp, err := m.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: execCtx.ContextID, PageSize: earlierTasks, HistoryLength: &history})
+	resp, err := m.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: execCtx.ContextID, PageSize: earlierTasks, HistoryLength: &history, IncludeArtifacts: true})
 	if err != nil {
 		return "", err
 	}
@@ -107,10 +110,19 @@ func (m *movedConversations) earlier(ctx context.Context, execCtx *a2asrv.Execut
 			}
 		}
 		if text := a2atext.Result(t); text != "" {
-			sb.WriteString("Agent: " + text + "\n\n")
+			sb.WriteString("Agent: " + firstBytes(text, maxEarlierReplyBytes) + "\n\n")
 		}
 	}
 	return lastBytes(strings.TrimSpace(sb.String()), maxEarlierBytes), nil
+}
+
+// firstBytes returns the start of s, at most n bytes of it and a mark
+// that it was cut.
+func firstBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return strings.ToValidUTF8(s[:n], "") + " […]"
 }
 
 // lastBytes returns the end of s, at most n bytes of it, cut at a line.
