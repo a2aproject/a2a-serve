@@ -277,13 +277,16 @@ func TestConformanceAgentErrorWithoutProtocolDetails(t *testing.T) {
 func TestConformanceStalledTurn(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name      string
-		prompt    string
-		wantState a2a.TaskState
-		wantText  string
+		name        string
+		prompt      string
+		toolTimeout time.Duration
+		wantState   a2a.TaskState
+		wantText    string
 	}{
 		{name: "agent sends nothing", prompt: "stall", wantState: a2a.TaskStateFailed, wantText: "the agent sent nothing for 3s"},
 		{name: "silent tool call", prompt: "build 6s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
+		{name: "silent pending tool call", prompt: "pending 6s", wantState: a2a.TaskStateCompleted, wantText: "Built."},
+		{name: "tool call that never ends", prompt: "pending 1h", toolTimeout: 6 * time.Second, wantState: a2a.TaskStateFailed, wantText: "a tool call of the agent sent nothing for 6s"},
 		{name: "streaming agent", prompt: "slow 6s", wantState: a2a.TaskStateCompleted, wantText: "Done."},
 	}
 	// A 3s stall timeout leaves room for a busy machine to delay the agent's
@@ -291,7 +294,10 @@ func TestConformanceStalledTurn(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.TurnStallTimeout = 3 * time.Second }})
+			ts := startServer(t, serverOpts{timings: func(tm *Timings) {
+				tm.TurnStallTimeout = 3 * time.Second
+				tm.ToolStallTimeout = tc.toolTimeout
+			}})
 			c := ts.client(ts.pair("me", auth.RoleOwner))
 			// A first turn starts the agent process, which the guard would count as silence.
 			warm := send(t, c, userText("hello", "", ""))
