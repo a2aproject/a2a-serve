@@ -16,6 +16,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -35,7 +36,9 @@ func newConfigEditCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Short: "Edit config.yaml in $EDITOR, validating it on save",
 		Long: `Open a copy of .a2a/config.yaml in $VISUAL or $EDITOR (default vi). On save
 it is validated and applied like ` + "`a2a-serve config set`" + `; if it is invalid,
-the file reopens with the errors on top, like crontab -e. A value typed into
+the file reopens with the errors on top, like crontab -e. If config.yaml
+changed while the editor was open, your edit is saved in
+.a2a/state/config-draft.yaml and the current file reopens. A value typed into
 a secret setting is stored in .a2a/state/secrets, and the file keeps a
 secret:NAME reference. Messengers are changed with ` + "`a2a-serve messenger add`" + `
 and ` + "`a2a-serve messenger rm`" + `.`,
@@ -93,7 +96,11 @@ func editorCommand(getenv func(string) string, terminal bool) ([]string, error) 
 // askEditAgain prints why the edit was rejected and, on a terminal, asks
 // whether to edit again.
 func askEditAgain(cfg *globalConfig, invalid error) (bool, error) {
-	if _, err := fmt.Fprintf(cfg.stderr(), "✗ invalid config:\n  %s\n", strings.ReplaceAll(invalid.Error(), "\n", "\n  ")); err != nil {
+	format := "✗ invalid config:\n  %s\n"
+	if errors.Is(invalid, agentctl.ErrConfigChanged) {
+		format = "✗ %s\n"
+	}
+	if _, err := fmt.Fprintf(cfg.stderr(), format, strings.ReplaceAll(invalid.Error(), "\n", "\n  ")); err != nil {
 		return false, err
 	}
 	if !term.IsTerminal(int(os.Stdin.Fd())) {
