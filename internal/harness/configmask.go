@@ -115,15 +115,27 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 		}
 		add(path, isDir)
 	}
-	for _, dir := range configDirs(mounts) {
+	roots, above := configDirs(mounts)
+	for _, dir := range roots {
+		for _, entry := range entries {
+			name, isDir := strings.CutSuffix(entry, "/")
+			if state, _ := configState(dir, name, isDir); state == configFound {
+				add(filepath.Join(dir, name), isDir)
+			}
+		}
+	}
+	for _, dir := range above {
 		for _, entry := range entries {
 			name, isDir := strings.CutSuffix(entry, "/")
 			path := filepath.Join(dir, name)
-			if !isConfig(dir, name, isDir) {
+			switch state, why := configState(dir, name, isDir); state {
+			case configFound:
+				add(path, isDir)
+			case configMissing:
 				unmasked = append(unmasked, path)
-				continue
+			default:
+				return configMasks{}, fmt.Errorf("%s %s, in a folder above the workspace where the agent reads its configuration; the agent could use it to change its own permissions, so remove it", why[0], why[1])
 			}
-			add(path, isDir)
 		}
 	}
 	for _, file := range files {
@@ -164,63 +176,50 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 }
 
 // configDirs returns the folders besides the workspace where the agent's
-// configuration is masked: the mount sources, and the folders of mounts
-// between a mount that holds the workspace and the workspace.
-func configDirs(mounts []agentdir.Mount) []string {
-	var out []string
-	add := func(dir string) {
-		if dir = resolvePath(dir); !slices.Contains(out, dir) && dir != resolvePath(mounts[0].Src) {
-			out = append(out, dir)
-		}
-	}
-	ws := mounts[0].Dst
+// configuration is masked: the sources of the mounts, and above, the
+// folders of mounts between a mount that holds the workspace and the
+// workspace, which opencode reads.
+func configDirs(mounts []agentdir.Mount) (roots, above []string) {
+	ws := resolvePath(mounts[0].Src)
 	for _, m := range mounts[1:] {
-		add(m.Src)
-		if m.Dst == ws || !within(m.Dst, ws) {
+		if m.Dst == mounts[0].Dst || !within(m.Dst, mounts[0].Dst) {
+			if src := resolvePath(m.Src); src != ws && !slices.Contains(roots, src) {
+				roots = append(roots, src)
+			}
 			continue
 		}
-		rel, err := filepath.Rel(m.Dst, filepath.Dir(ws))
-		if err != nil || rel == "." {
+		rel, err := filepath.Rel(m.Dst, filepath.Dir(mounts[0].Dst))
+		if err != nil {
 			continue
 		}
-		dir := m.Src
-		for _, part := range strings.Split(rel, string(filepath.Separator)) {
-			dir = filepath.Join(dir, part)
-			add(dir)
+		dir := resolvePath(m.Src)
+		for _, part := range append([]string{"."}, strings.Split(rel, string(filepath.Separator))...) {
+			if dir = filepath.Join(dir, part); !slices.Contains(above, dir) {
+				above = append(above, dir)
+			}
 		}
 	}
-	return out
+	roots = slices.DeleteFunc(roots, func(dir string) bool { return slices.Contains(above, dir) })
+	return roots, above
 }
 
 // prepareWorkspaceConfig makes name in the workspace ws a file or folder,
 // creating it when it is missing. It refuses symlinks on the way, which
 // the agent could repoint after the server masked their target.
 func prepareWorkspaceConfig(ws, name string, isDir bool) error {
-	refuse := func(path, why string) error {
-		return fmt.Errorf("%s %s; the agent could use it to change its own permissions, so remove it", path, why)
+	state, why := configState(ws, name, isDir)
+	if state == configInvalid {
+		return fmt.Errorf("%s %s; the agent could use it to change its own permissions, so remove it", why[0], why[1])
+	}
+	if state == configFound {
+		return nil
 	}
 	path := ws
 	parts := strings.Split(name, "/")
 	for i, part := range parts {
 		path = filepath.Join(path, part)
-		last := i == len(parts)-1
-		fi, err := os.Lstat(path)
-		if errors.Is(err, fs.ErrNotExist) {
-			if err := createConfig(path, isDir || !last); err != nil {
-				return fmt.Errorf("creating %s, which keeps the agent from changing its own permissions: %w", path, err)
-			}
-			continue
-		}
-		if err != nil {
-			return err
-		}
-		switch {
-		case fi.Mode()&fs.ModeSymlink != 0:
-			return refuse(path, "is a symlink")
-		case (isDir || !last) && !fi.IsDir():
-			return refuse(path, "isn't a folder")
-		case !isDir && last && !fi.Mode().IsRegular():
-			return refuse(path, "isn't a file")
+		if err := createConfig(path, isDir || i < len(parts)-1); err != nil && !errors.Is(err, fs.ErrExist) {
+			return fmt.Errorf("creating %s, which keeps the agent from changing its own permissions: %w", path, err)
 		}
 	}
 	return nil
@@ -233,22 +232,35 @@ func createConfig(path string, isDir bool) error {
 	return writeIfMissing(path, []byte(emptyConfig))
 }
 
-// isConfig reports whether name in dir is a configuration file or folder,
-// with no symlink on the way.
-func isConfig(dir, name string, isDir bool) bool {
+// States of a configuration file or folder.
+const (
+	configMissing = iota
+	configFound
+	configInvalid
+)
+
+// configState reports whether name in dir is missing, a configuration file
+// or folder, or something else on the way, such as a symlink. For the last
+// it returns the path and what it is.
+func configState(dir, name string, isDir bool) (int, [2]string) {
 	path := dir
 	parts := strings.Split(name, "/")
 	for i, part := range parts {
 		path = filepath.Join(path, part)
+		last := i == len(parts)-1
 		fi, err := os.Lstat(path)
-		if err != nil || fi.Mode()&fs.ModeSymlink != 0 {
-			return false
-		}
-		if i == len(parts)-1 {
-			return isDir == fi.IsDir() && (isDir || fi.Mode().IsRegular())
+		switch {
+		case err != nil:
+			return configMissing, [2]string{}
+		case fi.Mode()&fs.ModeSymlink != 0:
+			return configInvalid, [2]string{path, "is a symlink"}
+		case (isDir || !last) && !fi.IsDir():
+			return configInvalid, [2]string{path, "isn't a folder"}
+		case !isDir && last && !fi.Mode().IsRegular():
+			return configInvalid, [2]string{path, "isn't a file"}
 		}
 	}
-	return false
+	return configFound, [2]string{}
 }
 
 // hasSettings reports whether the configuration file or folder at path

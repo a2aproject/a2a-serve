@@ -638,6 +638,42 @@ func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
 	}
 }
 
+func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	repo, dotfiles := t.TempDir(), t.TempDir()
+	ws := mkdir(t, filepath.Join(repo, "app"))
+	mkdir(t, filepath.Join(dotfiles, "claude"))
+	symlink(t, "claude", filepath.Join(dotfiles, ".claude"))
+	spec := Spec{
+		Profile:    claude{},
+		Name:       "a2a-test",
+		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}, {Src: dotfiles, Dst: "/dotfiles"}},
+		Home:       t.TempDir(),
+		ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
+	}
+
+	p, err := Prepare(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Prepare() with a symlinked .claude in a mount error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Stop(context.Background()); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+	writeTestFile(t, filepath.Join(dotfiles, "claude", "settings.json"), `{}`)
+	if err := p.Check(); err != nil {
+		t.Fatalf("Prepared.Check() after a file appeared in a mount error = %v, want nil", err)
+	}
+
+	symlink(t, filepath.Join(dotfiles, ".claude"), filepath.Join(repo, ".claude"))
+	spec.Mounts = append(spec.Mounts, agentdir.Mount{Src: repo, Dst: repo})
+	_, err = Prepare(context.Background(), spec)
+	if want := filepath.Join(repo, ".claude") + " is a symlink, in a folder above the workspace"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() with a symlinked .claude above the workspace error = %v, want it to contain %q", err, want)
+	}
+}
+
 func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 	fakeDocker(t, runningDocker)
 	tests := []struct {
