@@ -51,6 +51,18 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           A2A_BOT_PAT: ${{ secrets.A2A_BOT_PAT }}
 
+  # Publishes ghcr.io/a2aproject/a2a-serve, the egress container image of
+  # Docker Desktop sandboxes.
+  egress-image:
+    needs: release-please
+    if: ${{ needs.release-please.outputs.release_created == 'true' }}
+    permissions:
+      contents: read
+      packages: write
+    uses: ./.github/workflows/egress-image.yaml
+    with:
+      tag: ${{ needs.release-please.outputs.tag_name }}
+
   # Publishes ghcr.io/a2aproject/a2a-serve-relay, which runs a relay on
   # Cloud Run or any container platform.
   relay-image:

@@ -1,0 +1,69 @@
+# Publishes the egress container image that a2a-serve runs next to each agent's
+# container on Docker Desktop, ghcr.io/a2aproject/a2a-serve:<version>. Without
+# it every first start on Docker Desktop builds the image locally.
+# release-please.yaml calls it for each release; workflow_dispatch publishes
+# an earlier release again.
+name: Egress image
+
+on:
+  workflow_call:
+    inputs:
+      tag:
+        description: Release tag to publish, such as v0.1.0
+        type: string
+        required: true
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to publish, such as v0.1.0
+        type: string
+        required: true
+  pull_request:
+    paths:
+      - 'internal/sandboxnet/Dockerfile'
+      - '.github/workflows/egress-image.yaml'
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+    - name: Build
+      run: docker build -t egress -f internal/sandboxnet/Dockerfile .
+
+    - name: Check the image runs the relay
+      run: |
+        docker run --rm egress version
+        docker run --rm egress sandbox-relay --help >/dev/null
+
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+    - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      with:
+        ref: ${{ inputs.tag }}
+
+    - name: Build and push
+      env:
+        IMAGE: ghcr.io/${{ github.repository_owner }}/a2a-serve
+        TAG: ${{ inputs.tag }}
+        TOKEN: ${{ github.token }}
+      run: |
+        set -eu
+        case "$TAG" in v[0-9]*.[0-9]*.[0-9]*) ;; *) echo "not a release tag: $TAG" >&2; exit 1 ;; esac
+        printf '%s' "$TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        docker run --privileged --rm tonistiigi/binfmt --install arm64
+        docker buildx create --use
+        docker buildx build --push --platform linux/amd64,linux/arm64 \
+          --build-arg "VERSION=${TAG#v}" \
+          -t "$IMAGE:$TAG" \
+          -f internal/sandboxnet/Dockerfile .

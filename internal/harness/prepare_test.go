@@ -16,6 +16,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -206,6 +207,52 @@ func TestPrepareDocker(t *testing.T) {
 	}
 	if want := EnvUnixSocket + "=" + SandboxDir + "/a2a.sock"; !slices.Contains(strings.Split(string(env), "\n"), want) {
 		t.Fatalf("Prepare() env = %q, want it to contain %q", env, want)
+	}
+}
+
+// noRelayImageDocker has the agent's image but not the egress container's,
+// which it can't pull.
+const noRelayImageDocker = `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") case "$*" in *example.com/egress*) exit 1 ;; esac; echo "amd64 null" ;;
+"rm "*) ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+
+func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
+	log := fakeDocker(t, noRelayImageDocker)
+	t.Setenv(EnvForceRelay, "1")
+	t.Setenv(EnvRelayImage, "example.com/egress:test")
+	ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+	p, err := Prepare(context.Background(), Spec{
+		Profile: claude{},
+		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:    home,
+		Name:    "a2a-test",
+		Socket:  filepath.Join(sockDir, "a2a.sock"),
+		CLI:     "/opt/a2a/bin/a2a",
+		OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
+			return EgressEndpoint{}, errors.New("unexpected boundary")
+		},
+	})
+	if err != nil {
+		t.Fatalf("Prepare() error = %v", err)
+	}
+	t.Cleanup(func() {
+		if err := p.Stop(context.Background()); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+	calls, err := os.ReadFile(log)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	if want := "pull example.com/egress:test"; !strings.Contains(string(calls), want) {
+		t.Fatalf("Prepare() docker calls = %q, want them to contain %q", calls, want)
+	}
+	if want := "the egress container's image isn't available"; !strings.Contains(p.EgressProblem, want) {
+		t.Fatalf("Prepare().EgressProblem = %q, want it to contain %q", p.EgressProblem, want)
 	}
 }
 
