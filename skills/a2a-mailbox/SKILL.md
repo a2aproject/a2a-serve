@@ -25,7 +25,7 @@ You need two binaries: `a2a-serve`, which pairs and answers tasks, and the
 They only run on the agent's OS and CPU. If a `version` command fails,
 install that binary another way, then run `a2a-serve` and `a2a` directly below:
 
-- `a2a-serve`: `go install github.com/a2aproject/a2a-serve@latest`
+- `a2a-serve`: `CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest`
 - `a2a`: `go install github.com/a2aproject/a2a-cli@latest`, then rename the
   installed `a2a-cli` to `a2a`.
 

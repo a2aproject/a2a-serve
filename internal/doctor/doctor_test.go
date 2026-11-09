@@ -156,6 +156,16 @@ func checks(results []Result) []check {
 	return out
 }
 
+func TestCheckServeBinaryMissingFix(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	delete(m.paths, "a2a-serve")
+	got := checkServeBinary(m.Env())
+	if want := "CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest"; got.Fix != want {
+		t.Fatalf("checkServeBinary().Fix = %q, want %q", got.Fix, want)
+	}
+}
+
 var healthyCLI = []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusOK}}
 
 func TestCLIChecks(t *testing.T) {

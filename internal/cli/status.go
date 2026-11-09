@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
+	"github.com/a2aproject/a2a-serve/internal/shellquote"
 )
 
 // urlFurthest is the value of a bare --url: the URL that reaches furthest.
@@ -275,7 +276,7 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 	}
 	fmt.Fprintf(sb, "  %-8s ! %s, latest %s\n", "", blocked, strings.Join(latest, ", "))
 	if hint != "" {
-		fmt.Fprintf(sb, "  %-8s   allow one with a2a-serve config set --egress-allow %s\n", "", hint)
+		fmt.Fprintf(sb, "  %-8s   allow one with a2a-serve config set --egress-allow %s\n", "", shellquote.Quote(hint))
 	}
 }
 

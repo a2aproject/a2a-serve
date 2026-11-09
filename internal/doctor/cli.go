@@ -33,7 +33,9 @@ import (
 const installA2A = "go install github.com/a2aproject/a2a-cli@latest" +
 	` && mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a"`
 
-const installServe = "go install github.com/a2aproject/a2a-serve@latest"
+// installServe installs the latest a2a-serve without cgo, which the
+// launcher of the Docker sandbox's network needs.
+const installServe = "CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest"
 
 // fixCommand is the fix of the problems --fix fixes. It names the binary,
 // which runs also while the a2a CLI has command plugins disabled.
