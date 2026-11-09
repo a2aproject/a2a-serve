@@ -42,10 +42,6 @@ type Item struct {
 	Warn   bool
 }
 
-// agentConfigFiles are the files of an agent's own configuration, which can
-// change what the agent runs and approves.
-var agentConfigFiles = []string{".claude/settings.json", ".claude/settings.local.json", "opencode.json", "opencode.jsonc", ".opencode/"}
-
 // instructionFiles are the files of instructions agents read.
 var instructionFiles = []string{"AGENTS.md", "CLAUDE.md", "GEMINI.md"}
 
@@ -83,8 +79,12 @@ func Review(r *Recipe, cfg *agentdir.Config, workspace string) []Line {
 	add("environment", envItems(cfg)...)
 	add("mcp", mcpItems(r, cfg)...)
 	add("skills", skillItems(r.Skills)...)
-	add("instructions", fileItems(r.Files, instructionFiles, false)...)
-	add("agent config", fileItems(r.Files, agentConfigFiles, true)...)
+	add("instructions", fileItems(r.Files, instructionFiles, "", false)...)
+	if local {
+		add("agent config", fileItems(r.Files, project.AgentConfigFiles, "they can change what the agent runs and approves", true)...)
+	} else {
+		add("agent config", fileItems(r.Files, project.AgentConfigFiles, "the sandbox hides them from the agent", false)...)
+	}
 	add("approvals", approvalItems(cfg.Approvals)...)
 	add("limits", limitItems(cfg.Limits)...)
 	owner := slices.DeleteFunc(r.Config.OwnerSettings(), func(s string) bool { return s == "name" })
@@ -170,7 +170,7 @@ func skillItems(skills []project.Skill) []Item {
 // fileItems lists the files of the recipe among names, where a name ending
 // in / matches the files in that directory. It follows the symlinks of the
 // directories in a name, as the agent does.
-func fileItems(files Files, names []string, warn bool) []Item {
+func fileItems(files Files, names []string, note string, warn bool) []Item {
 	var found []string
 	for _, name := range names {
 		if entry := files.match(name); entry != "" {
@@ -181,8 +181,8 @@ func fileItems(files Files, names []string, warn bool) []Item {
 		return nil
 	}
 	text := strings.Join(found, ", ")
-	if warn {
-		text += ": they can change what the agent runs and approves"
+	if note != "" {
+		text += ": " + note
 	}
 	return []Item{{Text: text, Warn: warn}}
 }

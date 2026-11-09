@@ -468,6 +468,175 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 	}
 }
 
+func TestPrepareDockerMasksAgentConfig(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws, docs, state := t.TempDir(), t.TempDir(), t.TempDir()
+	hidden := mkdir(t, filepath.Join(ws, agentdir.Name))
+	copyDir := mkdir(t, filepath.Join(hidden, "state", "workspaces", "ben"))
+	mask := filepath.Join(state, "config-mask.json")
+	writeTestFile(t, filepath.Join(ws, "opencode.json"), `{"permission": {"bash": "allow"}}`)
+	mkdir(t, filepath.Join(ws, ".opencode", "skills", "triage"))
+	writeTestFile(t, filepath.Join(docs, ".claude", "settings.json"), `{"permissions": {"allow": ["Bash"]}}`)
+
+	tests := []struct {
+		name         string
+		workspaceSrc string
+		wantMounts   []string
+		wantTmpfs    []string
+		wantCreated  []string
+	}{
+		{
+			name: "shared workspace",
+			wantMounts: []string{
+				ws + ":" + ws,
+				docs + ":/docs:ro",
+				mask + ":" + filepath.Join(ws, ".claude", "settings.json") + ":ro",
+				mask + ":" + filepath.Join(ws, ".claude", "settings.local.json") + ":ro",
+				mask + ":" + filepath.Join(ws, "opencode.json") + ":ro",
+				mask + ":" + filepath.Join(ws, "opencode.jsonc") + ":ro",
+				mask + ":/docs/.claude/settings.json:ro",
+				filepath.Join(ws, ".opencode", "skills") + ":" + filepath.Join(ws, ".opencode", "skills"),
+			},
+			wantTmpfs:   []string{"type=tmpfs,dst=" + hidden + ",readonly", "type=tmpfs,dst=" + filepath.Join(ws, ".opencode")},
+			wantCreated: []string{filepath.Join(ws, ".claude", "settings.json"), filepath.Join(ws, ".claude", "settings.local.json"), filepath.Join(ws, "opencode.jsonc")},
+		},
+		{
+			name:         "private copy of the workspace",
+			workspaceSrc: copyDir,
+			wantMounts: []string{
+				copyDir + ":" + ws,
+				docs + ":/docs:ro",
+				mask + ":" + filepath.Join(ws, ".claude", "settings.json") + ":ro",
+				mask + ":" + filepath.Join(ws, ".claude", "settings.local.json") + ":ro",
+				mask + ":" + filepath.Join(ws, "opencode.json") + ":ro",
+				mask + ":" + filepath.Join(ws, "opencode.jsonc") + ":ro",
+				mask + ":/docs/.claude/settings.json:ro",
+			},
+			wantTmpfs:   []string{"type=tmpfs,dst=" + hidden + ",readonly", "type=tmpfs,dst=" + filepath.Join(ws, ".opencode")},
+			wantCreated: []string{filepath.Join(copyDir, "opencode.json"), filepath.Join(copyDir, ".claude", "settings.json")},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			p, err := startDocker(t, Spec{
+				Mounts:       []agentdir.Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
+				WorkspaceSrc: tc.workspaceSrc,
+				Hidden:       []string{hidden},
+				Home:         t.TempDir(),
+				ConfigMask:   mask,
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+
+			var mounts []string
+			for _, m := range bindMounts(p.Args) {
+				if !strings.HasSuffix(m, ":"+ContainerHome) {
+					mounts = append(mounts, m)
+				}
+			}
+			if diff := cmp.Diff(tc.wantMounts, mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantTmpfs, tmpfsMounts(p.Args)); diff != "" {
+				t.Fatalf("Prepare() tmpfs mounts wrong result (-want +got) diff = %s", diff)
+			}
+			for _, file := range tc.wantCreated {
+				got, err := os.ReadFile(file)
+				if err != nil {
+					t.Fatalf("Prepare() didn't create %s: %v", file, err)
+				}
+				if diff := cmp.Diff(emptyConfig, string(got)); diff != "" {
+					t.Fatalf("Prepare() created %s wrong content (-want +got) diff = %s", file, diff)
+				}
+			}
+			if got, err := os.ReadFile(mask); err != nil || string(got) != emptyConfig {
+				t.Fatalf("Prepare() mask = %q, %v, want %q", got, err, emptyConfig)
+			}
+		})
+	}
+	if got, err := os.ReadFile(filepath.Join(ws, "opencode.json")); err != nil || string(got) != `{"permission": {"bash": "allow"}}` {
+		t.Fatalf("Prepare() changed the workspace's opencode.json to %q, %v", got, err)
+	}
+	if _, err := os.Stat(filepath.Join(docs, ".claude", "settings.local.json")); !os.IsNotExist(err) {
+		t.Fatalf("Prepare() created a file in a read-only mount: %v", err)
+	}
+}
+
+func TestPrepareDockerRefusesAgentConfigOutOfWorkspace(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	tests := []struct {
+		name  string
+		setup func(t *testing.T, ws, outside string)
+		want  string
+	}{
+		{
+			name: "file symlink",
+			setup: func(t *testing.T, ws, outside string) {
+				symlink(t, filepath.Join(outside, "x.json"), filepath.Join(ws, "opencode.json"))
+			},
+			want: "opencode.json leads out of the workspace",
+		},
+		{
+			name: "symlink into the hidden agent directory",
+			setup: func(t *testing.T, ws, _ string) {
+				symlink(t, filepath.Join(ws, agentdir.Name, "x.json"), filepath.Join(ws, "opencode.json"))
+			},
+			want: "opencode.json leads into a hidden directory; the agent could use it to change its own permissions, so remove it",
+		},
+		{
+			name:  "directory in place of a file",
+			setup: func(t *testing.T, ws, _ string) { mkdir(t, filepath.Join(ws, "opencode.jsonc")) },
+			want:  "opencode.jsonc isn't a file;",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, outside := t.TempDir(), t.TempDir()
+			hidden := mkdir(t, filepath.Join(ws, agentdir.Name))
+			tc.setup(t, ws, outside)
+
+			_, err := startDocker(t, Spec{
+				Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
+				Hidden:     []string{hidden},
+				Home:       t.TempDir(),
+				ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
+			})
+
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Prepare() error = %v, want it to contain %q", err, tc.want)
+			}
+			for _, dir := range []string{outside, hidden} {
+				entries, err := os.ReadDir(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(entries) > 0 {
+					t.Fatalf("Prepare() wrote %s out of the workspace", filepath.Join(dir, entries[0].Name()))
+				}
+			}
+		})
+	}
+}
+
+func bindMounts(args []string) []string {
+	var out []string
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-v" {
+			out = append(out, args[i+1])
+		}
+	}
+	return out
+}
+
+func writeTestFile(t *testing.T, path, content string) {
+	t.Helper()
+	mkdir(t, filepath.Dir(path))
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWithoutEgressCA(t *testing.T) {
 	t.Parallel()
 	got := withoutEgressCA([]string{"A=1", sandboxnet.EnvEgressCA + "=from-a-recipe", "B=2"})

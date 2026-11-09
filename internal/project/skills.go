@@ -28,6 +28,11 @@ import (
 // being a <name>/SKILL.md inside one.
 var SkillDirs = []string{".claude/skills", ".opencode/skills", ".agents/skills"}
 
+// AgentConfigFiles are the project files of the agents' own configuration,
+// which can change what the agent runs and approves. Directories end with a
+// slash.
+var AgentConfigFiles = []string{".claude/settings.json", ".claude/settings.local.json", "opencode.json", "opencode.jsonc", ".opencode/"}
+
 // Skill is a skill of a project.
 type Skill struct {
 	Name string `json:"name"`

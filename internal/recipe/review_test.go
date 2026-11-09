@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
 func loadTestRecipe(t *testing.T, config string, extra map[string]string) *Recipe {
@@ -68,7 +69,7 @@ func TestReview(t *testing.T) {
 		}},
 		{Label: "skills", Items: []Item{{Text: "triage"}}},
 		{Label: "instructions", Items: []Item{{Text: "AGENTS.md"}}},
-		{Label: "agent config", Items: []Item{{Text: ".claude/settings.json, .opencode/: they can change what the agent runs and approves", Warn: true}}},
+		{Label: "agent config", Items: []Item{{Text: ".claude/settings.json, .opencode/: the sandbox hides them from the agent"}}},
 		{Label: "approvals", Items: []Item{{Text: "approved without asking: read"}, {Text: "denied: execute"}}},
 		{Label: "limits", Items: []Item{{Text: "memory 8g"}}},
 		{Label: "not taken", Items: []Item{{Text: "port, private: the owner sets these"}}},
@@ -262,8 +263,10 @@ func TestReviewAgentConfigThroughLinks(t *testing.T) {
 				t.Fatalf("Load() error = %v", err)
 			}
 
+			cfg := r.NewConfig("o11y")
+			cfg.Sandbox = agentdir.SandboxLocal
 			var got []Item
-			for _, line := range Review(r, r.NewConfig("o11y"), "./o11y") {
+			for _, line := range Review(r, cfg, "./o11y") {
 				if line.Label == "agent config" {
 					got = line.Items
 				}
@@ -293,7 +296,7 @@ func TestFileItemsLinkLoops(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			got := fileItems(tc.files, agentConfigFiles, true)
+			got := fileItems(tc.files, project.AgentConfigFiles, "", true)
 
 			if len(got) != 0 {
 				t.Fatalf("fileItems() = %v, want none", got)

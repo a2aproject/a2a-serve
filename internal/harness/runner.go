@@ -71,6 +71,9 @@ type DockerRunner struct {
 	// Hidden are host paths which appear as empty read-only directories
 	// wherever a mount exposes them, such as the agent's .a2a directory.
 	Hidden []string
+	// Scratch are container paths which appear as empty directories, whose
+	// changes stay in the container.
+	Scratch []string
 	// Home is the host directory mounted at /home/agent.
 	Home string
 	// Env holds NAME=value pairs passed into the container. Values are passed
@@ -296,6 +299,9 @@ func (r *DockerRunner) runArgs(c Command, envFile string, check bool) []string {
 	}
 	for _, dst := range hiddenDsts(r.Mounts, r.Hidden) {
 		args = append(args, "--mount", "type=tmpfs,dst="+dst+",readonly")
+	}
+	for _, dst := range r.Scratch {
+		args = append(args, "--mount", "type=tmpfs,dst="+dst)
 	}
 	if r.Home != "" {
 		args = append(args, "-v", r.Home+":"+ContainerHome)

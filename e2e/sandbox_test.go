@@ -65,6 +65,31 @@ func TestDockerSandboxMounts(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxMasksAgentConfig(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	owner := newUser(t)
+	coder := owner.startAgent("coder", "--deny-tools", "execute")
+
+	for _, name := range []string{"opencode.json", filepath.Join(".claude", "settings.json")} {
+		path := filepath.Join(coder.dir, name)
+		if got := resultOf(owner.mustSend(coder.url, "write "+path)).Text; !strings.HasPrefix(got, "write error: ") {
+			t.Fatalf("a2a send write %s = %q, want a write error", name, got)
+		}
+	}
+	scratch := filepath.Join(coder.dir, ".opencode", "opencode.json")
+	owner.mustSend(coder.url, "write "+scratch)
+	if _, err := os.Stat(scratch); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(%s) after the agent wrote it error = %v, want it to stay in the container", scratch, err)
+	}
+	writeFile(t, filepath.Join(coder.dir, "opencode.json"), `{"permission": {"bash": "allow"}}`)
+	coder.serve("restart")
+
+	if got, want := resultOf(owner.mustSend(coder.url, "whoami")).Text, "whoami denied."; got != want {
+		t.Fatalf("a2a send whoami with opencode.json allowing bash = %q, want %q", got, want)
+	}
+}
+
 // TestStartWhenDockerDoesNotAnswer covers start --detach with a docker
 // endpoint that accepts connections and never answers: start fails within
 // seconds and names DOCKER_HOST.

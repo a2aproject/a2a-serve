@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/google/go-cmp/cmp"
 )
 
@@ -68,6 +69,15 @@ func TestHarnessOpencodeToolApprovals(t *testing.T) {
 		{
 			name:        "tool denied by a rule",
 			flags:       []string{"--deny-tools", "execute"},
+			calls:       func(string) []toolCall { return []toolCall{bash("echo stub-ran")} },
+			wantResults: map[string]string{"bash": rejected},
+		},
+		{
+			name:  "tool denied by a rule with opencode.json in the workspace allowing it",
+			flags: []string{"--deny-tools", "execute"},
+			prepare: func(t *testing.T, dir string) {
+				writeJSON(t, filepath.Join(dir, "opencode.json"), map[string]any{"permission": map[string]any{"bash": "allow", "edit": "allow"}})
+			},
 			calls:       func(string) []toolCall { return []toolCall{bash("echo stub-ran")} },
 			wantResults: map[string]string{"bash": rejected},
 		},
@@ -239,23 +249,50 @@ func requireHarness(t *testing.T, name string) {
 }
 
 // startOpencode starts an opencode agent in its real image, with model as
-// its model in a project config.
+// its model in the config of the agent home.
 func (a *agent) startOpencode(model *stubModel, flags ...string) {
 	a.u.t.Helper()
-	writeJSON(a.u.t, filepath.Join(a.dir, "opencode.json"), map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{"stub": map[string]any{
-			"npm":     "@ai-sdk/openai-compatible",
-			"options": map[string]any{"baseURL": model.url, "apiKey": "stub"},
-			"models":  map[string]any{"scripted": map[string]any{}},
-		}},
-	})
+	a.addStubProvider(model.url, "stub")
 	u, err := url.Parse(model.url)
 	if err != nil {
 		a.u.t.Fatalf("url.Parse(%q) error = %v", model.url, err)
 	}
 	// The stub model listens on the host's LAN address, a private one.
 	a.start("opencode", append([]string{"--sandbox", "docker", "--image", harnessImage, "--model", "stub/scripted", "--egress-allow", u.Host}, flags...)...)
+}
+
+// addStubProvider adds the stub provider with the model at baseURL to the
+// opencode config of the agent home, since the sandbox hides the one of the
+// workspace. A home without a config first gets the one the server writes.
+func (a *agent) addStubProvider(baseURL, apiKey string) {
+	t := a.u.t
+	t.Helper()
+	home := filepath.Join(a.dir, ".a2a", "state", "home")
+	path := filepath.Join(home, ".config", "opencode", "opencode.json")
+	profile, err := harness.Lookup("opencode", nil)
+	if err != nil {
+		t.Fatalf("harness.Lookup() error = %v", err)
+	}
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatalf("os.MkdirAll() error = %v", err)
+	}
+	if err := profile.Bootstrap(harness.Workspace{Dir: a.dir, Home: home}); err != nil {
+		t.Fatalf("Bootstrap() error = %v", err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("os.ReadFile() error = %v", err)
+	}
+	var cfg map[string]any
+	if err := json.Unmarshal(data, &cfg); err != nil {
+		t.Fatalf("json.Unmarshal(%s) error = %v", path, err)
+	}
+	cfg["provider"] = map[string]any{"stub": map[string]any{
+		"npm":     "@ai-sdk/openai-compatible",
+		"options": map[string]any{"baseURL": baseURL, "apiKey": apiKey},
+		"models":  map[string]any{"scripted": map[string]any{}},
+	}}
+	writeJSON(t, path, cfg)
 }
 
 func writeJSON(t *testing.T, path string, v any) {

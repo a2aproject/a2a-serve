@@ -284,20 +284,21 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	env := append([]string{}, cfg.Env...)
 	spec := harness.Spec{
-		Profile:  profile,
-		Sandbox:  cfg.Sandbox,
-		Mounts:   mounts,
-		Home:     s.dir.HomeDir(),
-		Hidden:   s.hidden(),
-		Pins:     s.pins,
-		MCPMask:  s.dir.MCPMaskPath(),
-		Env:      env,
-		Model:    cfg.Model,
-		Name:     "a2a-" + cfg.Name + "-" + s.dir.ID(),
-		Image:    cfg.Image,
-		Limits:   harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
-		Labels:   map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
-		Progress: imageProgress,
+		Profile:    profile,
+		Sandbox:    cfg.Sandbox,
+		Mounts:     mounts,
+		Home:       s.dir.HomeDir(),
+		Hidden:     s.hidden(),
+		Pins:       s.pins,
+		MCPMask:    s.dir.MCPMaskPath(),
+		ConfigMask: s.dir.ConfigMaskPath(),
+		Env:        env,
+		Model:      cfg.Model,
+		Name:       "a2a-" + cfg.Name + "-" + s.dir.ID(),
+		Image:      cfg.Image,
+		Limits:     harness.Limits{Memory: cfg.Limits.Memory, CPUs: cfg.Limits.CPUs, PIDs: cfg.Limits.PIDs},
+		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
+		Progress:   imageProgress,
 	}
 	id, isUser := agentkey.UserOf(key)
 	switch {
