@@ -161,7 +161,7 @@ $ a2a-serve config set --egress allowlist \
     --egress-allow github.com:443 --restart
 ```
 
-With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts. Include the API host of the agent's model provider, or the agent can't answer. Start from the hosts the agent needs:
+With `--egress allowlist`, the agent reaches only the `--egress-allow` hosts and the hosts of the [inject rules](secrets.md#keep-keys-out-of-the-sandbox) whose secrets the container gets. Include the API host of the agent's model provider in one of them, or the agent can't answer. Start from the hosts the agent needs:
 
 | Agent or provider | Hosts |
 | --- | --- |

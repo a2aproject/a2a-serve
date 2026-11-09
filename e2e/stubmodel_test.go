@@ -38,8 +38,13 @@ type stubModel struct {
 	// url is the base URL of the API, which containers reach.
 	url string
 
+	// auth is the Authorization header that requests need, or "" for any.
+	auth string
+
 	mu       sync.Mutex
 	requests []chatRequest
+	// auths are the Authorization headers of the requests.
+	auths []string
 }
 
 // modelScript is how a stubModel answers a turn: with the tool calls, one
@@ -141,6 +146,13 @@ func (m *stubModel) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+	m.mu.Lock()
+	m.auths = append(m.auths, r.Header.Get("Authorization"))
+	m.mu.Unlock()
+	if m.auth != "" && r.Header.Get("Authorization") != m.auth {
+		m.write(w, http.StatusUnauthorized, "application/json", `{"error":{"message":"wrong key","type":"invalid_request_error"}}`)
+		return
+	}
 	var req chatRequest
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -214,6 +226,13 @@ func (m *stubModel) toolResults() map[string]string {
 		return results
 	}
 	return nil
+}
+
+// authorizations returns the Authorization headers of the requests so far.
+func (m *stubModel) authorizations() []string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]string(nil), m.auths...)
 }
 
 // requestCount returns the number of chat completion requests so far.

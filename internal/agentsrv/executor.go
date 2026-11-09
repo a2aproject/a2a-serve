@@ -313,7 +313,8 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	if err != nil {
 		return nil, err
 	}
-	if err := s.applySandbox(ctx, &spec, key, sb); err != nil {
+	inject, err := s.applySandbox(ctx, &spec, key, sb)
+	if err != nil {
 		return nil, err
 	}
 	s.setStorageNote(spec.Home, sb.Storage)
@@ -351,7 +352,9 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 			spec.CLI = s.localCLI()
 		}
 	}
-	s.egressSandbox(&spec)
+	if err := s.egressSandbox(&spec, inject); err != nil {
+		return nil, errors.Join(err, closeEndpoint())
+	}
 	prepared, err := harness.Prepare(ctx, spec)
 	if err != nil {
 		return nil, errors.Join(err, closeEndpoint())

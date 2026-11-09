@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -176,7 +177,7 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 			}
 		}
 		d := EgressDecision{Boundary: true, Relay: true}
-		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 {
+		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 && len(cfg.Inject) == 0 {
 			d.Warning = noAllowlistRules
 		}
 		return d
@@ -185,7 +186,7 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 		return problemDecision(cfg, problem)
 	}
 	switch {
-	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0:
+	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 && len(cfg.Inject) == 0:
 		return EgressDecision{Boundary: true, Warning: noAllowlistRules}
 	}
 	return EgressDecision{Boundary: true}
@@ -194,10 +195,41 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 // problemDecision is the decision for cfg when problem keeps the boundary
 // from applying.
 func problemDecision(cfg *agentdir.Config, problem string) EgressDecision {
-	if cfg.Egress.Mode == egress.ModeAllowlist {
+	switch {
+	case cfg.Egress.Mode == egress.ModeAllowlist:
 		return EgressDecision{Problem: problem, Warning: noAllowlist(problem)}
+	case len(cfg.Inject) > 0:
+		return EgressDecision{Problem: problem, Warning: noInject(cfg, problem)}
 	}
 	return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
+}
+
+// StrictEgress reports whether the containers of cfg don't start without
+// the egress boundary: with --egress allowlist, or with secrets that the
+// boundary adds to requests, which would otherwise be lost or exposed.
+func StrictEgress(cfg *agentdir.Config) bool {
+	return cfg.Egress.Mode == egress.ModeAllowlist || len(cfg.Inject) > 0
+}
+
+// noInject says why a container whose secrets the boundary adds can't
+// start, and the ways out: fix the cause, or move the keys back into the
+// agent's environment.
+func noInject(cfg *agentdir.Config, why string) string {
+	var flags, unset []string
+	for _, r := range cfg.Inject {
+		if f := "--" + r.Setting(); !slices.Contains(flags, f) {
+			flags = append(flags, f)
+			unset = append(unset, "`a2a-serve config unset "+r.Setting()+"`")
+		}
+	}
+	secrets := cfg.InjectedSecrets()
+	// One flag per command can read its secret from a prompt, so each key
+	// gets a command of its own.
+	store := make([]string, len(secrets))
+	for i, name := range secrets {
+		store[i] = "`a2a-serve config set --secret " + name + "=-`"
+	}
+	return fmt.Sprintf("%s can't apply: %s. The agent doesn't start, so that it can't read %s. Fix that, or put the keys in the agent's environment: remove the rules with %s, then store the keys again with %s", strings.Join(flags, " and "), why, strings.Join(secrets, ", "), strings.Join(unset, " and "), strings.Join(store, " and "))
 }
 
 // noAllowlistRules warns about an allowlist that allows nothing.

@@ -215,11 +215,22 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 	if e == nil {
 		return
 	}
+	var inject, injectHosts []string
+	for _, i := range e.Inject {
+		inject = append(inject, i.Host+" gets "+strings.Join(i.Secrets, ", "))
+		injectHosts = append(injectHosts, i.Host)
+	}
+	if len(inject) > 0 {
+		defer fmt.Fprintf(sb, "  inject   %s\n", strings.Join(inject, "; "))
+	}
 	if e.Problem != "" {
 		fmt.Fprintf(sb, "  egress   ! %s\n", e.Problem)
 		return
 	}
 	allowed := strings.Join(e.Allow, ", ")
+	if e.Mode == egress.ModeAllowlist {
+		allowed = strings.Join(append(slices.Clone(e.Allow), injectHosts...), ", ")
+	}
 	var line string
 	switch e.Mode {
 	case egress.ModeAllowlist:

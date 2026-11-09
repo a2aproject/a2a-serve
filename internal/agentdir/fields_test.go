@@ -335,10 +335,13 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 	for _, d := range SettingDocs() {
 		docs[d.Flag] = d
 	}
+	// The inject flags take rules, and also store the secrets they name.
+	ruleValues := map[string]string{InjectHeaderSetting: "h.example=X-Token: $V", InjectModelKeySetting: "openrouter=V"}
 	for _, fl := range (&Settings{}).Flags(all) {
 		t.Run(fl.Name, func(t *testing.T) {
 			t.Parallel()
 			s := Settings{SecretValues: Secrets{"V": "value"}}
+			rule, isRule := ruleValues[fl.Name]
 			flags := s.Flags(all)
 			switch v := flags[slices.IndexFunc(flags, func(f Flag) bool { return f.Name == fl.Name })].Value.(type) {
 			case *string:
@@ -347,6 +350,9 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 				*v = 7
 			case *[]string:
 				*v = []string{"V"}
+				if isRule {
+					*v = []string{rule}
+				}
 			default:
 				t.Fatalf("Settings.Flags() value of --%s = %T, want *string, *int or *[]string", fl.Name, v)
 			}
@@ -373,7 +379,11 @@ func TestFlagsSetTheirKeys(t *testing.T) {
 			var got []string
 			setKeys(root.Content[0], "", &got)
 			got = slices.DeleteFunc(got, func(k string) bool { return k == "name" && fl.Name != "name" })
-			if diff := cmp.Diff([]string{doc.Key}, got); diff != "" {
+			want := []string{doc.Key}
+			if isRule {
+				want = []string{"secrets", doc.Key}
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
 				t.Fatalf("--%s sets wrong config.yaml keys (-want +got) diff = %s", fl.Name, diff)
 			}
 		})

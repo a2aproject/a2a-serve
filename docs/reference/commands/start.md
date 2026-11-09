@@ -79,7 +79,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets outside config.yaml; the agent can read it, unless --inject-header or --inject-model-key adds it; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -87,9 +87,11 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the ACP agent, as shell words, such as "gemini --experimental-acp" |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
+| `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
 | `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
@@ -169,7 +171,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets outside config.yaml; the agent can read it, unless --inject-header or --inject-model-key adds it; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -177,9 +179,11 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
+| `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
 | `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**
@@ -331,7 +335,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | `--disable-mcp servers` |  | MCP servers of the project's .mcp.json the agent doesn't get (repeatable; commas also separate values) |
 | `--env NAME=value` |  | Extra variable for the agent: NAME=value, such as DEBUG=1; keyed by NAME (repeatable) |
 | `--mount src[:dst][:ro]` |  | Extra directory to mount: src[:dst][:ro], such as ~/docs:/docs:ro; keyed by dst (repeatable) |
-| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
+| `--secret NAME[=value]` |  | Environment variable to pass to the agent, such as an API key: NAME[=value], stored in .a2a/state/secrets outside config.yaml; the agent can read it, unless --inject-header or --inject-model-key adds it; without a value, read from your environment or prompted (secret value: env:VAR, -, or the value) (repeatable) |
 | `--workspace src[:dst][:ro]` |  | Workspace directory: src[:dst][:ro], such as ~/src/app (default: the directory holding .a2a) |
 
 **Sandbox flags**
@@ -339,9 +343,11 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
+| `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
+| `--inject-model-key provider=NAME` |  | API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: provider=NAME, with provider one of anthropic, gemini, openai, openrouter and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider (repeatable) |
 | `--sandbox string` |  | Where the agent runs: docker (default) or local |
 
 **Network flags**

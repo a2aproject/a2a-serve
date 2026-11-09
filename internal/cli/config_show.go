@@ -158,6 +158,11 @@ func renderConfig(v *agentctl.View, all bool) string {
 		egressLine = strings.TrimPrefix(egressLine+", allow "+strings.Join(c.Egress.Allow, ", "), ", ")
 	}
 	line("egress", egressLine, "egress", "egress-allow")
+	var inject []string
+	for _, r := range c.Inject {
+		inject = append(inject, r.Entry())
+	}
+	line("inject", strings.Join(inject, "; "), agentdir.InjectHeaderSetting, agentdir.InjectModelKeySetting)
 	var secrets []string
 	for _, name := range c.Secrets {
 		secrets = append(secrets, name+" "+v.Secrets[name])

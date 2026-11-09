@@ -56,7 +56,7 @@ When the setup fails, it exits with status ` + strconv.Itoa(sandboxnet.SetupFail
 				return fmt.Errorf("invalid gid %q", args[2])
 			}
 			code, err := sandboxnet.Launch(sandboxnet.LaunchConfig{
-				Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Check: check,
+				Boundary: args[0], UID: uid, GID: gid, Argv: args[3:], Env: os.Environ(), Check: check,
 				FailSetup: os.Getenv(sandboxnet.EnvFailSetup) != "",
 			})
 			if setupErr, ok := errors.AsType[*sandboxnet.SetupError](err); ok {

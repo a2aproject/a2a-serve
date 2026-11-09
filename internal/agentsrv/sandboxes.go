@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 	"github.com/a2aproject/a2a-serve/internal/store"
 	"github.com/a2aproject/a2a-serve/internal/workspaces"
 )
@@ -429,39 +430,43 @@ func workspaceName(key string) string {
 }
 
 // applySandbox gives spec the storage and secrets of sb, for the container of
-// an agent key. Without the Docker sandbox, only the secrets apply.
-func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key string, sb access.Sandbox) error {
-	values, missing := sb.Values(s.rt.Secrets())
+// an agent key, and returns the headers its boundary adds. Without the
+// Docker sandbox, only the secrets apply.
+func (s *Server) applySandbox(ctx context.Context, spec *harness.Spec, key string, sb access.Sandbox) ([]sandboxnet.Injection, error) {
+	values, inject, missing, err := secretEnv(s.rt.Config(), sb, s.rt.Secrets())
+	if err != nil {
+		return nil, err
+	}
 	if len(missing) > 0 {
 		hint := fmt.Sprintf("secret %s is not set; pass --secret %s again with the variable set", missing[0], missing[0])
 		if key == "" {
-			return errors.New(hint)
+			return nil, errors.New(hint)
 		}
 		slog.Warn("an agent process of a caller can't start: "+hint, "key", key)
-		return fmt.Errorf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", missing[0])
+		return nil, fmt.Errorf("the owner of the agent hasn't stored the secret %s that this conversation's agent gets; ask them to store it", missing[0])
 	}
 	spec.Env = append(spec.Env, values...)
 	if spec.Sandbox == harness.SandboxLocal {
-		return nil
+		return inject, nil
 	}
 	ws := spec.Mounts[0].Src
 	spec.Mounts = sandboxMounts(sb.Storage, spec.Mounts)
 	if sb.Storage != agentdir.StorageOwn && sb.Storage != agentdir.StorageEmpty {
-		return nil
+		return inject, nil
 	}
 	p, _, err := s.sandboxes.principalOf(ctx, key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dir, err := s.workspaces.Prepare(ctx, workspaceName(key), p.ID, sb.Storage, ws)
 	if errors.Is(err, workspaces.ErrTooLarge) || errors.Is(err, workspaces.ErrTooMany) {
-		return errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
+		return nil, errors.New(err.Error() + "; the sandbox rule of this caller gives own storage, a private copy of the workspace, and the owner can give read-only storage, which needs no copy")
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	spec.WorkspaceSrc = dir
-	return nil
+	return inject, nil
 }
 
 // storageNote tells the agent what its storage is and how to return work.

@@ -17,6 +17,7 @@ package agentsrv
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -94,6 +95,24 @@ func egressNote(mode string) string {
 		return "The sandbox reaches only the hosts its owner allows. When a connection is refused, tell the user that the sandbox may have blocked it, and that `a2a-serve status` lists the blocked hosts."
 	}
 	return "The sandbox blocks private hosts, such as the LAN, the tailnet and the machine it runs on. When a connection to one is refused, tell the user that the sandbox may have blocked it, and that `a2a-serve status` lists the blocked hosts."
+}
+
+// injectNote tells the agent which hosts get credentials from the server,
+// so that it neither looks for them nor sends a placeholder elsewhere.
+func injectNote(cfg *agentdir.Config) string {
+	if len(cfg.Inject) == 0 {
+		return ""
+	}
+	var hosts []string
+	for _, r := range cfg.Inject {
+		if r.IsModel() {
+			hosts = append(hosts, fmt.Sprintf("%s (%s holds a placeholder)", r.Target(), r.Key))
+			continue
+		}
+		name, _, _ := strings.Cut(r.Header, ":")
+		hosts = append(hosts, fmt.Sprintf("%s (the %s header; %s holds a placeholder)", r.Target(), strings.TrimSpace(name), strings.Join(r.Secrets(), " and ")))
+	}
+	return "The server adds the credentials of your HTTPS requests to these hosts: " + strings.Join(hosts, ", ") + ". Use the variables as they are; the server replaces their placeholders with the real values on these hosts, and the placeholders work nowhere else."
 }
 
 // callableAgents returns the built-in schedules agent, the contacts, the
@@ -178,6 +197,9 @@ func (s *Server) writeInstructionsIn(ctx context.Context, homes ...string) error
 	}
 	if s.egress.boundary(cfg) && egressNote(cfg.Egress.Mode) != "" {
 		sb.WriteString("\n" + egressNote(cfg.Egress.Mode) + "\n")
+	}
+	if note := injectNote(cfg); note != "" {
+		sb.WriteString("\n" + note + "\n")
 	}
 	var errs []error
 	for _, home := range homes {

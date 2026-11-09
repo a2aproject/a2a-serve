@@ -13,7 +13,7 @@ sandbox: docker                  # or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace
 model: openrouter/~google/gemini-flash-latest  # optional: the agent's own model id
-secrets: [OPENROUTER_API_KEY]    # passed to the agent as environment variables
+secrets: [OPENROUTER_API_KEY, GITHUB_TOKEN]  # environment variables of the agent, unless inject adds them
 env: [LOG_LEVEL=debug]           # extra NAME=value environment variables
 port: 46757                      # localhost port, chosen on the first run
 network:
@@ -40,6 +40,11 @@ limits: {memory: 8g, cpus: "4", pids: 1024}
 egress:
   mode: internet                 # or allowlist, or unrestricted
   allow: [nas.lan:22, "*.corp.example.com", 192.168.1.0/24]
+inject:                          # headers the server adds; the secrets stay out of the sandbox
+  - model: openrouter            # --inject-model-key openrouter=OPENROUTER_API_KEY
+    key: OPENROUTER_API_KEY
+  - host: api.github.com         # --inject-header 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'
+    header: "Authorization: Bearer $GITHUB_TOKEN"
 taskTTL: 30d                     # finished tasks idle this long are deleted
 contactRefresh: 1h               # how often the cards of contacts and peers are fetched
 card:
@@ -165,6 +170,8 @@ dot. Files with the keys of older versions still load: snake_case keys, and
 | `--pids` | `limits.pids` | `config set` |
 | `--egress` | `egress.mode` | `start <agent>`, `config set` |
 | `--egress-allow` | `egress.allow` | `start <agent>`, `config set` |
+| `--inject-header` | `inject` | `start <agent>`, `config set` |
+| `--inject-model-key` | `inject` | `start <agent>`, `config set` |
 | `--google-client-id` | `auth.googleClientID` | `config set` |
 | `--google-client-secret` | `auth.googleClientSecret` | `config set` |
 | `--backup` | `backup.to` | `config set` |

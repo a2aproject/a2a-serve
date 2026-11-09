@@ -26,6 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
 func TestPrepareLocal(t *testing.T) {
@@ -417,5 +418,13 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 				t.Fatalf("Prepare() wrong mask (-want +got) diff = %s", diff)
 			}
 		})
+	}
+}
+
+func TestWithoutEgressCA(t *testing.T) {
+	t.Parallel()
+	got := withoutEgressCA([]string{"A=1", sandboxnet.EnvEgressCA + "=from-a-recipe", "B=2"})
+	if diff := cmp.Diff([]string{"A=1", "B=2"}, got); diff != "" {
+		t.Fatalf("withoutEgressCA() wrong result (-want +got) diff = %s", diff)
 	}
 }

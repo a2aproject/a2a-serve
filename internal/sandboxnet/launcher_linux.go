@@ -52,6 +52,14 @@ func Launch(cfg LaunchConfig) (int, error) {
 	if len(cfg.Argv) == 0 && !cfg.Check {
 		return 0, errors.New("no command to run")
 	}
+	env := cfg.Env
+	if !cfg.Check {
+		// Writing the system bundle takes root, which setUp drops.
+		var err error
+		if env, err = trustCA("/", cfg.Env); err != nil {
+			fmt.Fprintf(os.Stderr, "a2a-init: trusting the egress CA; the hosts that get headers may refuse the agent's connections: %v\n", err)
+		}
+	}
 	eng, err := setUp(cfg)
 	if err != nil {
 		return 0, &SetupError{Err: err}
@@ -62,6 +70,7 @@ func Launch(cfg LaunchConfig) (int, error) {
 	}
 	cmd := exec.Command(cfg.Argv[0], cfg.Argv[1:]...)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = os.Stdin, os.Stdout, os.Stderr
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	// Signals that arrive while the agent starts wait in the channel.
 	sig := make(chan os.Signal, 16)

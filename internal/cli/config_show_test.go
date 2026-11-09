@@ -61,6 +61,7 @@ func fullConfig() *agentdir.Config {
 		Backup:    agentdir.BackupConfig{To: "/backups-x", Key: "secret:backup-key", Interval: "10m", Retention: "3d"},
 		MCP:       agentdir.MCPConfig{Disabled: []string{"github-x"}},
 		Egress:    agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas-x.lan"}},
+		Inject:    []agentdir.InjectRule{{Host: "api-x.example", Header: "X-Token-X: $API_KEY"}, {Model: "openrouter", Key: "API_KEY"}},
 	}
 }
 

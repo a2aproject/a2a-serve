@@ -18,6 +18,7 @@ import (
 	"bufio"
 	"cmp"
 	"context"
+	"crypto/x509"
 	"errors"
 	"fmt"
 	"io"
@@ -82,6 +83,12 @@ type BoundaryConfig struct {
 	// [DefaultIdleTimeout].
 	MaxTunnels  int
 	IdleTimeout time.Duration
+	// Inject are the headers added to the requests to their hosts, whose
+	// certificates CA signs. The policy decides those requests as others.
+	Inject []Injection
+	CA     *CA
+	// UpstreamRoots verify the hosts of Inject; nil uses the system's.
+	UpstreamRoots *x509.CertPool
 }
 
 // Network tells what the policy needs to know about this host's network.
@@ -108,7 +115,9 @@ type Boundary struct {
 	ln      net.Listener
 	slots   chan struct{}
 	limiter *rate.Limiter
-	log     *decisionLog
+	// injectSlots bound the open requests to the hosts of cfg.Inject.
+	injectSlots chan struct{}
+	log         *decisionLog
 	// ctx ends when the boundary closes, which ends the requests it decides.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -125,6 +134,11 @@ func New(cfg BoundaryConfig) (*Boundary, error) {
 	if cfg.Policy == nil {
 		return nil, errors.New("the boundary needs a policy")
 	}
+	for _, inj := range cfg.Inject {
+		if cfg.CA == nil || !cfg.CA.Covers(inj.Host) {
+			return nil, fmt.Errorf("the egress CA doesn't cover %s, which gets a header; restart the server", inj.Host)
+		}
+	}
 	cfg.MaxTunnels = cmp.Or(cfg.MaxTunnels, DefaultMaxTunnels)
 	cfg.IdleTimeout = cmp.Or(cfg.IdleTimeout, DefaultIdleTimeout)
 	if cfg.Network == nil {
@@ -137,11 +151,12 @@ func New(cfg BoundaryConfig) (*Boundary, error) {
 		cfg.Log = slog.Default()
 	}
 	b := &Boundary{
-		cfg:     cfg,
-		slots:   make(chan struct{}, cfg.MaxTunnels),
-		limiter: rate.NewLimiter(tunnelRate, tunnelBurst),
-		log:     &decisionLog{log: cfg.Log, sandbox: cfg.Sandbox},
-		conns:   map[net.Conn]struct{}{},
+		cfg:         cfg,
+		slots:       make(chan struct{}, cfg.MaxTunnels),
+		limiter:     rate.NewLimiter(tunnelRate, tunnelBurst),
+		injectSlots: make(chan struct{}, maxInjectRequests),
+		log:         &decisionLog{log: cfg.Log, sandbox: cfg.Sandbox},
+		conns:       map[net.Conn]struct{}{},
 	}
 	b.ctx, b.cancel = context.WithCancel(context.Background())
 	return b, nil
@@ -327,6 +342,15 @@ func (b *Boundary) handle(guest net.Conn) {
 		return
 	}
 	g.target = target
+	if inj, ok := b.injection(host, port); ok {
+		// The tunnel lasts beyond the head, so it drops the head's deadline
+		// and the dial's context; each request dials in its own.
+		if err := guest.SetDeadline(time.Time{}); err != nil {
+			return
+		}
+		b.intercept(guest, br, g, inj)
+		return
+	}
 	upstream, addr, err := b.dial(ctx, g)
 	if err != nil {
 		b.log.write(slog.LevelWarn, "egress failed", "destination", target, "rule", g.rule, "reason", "dial-failed", "error", err)
