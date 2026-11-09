@@ -97,7 +97,7 @@ func TestClientRequests(t *testing.T) {
 			return err
 		}, wantMethod: http.MethodDelete, wantPath: "/signins/anna@example.com"},
 		{name: "delete contact", call: func(ctx context.Context, c *Client) error { return c.DeleteContact(ctx, "coder") }, wantMethod: http.MethodDelete, wantPath: "/contacts/coder"},
-		{name: "delete messenger", call: func(ctx context.Context, c *Client) error { return c.DeleteMessenger(ctx, "telegram") }, wantMethod: http.MethodDelete, wantPath: "/messengers/telegram"},
+		{name: "delete messenger", call: func(ctx context.Context, c *Client) error { _, err := c.DeleteMessenger(ctx, "telegram"); return err }, wantMethod: http.MethodDelete, wantPath: "/messengers/telegram"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -215,7 +215,7 @@ func TestClientErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			err := NewClient(tc.dir(t)).DeleteMessenger(t.Context(), "telegram")
+			_, err := NewClient(tc.dir(t)).DeleteMessenger(t.Context(), "telegram")
 			if err == nil {
 				t.Fatalf("Client.DeleteMessenger() error = nil, want an error")
 			}
@@ -262,7 +262,7 @@ func TestClientRequestErrors(t *testing.T) {
 			t.Parallel()
 			dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, tc.err) }))
 
-			err := NewClient(dir).DeleteMessenger(t.Context(), "telegram")
+			_, err := NewClient(dir).DeleteMessenger(t.Context(), "telegram")
 
 			var ce *clierr.Error
 			if errors.As(err, &ce) {
@@ -349,7 +349,8 @@ func TestClientRequestErrorKeepsHint(t *testing.T) {
 	err := agenterr.WithHint(agenterr.Conflictf("anna is already paired"), agenterr.HintPairRm, "anna")
 	dir := serveSocket(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { WriteError(w, err) }))
 
-	got := clierr.Classify(NewClient(dir).DeleteMessenger(t.Context(), "telegram"))
+	_, deleteErr := NewClient(dir).DeleteMessenger(t.Context(), "telegram")
+	got := clierr.Classify(deleteErr)
 
 	want := &clierr.Error{Code: clierr.CodeUsage, Message: "anna is already paired", Hint: "pick another name, or run `a2a-serve pair rm anna` first", Exit: 2}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(clierr.Error{})); diff != "" {

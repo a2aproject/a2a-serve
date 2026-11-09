@@ -16,6 +16,7 @@ package agentops
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/access"
@@ -32,6 +33,15 @@ func AccessInfo(a *access.Description) *controlapi.Access {
 	}
 	info := controlapi.Access(*a)
 	return &info
+}
+
+// ChangedAccess returns who may call the agent after a change, described
+// by after, if it differs from before.
+func ChangedAccess(before, after *access.Description) *controlapi.Access {
+	if reflect.DeepEqual(before, after) {
+		return nil
+	}
+	return AccessInfo(after)
 }
 
 func (s *Service) codeInfo(c *pairings.Code) *controlapi.PairCodeResponse {

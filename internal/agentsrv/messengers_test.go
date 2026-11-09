@@ -124,7 +124,7 @@ func TestDeleteMessengerNotConfigured(t *testing.T) {
 	t.Parallel()
 	ts := startServer(t, serverOpts{})
 
-	err := controlapi.NewClient(ts.dir).DeleteMessenger(context.Background(), "telegram")
+	_, err := controlapi.NewClient(ts.dir).DeleteMessenger(context.Background(), "telegram")
 
 	var nf *agenterr.NotFoundError
 	if !errors.As(err, &nf) {
@@ -168,5 +168,55 @@ func TestAddMessengerWhileReadingStatus(t *testing.T) {
 	close(done)
 	if err := <-errc; err != nil {
 		t.Fatalf("Status() error = %v", err)
+	}
+}
+
+func TestMessengerChangesReportAccess(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		policy     agentdir.PolicyConfig
+		wantChange bool
+	}{
+		{name: "public bot open to anyone", policy: agentdir.PolicyConfig{PublicAllowIncoming: agentdir.AccessAnyone}, wantChange: true},
+		{name: "paired callers only"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{name: "assistant", telegramAPI: fakeBotAPI(t), public: publicNet(), configure: func(c *agentdir.Config) { c.Policy = tc.policy }})
+			client := controlapi.NewClient(ts.dir)
+			ctx := context.Background()
+			before, err := client.Status(ctx)
+			if err != nil {
+				t.Fatalf("Status() error = %v", err)
+			}
+
+			added, err := client.AddMessenger(ctx, controlapi.MessengerRequest{
+				Kind:    agentdir.MessengerTelegram,
+				Token:   "secret:" + agentdir.SecretTelegram,
+				Secrets: map[string]string{agentdir.SecretTelegram: "good"},
+			})
+			if err != nil {
+				t.Fatalf("AddMessenger() error = %v", err)
+			}
+			removed, err := client.DeleteMessenger(ctx, agentdir.MessengerTelegram)
+			if err != nil {
+				t.Fatalf("DeleteMessenger() error = %v", err)
+			}
+
+			if !tc.wantChange {
+				if added.Access != nil || removed.Access != nil {
+					t.Fatalf("AddMessenger().Access = %+v, DeleteMessenger().Access = %+v, want both nil", added.Access, removed.Access)
+				}
+				return
+			}
+			if added.Access == nil || cmp.Equal(before.Access.Summary, added.Access.Summary) {
+				t.Fatalf("AddMessenger().Access = %+v, want who may call with the messenger", added.Access)
+			}
+			if diff := cmp.Diff(before.Access.Summary, removed.Access.Summary); removed.Access == nil || diff != "" {
+				t.Fatalf("DeleteMessenger().Access = %+v, want who may call without the messenger as before", removed.Access)
+			}
+		})
 	}
 }

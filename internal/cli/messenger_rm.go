@@ -15,6 +15,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
@@ -33,10 +35,21 @@ func newMessengerRmCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 				return err
 			}
 			defer joinClose(&err, closer)
-			if err := m.DeleteMessenger(cmd.Context(), args[0]); err != nil {
+			resp, err := m.DeleteMessenger(cmd.Context(), args[0])
+			if err != nil {
 				return err
 			}
-			return cfg.PrintRemoved("messenger", args[0], "✓ removed "+args[0])
+			if cfg.IsJSON() {
+				out := map[string]any{"removed": true, "kind": "messenger", "name": args[0]}
+				if resp.Access != nil {
+					out["access"] = resp.Access
+				}
+				return cfg.PrintJSON(out)
+			}
+			if _, err := fmt.Fprintln(cfg.Out, "✓ removed "+args[0]); err != nil {
+				return err
+			}
+			return printAccess(cfg, resp.Access)
 		},
 	}
 }

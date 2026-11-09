@@ -63,7 +63,7 @@ type Result struct {
 	// Restart are the settings which wait for a restart of the running server.
 	Restart []string `json:"restart,omitempty"`
 	// Access is who may call the agent with the saved settings, set when
-	// an access or network setting changed.
+	// that changed.
 	Access *controlapi.Access `json:"access,omitempty"`
 	// Warnings are problems of the saved settings that don't stop the agent.
 	Warnings []string `json:"warnings,omitempty"`
@@ -245,10 +245,8 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 			return nil, err
 		}
 	}
-	if slices.ContainsFunc(res.Changes, func(c agentdir.Change) bool { return agentdir.IsAccess(c.Setting) }) {
-		if res.Access, err = savedAccess(ctx, d, next, client, res.Running); err != nil {
-			return nil, err
-		}
+	if res.Access, err = changedAccess(ctx, d, old, next, client, res.Running); err != nil {
+		return nil, err
 	}
 	return res, nil
 }
@@ -394,7 +392,7 @@ func applyMessengers(ctx context.Context, client *controlapi.Client, next *agent
 		}
 		req := controlapi.MessengerRequestFromConfig(next, kind)
 		if req.Token == "" && req.Email == nil {
-			if err := client.DeleteMessenger(ctx, kind); err != nil {
+			if _, err := client.DeleteMessenger(ctx, kind); err != nil {
 				return fmt.Errorf("removing %s from the running agent: %w", kind, err)
 			}
 		} else {

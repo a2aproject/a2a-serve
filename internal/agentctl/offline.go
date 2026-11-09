@@ -74,37 +74,46 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 	return &offline{Service: ops, release: release, store: st}, nil
 }
 
-// savedAccess describes who may call the agent in d with its saved config
-// cfg. The pairings come from the running server, or from the database of
-// a stopped agent.
-func savedAccess(ctx context.Context, d agentdir.Dir, cfg *agentdir.Config, client *controlapi.Client, running bool) (_ *controlapi.Access, err error) {
-	var n access.Pairings
-	switch _, statErr := os.Stat(d.DBPath()); {
-	case running:
+// changedAccess returns who may call the agent in d with the saved config
+// next, if that differs from the config old.
+func changedAccess(ctx context.Context, d agentdir.Dir, old, next *agentdir.Config, client *controlapi.Client, running bool) (*controlapi.Access, error) {
+	n, err := pairingCounts(ctx, d, client, running)
+	if err != nil {
+		return nil, err
+	}
+	return agentops.ChangedAccess(access.DescribeConfig(old, access.NetworkOf(old), n), access.DescribeConfig(next, access.NetworkOf(next), n)), nil
+}
+
+// pairingCounts counts the pairings of the agent in d, from the running
+// server or from its database.
+func pairingCounts(ctx context.Context, d agentdir.Dir, client *controlapi.Client, running bool) (_ access.Pairings, err error) {
+	if running {
 		st, err := client.Status(ctx)
 		if err != nil {
-			return nil, err
+			return access.Pairings{}, err
 		}
-		if st.Access != nil {
-			n = access.Pairings{All: st.Access.Pairings, Owners: st.Access.OwnerPairings}
+		if st.Access == nil {
+			return access.Pairings{}, nil
 		}
-	case statErr == nil:
-		st, err := store.Open(d.DBPath())
-		if err != nil {
-			return nil, err
-		}
-		defer func() { err = errors.Join(err, st.Close()) }()
-		all, err := st.Pairings(ctx)
-		if err != nil {
-			return nil, err
-		}
-		nodes, err := st.Nodes(ctx)
-		if err != nil {
-			return nil, err
-		}
-		n = access.CountPairings(all, nodes)
+		return access.Pairings{All: st.Access.Pairings, Owners: st.Access.OwnerPairings}, nil
 	}
-	return agentops.AccessInfo(access.DescribeConfig(cfg, access.NetworkOf(cfg), n)), nil
+	if _, err := os.Stat(d.DBPath()); err != nil {
+		return access.Pairings{}, nil
+	}
+	st, err := store.Open(d.DBPath())
+	if err != nil {
+		return access.Pairings{}, err
+	}
+	defer func() { err = errors.Join(err, st.Close()) }()
+	all, err := st.Pairings(ctx)
+	if err != nil {
+		return access.Pairings{}, err
+	}
+	nodes, err := st.Nodes(ctx)
+	if err != nil {
+		return access.Pairings{}, err
+	}
+	return access.CountPairings(all, nodes), nil
 }
 
 // Close closes the database and releases the agent directory.

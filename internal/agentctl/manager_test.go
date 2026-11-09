@@ -193,7 +193,7 @@ func TestOfflineDeleteMessenger(t *testing.T) {
 				}
 			})
 
-			err = m.DeleteMessenger(t.Context(), tc.kind)
+			_, err = m.DeleteMessenger(t.Context(), tc.kind)
 
 			if diff := cmp.Diff(tc.wantErr, err, cmp.Comparer(func(a, b error) bool { return fmt.Sprintf("%T %v", a, a) == fmt.Sprintf("%T %v", b, b) })); diff != "" {
 				t.Fatalf("DeleteMessenger() wrong error (-want +got) diff = %s", diff)

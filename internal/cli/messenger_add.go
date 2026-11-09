@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"slices"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -104,16 +105,17 @@ func printMessengerAdded(cfg *globalConfig, st *controlapi.MessengerStatus, runn
 	if cfg.IsJSON() {
 		return cfg.PrintJSON(st)
 	}
-	if !running {
-		_, err := fmt.Fprintf(cfg.Out, "✓ saved %s; it starts with the agent (a2a-serve start)\n", st.Name)
-		return err
+	var sb strings.Builder
+	switch {
+	case !running:
+		fmt.Fprintf(&sb, "✓ saved %s; it starts with the agent (a2a-serve start)\n", st.Name)
+	default:
+		fmt.Fprintf(&sb, "✓ %s %s\n", st.Name, st.Account)
+		if st.OwnerLink != nil {
+			sb.WriteString(st.OwnerLink.Line() + "\n")
+		}
 	}
-	if _, err := fmt.Fprintf(cfg.Out, "✓ %s %s\n", st.Name, st.Account); err != nil {
-		return err
-	}
-	if st.OwnerLink == nil {
-		return nil
-	}
-	_, err := fmt.Fprintln(cfg.Out, st.OwnerLink.Line())
+	writeAccess(&sb, st.Access)
+	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err
 }

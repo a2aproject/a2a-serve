@@ -212,8 +212,8 @@ func (a *api) addMessenger(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) deleteMessenger(w http.ResponseWriter, r *http.Request) {
 	kind := r.PathValue("kind")
-	err := a.deps.Ops.DeleteMessenger(r.Context(), kind)
-	reply(w, map[string]string{"removed": kind}, err)
+	out, err := a.deps.Ops.DeleteMessenger(r.Context(), kind)
+	reply(w, out, err)
 }
 
 func (a *api) schedules(w http.ResponseWriter, r *http.Request) {

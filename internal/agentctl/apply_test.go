@@ -414,14 +414,14 @@ func TestSetRunning(t *testing.T) {
 	}{
 		{
 			name:        "live settings applied",
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
 			wantApplied: []string{"telegram", "description"},
 			wantRestart: []string{"sandbox"},
 		},
 		{
 			name:        "server without reload",
 			noReload:    true,
-			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload"},
+			wantCalls:   []string{"GET /status", "POST /messengers", "POST /config/reload", "GET /status"},
 			wantApplied: []string{"telegram"},
 			wantRestart: []string{"sandbox", "description"},
 		},
@@ -468,10 +468,16 @@ func TestSetAccess(t *testing.T) {
 	tests := []struct {
 		name    string
 		running bool
+		base    *agentdir.Config
 		s       agentdir.Settings
 		want    *controlapi.Access
 	}{
-		{name: "other setting", s: agentdir.Settings{Sandbox: "local"}},
+		{name: "other setting", s: agentdir.Settings{Description: "x"}},
+		{
+			name: "sandbox mode with a sandbox rule", base: &agentdir.Config{Name: "coder", Harness: "opencode", Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: []agentdir.SandboxRule{{Match: []string{"pairing:ben"}, Storage: agentdir.StorageReadOnly}}}},
+			s:    agentdir.Settings{Sandbox: "local"},
+			want: &controlapi.Access{Owner: []string{"self"}, Member: []string{"private"}, Guest: []string{}, Summary: []string{"you: this machine", "nobody else"}},
+		},
 		{
 			name: "stopped agent", s: agentdir.Settings{Private: "tailscale", PrivateAllowIncoming: agentdir.AccessPaired},
 			want: &controlapi.Access{
@@ -491,7 +497,11 @@ func TestSetAccess(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+			base := tc.base
+			if base == nil {
+				base = &agentdir.Config{Name: "coder", Harness: "opencode"}
+			}
+			d := newAgent(t, base, agentdir.Secrets{"KEY": "k"})
 			if tc.running {
 				serveFake(t, d, &fakeServer{running: &agentdir.Config{Name: "coder", Harness: "opencode"}, access: &controlapi.Access{Pairings: 3, OwnerPairings: 1}})
 			}
