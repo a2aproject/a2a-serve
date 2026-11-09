@@ -455,13 +455,26 @@ func send(t *testing.T, c *a2aclient.Client, msg *a2a.Message) *a2a.Task {
 	t.Helper()
 	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{HistoryLength: new(a2alimit.MaxHistoryLength)}})
 	if err != nil {
-		t.Fatalf("SendMessage() error = %v", err)
+		t.Fatalf("SendMessage() error = %v%s", err, taskStatus(c, msg.TaskID))
 	}
 	task, ok := res.(*a2a.Task)
 	if !ok {
 		t.Fatalf("SendMessage() = %T, want *a2a.Task", res)
 	}
 	return task
+}
+
+// taskStatus describes the state of the task id that a message went to, so
+// that a failure says why the task ended, or "" for a new task.
+func taskStatus(c *a2aclient.Client, id a2a.TaskID) string {
+	if id == "" {
+		return ""
+	}
+	task, err := c.GetTask(context.Background(), &a2a.GetTaskRequest{ID: id})
+	if err != nil {
+		return fmt.Sprintf("; GetTask(%s) error = %v", id, err)
+	}
+	return fmt.Sprintf("; task %s is %s: %q", id, task.Status.State, a2atext.Message(task.Status.Message))
 }
 
 func sendAsync(t *testing.T, c *a2aclient.Client, msg *a2a.Message) *a2a.Task {
