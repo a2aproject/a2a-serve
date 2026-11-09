@@ -188,11 +188,11 @@ func (e *stallGuardedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Exec
 					timer.Reset(wait)
 					continue
 				}
-				slog.Warn("stopping a turn in which the agent sent nothing", "task", execCtx.TaskID, "tool", tool)
-				text := fmt.Sprintf("the agent sent nothing for %s, so the server stopped the turn. Its model may refuse requests, for example a free model over its usage limit: set a model and its key with `a2a-serve config set --model <provider/model> --secret <KEY>`", e.g.timeout)
+				timeout, text := e.g.timeout, fmt.Sprintf("the agent sent nothing for %s, so the server stopped the turn. Its model may refuse requests, for example a free model over its usage limit: set a model and its key with `a2a-serve config set --model <provider/model> --secret <KEY>`", e.g.timeout)
 				if tool {
-					text = fmt.Sprintf("a tool call of the agent sent nothing for %s, so the server stopped the turn", e.g.toolTimeout)
+					timeout, text = e.g.toolTimeout, fmt.Sprintf("a tool call of the agent sent nothing for %s, so the server stopped the turn", e.g.toolTimeout)
 				}
+				slog.Warn("stopping a turn in which the agent sent nothing", "task", execCtx.TaskID, "tool", tool, "timeout", timeout)
 				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(text))), nil)
 				return
 			}
