@@ -33,6 +33,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/project"
 	"github.com/a2aproject/a2a-serve/internal/recipe"
 )
@@ -112,19 +113,23 @@ stopped, once its first start picked its port.`,
 // printStopped prints the status of the stopped agent in d, whose
 // config.yaml doesn't load if problem is set.
 func printStopped(cfg *globalConfig, d agentdir.Dir, problem string) error {
-	name, harness := d.NameOrDefault(), ""
+	name, agent := d.NameOrDefault(), ""
 	if conf, err := d.ReadConfig(); err == nil {
-		harness = conf.Harness
+		agent = conf.Harness
 	}
 	if cfg.IsJSON() {
-		return cfg.PrintJSON(statusJSON{Name: name, Harness: harness, Dir: d.Root, Recipe: recipeOf(d), ConfigError: problem})
+		return cfg.PrintJSON(statusJSON{Name: name, Harness: agent, Dir: d.Root, Recipe: recipeOf(d), ConfigError: problem})
 	}
 	var sb strings.Builder
 	sb.WriteString(name)
-	if harness != "" {
-		fmt.Fprintf(&sb, " (%s)", harness)
+	if agent != "" {
+		fmt.Fprintf(&sb, " (%s)", agent)
 	}
-	fmt.Fprintf(&sb, " in %s is not running; start it with `a2a-serve start --detach`\n", d.Root)
+	start := "start it with `a2a-serve start --detach`"
+	if !d.Exists() {
+		start = "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml"
+	}
+	fmt.Fprintf(&sb, " in %s is not running; %s\n", d.Root, start)
 	writeConfigProblem(&sb, problem)
 	_, err := fmt.Fprint(cfg.Out, sb.String())
 	return err

@@ -407,3 +407,25 @@ func setKeys(n *yaml.Node, prefix string, out *[]string) {
 		}
 	}
 }
+
+func TestUnsetEntriesOfScalar(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		setting string
+		entries []string
+		wantErr string
+	}{
+		{name: "entry", setting: "memory", entries: []string{"1g"}, wantErr: "memory is not a list: run `a2a-serve config unset memory` to reset it"},
+		{name: "settings", setting: "memory", entries: []string{"cpus"}, wantErr: "memory is not a list, and unset takes one setting: run `a2a-serve config unset memory` and `a2a-serve config unset cpus`"},
+		{name: "secret settings", setting: "tailscale-authkey", entries: []string{"port", "cpus"}, wantErr: "tailscale-authkey takes no entries, and unset takes one setting: run `a2a-serve config unset tailscale-authkey`, `a2a-serve config unset port` and `a2a-serve config unset cpus`"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if _, err := (Dir{Root: "/src/app"}).Unset(fullConfig(), tc.setting, tc.entries); err == nil || err.Error() != tc.wantErr {
+				t.Fatalf("Unset() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}

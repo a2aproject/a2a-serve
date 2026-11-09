@@ -16,6 +16,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +27,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/output"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
@@ -337,5 +340,29 @@ func TestStatusHelp(t *testing.T) {
 		if len(line) > 80 {
 			t.Fatalf("a2a-serve status --help has the line %q, want at most 80 characters", line)
 		}
+	}
+}
+
+func TestStatusAfterConfigDeleted(t *testing.T) {
+	t.Parallel()
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+	if err := os.MkdirAll(filepath.Dir(d.LockPath()), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(d.LockPath(), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(d.ConfigPath()); err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runCMD(t, "status", "--dir", d.Root)
+
+	if err != nil {
+		t.Fatalf("a2a-serve status error = %v", err)
+	}
+	want := "start it with `a2a-serve start <agent>` (" + strings.Join(harness.ProfileNames(), ", ") + "); its port and settings are lost with config.yaml\n"
+	if !strings.Contains(out, want) || strings.Contains(out, "start --detach") {
+		t.Fatalf("a2a-serve status = %q, want %q", out, want)
 	}
 }

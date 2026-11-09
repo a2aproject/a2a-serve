@@ -425,3 +425,86 @@ func TestEditStoresNoSecretWhenFileChangedMeanwhile(t *testing.T) {
 		t.Fatalf("stored secrets = %v, want none", secrets)
 	}
 }
+
+func TestEditResumesDraft(t *testing.T) {
+	t.Parallel()
+	const (
+		valid   = "name: coder\nagent: opencode\nsandbox: local\n"
+		invalid = "name: coder\nagent: opencode\nsandbox: vm\n"
+	)
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	giveUp := func(error) (bool, error) { return false, nil }
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), func(path string) error { return os.WriteFile(path, []byte(invalid), 0o600) }, giveUp); err == nil {
+		t.Fatalf("Edit() error = nil, want the invalid edit rejected")
+	}
+
+	var opened string
+	keep := func(path string) error {
+		data, err := os.ReadFile(path)
+		opened = string(data)
+		return err
+	}
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), keep, giveUp); err == nil {
+		t.Fatalf("Edit() of the unchanged draft error = nil, want it rejected again")
+	}
+	wantNote := "# NOTE: this is your edit saved in " + d.ConfigDraftPath() + "; to discard it, quit, run `rm " + d.ConfigDraftPath() + "`, and run `a2a-serve config edit` again\n"
+	if diff := cmp.Diff(wantNote+invalid, opened); diff != "" {
+		t.Fatalf("Edit() opened wrong file (-want +got) diff = %s", diff)
+	}
+	if _, err := os.Stat(d.ConfigDraftPath()); err != nil {
+		t.Fatalf("os.Stat(draft) error = %v, want the draft kept", err)
+	}
+
+	fix := func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(strings.Replace(string(data), "sandbox: vm", "sandbox: local", 1)), 0o600)
+	}
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), fix, giveUp); err != nil {
+		t.Fatalf("Edit() of the fixed draft error = %v", err)
+	}
+	got, err := os.ReadFile(d.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(valid, string(got)); diff != "" {
+		t.Fatalf("config.yaml wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := os.Stat(d.ConfigDraftPath()); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(draft) error = %v, want it removed after a valid edit", err)
+	}
+}
+
+func TestEditRefusesDraftOfOlderFile(t *testing.T) {
+	t.Parallel()
+	const invalid = "name: coder\nagent: opencode\nsandbox: vm\n"
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	giveUp := func(error) (bool, error) { return false, nil }
+	if _, err := Edit(t.Context(), d, controlapi.NewClient(d), func(path string) error { return os.WriteFile(path, []byte(invalid), 0o600) }, giveUp); err == nil {
+		t.Fatalf("Edit() error = nil, want the invalid edit rejected")
+	}
+	if err := d.UpdateConfig(func(cfg *agentdir.Config) error {
+		cfg.Description = "saved since"
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	fix := func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(strings.Replace(string(data), "sandbox: vm", "sandbox: local", 1)), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), fix, giveUp)
+
+	if !errors.Is(err, ErrConfigChanged) {
+		t.Fatalf("Edit() of a draft of an older config.yaml error = %v, want %v", err, ErrConfigChanged)
+	}
+	if cfg := loadConfig(t, d); cfg.Description != "saved since" || cfg.Sandbox != "" {
+		t.Fatalf("saved config = %+v, want only the change saved since", cfg)
+	}
+}

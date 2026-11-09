@@ -725,8 +725,8 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 		reply string
 		want  string
 	}{
-		{name: "follow-up to a working task", start: "slow", reply: "hello", want: "is still working on an earlier message; check it with a2a task get"},
-		{name: "answer that loses to another answer", start: "ask slow", first: "once", reply: "always", want: "already got an answer to this question; see where it stands with a2a task get"},
+		{name: "follow-up to a working task", start: "slow", reply: "hello", want: "is still working on an earlier message; check it with `a2a task get -a {url} {task}`, and once it is done, continue with `a2a send -a {url} --context-id {context}`"},
+		{name: "answer that loses to another answer", start: "ask slow", first: "once", reply: "always", want: "already got an answer to this question; see where it stands with `a2a task get -a {url} {task}`"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -744,10 +744,25 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 
 			_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText(tc.reply, string(task.ID), task.ContextID)})
 
-			if err == nil || !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), string(task.ID)) {
-				t.Fatalf("SendMessage() to the busy task error = %v, want it to name task %s and say %q", err, task.ID, tc.want)
+			want := strings.NewReplacer("{task}", string(task.ID), "{context}", task.ContextID, "{url}", ts.localURL()).Replace(tc.want)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("SendMessage() to the busy task error = %v, want it to say %q", err, want)
 			}
 		})
+	}
+}
+
+func TestNewTaskInConversationWaitingForAnswerNamesTheAnswer(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	asked := send(t, c, userText("ask", "", ""))
+
+	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", asked.ContextID)})
+
+	want := fmt.Sprintf("answer it first with one of once, always, reject, as in `a2a send -a %s --task-id %s once`", ts.localURL(), asked.ID)
+	if err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("SendMessage() in the waiting conversation error = %v, want it to say %q", err, want)
 	}
 }
 

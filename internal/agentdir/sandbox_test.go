@@ -208,7 +208,8 @@ func TestUnsetSecretThatARuleUses(t *testing.T) {
 		wantErr string
 	}{
 		{name: "guest", rule: SandboxRule{Match: []string{"guests"}, Secrets: []string{"KEY=secret:G2"}}, wantErr: "G2 is used by the rule of guests; run `a2a-serve config unset guest-secrets` first"},
-		{name: "pairing", rule: SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"G2"}}, wantErr: "G2 is used by ben's sandbox rule; change it with `a2a-serve pair set ben --secrets` first"},
+		{name: "pairing", rule: SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"G2"}}, wantErr: "G2 is used by ben's sandbox rule; change it with `a2a-serve pair set ben --secrets none` first"},
+		{name: "pairing with other secrets", rule: SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"KEY", "G=secret:G2", "OTHER=secret:KEY"}}, wantErr: "G2 is used by ben's sandbox rule; change it with `a2a-serve pair set ben --secrets KEY,OTHER=secret:KEY` first"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
