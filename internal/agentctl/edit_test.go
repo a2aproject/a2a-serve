@@ -315,3 +315,113 @@ func TestEditRefusesMessengers(t *testing.T) {
 		})
 	}
 }
+
+func TestEditReopensFileChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	const edited = "name: coder\nagent: opencode\nsandbox: local\n"
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	var opened []string
+	var draft []byte
+	edit := func(path string) error {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		opened = append(opened, string(data))
+		if len(opened) > 1 {
+			if draft, err = os.ReadFile(d.ConfigDraftPath()); err != nil {
+				return err
+			}
+			return os.WriteFile(path, append(stripErrors(data), "sandbox: local\n"...), 0o600)
+		}
+		if err := d.UpdateConfig(func(cfg *agentdir.Config) error {
+			cfg.Description = "saved meanwhile"
+			return nil
+		}); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(edited), 0o600)
+	}
+	var retried []error
+	res, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(err error) (bool, error) {
+		retried = append(retried, err)
+		return true, nil
+	})
+	if err != nil {
+		t.Fatalf("Edit() error = %v", err)
+	}
+	if len(retried) != 1 || !errors.Is(retried[0], ErrConfigChanged) {
+		t.Fatalf("Edit() asked to retry with %v, want one %v", retried, ErrConfigChanged)
+	}
+	if len(opened) != 2 || !strings.HasPrefix(opened[1], "# ERROR: config.yaml changed while you edited it\n") || !strings.Contains(opened[1], "saved meanwhile") {
+		t.Fatalf("Edit() opened %q, want the current file reopened with the conflict on top", opened)
+	}
+	if diff := cmp.Diff(edited, string(draft)); diff != "" {
+		t.Fatalf("draft while editing again wrong result (-want +got) diff = %s", diff)
+	}
+	cfg := loadConfig(t, d)
+	if cfg.Description != "saved meanwhile" || cfg.Sandbox != "local" {
+		t.Fatalf("saved config = %+v, want the change saved meanwhile and the edit", cfg)
+	}
+	if diff := cmp.Diff([]agentdir.Change{{Setting: "sandbox", Old: "", New: "local"}}, res.Changes); diff != "" {
+		t.Fatalf("Edit() changes wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestEditKeepsEditWhenFileChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	const edited = "name: coder\nagent: opencode\nsandbox: local\n"
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	edit := func(path string) error {
+		if err := d.UpdateConfig(func(cfg *agentdir.Config) error {
+			cfg.Description = "saved meanwhile"
+			return nil
+		}); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte(edited), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if !errors.Is(err, ErrConfigChanged) || !strings.Contains(err.Error(), "your edit is saved in "+d.ConfigDraftPath()) {
+		t.Fatalf("Edit() error = %v, want %v naming the draft %s", err, ErrConfigChanged, d.ConfigDraftPath())
+	}
+	if cfg := loadConfig(t, d); cfg.Description != "saved meanwhile" || cfg.Sandbox != "" {
+		t.Fatalf("saved config = %+v, want only the change saved meanwhile", cfg)
+	}
+	draft, err := os.ReadFile(d.ConfigDraftPath())
+	if err != nil {
+		t.Fatalf("reading the draft: %v", err)
+	}
+	if diff := cmp.Diff(edited, string(draft)); diff != "" {
+		t.Fatalf("draft wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestEditStoresNoSecretWhenFileChangedMeanwhile(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"}, nil)
+	edit := func(path string) error {
+		if err := d.UpdateConfig(func(cfg *agentdir.Config) error {
+			cfg.Description = "saved meanwhile"
+			return nil
+		}); err != nil {
+			return err
+		}
+		return os.WriteFile(path, []byte("name: coder\nagent: opencode\nbackup:\n    to: /backups\n    key: hunter2\n"), 0o600)
+	}
+
+	_, err := Edit(t.Context(), d, controlapi.NewClient(d), edit, func(error) (bool, error) { return false, nil })
+
+	if !errors.Is(err, ErrConfigChanged) {
+		t.Fatalf("Edit() error = %v, want %v", err, ErrConfigChanged)
+	}
+	secrets, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatalf("LoadSecrets() error = %v", err)
+	}
+	if len(secrets) != 0 {
+		t.Fatalf("stored secrets = %v, want none", secrets)
+	}
+}

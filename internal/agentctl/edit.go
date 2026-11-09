@@ -34,8 +34,10 @@ const errorPrefix = "# ERROR: "
 
 // Edit lets edit change a copy of config.yaml, like crontab -e. A valid
 // result is applied as by [Apply]. For an invalid one, retry decides
-// whether to edit again, with the error on top of the file. An unchanged
-// file returns an empty result.
+// whether to edit again, with the error on top of the file. If config.yaml
+// changed during the edit, the edit is kept as a draft and retry decides
+// whether to edit the current file. An unchanged file returns an empty
+// result.
 func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit func(path string) error, retry func(error) (bool, error)) (*Result, error) {
 	orig, err := os.ReadFile(d.ConfigPath())
 	if err != nil {
@@ -55,6 +57,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		return nil, err
 	}
 	content := orig
+	drafted := false
 	for {
 		if err := os.WriteFile(path, content, 0o600); err != nil {
 			return nil, err
@@ -68,14 +71,33 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		edited = stripErrors(edited)
 		if bytes.Equal(edited, orig) {
-			removeDraft(d)
+			if !drafted {
+				removeDraft(d)
+			}
 			return withUnknownKeys(&Result{Path: d.ConfigPath()}, edited), nil
 		}
-		res, err := Replace(ctx, d, client, edited, false)
+		res, err := Replace(ctx, d, client, edited, orig, false)
 		var se *agentdir.SettingsError
 		if err == nil {
 			removeDraft(d)
 			return withUnknownKeys(res, edited), nil
+		}
+		if errors.Is(err, ErrConfigChanged) {
+			drafted = true
+			err = errors.Join(err, keepDraft(d, edited))
+			again, rerr := retry(err)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if !again {
+				return nil, err
+			}
+			cur, rerr := os.ReadFile(d.ConfigPath())
+			if rerr != nil {
+				return nil, rerr
+			}
+			orig, content = cur, withErrors(cur, err)
+			continue
 		}
 		if !errors.As(err, &se) {
 			return res, err

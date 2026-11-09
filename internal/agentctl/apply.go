@@ -17,11 +17,13 @@
 package agentctl
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -100,12 +102,18 @@ func Unset(ctx context.Context, d agentdir.Dir, client *controlapi.Client, setti
 // which `a2a-serve messenger add` checks with the messenger first.
 var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2a-serve messenger add and a2a-serve messenger rm"), agenterr.HintMessengerList, "")
 
+// ErrConfigChanged refuses to save an edit of config.yaml when the file
+// changed since the edit read it.
+var ErrConfigChanged = errors.New("config.yaml changed while you edited it")
+
 // Replace replaces the agent's config with data, the content of
 // config.yaml as edited by hand, which is saved as it is. Values typed into
 // secret settings are stored, and replaced by references in the saved
 // file. A name that isn't a lowercase DNS label is normalized, as `config
 // set --name` does, in the saved file too. A change of messengers is refused.
-func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data []byte, dryRun bool) (*Result, error) {
+// If config.yaml no longer holds base, the content the edit started from,
+// nothing is saved and the error is [ErrConfigChanged].
+func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, data, base []byte, dryRun bool) (*Result, error) {
 	next, err := agentdir.ParseConfig(data)
 	if err != nil {
 		return nil, &agentdir.SettingsError{Err: agentdir.FileProblems(err)}
@@ -126,8 +134,12 @@ func Replace(ctx context.Context, d agentdir.Dir, client *controlapi.Client, dat
 		}
 		*cfg = *next
 		return store, nil, nil
-	}, nil, dryRun, data)
+	}, nil, dryRun, &rawEdit{data: data, base: base})
 }
+
+// rawEdit is a hand edit of config.yaml: data is saved as it is if the
+// file still holds base.
+type rawEdit struct{ data, base []byte }
 
 // Apply changes the agent's config with mutate, validates the result and
 // saves it. A running server applies messengers, the description and
@@ -146,8 +158,8 @@ func ApplyThen(ctx context.Context, d agentdir.Dir, client *controlapi.Client, m
 	return apply(ctx, d, client, mutate, then, dryRun, nil)
 }
 
-// apply is [ApplyThen], saving raw as config.yaml if set.
-func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, then Step, dryRun bool, raw []byte) (_ *Result, err error) {
+// apply is [ApplyThen], saving the hand edit raw as config.yaml if set.
+func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutate Mutation, then Step, dryRun bool, raw *rawEdit) (_ *Result, err error) {
 	created := !d.Exists()
 	if created {
 		if err := CheckEnclosing(ctx, d); err != nil {
@@ -188,7 +200,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 	}
 	if raw != nil && len(store) > 0 {
 		// The edited file keeps the references to the stored values.
-		if raw, err = agentdir.MergeConfig(raw, next); err != nil {
+		if raw.data, err = agentdir.MergeConfig(raw.data, next); err != nil {
 			return nil, err
 		}
 	}
@@ -220,13 +232,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 			return nil, err
 		}
 	}
-	if err := d.SaveSecrets(store); err != nil {
-		return nil, err
-	}
-	if err := d.DeleteSecrets(del...); err != nil {
-		return nil, err
-	}
-	if err := saveConfig(d, mutate, raw); err != nil {
+	if err := saveConfig(d, mutate, raw, store, del); err != nil {
 		return nil, err
 	}
 	if then != nil {
@@ -285,12 +291,29 @@ func CheckEnclosing(ctx context.Context, d agentdir.Dir) error {
 	}
 }
 
-// saveConfig saves raw as config.yaml, or the config on disk with mutate
+// saveConfig stores the secrets store, deletes the secrets del, and saves
+// the hand edit raw as config.yaml, or the config on disk with mutate
 // applied. The config is read again under its lock, so that changes saved
-// since apply read it, by other commands or the running server, are kept.
-func saveConfig(d agentdir.Dir, mutate Mutation, raw []byte) error {
+// since apply read it, by other commands or the running server, are kept,
+// or refuse the hand edit before anything is saved.
+func saveConfig(d agentdir.Dir, mutate Mutation, raw *rawEdit, store agentdir.Secrets, del []string) error {
 	if raw != nil {
-		return d.LockConfig(func() error { return fsutil.WriteAtomic(d.ConfigPath(), raw, 0o644) })
+		return d.LockConfig(func() error {
+			cur, err := os.ReadFile(d.ConfigPath())
+			if err != nil && !errors.Is(err, os.ErrNotExist) {
+				return err
+			}
+			if !bytes.Equal(cur, raw.base) {
+				return ErrConfigChanged
+			}
+			if err := saveSecrets(d, store, del); err != nil {
+				return err
+			}
+			return fsutil.WriteAtomic(d.ConfigPath(), raw.data, 0o644)
+		})
+	}
+	if err := saveSecrets(d, store, del); err != nil {
+		return err
 	}
 	return d.UpdateConfig(func(cfg *agentdir.Config) error {
 		if _, _, err := mutate(cfg); err != nil {
@@ -298,6 +321,13 @@ func saveConfig(d agentdir.Dir, mutate Mutation, raw []byte) error {
 		}
 		return nil
 	})
+}
+
+func saveSecrets(d agentdir.Dir, store agentdir.Secrets, del []string) error {
+	if err := d.SaveSecrets(store); err != nil {
+		return err
+	}
+	return d.DeleteSecrets(del...)
 }
 
 func secretChanges(stored, store agentdir.Secrets, del []string) []SecretChange {
