@@ -667,10 +667,21 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 	}
 
 	symlink(t, filepath.Join(dotfiles, ".claude"), filepath.Join(repo, ".claude"))
+	symlink(t, filepath.Join(dotfiles, "claude"), filepath.Join(repo, ".opencode"))
 	spec.Mounts = append(spec.Mounts, agentdir.Mount{Src: repo, Dst: repo})
+	above, err := Prepare(context.Background(), spec)
+	if err != nil {
+		t.Fatalf("Prepare() for Claude Code with a symlinked .claude above the workspace error = %v, want nil", err)
+	}
+	t.Cleanup(func() {
+		if err := above.Stop(context.Background()); err != nil {
+			t.Errorf("Stop() error = %v", err)
+		}
+	})
+	spec.Profile = opencode{}
 	_, err = Prepare(context.Background(), spec)
-	if want := filepath.Join(repo, ".claude") + " is a symlink, in a folder above the workspace"; err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("Prepare() with a symlinked .claude above the workspace error = %v, want it to contain %q", err, want)
+	if want := filepath.Join(repo, ".opencode") + " is a symlink, in a folder above the workspace"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() for opencode with a symlinked .opencode above the workspace error = %v, want it to contain %q", err, want)
 	}
 }
 

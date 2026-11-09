@@ -36,21 +36,27 @@ const emptyConfig = "{}\n"
 // files of [project.AgentConfigFiles].
 type configReader interface {
 	projectConfigFiles() []string
+	// readsParentConfig reports whether it also reads them in the folders
+	// above its working directory.
+	readsParentConfig() bool
 }
 
 func (opencode) projectConfigFiles() []string { return project.OpencodeConfigFiles }
+func (opencode) readsParentConfig() bool      { return true }
 func (claude) projectConfigFiles() []string   { return project.ClaudeConfigFiles }
+func (claude) readsParentConfig() bool        { return false }
 
-// configFiles returns the project configuration files p reads: all of them
-// for an agent of unknown kind.
-func configFiles(p Profile) []string {
+// configFiles returns the project configuration files p reads, and whether
+// it reads them above its working directory: all of them, also above, for
+// an agent of unknown kind.
+func configFiles(p Profile) ([]string, bool) {
 	if c, ok := p.(custom); ok && c.base != nil {
 		p = c.base
 	}
 	if r, ok := p.(configReader); ok {
-		return r.projectConfigFiles()
+		return r.projectConfigFiles(), r.readsParentConfig()
 	}
-	return project.AgentConfigFiles
+	return project.AgentConfigFiles, true
 }
 
 // opencodeOwnFiles are what opencode writes into a configuration folder
@@ -72,8 +78,9 @@ type configMasks struct {
 
 // maskAgentConfig writes the empty configuration file of spec and returns
 // the mounts that put it over the agent's configuration files: those of the
-// workspace, and the existing ones in the mounts and in the folders of
-// mounts that hold the workspace, which opencode also reads.
+// workspace, and the existing ones in the mounts. In the folders of mounts
+// between a mount that holds the workspace and the workspace, which opencode
+// also reads, it refuses symlinks and checks for files that appear later.
 //
 // The workspace gets the files and folders it lacks, since docker would
 // otherwise create them as root and the agent could create them in a
@@ -93,7 +100,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 	if spec.WorkspaceSrc != "" {
 		mounts[0].Src = spec.WorkspaceSrc
 	}
-	entries := configFiles(spec.Profile)
+	entries, readsParents := configFiles(spec.Profile)
 	var cm configMasks
 	var files, dirs, unmasked []string
 	add := func(path string, isDir bool) {
@@ -116,6 +123,9 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 		add(path, isDir)
 	}
 	roots, above := configDirs(mounts)
+	if !readsParents {
+		roots, above = append(roots, above...), nil
+	}
 	for _, dir := range roots {
 		for _, entry := range entries {
 			name, isDir := strings.CutSuffix(entry, "/")
