@@ -37,3 +37,25 @@ func TestLastBytes(t *testing.T) {
 		})
 	}
 }
+
+func TestFirstBytes(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		s    string
+		n    int
+		want string
+	}{
+		{name: "short", s: "OK.", n: 100, want: "OK."},
+		{name: "cut", s: "one two", n: 3, want: "one […]"},
+		{name: "cut in a rune", s: "éé", n: 3, want: "é […]"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := firstBytes(tc.s, tc.n); got != tc.want {
+				t.Fatalf("firstBytes(%q, %d) = %q, want %q", tc.s, tc.n, got, tc.want)
+			}
+		})
+	}
+}
