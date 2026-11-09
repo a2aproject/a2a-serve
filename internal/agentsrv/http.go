@@ -190,12 +190,18 @@ func (s *Server) authenticate(kind string, next http.Handler) http.Handler {
 			proto.writeError(w, http.StatusInternalServerError, a2a.ErrInternalError, "authentication failed")
 			return
 		}
-		ctx := context.WithValue(auth.WithPrincipal(r.Context(), p), agentURLKey{}, base(s.listenerURL(kind), r))
+		agentURL := base(s.listenerURL(kind), r)
+		if auth.Hops(r.Header) > 0 {
+			// An agent calls through its server, at a URL only that server knows.
+			agentURL = "<agent URL>"
+		}
+		ctx := context.WithValue(auth.WithPrincipal(r.Context(), p), agentURLKey{}, agentURL)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})
 }
 
-// agentURLKey is the context key of the URL a caller reached the agent at.
+// agentURLKey is the context key of the URL a caller reached the agent at,
+// as the caller can pass it to the a2a CLI.
 type agentURLKey struct{}
 
 // a2aCommand words the a2a CLI command `a2a <args>` for the caller of ctx,

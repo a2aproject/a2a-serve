@@ -24,6 +24,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -754,15 +755,33 @@ func TestReplyToBusyTaskNamesTheTask(t *testing.T) {
 
 func TestNewTaskInConversationWaitingForAnswerNamesTheAnswer(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{})
-	c := ts.client(ts.pair("me", auth.RoleOwner))
-	asked := send(t, c, userText("ask", "", ""))
+	tests := []struct {
+		name    string
+		hops    int
+		wantURL string
+	}{
+		{name: "person", wantURL: "{url}"},
+		{name: "agent", hops: 1, wantURL: "<agent URL>"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			asked := send(t, c, userText("ask", "", ""))
+			ctx := context.Background()
+			if tc.hops > 0 {
+				ctx = a2aclient.AttachServiceParams(ctx, a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(tc.hops)}})
+			}
 
-	_, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", asked.ContextID)})
+			_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", asked.ContextID)})
 
-	want := fmt.Sprintf("answer it first with one of once, always, reject, as in `a2a send -a %s --task-id %s once`", ts.localURL(), asked.ID)
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("SendMessage() in the waiting conversation error = %v, want it to say %q", err, want)
+			url := strings.ReplaceAll(tc.wantURL, "{url}", ts.localURL())
+			want := fmt.Sprintf("answer it first with one of once, always, reject, as in `a2a send -a %s --task-id %s once`", url, asked.ID)
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("SendMessage() in the waiting conversation error = %v, want it to say %q", err, want)
+			}
+		})
 	}
 }
 

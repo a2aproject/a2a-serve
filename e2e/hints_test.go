@@ -67,7 +67,7 @@ func TestBusyTaskHintsWorkAsPrinted(t *testing.T) {
 	t.Parallel()
 	owner := newUser(t)
 	coder := owner.startAgent("coder")
-	task := owner.mustSend(coder.url, "--async", "slow 3s")
+	task := owner.mustSend(coder.url, "--async", "slow 10s")
 
 	_, err := owner.send(coder.url, "--task-id", string(task.ID), "hello")
 	if err == nil {

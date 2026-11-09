@@ -51,6 +51,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 	if err != nil {
 		return nil, err
 	}
+	resumed := !bytes.Equal(content, cur)
 	tmp, err := os.CreateTemp(d.Path(), "config-*.yaml")
 	if err != nil {
 		return nil, err
@@ -91,7 +92,11 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		}
 		if errors.Is(err, ErrConfigChanged) {
 			drafted = true
-			err = errors.Join(err, keepDraft(d, edited, base))
+			why := fmt.Errorf("%w while you edited it", err)
+			if resumed {
+				why = fmt.Errorf("%w since your edit was saved; to apply the edit to the current file, run `a2a-serve config edit` in a terminal and edit again, or discard it with `rm %s`", err, d.ConfigDraftPath())
+			}
+			err = errors.Join(why, keepDraft(d, edited, base))
 			again, rerr := retry(err)
 			if rerr != nil {
 				return nil, rerr
@@ -102,7 +107,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 			if cur, rerr = os.ReadFile(d.ConfigPath()); rerr != nil {
 				return nil, rerr
 			}
-			base, content = cur, withErrors(cur, err)
+			base, content, resumed = cur, withErrors(cur, err), false
 			continue
 		}
 		if !errors.As(err, &se) {
@@ -115,7 +120,7 @@ func Edit(ctx context.Context, d agentdir.Dir, client *controlapi.Client, edit f
 		if !again {
 			return nil, &agentdir.SettingsError{Err: errors.Join(err, keepDraft(d, edited, base))}
 		}
-		content = withErrors(edited, err)
+		content, resumed = withErrors(edited, err), false
 	}
 }
 

@@ -501,8 +501,9 @@ func TestEditRefusesDraftOfOlderFile(t *testing.T) {
 
 	_, err := Edit(t.Context(), d, controlapi.NewClient(d), fix, giveUp)
 
-	if !errors.Is(err, ErrConfigChanged) {
-		t.Fatalf("Edit() of a draft of an older config.yaml error = %v, want %v", err, ErrConfigChanged)
+	want := "config.yaml changed since your edit was saved; to apply the edit to the current file, run `a2a-serve config edit` in a terminal and edit again, or discard it with `rm " + d.ConfigDraftPath() + "`"
+	if !errors.Is(err, ErrConfigChanged) || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Edit() of a draft of an older config.yaml error = %v, want %q", err, want)
 	}
 	if cfg := loadConfig(t, d); cfg.Description != "saved since" || cfg.Sandbox != "" {
 		t.Fatalf("saved config = %+v, want only the change saved since", cfg)

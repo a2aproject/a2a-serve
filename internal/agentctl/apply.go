@@ -104,7 +104,7 @@ var errMessengers = agenterr.WithHint(errors.New("messengers are changed with a2
 
 // ErrConfigChanged refuses to save an edit of config.yaml when the file
 // changed since the edit read it.
-var ErrConfigChanged = errors.New("config.yaml changed while you edited it")
+var ErrConfigChanged = errors.New("config.yaml changed")
 
 // Replace replaces the agent's config with data, the content of
 // config.yaml as edited by hand, which is saved as it is. Values typed into
