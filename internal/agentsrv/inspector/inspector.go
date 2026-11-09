@@ -507,7 +507,7 @@ const inProgressText = "The task is already handling another answer. Reload the 
 // so that a stale page or a double click can't answer the next question.
 func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ session) {
 	ctx := r.Context()
-	stored, err := in.deps.Tasks.Get(ctx, a2a.TaskID(r.PathValue("id")))
+	stored, err := in.deps.Tasks.Header(ctx, a2a.TaskID(r.PathValue("id")))
 	if err != nil {
 		http.Error(w, "This task does not exist.", http.StatusNotFound)
 		return

@@ -327,7 +327,7 @@ func (s *Service) expireWith(reject func() (Outcome, error), logArgs ...any) {
 
 // TaskUser returns the user who started a stored task.
 func (r *Records) TaskUser(ctx context.Context, taskID a2a.TaskID) (string, error) {
-	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	stored, err := r.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err != nil {
 		return "", err
 	}
@@ -356,7 +356,7 @@ func (r *Records) Waiting(ctx context.Context, rec store.Question) (bool, error)
 	if rec.Contact != "" {
 		return true, nil
 	}
-	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), a2a.TaskID(rec.TaskID))
+	stored, err := r.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), a2a.TaskID(rec.TaskID))
 	if errors.Is(err, a2a.ErrTaskNotFound) {
 		return false, nil
 	}
@@ -561,7 +561,7 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 		return 0, err
 	}
 	waits := func() (bool, error) {
-		stored, err := s.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+		stored, err := s.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 		if errors.Is(err, a2a.ErrTaskNotFound) {
 			return false, nil
 		}

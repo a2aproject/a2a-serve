@@ -466,7 +466,7 @@ func (rd *renderer) finish(ctx context.Context) {
 		rd.final(ctx, interrupted)
 		return
 	}
-	stored, err := rd.a.tasks.Get(auth.WithPrincipal(context.WithoutCancel(ctx), auth.Owner()), taskID)
+	stored, err := rd.a.tasks.Header(auth.WithPrincipal(context.WithoutCancel(ctx), auth.Owner()), taskID)
 	if err != nil {
 		slog.Warn("loading the task of an ended stream", "task", taskID, "error", err)
 		rd.final(ctx, interrupted)

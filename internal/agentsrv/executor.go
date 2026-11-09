@@ -969,7 +969,8 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		// a2a-go reports a running execution before it loads the task in
 		// the caller's scope, which tells another person's task from an
 		// unknown one.
-		if _, err := i.tasks.Header(ctx, msg.Message.TaskID); errors.Is(err, a2a.ErrTaskNotFound) {
+		header, err := i.tasks.Header(ctx, msg.Message.TaskID)
+		if errors.Is(err, a2a.ErrTaskNotFound) {
 			return ctx, nil, err
 		}
 		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
@@ -978,7 +979,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
-		ctx = i.withReply(ctx, msg.Message)
+		if err == nil {
+			ctx = i.withReply(ctx, msg.Message, header.Task)
+		}
 	}
 	return ctx, nil, nil
 }
@@ -995,19 +998,20 @@ type reply struct {
 	approval bool
 }
 
-// withReply returns ctx with msg, the reply to a task that it sends, for
-// After.
-func (i *callerInterceptor) withReply(ctx context.Context, msg *a2a.Message) context.Context {
-	stored, err := i.tasks.Get(ctx, msg.TaskID)
-	if err != nil {
-		return ctx
-	}
-	q := pendingApproval(stored.Task)
+// withReply returns ctx with msg, the reply to the task of header that it
+// sends, for After. header is the task without its history, which is read
+// only when the status holds no approval.
+func (i *callerInterceptor) withReply(ctx context.Context, msg *a2a.Message, header *a2a.Task) context.Context {
+	q := pendingApproval(header)
 	if q == nil {
+		stored, err := i.tasks.Get(ctx, msg.TaskID)
+		if err != nil {
+			return ctx
+		}
 		q = lastQuestion(stored.Task)
 	}
 	approval := q != nil && answersQuestion(msg, q)
-	return context.WithValue(ctx, replyKey{}, reply{task: msg.TaskID, contextID: stored.Task.ContextID, approval: approval})
+	return context.WithValue(ctx, replyKey{}, reply{task: msg.TaskID, contextID: header.ContextID, approval: approval})
 }
 
 // lastQuestion returns the question of the last agent message in the

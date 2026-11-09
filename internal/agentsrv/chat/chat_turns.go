@@ -413,7 +413,7 @@ func (c *ChatTurns) prepare(ctx context.Context, ch messenger.Messenger, in *mes
 // approval. approval is the permission question the task waits on, which
 // only an answer continues.
 func (c *ChatTurns) canContinue(ctx context.Context, p auth.Principal, taskID a2a.TaskID) (approval *approvals.Question, ok bool) {
-	stored, err := c.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), taskID)
+	stored, err := c.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), taskID)
 	if err != nil {
 		slog.Warn("loading the pending task of a conversation", "task", taskID, "error", err)
 		return nil, p.IsOwner()
