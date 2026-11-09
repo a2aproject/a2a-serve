@@ -18,4 +18,4 @@ The agent also needs a model API key, which `a2a-serve recipe` asks for.
 
 ## What it can do
 
-It reads. It can't edit its workspace, run commands or fetch URLs: the recipe denies those tool kinds. It asks before each MCP call; see the walkthrough for how to answer fewer questions.
+It reads. It can't edit its workspace, run commands or fetch URLs: the recipe denies those tool kinds. It runs its MCP tools without asking, for everyone who can call it. Each MCP server is read-only on its own side, through the identities above.
