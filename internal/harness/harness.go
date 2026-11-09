@@ -30,6 +30,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/tailscale/hujson"
 )
 
 // Workspace is what a harness works on.
@@ -418,6 +419,10 @@ func setJSONKey(home, name, key string, v any) (err error) {
 	}
 	if err != nil {
 		return err
+	}
+	// opencode reads comments and trailing commas, which a rewrite drops.
+	if data, err = hujson.Standardize(data); err != nil {
+		return fmt.Errorf("parsing %s: %w", filepath.Join(home, name), err)
 	}
 	obj := map[string]any{}
 	if err := json.Unmarshal(data, &obj); err != nil {

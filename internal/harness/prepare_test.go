@@ -875,6 +875,15 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 			kept:    "provider",
 		},
 		{
+			name:    "opencode with comments",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: "{\n  // the stub model\n  \"provider\": {\"stub\": {}},\n  \"permission\": {\"bash\": \"allow\"},\n}",
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
 			name:    "claude",
 			profile: claude{},
 			file:    filepath.Join(".claude", "settings.json"),
