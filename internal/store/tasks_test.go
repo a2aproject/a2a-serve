@@ -31,6 +31,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
 
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
@@ -186,6 +187,100 @@ func TestLatestStateInContext(t *testing.T) {
 	}
 	if _, _, err := ts.LatestStateInContext(asUser("alice"), "c2"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("LatestStateInContext() of an empty context error = %v, want %v", err, ErrNotFound)
+	}
+}
+
+func TestListCutsLongParts(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	limit := a2alimit.MaxListPart
+	long := strings.Repeat("a", limit+10)
+	blob := []byte(strings.Repeat("b", limit+1))
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task,
+		a2a.NewTextPart(long), a2a.NewRawPart(blob), a2a.NewRawPart([]byte("small")), a2a.NewDataPart(map[string]any{"k": long}))}
+	question := a2a.NewMessageForTask(a2a.MessageRoleAgent, task, a2a.NewTextPart(long))
+	answer := a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("yes"))
+	asked := a2a.NewStatusUpdateEvent(task, a2a.TaskStateInputRequired, question)
+	applyEvents(t, ts, "owner", task, textChunk(task, long[:limit], false), textChunk(task, long[limit:], true), asked, answer)
+	history := 10
+	req := &a2a.ListTasksRequest{HistoryLength: &history, IncludeArtifacts: true}
+
+	resp, err := ts.CutLists().List(asUser("owner"), req)
+	if err != nil {
+		t.Fatalf("CutLists().List() error = %v", err)
+	}
+
+	cutText := a2a.NewTextPart(long[:limit] + fmt.Sprintf("\n[cut: %d of %d bytes shown; get task t1 for the whole text]", limit, len(long)))
+	cutQuestion := &a2a.Message{ID: question.ID, Role: a2a.MessageRoleAgent, TaskID: "t1", ContextID: "c1", Parts: a2a.ContentParts{cutText}}
+	want := &a2a.Task{
+		ID: "t1", ContextID: "c1",
+		Status: a2a.TaskStatus{State: asked.Status.State, Timestamp: asked.Status.Timestamp, Message: cutQuestion},
+		History: []*a2a.Message{
+			{ID: task.History[0].ID, Role: a2a.MessageRoleUser, TaskID: "t1", ContextID: "c1", Parts: a2a.ContentParts{
+				cutText,
+				a2a.NewTextPart(fmt.Sprintf("[file of %d bytes left out of the list; get task t1 for it]", len(blob))),
+				a2a.NewRawPart([]byte("small")),
+				a2a.NewTextPart(fmt.Sprintf("[data of %d bytes left out of the list; get task t1 for it]", len(long)+8)),
+			}},
+			cutQuestion,
+			answer,
+		},
+		Artifacts: []*a2a.Artifact{{ID: "story", Parts: a2a.ContentParts{cutText}}},
+	}
+	if diff := cmp.Diff([]*a2a.Task{want}, resp.Tasks); diff != "" {
+		t.Fatalf("CutLists().List() wrong result (-want +got) diff = %s", diff)
+	}
+
+	whole, err := ts.List(asUser("owner"), req)
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	stored, err := ts.Get(asUser("owner"), "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if diff := cmp.Diff([]*a2a.Task{stored.Task}, whole.Tasks); diff != "" {
+		t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestListHistoryMatchesGet(t *testing.T) {
+	t.Parallel()
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("write a story"))}
+	thinking := a2a.NewMessageForTask(a2a.MessageRoleAgent, task, a2a.NewTextPart("thinking"))
+	question := a2a.NewMessageForTask(a2a.MessageRoleAgent, task, a2a.NewTextPart("which ending?"))
+	answer := a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("a happy one"))
+	events := streamedEvents(task, snapshotEvery+10,
+		a2a.NewStatusUpdateEvent(task, a2a.TaskStateInputRequired, question),
+		answer,
+		a2a.NewStatusUpdateEvent(task, a2a.TaskStateWorking, thinking),
+		textChunk(task, "The end.", true))
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	applyEvents(t, ts, "alice", task, events...)
+	stored, err := ts.Get(asUser("alice"), "t1")
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+
+	for _, n := range []int{1, 2, 3, 100} {
+		t.Run(fmt.Sprintf("history %d", n), func(t *testing.T) {
+			t.Parallel()
+			want := *stored.Task
+			want.History = want.History[max(len(want.History)-n, 0):]
+
+			resp, err := ts.List(asUser("alice"), &a2a.ListTasksRequest{HistoryLength: &n, IncludeArtifacts: true})
+			if err != nil {
+				t.Fatalf("List() error = %v", err)
+			}
+
+			if diff := cmp.Diff([]*a2a.Task{&want}, resp.Tasks); diff != "" {
+				t.Fatalf("List() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
 
@@ -493,6 +588,31 @@ func TestHeader(t *testing.T) {
 	}
 }
 
+func TestPromptsOfTaskFinishedAfterItsHeader(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	ts := s.Tasks("", testViewer)
+	task := newTask("t1", "c1")
+	task.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, task, a2a.NewTextPart("draw a cat"))}
+	applyEvents(t, ts, "owner", task)
+	h, err := ts.row(t.Context(), s.reads, "t1", "owner", true)
+	if err != nil {
+		t.Fatalf("row() error = %v", err)
+	}
+	if _, err := ts.Update(asUser("owner"), &taskstore.UpdateRequest{Task: task, Event: a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil), PrevVersion: 1}); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	got, err := ts.prompts(t.Context(), []*taskHeader{h})
+
+	if err != nil {
+		t.Fatalf("prompts() error = %v", err)
+	}
+	if len(got) != 1 || a2atext.Message(got[0]) != "draw a cat" {
+		t.Fatalf("prompts() = %v, want the first user message", got)
+	}
+}
+
 func TestListSummaries(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)
@@ -508,6 +628,17 @@ func TestListSummaries(t *testing.T) {
 	second := newTask("t2", "c1")
 	second.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleAgent, second, a2a.NewTextPart("done"))}
 	applyEvents(t, ts, "bob", second)
+	later := newTask("t3", "c2")
+	applyEvents(t, ts, "owner", later,
+		a2a.NewStatusUpdateEvent(later, a2a.TaskStateInputRequired, a2a.NewMessageForTask(a2a.MessageRoleAgent, later, a2a.NewTextPart("what now?"))),
+		a2a.NewMessageForTask(a2a.MessageRoleUser, later, a2a.NewTextPart("a dog")),
+		a2a.NewMessageForTask(a2a.MessageRoleUser, later, a2a.NewTextPart("a bird")))
+	snapshotted := newTask("t4", "c2")
+	applyEvents(t, ts, "owner", snapshotted, streamedEvents(snapshotted, snapshotEvery+10,
+		a2a.NewMessageForTask(a2a.MessageRoleUser, snapshotted, a2a.NewTextPart("a fish")))...)
+	old := newTask("t5", "c3")
+	old.History = []*a2a.Message{a2a.NewMessageForTask(a2a.MessageRoleUser, old, a2a.NewTextPart("an old one"))}
+	writeOldLog(t, s, ts, "owner", old, a2a.NewStatusUpdateEvent(old, a2a.TaskStateCompleted, nil))
 
 	type summary struct {
 		ID     a2a.TaskID
@@ -527,6 +658,9 @@ func TestListSummaries(t *testing.T) {
 			want: []summary{
 				{ID: "t1", State: a2a.TaskStateCompleted, Owner: "alice", Prompt: "draw a cat"},
 				{ID: "t2", State: a2a.TaskStateWorking, Owner: "bob"},
+				{ID: "t3", State: a2a.TaskStateInputRequired, Owner: "owner", Prompt: "a dog"},
+				{ID: "t4", State: a2a.TaskStateWorking, Owner: "owner", Prompt: "a fish"},
+				{ID: "t5", State: a2a.TaskStateCompleted, Owner: "owner", Prompt: "an old one"},
 			},
 		},
 		{

@@ -20,6 +20,7 @@
 //	ask              a permission request; the answer decides the reply
 //	ask twice        two permission requests in one turn
 //	ask slow         a permission request, then chunks until canceled
+//	ask big          a permission request with a 20 KiB tool input
 //	slow [<d>]       chunks for duration d, or until canceled
 //	stall            nothing until canceled, like opencode retrying a model
 //	                 that refuses requests
@@ -520,7 +521,13 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			end("end_turn")
 			return
 		}
-		option, ok := a.askPush(sid, "t2")
+		var option string
+		var ok bool
+		if arg == "big" {
+			option, ok = a.askTool(sid, "t2", "git push", "git push origin "+strings.Repeat("x", 20<<10))
+		} else {
+			option, ok = a.askPush(sid, "t2")
+		}
 		if !ok {
 			end("cancelled")
 			return

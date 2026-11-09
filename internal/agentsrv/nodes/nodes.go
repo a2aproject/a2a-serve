@@ -185,7 +185,7 @@ func (n *Host) Handler(id string) a2asrv.RequestHandler {
 		return h
 	}
 	h = a2alimit.NewHandler(a2asrv.NewHandler(&nodeExecutor{n: n, node: id},
-		a2asrv.WithTaskStore(ts),
+		a2asrv.WithTaskStore(ts.CutLists()),
 		a2asrv.WithUpdateMaterializer(ts.UpdateMaterializer()),
 		a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &nodeCallerInterceptor{node: id, advertised: n.cfg.Advertised, tasks: ts}),
 		a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
@@ -431,11 +431,24 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 		return
 	}
 	ev.State = string(state)
+	parts := ev.Parts
+	if ev.Text != "" {
+		parts = append([]*a2a.Part{a2a.NewTextPart(ev.Text)}, parts...)
+	}
+	var metadata []map[string]any
 	for _, a := range ev.Artifacts {
 		if a == nil || len(a.Parts) == 0 {
 			jsonhttp.Error(w, http.StatusBadRequest, "every artifact needs at least one part")
 			return
 		}
+		parts = append(parts, a.Parts...)
+		metadata = append(metadata, a.Metadata)
+	}
+	// A reply counts as one message, so that its artifacts can't add up to
+	// more than a message may have.
+	if err := a2alimit.Default().CheckParts("a reply", parts, metadata...); err != nil {
+		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	res, err := n.postEvent(r.Context(), node.ID, taskID, ev)

@@ -31,6 +31,7 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/egress"
@@ -107,6 +108,54 @@ func TestInstructionsKeepTheNodeToken(t *testing.T) {
 		if !strings.Contains(got, "mailbox reply t1") {
 			t.Fatalf("instructions(%s) = %q, want the reply command", kind, got)
 		}
+	}
+}
+
+func TestEventOverMessageLimitsRefused(t *testing.T) {
+	t.Parallel()
+	manyParts := make([]*a2a.Part, a2alimit.MaxParts)
+	for i := range manyParts {
+		manyParts[i] = a2a.NewTextPart("p")
+	}
+	tests := []struct {
+		name    string
+		ev      mailboxapi.Event
+		wantErr string
+	}{
+		{
+			name:    "too many parts",
+			ev:      mailboxapi.Event{State: "completed", Text: "done", Parts: manyParts},
+			wantErr: fmt.Sprintf("a reply may have at most %d parts, got %d", a2alimit.MaxParts, a2alimit.MaxParts+1),
+		},
+		{
+			name:    "too much text in artifacts",
+			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewTextPart(strings.Repeat("a", a2alimit.MaxText))}}, {Parts: []*a2a.Part{a2a.NewTextPart("b")}}}},
+			wantErr: fmt.Sprintf("the text of a reply may have at most %d bytes, got %d", a2alimit.MaxText, a2alimit.MaxText+1),
+		},
+		{
+			name:    "too much metadata",
+			ev:      mailboxapi.Event{State: "working", Artifacts: []*a2a.Artifact{{Parts: []*a2a.Part{a2a.NewTextPart("a")}, Metadata: map[string]any{"k": strings.Repeat("m", a2alimit.MaxMetadata)}}}},
+			wantErr: fmt.Sprintf("the metadata of a reply and its parts may have at most %d bytes, got %d", a2alimit.MaxMetadata, a2alimit.MaxMetadata+8),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := New(t.Context(), Config{})
+			body, err := json.Marshal(tc.ev)
+			if err != nil {
+				t.Fatalf("json.Marshal() error = %v", err)
+			}
+			r := httptest.NewRequest(http.MethodPost, "/mailbox/api/tasks/t1/events", bytes.NewReader(body))
+			r.SetPathValue("id", "t1")
+			w := httptest.NewRecorder()
+
+			h.handleEvent(w, r, "", store.Node{ID: "grok"})
+
+			if w.Code != http.StatusBadRequest || !strings.Contains(w.Body.String(), tc.wantErr) {
+				t.Fatalf("handleEvent() = %d %s, want %d with %q", w.Code, w.Body, http.StatusBadRequest, tc.wantErr)
+			}
+		})
 	}
 }
 

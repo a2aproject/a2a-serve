@@ -25,6 +25,8 @@ import (
 	"slices"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 )
 
 // blobKey is the part metadata key under which a stored raw part refers to
@@ -142,19 +144,29 @@ func addBlobs(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID, 
 // into the parts. It must not run while rows of the store are open: an
 // in-memory store has a single connection.
 func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
-	refs := map[string][]*a2a.Part{}
-	collect := func(parts []*a2a.Part) {
-		for _, p := range parts {
-			raw, isRaw := p.Content.(a2a.Raw)
-			if !isRaw || len(raw) > 0 {
-				continue
-			}
-			if h, ok := p.Metadata[blobKey].(string); ok {
-				refs[h] = append(refs[h], p)
+	return s.loadBlobsUpTo(ctx, 0, tasks...)
+}
+
+// loadBlobsUpTo is [Store.loadBlobs] that leaves out the blobs longer than
+// limit bytes, unless limit is 0, with a note in place of each.
+func (s *Store) loadBlobsUpTo(ctx context.Context, limit int, tasks ...*a2a.Task) error {
+	type ref struct {
+		part *a2a.Part
+		task a2a.TaskID
+	}
+	refs := map[string][]ref{}
+	for _, t := range tasks {
+		collect := func(parts []*a2a.Part) {
+			for _, p := range parts {
+				raw, isRaw := p.Content.(a2a.Raw)
+				if !isRaw || len(raw) > 0 {
+					continue
+				}
+				if h, ok := p.Metadata[blobKey].(string); ok {
+					refs[h] = append(refs[h], ref{part: p, task: t.ID})
+				}
 			}
 		}
-	}
-	for _, t := range tasks {
 		if t.Status.Message != nil {
 			collect(t.Status.Message.Parts)
 		}
@@ -170,16 +182,25 @@ func (s *Store) loadBlobs(ctx context.Context, tasks ...*a2a.Task) error {
 		}
 	}
 	for h, parts := range refs {
-		var data []byte
-		err := s.reads.QueryRowContext(ctx, `SELECT data FROM blobs WHERE hash = ?`, h).Scan(&data)
+		var (
+			size int
+			data []byte
+		)
+		err := s.reads.QueryRowContext(ctx, `SELECT length(data), CASE WHEN ? = 0 OR length(data) <= ? THEN data END FROM blobs WHERE hash = ?`,
+			limit, limit, h).Scan(&size, &data)
 		missing := errors.Is(err, sql.ErrNoRows)
 		if err != nil && !missing {
 			return fmt.Errorf("loading blob %s: %w", h, err)
 		}
-		for _, p := range parts {
-			p.Content = a2a.Raw(data)
-			if missing {
+		for _, r := range parts {
+			p := r.part
+			switch {
+			case missing:
 				p.Content = a2a.Text(missingBlobText)
+			case limit > 0 && size > limit:
+				*p = *a2alimit.OmitFile(r.task, p, size)
+			default:
+				p.Content = a2a.Raw(data)
 			}
 			delete(p.Metadata, blobKey)
 			if len(p.Metadata) == 0 {

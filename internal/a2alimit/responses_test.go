@@ -24,7 +24,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 )
 
-var testLimits = Limits{Parts: 10, Text: 100, History: 2, ListPart: 4}
+var testLimits = Limits{Parts: 10, Text: 100, Metadata: 100, History: 2}
 
 // fakeHandler returns task from every method and records the history
 // length each request asks for.
@@ -163,43 +163,37 @@ func TestHandlerClampsHistoryLength(t *testing.T) {
 	}
 }
 
-func TestHandlerListTasksCutsLongParts(t *testing.T) {
+func TestCutPart(t *testing.T) {
 	t.Parallel()
-	task := func() *a2a.Task {
-		return &a2a.Task{
-			ID: "t1",
-			Status: a2a.TaskStatus{State: a2a.TaskStateCompleted, Message: &a2a.Message{ID: "s", Role: a2a.MessageRoleAgent, Parts: []*a2a.Part{
-				a2a.NewTextPart("done"),
-			}}},
-			History: []*a2a.Message{{ID: "m1", Role: a2a.MessageRoleUser, Parts: []*a2a.Part{
-				a2a.NewTextPart("abcéd"),
-				{Content: a2a.Raw("12345"), Filename: "f.bin", MediaType: "application/octet-stream"},
-				a2a.NewDataPart(map[string]any{"k": "v"}),
-				a2a.NewFileURLPart("https://example.com/long", "text/plain"),
-			}}},
-			Artifacts: []*a2a.Artifact{{ID: "a1", Parts: []*a2a.Part{a2a.NewTextPart("abcdef")}}},
-		}
+	tests := []struct {
+		name string
+		part *a2a.Part
+		want *a2a.Part
+	}{
+		{name: "short text", part: a2a.NewTextPart("abcd"), want: a2a.NewTextPart("abcd")},
+		{name: "long text", part: a2a.NewTextPart("abcdef"), want: a2a.NewTextPart("abcd\n[cut: 4 of 6 bytes shown; get task t1 for the whole text]")},
+		{name: "text cut in a rune", part: a2a.NewTextPart("abcéd"), want: a2a.NewTextPart("abc\n[cut: 3 of 6 bytes shown; get task t1 for the whole text]")},
+		{
+			name: "long file",
+			part: &a2a.Part{Content: a2a.Raw("12345"), Filename: "f.bin", MediaType: "application/octet-stream"},
+			want: &a2a.Part{Content: a2a.Text("[file of 5 bytes left out of the list; get task t1 for it]"), Filename: "f.bin"},
+		},
+		{name: "long data", part: a2a.NewDataPart(map[string]any{"k": "v"}), want: a2a.NewTextPart("[data of 9 bytes left out of the list; get task t1 for it]")},
+		{name: "file URL", part: a2a.NewFileURLPart("https://example.com/long", "text/plain"), want: a2a.NewFileURLPart("https://example.com/long", "text/plain")},
 	}
-	want := task()
-	want.History[0].Parts = []*a2a.Part{
-		a2a.NewTextPart("abc\n[cut: 3 of 6 bytes shown; get task t1 for the whole text]"),
-		{Content: a2a.Text("[file of 5 bytes left out of the list; get task t1 for it]"), Filename: "f.bin"},
-		a2a.NewTextPart("[data of 9 bytes left out of the list; get task t1 for it]"),
-		a2a.NewFileURLPart("https://example.com/long", "text/plain"),
-	}
-	want.Artifacts[0].Parts = []*a2a.Part{a2a.NewTextPart("abcd\n[cut: 4 of 6 bytes shown; get task t1 for the whole text]")}
-	stored := task()
-	h := NewHandler(&fakeHandler{task: stored}, testLimits)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			in := *tt.part
 
-	resp, err := h.ListTasks(t.Context(), &a2a.ListTasksRequest{HistoryLength: new(1), IncludeArtifacts: true})
-	if err != nil {
-		t.Fatalf("NewHandler().ListTasks() error = %v", err)
-	}
+			got := CutPart("t1", tt.part, 4)
 
-	if diff := cmp.Diff([]*a2a.Task{want}, resp.Tasks); diff != "" {
-		t.Fatalf("NewHandler().ListTasks() wrong result (-want +got) diff = %s", diff)
-	}
-	if diff := cmp.Diff(task(), stored); diff != "" {
-		t.Fatalf("NewHandler().ListTasks() changed the handler's task (-want +got) diff = %s", diff)
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Fatalf("CutPart() wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(&in, tt.part); diff != "" {
+				t.Fatalf("CutPart() changed its part (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }
