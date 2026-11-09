@@ -123,7 +123,7 @@ In Docker, every connection the agent opens goes through the server ([where it a
 
 - The agent reaches the public internet.
 - Private destinations are blocked: the tailnet, the LAN, link-local and unique local addresses, loopback, the addresses of this machine, and every network this machine reaches through another route than the internet, such as a split-tunnel VPN or a bridge. Behind a full-tunnel VPN or a Tailscale exit node, the internet is still the internet.
-- `host.docker.internal` reaches the ports that other containers publish on this machine. `--egress-allow host.docker.internal:11434` opens another port of this machine.
+- `host.docker.internal` reaches the ports that other containers publish on all addresses of this machine, such as with `-p 5432:5432`. With Docker Desktop, it also reaches the ports published on `127.0.0.1`. `--egress-allow host.docker.internal:11434` opens another port of this machine, such as one that a container publishes on `127.0.0.1` on Linux.
 
 The server resolves each name itself and checks every address it gets, so a public name can't lead to a private address. The agent calls other agents through its socket to the server, as before. A blocked connection fails in the agent's tools like a refused one.
 
@@ -151,7 +151,7 @@ A host allowed by name may resolve to private addresses, though not to loopback,
 | A model server on another machine | `a2a-serve config set --egress-allow 192.168.1.30:11434` |
 | A model server on this machine | `a2a-serve config set --egress-allow host.docker.internal:11434`, and point the agent at `host.docker.internal:11434` |
 
-A rule that names `host.docker.internal` reaches that port on this machine's loopback. The published ports of containers stay reachable. With `--egress allowlist`, `host.docker.internal` reaches only the ports of its rules.
+A rule that names `host.docker.internal` reaches that port on this machine's loopback. The ports that containers publish on all addresses stay reachable. With `--egress allowlist`, `host.docker.internal` reaches only the ports of its rules.
 
 ### Allow only some hosts
 
@@ -205,7 +205,7 @@ Allowed connections are logged too when the server runs with `a2a-serve start --
 
 | Message | Reason | Meaning |
 | --- | --- | --- |
-| `egress blocked` | `not-on-allowlist` | With `--egress allowlist`, no rule names the host, or no container publishes the port of `host.docker.internal`. |
+| `egress blocked` | `not-on-allowlist` | With `--egress allowlist`, no rule names the host. For `host.docker.internal`, no rule names the port, and no container publishes it on all addresses ([which ports](#network)). |
 | `egress blocked` | `port-not-allowed` | A rule names the host for another port. |
 | `egress blocked` | `ip-not-on-allowlist` | The address is private, and no rule allows it. |
 | `egress blocked` | `resolved-address-denied` | No address of the name may be reached. `addresses` lists them. |

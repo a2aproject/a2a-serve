@@ -21,10 +21,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"runtime/debug"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -118,21 +120,55 @@ func TestDockerRunnerCommandWithRelay(t *testing.T) {
 
 func TestPublishes(t *testing.T) {
 	t.Parallel()
-	ports := "80/tcp, 0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp\n127.0.0.1:4317->4317/tcp\n192.168.1.5:8080->80/tcp, 0.0.0.0:5353->53/udp"
+	ports := "80/tcp, 0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp\n127.0.0.1:4317->4317/tcp\n[::1]:6379->6379/tcp\n[::]:9000->9000/tcp\n192.168.1.5:8080->80/tcp, 0.0.0.0:5353->53/udp"
 	tests := []struct {
+		name     string
+		port     uint16
+		loopback bool
+		want     bool
+	}{
+		{name: "all addresses", port: 3000, want: true},
+		{name: "all IPv6 addresses", port: 9000, want: true},
+		{name: "loopback", port: 4317},
+		{name: "IPv6 loopback", port: 6379},
+		{name: "loopback with Docker Desktop", port: 4317, loopback: true, want: true},
+		{name: "IPv6 loopback with Docker Desktop", port: 6379, loopback: true, want: true},
+		{name: "all addresses with Docker Desktop", port: 3000, loopback: true, want: true},
+		{name: "not published", port: 80},
+		{name: "another address", port: 8080, loopback: true},
+		{name: "UDP", port: 5353, loopback: true},
+		{name: "unknown", port: 22, loopback: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := publishes(ports, tc.port, tc.loopback); got != tc.want {
+				t.Fatalf("publishes(%d, %v) = %v, want %v", tc.port, tc.loopback, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestHostGateway(t *testing.T) {
+	fakeDocker(t, `echo "0.0.0.0:3000->3000/tcp, [::]:3000->3000/tcp"; echo "127.0.0.1:6379->6379/tcp"`)
+	tests := []struct {
+		goos string
 		port uint16
 		want bool
 	}{
-		{port: 3000, want: true},
-		{port: 4317, want: true},
-		{port: 80},
-		{port: 8080},
-		{port: 5353},
-		{port: 22},
+		{goos: "linux", port: 3000, want: true},
+		{goos: "linux", port: 6379},
+		{goos: "darwin", port: 3000, want: true},
+		{goos: "darwin", port: 6379, want: true},
+		{goos: "windows", port: 6379, want: true},
 	}
 	for _, tc := range tests {
-		if got := publishes(ports, tc.port); got != tc.want {
-			t.Errorf("publishes(%d) = %v, want %v", tc.port, got, tc.want)
+		got, ok := hostGateway(tc.goos)(context.Background(), tc.port)
+		if ok != tc.want {
+			t.Fatalf("hostGateway(%q)(%d) = %v, %v, want found %v", tc.goos, tc.port, got, ok, tc.want)
+		}
+		if want := netip.MustParseAddrPort("127.0.0.1:" + strconv.Itoa(int(tc.port))); ok && got != want {
+			t.Fatalf("hostGateway(%q)(%d) = %v, want %v", tc.goos, tc.port, got, want)
 		}
 	}
 }
