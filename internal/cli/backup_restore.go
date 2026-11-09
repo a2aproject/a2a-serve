@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -37,8 +38,12 @@ func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "restore <backup-destination>",
 		Short: "Recreate an agent from a backup snapshot",
 		Long: `Recreate an agent's .a2a directory from a snapshot taken by
-"a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
-latest snapshot is used unless --snapshot names one.
+"a2a-serve backup now" or the running agent: its database, config, secrets,
+recipe.lock and agent home directory. The latest snapshot is used unless
+--snapshot names one.
+
+The directory must have no .a2a, or a .a2a that holds only recipe.lock or
+.gitignore, such as those a repository commits. Restore keeps those files.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
@@ -88,13 +93,19 @@ on the old host before taking over.
 				}
 				snapshot = latest.Name
 			}
-			if err := backup.Restore(ctx, dest, snapshot, passphrase, dir, takeOver); err != nil {
+			notes, err := backup.Restore(ctx, dest, snapshot, passphrase, dir, takeOver)
+			if err != nil {
 				return deadlineError(err)
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver})
+				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver, "notes": notes})
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ restored %s into %s\n  check it with `a2a-serve doctor`, then start it with `a2a-serve start`\n", snapshot, dir)
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "✓ restored %s into %s\n  check it with `a2a-serve doctor`, then start it with `a2a-serve start`\n", snapshot, dir)
+			for _, note := range notes {
+				fmt.Fprintf(&sb, "! %s\n", note)
+			}
+			_, err = fmt.Fprint(cfg.Out, sb.String())
 			return err
 		},
 	}

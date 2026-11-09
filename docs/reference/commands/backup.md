@@ -3,8 +3,8 @@
 <!-- Generated from the command definitions; do not edit. -->
 
 Snapshots hold a consistent copy of the database (conversations, pairings,
-contacts, schedules), config.yaml, the secrets, the agent home directory and the
-network identity, encrypted with --backup-key. A running agent takes one every
+contacts, schedules), config.yaml, the secrets, recipe.lock, the agent home
+directory and the network identity, encrypted with --backup-key. A running agent takes one every
 --backup-interval and keeps them for --backup-retention, always keeping the
 latest. The workspace isn't included: it is usually in git.
 
@@ -48,8 +48,12 @@ a2a-serve backup now
 ## a2a-serve backup restore
 
 Recreate an agent's .a2a directory from a snapshot taken by
-"a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
-latest snapshot is used unless --snapshot names one.
+"a2a-serve backup now" or the running agent: its database, config, secrets,
+recipe.lock and agent home directory. The latest snapshot is used unless
+--snapshot names one.
+
+The directory must have no .a2a, or a .a2a that holds only recipe.lock or
+.gitignore, such as those a repository commits. Restore keeps those files.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
