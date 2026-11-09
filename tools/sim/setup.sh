@@ -78,7 +78,7 @@ else
 fi
 
 echo "building a2a-serve at $COMMIT"
-(cd "$SRC" && go build -o "$ROOT/bin/a2a-serve" .)
+(cd "$SRC" && CGO_ENABLED=0 go build -o "$ROOT/bin/a2a-serve" .)
 
 CLI_VERSION="$(sed -n 's/^const MinVersion = "\(.*\)"/\1/p' "$SRC/internal/a2acli/a2acli.go")"
 [[ -n "$CLI_VERSION" ]] || die "can't read a2acli.MinVersion"
