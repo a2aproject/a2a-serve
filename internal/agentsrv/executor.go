@@ -969,9 +969,9 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		// a2a-go reports a running execution before it loads the task in
 		// the caller's scope, which tells another person's task from an
 		// unknown one.
-		header, err := i.tasks.Header(ctx, msg.Message.TaskID)
-		if errors.Is(err, a2a.ErrTaskNotFound) {
-			return ctx, nil, err
+		header, headerErr := i.tasks.Header(ctx, msg.Message.TaskID)
+		if errors.Is(headerErr, a2a.ErrTaskNotFound) {
+			return ctx, nil, headerErr
 		}
 		if err := i.tasks.CheckNotInterrupted(ctx, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
@@ -979,7 +979,7 @@ func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallCont
 		if err := i.approvals.CheckAnswer(ctx, p, msg.Message.TaskID); err != nil {
 			return ctx, nil, err
 		}
-		if err == nil {
+		if headerErr == nil {
 			ctx = i.withReply(ctx, msg.Message, header.Task)
 		}
 	}
