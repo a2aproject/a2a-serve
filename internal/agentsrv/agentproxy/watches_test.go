@@ -666,7 +666,7 @@ func TestWatchesWatchEndTellsTheWaitingCaller(t *testing.T) {
 		},
 		{
 			name: "user removed", user: "pair:gone", wantReason: "can no longer call this agent",
-			end: func(*testing.T, *watchesFixture) {},
+			end: func(_ *testing.T, f *watchesFixture) { f.remote.releaseHeld() },
 		},
 	}
 	for _, tc := range tests {
@@ -681,7 +681,6 @@ func TestWatchesWatchEndTellsTheWaitingCaller(t *testing.T) {
 			f.waitPolls(t, 1)
 
 			tc.end(t, f)
-			f.remote.releaseHeld()
 
 			var got CallerOutcome
 			select {
