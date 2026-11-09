@@ -18,10 +18,8 @@ import (
 	"context"
 	"io"
 	"net/http"
-	"strings"
 	"time"
 
-	"github.com/a2aproject/a2a-go/v2/a2a"
 	"golang.org/x/sync/semaphore"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -66,7 +64,8 @@ func (e *guestBodiesBusyError) Error() string { return errGuestsBusy.Error() }
 func (g *guestBodies) handler(p a2aProtocol, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		caller, _ := auth.PrincipalFrom(r.Context())
-		if caller.Role != auth.RoleGuest || r.Body == nil || r.Body == http.NoBody {
+		// jsonhttp.Limit wraps every body, so an empty one isn't http.NoBody.
+		if caller.Role != auth.RoleGuest || r.ContentLength == 0 {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -129,29 +128,4 @@ func (b *guestBody) charge(n int64) *guestBodiesBusyError {
 func (b *guestBody) release() {
 	b.g.sem.Release(b.charged)
 	b.charged = 0
-}
-
-// guestRate refuses a guest's REST request to send a message, before its
-// body is read, when the listener started all the guest tasks it may in an
-// hour, as the chat path does. A JSON-RPC request names its method only in
-// the body.
-func guestRate(budget *guestBudget, p a2aProtocol, next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		caller, _ := auth.PrincipalFrom(r.Context())
-		if p != protocolREST || caller.Role != auth.RoleGuest || r.Method != http.MethodPost || !isSendPath(r.URL.Path) {
-			next.ServeHTTP(w, r)
-			return
-		}
-		if err := budget.CheckRate(caller); err != nil {
-			p.writeError(w, http.StatusForbidden, a2a.ErrUnauthorized, err.Error())
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
-}
-
-// isSendPath reports whether path is the REST path of message:send or
-// message:stream, with or without a tenant.
-func isSendPath(path string) bool {
-	return strings.HasSuffix(path, "/message:send") || strings.HasSuffix(path, "/message:stream")
 }

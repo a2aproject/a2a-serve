@@ -20,10 +20,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
 	"github.com/a2aproject/a2a-serve/internal/network"
 )
 
@@ -57,10 +59,10 @@ func holdGuestBody(t *testing.T, bodies *guestBodies, n int) func() {
 		h.ServeHTTP(httptest.NewRecorder(), guestBodyRequest(guestPrincipal, "/message:send", n, false))
 	}()
 	<-entered
-	return func() {
+	return sync.OnceFunc(func() {
 		close(release)
 		<-done
-	}
+	})
 }
 
 func TestGuestBodies(t *testing.T) {
@@ -131,40 +133,28 @@ func TestGuestBodiesWaitForRelease(t *testing.T) {
 	}
 }
 
-func TestGuestRateBeforeBody(t *testing.T) {
+func TestGuestBodiesPassEmptyBodiesPastWaitingOnes(t *testing.T) {
 	t.Parallel()
-	tests := []struct {
-		name       string
-		caller     auth.Principal
-		path       string
-		wantStatus int
-	}{
-		{name: "guest new message", caller: guestPrincipal, path: "/message:send", wantStatus: http.StatusForbidden},
-		{name: "guest streamed message with tenant", caller: guestPrincipal, path: "/t1/message:stream", wantStatus: http.StatusForbidden},
-		{name: "guest task read", caller: guestPrincipal, path: "/tasks/t1:subscribe", wantStatus: http.StatusOK},
-		{name: "member new message", caller: auth.Principal{ID: "pair:bob", Role: auth.RoleMember}, path: "/message:send", wantStatus: http.StatusOK},
+	bodies := newGuestBodies(1<<20, 10*time.Second)
+	release := holdGuestBody(t, bodies, 1<<20)
+	defer release()
+	waiting := make(chan struct{})
+	go func() {
+		defer close(waiting)
+		bodies.handler(protocolREST, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})).ServeHTTP(httptest.NewRecorder(), guestBodyRequest(guestPrincipal, "/message:send", 1<<20, false))
+	}()
+	for bodies.sem.TryAcquire(0) {
+		time.Sleep(time.Millisecond)
 	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			budget := newGuestBudget()
-			for range budget.perHour {
-				if err := budget.admit(network.ListenerPublic); err != nil {
-					t.Fatalf("admit() error = %v", err)
-				}
-			}
-			read := false
-			h := guestRate(budget, protocolREST, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { read = true }))
-			rec := httptest.NewRecorder()
+	h := jsonhttp.LimitBody(bodies.handler(protocolREST, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {})))
+	rec := httptest.NewRecorder()
+	start := time.Now()
 
-			h.ServeHTTP(rec, guestBodyRequest(tc.caller, tc.path, 10, false))
+	h.ServeHTTP(rec, guestBodyRequest(guestPrincipal, "/tasks/t1:cancel", 0, false))
 
-			if rec.Code != tc.wantStatus {
-				t.Fatalf("POST %s status = %d (%s), want %d", tc.path, rec.Code, rec.Body, tc.wantStatus)
-			}
-			if wantRead := tc.wantStatus == http.StatusOK; read != wantRead {
-				t.Fatalf("POST %s reached the handler = %t, want %t", tc.path, read, wantRead)
-			}
-		})
+	if rec.Code != http.StatusOK || time.Since(start) > 5*time.Second {
+		t.Fatalf("POST without a body = %d after %s, want %d at once", rec.Code, time.Since(start), http.StatusOK)
 	}
+	release()
+	<-waiting
 }

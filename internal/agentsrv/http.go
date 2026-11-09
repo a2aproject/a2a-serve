@@ -130,7 +130,7 @@ func (s *Server) routes(l listener) http.Handler {
 // to bodies, the budget of the listener.
 func (s *Server) a2aRoute(kind string, p a2aProtocol, bodies *guestBodies, h http.Handler) http.Handler {
 	limit := jsonhttp.Limit{Max: jsonhttp.MaxBody, Idle: jsonhttp.ReadIdleTimeout, TooLarge: p.tooLarge}
-	return jsonhttp.RequireJSON(limit.Handler(s.authenticate(kind, guestRate(s.budget, p, bodies.handler(p, p.readBody(h))))))
+	return jsonhttp.RequireJSON(limit.Handler(s.authenticate(kind, bodies.handler(p, p.readBody(h)))))
 }
 
 // base returns the configured base URL or derives it from the request.
