@@ -114,7 +114,7 @@ func maskAgentConfig(spec Spec) (configMasks, error) {
 	for _, entry := range entries {
 		name, isDir := strings.CutSuffix(entry, "/")
 		path := filepath.Join(ws, name)
-		if err := prepareWorkspaceConfig(ws, name, isDir); err != nil {
+		if err := prepareConfig(ws, name, isDir); err != nil {
 			return configMasks{}, err
 		}
 		if hasSettings(path, isDir) {
@@ -213,18 +213,18 @@ func configDirs(mounts []agentdir.Mount) (roots, above []string) {
 	return roots, above
 }
 
-// prepareWorkspaceConfig makes name in the workspace ws a file or folder,
-// creating it when it is missing. It refuses symlinks on the way, which
-// the agent could repoint after the server masked their target.
-func prepareWorkspaceConfig(ws, name string, isDir bool) error {
-	state, why := configState(ws, name, isDir)
+// prepareConfig makes name in dir, such as the workspace, a file or
+// folder, creating it when it is missing. It refuses symlinks on the way,
+// which the agent could repoint after the server masked their target.
+func prepareConfig(dir, name string, isDir bool) error {
+	state, why := configState(dir, name, isDir)
 	if state == configInvalid {
 		return fmt.Errorf("%s %s; the agent could use it to change its own permissions, so remove it", why[0], why[1])
 	}
 	if state == configFound {
 		return nil
 	}
-	path := ws
+	path := dir
 	parts := strings.Split(name, "/")
 	for i, part := range parts {
 		path = filepath.Join(path, part)

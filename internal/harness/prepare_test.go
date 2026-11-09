@@ -744,6 +744,130 @@ func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 	}
 }
 
+func TestPrepareDockerLocksHomeConfig(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	claudeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".claude") + ":" + filepath.Join(ContainerHome, ".claude"),
+			filepath.Join(home, ".claude", "settings.json") + ":" + filepath.Join(ContainerHome, ".claude", "settings.json") + ":ro",
+			filepath.Join(home, ".claude", "agents") + ":" + filepath.Join(ContainerHome, ".claude", "agents") + ":ro",
+			filepath.Join(home, ".claude", "commands") + ":" + filepath.Join(ContainerHome, ".claude", "commands") + ":ro",
+			filepath.Join(home, ".claude", "skills") + ":" + filepath.Join(ContainerHome, ".claude", "skills") + ":ro",
+		}
+	}
+	opencodeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".config") + ":" + filepath.Join(ContainerHome, ".config"),
+			filepath.Join(home, ".config", "opencode") + ":" + filepath.Join(ContainerHome, ".config", "opencode") + ":ro",
+			filepath.Join(home, ".opencode") + ":" + filepath.Join(ContainerHome, ".opencode") + ":ro",
+		}
+	}
+	claudePolicy := func(policy string) string { return policy + ":/etc/claude-code/managed-settings.json:ro" }
+	tests := []struct {
+		name    string
+		profile Profile
+		lock    bool
+		want    func(home, policy string) []string
+		// wantCreated are the files the home gets, relative to it.
+		wantCreated []string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			lock:    true,
+			want:    func(home, _ string) []string { return opencodeWant(home) },
+			wantCreated: []string{
+				filepath.Join(".config", "opencode", ".gitignore"),
+				filepath.Join(".opencode", ".gitignore"),
+			},
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			lock:    true,
+			want: func(home, policy string) []string {
+				return append(claudeWant(home), claudePolicy(policy))
+			},
+			wantCreated: []string{filepath.Join(".claude", "agents"), filepath.Join(".claude", "commands"), filepath.Join(".claude", "skills")},
+		},
+		{
+			name:    "agent of unknown kind",
+			profile: custom{name: "acp", argv: []string{"fakeacp"}},
+			lock:    true,
+			want: func(home, policy string) []string {
+				return append(append(claudeWant(home), opencodeWant(home)...), claudePolicy(policy))
+			},
+			wantCreated: []string{filepath.Join(".claude", "settings.json"), filepath.Join(".opencode", ".gitignore")},
+		},
+		{
+			name:    "owner's home",
+			profile: claude{},
+			want:    func(string, string) []string { return nil },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			policy := filepath.Join(t.TempDir(), "home-policy.json")
+			spec := Spec{
+				Profile: tc.profile,
+				Name:    "a2a-test",
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    home,
+				Image:   "img:1",
+			}
+			if tc.lock {
+				spec.HomePolicy = policy
+			}
+
+			p, err := Prepare(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+
+			var mounts []string
+			for _, m := range bindMounts(p.Args) {
+				if m != ws+":"+ws && m != home+":"+ContainerHome {
+					mounts = append(mounts, m)
+				}
+			}
+			if diff := cmp.Diff(tc.want(home, policy), mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			for _, name := range tc.wantCreated {
+				if _, err := os.Lstat(filepath.Join(home, name)); err != nil {
+					t.Fatalf("Prepare() didn't create %s in the home: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws, home := t.TempDir(), t.TempDir()
+	mkdir(t, filepath.Join(home, "agents"))
+	mkdir(t, filepath.Join(home, ".claude"))
+	symlink(t, filepath.Join("..", "agents"), filepath.Join(home, ".claude", "agents"))
+
+	_, err := Prepare(context.Background(), Spec{
+		Profile:    claude{},
+		Name:       "a2a-test",
+		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:       home,
+		HomePolicy: filepath.Join(t.TempDir(), "home-policy.json"),
+	})
+
+	if want := filepath.Join(home, ".claude", "agents") + " is a symlink"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() error = %v, want it to contain %q", err, want)
+	}
+}
+
 func bindMounts(args []string) []string {
 	var out []string
 	for i := 0; i+1 < len(args); i++ {
