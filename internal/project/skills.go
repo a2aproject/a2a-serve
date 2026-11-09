@@ -28,10 +28,16 @@ import (
 // being a <name>/SKILL.md inside one.
 var SkillDirs = []string{".claude/skills", ".opencode/skills", ".agents/skills"}
 
-// AgentConfigFiles are the project files of the agents' own configuration,
-// which can change what the agent runs and approves. Directories end with a
-// slash.
-var AgentConfigFiles = []string{".claude/settings.json", ".claude/settings.local.json", "opencode.json", "opencode.jsonc", ".opencode/"}
+// ClaudeConfigFiles and OpencodeConfigFiles are the project files of the
+// agents' own configuration, which can change what the agent runs and
+// approves. Directories end with a slash.
+var (
+	ClaudeConfigFiles   = []string{".claude/settings.json", ".claude/settings.local.json"}
+	OpencodeConfigFiles = []string{"opencode.json", "opencode.jsonc", ".opencode/"}
+)
+
+// AgentConfigFiles are the configuration files of every agent.
+var AgentConfigFiles = append(slices.Clone(ClaudeConfigFiles), OpencodeConfigFiles...)
 
 // Skill is a skill of a project.
 type Skill struct {

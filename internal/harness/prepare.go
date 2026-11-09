@@ -301,16 +301,16 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		}
 		dr.Mounts = append(dr.Mounts, masks...)
 	}
+	cm := configMasks{check: func() error { return nil }}
 	if spec.ConfigMask != "" {
-		masks, scratch, err := maskAgentConfig(spec)
-		if err != nil {
+		if cm, err = maskAgentConfig(spec); err != nil {
 			return nil, err
 		}
-		dr.Mounts = append(dr.Mounts, masks...)
-		dr.Scratch = scratch
+		dr.Mounts = append(dr.Mounts, cm.mounts...)
+		dr.Scratch = cm.scratch
 	}
 	closeEgress := func() error { return nil }
-	var warnings []string
+	warnings := slices.Clone(cm.warnings)
 	var egressProblem string
 	var fallback *DockerRunner
 	relay := false
@@ -409,6 +409,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			return err
 		}
 		if err := checkNoNewAgents(spec); err != nil {
+			return err
+		}
+		if err := cm.check(); err != nil {
 			return err
 		}
 		if marker != "" {
@@ -587,132 +590,6 @@ func maskMCP(mask string, mounts []agentdir.Mount) ([]agentdir.Mount, error) {
 		out = append(out, agentdir.Mount{Src: mask, Dst: dst, ReadOnly: true})
 	}
 	return out, nil
-}
-
-// emptyConfig is an agent configuration file that changes nothing.
-const emptyConfig = "{}\n"
-
-// maskAgentConfig writes the empty configuration file of spec and returns
-// the mounts which put it over the agent's configuration files, and the
-// container paths of its configuration directories, which appear empty.
-// The workspace gets the files and directories it lacks, since docker would
-// otherwise create them as root and the agent could create them in a
-// running container. In the other mounts, only the existing ones are masked,
-// as the agent doesn't read its configuration from there.
-//
-// The directories stay writable, since opencode exits when it can't write
-// its own files there. What the agent writes stays in its container, and
-// opencode has read its configuration before the agent's first tool call.
-// The skills folder of a masked .opencode stays visible.
-func maskAgentConfig(spec Spec) (mounts []agentdir.Mount, scratch []string, err error) {
-	if err := fsutil.WriteAtomic(spec.ConfigMask, []byte(emptyConfig), 0o644); err != nil {
-		return nil, nil, fmt.Errorf("writing %s: %w", spec.ConfigMask, err)
-	}
-	effective := slices.Clone(spec.Mounts)
-	if spec.WorkspaceSrc != "" {
-		effective[0].Src = spec.WorkspaceSrc
-	}
-	var files, dirs []string
-	for i, m := range effective {
-		root := resolvePath(m.Src)
-		for _, entry := range project.AgentConfigFiles {
-			name, isDir := strings.CutSuffix(entry, "/")
-			path, err := configPath(root, name, isDir, i == 0, spec.Hidden)
-			if err != nil {
-				return nil, nil, err
-			}
-			switch {
-			case path == "":
-			case isDir:
-				dirs = append(dirs, path)
-			default:
-				files = append(files, path)
-			}
-		}
-	}
-	for _, dst := range hiddenDsts(effective, files) {
-		mounts = append(mounts, agentdir.Mount{Src: spec.ConfigMask, Dst: dst, ReadOnly: true})
-	}
-	for _, dir := range dirs {
-		skills := filepath.Join(dir, "skills")
-		fi, err := os.Lstat(skills)
-		keep := err == nil && fi.IsDir()
-		for _, m := range effective {
-			src := resolvePath(m.Src)
-			if !within(src, dir) {
-				continue
-			}
-			rel, err := filepath.Rel(src, dir)
-			if err != nil {
-				return nil, nil, err
-			}
-			dst := filepath.Join(m.Dst, rel)
-			if slices.Contains(scratch, dst) {
-				continue
-			}
-			scratch = append(scratch, dst)
-			if keep {
-				mounts = append(mounts, agentdir.Mount{Src: skills, Dst: filepath.Join(dst, "skills"), ReadOnly: m.ReadOnly})
-			}
-		}
-	}
-	return mounts, scratch, nil
-}
-
-// configPath returns the resolved path of the configuration file or
-// directory name in root, or "" when there is none to mask. In the
-// workspace it creates a missing one, and refuses one that leads out of
-// the workspace or into a hidden path, which the server couldn't mask
-// there, or that has the wrong type.
-func configPath(root, name string, isDir, workspace bool, hidden []string) (string, error) {
-	path := resolvePath(filepath.Join(root, name))
-	refuse := func(why string) (string, error) {
-		if !workspace {
-			return "", nil
-		}
-		return "", fmt.Errorf("%s %s; the agent could use it to change its own permissions, so remove it", filepath.Join(root, name), why)
-	}
-	if !within(root, path) {
-		return refuse("leads out of the workspace")
-	}
-	if slices.ContainsFunc(hidden, func(h string) bool { h = resolvePath(h); return within(h, path) && !within(h, root) }) {
-		return refuse("leads into a hidden directory")
-	}
-	if workspace {
-		if err := createConfig(path, isDir); err != nil {
-			return "", fmt.Errorf("creating %s, which keeps the agent from changing its own permissions: %w", path, err)
-		}
-	}
-	fi, err := os.Stat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return "", nil
-	}
-	if err != nil {
-		return "", err
-	}
-	if fi.IsDir() != isDir {
-		if isDir {
-			return refuse("isn't a directory")
-		}
-		return refuse("isn't a file")
-	}
-	return path, nil
-}
-
-func createConfig(path string, isDir bool) error {
-	if isDir {
-		return os.MkdirAll(path, 0o755)
-	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	return writeIfMissing(path, []byte(emptyConfig))
-}
-
-// within reports whether path is root or in it.
-func within(root, path string) bool {
-	rel, err := filepath.Rel(root, path)
-	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 func writeIfMissing(path string, data []byte) error {
