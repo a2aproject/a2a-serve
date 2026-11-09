@@ -194,7 +194,7 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 			return
 		}
 		p, _ := auth.Caller(ctx)
-		outcomes, stop := e.watches.Await(execCtx.ContextID)
+		outcomes, stop := e.watches.Await(execCtx.ContextID, rec.Contact, rec.TaskID)
 		defer stop()
 		out, err := e.approvals.Answer(ctx, rec, p, option, auth.DisplayPrincipal(p.ID))
 		switch {
@@ -232,6 +232,12 @@ func (e *observedExecutor) answerCallerQuestion(ctx context.Context, execCtx *a2
 		case o = <-outcomes:
 		}
 		stop()
+		if o.Ended != "" {
+			msg := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(o.Ended))
+			msg.TaskID, msg.ContextID = execCtx.TaskID, execCtx.ContextID
+			yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, msg), nil)
+			return
+		}
 		if o.Question != nil {
 			yield(callerQuestionEvent(execCtx, o.Question), nil)
 			return

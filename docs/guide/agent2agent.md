@@ -15,10 +15,11 @@ To let the agent call every agent on the private network without adding each one
 
 - Each prompt tells the agent which agents it can call, with the description and skills from each agent's card. See [Cards of other agents](#cards-of-other-agents).
 - With `a2a send --async`, the agent moves on, and the result arrives later in the same conversation. A result over 16 KiB arrives as the file `result.txt`, with its first lines in the message. The server watches the task for at most 7 days. It also stops when the task keeps the same state for 24 hours. The 24-hour limit pauses while the task waits for your approval. Either way, the agent gets a message that says so.
+- When the agent is too busy to take a result, such as when you have 8 unfinished tasks, the server posts it again at the next poll until the agent takes it. An agent on the private network that is offline counts as unreachable. The server keeps polling it for a day, and then the agent gets a message that says so.
 - When you cancel a task, the server cancels the tasks that the agent started on other agents while it worked on that task. A task that the server can't cancel stays watched, and its result still arrives in the conversation.
 - A response from a contact can be at most 32 MiB. Streams have no limit.
 - A contact on a public URL can't point the server into your private network (see [Security](../advanced/security.md#calls-to-other-agents-and-webhooks)).
-- When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it. If you talk to the agent with `a2a send` and no messenger chat can take the question, it arrives in your conversation as a new task in `input-required`. Answer it with `a2a send --task-id`. If the question is answered elsewhere, such as in the inspector, that task completes.
+- When the called agent asks for approval, the question comes to you in your chat, and your answer goes back to it. If you talk to the agent with `a2a send` and no messenger chat can take the question, it arrives in your conversation as a new task in `input-required`. Answer it with `a2a send --task-id`. If the question is answered elsewhere, such as in the inspector, that task completes. After you answer, that task waits for the called agent. If the server stops watching the called agent's task, such as when you remove the contact, the waiting task fails with a message that says why.
 - A chain of calls stops after 3 hops, so agents can't call each other in a loop.
 
 ## Your agent's card
