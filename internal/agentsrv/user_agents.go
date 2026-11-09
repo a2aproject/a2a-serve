@@ -182,6 +182,15 @@ func (u *userAgents) sandboxOf(key string) (access.Sandbox, bool) {
 func (u *userAgents) admit(key string, want access.Sandbox, answer bool) (release func(), err error) {
 	a := u.get(key)
 	u.mu.Lock()
+	if a.proc == nil {
+		// A closer unsets the process before it closes it, holding startMu
+		// until it did; a turn admitted before that would run in the
+		// process that exits.
+		u.mu.Unlock()
+		a.startMu.Lock()
+		a.startMu.Unlock() //nolint:staticcheck // waits for a close in progress
+		u.mu.Lock()
+	}
 	if a.proc != nil && !a.sandbox.Equal(want) && !answer {
 		if a.turns > 0 || !a.startMu.TryLock() {
 			u.mu.Unlock()

@@ -97,17 +97,33 @@ func TestContainersGetTheSecretsOfTheirRule(t *testing.T) {
 
 func TestRuleChangeAppliesToTheNextTurn(t *testing.T) {
 	t.Parallel()
-	ts := sandboxServer(t)
-	ben := ts.client(ts.pair("ben", auth.RoleMember))
-	first := send(t, ben, userText("env KEY", "", ""))
-	if got := a2atext.Result(first); got != "env KEY=owner-key" {
-		t.Fatalf("SendMessage() = %q, want %q", got, "env KEY=owner-key")
+	tests := []struct {
+		name          string
+		checkInterval time.Duration
+	}{
+		{name: "turn stops the container", checkInterval: time.Hour},
+		{name: "sandbox loop stops the container", checkInterval: time.Millisecond},
 	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{
+				secrets:   agentdir.Secrets{"KEY": "owner-key", "GUEST": "guest-key"},
+				configure: func(c *agentdir.Config) { c.Secrets = []string{"KEY", "GUEST"} },
+				timings:   func(tm *Timings) { tm.SandboxCheckInterval = tc.checkInterval },
+			})
+			ben := ts.client(ts.pair("ben", auth.RoleMember))
+			first := send(t, ben, userText("env KEY", "", ""))
+			if got := a2atext.Result(first); got != "env KEY=owner-key" {
+				t.Fatalf("SendMessage() = %q, want %q", got, "env KEY=owner-key")
+			}
 
-	setRule(t, ts, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
+			setRule(t, ts, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
 
-	if got := a2atext.Result(send(t, ben, userText("env KEY", "", first.ContextID))); got != "env KEY unset" {
-		t.Fatalf("SendMessage() after the rule changed = %q, want %q", got, "env KEY unset")
+			if got := a2atext.Result(send(t, ben, userText("env KEY", "", first.ContextID))); got != "env KEY unset" {
+				t.Fatalf("SendMessage() after the rule changed = %q, want %q", got, "env KEY unset")
+			}
+		})
 	}
 }
 
@@ -197,7 +213,12 @@ func TestNarrowedRulesEndTheWaitingTasksOfTheContainer(t *testing.T) {
 
 func TestAnswerIntoANarrowedContainerIsRefused(t *testing.T) {
 	t.Parallel()
-	ts := sandboxServer(t)
+	// The sandbox loop would cancel the waiting task before the answer.
+	ts := startServer(t, serverOpts{
+		secrets:   agentdir.Secrets{"KEY": "owner-key", "GUEST": "guest-key"},
+		configure: func(c *agentdir.Config) { c.Secrets = []string{"KEY", "GUEST"} },
+		timings:   func(tm *Timings) { tm.SandboxCheckInterval = time.Hour },
+	})
 	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	waiting := send(t, ben, userText("ask", "", ""))
 	setRule(t, ts, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
