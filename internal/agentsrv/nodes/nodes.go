@@ -431,11 +431,24 @@ func (n *Host) handleEvent(w http.ResponseWriter, r *http.Request, _ string, nod
 		return
 	}
 	ev.State = string(state)
+	parts := ev.Parts
+	if ev.Text != "" {
+		parts = append([]*a2a.Part{a2a.NewTextPart(ev.Text)}, parts...)
+	}
+	var metadata []map[string]any
 	for _, a := range ev.Artifacts {
 		if a == nil || len(a.Parts) == 0 {
 			jsonhttp.Error(w, http.StatusBadRequest, "every artifact needs at least one part")
 			return
 		}
+		parts = append(parts, a.Parts...)
+		metadata = append(metadata, a.Metadata)
+	}
+	// A reply counts as one message, so that its artifacts can't add up to
+	// more than a message may have.
+	if err := a2alimit.Default().CheckParts("a reply", parts, metadata...); err != nil {
+		jsonhttp.Error(w, http.StatusBadRequest, err.Error())
+		return
 	}
 
 	res, err := n.postEvent(r.Context(), node.ID, taskID, ev)

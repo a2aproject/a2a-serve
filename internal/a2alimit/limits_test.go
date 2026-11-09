@@ -24,11 +24,12 @@ import (
 
 func TestLimitsCheck(t *testing.T) {
 	t.Parallel()
-	limits := Limits{Parts: 3, Text: 5}
+	limits := Limits{Parts: 3, Text: 5, Metadata: 12}
 	tests := []struct {
-		name    string
-		parts   []*a2a.Part
-		wantErr string
+		name     string
+		parts    []*a2a.Part
+		metadata map[string]any
+		wantErr  string
 	}{
 		{name: "within the limits", parts: []*a2a.Part{a2a.NewTextPart("ab"), a2a.NewTextPart("cde")}},
 		{name: "files and data don't count as text", parts: []*a2a.Part{a2a.NewTextPart("abcde"), a2a.NewRawPart([]byte("123456")), a2a.NewDataPart(map[string]any{"k": "123456"})}},
@@ -42,11 +43,20 @@ func TestLimitsCheck(t *testing.T) {
 			parts:   []*a2a.Part{a2a.NewTextPart("abc"), a2a.NewTextPart("def")},
 			wantErr: "the text of a message may have at most 5 bytes, got 6",
 		},
+		{name: "metadata within the limit", parts: []*a2a.Part{a2a.NewTextPart("a")}, metadata: map[string]any{"k": "v"}},
+		{
+			name:     "too much metadata",
+			parts:    []*a2a.Part{{Content: a2a.Text("a"), Metadata: map[string]any{"k": "v"}}},
+			metadata: map[string]any{"k": "v"},
+			wantErr:  "the metadata of a message and its parts may have at most 12 bytes, got 18",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			err := limits.Check(a2a.NewMessage(a2a.MessageRoleUser, tt.parts...))
+			msg := a2a.NewMessage(a2a.MessageRoleUser, tt.parts...)
+			msg.Metadata = tt.metadata
+			err := limits.Check(msg)
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Limits.Check() error = %v, want nil", err)
@@ -58,6 +68,18 @@ func TestLimitsCheck(t *testing.T) {
 				t.Fatalf("Limits.Check() error = %v, want invalid params %q", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestLimitsCheckParts(t *testing.T) {
+	t.Parallel()
+	limits := Limits{Parts: 1, Text: 5, Metadata: 20}
+
+	err := limits.CheckParts("a reply", []*a2a.Part{a2a.NewTextPart("a")}, map[string]any{"k": "v"}, map[string]any{"key": "value"})
+
+	var a2aErr *a2a.Error
+	if want := "the metadata of a reply and its parts may have at most 20 bytes, got 24"; !errors.As(err, &a2aErr) || !errors.Is(err, a2a.ErrInvalidParams) || a2aErr.Message != want {
+		t.Fatalf("Limits.CheckParts() error = %v, want invalid params %q", err, want)
 	}
 }
 

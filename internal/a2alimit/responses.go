@@ -19,7 +19,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"iter"
-	"slices"
 	"unicode/utf8"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
@@ -31,8 +30,6 @@ import (
 //     history messages per task, also when the request asks for more.
 //   - The blocking SendMessage returns no history unless the request asks
 //     for it. a2a-go returns the whole history there.
-//   - ListTasks cuts parts longer than limits.ListPart, with a note that
-//     GetTask returns the whole part.
 func NewHandler(h a2asrv.RequestHandler, limits Limits) a2asrv.RequestHandler {
 	return &handler{RequestHandler: h, limits: limits}
 }
@@ -57,16 +54,7 @@ func (h *handler) ListTasks(ctx context.Context, req *a2a.ListTasksRequest) (*a2
 		clamped.HistoryLength = h.clamp(req.HistoryLength)
 		req = &clamped
 	}
-	resp, err := h.RequestHandler.ListTasks(ctx, req)
-	if err != nil {
-		return nil, err
-	}
-	cut := *resp
-	cut.Tasks = make([]*a2a.Task, len(resp.Tasks))
-	for i, t := range resp.Tasks {
-		cut.Tasks[i] = h.cutTask(t)
-	}
-	return &cut, nil
+	return h.RequestHandler.ListTasks(ctx, req)
 }
 
 func (h *handler) SendMessage(ctx context.Context, req *a2a.SendMessageRequest) (a2a.SendMessageResult, error) {
@@ -115,68 +103,13 @@ func limitHistory(task *a2a.Task, n int) *a2a.Task {
 	return &limited
 }
 
-// cutTask returns t with its long parts cut. It copies what it changes.
-func (h *handler) cutTask(t *a2a.Task) *a2a.Task {
-	cut := *t
-	cutMessage := func(m *a2a.Message) *a2a.Message {
-		if m == nil {
-			return nil
-		}
-		parts, changed := h.cutParts(t.ID, m.Parts)
-		if !changed {
-			return m
-		}
-		c := *m
-		c.Parts = parts
-		return &c
-	}
-	cut.Status.Message = cutMessage(t.Status.Message)
-	cut.History = make([]*a2a.Message, len(t.History))
-	for i, m := range t.History {
-		cut.History[i] = cutMessage(m)
-	}
-	if t.Artifacts != nil {
-		cut.Artifacts = make([]*a2a.Artifact, len(t.Artifacts))
-		for i, a := range t.Artifacts {
-			cut.Artifacts[i] = a
-			if a == nil {
-				continue
-			}
-			if parts, changed := h.cutParts(t.ID, a.Parts); changed {
-				c := *a
-				c.Parts = parts
-				cut.Artifacts[i] = &c
-			}
-		}
-	}
-	return &cut
-}
-
-func (h *handler) cutParts(task a2a.TaskID, parts []*a2a.Part) ([]*a2a.Part, bool) {
-	var out []*a2a.Part
-	for i, p := range parts {
-		c := h.cutPart(task, p)
-		if c == p {
-			continue
-		}
-		if out == nil {
-			out = slices.Clone(parts)
-		}
-		out[i] = c
-	}
-	if out == nil {
-		return parts, false
-	}
-	return out, true
-}
-
-// cutPart returns p, or a copy cut to the list limit: a long text keeps its
-// start, and a long file or data part becomes a note.
-func (h *handler) cutPart(task a2a.TaskID, p *a2a.Part) *a2a.Part {
+// CutPart returns p, or a copy cut to limit bytes for a list of tasks: a
+// long text keeps its start, and a long data part becomes a note. A file
+// part becomes a note where its bytes are read, with [OmitFile].
+func CutPart(task a2a.TaskID, p *a2a.Part, limit int) *a2a.Part {
 	if p == nil {
 		return p
 	}
-	limit := h.limits.ListPart
 	switch c := p.Content.(type) {
 	case a2a.Text:
 		if len(c) <= limit {
@@ -193,7 +126,7 @@ func (h *handler) cutPart(task a2a.TaskID, p *a2a.Part) *a2a.Part {
 		if len(c) <= limit {
 			return p
 		}
-		return omitted(p, fmt.Sprintf("[file of %d bytes left out of the list; get task %s for it]", len(c), task))
+		return OmitFile(task, p, len(c))
 	case a2a.Data:
 		data, err := json.Marshal(c.Value)
 		if err != nil || len(data) <= limit {
@@ -202,6 +135,12 @@ func (h *handler) cutPart(task a2a.TaskID, p *a2a.Part) *a2a.Part {
 		return omitted(p, fmt.Sprintf("[data of %d bytes left out of the list; get task %s for it]", len(data), task))
 	}
 	return p
+}
+
+// OmitFile returns a copy of p, a file part of size bytes, with a note in
+// place of the file.
+func OmitFile(task a2a.TaskID, p *a2a.Part, size int) *a2a.Part {
+	return omitted(p, fmt.Sprintf("[file of %d bytes left out of the list; get task %s for it]", size, task))
 }
 
 func omitted(p *a2a.Part, note string) *a2a.Part {

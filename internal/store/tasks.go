@@ -22,12 +22,15 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2asrv/taskstore"
+
+	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 )
 
 // Viewer identifies the caller of a task store operation. all is true for
@@ -433,22 +436,30 @@ func (ts *TaskStore) Get(ctx context.Context, taskID a2a.TaskID) (*taskstore.Sto
 
 const defaultPageSize = 50
 
-// List implements [taskstore.Store].
+// List implements [taskstore.Store]. It cuts each part longer than
+// [a2alimit.MaxListPart], with a note that names the task, as it reads the
+// page, so that large tasks don't make the page large in memory.
 func (ts *TaskStore) List(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, error) {
-	resp, _, err := ts.ListWithOwners(ctx, req)
+	resp, _, err := ts.list(ctx, req, a2alimit.MaxListPart)
 	return resp, err
 }
 
-// ListWithOwners is [TaskStore.List] that also returns the owner of each
-// listed task, in the order of the tasks.
+// ListWithOwners is [TaskStore.List] with whole parts, that also returns
+// the owner of each listed task, in the order of the tasks.
 func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksRequest) (*a2a.ListTasksResponse, []string, error) {
+	return ts.list(ctx, req, 0)
+}
+
+// list lists the tasks that req selects, with parts cut to partLimit
+// bytes, or whole if partLimit is 0.
+func (ts *TaskStore) list(ctx context.Context, req *a2a.ListTasksRequest, partLimit int) (*a2a.ListTasksResponse, []string, error) {
 	// Lists carry history only when asked, so that large messages don't
 	// make every page large.
-	history := 0
+	b := listBounds{artifacts: req.IncludeArtifacts, part: partLimit}
 	if req.HistoryLength != nil {
-		history = *req.HistoryLength
+		b.history = max(*req.HistoryLength, 0)
 	}
-	pg, err := ts.page(ctx, req, history > 0 || req.IncludeArtifacts)
+	pg, err := ts.page(ctx, req, b)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -457,34 +468,76 @@ func (ts *TaskStore) ListWithOwners(ctx context.Context, req *a2a.ListTasksReque
 		last := pg.headers[len(pg.headers)-1]
 		resp.NextPageToken = encodePageToken(last.updated, string(last.task.ID))
 	}
-	var full []*a2a.Task
-	if pg.logs != nil {
-		if full, err = ts.materialize(ctx, pg.logs); err != nil {
-			return nil, nil, err
-		}
-	}
 	owners := make([]string, 0, len(pg.headers))
 	for i, h := range pg.headers {
 		task := h.task
-		if full != nil {
-			task = full[i]
+		if pg.tasks != nil {
+			task = pg.tasks[i]
+		} else {
+			b.cut(task)
+		}
+		if task.History == nil {
+			task.History = []*a2a.Message{}
 		}
 		owners = append(owners, h.owner)
-		switch {
-		case history <= 0:
-			task.History = []*a2a.Message{}
-		case len(task.History) > history:
-			task.History = task.History[len(task.History)-history:]
-		}
-		if !req.IncludeArtifacts {
-			task.Artifacts = nil
-		}
 		resp.Tasks = append(resp.Tasks, task)
 	}
-	if err := ts.s.loadBlobs(ctx, resp.Tasks...); err != nil {
+	if err := ts.s.loadBlobsUpTo(ctx, partLimit, resp.Tasks...); err != nil {
 		return nil, nil, err
 	}
 	return resp, owners, nil
+}
+
+// listBounds are what a list returns of each task.
+type listBounds struct {
+	// history is how many of the latest history messages a task keeps.
+	history int
+	// artifacts keeps the artifacts of a task.
+	artifacts bool
+	// part is the most bytes of a part, or 0 for whole parts.
+	part int
+}
+
+// fold returns the task of l within b.
+func (b listBounds) fold(l *taskLog) (*a2a.Task, error) {
+	task, err := l.fold()
+	if err != nil {
+		return nil, fmt.Errorf("materializing task %s: %w", l.header.task.ID, err)
+	}
+	if n := len(task.History); n > b.history {
+		task.History = slices.Clone(task.History[n-b.history:])
+	}
+	if !b.artifacts {
+		task.Artifacts = nil
+	}
+	b.cut(task)
+	return task, nil
+}
+
+// cut cuts the parts of task in place to the part limit. The raw parts
+// still refer to blobs; loading them skips the long ones.
+func (b listBounds) cut(task *a2a.Task) {
+	if b.part == 0 {
+		return
+	}
+	cutParts := func(parts []*a2a.Part) {
+		for i, p := range parts {
+			parts[i] = a2alimit.CutPart(task.ID, p, b.part)
+		}
+	}
+	// The status message may also be in the history.
+	cut := map[*a2a.Message]bool{}
+	for _, m := range append([]*a2a.Message{task.Status.Message}, task.History...) {
+		if m != nil && !cut[m] {
+			cut[m] = true
+			cutParts(m.Parts)
+		}
+	}
+	for _, a := range task.Artifacts {
+		if a != nil {
+			cutParts(a.Parts)
+		}
+	}
 }
 
 // TaskSummary is a listed task without its history and artifacts, with its
@@ -498,27 +551,74 @@ type TaskSummary struct {
 }
 
 // ListSummaries lists the tasks that req selects as [TaskSummary] values,
-// ignoring the history length and artifacts that req asks for. It reads no
-// attachments, so that overviews of many tasks stay cheap.
+// ignoring the history length and artifacts that req asks for. It reads only
+// the first user message of each task, and no attachments, so that overviews
+// of many tasks stay cheap.
 func (ts *TaskStore) ListSummaries(ctx context.Context, req *a2a.ListTasksRequest) ([]TaskSummary, error) {
-	pg, err := ts.page(ctx, req, true)
+	pg, err := ts.page(ctx, req, listBounds{})
 	if err != nil {
 		return nil, err
 	}
-	full, err := ts.materialize(ctx, pg.logs)
+	prompts, err := ts.prompts(ctx, pg.headers)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]TaskSummary, 0, len(pg.headers))
 	for i, h := range pg.headers {
-		sum := TaskSummary{Task: h.task, Owner: h.owner}
-		for _, m := range full[i].History {
-			if m.Role == a2a.MessageRoleUser {
-				sum.Prompt = m
-				break
+		out = append(out, TaskSummary{Task: h.task, Owner: h.owner, Prompt: prompts[i]})
+	}
+	return out, nil
+}
+
+// firstPrompt selects the first user message of the history JSON of a task
+// in table t, as the message JSON, or NULL.
+const firstPrompt = `(SELECT m.value FROM json_each(t.data, '$.history') m
+	WHERE json_extract(m.value, '$.role') = ? ORDER BY m.key LIMIT 1)`
+
+// prompts returns the first user message of the history of each task of
+// headers, or nil for a task without one. It looks in the snapshot, which
+// holds the history up to its version, and then in the events in order.
+// SQLite picks the message out of the stored JSON, so that the messages
+// after it aren't read into memory.
+func (ts *TaskStore) prompts(ctx context.Context, headers []*taskHeader) ([]*a2a.Message, error) {
+	if len(headers) == 0 {
+		return nil, nil
+	}
+	index := make(map[string]int, len(headers))
+	args := make([]any, 0, 2*len(headers)+7)
+	for i, h := range headers {
+		index[string(h.task.ID)] = i
+		args = append(args, string(h.task.ID), h.version)
+	}
+	user := string(a2a.MessageRoleUser)
+	out := make([]*a2a.Message, len(headers))
+	err := queryEach(ctx, ts.s.reads, pageValues(len(headers), 2)+`SELECT page.id, COALESCE(
+		(SELECT `+firstPrompt+` FROM task_snapshots t WHERE t.scope = ? AND t.task_id = page.id AND t.version <= page.v1),
+		(SELECT CASE WHEN t.kind = ? THEN (CASE WHEN json_extract(t.data, '$.role') = ? THEN t.data END)
+			WHEN t.kind = ? THEN `+firstPrompt+` END AS prompt
+			FROM task_events t WHERE t.scope = ? AND t.task_id = page.id AND t.version <= page.v1 AND prompt IS NOT NULL
+			ORDER BY t.version LIMIT 1)
+		) FROM page`,
+		append(args, user, ts.scope, kindMessage, user, kindTask, user, ts.scope), func(rows *sql.Rows) error {
+			var (
+				id   string
+				data sql.NullString
+			)
+			if err := rows.Scan(&id, &data); err != nil {
+				return err
 			}
-		}
-		out = append(out, sum)
+			if !data.Valid {
+				return nil
+			}
+			msg := &a2a.Message{}
+			if err := json.Unmarshal([]byte(data.String), msg); err != nil {
+				return fmt.Errorf("decoding the first message of task %s: %w", id, err)
+			}
+			out[index[id]] = msg
+			return nil
+		})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }
@@ -529,13 +629,14 @@ type taskPage struct {
 	total   int
 	more    bool
 	headers []*taskHeader
-	// logs is nil unless the page was read with its logs.
-	logs []*taskLog
+	// tasks is nil unless the page was read with history or artifacts.
+	tasks []*a2a.Task
 }
 
-// page reads the page of tasks that req selects, and their logs if withLogs
-// is true.
-func (ts *TaskStore) page(ctx context.Context, req *a2a.ListTasksRequest, withLogs bool) (*taskPage, error) {
+// page reads the page of tasks that req selects. It folds the tasks within
+// b if b asks for history or artifacts, one task at a time, so that the
+// page holds at most one whole task.
+func (ts *TaskStore) page(ctx context.Context, req *a2a.ListTasksRequest, b listBounds) (*taskPage, error) {
 	user, all, err := ts.viewer(ctx)
 	if err != nil {
 		return nil, err
@@ -594,10 +695,20 @@ func (ts *TaskStore) page(ctx context.Context, req *a2a.ListTasksRequest, withLo
 		if pg.more = len(pg.headers) > pageSize; pg.more {
 			pg.headers = pg.headers[:pageSize]
 		}
-		if withLogs {
-			pg.logs, err = ts.logs(ctx, tx, pg.headers)
+		if b.history == 0 && !b.artifacts {
+			return nil
 		}
-		return err
+		pg.tasks = make([]*a2a.Task, len(pg.headers))
+		for i, h := range pg.headers {
+			logs, err := ts.logs(ctx, tx, []*taskHeader{h})
+			if err != nil {
+				return err
+			}
+			if pg.tasks[i], err = b.fold(logs[0]); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
