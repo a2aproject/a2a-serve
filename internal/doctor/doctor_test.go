@@ -1017,7 +1017,7 @@ func TestRunningAgent(t *testing.T) {
 			st.Local, st.PID = tc.local, 42
 			m.status = &st
 			env := m.Env()
-			env.HTTP = &http.Client{Timeout: 5 * time.Second}
+			env.HTTP = &http.Client{Transport: testHTTP.Transport, Timeout: 5 * time.Second}
 			if tc.token != "" {
 				if err := env.Credentials.Put(credstore.Credential{URL: tc.local, Token: tc.token}); err != nil {
 					t.Fatalf("Credentials.Put() error = %v", err)
@@ -1027,7 +1027,7 @@ func TestRunningAgent(t *testing.T) {
 			got := Run(t.Context(), env, Options{Dir: &d})
 			want := append(healthyCLI[:4:4], check{"harness-command", StatusOK}, check{"config", StatusOK})
 			if diff := cmp.Diff(append(want, tc.want...), checks(got)); diff != "" {
-				t.Fatalf("Run() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("Run() wrong result (-want +got) diff = %s\n%+v", diff, got)
 			}
 		})
 	}
