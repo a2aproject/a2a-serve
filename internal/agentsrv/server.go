@@ -297,7 +297,7 @@ func Run(ctx context.Context, opts Options) error {
 		peerCards:          newPeerCards(),
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
-	s.stalls = newStallGuard(s.timings.TurnStallTimeout)
+	s.stalls = newStallGuard(s.timings.TurnStallTimeout, s.timings.ToolStallTimeout)
 	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {

@@ -24,6 +24,8 @@
 //	stall            nothing until canceled, like opencode retrying a model
 //	                 that refuses requests
 //	build <d>        a tool call that runs for duration d without updates
+//	pending <d>      a tool call that stays pending for duration d, then
+//	                 completes, like the claude adapter
 //	remember <x>     stores x in the session
 //	recall           replies with the stored value
 //	crash            exits mid-turn
@@ -593,14 +595,16 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			"message": "Internal error: models/gemini-2.5-flash is not found for API version v1beta",
 			"data":    map[string]any{"service": "session", "errorName": "APIError"},
 		}})
-	case "build":
+	case "build", "pending":
 		d, err := time.ParseDuration(arg)
 		if err != nil {
 			a.fail(m.ID, err.Error())
 			return
 		}
 		a.notify(sid, map[string]any{"sessionUpdate": "tool_call", "toolCallId": "b1", "title": "make", "kind": "execute", "status": "pending"})
-		a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "b1", "status": "in_progress"})
+		if cmd == "build" {
+			a.notify(sid, map[string]any{"sessionUpdate": "tool_call_update", "toolCallId": "b1", "status": "in_progress"})
+		}
 		select {
 		case <-canceled:
 			end("cancelled")

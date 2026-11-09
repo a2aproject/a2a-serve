@@ -60,6 +60,9 @@ type Timings struct {
 	// TurnStallTimeout fails a turn in which the agent sent nothing this
 	// long while none of its tool calls ran.
 	TurnStallTimeout time.Duration
+	// ToolStallTimeout fails a turn in which the agent sent nothing this
+	// long while one of its tool calls ran.
+	ToolStallTimeout time.Duration
 	// StateCheckInterval is how often the server checks that its state
 	// directory still exists.
 	StateCheckInterval time.Duration
@@ -99,6 +102,7 @@ func (t Timings) withDefaults() Timings {
 	t.GuestQuestionTimeout = cmp.Or(t.GuestQuestionTimeout, 10*time.Minute)
 	t.UserQuestionTimeout = cmp.Or(t.UserQuestionTimeout, 4*time.Hour)
 	t.TurnStallTimeout = cmp.Or(t.TurnStallTimeout, 10*time.Minute)
+	t.ToolStallTimeout = cmp.Or(t.ToolStallTimeout, time.Hour)
 	t.StateCheckInterval = cmp.Or(t.StateCheckInterval, 5*time.Second)
 	t.SandboxCheckInterval = cmp.Or(t.SandboxCheckInterval, 5*time.Second)
 	t.NarrowedCancelGrace = cmp.Or(t.NarrowedCancelGrace, 10*time.Second)

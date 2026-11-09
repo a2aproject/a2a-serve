@@ -29,12 +29,13 @@ import (
 )
 
 // stallGuard fails a turn in which the agent sends nothing for timeout while
-// none of its tool calls runs. opencode retries a failed request to the
-// model's provider before it reports the error over ACP, waiting as long as
-// the provider's retry-after asks, so the task could stay working with no
-// reason for hours.
+// none of its tool calls runs, or for toolTimeout while one runs. opencode
+// retries a failed request to the model's provider before it reports the
+// error over ACP, waiting as long as the provider's retry-after asks, so the
+// task could stay working with no reason for hours.
 type stallGuard struct {
-	timeout time.Duration
+	timeout     time.Duration
+	toolTimeout time.Duration
 
 	mu    sync.Mutex
 	turns map[a2a.TaskID]*stallTurn
@@ -43,12 +44,12 @@ type stallGuard struct {
 // stallTurn is the activity of a turn, guarded by stallGuard.mu.
 type stallTurn struct {
 	last time.Time
-	// tools are the IDs of the tool calls in progress.
+	// tools are the IDs of the tool calls that started and haven't ended.
 	tools map[string]bool
 }
 
-func newStallGuard(timeout time.Duration) *stallGuard {
-	return &stallGuard{timeout: timeout, turns: map[a2a.TaskID]*stallTurn{}}
+func newStallGuard(timeout, toolTimeout time.Duration) *stallGuard {
+	return &stallGuard{timeout: timeout, toolTimeout: toolTimeout, turns: map[a2a.TaskID]*stallTurn{}}
 }
 
 // turn wraps the Turn hook of a2aacp, so that the guard tracks a turn from
@@ -95,12 +96,14 @@ func (g *stallGuard) observe(id a2a.TaskID, u a2aacp.Update) {
 		return
 	}
 	st.last = time.Now()
-	switch tool.Status {
-	case "":
-	case "in_progress":
-		st.tools[tool.ID] = true
-	default:
+	// The claude adapter never reports in_progress: its tool calls stay
+	// pending until they end.
+	switch {
+	case tool.ID == "":
+	case tool.Status == "completed" || tool.Status == "failed":
 		delete(st.tools, tool.ID)
+	case u.Type == "tool_call" || tool.Status != "":
+		st.tools[tool.ID] = true
 	}
 }
 
@@ -113,17 +116,20 @@ func (g *stallGuard) resume(id a2a.TaskID) {
 	}
 }
 
-// remaining is how long the turn of a task may still stay silent. A task
-// whose turn hasn't started, such as one queued behind another task of its
-// context, has the whole timeout.
-func (g *stallGuard) remaining(id a2a.TaskID) time.Duration {
+// remaining is how long the turn of a task may still stay silent, and
+// whether one of its tool calls runs. A task whose turn hasn't started, such
+// as one queued behind another task of its context, has the whole timeout.
+func (g *stallGuard) remaining(id a2a.TaskID) (time.Duration, bool) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	st := g.turns[id]
-	if st == nil || len(st.tools) > 0 {
-		return g.timeout
+	if st == nil {
+		return g.timeout, false
 	}
-	return g.timeout - time.Since(st.last)
+	if len(st.tools) > 0 {
+		return g.toolTimeout - time.Since(st.last), true
+	}
+	return g.timeout - time.Since(st.last), false
 }
 
 // guard returns inner, an executor whose a2aacp config uses the guard's
@@ -177,12 +183,16 @@ func (e *stallGuardedExecutor) Execute(ctx context.Context, execCtx *a2asrv.Exec
 					return
 				}
 			case <-timer.C:
-				if wait := e.g.remaining(execCtx.TaskID); wait > 0 {
+				wait, tool := e.g.remaining(execCtx.TaskID)
+				if wait > 0 {
 					timer.Reset(wait)
 					continue
 				}
-				slog.Warn("stopping a turn in which the agent sent nothing", "task", execCtx.TaskID, "timeout", e.g.timeout)
-				text := fmt.Sprintf("the agent sent nothing for %s, so the server stopped the turn. Its model may refuse requests, for example a free model over its usage limit: set a model and its key with `a2a-serve config set --model <provider/model> --secret <KEY>`", e.g.timeout)
+				timeout, text := e.g.timeout, fmt.Sprintf("the agent sent nothing for %s, so the server stopped the turn. Its model may refuse requests, for example a free model over its usage limit: set a model and its key with `a2a-serve config set --model <provider/model> --secret <KEY>`", e.g.timeout)
+				if tool {
+					timeout, text = e.g.toolTimeout, fmt.Sprintf("a tool call of the agent sent nothing for %s, so the server stopped the turn", e.g.toolTimeout)
+				}
+				slog.Warn("stopping a turn in which the agent sent nothing", "task", execCtx.TaskID, "tool", tool, "timeout", timeout)
 				yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessageForTask(a2a.MessageRoleAgent, execCtx, a2a.NewTextPart(text))), nil)
 				return
 			}
