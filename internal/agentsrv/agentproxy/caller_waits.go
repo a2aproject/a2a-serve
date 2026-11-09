@@ -33,10 +33,12 @@ type CallerQuestion struct {
 }
 
 // CallerOutcome is what a task waiting for another agent gets next: that
-// agent's next question, or its result.
+// agent's next question, its result, or why no result comes.
 type CallerOutcome struct {
 	Question *CallerQuestion
 	Result   *chat.PostedTurn
+	// Ended says why the watch of the task ended without a result.
+	Ended string
 }
 
 // callerWait is a context whose A2A caller waits for its task: the question
@@ -45,6 +47,8 @@ type CallerOutcome struct {
 type callerWait struct {
 	question *CallerQuestion
 	outcomes chan CallerOutcome
+	// agent and taskID are the task of another agent awaited.
+	agent, taskID string
 }
 
 // Attend notes that the A2A caller of the turn running in contextID waits
@@ -79,12 +83,12 @@ func (ws *Watches) Attend(contextID string) func(ask bool) *CallerQuestion {
 	}
 }
 
-// Await registers a task in contextID which waits for another agent after
-// its caller answered that agent's question. The returned func ends the
-// wait; an outcome which arrived and wasn't read goes where it goes when no
-// caller waits.
-func (ws *Watches) Await(contextID string) (<-chan CallerOutcome, func()) {
-	cw := &callerWait{outcomes: make(chan CallerOutcome, 1)}
+// Await registers a task in contextID which waits for agent's task taskID
+// after its caller answered that agent's question. The returned func ends
+// the wait; an outcome which arrived and wasn't read goes where it goes
+// when no caller waits.
+func (ws *Watches) Await(contextID, agent, taskID string) (<-chan CallerOutcome, func()) {
+	cw := &callerWait{outcomes: make(chan CallerOutcome, 1), agent: agent, taskID: taskID}
 	ws.mu.Lock()
 	ws.callers[contextID] = cw
 	ws.mu.Unlock()
@@ -105,6 +109,9 @@ func (ws *Watches) Await(contextID string) (<-chan CallerOutcome, func()) {
 // redirect sends an outcome no caller read in contextID to the user's
 // chats, or posts a result into its conversation.
 func (ws *Watches) redirect(contextID string, o CallerOutcome) {
+	if o.Ended != "" {
+		return
+	}
 	if o.Question != nil {
 		ws.askInChat(ws.ctx, contextID, o.Question)
 		return
@@ -161,5 +168,20 @@ func (ws *Watches) resultToCaller(t chat.PostedTurn) bool {
 		return true
 	default:
 		return false
+	}
+}
+
+// endToCaller tells a task that waits for the watched task that its watch
+// ended without a result, and why.
+func (ws *Watches) endToCaller(w store.Watch, reason string) {
+	ws.mu.Lock()
+	defer ws.mu.Unlock()
+	cw := ws.callers[w.OriginContextID]
+	if cw == nil || cw.outcomes == nil || cw.agent != w.Contact || cw.taskID != w.TaskID {
+		return
+	}
+	select {
+	case cw.outcomes <- CallerOutcome{Ended: stoppedWatching(w, reason)}:
+	default:
 	}
 }

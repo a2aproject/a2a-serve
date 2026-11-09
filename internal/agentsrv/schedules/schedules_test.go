@@ -28,6 +28,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/chat"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
+	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/store"
 )
@@ -89,7 +90,12 @@ func newSchedulesFixture(t *testing.T) *schedulesFixture {
 
 func (fx *schedulesFixture) addSchedule(t *testing.T, s store.Schedule) {
 	t.Helper()
-	s.Prompt, s.UserID, s.CreatedBy = "x", auth.OwnerID, auth.OwnerID
+	fx.addScheduleAs(t, s, auth.OwnerID)
+}
+
+func (fx *schedulesFixture) addScheduleAs(t *testing.T, s store.Schedule, user string) {
+	t.Helper()
+	s.Prompt, s.UserID, s.CreatedBy = "x", user, user
 	s.Conversation, s.ContextID = schedule.ThreadSame, "c-schedule"
 	if err := fx.store.AddSchedule(fx.ctx, s); err != nil {
 		t.Fatalf("AddSchedule() error = %v", err)
@@ -142,15 +148,15 @@ func TestSchedulesRecordErrorHints(t *testing.T) {
 	}
 }
 
-func TestSchedulesRecordFailedSends(t *testing.T) {
+func TestSchedulesRetryRefusedRuns(t *testing.T) {
 	t.Parallel()
 	due := time.Now().Add(-time.Minute).Truncate(time.Second)
 	tests := []struct {
-		name      string
-		sched     store.Schedule
-		wantRetry bool
+		name    string
+		sched   store.Schedule
+		wantDue bool
 	}{
-		{name: "one-time", sched: store.Schedule{Name: "once", At: due, NextRun: due}, wantRetry: true},
+		{name: "one-time", sched: store.Schedule{Name: "once", At: due, NextRun: due}, wantDue: true},
 		{name: "recurring", sched: store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due}},
 	}
 	for _, tc := range tests {
@@ -165,17 +171,102 @@ func TestSchedulesRecordFailedSends(t *testing.T) {
 			if got := fx.schedule(t, tc.sched.Name).LastError; !strings.Contains(got, "the agent is not running") {
 				t.Fatalf("Schedule().LastError after a failed send = %q, want the failure", got)
 			}
-			if due := !fx.schedule(t, tc.sched.Name).NextRun.After(time.Now()); due != tc.wantRetry {
-				t.Fatalf("Schedule() after a failed send is due = %v, want %v", due, tc.wantRetry)
+			if due := !fx.schedule(t, tc.sched.Name).NextRun.After(time.Now()); due != tc.wantDue {
+				t.Fatalf("Schedule() after a failed send is due = %v, want %v", due, tc.wantDue)
 			}
 			fx.sc.RunDue(fx.ctx)
-			want := 1
-			if tc.wantRetry {
-				want = 2
+			fx.sc.RunDue(fx.ctx)
+			posted := fx.turns.turns()
+			if got := len(posted); got != 2 {
+				t.Fatalf("turns posted after the next checks = %d, want 2", got)
 			}
-			if got := len(fx.turns.turns()); got != want {
-				t.Fatalf("turns posted after the next check = %d, want %d", got, want)
+			posted[1].Accept(nil)
+			fx.sc.RunDue(fx.ctx)
+			if got := len(fx.turns.turns()); got != 2 {
+				t.Fatalf("turns posted after the retry was accepted = %d, want 2", got)
 			}
 		})
+	}
+}
+
+func TestSchedulesPostDueRunWhileARetryWaits(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+	fx.sc.RunDue(fx.ctx)
+	if posted := fx.turns.turns(); len(posted) != 2 || !posted[1].Quiet {
+		t.Fatalf("turns posted after the refusal = %+v, want a quiet retry", posted)
+	}
+
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+	fx.sc.RunDue(fx.ctx)
+
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+	fx.sc.RunDue(fx.ctx)
+
+	posted := fx.turns.turns()
+	if len(posted) != 4 || posted[2].Key != posted[1].Key || posted[3].Key != posted[1].Key {
+		t.Fatalf("turns posted once two more runs are due = %d, want both runs posted with the key of the waiting retry", len(posted))
+	}
+	if next := fx.schedule(t, "hourly").NextRun; !next.After(time.Now()) {
+		t.Fatalf("Schedule().NextRun = %v, want the next time after the due runs", next)
+	}
+	for _, p := range posted[1:] {
+		p.Accept(nil)
+	}
+	fx.sc.RunDue(fx.ctx)
+	if got := len(fx.turns.turns()); got != 4 {
+		t.Fatalf("turns posted after the merged retry was accepted = %d, want 4", got)
+	}
+}
+
+func TestSchedulesDueRunReplacesARefusedRun(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+
+	fx.sc.RunDue(fx.ctx)
+	fx.sc.RunDue(fx.ctx)
+
+	posted := fx.turns.turns()
+	if len(posted) != 2 || posted[1].Quiet {
+		t.Fatalf("turns posted = %+v, want the due run in place of the retry", posted)
+	}
+}
+
+func TestSchedulesStopRetryingWhenTheUserLosesAccess(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	if _, err := fx.store.EnsurePairing(fx.ctx, store.Pairing{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
+		t.Fatalf("store.EnsurePairing() error = %v", err)
+	}
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addScheduleAs(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due}, "pair:anna")
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+
+	if err := fx.store.DeletePairing(fx.ctx, "anna"); err != nil {
+		t.Fatalf("store.DeletePairing() error = %v", err)
+	}
+	fx.sc.RunDue(fx.ctx)
+
+	if got := len(fx.turns.turns()); got != 1 {
+		t.Fatalf("turns posted after the user lost access = %d, want 1", got)
+	}
+	if got := fx.schedule(t, "hourly").LastError; !strings.Contains(got, "can no longer call this agent") {
+		t.Fatalf("Schedule().LastError = %q, want that the user lost access", got)
 	}
 }

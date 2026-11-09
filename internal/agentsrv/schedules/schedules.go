@@ -22,6 +22,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"time"
 
@@ -73,9 +74,14 @@ type Runner struct {
 	wake chan struct{}
 
 	mu sync.Mutex
-	// pending are the one-time schedules whose run waits to be accepted.
-	// They stay due in the store, so that a restart runs them again.
+	// pending are the schedules whose run waits to be accepted: one-time
+	// schedules, which stay due in the store so that a restart runs them
+	// again, and the retries of refused recurring runs.
 	pending map[string]bool
+	// refused are the recurring schedules whose last run the agent refused.
+	// Each check posts the run again until the agent accepts it, the user
+	// loses access, or the next run is due.
+	refused map[string]bool
 }
 
 // Deps are the dependencies of [Runner].
@@ -100,6 +106,7 @@ func New(ctx context.Context, deps Deps) *Runner {
 		minWait:    deps.MinWait,
 		wake:       make(chan struct{}, 1),
 		pending:    map[string]bool{},
+		refused:    map[string]bool{},
 	}
 }
 
@@ -135,12 +142,21 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 		return wait
 	}
 	now := sc.now()
+	sc.forgetRefused(all)
 	for _, s := range all {
-		if s.NextRun.IsZero() || sc.isPending(s.Name) {
+		if s.NextRun.IsZero() {
+			continue
+		}
+		// A due run merges into a retry that waits in its conversation.
+		retrying := sc.isRefused(s.Name)
+		if sc.isPending(s.Name) && (!retrying || s.NextRun.After(now)) {
 			continue
 		}
 		if s.NextRun.After(now) {
 			wait = min(wait, s.NextRun.Sub(now))
+			if retrying {
+				sc.retry(ctx, s, now)
+			}
 			continue
 		}
 		next, ok, nextErr := whenOf(s).Next(s.NextRun, now)
@@ -153,7 +169,12 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
 			continue
 		}
-		runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
+		// While a retry waits, it stays a retry, so that every due run
+		// merges into it.
+		if !sc.isPending(s.Name) {
+			sc.setRefused(s.Name, false)
+		}
+		runErr := sc.start(ctx, s, false, sc.retryRefused(s.Name))
 		sc.record(ctx, s.Name, now, cmp.Or(runErr, nextErr))
 		if !next.IsZero() {
 			wait = min(wait, next.Sub(now))
@@ -167,7 +188,7 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 // check retries it.
 func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) {
 	sc.setPending(s.Name, true)
-	err := sc.start(ctx, s, func(err error) {
+	err := sc.start(ctx, s, false, func(err error) {
 		sc.setPending(s.Name, false)
 		if err != nil {
 			sc.record(context.WithoutCancel(sc.ctx), s.Name, sc.now(), err)
@@ -178,6 +199,39 @@ func (sc *Runner) runOnce(ctx context.Context, s store.Schedule, now time.Time) 
 	if err != nil {
 		sc.setPending(s.Name, false)
 		sc.record(ctx, s.Name, now, err)
+	}
+}
+
+// retry posts again the refused run of a recurring schedule.
+func (sc *Runner) retry(ctx context.Context, s store.Schedule, now time.Time) {
+	sc.setPending(s.Name, true)
+	err := sc.start(ctx, s, true, func(err error) {
+		sc.setPending(s.Name, false)
+		if err != nil {
+			sc.record(context.WithoutCancel(sc.ctx), s.Name, sc.now(), err)
+			return
+		}
+		sc.setRefused(s.Name, false)
+	})
+	if err == nil {
+		return
+	}
+	sc.setPending(s.Name, false)
+	sc.record(ctx, s.Name, now, err)
+	if errors.Is(err, errNoAccess) {
+		sc.setRefused(s.Name, false)
+	}
+}
+
+// retryRefused returns what records a recurring run's turn that the agent
+// refused, and has the next checks post it again.
+func (sc *Runner) retryRefused(name string) func(error) {
+	return func(err error) {
+		if err == nil {
+			return
+		}
+		sc.record(context.WithoutCancel(sc.ctx), name, sc.now(), err)
+		sc.setRefused(name, true)
 	}
 }
 
@@ -200,6 +254,34 @@ func (sc *Runner) isPending(name string) bool {
 	sc.mu.Lock()
 	defer sc.mu.Unlock()
 	return sc.pending[name]
+}
+
+func (sc *Runner) isRefused(name string) bool {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	return sc.refused[name]
+}
+
+func (sc *Runner) setRefused(name string, refused bool) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	if refused {
+		sc.refused[name] = true
+		return
+	}
+	delete(sc.refused, name)
+}
+
+// forgetRefused forgets the refused runs of the schedules not in all,
+// which were removed.
+func (sc *Runner) forgetRefused(all []store.Schedule) {
+	sc.mu.Lock()
+	defer sc.mu.Unlock()
+	for name := range sc.refused {
+		if !slices.ContainsFunc(all, func(s store.Schedule) bool { return s.Name == name }) {
+			delete(sc.refused, name)
+		}
+	}
 }
 
 func (sc *Runner) setPending(name string, pending bool) {
@@ -232,11 +314,12 @@ func whenOf(s store.Schedule) schedule.When {
 // start posts a run of s into its conversation as a new turn. The turn runs
 // in the background, as an ordinary task of the schedule's user, with the
 // role the user has now. accepted is called once the agent accepted the
-// turn or refused it, unless start fails.
-func (sc *Runner) start(ctx context.Context, s store.Schedule, accepted func(error)) error {
+// turn or refused it, unless start fails. A quiet run doesn't show a
+// refusal in the chat.
+func (sc *Runner) start(ctx context.Context, s store.Schedule, quiet bool, accepted func(error)) error {
 	user, err := sc.chain.Stored(ctx, s.UserID, s.UserIdentity)
 	if err == nil && user.Role == "" {
-		err = fmt.Errorf("%s can no longer call this agent", auth.DisplayPrincipal(s.UserID))
+		err = fmt.Errorf("%s %w", auth.DisplayPrincipal(s.UserID), errNoAccess)
 	}
 	if err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
@@ -248,12 +331,16 @@ func (sc *Runner) start(ctx context.Context, s store.Schedule, accepted func(err
 		return err
 	}
 	text := fmt.Sprintf("Scheduled run of %q (no one is waiting at the keyboard; your answer is delivered to the user):\n%s", s.Name, s.Prompt)
-	if err := sc.turns.InjectTurn(sc.ctx, chat.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted}); err != nil {
+	if err := sc.turns.InjectTurn(sc.ctx, chat.PostedTurn{ContextID: contextID, User: user, Text: text, Key: scheduleTurnKey(s.Name), Accepted: accepted, Quiet: quiet}); err != nil {
 		slog.Warn("running a schedule", "schedule", s.Name, "error", err)
 		return err
 	}
 	return nil
 }
+
+// errNoAccess is what a run of a user who can no longer call this agent
+// fails with.
+var errNoAccess = errors.New("can no longer call this agent")
 
 // scheduleTurnKey merges the runs of a schedule that wait in a context
 // into one.
@@ -331,7 +418,7 @@ func (sc *Runner) RunNow(ctx context.Context, name string) (store.Schedule, erro
 	if err != nil {
 		return store.Schedule{}, err
 	}
-	runErr := sc.start(ctx, s, sc.recordFailure(s.Name))
+	runErr := sc.start(ctx, s, false, sc.recordFailure(s.Name))
 	s.LastRun, s.LastError = sc.now(), agenterr.Text(runErr)
 	if err := sc.store.RecordScheduleResult(ctx, s.Name, s.LastRun, s.LastError); err != nil {
 		return store.Schedule{}, err

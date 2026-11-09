@@ -46,6 +46,9 @@ type PostedTurn struct {
 	// the error it refused it with. It isn't called if the server stops
 	// before the turn is sent.
 	Accepted func(error)
+	// Quiet keeps a refusal out of the conversation's chat, for a turn
+	// posted again after the agent refused it.
+	Quiet bool
 }
 
 // Parts are the message parts of the turn.
@@ -279,7 +282,7 @@ func (c *ChatTurns) send(ctx context.Context, t *heldTurn, chName string, conv m
 		t.accept(err)
 		return
 	}
-	c.streamThen(ctx, ch, conv, messenger.Ref{}, t.User, &a2a.SendMessageRequest{Message: msg}, t.accept)
+	c.streamThen(ctx, ch, conv, messenger.Ref{}, t.User, &a2a.SendMessageRequest{Message: msg}, t.Quiet, t.accept)
 }
 
 // holdsTurns reports whether the context's latest task holds back posted

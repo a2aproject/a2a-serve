@@ -443,6 +443,7 @@ type injectedTurn struct {
 	User      auth.Principal
 	Text      string
 	Files     []messenger.File
+	Quiet     bool
 }
 
 // fakeTurnInjector records the turns injected. The agent accepts them at
@@ -451,7 +452,15 @@ type fakeTurnInjector struct {
 	turns    chan injectedTurn
 	accepted chan func(error)
 	hold     bool
-	err      error
+
+	mu  sync.Mutex
+	err error
+}
+
+func (f *fakeTurnInjector) setErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.err = err
 }
 
 func newFakeTurnInjector() *fakeTurnInjector {
@@ -459,19 +468,22 @@ func newFakeTurnInjector() *fakeTurnInjector {
 }
 
 func (f *fakeTurnInjector) InjectTurn(_ context.Context, t chat.PostedTurn) error {
+	f.mu.Lock()
+	err := f.err
+	f.mu.Unlock()
 	accept := t.Accepted
 	if accept == nil {
 		accept = func(error) {}
 	}
 	switch {
-	case f.err != nil:
+	case err != nil:
 	case f.hold:
 		f.accepted <- accept
 	default:
 		accept(nil)
 	}
-	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text, Files: t.Files}
-	return f.err
+	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text, Files: t.Files, Quiet: t.Quiet}
+	return err
 }
 
 // statusContact is a remote agent that serves its card and answers every

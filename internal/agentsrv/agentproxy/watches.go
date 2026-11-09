@@ -246,6 +246,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		// again.
 		cur, err := ws.store.Watch(ctx, w.Contact, w.TaskID)
 		if errors.Is(err, store.ErrNotFound) {
+			ws.endToCaller(w, reasonRemoved)
 			return
 		}
 		if err != nil {
@@ -260,6 +261,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		case watchDropped:
 			ws.endQuestions(ctx, w)
 			ws.deleteWatch(ctx, w)
+			ws.endToCaller(w, "the agent was removed or may no longer be called")
 			return
 		}
 		user, err := ws.watchPrincipal(ctx, w)
@@ -270,10 +272,11 @@ func (ws *Watches) follow(w store.Watch, key string) {
 			slog.Error("dropped a watched result: its user can't be resolved", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf, "error", err)
 			ws.endQuestions(ctx, w)
 			ws.deleteWatch(ctx, w)
+			ws.endToCaller(w, "the user it ran for can't be resolved")
 			return
 		}
 		ws.endQuestions(ctx, w)
-		posting = ws.finishWatch(ctx, w, key, user, text)
+		posting = ws.finishWatch(ctx, w, key, user, text, interval, false)
 		return
 	}
 }
@@ -294,8 +297,13 @@ const (
 func (ws *Watches) check(ctx context.Context, w *store.Watch, claims Claims) (string, watchEnd) {
 	task, err := ws.poll(ctx, *w, claims.User)
 	if errors.Is(err, store.ErrNotFound) {
-		slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
-		return "", watchDropped
+		if !ws.clients.CallsPeers() {
+			slog.Info("stopped watching a task of a removed agent", "agent", w.Contact, "task", w.TaskID)
+			return "", watchDropped
+		}
+		// An agent called by name is listed only while it is online, so it
+		// may be back soon. A removed contact takes the same path.
+		err = errors.New("no agent by this name is online on the private network")
 	}
 	if reason, ok := permanentPollError(err); ok {
 		slog.Warn("stopped watching a task", "agent", w.Contact, "task", w.TaskID, "reason", reason)
@@ -368,6 +376,10 @@ func (ws *Watches) noteState(ctx context.Context, w *store.Watch, state a2a.Task
 		slog.Warn("recording the state of a watched task", "agent", w.Contact, "task", w.TaskID, "error", err)
 	}
 }
+
+// reasonRemoved is why a watch whose row is gone ends: its contact, node or
+// user was removed.
+const reasonRemoved = "the agent or the user it ran for was removed"
 
 func stoppedWatching(w store.Watch, reason string) string {
 	return fmt.Sprintf("[%s: stopped watching task %s: %s]", w.Contact, w.TaskID, reason)
@@ -471,41 +483,89 @@ func permanentPollError(err error) (string, bool) {
 // finishWatch posts the result of a watched task as its user, if they may
 // still call this agent. Once the agent accepted the result, the watch is
 // deleted if no call watched the task again meanwhile, and the task is
-// watched again otherwise. A restart before then posts the result again.
-// It reports whether the result waits to be posted; the watch of key is
-// done once it is.
-func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, user auth.Principal, text string) bool {
+// watched again otherwise. A result the agent refused is posted again
+// after interval. A restart before then posts the result again. It reports
+// whether the result waits to be posted; the watch of key is done once it
+// is. A result posted again doesn't show the refusal in the chat again.
+func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, user auth.Principal, text string, interval time.Duration, again bool) bool {
 	if user.Role == "" {
 		slog.Warn("dropped a watched result: its user can no longer call this agent", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf)
 		ws.deleteWatch(ctx, w)
+		ws.endToCaller(w, "the user it ran for can no longer call this agent")
 		return false
 	}
 	accepted := func(err error) {
 		ctx := context.WithoutCancel(ctx)
 		if err != nil {
-			slog.Error("posting watched result; it is posted again on the next start", "contact", w.Contact, "task", w.TaskID, "error", err)
-		} else {
-			err := ws.store.DeleteWatch(ctx, w.Contact, w.TaskID, w.Generation)
-			if !errors.Is(err, store.ErrNotFound) {
-				if err != nil {
-					slog.Error("deleting watch", "error", err)
-				}
-				ws.done(key)
-				return
+			slog.Warn("the agent refused a watched result; it is posted again", "contact", w.Contact, "task", w.TaskID, "in", interval, "error", err)
+			go ws.retryPost(w, key, text, interval)
+			return
+		}
+		err = ws.store.DeleteWatch(ctx, w.Contact, w.TaskID, w.Generation)
+		if !errors.Is(err, store.ErrNotFound) {
+			if err != nil {
+				slog.Error("deleting watch", "error", err)
 			}
+			ws.done(key)
+			return
 		}
 		ws.rewatch(ctx, w, key)
 	}
-	text, files := resultTurn(text)
-	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: text, Files: files, Accepted: accepted}
+	turnText, files := resultTurn(text)
+	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, Accepted: accepted, Quiet: again}
 	if ws.resultToCaller(t) {
 		return true
 	}
 	if err := ws.turns.InjectTurn(ctx, t); err != nil {
-		slog.Error("posting watched result", "contact", w.Contact, "task", w.TaskID, "error", err)
-		return false
+		slog.Error("posting watched result; it is posted again", "contact", w.Contact, "task", w.TaskID, "in", interval, "error", err)
+		go ws.retryPost(w, key, text, interval)
 	}
 	return true
+}
+
+// retryPost posts the result of the watch of key again after interval,
+// until the agent accepts it, the user can no longer call this agent, or
+// the watch is older than the longest a task is watched. A call that
+// watched the task again meanwhile watches it anew, which posts its next
+// result.
+func (ws *Watches) retryPost(w store.Watch, key, text string, interval time.Duration) {
+	ctx := ws.ctx
+	for {
+		select {
+		case <-ctx.Done():
+			ws.done(key)
+			return
+		case <-time.After(interval):
+		}
+		cur, err := ws.store.Watch(ctx, w.Contact, w.TaskID)
+		switch {
+		case errors.Is(err, store.ErrNotFound):
+			ws.done(key)
+			ws.endToCaller(w, reasonRemoved)
+			return
+		case err != nil:
+			slog.Warn("reading a watch", "agent", w.Contact, "task", w.TaskID, "error", err)
+			continue
+		case cur.Generation != w.Generation:
+			ws.done(key)
+			ws.watch(cur)
+			return
+		case time.Since(cur.Created) >= ws.timings.WatchMaxAge:
+			slog.Error("dropped a watched result: the agent refused it until the watch got too old", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf)
+			ws.deleteWatch(ctx, cur)
+			ws.done(key)
+			ws.endToCaller(w, fmt.Sprintf("its result wasn't accepted within %s", describeWait(ws.timings.WatchMaxAge)))
+			return
+		}
+		user, err := ws.watchPrincipal(ctx, cur)
+		if err != nil {
+			continue
+		}
+		if !ws.finishWatch(ctx, cur, key, user, text, interval, true) {
+			ws.done(key)
+		}
+		return
+	}
 }
 
 // rewatch ends the watch of key and watches its task again if a call

@@ -30,6 +30,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/messenger"
@@ -76,10 +77,21 @@ func newWatchesFixtureWith(t *testing.T, timings Timings) *watchesFixture {
 // network net refreshes.
 func newWatchesFixtureNet(t *testing.T, timings Timings, net network.Provider) *watchesFixture {
 	t.Helper()
+	return newWatchesFixtureOf(t, timings, net, func(st *store.Store) *ContactClients { return newTestContactClients(t, st, nil) })
+}
+
+// newWatchesFixtureOf makes a fixture that calls agents with the contact
+// clients that clients returns.
+func newWatchesFixtureOf(t *testing.T, timings Timings, net network.Provider, clients func(*store.Store) *ContactClients) *watchesFixture {
+	t.Helper()
 	st := openTestStore(t)
 	remote := newFakeContact(t)
 	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
-	clients := newTestContactClients(t, st, nil)
+	return newWatchesFixtureClients(t, st, remote, timings, net, clients(st))
+}
+
+func newWatchesFixtureClients(t *testing.T, st *store.Store, remote *fakeContact, timings Timings, net network.Provider, clients *ContactClients) *watchesFixture {
+	t.Helper()
 	chain := &auth.Chain{Store: st, Net: net, Policy: func() auth.Policy { return auth.Policy{} }}
 	f := &watchesFixture{store: st, clients: clients, chat: &fakeQuestionChat{}, turns: newFakeTurnInjector(), asked: &fakeQuestionTasks{}, remote: remote}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -273,40 +285,113 @@ func TestWatchesWatchPostsOnceForTheSameTask(t *testing.T) {
 
 func TestWatchesWatchKeepsWatchUntilResultIsAccepted(t *testing.T) {
 	t.Parallel()
+	f := newWatchesFixture(t)
+	f.turns.hold = true
+	task := f.remote.startTask(t, promptDone)
+	w := f.addWatch(t, task, auth.OwnerID)
+	f.ws.watch(w)
+	first := f.nextTurn(t)
+
+	f.ws.watch(w)
+	f.wantWatch(t)
+	(<-f.turns.accepted)(nil)
+
+	f.waitIdle(t)
+	f.wantNoWatches(t)
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("further turns injected for the same task = %d, want 0", n)
+	}
+	if want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactResult); first.Text != want {
+		t.Fatalf("injected text = %q, want %q", first.Text, want)
+	}
+}
+
+func TestWatchesWatchPostsRefusedResultAgain(t *testing.T) {
+	t.Parallel()
 	tests := []struct {
-		name     string
-		err      error
-		wantKept bool
+		name string
+		err  error
 	}{
-		{name: "accepted"},
-		{name: "refused", err: errors.New("the agent is not running"), wantKept: true},
+		{name: "refused", err: errors.New("anna has 8 unfinished tasks")},
+		{name: "not posted", err: errors.New("the conversation can't be read")},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newWatchesFixture(t)
-			f.turns.hold = true
 			task := f.remote.startTask(t, promptDone)
 			w := f.addWatch(t, task, auth.OwnerID)
-			f.ws.watch(w)
-			f.nextTurn(t)
-
-			f.ws.watch(w)
-			if got, err := f.store.Watches(context.Background()); err != nil || len(got) != 1 {
-				t.Fatalf("store.Watches() before the result is accepted = %+v, %v, want the watch", got, err)
+			want := fmt.Sprintf("[coder finished task %s: completed]\n%s", task.ID, fakeContactResult)
+			if tc.name == "refused" {
+				f.turns.hold = true
+				f.ws.watch(w)
+				f.nextTurn(t)
+				(<-f.turns.accepted)(tc.err)
+			} else {
+				f.turns.setErr(tc.err)
+				f.ws.watch(w)
+				f.nextTurn(t)
+				f.wantWatch(t)
+				f.turns.setErr(nil)
 			}
-			(<-f.turns.accepted)(tc.err)
 
+			got := f.nextTurn(t)
+			if got.Text != want || !got.Quiet {
+				t.Fatalf("injected turn posted again = %+v, want %q without showing the refusal again", got, want)
+			}
+			if f.turns.hold {
+				(<-f.turns.accepted)(nil)
+			}
 			f.waitIdle(t)
-			got, err := f.store.Watches(context.Background())
-			if err != nil {
-				t.Fatalf("store.Watches() error = %v", err)
+			f.wantNoWatches(t)
+		})
+	}
+}
+
+func TestWatchesWatchStopsPostingRefusedResult(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		timings Timings
+		remove  bool
+	}{
+		{name: "once the watch is too old", timings: Timings{WatchInterval: time.Millisecond, WatchMaxInterval: 4 * time.Millisecond, WatchMaxAge: 200 * time.Millisecond}},
+		{name: "once the user can no longer call this agent", timings: watchTimings, remove: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixtureWith(t, tc.timings)
+			if _, err := f.store.EnsurePairing(context.Background(), store.Pairing{Name: "anna", Kind: pairapi.PairingPerson, Role: auth.RoleMember}); err != nil {
+				t.Fatalf("store.EnsurePairing() error = %v", err)
 			}
-			if kept := len(got) == 1; kept != tc.wantKept {
-				t.Fatalf("watch kept = %v, want %v", kept, tc.wantKept)
+			f.turns.hold = true
+			task := f.remote.startTask(t, promptDone)
+			f.ws.watch(f.addWatch(t, task, "pair:anna"))
+			accept := <-f.turns.accepted
+			if tc.remove {
+				if err := f.store.DeletePairing(context.Background(), "anna"); err != nil {
+					t.Fatalf("store.DeletePairing() error = %v", err)
+				}
 			}
-			if n := len(f.turns.turns); n != 0 {
-				t.Fatalf("further turns injected for the same task = %d, want 0", n)
+			accept(errors.New("anna has 8 unfinished tasks"))
+			posts := 1
+
+			for ended := false; !ended; {
+				select {
+				case accept := <-f.turns.accepted:
+					accept(errors.New("anna has 8 unfinished tasks"))
+					posts++
+				case <-f.turns.turns:
+				default:
+					got, err := f.store.Watches(context.Background())
+					ended = err == nil && len(got) == 0
+					time.Sleep(time.Millisecond)
+				}
+			}
+			f.waitIdle(t)
+			if tc.remove && posts != 1 {
+				t.Fatalf("posts of the result = %d, want 1 before the user lost access", posts)
 			}
 		})
 	}
@@ -538,6 +623,77 @@ func TestWatchesWatchOfRemovedContactEnds(t *testing.T) {
 	f.waitIdle(t)
 	if n := len(f.turns.turns); n != 0 {
 		t.Fatalf("turns injected for a removed contact = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchKeepsPollingWhilePeerIsOffline(t *testing.T) {
+	t.Parallel()
+	peers := &staticPeers{}
+	f := newWatchesFixtureOf(t, watchTimings, nil, func(st *store.Store) *ContactClients {
+		return newTestContactClientsOutgoing(t, st, peers, agentdir.AccessEveryone)
+	})
+	w := store.Watch{Contact: "ben", TaskID: "t1", OriginContextID: "origin", OnBehalfOf: auth.OwnerID}
+	if err := f.store.PutWatch(context.Background(), w); err != nil {
+		t.Fatalf("store.PutWatch() error = %v", err)
+	}
+
+	f.ws.watch(w)
+
+	waitFor(t, "the failure to be recorded", func() bool {
+		got, err := f.store.Watches(context.Background())
+		return err == nil && len(got) == 1 && !got[0].FailingSince.IsZero()
+	})
+	if n := len(f.turns.turns); n != 0 {
+		t.Fatalf("turns injected for an offline peer = %d, want 0", n)
+	}
+}
+
+func TestWatchesWatchEndTellsTheWaitingCaller(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name       string
+		user       string
+		end        func(t *testing.T, f *watchesFixture)
+		wantReason string
+	}{
+		{
+			name: "contact removed", user: auth.OwnerID, wantReason: "was removed",
+			end: func(t *testing.T, f *watchesFixture) {
+				if err := f.store.DeleteContact(context.Background(), "coder"); err != nil {
+					t.Fatalf("store.DeleteContact() error = %v", err)
+				}
+			},
+		},
+		{
+			name: "user removed", user: "pair:gone", wantReason: "can no longer call this agent",
+			end: func(_ *testing.T, f *watchesFixture) { f.remote.releaseHeld() },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			f := newWatchesFixture(t)
+			task := f.remote.startTask(t, promptHold)
+			w := f.addWatch(t, task, tc.user)
+			outcomes, stop := f.ws.Await("origin", "coder", string(task.ID))
+			defer stop()
+			f.ws.watch(w)
+			f.waitPolls(t, 1)
+
+			tc.end(t, f)
+
+			var got CallerOutcome
+			select {
+			case got = <-outcomes:
+			case <-time.After(10 * time.Second):
+				t.Fatalf("no outcome reached the waiting caller")
+			}
+			if prefix := fmt.Sprintf("[coder: stopped watching task %s: ", task.ID); got.Question != nil || got.Result != nil || !strings.HasPrefix(got.Ended, prefix) || !strings.Contains(got.Ended, tc.wantReason) {
+				t.Fatalf("outcome = %+v, want the end of the watch: %s", got, tc.wantReason)
+			}
+			f.waitIdle(t)
+			f.wantNoWatches(t)
+		})
 	}
 }
 
