@@ -104,13 +104,18 @@ type PairingUser struct {
 	// AgentKey is the key of the user's agent process, stored with the
 	// session of each conversation that runs in it.
 	AgentKey string
+	// CallerKeys starts the keys of the agent processes the user gets for
+	// the people behind its calls, when the user is another agent.
+	CallerKeys string
 }
 
 // removedTasks selects the tasks that go with u: its own, and every task of
 // the conversations that run in its agent process, which are routed by the
 // agent key alone and would reach a new pairing with the same name.
 func removedTasks(u PairingUser) (string, []any) {
-	return `(owner = ? OR context_id IN (SELECT context_id FROM sessions WHERE agent_key = ? AND agent_key != ''))`, []any{u.Principal, u.AgentKey}
+	return `(owner = ? OR context_id IN (SELECT context_id FROM sessions WHERE agent_key != '' AND
+		(agent_key = ? OR (? != '' AND substr(agent_key, 1, length(?)) = ?))))`,
+		[]any{u.Principal, u.AgentKey, u.CallerKeys, u.CallerKeys, u.CallerKeys}
 }
 
 // removedTasksOf is removedTasks for all of users.

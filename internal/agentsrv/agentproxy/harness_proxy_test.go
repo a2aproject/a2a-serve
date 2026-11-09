@@ -364,6 +364,9 @@ func TestHarnessProxyCallsContactForTheUserOfTheTurn(t *testing.T) {
 			if r.Authorization != "Bearer a2p_agent" {
 				t.Fatalf("call to the contact authorization = %q, want the agent's token for the contact", r.Authorization)
 			}
+			if r.Caller == "" {
+				t.Fatalf("call to the contact has no caller header, want the ID of the turn's user")
+			}
 			hops = append(hops, r.Hops)
 		}
 	}

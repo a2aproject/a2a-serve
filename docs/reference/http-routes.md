@@ -83,7 +83,7 @@ The A2A routes answer 401, 403 and 413 with A2A errors, so that A2A clients show
 
 ## Signatures and headers
 
-The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the member role.
+The server wakes a webhook node with a POST signed in `X-A2A-Serve-Signature: t=<unix time>,v1=<hex HMAC-SHA256 of "<t>.<body>">`. The key is the hex HMAC-SHA256 of `a2a-serve wake signing key` under the node token, so a node checks wakes with its token alone, using `a2a-serve mailbox verify`. Retries of a wake keep its `X-A2A-Serve-Wake` ID. Calls between agents carry `X-A2A-Serve-Hops`, the number of servers a call passed through. A call with a count of 1 or more gets at most the member role. Such a call also carries `X-A2A-Serve-Caller`, an opaque ID of the person the call is for: up to 64 letters, digits, `-` and `_`. The calling server derives it with HMAC-SHA256 under a secret key of its own, so it stays the same for one person and says nothing about who they are. The receiving server runs the calls of each ID in a separate agent process and never uses it to decide access. It ignores a malformed ID and a call with no hop count.
 
 ## Relay routes
 

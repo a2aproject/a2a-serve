@@ -73,8 +73,8 @@ func testViewer(ctx context.Context) (string, bool, error) {
 
 func usersOf(pairing string) []PairingUser {
 	return []PairingUser{
-		{Principal: "pair:" + pairing, AgentKey: "user:pair:" + pairing},
-		{Principal: "node:" + pairing, AgentKey: "user:node:" + pairing},
+		{Principal: "pair:" + pairing, AgentKey: "user:pair:" + pairing, CallerKeys: "user:pair:" + pairing + "#"},
+		{Principal: "node:" + pairing, AgentKey: "user:node:" + pairing, CallerKeys: "user:node:" + pairing + "#"},
 	}
 }
 
@@ -584,6 +584,8 @@ func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 		{"owner", newTask("owner-in-anna", "c-anna")},
 		{"owner", newTask("owner-1", "c-owner")},
 		{"pair:anna", newTask("anna-in-owner", "c-owner")},
+		{"owner", newTask("owner-in-anna-caller", "c-anna-caller")},
+		{"owner", newTask("owner-in-annab-caller", "c-annab-caller")},
 	} {
 		if _, err := ts.Create(asUser(c.user), c.task); err != nil {
 			t.Fatalf("Create(%s) error = %v", c.task.ID, err)
@@ -593,8 +595,10 @@ func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 		contextID string
 		key       string
 	}{
-		"anna-dm":  {"c-anna", "user:pair:anna"},
-		"owner-dm": {"c-owner", ""},
+		"anna-dm":         {"c-anna", "user:pair:anna"},
+		"owner-dm":        {"c-owner", ""},
+		"anna-caller-dm":  {"c-anna-caller", "user:pair:anna#0123456789abcdef"},
+		"annab-caller-dm": {"c-annab-caller", "user:pair:annab#0123456789abcdef"},
 	} {
 		if err := s.SetContext(ctx, "telegram", conv, sess.contextID); err != nil {
 			t.Fatalf("SetContext(%s) error = %v", conv, err)
@@ -608,14 +612,14 @@ func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 		t.Fatalf("UnfinishedRemoved() error = %v", err)
 	}
 	slices.Sort(unfinished)
-	if diff := cmp.Diff([]a2a.TaskID{"anna-1", "anna-in-owner", "owner-in-anna"}, unfinished); diff != "" {
+	if diff := cmp.Diff([]a2a.TaskID{"anna-1", "anna-in-owner", "owner-in-anna", "owner-in-anna-caller"}, unfinished); diff != "" {
 		t.Fatalf("UnfinishedRemoved() wrong result (-want +got) diff = %s", diff)
 	}
 	counts, err := s.PairingRemoval(ctx, "anna", usersOf("anna")...)
 	if err != nil {
 		t.Fatalf("PairingRemoval() error = %v", err)
 	}
-	if diff := cmp.Diff(PairingRemoval{Tasks: 3, Unfinished: 3, Conversations: 1}, counts); diff != "" {
+	if diff := cmp.Diff(PairingRemoval{Tasks: 4, Unfinished: 4, Conversations: 2}, counts); diff != "" {
 		t.Fatalf("PairingRemoval() wrong result (-want +got) diff = %s", diff)
 	}
 
@@ -623,13 +627,15 @@ func TestDeletePairingDeletesConversationsOfItsAgentProcess(t *testing.T) {
 		t.Fatalf("DeletePairing() error = %v", err)
 	}
 
-	for _, id := range []a2a.TaskID{"anna-1", "owner-in-anna", "anna-in-owner"} {
+	for _, id := range []a2a.TaskID{"anna-1", "owner-in-anna", "anna-in-owner", "owner-in-anna-caller"} {
 		if _, err := ts.Get(owner, id); !errors.Is(err, a2a.ErrTaskNotFound) {
 			t.Fatalf("Get(%s) after DeletePairing() error = %v, want %v", id, err, a2a.ErrTaskNotFound)
 		}
 	}
-	if _, err := ts.Get(owner, "owner-1"); err != nil {
-		t.Fatalf("Get() of the owner's conversation error = %v", err)
+	for _, id := range []a2a.TaskID{"owner-1", "owner-in-annab-caller"} {
+		if _, err := ts.Get(owner, id); err != nil {
+			t.Fatalf("Get(%s) of a conversation of another process error = %v", id, err)
+		}
 	}
 	if _, err := s.ContextOf(ctx, "telegram", "anna-dm"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("ContextOf() of the removed user's conversation error = %v, want %v", err, ErrNotFound)

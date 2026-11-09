@@ -59,6 +59,14 @@ const LocalPairing = store.LocalPairing
 // agent servers a request passed through.
 const HeaderHops = "X-A2A-Serve-Hops"
 
+// HeaderCaller is set by agent servers calling each other to an opaque,
+// stable ID of the person a call is for. It keeps the agent processes of
+// the callers of one agent apart, and never decides access.
+const HeaderCaller = "X-A2A-Serve-Caller"
+
+// maxCallerLen is the length of the longest caller ID taken.
+const maxCallerLen = 64
+
 // MaxHops limits chains of agents calling agents.
 const MaxHops = 3
 
@@ -285,6 +293,9 @@ func (a *Chain) refreshNetwork(ctx context.Context, id Identity) (Identity, erro
 
 func (a *Chain) requestIdentity(ctx context.Context, r Request) (Identity, error) {
 	id := Identity{Network: r.Listener, Hops: Hops(r.Header)}
+	if id.Hops > 0 {
+		id.Caller = caller(r.Header)
+	}
 	if r.Listener == network.ListenerPrivate && a.Net != nil {
 		id.Provider = a.Net.Name()
 		peer, err := a.Net.WhoIs(ctx, r.RemoteAddr)
@@ -405,6 +416,21 @@ func Hops(h http.Header) int {
 		return 0
 	}
 	return n
+}
+
+// caller returns the caller ID another agent sent, or "" for a missing
+// or malformed one: up to maxCallerLen letters, digits, '-' and '_'.
+func caller(h http.Header) string {
+	c := h.Get(HeaderCaller)
+	if len(c) > maxCallerLen {
+		return ""
+	}
+	for _, r := range c {
+		if !('a' <= r && r <= 'z' || 'A' <= r && r <= 'Z' || '0' <= r && r <= '9' || r == '-' || r == '_') {
+			return ""
+		}
+	}
+	return c
 }
 
 // BearerToken extracts the token of an Authorization header.

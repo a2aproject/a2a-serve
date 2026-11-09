@@ -126,6 +126,66 @@ func TestCancelingTaskCancelsItsCalls(t *testing.T) {
 	}
 }
 
+func TestCalledAgentKeepsThePeopleBehindACallerApart(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleMember)
+	anna := assistant.client(assistant.pair("anna", auth.RoleMember))
+	ben := assistant.client(assistant.pair("ben", auth.RoleMember))
+	calledPid := func(c *a2aclient.Client) int {
+		t.Helper()
+		return pidOf(t, send(t, c, userText("call coder pid", "", "")))
+	}
+
+	annaPid, benPid, annaAgain := calledPid(anna), calledPid(ben), calledPid(anna)
+
+	if annaPid == benPid || annaPid != annaAgain {
+		t.Fatalf("coder ran anna's calls in processes %d and %d, and ben's in %d; want one process for each person", annaPid, annaAgain, benPid)
+	}
+	homes, err := coder.dir.CallerHomeDirs(auth.PairPrincipal("assistant"))
+	if err != nil || len(homes) != 2 {
+		t.Fatalf("CallerHomeDirs() = %v, %v, want one agent home for each person behind assistant", homes, err)
+	}
+
+	if _, err := controlapi.NewClient(coder.dir).Revoke(context.Background(), "assistant"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+
+	waitFor(t, "the processes of assistant's callers to stop", func() bool { return !processRuns(annaPid) && !processRuns(benPid) })
+	if homes, err := coder.dir.CallerHomeDirs(auth.PairPrincipal("assistant")); err != nil || len(homes) != 0 {
+		t.Fatalf("CallerHomeDirs() after removing the pairing = %v, %v, want none", homes, err)
+	}
+}
+
+func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	token := coder.pair("assistant", auth.RoleMember)
+	for i := range maxCallerHomes {
+		if err := os.MkdirAll(coder.dir.CallerHomeDir(auth.PairPrincipal("assistant"), fmt.Sprintf("%016x", i)), 0o700); err != nil {
+			t.Fatalf("MkdirAll() error = %v", err)
+		}
+	}
+	c := coder.client(token)
+	viaAssistant := func(caller string) context.Context {
+		return a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {"1"}, auth.HeaderCaller: {caller}})
+	}
+
+	_, err := c.SendMessage(viaAssistant("new-person"), &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+
+	if err == nil || !strings.Contains(err.Error(), fmt.Sprintf("at most %d people", maxCallerHomes)) {
+		t.Fatalf("SendMessage() for one person too many error = %v, want the limit of agent homes", err)
+	}
+	res, err := c.SendMessage(context.Background(), &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+	if err != nil {
+		t.Fatalf("SendMessage() without a caller error = %v", err)
+	}
+	if task, ok := res.(*a2a.Task); !ok || task.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("SendMessage() without a caller = %#v, want a completed task", res)
+	}
+}
+
 func TestAgentCallsContactWhileWaitingForApproval(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})

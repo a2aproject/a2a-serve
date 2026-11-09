@@ -228,6 +228,38 @@ func TestChainAuthenticate(t *testing.T) {
 			}},
 		},
 		{
+			name:   "agent names the person behind its call",
+			policy: testPolicy(true, nil),
+			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderHops, "1", HeaderCaller, "Zm9vYmFy_-09")},
+			want: Principal{ID: "pair:phone", Role: RoleMember, Identity: Identity{
+				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner, Hops: 1, Caller: "Zm9vYmFy_-09",
+			}},
+		},
+		{
+			name:   "caller without hops ignored",
+			policy: testPolicy(true, nil),
+			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderCaller, "Zm9vYmFy")},
+			want: Principal{ID: "pair:phone", Role: RoleOwner, Identity: Identity{
+				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner,
+			}},
+		},
+		{
+			name:   "caller with other characters ignored",
+			policy: testPolicy(true, nil),
+			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderHops, "1", HeaderCaller, "../anna")},
+			want: Principal{ID: "pair:phone", Role: RoleMember, Identity: Identity{
+				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner, Hops: 1,
+			}},
+		},
+		{
+			name:   "too long caller ignored",
+			policy: testPolicy(true, nil),
+			req:    Request{Listener: network.ListenerPublic, Header: header("Authorization", "Bearer "+ownerToken, HeaderHops, "1", HeaderCaller, strings.Repeat("a", 65))},
+			want: Principal{ID: "pair:phone", Role: RoleMember, Identity: Identity{
+				Network: network.ListenerPublic, Pairing: "phone", PairingRole: RoleOwner, Hops: 1,
+			}},
+		},
+		{
 			name:   "pairing token on the tailnet takes the higher role",
 			policy: testPolicy(true, nil),
 			req:    Request{Listener: network.ListenerPrivate, RemoteAddr: "100.1.1.2:5000", Header: header("Authorization", "Bearer "+ownerToken)},

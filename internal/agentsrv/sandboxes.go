@@ -76,10 +76,12 @@ func newSandboxes(config func() *agentdir.Config, st *store.Store) *sandboxes {
 // remember keeps the principal of a user who called, for the sandbox of
 // their container, and saves its identity when it changed.
 func (s *sandboxes) remember(ctx context.Context, p auth.Principal) {
-	key := agentkey.Of(p, true)
-	if _, ok := agentkey.UserOf(key); !ok {
+	if _, ok := agentkey.UserOf(agentkey.Of(p, true)); !ok {
 		return
 	}
+	// The rules match the user, whichever of its callers a call is for.
+	key := agentkey.User(p.ID)
+	p.Caller = ""
 	s.mu.Lock()
 	prev, known := s.users[key]
 	save := !known || prev.p.Identity != p.Identity || time.Since(prev.saved) > identityRefresh
@@ -140,7 +142,7 @@ func (s *sandboxes) principalOf(ctx context.Context, key string) (auth.Principal
 	}
 	id, _ := agentkey.UserOf(key)
 	s.mu.Lock()
-	u, ok := s.users[key]
+	u, ok := s.users[agentkey.User(id)]
 	s.mu.Unlock()
 	if ok {
 		return u.p, true, nil
@@ -213,7 +215,7 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 	if err != nil {
 		return nil, err
 	}
-	if ok && key != agentkey.Of(caller, ok) {
+	if ok && !sameProcessUser(key, agentkey.Of(caller, ok)) {
 		if err := s.admitOther(ctx, caller, key, want); err != nil {
 			return nil, err
 		}
@@ -268,6 +270,18 @@ func (s *Server) admitOther(ctx context.Context, caller auth.Principal, key stri
 		return errSandboxPrivate
 	}
 	return nil
+}
+
+// sameProcessUser reports whether two agent keys are the processes of one
+// user, whose sandbox rules are the same: a user's own process and those
+// it has for the people behind its calls.
+func sameProcessUser(a, b string) bool {
+	if a == b {
+		return true
+	}
+	ida, oka := agentkey.UserOf(a)
+	idb, okb := agentkey.UserOf(b)
+	return oka && okb && ida == idb
 }
 
 // answersWaiting reports whether execCtx answers a task that waits for
@@ -423,8 +437,8 @@ func workspaceName(key string) string {
 	if key == "" {
 		return "owner"
 	}
-	if id, ok := agentkey.UserOf(key); ok {
-		return agentdir.UserKey(id)
+	if _, ok := agentkey.UserOf(key); ok {
+		return userProcessName(key)
 	}
 	return key
 }

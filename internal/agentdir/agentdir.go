@@ -210,10 +210,39 @@ func (d Dir) UserWorkspacesDir(id string) string {
 	return filepath.Join(d.WorkspacesDir(), UserKey(id))
 }
 
-// RemoveUserHome deletes the home and the private workspaces of the agent
-// process of the user with the principal ID id, if there are any.
+// CallerName names the agent process that the member id, another agent,
+// runs for one of its callers, in paths and container names. caller is the
+// part of the process's agent key that names the caller.
+func CallerName(id, caller string) string { return UserKey(id) + "-" + caller }
+
+// CallerHomeDir is the home of the agent process that the member id runs
+// for caller.
+func (d Dir) CallerHomeDir(id, caller string) string {
+	return filepath.Join(d.UserHomesDir(), CallerName(id, caller))
+}
+
+// CallerHomeDirs returns the homes of the agent processes that the member
+// id runs for its callers.
+func (d Dir) CallerHomeDirs(id string) ([]string, error) {
+	return filepath.Glob(filepath.Join(d.UserHomesDir(), CallerName(id, "*")))
+}
+
+// CallerWorkspacesDirs returns the private workspaces of the agent
+// containers that the member id runs for its callers.
+func (d Dir) CallerWorkspacesDirs(id string) ([]string, error) {
+	return filepath.Glob(filepath.Join(d.WorkspacesDir(), CallerName(id, "*")))
+}
+
+// RemoveUserHome deletes the homes and the private workspaces of the agent
+// processes of the user with the principal ID id, if there are any.
 func (d Dir) RemoveUserHome(id string) error {
-	return errors.Join(os.RemoveAll(d.UserHomeDir(id)), os.RemoveAll(d.UserWorkspacesDir(id)))
+	homes, herr := d.CallerHomeDirs(id)
+	workspaces, werr := d.CallerWorkspacesDirs(id)
+	errs := []error{herr, werr}
+	for _, dir := range append(append(homes, workspaces...), d.UserHomeDir(id), d.UserWorkspacesDir(id)) {
+		errs = append(errs, os.RemoveAll(dir))
+	}
+	return errors.Join(errs...)
 }
 
 // UserKey is a short stable name of the principal ID id, for paths and

@@ -176,9 +176,9 @@ func TestRemoveUserHome(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Open() error = %v", err)
 	}
-	for _, id := range []string{"pair:anna", "pair:bob"} {
-		if err := os.MkdirAll(filepath.Join(d.UserHomeDir(id), ".config"), 0o700); err != nil {
-			t.Fatalf("MkdirAll(%s) error = %v", id, err)
+	for _, dir := range []string{d.UserHomeDir("pair:anna"), d.CallerHomeDir("pair:anna", "0123456789abcdef"), d.UserHomeDir("pair:bob"), d.CallerHomeDir("pair:bob", "0123456789abcdef")} {
+		if err := os.MkdirAll(filepath.Join(dir, ".config"), 0o700); err != nil {
+			t.Fatalf("MkdirAll(%s) error = %v", dir, err)
 		}
 	}
 
@@ -186,11 +186,15 @@ func TestRemoveUserHome(t *testing.T) {
 		t.Fatalf("RemoveUserHome() error = %v", err)
 	}
 
-	if _, err := os.Stat(d.UserHomeDir("pair:anna")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("Stat() of the removed home error = %v, want %v", err, os.ErrNotExist)
+	for _, dir := range []string{d.UserHomeDir("pair:anna"), d.CallerHomeDir("pair:anna", "0123456789abcdef")} {
+		if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("Stat(%s) of a removed home error = %v, want %v", dir, err, os.ErrNotExist)
+		}
 	}
-	if _, err := os.Stat(d.UserHomeDir("pair:bob")); err != nil {
-		t.Fatalf("Stat() of another user's home error = %v", err)
+	for _, dir := range []string{d.UserHomeDir("pair:bob"), d.CallerHomeDir("pair:bob", "0123456789abcdef")} {
+		if _, err := os.Stat(dir); err != nil {
+			t.Fatalf("Stat(%s) of another user's home error = %v", dir, err)
+		}
 	}
 	if err := d.RemoveUserHome("pair:anna"); err != nil {
 		t.Fatalf("RemoveUserHome() of a missing home error = %v", err)

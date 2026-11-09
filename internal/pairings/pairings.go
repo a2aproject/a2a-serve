@@ -118,6 +118,13 @@ type Homes interface {
 	// UserWorkspacesDir is the path of the private workspaces of the user
 	// id, which RemoveUserHome deletes too.
 	UserWorkspacesDir(id string) string
+	// CallerHomeDirs are the homes of the agent processes that the user id,
+	// another agent, has for the people behind its calls. RemoveUserHome
+	// deletes them too.
+	CallerHomeDirs(id string) ([]string, error)
+	// CallerWorkspacesDirs are the private workspaces of those processes,
+	// which RemoveUserHome deletes too.
+	CallerWorkspacesDirs(id string) ([]string, error)
 }
 
 func invalid(format string, args ...any) error {
@@ -515,12 +522,20 @@ func (s *Service) PreviewRemove(ctx context.Context, name string) (*RemovalPrevi
 		if err != nil {
 			return nil, fmt.Errorf("checking the agent home of %s: %w", name, err)
 		}
-		resp.AgentHomes = append(resp.AgentHomes, home...)
+		callerHomes, err := s.deps.Homes.CallerHomeDirs(u.Principal)
+		if err != nil {
+			return nil, fmt.Errorf("listing the agent homes of the callers of %s: %w", name, err)
+		}
+		resp.AgentHomes = append(append(resp.AgentHomes, home...), callerHomes...)
 		ws, err := existing(s.deps.Homes.UserWorkspacesDir(u.Principal))
 		if err != nil {
 			return nil, fmt.Errorf("checking the private workspaces of %s: %w", name, err)
 		}
-		resp.Workspaces = append(resp.Workspaces, ws...)
+		callerWorkspaces, err := s.deps.Homes.CallerWorkspacesDirs(u.Principal)
+		if err != nil {
+			return nil, fmt.Errorf("listing the private workspaces of the callers of %s: %w", name, err)
+		}
+		resp.Workspaces = append(append(resp.Workspaces, ws...), callerWorkspaces...)
 	}
 	return resp, nil
 }
@@ -566,7 +581,7 @@ func (s *Service) isRemoving(name string) bool {
 func pairingUsers(name string) []store.PairingUser {
 	var out []store.PairingUser
 	for _, p := range []string{auth.PairPrincipal(name), auth.NodePrincipal(name)} {
-		out = append(out, store.PairingUser{Principal: p, AgentKey: agentkey.User(p)})
+		out = append(out, store.PairingUser{Principal: p, AgentKey: agentkey.User(p), CallerKeys: agentkey.CallerPrefix(p)})
 	}
 	return out
 }

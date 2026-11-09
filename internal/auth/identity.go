@@ -64,6 +64,10 @@ type Identity struct {
 	Self bool `json:"self,omitempty"`
 	// Hops is the number of agent servers the request passed through.
 	Hops int `json:"hops,omitempty"`
+	// Caller is the opaque ID that the calling agent gives the person a
+	// call is for, with Hops above 0. It keeps their agent processes
+	// apart, and never decides access.
+	Caller string `json:"caller,omitempty"`
 }
 
 // identified reports whether the identity holds a verified claim beyond

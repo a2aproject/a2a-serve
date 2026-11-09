@@ -16,6 +16,9 @@ package agentproxy
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -51,6 +54,8 @@ type ContactClients struct {
 	nodes   *nodes.Host
 	ads     *gossip.Table
 	config  func() *agentdir.Config
+	// callerKey derives the caller IDs of the calls to other agents.
+	callerKey []byte
 
 	// builds joins the concurrent builds of one contact's client, so that
 	// two calls don't build one each and destroy the other's.
@@ -74,6 +79,10 @@ type ContactClientsDeps struct {
 	Ads     *gossip.Table
 	// Config returns the current config of the agent.
 	Config func() *agentdir.Config
+	// CallerKey derives the IDs that calls to other agents give the people
+	// they are for, so that the agent called keeps them apart. Calls have
+	// none without it.
+	CallerKey []byte
 }
 
 var _ approvals.RemoteAnswerer = (*ContactClients)(nil)
@@ -81,12 +90,13 @@ var _ approvals.RemoteAnswerer = (*ContactClients)(nil)
 // NewContactClients returns the contact clients of deps.
 func NewContactClients(deps ContactClientsDeps) *ContactClients {
 	return &ContactClients{
-		store:   deps.Store,
-		private: deps.Private,
-		nodes:   deps.Nodes,
-		ads:     deps.Ads,
-		config:  deps.Config,
-		clients: map[string]*contactClient{},
+		store:     deps.Store,
+		private:   deps.Private,
+		nodes:     deps.Nodes,
+		ads:       deps.Ads,
+		config:    deps.Config,
+		callerKey: deps.CallerKey,
+		clients:   map[string]*contactClient{},
 	}
 }
 
@@ -254,10 +264,27 @@ func (cc *ContactClients) HTTPClient(c store.Contact) *http.Client {
 }
 
 // viaAgent returns ctx for calling another agent from a conversation hops
-// agents deep. The agent called caps what the call may do by the hop count;
-// the user stays with this server, which relays the approvals.
-func viaAgent(ctx context.Context, hops int) context.Context {
-	return a2aclient.AttachServiceParams(ctx, a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(hops + 1)}})
+// agents deep, with the caller ID of its user. The agent called caps what
+// the call may do by the hop count; the user stays with this server, which
+// relays the approvals.
+func viaAgent(ctx context.Context, hops int, caller string) context.Context {
+	params := a2aclient.ServiceParams{auth.HeaderHops: {strconv.Itoa(hops + 1)}}
+	if caller != "" {
+		params[auth.HeaderCaller] = []string{caller}
+	}
+	return a2aclient.AttachServiceParams(ctx, params)
+}
+
+// callerID is the opaque, stable ID that calls to other agents give user.
+// It covers the caller ID of an agent that called this one, so that the
+// people behind that agent stay apart too.
+func (cc *ContactClients) callerID(user auth.Principal) string {
+	if len(cc.callerKey) == 0 || user.ID == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, cc.callerKey)
+	mac.Write([]byte(user.ID + "\x00" + user.Caller))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)[:16])
 }
 
 // target is an agent the server calls for a user.
@@ -269,20 +296,21 @@ type target interface {
 }
 
 type remoteTarget struct {
-	c    *a2aclient.Client
-	hops int
+	c      *a2aclient.Client
+	hops   int
+	caller string
 }
 
 func (t remoteTarget) send(ctx context.Context, msg *a2a.Message) (a2a.SendMessageResult, error) {
-	return t.c.SendMessage(viaAgent(ctx, t.hops), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
+	return t.c.SendMessage(viaAgent(ctx, t.hops, t.caller), &a2a.SendMessageRequest{Message: msg, Config: &a2a.SendMessageConfig{ReturnImmediately: true}})
 }
 
 func (t remoteTarget) get(ctx context.Context, id a2a.TaskID) (*a2a.Task, error) {
-	return t.c.GetTask(viaAgent(ctx, t.hops), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
+	return t.c.GetTask(viaAgent(ctx, t.hops, t.caller), &a2a.GetTaskRequest{ID: id, HistoryLength: new(int)})
 }
 
 func (t remoteTarget) cancel(ctx context.Context, id a2a.TaskID) error {
-	_, err := t.c.CancelTask(viaAgent(ctx, t.hops), &a2a.CancelTaskRequest{ID: id})
+	_, err := t.c.CancelTask(viaAgent(ctx, t.hops, t.caller), &a2a.CancelTaskRequest{ID: id})
 	return err
 }
 
@@ -321,7 +349,7 @@ func (cc *ContactClients) target(ctx context.Context, name string, user auth.Pri
 	if err != nil {
 		return nil, err
 	}
-	return remoteTarget{c: client, hops: hops}, nil
+	return remoteTarget{c: client, hops: hops, caller: cc.callerID(user)}, nil
 }
 
 // isNode reports whether name is a webhook node hosted here.
@@ -418,7 +446,7 @@ func (cc *ContactClients) agentHandler(ctx context.Context, c Claims, name strin
 		return nil, nil, err
 	}
 	return &a2aproxy.ClientHandler{Client: client, Context: func(ctx context.Context) context.Context {
-		return viaAgent(ctx, c.User.Hops)
+		return viaAgent(ctx, c.User.Hops, cc.callerID(c.User))
 	}}, nil, nil
 }
 
