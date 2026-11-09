@@ -119,16 +119,18 @@ func (s *Server) routes(l listener) http.Handler {
 		s.inspector.Register(mux)
 	}
 	s.nodes.Register(mux, l.kind, func(r *http.Request) string { return base(baseURL, r) })
-	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, jsonrpc))
-	mux.Handle("/", s.a2aRoute(l.kind, protocolREST, rest))
+	bodies := newGuestBodies(maxGuestBodies, jsonhttp.ReadIdleTimeout)
+	mux.Handle("POST /{$}", s.a2aRoute(l.kind, protocolJSONRPC, bodies, jsonrpc))
+	mux.Handle("/", s.a2aRoute(l.kind, protocolREST, bodies, rest))
 	return http.NewCrossOriginProtection().Handler(mux)
 }
 
 // a2aRoute serves an A2A transport to authenticated callers, and answers
-// a body over the limit as an error of p.
-func (s *Server) a2aRoute(kind string, p a2aProtocol, h http.Handler) http.Handler {
+// a body over the limit as an error of p. The bodies of guests are charged
+// to bodies, the budget of the listener.
+func (s *Server) a2aRoute(kind string, p a2aProtocol, bodies *guestBodies, h http.Handler) http.Handler {
 	limit := jsonhttp.Limit{Max: jsonhttp.MaxBody, Idle: jsonhttp.ReadIdleTimeout, TooLarge: p.tooLarge}
-	return jsonhttp.RequireJSON(limit.Handler(s.authenticate(kind, p.readBody(h))))
+	return jsonhttp.RequireJSON(limit.Handler(s.authenticate(kind, bodies.handler(p, p.readBody(h)))))
 }
 
 // base returns the configured base URL or derives it from the request.

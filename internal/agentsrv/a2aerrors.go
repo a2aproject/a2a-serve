@@ -19,7 +19,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
+	"strconv"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/errordetails"
@@ -97,6 +99,12 @@ func (p a2aProtocol) tooLarge(w http.ResponseWriter) {
 	p.writeError(w, http.StatusRequestEntityTooLarge, a2a.ErrInvalidRequest, "request body too large")
 }
 
+// busy answers a request that waited too long for the server to take it.
+func (p a2aProtocol) busy(w http.ResponseWriter, err *guestBodiesBusyError) {
+	w.Header().Set("Retry-After", strconv.Itoa(max(1, int(math.Ceil(err.retryAfter.Seconds())))))
+	p.writeError(w, http.StatusServiceUnavailable, a2a.ErrInternalError, err.Error())
+}
+
 // readBody reads the whole request body before next, so that a body over
 // the limit gets 413 also without a Content-Length, which a2a-go would
 // answer as a parse error.
@@ -104,9 +112,13 @@ func (p a2aProtocol) readBody(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
 		var tooLarge *http.MaxBytesError
+		var busy *guestBodiesBusyError
 		switch {
 		case errors.As(err, &tooLarge):
 			p.tooLarge(w)
+			return
+		case errors.As(err, &busy):
+			p.busy(w, busy)
 			return
 		case err != nil:
 			slog.Debug("reading an A2A request body", "error", err)
