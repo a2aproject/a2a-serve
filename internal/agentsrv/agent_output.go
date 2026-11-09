@@ -138,6 +138,10 @@ func (b *boundedMessages) scan(p []byte) (int, bool) {
 // reader to see the output end.
 const agentReadEndGrace = 5 * time.Second
 
+// agentExitSettle is how long closing an agent's stream waits after its
+// reader saw the output end.
+const agentExitSettle = 50 * time.Millisecond
+
 // awaitedClose closes an agent's stream and waits, up to grace, until its
 // reader saw the output end. The ACP pool notices that an agent exited only
 // once its reader does, and until then sends new prompts to the closed
@@ -167,6 +171,10 @@ func (a *awaitedClose) Close() error {
 	defer t.Stop()
 	select {
 	case <-a.ended:
+		// The ACP connection marks the agent exited just after its read
+		// returns, with no signal to wait for; a prompt sent before that
+		// fails the turn.
+		time.Sleep(agentExitSettle)
 	case <-t.C:
 	}
 	return err
