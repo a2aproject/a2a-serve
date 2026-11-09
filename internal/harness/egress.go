@@ -223,12 +223,13 @@ func noInject(cfg *agentdir.Config, why string) string {
 		}
 	}
 	secrets := cfg.InjectedSecrets()
-	var store strings.Builder
-	store.WriteString("`a2a-serve config set")
-	for _, name := range secrets {
-		store.WriteString(" --secret " + name + "=-")
+	// One flag per command can read its secret from a prompt, so each key
+	// gets a command of its own.
+	store := make([]string, len(secrets))
+	for i, name := range secrets {
+		store[i] = "`a2a-serve config set --secret " + name + "=-`"
 	}
-	return fmt.Sprintf("%s can't apply: %s. The agent doesn't start, so that it can't read %s. Fix that, or put the keys in the agent's environment: remove the rules with %s, then store the keys again with %s`", strings.Join(flags, " and "), why, strings.Join(secrets, ", "), strings.Join(unset, " and "), store.String())
+	return fmt.Sprintf("%s can't apply: %s. The agent doesn't start, so that it can't read %s. Fix that, or put the keys in the agent's environment: remove the rules with %s, then store the keys again with %s", strings.Join(flags, " and "), why, strings.Join(secrets, ", "), strings.Join(unset, " and "), strings.Join(store, " and "))
 }
 
 // noAllowlistRules warns about an allowlist that allows nothing.

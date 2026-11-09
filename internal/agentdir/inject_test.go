@@ -96,6 +96,7 @@ func TestApplyInjectRuleErrors(t *testing.T) {
 		want string
 	}{
 		{name: "unset variable", s: Settings{InjectModelKeys: []string{"openrouter=INJECT_TEST_UNSET"}}, want: "the environment variable INJECT_TEST_UNSET is not set"},
+		{name: "two unset variables", s: Settings{InjectHeaders: []string{"h.example=X-Auth: $INJECT_TEST_A:$INJECT_TEST_B"}}, want: "the environment variables INJECT_TEST_A, INJECT_TEST_B are not set; set them"},
 		{name: "unknown provider", s: Settings{InjectModelKeys: []string{"mistral=K"}}, want: `unknown model provider "mistral": want anthropic, gemini, openai, openrouter`},
 		{name: "expanded by the shell", s: Settings{InjectHeaders: []string{"api.github.com=Authorization: Bearer ghp_x"}}, want: "quote the rule in single quotes"},
 	}

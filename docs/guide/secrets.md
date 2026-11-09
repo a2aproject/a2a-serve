@@ -88,7 +88,7 @@ $ a2a-serve status
 | Change a key | Set the variable to the new value and run the same `config set --inject-…` command with `--restart`. |
 | Remove a rule | `a2a-serve config unset inject-header api.github.com` or `a2a-serve config unset inject-model-key openrouter`. The secret is removed with the rule, so it doesn't reach the agent's environment. |
 
-Rules apply at the next start, so run `a2a-serve restart` or pass `--restart`. A rule allows its host with `--egress allowlist` too.
+Rules apply at the next start, so run `a2a-serve restart` or pass `--restart`. With `--egress allowlist`, a rule also allows its host for the containers that get its secrets.
 
 Sandbox rules decide which containers get the key. A container that a rule doesn't give `GITHUB_TOKEN` gets neither the variable nor the header. `NAME=secret:OTHER` adds the value of `OTHER`.
 

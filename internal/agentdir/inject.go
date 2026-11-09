@@ -187,15 +187,22 @@ func mergeInject(model bool) func(s *Settings, cfg *Config, d Dir, secrets Secre
 			if err != nil {
 				return fmt.Errorf("--%s: %w", flag, err)
 			}
+			var unset []string
 			for _, name := range r.Secrets() {
 				v := cmp.Or(secrets[name], s.SecretValues[name], os.Getenv(name))
 				switch {
 				case v != "":
 					secrets[name] = v
 				case !slices.Contains(cfg.Secrets, name):
-					return fmt.Errorf("--%s: the environment variable %s is not set; set it, or add --secret %s=- to this command to type the value", flag, name, name)
+					unset = append(unset, name)
 				}
 				cfg.Secrets = putKeyed(cfg.Secrets, name, nil)
+			}
+			switch {
+			case len(unset) == 1:
+				return fmt.Errorf("--%s: the environment variable %s is not set; set it, or add --secret %s=- to this command to type the value", flag, unset[0], unset[0])
+			case len(unset) > 1:
+				return fmt.Errorf("--%s: the environment variables %s are not set; set them and run the command again", flag, strings.Join(unset, ", "))
 			}
 			cur := injectRules(model).get(cfg)
 			injectRules(model).put(cfg, putKeyed(cur, r.Entry(), injectKey(model)))

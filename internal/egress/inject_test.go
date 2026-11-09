@@ -80,9 +80,10 @@ func TestParseHeaderRuleRejects(t *testing.T) {
 		{in: "api.github.com=Host: $K", want: "can't set the header Host"},
 		{in: "api.github.com=Proxy-Authorization: $K", want: "can't set the header"},
 		{in: "1.2.3.4=Authorization: $K", want: "IP address"},
-		{in: "*.github.com=Authorization: $K", want: "one host name"},
+		{in: "*.github.com=Authorization: $K", want: "name each host in a rule of its own"},
 		{in: "api.github.com:0=Authorization: $K", want: "invalid port"},
-		{in: "bad host=Authorization: $K", want: "invalid host name"},
+		{in: "bad host=Authorization: $K", want: "isn't a valid host name"},
+		{in: "Authorization: Basic ghp_x=", want: "the host before ="},
 	}
 	for _, tc := range tests {
 		_, err := ParseHeaderRule(tc.in)

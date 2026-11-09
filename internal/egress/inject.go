@@ -212,7 +212,9 @@ func ParseHeaderRule(s string) (HeaderRule, error) {
 	}
 	host, port, err := ParseInjectTarget(dest)
 	if err != nil {
-		return HeaderRule{}, fmt.Errorf("invalid header rule for %q: %w", dest, err)
+		// The part before = may be a value the shell expanded, when the
+		// host is missing.
+		return HeaderRule{}, fmt.Errorf("invalid header rule: the host before = %w; want host=Name: value, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'", err)
 	}
 	name, value, ok := strings.Cut(header, ":")
 	name, value = strings.TrimSpace(name), strings.TrimSpace(value)
@@ -245,19 +247,19 @@ func ParseInjectTarget(s string) (string, uint16, error) {
 	if h, p, err := net.SplitHostPort(s); err == nil {
 		n, err := ParsePort(p)
 		if err != nil {
-			return "", 0, err
+			return "", 0, errors.New("has an invalid port")
 		}
 		host, port = h, int(n)
 	}
 	if _, err := netip.ParseAddr(host); err == nil {
-		return "", 0, errors.New("want a host name; the server can't add headers for an IP address")
+		return "", 0, errors.New("is an IP address, and the server adds headers only for a host name")
 	}
 	if strings.HasPrefix(host, "*.") {
-		return "", 0, errors.New("want one host name; name each host in a rule of its own")
+		return "", 0, errors.New("names several hosts; name each host in a rule of its own")
 	}
 	name, err := NormalizeHost(host)
 	if err != nil {
-		return "", 0, err
+		return "", 0, errors.New("isn't a valid host name")
 	}
 	return name, uint16(port), nil
 }

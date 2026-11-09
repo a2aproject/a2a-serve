@@ -220,6 +220,10 @@ func TestProbeFailed(t *testing.T) {
 			want: "--inject-model-key can't apply: the agent's container can't set up its network: operation not permitted. The agent doesn't start, so that it can't read OPENROUTER_API_KEY. Fix that, or put the keys in the agent's environment: remove the rules with `a2a-serve config unset inject-model-key`, then store the keys again with `a2a-serve config set --secret OPENROUTER_API_KEY=-`",
 		},
 	}
+	two := probeFailed(&agentdir.Config{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "K"}, {Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, errors.New("x"))
+	if want := "remove the rules with `a2a-serve config unset inject-model-key` and `a2a-serve config unset inject-header`, then store the keys again with `a2a-serve config set --secret K=-` and `a2a-serve config set --secret GH=-`"; !strings.Contains(two.Warning, want) {
+		t.Fatalf("probeFailed() warning = %q, want it to contain %q", two.Warning, want)
+	}
 	for _, tc := range tests {
 		got := probeFailed(&tc.cfg, errors.New("operation not permitted"))
 		if got.Boundary || got.Problem == "" || !strings.HasPrefix(got.Warning, tc.want) {
