@@ -474,7 +474,7 @@ func (n *Host) postEvent(ctx context.Context, node string, taskID a2a.TaskID, ev
 		if wt == nil {
 			n.mu.Unlock()
 			current := "unknown"
-			if t, err := n.tasks(ctx, node).Get(auth.WithPrincipal(ctx, auth.Owner()), taskID); err == nil {
+			if t, err := n.tasks(ctx, node).Header(auth.WithPrincipal(ctx, auth.Owner()), taskID); err == nil {
 				current = mailboxapi.StateName(t.Task.Status.State)
 			}
 			return mailboxapi.EventResult{}, fmt.Errorf("task %s is %s and not waiting for an event from the node", taskID, current)

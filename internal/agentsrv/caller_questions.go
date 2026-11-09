@@ -119,7 +119,7 @@ func (qt *questionTasks) End(ctx context.Context, contextID, agent, taskID strin
 // end completes the question task id, and returns its last event, or nil
 // if the task moved on.
 func (qt *questionTasks) end(ctx context.Context, id a2a.TaskID, rec store.Question) (*a2a.TaskStatusUpdateEvent, error) {
-	stored, err := qt.tasks.Get(ctx, id)
+	stored, err := qt.tasks.Header(ctx, id)
 	if err != nil {
 		return nil, err
 	}

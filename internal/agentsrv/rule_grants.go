@@ -51,7 +51,7 @@ func (r *ruleAnswers) record(ctx context.Context, p auth.Principal, execCtx *a2a
 	if q.Rule == "" {
 		return nil
 	}
-	stored, err := r.tasks.Get(auth.WithPrincipal(ctx, auth.Owner()), execCtx.TaskID)
+	stored, err := r.tasks.Header(auth.WithPrincipal(ctx, auth.Owner()), execCtx.TaskID)
 	if err != nil {
 		return fmt.Errorf("checking task %s: %w", execCtx.TaskID, err)
 	}
