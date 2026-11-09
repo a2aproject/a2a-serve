@@ -197,7 +197,12 @@ func TestNarrowedRulesEndTheWaitingTasksOfTheContainer(t *testing.T) {
 
 func TestAnswerIntoANarrowedContainerIsRefused(t *testing.T) {
 	t.Parallel()
-	ts := sandboxServer(t)
+	// The sandbox loop would cancel the waiting task before the answer.
+	ts := startServer(t, serverOpts{
+		secrets:   agentdir.Secrets{"KEY": "owner-key", "GUEST": "guest-key"},
+		configure: func(c *agentdir.Config) { c.Secrets = []string{"KEY", "GUEST"} },
+		timings:   func(tm *Timings) { tm.SandboxCheckInterval = time.Hour },
+	})
 	ben := ts.client(ts.pair("ben", auth.RoleMember))
 	waiting := send(t, ben, userText("ask", "", ""))
 	setRule(t, ts, agentdir.SandboxRule{Match: []string{"pairing:ben"}, Secrets: []string{"none"}})
