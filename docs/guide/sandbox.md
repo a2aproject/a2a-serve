@@ -39,7 +39,7 @@ Sandbox rules set what chosen callers get, such as a read-only workspace for a p
            guests: read-only workspace, no secrets
 ```
 
-These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent. `config set`, `config edit` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
+These lines appear when sandbox rules exist or guests may call; without them, every caller gets the same. `a2a-serve start` shows them when others may call the agent. `config set`, `config edit`, `messenger add`, `messenger rm` and the `pair` commands print them as "what their agent containers get:" after "who may call:". `pair get` shows what the pairing's container gets, and `pair invite` shows it when rules change it. When the agent's model needs a key that a caller's container doesn't get, these commands warn that the agent can't reach its model for them and say how to give one.
 
 ### Share the agent
 

@@ -245,9 +245,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 			return nil, err
 		}
 	}
-	if res.Access, err = changedAccess(ctx, d, old, next, client, res.Running); err != nil {
-		return nil, err
-	}
+	res.Access = changedAccess(ctx, d, old, next, client, res.Running)
 	return res, nil
 }
 

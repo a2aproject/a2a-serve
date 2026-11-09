@@ -42,9 +42,8 @@ options, backups and Google sign-in. Messengers are set with
 agent, to be started with ` + "`a2a-serve start`" + `. Scalars are
 overwritten. List entries are added, or replace the entry with the same key:
 --secret by name, --env by NAME, --mount by destination, and the other
-lists by value. Remove entries with ` + "`a2a-serve config unset`" + `. A change to who
-may call the agent, or to what their agent containers get, prints both
-afterwards.
+lists by value. Remove entries with ` + "`a2a-serve config unset`" + `. When a change
+alters who may call the agent, it prints who may call afterwards.
 
 ` + flagparse.SecretHelp,
 		Example: `  a2a-serve config set --sandbox local --allow-tools read,search --secret ANTHROPIC_API_KEY

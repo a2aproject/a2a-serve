@@ -214,8 +214,11 @@ func TestMessengerChangesReportAccess(t *testing.T) {
 			if added.Access == nil || cmp.Equal(before.Access.Summary, added.Access.Summary) {
 				t.Fatalf("AddMessenger().Access = %+v, want who may call with the messenger", added.Access)
 			}
-			if diff := cmp.Diff(before.Access.Summary, removed.Access.Summary); removed.Access == nil || diff != "" {
-				t.Fatalf("DeleteMessenger().Access = %+v, want who may call without the messenger as before", removed.Access)
+			if removed.Access == nil {
+				t.Fatalf("DeleteMessenger().Access = nil, want who may call without the messenger")
+			}
+			if diff := cmp.Diff(before.Access, removed.Access); diff != "" {
+				t.Fatalf("DeleteMessenger().Access wrong result (-want +got) diff = %s", diff)
 			}
 		})
 	}

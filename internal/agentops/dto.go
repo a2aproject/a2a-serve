@@ -36,9 +36,9 @@ func AccessInfo(a *access.Description) *controlapi.Access {
 }
 
 // ChangedAccess returns who may call the agent after a change, described
-// by after, if it differs from before.
+// by after, if it differs from before. A nil description is unknown.
 func ChangedAccess(before, after *access.Description) *controlapi.Access {
-	if reflect.DeepEqual(before, after) {
+	if before == nil || after == nil || reflect.DeepEqual(before, after) {
 		return nil
 	}
 	return AccessInfo(after)

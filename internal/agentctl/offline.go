@@ -17,6 +17,7 @@ package agentctl
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 
@@ -75,13 +76,15 @@ func openOffline(d agentdir.Dir, release func() error) (*offline, error) {
 }
 
 // changedAccess returns who may call the agent in d with the saved config
-// next, if that differs from the config old.
-func changedAccess(ctx context.Context, d agentdir.Dir, old, next *agentdir.Config, client *controlapi.Client, running bool) (*controlapi.Access, error) {
+// next, if that differs from the config old. The change is saved by then,
+// so failing to count the pairings only leaves the report out.
+func changedAccess(ctx context.Context, d agentdir.Dir, old, next *agentdir.Config, client *controlapi.Client, running bool) *controlapi.Access {
 	n, err := pairingCounts(ctx, d, client, running)
 	if err != nil {
-		return nil, err
+		slog.Warn("counting the pairings to report who may call", "error", err)
+		return nil
 	}
-	return agentops.ChangedAccess(access.DescribeConfig(old, access.NetworkOf(old), n), access.DescribeConfig(next, access.NetworkOf(next), n)), nil
+	return agentops.ChangedAccess(access.DescribeConfig(old, access.NetworkOf(old), n), access.DescribeConfig(next, access.NetworkOf(next), n))
 }
 
 // pairingCounts counts the pairings of the agent in d, from the running

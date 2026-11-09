@@ -406,20 +406,24 @@ func (s *Service) DeleteSchedule(ctx context.Context, name string) error {
 // AddMessenger checks the messenger's credentials, saves it and its secrets,
 // and starts it on a running agent.
 func (s *Service) AddMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error) {
-	before, err := s.Access(ctx)
-	if err != nil {
-		return nil, err
-	}
+	before := s.reportedAccess(ctx)
 	st, err := s.addMessenger(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	after, err := s.Access(ctx)
-	if err != nil {
-		return nil, err
-	}
-	st.Access = ChangedAccess(before, after)
+	st.Access = ChangedAccess(before, s.reportedAccess(ctx))
 	return st, nil
+}
+
+// reportedAccess describes who may call the agent for the report after a
+// change, or returns nil when that fails, which leaves the report out.
+func (s *Service) reportedAccess(ctx context.Context) *access.Description {
+	a, err := s.Access(ctx)
+	if err != nil {
+		slog.Warn("describing who may call the agent", "error", err)
+		return nil
+	}
+	return a
 }
 
 func (s *Service) addMessenger(ctx context.Context, req controlapi.MessengerRequest) (*controlapi.MessengerStatus, error) {
@@ -467,19 +471,12 @@ func (s *Service) DeleteMessenger(ctx context.Context, kind string) (*controlapi
 	if !s.deps.Runtime.Config().HasMessenger(kind) {
 		return nil, &agenterr.NotFoundError{Kind: "messenger", Name: kind}
 	}
-	before, err := s.Access(ctx)
-	if err != nil {
-		return nil, err
-	}
+	before := s.reportedAccess(ctx)
 	if err := s.deps.Runtime.Update(func(c *agentdir.Config) error { return c.SetMessenger(kind, "", nil) }); err != nil {
 		return nil, err
 	}
 	if s.deps.Hooks.MessengerRemoved != nil {
 		s.deps.Hooks.MessengerRemoved(kind)
 	}
-	after, err := s.Access(ctx)
-	if err != nil {
-		return nil, err
-	}
-	return &controlapi.MessengerRemoval{Removed: kind, Access: ChangedAccess(before, after)}, nil
+	return &controlapi.MessengerRemoval{Removed: kind, Access: ChangedAccess(before, s.reportedAccess(ctx))}, nil
 }
