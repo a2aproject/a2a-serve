@@ -20,6 +20,7 @@ import (
 	"slices"
 
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
+	"github.com/a2aproject/a2a-serve/internal/shellquote"
 )
 
 // FieldError is an invalid entry of a setting. It names the setting by its
@@ -142,7 +143,7 @@ func fixHint(e *FieldError) (agenterr.Hint, string) {
 	if !f.list {
 		return agenterr.HintConfigUnset, e.Flag
 	}
-	return agenterr.HintConfigUnset, e.Flag + " " + shellQuote(e.Entry)
+	return agenterr.HintConfigUnset, e.Flag + " " + shellquote.Quote(e.Entry)
 }
 
 // problems returns the problems joined in err.

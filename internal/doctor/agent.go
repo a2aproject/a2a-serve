@@ -305,7 +305,7 @@ func checkRelay(ctx context.Context, env Env, cfg *agentdir.Config, online bool)
 	}
 	if !network.AgentMeshBuilt {
 		return []Result{{ID: "relay", Status: StatusFail, Message: "this a2a-serve was built without Agent Mesh, so it can't join " + relay,
-			Fix: "go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"}}
+			Fix: network.InstallAgentMesh}}
 	}
 	version := Result{ID: "relay", Status: StatusOK, Message: fmt.Sprintf("joins %s with Agent Mesh %s", relay, network.AgentMeshVersion)}
 	if !online || env.HTTP == nil {

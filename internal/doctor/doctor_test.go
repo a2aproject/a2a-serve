@@ -156,6 +156,28 @@ func checks(results []Result) []check {
 	return out
 }
 
+func TestCheckServeBinaryMissingFix(t *testing.T) {
+	t.Parallel()
+	m := newFakeMachine(t)
+	delete(m.paths, "a2a-serve")
+	got := checkServeBinary(m.Env())
+	if want := "CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest"; got.Fix != want {
+		t.Fatalf("checkServeBinary().Fix = %q, want %q", got.Fix, want)
+	}
+}
+
+func TestCheckRelayWithoutAgentMeshFix(t *testing.T) {
+	t.Parallel()
+	if network.AgentMeshBuilt {
+		t.Skip("this build has Agent Mesh")
+	}
+	cfg := &agentdir.Config{Network: agentdir.NetworkConfig{Private: "https://relay.example.com"}}
+	got := checkRelay(context.Background(), newFakeMachine(t).Env(), cfg, false)
+	if want := "CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"; len(got) != 1 || got[0].Fix != want {
+		t.Fatalf("checkRelay() = %+v, want one result with the fix %q", got, want)
+	}
+}
+
 var healthyCLI = []check{{"a2a", StatusOK}, {"plugins", StatusOK}, {"a2a-serve", StatusOK}, {"credential-helper", StatusOK}}
 
 func TestCLIChecks(t *testing.T) {
@@ -995,7 +1017,7 @@ func TestRunningAgent(t *testing.T) {
 			st.Local, st.PID = tc.local, 42
 			m.status = &st
 			env := m.Env()
-			env.HTTP = &http.Client{Timeout: 5 * time.Second}
+			env.HTTP = &http.Client{Transport: testHTTP.Transport, Timeout: 5 * time.Second}
 			if tc.token != "" {
 				if err := env.Credentials.Put(credstore.Credential{URL: tc.local, Token: tc.token}); err != nil {
 					t.Fatalf("Credentials.Put() error = %v", err)
@@ -1005,7 +1027,7 @@ func TestRunningAgent(t *testing.T) {
 			got := Run(t.Context(), env, Options{Dir: &d})
 			want := append(healthyCLI[:4:4], check{"harness-command", StatusOK}, check{"config", StatusOK})
 			if diff := cmp.Diff(append(want, tc.want...), checks(got)); diff != "" {
-				t.Fatalf("Run() wrong result (-want +got) diff = %s", diff)
+				t.Fatalf("Run() wrong result (-want +got) diff = %s\n%+v", diff, got)
 			}
 		})
 	}

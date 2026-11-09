@@ -22,7 +22,7 @@ no sidecar to run.
   [Getting Started](../../docs/getting-started.md#install)):
 
   ```bash
-  go install -tags agentmesh github.com/a2aproject/a2a-serve@latest
+  CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest
   ```
 
 - Docker, and an API key for the agent, as in the [prerequisites of Serve a coding agent](../01-agent-server/README.md#prerequisites)

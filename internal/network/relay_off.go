@@ -23,5 +23,5 @@ const AgentMeshBuilt = false
 
 // NewRelay returns the provider of an Agent Mesh relay.
 func NewRelay(RelayConfig) (Provider, error) {
-	return nil, errors.New("this a2a-serve was built without Agent Mesh support; build it with `go install -tags agentmesh github.com/a2aproject/a2a-serve@latest` to join a relay")
+	return nil, errors.New("this a2a-serve was built without Agent Mesh support; build it with `" + InstallAgentMesh + "` to join a relay")
 }

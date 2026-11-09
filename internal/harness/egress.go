@@ -164,10 +164,7 @@ type EgressDecision struct {
 // containers, doctor, status and the agent's instructions.
 func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 	if cfg.Sandbox == SandboxLocal {
-		if cfg.Egress.Mode != "" || len(cfg.Egress.Allow) > 0 {
-			return EgressDecision{Warning: "--egress and --egress-allow have no effect with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove the rules with a2a-serve config unset egress-allow"}
-		}
-		return EgressDecision{}
+		return EgressDecision{Warning: localEgressWarning(cfg)}
 	}
 	if cfg.Egress.Mode == egress.ModeUnrestricted {
 		return EgressDecision{}
@@ -196,6 +193,22 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 		return EgressDecision{Boundary: true, Warning: noAllowlistRules}
 	}
 	return EgressDecision{Boundary: true}
+}
+
+// localEgressWarning says which egress settings of cfg have no effect with
+// --sandbox local, and how to remove them, or "".
+func localEgressWarning(cfg *agentdir.Config) string {
+	mode, allow := cfg.Egress.Mode != "", len(cfg.Egress.Allow) > 0
+	effect := " with --sandbox local: " + UnrestrictedEffect + "; use --sandbox docker, or remove "
+	switch {
+	case mode && allow:
+		return "--egress and --egress-allow have no effect" + effect + "the settings with `a2a-serve config unset egress` and `a2a-serve config unset egress-allow`"
+	case mode:
+		return "--egress has no effect" + effect + "the setting with `a2a-serve config unset egress`"
+	case allow:
+		return "--egress-allow has no effect" + effect + "the rules with `a2a-serve config unset egress-allow`"
+	}
+	return ""
 }
 
 // problemDecision is the decision for cfg when problem keeps the boundary

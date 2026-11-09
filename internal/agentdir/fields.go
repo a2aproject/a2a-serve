@@ -26,6 +26,7 @@ import (
 	"github.com/google/shlex"
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/shellquote"
 	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
@@ -1036,7 +1037,7 @@ func appendFlag(args []string, flag string, values ...string) []string {
 func ShellJoin(args []string) string {
 	out := make([]string, len(args))
 	for i, a := range args {
-		out[i] = shellQuote(a)
+		out[i] = shellquote.Quote(a)
 	}
 	return strings.Join(out, " ")
 }
@@ -1053,15 +1054,6 @@ func shellSplit(s string) []string {
 		return []string{s}
 	}
 	return argv
-}
-
-func shellQuote(s string) string {
-	if s != "" && strings.IndexFunc(s, func(r rune) bool {
-		return !(r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || strings.ContainsRune("-_./:=@,+%", r))
-	}) < 0 {
-		return s
-	}
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // MessengersDiffer reports whether a and b have different messengers.

@@ -41,6 +41,10 @@ import (
 // with. Relays should run the same version.
 const AgentMeshVersion = agentmesh.Version
 
+// InstallAgentMesh installs an a2a-serve that joins relays. It builds
+// without cgo, which the launcher of the Docker sandbox's network needs.
+const InstallAgentMesh = "CGO_ENABLED=0 go install -tags agentmesh github.com/a2aproject/a2a-serve@latest"
+
 // AgentMeshHost is the virtual host of private URLs on a relay, which only
 // agents on the relay reach, through their in-process mesh node.
 const AgentMeshHost = "agentmesh.local"

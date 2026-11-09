@@ -242,6 +242,33 @@ func TestPrintStatusInject(t *testing.T) {
 	}
 }
 
+func TestPrintStatusEgressAllowHint(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name  string
+		allow string
+		want  string
+	}{
+		{name: "host", allow: "nas.lan:22", want: "allow one with a2a-serve config set --egress-allow nas.lan:22\n"},
+		{name: "IPv6 address", allow: "[fd00::1]:22", want: "allow one with a2a-serve config set --egress-allow '[fd00::1]:22'\n"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+			egress := &controlapi.EgressStatus{Mode: "internet", Blocked: 1, Recent: []controlapi.EgressBlock{{Destination: tc.allow, Allow: tc.allow}}}
+			st := &controlapi.Status{Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000", Egress: egress}
+			if err := printStatus(cfg, st, nil, nil, "", ""); err != nil {
+				t.Fatalf("printStatus() error = %v", err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("printStatus() = %q, want the hint %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestPrintStatusNetworkProblems(t *testing.T) {
 	t.Parallel()
 	removed := &controlapi.NetworkProblem{State: "removed", Problem: "the relay https://relay.example.com removed this agent", Fix: "ask the relay's operator to let it back"}
