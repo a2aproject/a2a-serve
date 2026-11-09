@@ -449,6 +449,43 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	}
 }
 
+func TestRelayKeepsAnAgentWhoseInviteIsRefused(t *testing.T) {
+	bin := agentmeshOne(t)
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelay(t, d, bin)
+	inv, err := r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	cfg := network.RelayConfig{AgentName: "reviewer", URL: r.url, StateDir: t.TempDir(), Token: inv.Token, Private: true, Public: true, Logf: t.Logf}
+	reviewer := serveAgent(t, cfg)
+	if err := reviewer.provider.Close(); err != nil {
+		t.Fatalf("closing reviewer: %v", err)
+	}
+	// An agent that joined before a2a-serve recorded its invite.
+	if err := os.Remove(filepath.Join(cfg.StateDir, "invite-hash")); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, token := range []string{inv.Token, "not-an-invite"} {
+		cfg.Token = token
+		back := serveAgent(t, cfg)
+		if back.privateURL != reviewer.privateURL {
+			t.Fatalf("reviewer's private URL after a start with token %q = %s, want %s", token, back.privateURL, reviewer.privateURL)
+		}
+		if err := back.provider.Close(); err != nil {
+			t.Fatalf("closing reviewer: %v", err)
+		}
+	}
+}
+
 // browser is the person behind signed-in agents: it approves every sign-in
 // link an agent prints, signing in at the fake Google at once.
 type browser struct {
