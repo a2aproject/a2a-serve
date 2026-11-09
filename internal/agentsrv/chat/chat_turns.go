@@ -486,12 +486,13 @@ func (c *ChatTurns) stop(ctx context.Context, ch messenger.Messenger, in messeng
 
 // stream sends a message to the agent and renders the task in the conversation.
 func (c *ChatTurns) stream(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest) {
-	c.streamThen(ctx, ch, conv, replyTo, p, req, func(error) {})
+	c.streamThen(ctx, ch, conv, replyTo, p, req, false, func(error) {})
 }
 
 // streamThen is stream which calls accepted once the agent accepted the
 // message, with its first event, or with the error it was refused with.
-func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest, accepted func(error)) {
+// With quiet, a refusal isn't shown in the chat.
+func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv messenger.ConvKey, replyTo messenger.Ref, p auth.Principal, req *a2a.SendMessageRequest, quiet bool, accepted func(error)) {
 	rd := newRenderer(c.chat, ch, conv, replyTo, p)
 	rd.onWaitForOwner = func(taskID a2a.TaskID) { c.chat.followOwnerAnswer(ctx, ch, conv, p, taskID) }
 	first := true
@@ -499,6 +500,9 @@ func (c *ChatTurns) streamThen(ctx context.Context, ch messenger.Messenger, conv
 		if first {
 			first = false
 			accepted(err)
+			if err != nil && quiet {
+				return
+			}
 		}
 		if err != nil {
 			rd.fail(ctx, err)

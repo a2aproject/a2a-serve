@@ -443,6 +443,7 @@ type injectedTurn struct {
 	User      auth.Principal
 	Text      string
 	Files     []messenger.File
+	Quiet     bool
 }
 
 // fakeTurnInjector records the turns injected. The agent accepts them at
@@ -481,7 +482,7 @@ func (f *fakeTurnInjector) InjectTurn(_ context.Context, t chat.PostedTurn) erro
 	default:
 		accept(nil)
 	}
-	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text, Files: t.Files}
+	f.turns <- injectedTurn{ContextID: t.ContextID, User: t.User, Text: t.Text, Files: t.Files, Quiet: t.Quiet}
 	return err
 }
 

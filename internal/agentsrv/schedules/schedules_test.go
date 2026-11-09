@@ -189,6 +189,32 @@ func TestSchedulesRetryRefusedRuns(t *testing.T) {
 	}
 }
 
+func TestSchedulesPostDueRunWhileARetryWaits(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+	fx.sc.RunDue(fx.ctx)
+	if posted := fx.turns.turns(); len(posted) != 2 || !posted[1].Quiet {
+		t.Fatalf("turns posted after the refusal = %+v, want a quiet retry", posted)
+	}
+
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+	fx.sc.RunDue(fx.ctx)
+
+	posted := fx.turns.turns()
+	if len(posted) != 3 || posted[2].Key != posted[1].Key {
+		t.Fatalf("turns posted once the next run is due = %d, want the run posted with the key of the waiting retry", len(posted))
+	}
+	if next := fx.schedule(t, "hourly").NextRun; !next.After(time.Now()) {
+		t.Fatalf("Schedule().NextRun = %v, want the next time after the due run", next)
+	}
+}
+
 func TestSchedulesStopRetryingWhenTheUserLosesAccess(t *testing.T) {
 	t.Parallel()
 	fx := newSchedulesFixture(t)

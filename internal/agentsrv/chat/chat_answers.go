@@ -215,7 +215,7 @@ func (c *ChatTurns) answerIn(ctx context.Context, ch messenger.Messenger, in mes
 		sent := false
 		send := func(ctx context.Context, msg *a2a.Message, accepted func(error)) {
 			sent = true
-			c.streamThen(ctx, ch, in.Conv, messenger.Ref{}, p, &a2a.SendMessageRequest{Message: msg}, accepted)
+			c.streamThen(ctx, ch, in.Conv, messenger.Ref{}, p, &a2a.SendMessageRequest{Message: msg}, false, accepted)
 		}
 		out, err := c.approvals.AnswerWith(ctx, rec, p, opt, who, send)
 		if !sent {

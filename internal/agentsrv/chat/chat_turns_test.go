@@ -21,6 +21,7 @@ import (
 	"iter"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -591,6 +592,30 @@ func TestChatTurnsInjectTurnInConversationShowsReplyInChat(t *testing.T) {
 	fx.ch.WaitFor(t, "dm1", messengertest.HasText(agentReply))
 	if fx.unattended.Has("c1") {
 		t.Error("unattended.Has(c1) = true, want false for a conversation in a chat")
+	}
+}
+
+func TestChatTurnsInjectTurnQuietShowsNoRefusal(t *testing.T) {
+	t.Parallel()
+	fx := newTurnsFixture(t)
+	fx.setContext(t, "dm1", "c1")
+	fx.sender.streamErr = errors.New("anna has 8 unfinished tasks")
+	refused := make(chan error, 2)
+
+	for _, quiet := range []bool{true, false} {
+		if err := fx.turns.InjectTurn(fx.ctx, PostedTurn{ContextID: "c1", User: auth.Owner(), Text: "run it", Quiet: quiet, Accepted: func(err error) { refused <- err }}); err != nil {
+			t.Fatalf("turns.InjectTurn() error = %v", err)
+		}
+	}
+
+	fx.ch.WaitFor(t, "dm1", func(m messenger.Outbound) bool { return m.Text == "⚠ anna has 8 unfinished tasks" })
+	for range 2 {
+		if err := <-refused; err == nil {
+			t.Fatalf("PostedTurn.Accepted() error = nil, want the refusal")
+		}
+	}
+	if n := strings.Count(fx.ch.Dump(), "⚠"); n != 1 {
+		t.Fatalf("refusals shown in the chat = %d, want 1 for the turn that isn't quiet:\n%s", n, fx.ch.Dump())
 	}
 }
 

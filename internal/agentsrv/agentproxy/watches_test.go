@@ -336,8 +336,8 @@ func TestWatchesWatchPostsRefusedResultAgain(t *testing.T) {
 			}
 
 			got := f.nextTurn(t)
-			if got.Text != want {
-				t.Fatalf("injected text posted again = %q, want %q", got.Text, want)
+			if got.Text != want || !got.Quiet {
+				t.Fatalf("injected turn posted again = %+v, want %q without showing the refusal again", got, want)
 			}
 			if f.turns.hold {
 				(<-f.turns.accepted)(nil)

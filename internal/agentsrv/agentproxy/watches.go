@@ -261,7 +261,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 		case watchDropped:
 			ws.endQuestions(ctx, w)
 			ws.deleteWatch(ctx, w)
-			ws.endToCaller(w, "the agent was removed")
+			ws.endToCaller(w, "the agent was removed or may no longer be called")
 			return
 		}
 		user, err := ws.watchPrincipal(ctx, w)
@@ -276,7 +276,7 @@ func (ws *Watches) follow(w store.Watch, key string) {
 			return
 		}
 		ws.endQuestions(ctx, w)
-		posting = ws.finishWatch(ctx, w, key, user, text, interval)
+		posting = ws.finishWatch(ctx, w, key, user, text, interval, false)
 		return
 	}
 }
@@ -486,8 +486,8 @@ func permanentPollError(err error) (string, bool) {
 // watched again otherwise. A result the agent refused is posted again
 // after interval. A restart before then posts the result again. It reports
 // whether the result waits to be posted; the watch of key is done once it
-// is.
-func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, user auth.Principal, text string, interval time.Duration) bool {
+// is. A result posted again doesn't show the refusal in the chat again.
+func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, user auth.Principal, text string, interval time.Duration, again bool) bool {
 	if user.Role == "" {
 		slog.Warn("dropped a watched result: its user can no longer call this agent", "contact", w.Contact, "task", w.TaskID, "user", w.OnBehalfOf)
 		ws.deleteWatch(ctx, w)
@@ -512,7 +512,7 @@ func (ws *Watches) finishWatch(ctx context.Context, w store.Watch, key string, u
 		ws.rewatch(ctx, w, key)
 	}
 	turnText, files := resultTurn(text)
-	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, Accepted: accepted}
+	t := chat.PostedTurn{ContextID: w.OriginContextID, User: user, Text: turnText, Files: files, Accepted: accepted, Quiet: again}
 	if ws.resultToCaller(t) {
 		return true
 	}
@@ -561,7 +561,7 @@ func (ws *Watches) retryPost(w store.Watch, key, text string, interval time.Dura
 		if err != nil {
 			continue
 		}
-		if !ws.finishWatch(ctx, cur, key, user, text, interval) {
+		if !ws.finishWatch(ctx, cur, key, user, text, interval, true) {
 			ws.done(key)
 		}
 		return
