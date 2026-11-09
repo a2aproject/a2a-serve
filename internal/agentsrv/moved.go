@@ -89,7 +89,7 @@ func (m *movedConversations) withEarlier(ctx context.Context, execCtx *a2asrv.Ex
 // before this one, at most maxEarlierBytes of them.
 func (m *movedConversations) earlier(ctx context.Context, execCtx *a2asrv.ExecutorContext) (string, error) {
 	history := earlierHistory
-	resp, err := m.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: execCtx.ContextID, PageSize: earlierTasks, HistoryLength: &history})
+	resp, err := m.tasks.List(ctx, &a2a.ListTasksRequest{ContextID: execCtx.ContextID, PageSize: earlierTasks, HistoryLength: &history, IncludeArtifacts: true})
 	if err != nil {
 		return "", err
 	}

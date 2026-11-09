@@ -163,7 +163,7 @@ func TestConversationContinuesAfterWorkspaceMoved(t *testing.T) {
 	c := ts.client(token)
 	task := send(t, c, userText("earlier", "", first.ContextID))
 
-	wantResult(t, task, a2a.TaskStateCompleted, "remember red")
+	wantResult(t, task, a2a.TaskStateCompleted, "User: remember red\n\nAgent: OK.")
 	if got := a2atext.Message(task.Status.Message); !strings.Contains(got, "new session") {
 		t.Fatalf("task status message = %q, want a note about the new session", got)
 	}
