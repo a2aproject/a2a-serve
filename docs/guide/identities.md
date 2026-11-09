@@ -74,4 +74,5 @@ With `--public-allow-incoming anyone`, anyone on the public URL, and anyone who 
 - Their approvals go to the owner chat, or wait in the inspector. Only owners answer them. An approval that nobody answers in 10 minutes is rejected.
 - Their conversations can't call other agents or use the schedules agent.
 - The public URL and each messenger take at most 20 new guest tasks an hour, and run at most 2 at a time.
+- The public URL holds at most 64 MiB of guest request bodies at a time. A guest request past that waits up to 30 seconds, and then fails with 503 and a `Retry-After` header.
 - A caller on the public URL without a token proves nothing about themselves. The task and conversation IDs that the server returns let them read and continue their own tasks. Anyone who has those IDs can do the same.
