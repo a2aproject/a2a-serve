@@ -200,6 +200,40 @@ func TestPrintStatusTools(t *testing.T) {
 	}
 }
 
+func TestPrintStatusInject(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		egress *controlapi.EgressStatus
+		want   string
+	}{
+		{
+			name:   "boundary",
+			egress: &controlapi.EgressStatus{Mode: "internet", Inject: []string{"openrouter.ai gets OPENROUTER_API_KEY", "api.github.com gets GH"}},
+			want:   "  egress   the internet; private networks blocked\n  inject   openrouter.ai gets OPENROUTER_API_KEY; api.github.com gets GH\n",
+		},
+		{
+			name:   "problem",
+			egress: &controlapi.EgressStatus{Mode: "internet", Problem: "--inject-model-key can't apply", Inject: []string{"openrouter.ai gets OPENROUTER_API_KEY"}},
+			want:   "  egress   ! --inject-model-key can't apply\n  inject   openrouter.ai gets OPENROUTER_API_KEY\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var out strings.Builder
+			cfg := &globalConfig{Printer: output.NewPrinter(&out, output.ModeText)}
+			st := &controlapi.Status{Name: "coder", Harness: "opencode", Started: time.Now(), Local: "http://127.0.0.1:4000", Egress: tc.egress}
+			if err := printStatus(cfg, st, nil, nil, "", ""); err != nil {
+				t.Fatalf("printStatus() error = %v", err)
+			}
+			if !strings.Contains(out.String(), tc.want) {
+				t.Fatalf("printStatus() = %q, want the egress block %q", out.String(), tc.want)
+			}
+		})
+	}
+}
+
 func TestPrintStatusNetworkProblems(t *testing.T) {
 	t.Parallel()
 	removed := &controlapi.NetworkProblem{State: "removed", Problem: "the relay https://relay.example.com removed this agent", Fix: "ask the relay's operator to let it back"}

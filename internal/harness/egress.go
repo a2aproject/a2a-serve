@@ -26,6 +26,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -176,7 +177,7 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 			}
 		}
 		d := EgressDecision{Boundary: true, Relay: true}
-		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 {
+		if cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 && len(cfg.Inject) == 0 {
 			d.Warning = noAllowlistRules
 		}
 		return d
@@ -185,7 +186,7 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 		return problemDecision(cfg, problem)
 	}
 	switch {
-	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0:
+	case cfg.Egress.Mode == egress.ModeAllowlist && len(cfg.Egress.Allow) == 0 && len(cfg.Inject) == 0:
 		return EgressDecision{Boundary: true, Warning: noAllowlistRules}
 	}
 	return EgressDecision{Boundary: true}
@@ -194,10 +195,33 @@ func DecideEgress(cfg *agentdir.Config, env EgressEnv) EgressDecision {
 // problemDecision is the decision for cfg when problem keeps the boundary
 // from applying.
 func problemDecision(cfg *agentdir.Config, problem string) EgressDecision {
-	if cfg.Egress.Mode == egress.ModeAllowlist {
+	switch {
+	case cfg.Egress.Mode == egress.ModeAllowlist:
 		return EgressDecision{Problem: problem, Warning: noAllowlist(problem)}
+	case len(cfg.Inject) > 0:
+		return EgressDecision{Problem: problem, Warning: noInject(cfg, problem)}
 	}
 	return EgressDecision{Problem: problem, Warning: noBoundary(problem)}
+}
+
+// StrictEgress reports whether the containers of cfg don't start without
+// the egress boundary: with --egress allowlist, or with secrets that the
+// boundary adds to requests, which would otherwise be lost or exposed.
+func StrictEgress(cfg *agentdir.Config) bool {
+	return cfg.Egress.Mode == egress.ModeAllowlist || len(cfg.Inject) > 0
+}
+
+// noInject says why a container whose secrets the boundary adds can't
+// start.
+func noInject(cfg *agentdir.Config, why string) string {
+	var flags, unset []string
+	for _, r := range cfg.Inject {
+		if f := "--" + r.Setting(); !slices.Contains(flags, f) {
+			flags = append(flags, f)
+			unset = append(unset, "`a2a-serve config unset "+r.Setting()+"`")
+		}
+	}
+	return fmt.Sprintf("%s can't apply: %s; the agent doesn't start, so that it can't read %s. Run the server on Linux with a release build, or remove the rules with %s, which removes their secrets too; then pass a key again with --secret to put it in the agent's environment", strings.Join(flags, " and "), why, strings.Join(cfg.InjectedSecrets(), ", "), strings.Join(unset, " and "))
 }
 
 // noAllowlistRules warns about an allowlist that allows nothing.

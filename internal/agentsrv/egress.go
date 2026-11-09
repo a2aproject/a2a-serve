@@ -63,6 +63,8 @@ type egressSockets struct {
 	relayAddr, relayMount string
 	// launcherCopy is the copy of the running a2a-serve.
 	launcherCopy string
+	// ca signs the certificates of the hosts that get headers.
+	ca *sandboxnet.CA
 
 	// probeMu serializes the check of the containers' egress setup, which
 	// runs once for the server, and probed and probeErr are its result.
@@ -119,11 +121,11 @@ func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets
 }
 
 // opener returns the function that opens the boundary of the container
-// named sandbox, which keeps mode until it restarts. Changes of the allow
-// rules apply to its next connection.
-func (e *egressSockets) opener(sandbox, mode string) harness.OpenEgress {
+// named sandbox, which keeps mode and the headers of inject until it
+// restarts. Changes of the allow rules apply to its next connection.
+func (e *egressSockets) opener(sandbox, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) harness.OpenEgress {
 	return func(gateway harness.HostGatewayFunc, relay bool) (harness.EgressEndpoint, error) {
-		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode) }, HostGateway: gateway, Blocks: e.blocks}
+		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
 		if relay {
 			return e.openRelayed(cfg)
 		}
@@ -218,10 +220,11 @@ func (e *egressSockets) close(context.Context) error {
 }
 
 // policy returns the policy of mode with the allow rules of the current
-// config. Rules that the server can't read allow nothing, as the server
-// validated them before.
+// config and the hosts of its inject rules. Rules that the server can't
+// read allow nothing, as the server validated them before.
 func (e *egressSockets) policy(mode string) egress.Policy {
-	p, err := egress.NewPolicy(mode, e.config().Egress.Allow)
+	cfg := e.config()
+	p, err := egress.NewPolicy(mode, append(slices.Clone(cfg.Egress.Allow), injectAllow(cfg)...))
 	if err != nil {
 		slog.Error("reading the egress rules; the sandbox reaches nothing until they are fixed", "error", err)
 		return egress.Policy{Mode: egress.ModeAllowlist}
@@ -265,6 +268,9 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	e.mu.Lock()
 	st := &controlapi.EgressStatus{Mode: cmp.Or(e.mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Problem: cmp.Or(e.problem, fellBack)}
 	e.mu.Unlock()
+	for _, r := range cfg.Inject {
+		st.Inject = append(st.Inject, r.Show())
+	}
 	if st.Problem == "" {
 		st.Problem = harness.DecideEgress(cfg, harness.HostEgressEnv()).Warning
 	}
@@ -364,16 +370,44 @@ func copyExecutable(src, dst string) (err error) {
 	return nil
 }
 
-// egressSandbox gives spec the egress socket of its container.
-func (s *Server) egressSandbox(spec *harness.Spec) {
+// egressSandbox gives spec the egress socket of its container, whose
+// boundary adds the headers of inject.
+func (s *Server) egressSandbox(spec *harness.Spec, inject []sandboxnet.Injection) error {
 	cfg := s.rt.Config()
 	if cfg.Sandbox != harness.SandboxLocal && cfg.Egress.Mode != egress.ModeUnrestricted {
 		spec.Launcher = s.egress.launcher()
 	}
-	spec.EgressMode = s.rt.Config().Egress.Mode
-	spec.EgressAllow = s.rt.Config().Egress.Allow
+	spec.EgressMode = cfg.Egress.Mode
+	spec.EgressAllow = cfg.Egress.Allow
+	spec.Inject = cfg.Inject
 	spec.ProbeEgress = s.egress.probeOnce
-	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode)
+	var ca *sandboxnet.CA
+	if len(inject) > 0 {
+		var err error
+		if ca, err = s.egress.authority(injectHosts(cfg)); err != nil {
+			return err
+		}
+		spec.EgressCA = ca.PEM()
+	}
+	spec.OpenEgress = s.egress.opener(spec.Name, spec.EgressMode, inject, ca)
+	return nil
+}
+
+// authority returns the CA of the hosts that get headers, making one at
+// the first call, or when the rules name a host it doesn't cover. A
+// container keeps the CA it started with.
+func (e *egressSockets) authority(hosts []string) (*sandboxnet.CA, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.ca != nil && !slices.ContainsFunc(hosts, func(h string) bool { return !e.ca.Covers(h) }) {
+		return e.ca, nil
+	}
+	ca, err := sandboxnet.NewCA(hosts)
+	if err != nil {
+		return nil, err
+	}
+	e.ca = ca
+	return ca, nil
 }
 
 // egressNoticeFile records in the state directory that start told the

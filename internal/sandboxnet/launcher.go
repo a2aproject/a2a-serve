@@ -26,8 +26,10 @@ type LaunchConfig struct {
 	// UID and GID are the IDs the agent runs as.
 	UID, GID int
 	// Argv is the agent's command, which gets the launcher's standard
-	// streams.
+	// streams, and Env its environment, without what only the launcher
+	// reads.
 	Argv []string
+	Env  []string
 	// Check sets up the network and drops the capabilities as for the
 	// agent, then returns without running a command.
 	Check bool

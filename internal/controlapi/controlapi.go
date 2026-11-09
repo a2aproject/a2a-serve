@@ -103,6 +103,10 @@ type EgressStatus struct {
 	// Problem is why the sandbox reaches every network, such as on Docker
 	// Desktop.
 	Problem string `json:"problem,omitempty"`
+	// Inject are the hosts that get headers from the server and the names
+	// of the secrets in them, such as "openrouter.ai gets
+	// OPENROUTER_API_KEY".
+	Inject []string `json:"inject,omitempty"`
 }
 
 // NetworkProblem says why a network doesn't reach the agent now.

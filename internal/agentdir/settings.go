@@ -72,6 +72,11 @@ type Settings struct {
 	// added to the hosts the Docker sandbox may reach.
 	Egress      string
 	EgressAllow []string
+	// InjectHeaders are host=Name: value rules, and InjectModelKeys
+	// provider=NAME rules, of headers the server adds to the sandbox's
+	// requests.
+	InjectHeaders   []string
+	InjectModelKeys []string
 
 	Memory     string
 	CPUs       string

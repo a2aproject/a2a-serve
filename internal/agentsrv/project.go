@@ -87,7 +87,12 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
 		return a2aacp.SessionParams{Cwd: ws}, nil
 	}
-	granted, _ := sb.Values(s.rt.Secrets())
+	// The variables are the container's own: the secrets that the server
+	// adds at the boundary stay out of them.
+	granted, _, _, err := secretEnv(cfg, sb, s.rt.Secrets())
+	if err != nil {
+		return a2aacp.SessionParams{}, err
+	}
 	vars := project.EnvVars(cfg.Env, granted)
 	var servers []json.RawMessage
 	for _, srv := range found {

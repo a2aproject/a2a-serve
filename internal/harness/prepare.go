@@ -110,6 +110,12 @@ type Spec struct {
 	EgressMode  string
 	EgressAllow []string
 	OpenEgress  OpenEgress
+	// Inject are the rules of the headers the boundary adds; with any, a
+	// container doesn't start without the boundary. EgressCA is the PEM
+	// certificate the boundary signs their hosts with, which the
+	// container trusts.
+	Inject   []agentdir.InjectRule
+	EgressCA []byte
 	// Launcher is the host path of the a2a-serve binary that containers run
 	// as their launcher; empty uses this binary.
 	Launcher string
@@ -302,9 +308,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		}
 		if eg != nil {
 			// The agent's container gets Docker's own network when its
-			// launcher can't set up the boundary, unless the allowlist
-			// asks for the boundary.
-			if spec.EgressMode != egress.ModeAllowlist {
+			// launcher can't set up the boundary, unless the config needs
+			// the boundary.
+			if !StrictEgress(spec.egressConfig()) {
 				fallback = clone(dr)
 			}
 			dr.Egress = eg
@@ -317,7 +323,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 				dr.Env = append(dr.Env, sandboxnet.EnvFailSetup+"=1")
 			}
 			if perr != nil {
-				decision = probeFailed(spec.EgressMode, perr)
+				decision = probeFailed(spec.egressConfig(), perr)
 				dr.Egress, fallback = nil, nil
 				if cerr := closeFn(); cerr != nil {
 					slog.Warn("closing the egress boundary", "error", cerr)
@@ -331,7 +337,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 				relay = eg.Relay != ""
 			}
 		}
-		if decision.Problem != "" && spec.EgressMode == egress.ModeAllowlist {
+		if decision.Problem != "" && StrictEgress(spec.egressConfig()) {
 			return nil, errors.Join(errors.New(decision.Warning), closeEgress())
 		}
 		if decision.Warning != "" {
@@ -346,6 +352,12 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 				what += " (egress container)"
 			}
 		}
+	}
+	if len(spec.Inject) > 0 && dr.Egress == nil {
+		return nil, errors.Join(errors.New(noInject(spec.egressConfig(), "the agent's container has no egress boundary")), closeEgress())
+	}
+	if dr.Egress != nil && len(spec.EgressCA) > 0 {
+		dr.Env = append(dr.Env, sandboxnet.EgressCAEnv(spec.EgressCA))
 	}
 	connectServer(dr, spec, relay)
 	c := profileCommand(spec, ws)
@@ -398,10 +410,16 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 	}}, nil
 }
 
-// probeFailed is the decision for a container of mode whose egress check
-// failed with err: Docker's own network, or no start with allowlist.
-func probeFailed(mode string, err error) EgressDecision {
-	return problemDecision(&agentdir.Config{Egress: agentdir.EgressConfig{Mode: mode}}, "the agent's container can't set up its network: "+err.Error())
+// probeFailed is the decision for a container of cfg whose egress check
+// failed with err: Docker's own network, or no start when cfg needs the
+// boundary.
+func probeFailed(cfg *agentdir.Config, err error) EgressDecision {
+	return problemDecision(cfg, "the agent's container can't set up its network: "+err.Error())
+}
+
+// egressConfig returns the settings of spec that decide its egress.
+func (spec Spec) egressConfig() *agentdir.Config {
+	return &agentdir.Config{Sandbox: spec.Sandbox, Egress: agentdir.EgressConfig{Mode: spec.EgressMode, Allow: spec.EgressAllow}, Inject: spec.Inject}
 }
 
 // probeEgress runs probe, the check of a container's egress setup, once
@@ -481,7 +499,7 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 	if spec.Launcher != "" {
 		env.Launcher = func() (string, error) { return CheckLauncher(spec.Launcher) }
 	}
-	decision = DecideEgress(&agentdir.Config{Sandbox: spec.Sandbox, Egress: agentdir.EgressConfig{Mode: spec.EgressMode, Allow: spec.EgressAllow}}, env)
+	decision = DecideEgress(spec.egressConfig(), env)
 	if !decision.Boundary {
 		return nil, nil, decision, nil
 	}
@@ -505,11 +523,7 @@ func dockerEgress(ctx context.Context, spec Spec, image string, rootless bool) (
 func relayEgress(ctx context.Context, spec Spec, entrypoint []string, rootless bool, decision EgressDecision) (*DockerEgress, func() error, EgressDecision, error) {
 	image, err := EnsureRelayImage(ctx, logLines{msg: "egress container image"})
 	if err != nil {
-		problem := "the egress container's image isn't available: " + err.Error()
-		if spec.EgressMode == egress.ModeAllowlist {
-			return nil, nil, EgressDecision{Problem: problem, Warning: noAllowlist(problem)}, nil
-		}
-		return nil, nil, EgressDecision{Problem: problem, Warning: noBoundary(problem)}, nil
+		return nil, nil, problemDecision(spec.egressConfig(), "the egress container's image isn't available: "+err.Error()), nil
 	}
 	ep, err := spec.OpenEgress(hostGateway(), true)
 	if err != nil {
@@ -599,6 +613,9 @@ func cliEnv(env []string) []string {
 }
 
 func prepareLocal(ctx context.Context, spec Spec, ws Workspace) (*Prepared, error) {
+	if len(spec.Inject) > 0 {
+		return nil, errors.New(noInject(spec.egressConfig(), "the agent runs with --sandbox local"))
+	}
 	c := profileCommand(spec, ws)
 	c.Env = append(c.Env, cliEnv(spec.Env)...)
 	if spec.CLI != "" {

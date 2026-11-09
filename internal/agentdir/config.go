@@ -79,9 +79,12 @@ type Config struct {
 	Approvals  ApprovalsConfig  `yaml:"approvals,omitempty" json:"approvals,omitzero"`
 	Limits     LimitsConfig     `yaml:"limits,omitempty" json:"limits,omitzero"`
 	Egress     EgressConfig     `yaml:"egress,omitempty" json:"egress,omitzero"`
-	Auth       AuthConfig       `yaml:"auth,omitempty" json:"auth,omitzero"`
-	Backup     BackupConfig     `yaml:"backup,omitempty" json:"backup,omitzero"`
-	MCP        MCPConfig        `yaml:"mcp,omitempty" json:"mcp,omitzero"`
+	// Inject are the headers the server adds to the Docker sandbox's
+	// requests, so that the secrets they carry stay out of the sandbox.
+	Inject []InjectRule `yaml:"inject,omitempty" json:"inject,omitempty"`
+	Auth   AuthConfig   `yaml:"auth,omitempty" json:"auth,omitzero"`
+	Backup BackupConfig `yaml:"backup,omitempty" json:"backup,omitzero"`
+	MCP    MCPConfig    `yaml:"mcp,omitempty" json:"mcp,omitzero"`
 }
 
 // EgressConfig decides where the Docker sandbox may connect.
@@ -846,6 +849,8 @@ func (c *Config) Clone() *Config {
 	out.Policy = c.Policy.clone()
 	out.MCP.Disabled = slices.Clone(c.MCP.Disabled)
 	out.Card = c.Card.clone()
+	out.Egress.Allow = slices.Clone(c.Egress.Allow)
+	out.Inject = slices.Clone(c.Inject)
 	if t := c.Messengers.Telegram; t != nil {
 		out.Messengers.Telegram = &TelegramConfig{Token: t.Token}
 	}

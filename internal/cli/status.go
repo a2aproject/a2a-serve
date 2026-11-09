@@ -215,6 +215,9 @@ func writeEgress(sb *strings.Builder, e *controlapi.EgressStatus) {
 	if e == nil {
 		return
 	}
+	if len(e.Inject) > 0 {
+		defer fmt.Fprintf(sb, "  inject   %s\n", strings.Join(e.Inject, "; "))
+	}
 	if e.Problem != "" {
 		fmt.Fprintf(sb, "  egress   ! %s\n", e.Problem)
 		return

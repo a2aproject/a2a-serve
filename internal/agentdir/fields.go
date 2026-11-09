@@ -220,6 +220,15 @@ func mountArgKey(s string) string {
 
 func trimSpace(_ Dir, v string) (string, error) { return strings.TrimSpace(v), nil }
 
+// injectProviderValues are the completions of --inject-model-key.
+func injectProviderValues() []string {
+	var out []string
+	for _, p := range egress.ProviderNames() {
+		out = append(out, p+"=")
+	}
+	return out
+}
+
 func parseEgressRule(_ Dir, v string) (string, error) {
 	r, err := egress.ParseRule(v)
 	if err != nil {
@@ -420,7 +429,7 @@ var fields = []field{
 	{
 		access: strs(func(c *Config) *[]string { return &c.Secrets }, func(s *Settings) *[]string { return &s.Secrets }),
 		flag:   "secret", path: "secrets", scope: scopeAgent, section: SectionWorkspace, key: identity, merge: mergeSecrets,
-		usage: "Environment variable to pass to the agent, such as an API key: `NAME[=value]`, stored in .a2a/state/secrets; without a value, read from your environment or prompted",
+		usage: "Environment variable to pass to the agent, such as an API key: `NAME[=value]`, stored in .a2a/state/secrets outside config.yaml; the agent can read it, unless --inject-header or --inject-model-key adds it; without a value, read from your environment or prompted",
 	},
 	{
 		access: strs(func(c *Config) *[]string { return &c.Env }, func(s *Settings) *[]string { return &s.Env }),
@@ -610,6 +619,19 @@ var fields = []field{
 		flag:   "egress-allow", path: "egress.allow", scope: scopeOwner, live: true, section: SectionSandbox, split: true,
 		key: identity, parse: parseEgressRule,
 		usage: "Host the Docker sandbox may also reach, private ones included: a `rule` such as nas.lan, *.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port",
+	},
+	{
+		access: injectRules(false),
+		flag:   InjectHeaderSetting, path: "inject", scope: scopeOwner, section: SectionSandbox,
+		key: injectKey(false), merge: mergeInject(false),
+		usage: "Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: `host=Name: value`, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host",
+	},
+	{
+		access: injectRules(true),
+		flag:   InjectModelKeySetting, path: "inject", scope: scopeOwner, section: SectionSandbox,
+		key: injectKey(true), merge: mergeInject(true),
+		usage:  "API key the server adds to the Docker sandbox's requests to a model provider; the agent gets a placeholder in the variable: `provider=NAME`, with provider one of " + strings.Join(egress.ProviderNames(), ", ") + " and NAME a variable of your environment, stored in .a2a/state/secrets, such as openrouter=OPENROUTER_API_KEY; keyed by provider",
+		values: injectProviderValues(),
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Auth.GoogleClientID }, func(s *Settings) *string { return &s.GoogleClientID }),
@@ -904,8 +926,12 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 		if err := cfg.Policy.checkSecretsUnused(names); err != nil {
 			return nil, err
 		}
+		if err := cfg.checkInjectUnused(names); err != nil {
+			return nil, err
+		}
 	}
 	before := cfg.referencedSecrets()
+	injected := cfg.InjectedSecrets()
 	var deleted []string
 	f, _ := lookupField(setting)
 	switch {
@@ -933,6 +959,11 @@ func (d Dir) Unset(cfg *Config, setting string, entries []string) ([]string, err
 	}
 	if e := cfg.Messengers.Email; e != nil && *e == (EmailConfig{}) {
 		cfg.Messengers.Email = nil
+	}
+	if f.path == "inject" {
+		if err := cfg.dropInjectedSecrets(injected, nil); err != nil {
+			return nil, err
+		}
 	}
 	after := cfg.referencedSecrets()
 	for name := range before {
