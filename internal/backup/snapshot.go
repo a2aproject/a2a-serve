@@ -43,10 +43,16 @@ const (
 	pathDB      = "state/server.db"
 	pathSecrets = "state/secrets"
 	pathAds     = "state/ads.json"
-	pathHome    = "state/home"
+	// pathRecipeLock records the recipe the agent came from.
+	pathRecipeLock = agentdir.RecipeLockFile
+	pathHome       = "state/home"
 	// pathUserHomes holds a home per member.
 	pathUserHomes = "state/homes"
 )
+
+// optionalFiles are the files of a snapshot besides the database, which an
+// agent may not have.
+var optionalFiles = []string{pathConfig, pathSecrets, pathAds, pathRecipeLock}
 
 // identityPaths hold the agent's network identity on a tailnet or an Agent
 // Mesh relay, restored only when the new host takes over from the old one.
@@ -78,7 +84,7 @@ func newSnapshotter(tw *tar.Writer, stage *os.File, log *slog.Logger, afterCopy 
 
 // writeArchive writes a gzipped tar of the agent's state to w: a consistent
 // copy of server.db, config.yaml, the secrets, the advertised pairings, the
-// harness homes and the network identity.
+// recipe lock, the harness homes and the network identity.
 func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	if err := os.MkdirAll(d.StateDir(), 0o700); err != nil {
 		return err
@@ -104,12 +110,12 @@ func writeArchive(ctx context.Context, d agentdir.Dir, w io.Writer) error {
 	if err := s.addDB(ctx, d, tmp); err != nil {
 		return err
 	}
-	for _, p := range []string{pathConfig, pathSecrets, pathAds} {
+	for _, p := range optionalFiles {
 		if err := s.addFile(filepath.Join(d.Path(), p), p); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
 	}
-	for _, p := range append([]string{pathHome, pathUserHomes}, identityPaths...) {
+	for _, p := range snapshotTrees() {
 		if err := s.addTree(ctx, filepath.Join(d.Path(), p), p); err != nil {
 			return err
 		}
@@ -437,7 +443,7 @@ func extractArchive(ctx context.Context, r io.Reader, dst string, takeOver bool)
 		if !fs.ValidPath(name) {
 			return fmt.Errorf("the snapshot has an invalid path %q", hdr.Name)
 		}
-		if !takeOver && isIdentity(name) {
+		if !isKnown(name) || !takeOver && isIdentity(name) {
 			continue
 		}
 		target := filepath.Join(dst, filepath.FromSlash(name))
@@ -462,6 +468,22 @@ func isHomeCache(name, rel string) bool {
 		return ok && slices.Contains(skippedHomeDirs, dir)
 	}
 	return false
+}
+
+// snapshotTrees are the directories of a snapshot.
+func snapshotTrees() []string {
+	return append([]string{pathHome, pathUserHomes}, identityPaths...)
+}
+
+// isKnown reports whether this build writes the entry name into snapshots.
+// Restore skips the others, such as the entries of a newer build.
+func isKnown(name string) bool {
+	if name == pathDB || slices.Contains(optionalFiles, name) {
+		return true
+	}
+	return slices.ContainsFunc(snapshotTrees(), func(p string) bool {
+		return name == p || strings.HasPrefix(name, p+"/")
+	})
 }
 
 func isIdentity(name string) bool {

@@ -232,7 +232,10 @@ func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask
 
 // RecipeLockPath returns the path of the record of the recipe the agent
 // was created from.
-func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), "recipe.lock") }
+func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), RecipeLockFile) }
+
+// RecipeLockFile is the name of the recipe lock in the agent directory.
+const RecipeLockFile = "recipe.lock"
 
 // LockPath returns the path of the file the running server holds locked.
 func (d Dir) LockPath() string { return filepath.Join(d.StateDir(), "server.lock") }

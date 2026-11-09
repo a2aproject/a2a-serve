@@ -170,11 +170,17 @@ func checkSnapshot(ctx context.Context, dest Dest, name string) error {
 	return agenterr.WithHint(nf, agenterr.HintRestoreLatest, snaps[len(snaps)-1].Name)
 }
 
+// committedFiles are the files a repository can hold in .a2a without an
+// agent. Restore keeps them, since they belong to the files of the
+// repository's commit.
+var committedFiles = []string{pathRecipeLock, ".gitignore"}
+
 // Restore recreates an agent's .a2a directory in root from a snapshot. It
 // extracts the snapshot into a directory next to .a2a and renames that into
 // place, so that a damaged snapshot or an interruption leaves no partial
 // agent behind. The network identity is restored only with takeOver, so
-// that the old and the new host don't run as the same machine.
+// that the old and the new host don't run as the same machine. A .a2a that
+// holds only committed files keeps them.
 func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (err error) {
 	if err := checkSnapshot(ctx, dest, name); err != nil {
 		return err
@@ -190,8 +196,12 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if len(entries) > 0 {
+	if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.Type().IsRegular() || !slices.Contains(committedFiles, e.Name()) }) {
 		return agenterr.Conflictf("%s is not empty; restore into another directory", d.Path())
+	}
+	committed, err := readCommitted(d.Path(), entries)
+	if err != nil {
+		return err
 	}
 	rc, err := dest.Get(ctx, name)
 	if err != nil {
@@ -226,17 +236,81 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err := extractArchive(ctx, plain, tmp, takeOver); err != nil {
 		return err
 	}
+	for _, f := range committed {
+		if err := fsutil.WriteAtomic(filepath.Join(tmp, f.name), f.data, f.perm); err != nil {
+			return err
+		}
+	}
 	if err := agentdir.WriteGitignore(tmp); err != nil {
 		return err
 	}
+	return moveIntoPlace(tmp, d.Path(), committed)
+}
+
+// committedFile is a file of committedFiles in .a2a before a restore.
+type committedFile struct {
+	name string
+	data []byte
+	perm fs.FileMode
+}
+
+func readCommitted(dir string, entries []fs.DirEntry) ([]committedFile, error) {
+	var out []committedFile
+	for _, e := range entries {
+		path := filepath.Join(dir, e.Name())
+		fi, err := os.Lstat(path)
+		if err != nil {
+			return nil, err
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, committedFile{name: e.Name(), data: data, perm: fi.Mode().Perm()})
+	}
+	return out, nil
+}
+
+// moveIntoPlace renames the restored directory tmp to dir, which holds only
+// the committed files. When that fails, it writes the committed files back.
+func moveIntoPlace(tmp, dir string, committed []committedFile) (err error) {
+	defer func() {
+		if err == nil || len(committed) == 0 {
+			return
+		}
+		if merr := os.MkdirAll(dir, 0o755); merr != nil {
+			err = errors.Join(err, merr)
+			return
+		}
+		for _, f := range committed {
+			err = errors.Join(err, writeIfMissing(filepath.Join(dir, f.name), f.data, f.perm))
+		}
+	}()
+	for _, f := range committed {
+		if err := os.Remove(filepath.Join(dir, f.name)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	}
 	// os.Rename doesn't replace a directory, even an empty one.
-	if err := os.Remove(d.Path()); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.Remove(dir); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	if err := os.Rename(tmp, d.Path()); err != nil {
+	if err := os.Rename(tmp, dir); err != nil {
 		return fmt.Errorf("moving the restored agent into place: %w", err)
 	}
 	return nil
+}
+
+func writeIfMissing(path string, data []byte, perm fs.FileMode) error {
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, perm)
+	if errors.Is(err, fs.ErrExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(data)
+	return errors.Join(err, f.Close())
 }
 
 // removeCreated removes the empty directories from dir up to created, the

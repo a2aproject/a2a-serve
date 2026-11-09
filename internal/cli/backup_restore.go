@@ -37,8 +37,12 @@ func newBackupRestoreCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
 		Use:   "restore <backup-destination>",
 		Short: "Recreate an agent from a backup snapshot",
 		Long: `Recreate an agent's .a2a directory from a snapshot taken by
-"a2a-serve backup now" or the running agent: its database, config, secrets and agent home directory. The
-latest snapshot is used unless --snapshot names one.
+"a2a-serve backup now" or the running agent: its database, config, secrets,
+recipe.lock and agent home directory. The latest snapshot is used unless
+--snapshot names one.
+
+The directory must have no .a2a, or a .a2a that holds only recipe.lock or
+.gitignore, such as those a repository commits. Restore keeps those files.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same
