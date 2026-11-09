@@ -21,6 +21,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -53,7 +54,7 @@ func newTestContactClients(t *testing.T, st *store.Store, private network.Provid
 func newTestContactClientsOutgoing(t *testing.T, st *store.Store, private network.Provider, outgoing string) *ContactClients {
 	t.Helper()
 	cfg := &agentdir.Config{Name: "assistant", Policy: agentdir.PolicyConfig{PrivateAllowOutgoing: outgoing}}
-	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Config: func() *agentdir.Config { return cfg }})
+	cc := NewContactClients(ContactClientsDeps{Store: st, Private: private, Config: func() *agentdir.Config { return cfg }, CallerKey: []byte("test caller key")})
 	t.Cleanup(func() {
 		if err := cc.Close(context.Background()); err != nil {
 			t.Errorf("ContactClients.close() error = %v", err)
@@ -484,6 +485,81 @@ func TestContactClientsTargetCountsHops(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"2"}, hops); diff != "" {
 		t.Fatalf("hops header of the calls to the contact wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestContactClientsTargetNamesTheCaller(t *testing.T) {
+	t.Parallel()
+	remote := newFakeContact(t)
+	st := openTestStore(t)
+	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	putContact(t, st, store.Contact{Name: "reviewer", URL: remote.URL})
+	cc := newTestContactClients(t, st, nil)
+	anna := auth.Principal{ID: "pair:anna", Role: auth.RoleMember}
+	calls := []struct {
+		agent string
+		user  auth.Principal
+	}{
+		{"coder", anna},
+		{"coder", auth.Principal{ID: "pair:ben", Role: auth.RoleMember}},
+		{"coder", anna},
+		{"coder", auth.Principal{ID: "pair:anna", Role: auth.RoleMember, Identity: auth.Identity{Hops: 1, Caller: "m13"}}},
+		{"reviewer", anna},
+	}
+
+	for _, call := range calls {
+		tg, err := cc.target(context.Background(), call.agent, call.user, call.user.Hops)
+		if err != nil {
+			t.Fatalf("ContactClients.target() error = %v", err)
+		}
+		if _, err := tg.send(context.Background(), a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(promptDone))); err != nil {
+			t.Fatalf("target.send() error = %v", err)
+		}
+	}
+
+	var got []string
+	for _, r := range remote.received() {
+		if r.Path == "/" {
+			got = append(got, r.Caller)
+		}
+	}
+	if len(got) != len(calls) {
+		t.Fatalf("calls to the contact = %d, want %d", len(got), len(calls))
+	}
+	for _, c := range got {
+		if !regexp.MustCompile(`^[A-Za-z0-9_-]{22}$`).MatchString(c) || strings.Contains(c, "anna") {
+			t.Fatalf("caller header = %q, want an opaque ID", c)
+		}
+	}
+	if got[0] != got[2] || got[0] == got[1] || got[0] == got[3] || got[0] == got[4] {
+		t.Fatalf("caller headers = %q, want one stable ID per person and agent", got)
+	}
+}
+
+func TestContactClientsTargetNamesNoCallerWithoutAKey(t *testing.T) {
+	t.Parallel()
+	remote := newFakeContact(t)
+	st := openTestStore(t)
+	putContact(t, st, store.Contact{Name: "coder", URL: remote.URL})
+	cc := NewContactClients(ContactClientsDeps{Store: st, Config: func() *agentdir.Config { return &agentdir.Config{Name: "assistant"} }})
+	t.Cleanup(func() {
+		if err := cc.Close(context.Background()); err != nil {
+			t.Errorf("ContactClients.Close() error = %v", err)
+		}
+	})
+
+	tg, err := cc.target(context.Background(), "coder", auth.Principal{ID: "pair:anna", Role: auth.RoleMember}, 0)
+	if err != nil {
+		t.Fatalf("ContactClients.target() error = %v", err)
+	}
+	if _, err := tg.send(context.Background(), a2a.NewMessage(a2a.MessageRoleUser, a2a.NewTextPart(promptDone))); err != nil {
+		t.Fatalf("target.send() error = %v", err)
+	}
+
+	for _, r := range remote.received() {
+		if r.Path == "/" && r.Caller != "" {
+			t.Fatalf("caller header = %q, want none", r.Caller)
+		}
 	}
 }
 

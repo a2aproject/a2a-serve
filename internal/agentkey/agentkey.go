@@ -16,11 +16,15 @@
 // stores the key with the session of each conversation: the owner's
 // conversations run in the main agent process, which has no key, the
 // conversations of guests in one process, and the conversations of each
-// member in a process of their own. Processes don't share a
-// home, so a conversation can't read what another user's left there.
+// member in a process of their own. A member that is another agent gets a
+// process for each person behind its calls, which it names with an opaque
+// caller ID. Processes don't share a home, so a conversation can't read
+// what another user's left there.
 package agentkey
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/auth"
@@ -42,6 +46,9 @@ func Of(p auth.Principal, ok bool) string {
 	case auth.RoleGuest:
 		return Guest
 	case auth.RoleMember:
+		if p.Caller != "" {
+			return Caller(p.ID, p.Caller)
+		}
 		return User(p.ID)
 	}
 	return ""
@@ -50,7 +57,57 @@ func Of(p auth.Principal, ok bool) string {
 // User returns the key of the agent process of the principal id.
 func User(id string) string { return userPrefix + id }
 
-// UserOf returns the principal ID of a user's agent key.
+// callerLen is the length of the part of a key that names a caller.
+const callerLen = 16
+
+// Caller returns the key of the agent process that the principal id, an
+// agent, gets for the person it names caller.
+func Caller(id, caller string) string {
+	sum := sha256.Sum256([]byte(caller))
+	return CallerKey(id, hex.EncodeToString(sum[:])[:callerLen])
+}
+
+// UserOf returns the principal ID of a user's agent key, also of one that
+// names a caller.
 func UserOf(key string) (string, bool) {
-	return strings.CutPrefix(key, userPrefix)
+	rest, ok := strings.CutPrefix(key, userPrefix)
+	if !ok {
+		return "", false
+	}
+	if id, _, ok := splitCaller(rest); ok {
+		return id, true
+	}
+	return rest, true
+}
+
+// CallerOf returns the part of a user's agent key that names a caller, or
+// "". It is safe in paths and container names.
+func CallerOf(key string) string {
+	rest, ok := strings.CutPrefix(key, userPrefix)
+	if !ok {
+		return ""
+	}
+	_, caller, _ := splitCaller(rest)
+	return caller
+}
+
+// CallerKey returns the key whose CallerOf is caller.
+func CallerKey(id, caller string) string { return CallerPrefix(id) + caller }
+
+// CallerPrefix starts the keys of the agent processes that the principal
+// id gets for the people behind its calls.
+func CallerPrefix(id string) string { return User(id) + "#" }
+
+// splitCaller splits the principal ID and caller of a key without its
+// prefix. Principal IDs never end in '#' and 16 hex digits.
+func splitCaller(rest string) (string, string, bool) {
+	i := len(rest) - callerLen - 1
+	if i <= 0 || rest[i] != '#' {
+		return "", "", false
+	}
+	caller := rest[i+1:]
+	if _, err := hex.DecodeString(caller); err != nil || strings.ToLower(caller) != caller {
+		return "", "", false
+	}
+	return rest[:i], caller, true
 }

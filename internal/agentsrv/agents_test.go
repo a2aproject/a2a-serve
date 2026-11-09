@@ -20,6 +20,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -43,6 +44,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/a2alimit"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/access"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/agentproxy"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
@@ -123,6 +125,93 @@ func TestCancelingTaskCancelsItsCalls(t *testing.T) {
 	got := waitState(t, coderClient, a2a.TaskID(calls[0].TaskID), a2a.TaskStateCanceled)
 	if got.Status.State != a2a.TaskStateCanceled {
 		t.Fatalf("called task state after canceling the caller's task = %s, want canceled", got.Status.State)
+	}
+}
+
+func TestCalledAgentKeepsThePeopleBehindACallerApart(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleMember)
+	anna := assistant.client(assistant.pair("anna", auth.RoleMember))
+	ben := assistant.client(assistant.pair("ben", auth.RoleMember))
+	calledPid := func(c *a2aclient.Client) int {
+		t.Helper()
+		return pidOf(t, send(t, c, userText("call coder pid", "", "")))
+	}
+
+	annaPid, benPid, annaAgain := calledPid(anna), calledPid(ben), calledPid(anna)
+
+	if annaPid == benPid || annaPid != annaAgain {
+		t.Fatalf("coder ran anna's calls in processes %d and %d, and ben's in %d; want one process for each person", annaPid, annaAgain, benPid)
+	}
+	homes, err := coder.dir.CallerHomeDirs(auth.PairPrincipal("assistant"))
+	if err != nil || len(homes) != 2 {
+		t.Fatalf("CallerHomeDirs() = %v, %v, want one agent home for each person behind assistant", homes, err)
+	}
+
+	if _, err := controlapi.NewClient(coder.dir).Revoke(context.Background(), "assistant"); err != nil {
+		t.Fatalf("Revoke() error = %v", err)
+	}
+
+	waitFor(t, "the processes of assistant's callers to stop", func() bool { return !processRuns(annaPid) && !processRuns(benPid) })
+	if homes, err := coder.dir.CallerHomeDirs(auth.PairPrincipal("assistant")); err != nil || len(homes) != 0 {
+		t.Fatalf("CallerHomeDirs() after removing the pairing = %v, %v, want none", homes, err)
+	}
+}
+
+func TestCalledAgentLimitsTheHomesOfACallersPeople(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		running bool
+		wantErr string
+	}{
+		{name: "the least recently used home makes room"},
+		{name: "all homes in use", running: true, wantErr: fmt.Sprintf("all %d people", maxCallerHomes)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			coder := startServer(t, serverOpts{name: "coder"})
+			id := auth.PairPrincipal("assistant")
+			c := coder.client(coder.pair("assistant", auth.RoleMember))
+			start := time.Now().Add(-time.Hour)
+			for i := range maxCallerHomes {
+				caller := fmt.Sprintf("%016x", i)
+				home := coder.dir.CallerHomeDir(id, caller)
+				if err := os.MkdirAll(home, 0o700); err != nil {
+					t.Fatalf("MkdirAll() error = %v", err)
+				}
+				used := start.Add(time.Duration(i) * time.Minute)
+				if err := os.Chtimes(home, used, used); err != nil {
+					t.Fatalf("Chtimes() error = %v", err)
+				}
+				if tc.running {
+					a := coder.srv.users.get(agentkey.CallerKey(id, caller))
+					coder.srv.users.started(a, io.NopCloser(nil), access.Sandbox{})
+				}
+			}
+			ctx := a2aclient.AttachServiceParams(context.Background(), a2aclient.ServiceParams{auth.HeaderHops: {"1"}, auth.HeaderCaller: {"new-person"}})
+
+			_, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText("hello", "", "")})
+
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("SendMessage() for one person too many error = %v, want %q", err, tc.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("SendMessage() for one person too many error = %v", err)
+			}
+			if _, err := os.Stat(coder.dir.CallerHomeDir(id, fmt.Sprintf("%016x", 0))); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("Stat() of the least recently used home error = %v, want %v", err, os.ErrNotExist)
+			}
+			if homes, err := coder.dir.CallerHomeDirs(id); err != nil || len(homes) != maxCallerHomes {
+				t.Fatalf("CallerHomeDirs() = %d homes, %v, want %d", len(homes), err, maxCallerHomes)
+			}
+		})
 	}
 }
 

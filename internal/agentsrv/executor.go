@@ -181,6 +181,13 @@ func (s *Server) startPoolAgent(ctx context.Context, agents *userAgents, key str
 	if !isUser && key != agentkey.Guest {
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
+	if isUser && agentkey.CallerOf(key) != "" {
+		// Removing the user waits for the processes of its callers to start,
+		// and holds new ones until it ends.
+		base := agents.get(agentkey.User(id))
+		base.callersMu.RLock()
+		defer base.callersMu.RUnlock()
+	}
 	ua := agents.get(key)
 	ua.startMu.Lock()
 	defer ua.startMu.Unlock()
@@ -300,12 +307,12 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Labels:     map[string]string{"a2a.agent": cfg.Name, "a2a.dir": s.dir.Root},
 		Progress:   imageProgress,
 	}
-	id, isUser := agentkey.UserOf(key)
+	_, isUser := agentkey.UserOf(key)
 	switch {
 	case key == agentkey.Guest:
 		spec.Home = s.dir.GuestHomeDir()
 	case isUser:
-		spec.Home = s.dir.UserHomeDir(id)
+		spec.Home = s.userHomeDir(key)
 	}
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
@@ -333,7 +340,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	} else {
 		ep := s.mainHarness
 		if isUser {
-			if err := s.prepareUserHome(ctx, &spec, id); err != nil {
+			if err := s.prepareUserHome(ctx, &spec, key); err != nil {
 				return nil, err
 			}
 			if ep, err = s.harness.open(key); err != nil {
@@ -397,9 +404,9 @@ func (s *Server) connectHarness(spec *harness.Spec, ep *harnessEndpoint) error {
 }
 
 // prepareUserHome gives spec the container name of the agent process of
-// the user id, and its home the instructions of the owner's home.
-func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, id string) error {
-	spec.Name += "-" + agentdir.UserKey(id)
+// a member's agent key, and its home the instructions of the owner's home.
+func (s *Server) prepareUserHome(ctx context.Context, spec *harness.Spec, key string) error {
+	spec.Name += "-" + userProcessName(key)
 	spec.Labels["a2a.role"] = auth.RoleMember
 	for _, dir := range []string{s.dir.UserHomesDir(), spec.Home} {
 		if err := fsutil.CheckPrivate(dir); err != nil {
@@ -916,6 +923,11 @@ type callerInterceptor struct {
 	budget    *guestBudget
 	keys      *agentKeys
 	users     *userAgents
+	// dir holds the agent homes of members.
+	dir agentdir.Dir
+	// removeHome forgets what the server keeps about an agent home that
+	// goes.
+	removeHome func(home string)
 }
 
 func (i *callerInterceptor) Before(ctx context.Context, callCtx *a2asrv.CallContext, req *a2asrv.Request) (context.Context, any, error) {
@@ -1065,10 +1077,10 @@ func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID strin
 	if err != nil {
 		return fmt.Errorf("looking up the session of conversation %s: %w", contextID, err)
 	}
-	if _, ok := agentkey.UserOf(key); !ok || i.users.hasRoom(key) {
-		return nil
+	if _, ok := agentkey.UserOf(key); ok && !i.users.hasRoom(key) {
+		return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
 	}
-	return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
+	return i.checkCallerHomes(key)
 }
 
 // checkConversation refuses a message into a conversation that another

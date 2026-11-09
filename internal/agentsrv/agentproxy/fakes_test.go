@@ -137,6 +137,7 @@ type contactRequest struct {
 	Path          string
 	Authorization string
 	Hops          string
+	Caller        string
 }
 
 // fakeContact is a remote agent: an A2A server that runs the prompts above.
@@ -166,7 +167,7 @@ func newFakeContact(t *testing.T) *fakeContact {
 	mux.Handle("/", a2asrv.NewJSONRPCHandler(fc.Handler))
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fc.mu.Lock()
-		fc.requests = append(fc.requests, contactRequest{Path: r.URL.Path, Authorization: r.Header.Get("Authorization"), Hops: r.Header.Get(auth.HeaderHops)})
+		fc.requests = append(fc.requests, contactRequest{Path: r.URL.Path, Authorization: r.Header.Get("Authorization"), Hops: r.Header.Get(auth.HeaderHops), Caller: r.Header.Get(auth.HeaderCaller)})
 		fc.mu.Unlock()
 		mux.ServeHTTP(w, r)
 	}))

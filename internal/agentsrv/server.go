@@ -448,7 +448,11 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return nil
 	})
 	s.supervisor = chat.NewMessengerSupervisor(ctx, chat.SupervisorDeps{Store: s.store, Logf: s.logf, RetryMin: s.timings.MessengerRetryMin})
-	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config})
+	callerKey, err := s.store.ServerKey(ctx, "caller-ids")
+	if err != nil {
+		return fmt.Errorf("loading the key of caller IDs: %w", err)
+	}
+	s.clients = agentproxy.NewContactClients(agentproxy.ContactClientsDeps{Store: s.store, Private: s.private, Nodes: s.nodes, Ads: s.ads, Config: s.rt.Config, CallerKey: callerKey})
 	closers.push(s.clients.Close)
 	s.contacts = contacts.Service{Store: s.store, Locate: s.clients.Locate, HTTPClient: s.clients.HTTPClient, Changed: s.refreshInstructions}
 	s.keys = newAgentKeys(s.store.Sessions())
@@ -539,7 +543,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 		return a2alimit.NewHandler(withFinishedSubscribeRefused(withRetryingCancel(a2asrv.NewHandler(&observedExecutor{inner: s.split, bus: s.bus, claims: s.claims, approvals: s.approvals, ends: s.ends, watches: s.watches, store: s.store, notes: s.notes, decider: s.decider, moved: &movedConversations{sessions: s.sessions, tasks: s.tasks}, turns: &s.turns, stopping: ctx, answers: &ruleAnswers{store: s.store, tasks: s.tasks, granted: s.answerAllowed}},
 			a2asrv.WithTaskStore(s.tasks.CutLists()),
 			a2asrv.WithUpdateMaterializer(s.tasks.UpdateMaterializer()),
-			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users}),
+			a2asrv.WithCallInterceptors(a2aerr.Sanitizer{}, a2alimit.NewMessageCheck(a2alimit.Default()), &callerInterceptor{approvals: s.approvals, tasks: s.tasks, budget: s.budget, keys: s.keys, users: &s.users, dir: s.dir, removeHome: s.forgetHome}),
 			a2asrv.WithCapabilityChecks(&a2a.AgentCapabilities{Streaming: true}),
 			a2asrv.WithConcurrencyConfig(limiter.ConcurrencyConfig{MaxExecutions: maxExecutions, GetMaxExecutions: maxExecutionsOf}),
 			a2asrv.WithLogger(slog.Default()),

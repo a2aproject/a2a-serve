@@ -112,7 +112,7 @@ The agent calls other agents through its server, which holds the credentials. Th
 
 ### Agent processes
 
-Each member's conversations run in an agent process of their own. Your conversations run in the owner's process, and all guests share one more. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of members run at once. When all of them work on tasks or wait for approvals, a member without a running process gets an error for a new task and can send it again later. What each process gets of the workspace and of the agent's `--secret` environment variables follows the [sandbox defaults and rules](../guide/sandbox.md#what-each-callers-container-gets), so anyone who can call the agent and approve their own commands can read and change what their process gets.
+Each member's conversations run in an agent process of their own. Your conversations run in the owner's process, and all guests share one more. When the member is another agent, each person behind its calls gets a process of their own. The calling agent names each person with an opaque ID that stays the same across calls and doesn't say who the person is. The server uses the ID only to keep the processes apart, and the calls still get the member's access. The server keeps homes for at most 32 people behind one agent. A new person then takes the home of the person whose last task is the oldest and whose process doesn't run, and that person's conversations continue without their earlier agent session. Removing the agent's pairing with `a2a-serve pair rm` removes the homes too. A calling agent that names no person, such as an older version, gets one process for all its calls. In Docker each process has its own container and home directory, so a conversation can't read the history of another user's conversations. At most 10 processes of members run at once. When all of them work on tasks or wait for approvals, a member without a running process gets an error for a new task and can send it again later. What each process gets of the workspace and of the agent's `--secret` environment variables follows the [sandbox defaults and rules](../guide/sandbox.md#what-each-callers-container-gets), so anyone who can call the agent and approve their own commands can read and change what their process gets.
 
 A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
 
@@ -133,6 +133,7 @@ Every request yields one identity: verified claims, and where each came from.
 | chat account | `telegram:<user id>`, `discord:<user id>`, or the email address |
 | self | Tailscale: the same user on an untagged device. Relay: a verified email equal to the one saved when this agent signed in. Never on the public URL |
 | via agent | the request came from another server, with a hop count of 1 or more |
+| caller | the opaque ID of the person behind a call from another agent. It picks the agent process and never decides access |
 
 ### Roles
 

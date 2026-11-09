@@ -48,6 +48,10 @@ type userAgent struct {
 	// startMu is held while the process starts and while its user is
 	// removed.
 	startMu sync.Mutex
+	// callersMu is held for reading while a process that the user has for
+	// the people behind its calls starts, and for writing while the user
+	// is removed.
+	callersMu sync.RWMutex
 	// proc, starting and turns are guarded by userAgents.mu. turns counts
 	// the turns that use the process, including those waiting for an answer.
 	proc     io.Closer
@@ -72,6 +76,46 @@ func (u *userAgents) get(key string) *userAgent {
 		u.keys[key] = a
 	}
 	return a
+}
+
+// callerKeys returns the keys of the processes that the principal id has
+// for the people behind its calls.
+func (u *userAgents) callerKeys(id string) []string {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	var out []string
+	for k := range u.keys {
+		if user, ok := agentkey.UserOf(k); ok && user == id && agentkey.CallerOf(k) != "" {
+			out = append(out, k)
+		}
+	}
+	return out
+}
+
+// holdCallerStarts holds the starts of the processes that the users of
+// keys have for the people behind their calls, until release is called.
+func (u *userAgents) holdCallerStarts(keys ...string) (release func()) {
+	keys = slices.Sorted(slices.Values(keys))
+	held := make([]*userAgent, len(keys))
+	for i, key := range keys {
+		held[i] = u.get(key)
+		held[i].callersMu.Lock()
+	}
+	return func() {
+		for _, a := range held {
+			a.callersMu.Unlock()
+		}
+	}
+}
+
+// forget drops the entry of key if no process of it runs or starts and no
+// turn uses it.
+func (u *userAgents) forget(key string) {
+	u.mu.Lock()
+	defer u.mu.Unlock()
+	if a := u.keys[key]; a != nil && a.proc == nil && !a.starting && a.turns == 0 {
+		delete(u.keys, key)
+	}
 }
 
 // started records proc as the running process of a.
@@ -344,7 +388,7 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 	keys := make([]string, len(principals))
 	for i, p := range principals {
 		keys[i] = agentkey.User(p)
-		ids, err := u.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: p, AgentKey: keys[i]})
+		ids, err := u.tasks.UnfinishedRemoved(ctx, store.PairingUser{Principal: p, AgentKey: keys[i], CallerKeys: agentkey.CallerPrefix(p)})
 		if err != nil {
 			return nil, err
 		}
@@ -354,12 +398,23 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 			}
 		}
 	}
-	release, err := u.users.stop(keys...)
+	// Holding the starts of the processes of the users' callers before
+	// they are listed keeps a new one from starting unseen.
+	releaseStarts := u.users.holdCallerStarts(keys...)
+	var callers []string
+	for _, p := range principals {
+		callers = append(callers, u.users.callerKeys(p)...)
+	}
+	release, err := u.users.stop(append(keys, callers...)...)
 	if err != nil {
+		releaseStarts()
 		return nil, err
 	}
 	u.sandboxes.forget(keys...)
-	return release, nil
+	return func() {
+		release()
+		releaseStarts()
+	}, nil
 }
 
 // userHomes deletes the homes of users' agent processes and forgets their
@@ -367,14 +422,29 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 type userHomes struct{ s *Server }
 
 func (h userHomes) RemoveUserHome(id string) error {
-	h.s.pins.Unpin(h.s.dir.UserHomeDir(id))
-	h.s.forgetStorageNote(h.s.dir.UserHomeDir(id))
-	return h.s.dir.RemoveUserHome(id)
+	homes, err := h.s.dir.CallerHomeDirs(id)
+	for _, home := range append(homes, h.s.dir.UserHomeDir(id)) {
+		h.s.forgetHome(home)
+	}
+	return errors.Join(err, h.s.dir.RemoveUserHome(id))
+}
+
+// forgetHome forgets the pins and the storage note of an agent home that
+// goes.
+func (s *Server) forgetHome(home string) {
+	s.pins.Unpin(home)
+	s.forgetStorageNote(home)
 }
 
 func (h userHomes) UserHomeDir(id string) string { return h.s.dir.UserHomeDir(id) }
 
 func (h userHomes) UserWorkspacesDir(id string) string { return h.s.dir.UserWorkspacesDir(id) }
+
+func (h userHomes) CallerHomeDirs(id string) ([]string, error) { return h.s.dir.CallerHomeDirs(id) }
+
+func (h userHomes) CallerWorkspacesDirs(id string) ([]string, error) {
+	return h.s.dir.CallerWorkspacesDirs(id)
+}
 
 // errRemovedUser is returned when the agent process of a user whose
 // pairing or webhook node was removed would start.
