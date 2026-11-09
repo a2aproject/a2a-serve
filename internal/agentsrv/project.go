@@ -26,6 +26,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/project"
 )
 
@@ -87,6 +88,13 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 		slog.WarnContext(ctx, "ignoring the project's MCP servers", "error", err)
 		return a2aacp.SessionParams{Cwd: ws}, nil
 	}
+	// The agent reads its policy when the session starts, so the policy
+	// gets the rules of servers added since the agent process started.
+	if cfg.Sandbox != agentdir.SandboxLocal {
+		if err := s.addPolicyServers(cfg, key, found); err != nil {
+			return a2aacp.SessionParams{}, err
+		}
+	}
 	// The variables are the container's own: the secrets that the server
 	// adds at the boundary stay out of them.
 	granted, _, _, err := secretEnv(cfg, sb, s.rt.Secrets())
@@ -111,6 +119,23 @@ func (s *Server) sessionParams(ctx context.Context, execCtx *a2asrv.ExecutorCont
 		servers = append(servers, raw)
 	}
 	return a2aacp.SessionParams{Cwd: ws, MCPServers: servers}, nil
+}
+
+// addPolicyServers adds the MCP servers to the policy of the agent process
+// of key.
+func (s *Server) addPolicyServers(cfg *agentdir.Config, key string, servers []project.MCPServer) error {
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return err
+	}
+	names := make([]string, len(servers))
+	for i, srv := range servers {
+		names[i] = srv.Name
+	}
+	if _, err := s.policies.write(profile, key != "", names); err != nil {
+		return fmt.Errorf("writing the agent's policy: %w", err)
+	}
+	return nil
 }
 
 // mcpServerNames returns the names of the MCP servers of the project's

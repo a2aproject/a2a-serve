@@ -88,11 +88,14 @@ type Spec struct {
 	// workspace and the mounts, so that the agent's permissions come only
 	// from the server. Empty keeps them visible.
 	ConfigMask string
-	// HomePolicy is the host path of a file where the server writes the
-	// settings that the agent can't override, for a sandbox that keeps the
-	// agent from changing its own configuration in Home, such as for the
-	// agents of members and guests. Empty leaves it writable.
-	HomePolicy string
+	// PolicyDir is the host folder where [WritePolicy] wrote the settings
+	// that the agent can't override, which a sandbox mounts read-only where
+	// the agent reads them. Empty leaves them out.
+	PolicyDir string
+	// LockHome makes the agent's own configuration in Home read-only in a
+	// sandbox, such as for the agents of members and guests, who could
+	// otherwise change the permissions that the owner set for them.
+	LockHome bool
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 	// Model is the model of the harness, in its own format. Empty keeps
@@ -314,7 +317,16 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		dr.Mounts = append(dr.Mounts, cm.mounts...)
 		dr.Scratch = cm.scratch
 	}
-	if spec.HomePolicy != "" {
+	if spec.PolicyDir != "" {
+		dst, err := policyMount(spec)
+		if err != nil {
+			return nil, err
+		}
+		if dst != "" {
+			dr.Mounts = append(dr.Mounts, agentdir.Mount{Src: spec.PolicyDir, Dst: dst, ReadOnly: true})
+		}
+	}
+	if spec.LockHome {
 		locks, err := lockHomeConfig(spec)
 		if err != nil {
 			return nil, err

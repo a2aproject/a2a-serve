@@ -105,7 +105,7 @@ An entry is in one list at most: setting it in one list removes it from the othe
 
 So a new `--deny-tools` entry stops what people allowed for themselves. A change of the rules, a call allowed in all conversations, or an "Always allow" also answers the approvals that wait and that it decides.
 
-Rules, preferences and grants see only the calls that the agent asks about. opencode asks before every tool except the ones that change nothing, such as reading and searching files. Claude Code asks in its default mode.
+Rules, preferences and grants see only the calls that the agent asks about. opencode asks before every tool except the ones that change nothing, such as reading and searching files. In the Docker sandbox, Claude Code asks before every shell command, file change, web request and MCP tool call, also those that a skill's `allowed-tools` or its own settings allow. With `--sandbox local`, Claude Code asks in its default mode, which runs some read-only shell commands and the tools that skills allow without asking.
 
 ## Who answers
 

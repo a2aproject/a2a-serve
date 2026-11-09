@@ -121,6 +121,27 @@ func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
 	}
 }
 
+func TestDockerSandboxPolicy(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	owner, anna := newUser(t), newUser(t)
+	coder := owner.startAgent("coder")
+	anna.pairJoin(coder.url, coder.invite("anna"))
+	read := "read /etc/claude-code/managed-settings.json"
+
+	got := resultOf(owner.mustSend(coder.url, read)).Text
+	if !strings.Contains(got, `"Bash"`) || strings.Contains(got, "strictPluginOnlyCustomization") {
+		t.Fatalf("a2a send %s as the owner = %q, want ask rules and the MCP servers of the home kept", read, got)
+	}
+	writeFile(t, filepath.Join(coder.dir, ".mcp.json"), `{"mcpServers": {"docs": {"command": "docs-mcp"}}}`)
+	if got := resultOf(owner.mustSend(coder.url, read)).Text; !strings.Contains(got, `"mcp__docs"`) {
+		t.Fatalf("a2a send %s after adding an MCP server = %q, want its ask rule", read, got)
+	}
+	if got := resultOf(anna.mustSend(coder.url, read)).Text; !strings.Contains(got, `"mcp__docs"`) || !strings.Contains(got, "strictPluginOnlyCustomization") {
+		t.Fatalf("a2a send %s as a member = %q, want ask rules and the MCP servers of the home ignored", read, got)
+	}
+}
+
 // TestStartWhenDockerDoesNotAnswer covers start --detach with a docker
 // endpoint that accepts connections and never answers: start fails within
 // seconds and names DOCKER_HOST.
