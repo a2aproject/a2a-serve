@@ -133,13 +133,8 @@ func savedPeerID(stateDir string) string {
 	return id.String()
 }
 
-func (a *agentMesh) start(ctx context.Context) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.started.Load() {
-		return nil
-	}
-	srv := &meshnet.Server{
+func (a *agentMesh) newMeshServer() *meshnet.Server {
+	return &meshnet.Server{
 		StateDir:        a.cfg.StateDir,
 		ControlPlaneURL: a.cfg.URL,
 		BootstrapToken:  a.cfg.Token,
@@ -149,6 +144,22 @@ func (a *agentMesh) start(ctx context.Context) error {
 			a.logf("! relay: credential lapsed (%v)", err)
 		},
 	}
+}
+
+func (a *agentMesh) start(ctx context.Context) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.started.Load() {
+		return nil
+	}
+	var invite *inviteSwitch
+	if a.cfg.Token != "" {
+		var err error
+		if invite, err = useInvite(a.cfg.StateDir, a.cfg.Token); err != nil {
+			return fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err)
+		}
+	}
+	srv := a.newMeshServer()
 	// Without a token, the agent signs in with an account; the first run
 	// prints the link, later runs use the stored identity.
 	if a.cfg.Token == "" {
@@ -167,6 +178,7 @@ func (a *agentMesh) start(ctx context.Context) error {
 	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
 		slog.Warn("recording the relay join", "error", rerr)
 	}
+	srv, st, err = a.settleInvite(ctx, invite, srv, st, err)
 	if err != nil {
 		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
 			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {

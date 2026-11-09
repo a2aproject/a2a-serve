@@ -41,6 +41,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 type fakeMeshSession struct {
@@ -295,6 +296,112 @@ func TestHasMeshIdentity(t *testing.T) {
 				t.Fatalf("hasMeshIdentity(%q) = %v, want %v", tc.dir, got, tc.want)
 			}
 		})
+	}
+}
+
+func recordInvite(t *testing.T, dir, token string) {
+	t.Helper()
+	sw, err := useInvite(dir, token)
+	if err != nil {
+		t.Fatalf("useInvite(%q) error = %v", token, err)
+	}
+	if err := sw.record(); err != nil {
+		t.Fatalf("inviteSwitch.record() error = %v", err)
+	}
+}
+
+func TestUseInvite(t *testing.T) {
+	t.Parallel()
+	enrolled := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}
+	setAside := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com"}
+	tests := []struct {
+		name       string
+		lastToken  string
+		token      string
+		wantSwitch bool
+		wantCred   *api.MemberCredential
+	}{
+		{name: "unrecorded token sets the credential aside", token: "invite-1", wantSwitch: true, wantCred: setAside},
+		{name: "same token keeps the credential", lastToken: "invite-1", token: "invite-1", wantCred: enrolled},
+		{name: "new token sets the credential aside", lastToken: "invite-1", token: "invite-2", wantSwitch: true, wantCred: setAside},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			key := marshalLibp2pEd25519Key(t)
+			if tc.lastToken != "" {
+				recordInvite(t, dir, tc.lastToken)
+			}
+			if err := meshnet.WriteStateDir(dir, key, enrolled); err != nil {
+				t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+			}
+
+			sw, err := useInvite(dir, tc.token)
+			if err != nil {
+				t.Fatalf("useInvite(%q) error = %v", tc.token, err)
+			}
+
+			if got := sw != nil; got != tc.wantSwitch {
+				t.Fatalf("useInvite(%q) switches = %v, want %v", tc.token, got, tc.wantSwitch)
+			}
+			if sw != nil && sw.recorded != (tc.lastToken != "") {
+				t.Fatalf("useInvite(%q) recorded = %v, want %v", tc.token, sw.recorded, tc.lastToken != "")
+			}
+			gotKey, gotCred, err := meshnet.ReadStateDir(dir)
+			if err != nil {
+				t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+			}
+			if diff := cmp.Diff(key, gotKey); diff != "" {
+				t.Fatalf("meshnet.ReadStateDir() identity key wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.wantCred, gotCred, protocmp.Transform()); diff != "" {
+				t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestUseInviteWithoutState(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "relay")
+	for _, token := range []string{"invite-1", "invite-2"} {
+		recordInvite(t, dir, token)
+	}
+	if hasMeshIdentity(dir) {
+		t.Fatalf("hasMeshIdentity() = true after invites without a join, want false")
+	}
+	if restored, err := restoreMeshCredential(dir); err != nil || restored {
+		t.Fatalf("restoreMeshCredential() = %v, %v, want false, nil", restored, err)
+	}
+}
+
+func TestRestoreMeshCredential(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	enrolled := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}
+	if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), enrolled); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+	for _, token := range []string{"invite-1", "invite-2"} {
+		if _, err := useInvite(dir, token); err != nil {
+			t.Fatalf("useInvite(%q) error = %v", token, err)
+		}
+	}
+
+	restored, err := restoreMeshCredential(dir)
+	if err != nil || !restored {
+		t.Fatalf("restoreMeshCredential() = %v, %v, want true, nil", restored, err)
+	}
+	_, got, err := meshnet.ReadStateDir(dir)
+	if err != nil {
+		t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+	}
+	if diff := cmp.Diff(enrolled, got, protocmp.Transform()); diff != "" {
+		t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
+	}
+	if restored, err := restoreMeshCredential(dir); err != nil || restored {
+		t.Fatalf("restoreMeshCredential() again = %v, %v, want false, nil", restored, err)
 	}
 }
 

@@ -405,6 +405,115 @@ func TestRelayLetsBackARemovedAgent(t *testing.T) {
 	})
 }
 
+func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
+	bin := agentmeshOne(t)
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelay(t, d, bin)
+	inv, err := r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	cfg := network.RelayConfig{AgentName: "reviewer", URL: r.url, StateDir: t.TempDir(), Token: inv.Token, Private: true, Public: true, Logf: t.Logf}
+	reviewer := serveAgent(t, cfg)
+	eventually(t, "members lists reviewer", func() error {
+		_, err := r.client.Remove(t.Context(), control.RemoveRequest{Target: "reviewer"})
+		return err
+	})
+	if err := reviewer.provider.Close(); err != nil {
+		t.Fatalf("closing reviewer: %v", err)
+	}
+	// The relay's router loads the revoked credentials when it starts.
+	if err := r.stop(); err != nil {
+		t.Fatalf("relay.Run() error = %v", err)
+	}
+	r = startRelay(t, d, bin)
+
+	inv, err = r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	if inv.LetBack == nil {
+		t.Fatal("Client.Invite() let back no agent, want reviewer")
+	}
+	for range 2 {
+		mistyped := cfg
+		mistyped.Token = inv.Token[1:]
+		p, err := network.NewRelay(mistyped)
+		if err != nil {
+			t.Fatalf("network.NewRelay() error = %v", err)
+		}
+		var invite *network.InviteError
+		if _, _, err := p.ListenPrivate(t.Context()); !errors.As(err, &invite) {
+			t.Fatalf("joining with a mistyped invite: error = %v, want an invite error", err)
+		}
+	}
+	cfg.Token = inv.Token
+	back := serveAgent(t, cfg)
+	if back.privateURL != reviewer.privateURL {
+		t.Fatalf("reviewer's private URL after it came back = %s, want %s", back.privateURL, reviewer.privateURL)
+	}
+}
+
+func TestRelayKeepsAnAgentWhoseInviteIsRefused(t *testing.T) {
+	bin := agentmeshOne(t)
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SaveSettings(relaydir.Settings{URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port)}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelay(t, d, bin)
+	inv, err := r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
+	if err != nil {
+		t.Fatalf("Client.Invite() error = %v", err)
+	}
+	cfg := network.RelayConfig{AgentName: "reviewer", URL: r.url, StateDir: t.TempDir(), Token: inv.Token, Private: true, Public: true, Logf: t.Logf}
+	reviewer := serveAgent(t, cfg)
+	if err := reviewer.provider.Close(); err != nil {
+		t.Fatalf("closing reviewer: %v", err)
+	}
+	// An agent that joined before a2a-serve recorded its invite.
+	if err := os.Remove(filepath.Join(cfg.StateDir, "invite-hash")); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		token       string
+		wantProblem bool
+	}{
+		{token: inv.Token},
+		{token: "not-an-invite", wantProblem: true},
+		{token: "not-an-invite", wantProblem: true},
+		{token: inv.Token},
+	}
+	for _, tc := range tests {
+		cfg.Token = tc.token
+		back := serveAgent(t, cfg)
+		if back.privateURL != reviewer.privateURL {
+			t.Fatalf("reviewer's private URL after a start with token %q = %s, want %s", tc.token, back.privateURL, reviewer.privateURL)
+		}
+		if err := back.provider.Close(); err != nil {
+			t.Fatalf("closing reviewer: %v", err)
+		}
+		problem, err := network.InviteProblem(cfg.StateDir)
+		if err != nil {
+			t.Fatalf("network.InviteProblem() error = %v", err)
+		}
+		if got := problem != ""; got != tc.wantProblem {
+			t.Fatalf("network.InviteProblem() after a start with token %q = %q, want a problem: %v", tc.token, problem, tc.wantProblem)
+		}
+	}
+}
+
 // browser is the person behind signed-in agents: it approves every sign-in
 // link an agent prints, signing in at the fake Google at once.
 type browser struct {
