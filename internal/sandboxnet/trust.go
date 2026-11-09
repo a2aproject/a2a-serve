@@ -58,12 +58,16 @@ func EgressCAEnv(cert []byte) string {
 // error. Without the CA, the agent's connections to the hosts that get
 // headers fail, and others work.
 func trustCA(root string, env []string) ([]string, error) {
-	i := slices.IndexFunc(env, func(kv string) bool { return strings.HasPrefix(kv, EnvEgressCA+"=") })
-	if i < 0 {
+	encoded, found := "", false
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, EnvEgressCA+"="); ok {
+			encoded, found = v, true
+		}
+	}
+	if !found {
 		return env, nil
 	}
-	encoded := strings.TrimPrefix(env[i], EnvEgressCA+"=")
-	env = slices.Delete(slices.Clone(env), i, i+1)
+	env = slices.DeleteFunc(slices.Clone(env), func(kv string) bool { return strings.HasPrefix(kv, EnvEgressCA+"=") })
 	ca, err := decodeCA(encoded)
 	if err != nil {
 		return env, err

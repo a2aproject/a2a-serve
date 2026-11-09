@@ -215,19 +215,3 @@ func TestUnsetInjectRefusals(t *testing.T) {
 		})
 	}
 }
-
-func TestInjectRuleShow(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		rule InjectRule
-		want string
-	}{
-		{rule: InjectRule{Model: "anthropic", Key: "CLAUDE_CODE_OAUTH_TOKEN"}, want: "api.anthropic.com gets CLAUDE_CODE_OAUTH_TOKEN"},
-		{rule: InjectRule{Host: "git.example:8443", Header: "X-Auth: $A:$B"}, want: "git.example:8443 gets A, B"},
-	}
-	for _, tc := range tests {
-		if got := tc.rule.Show(); got != tc.want {
-			t.Errorf("InjectRule.Show() = %q, want %q", got, tc.want)
-		}
-	}
-}

@@ -317,6 +317,28 @@ func TestSetWarnings(t *testing.T) {
 	}
 }
 
+func TestSetReplacingAnInjectRuleDeletesItsSecret(t *testing.T) {
+	t.Parallel()
+	d := newAgent(t, &agentdir.Config{
+		Name: "coder", Harness: "opencode", Secrets: []string{"OLD_GH"},
+		Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $OLD_GH"}},
+	}, agentdir.Secrets{"OLD_GH": "ghp_old"})
+	_, err := Set(t.Context(), d, controlapi.NewClient(d), agentdir.Settings{
+		Secrets: []string{"NEW_GH"}, SecretValues: agentdir.Secrets{"NEW_GH": "ghp_new"},
+		InjectHeaders: []string{"api.github.com=Authorization: Bearer $NEW_GH"},
+	}, false)
+	if err != nil {
+		t.Fatalf("Set() error = %v", err)
+	}
+	stored, err := d.LoadSecrets()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if diff := cmp.Diff(agentdir.Secrets{"NEW_GH": "ghp_new"}, stored); diff != "" {
+		t.Fatalf("Set() wrong stored secrets (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSetDisableMCPWarnings(t *testing.T) {
 	t.Parallel()
 	const mcp = `{"mcpServers": {"github": {"command": "gh-mcp"}, "files": {"command": "fs-mcp"}}}`

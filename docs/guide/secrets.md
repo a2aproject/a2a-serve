@@ -92,7 +92,7 @@ Rules apply at the next start, so run `a2a-serve restart` or pass `--restart`. A
 
 Sandbox rules decide which containers get the key. A container that a rule doesn't give `GITHUB_TOKEN` gets neither the variable nor the header. `NAME=secret:OTHER` adds the value of `OTHER`.
 
-The rules need the egress boundary. Where it doesn't apply, such as with `--sandbox local`, `--egress unrestricted` or an a2a-serve built with cgo, the agent doesn't start, and the error names the secrets.
+The rules need the egress boundary. `config set` refuses them with `--sandbox local` and `--egress unrestricted`. Where the boundary can't apply, such as with an a2a-serve built with cgo or on Docker Desktop without the egress container image, the agent doesn't start, and the error names the secrets.
 
 What the rules don't protect:
 

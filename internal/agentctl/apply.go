@@ -82,8 +82,9 @@ type Step func(cfg *agentdir.Config) error
 // Set merges settings into the agent's config.
 func Set(ctx context.Context, d agentdir.Dir, client *controlapi.Client, s agentdir.Settings, dryRun bool) (*Result, error) {
 	return Apply(ctx, d, client, func(cfg *agentdir.Config) (agentdir.Secrets, []string, error) {
+		old := cfg.Clone()
 		store, err := s.Apply(cfg, d)
-		return store, nil, err
+		return store, agentdir.DroppedInjected(old, cfg), err
 	}, dryRun)
 }
 
@@ -196,7 +197,7 @@ func apply(ctx context.Context, d agentdir.Dir, client *controlapi.Client, mutat
 		Secrets: secretChanges(stored, store, del), DryRun: dryRun, Created: created,
 		Warnings: append(harness.Warnings(next), mcpWarnings(d, old, next)...),
 	}
-	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) {
+	if old == nil || old.Sandbox != next.Sandbox || old.Egress.Mode != next.Egress.Mode || !slices.Equal(old.Egress.Allow, next.Egress.Allow) || !slices.Equal(old.Inject, next.Inject) {
 		if w := harness.DecideEgress(next, harness.HostEgressEnv()).Warning; w != "" {
 			res.Warnings = append(res.Warnings, w)
 		}

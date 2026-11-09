@@ -284,7 +284,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		WorkspaceSrc: spec.WorkspaceSrc,
 		Hidden:       spec.Hidden,
 		Home:         spec.Home,
-		Env:          cliEnv(spec.Env),
+		Env:          withoutEgressCA(cliEnv(spec.Env)),
 		Limits:       spec.Limits,
 		Labels:       spec.Labels,
 		Rootless:     rootless,
@@ -331,7 +331,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 				if err := dr.Stop(ctx); err != nil {
 					slog.Warn("removing the files of the egress check", "error", err)
 				}
-				dr.Env = cliEnv(spec.Env)
+				dr.Env = withoutEgressCA(cliEnv(spec.Env))
 			} else {
 				closeEgress = closeFn
 				relay = eg.Relay != ""
@@ -602,6 +602,13 @@ func profileCommand(spec Spec, ws Workspace) Command {
 	})
 	c.Env = append(env, model...)
 	return c
+}
+
+// withoutEgressCA returns env without the variable that passes the egress
+// CA to the launcher, which only the server sets: a CA from --env would be
+// trusted by everything in the container.
+func withoutEgressCA(env []string) []string {
+	return slices.DeleteFunc(slices.Clone(env), func(kv string) bool { return strings.HasPrefix(kv, sandboxnet.EnvEgressCA+"=") })
 }
 
 // cliEnv returns env with the a2a CLI timeout added unless env sets it.

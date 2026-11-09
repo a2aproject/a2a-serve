@@ -203,30 +203,32 @@ func (r HeaderRule) Expand(value func(name string) string) string {
 var secretRef = regexp.MustCompile(`\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))`)
 
 // ParseHeaderRule parses an --inject-header rule: host[:port]=Name: value,
-// such as "api.github.com=Authorization: Bearer $GITHUB_TOKEN".
+// such as "api.github.com=Authorization: Bearer $GITHUB_TOKEN". Its errors
+// leave out the value, which holds a secret when the shell expanded $NAME.
 func ParseHeaderRule(s string) (HeaderRule, error) {
 	dest, header, ok := strings.Cut(strings.TrimSpace(s), "=")
 	if !ok {
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: want host=Name: value, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'", s)
+		return HeaderRule{}, errors.New("invalid header rule: want host=Name: value, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'")
 	}
 	host, port, err := ParseInjectTarget(dest)
 	if err != nil {
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: %w", s, err)
+		return HeaderRule{}, fmt.Errorf("invalid header rule for %q: %w", dest, err)
 	}
 	name, value, ok := strings.Cut(header, ":")
 	name, value = strings.TrimSpace(name), strings.TrimSpace(value)
 	r := HeaderRule{Host: host, Port: port, Name: http.CanonicalHeaderKey(name), Value: value}
+	invalid := func(reason string) error { return fmt.Errorf("invalid header rule for %s: %s", r.Target(), reason) }
 	switch {
 	case !ok || !httpguts.ValidHeaderFieldName(name):
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: want a header Name: value after the host", s)
+		return HeaderRule{}, invalid("want a header Name: value after the host")
 	case slices.Contains(reservedHeaders, r.Name) || strings.HasPrefix(r.Name, "Proxy-"):
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: the server can't set the header %s", s, r.Name)
+		return HeaderRule{}, invalid("the server can't set the header " + r.Name)
 	case !httpguts.ValidHeaderFieldValue(value):
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: the value has a control character", s)
+		return HeaderRule{}, invalid("the value has a control character")
 	case len(r.Secrets()) == 0:
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: the value names no secret; write it as $NAME, and quote the rule in single quotes so that the shell keeps $NAME", s)
+		return HeaderRule{}, invalid("the value names no secret; write it as $NAME, and quote the rule in single quotes so that the shell keeps $NAME")
 	case strings.Count(value, "$") != len(secretRef.FindAllString(value, -1)):
-		return HeaderRule{}, fmt.Errorf("invalid header rule %q: a $ starts a $NAME or ${NAME}", s)
+		return HeaderRule{}, invalid("a $ starts a $NAME or ${NAME}")
 	}
 	return r, nil
 }

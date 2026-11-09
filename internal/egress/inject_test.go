@@ -85,8 +85,12 @@ func TestParseHeaderRuleRejects(t *testing.T) {
 		{in: "bad host=Authorization: $K", want: "invalid host name"},
 	}
 	for _, tc := range tests {
-		if _, err := ParseHeaderRule(tc.in); err == nil || !strings.Contains(err.Error(), tc.want) {
+		_, err := ParseHeaderRule(tc.in)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
 			t.Errorf("ParseHeaderRule(%q) error = %v, want one containing %q", tc.in, err, tc.want)
+		}
+		if err != nil && strings.Contains(err.Error(), "ghp_") {
+			t.Errorf("ParseHeaderRule(%q) error = %v, want it without the value", tc.in, err)
 		}
 	}
 }

@@ -125,7 +125,8 @@ func newEgressSockets(dir string, config func() *agentdir.Config) *egressSockets
 // restarts. Changes of the allow rules apply to its next connection.
 func (e *egressSockets) opener(sandbox, mode string, inject []sandboxnet.Injection, ca *sandboxnet.CA) harness.OpenEgress {
 	return func(gateway harness.HostGatewayFunc, relay bool) (harness.EgressEndpoint, error) {
-		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
+		allow := injectAllow(inject)
+		cfg := sandboxnet.BoundaryConfig{Sandbox: sandbox, Policy: func() egress.Policy { return e.policy(mode, allow...) }, HostGateway: gateway, Blocks: e.blocks, Inject: inject, CA: ca}
 		if relay {
 			return e.openRelayed(cfg)
 		}
@@ -220,11 +221,10 @@ func (e *egressSockets) close(context.Context) error {
 }
 
 // policy returns the policy of mode with the allow rules of the current
-// config and the hosts of its inject rules. Rules that the server can't
-// read allow nothing, as the server validated them before.
-func (e *egressSockets) policy(mode string) egress.Policy {
-	cfg := e.config()
-	p, err := egress.NewPolicy(mode, append(slices.Clone(cfg.Egress.Allow), injectAllow(cfg)...))
+// config and extra. Rules that the server can't read allow nothing, as the
+// server validated them before.
+func (e *egressSockets) policy(mode string, extra ...string) egress.Policy {
+	p, err := egress.NewPolicy(mode, append(slices.Clone(e.config().Egress.Allow), extra...))
 	if err != nil {
 		slog.Error("reading the egress rules; the sandbox reaches nothing until they are fixed", "error", err)
 		return egress.Policy{Mode: egress.ModeAllowlist}
@@ -269,7 +269,7 @@ func (e *egressSockets) status(cfg *agentdir.Config) *controlapi.EgressStatus {
 	st := &controlapi.EgressStatus{Mode: cmp.Or(e.mode, cfg.Egress.Mode, egress.ModeInternet), Allow: cfg.Egress.Allow, Problem: cmp.Or(e.problem, fellBack)}
 	e.mu.Unlock()
 	for _, r := range cfg.Inject {
-		st.Inject = append(st.Inject, r.Show())
+		st.Inject = append(st.Inject, controlapi.EgressInjection{Host: r.Target(), Secrets: r.Secrets()})
 	}
 	if st.Problem == "" {
 		st.Problem = harness.DecideEgress(cfg, harness.HostEgressEnv()).Warning

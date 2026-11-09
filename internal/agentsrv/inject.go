@@ -15,8 +15,11 @@
 package agentsrv
 
 import (
+	"cmp"
 	"fmt"
+	"net"
 	"slices"
+	"strconv"
 	"strings"
 
 	"golang.org/x/net/http/httpguts"
@@ -31,64 +34,63 @@ import (
 // under the inject rules of cfg, as NAME=value: in its environment and in
 // the variables of .mcp.json. It also returns the headers its boundary
 // adds, and the names of the granted secrets that have no stored value.
+//
+// A secret that a rule adds stays in the environment as a placeholder,
+// shaped like a key of its provider for a model key, so that clients that
+// need the variable start, and their requests to the rule's host get the
+// real header. A grant that passes an added secret under another name gets
+// a placeholder too, whatever rules are pending, so that the value never
+// enters the container. A rule adds nothing to a container that isn't
+// granted all of its secrets.
 func secretEnv(cfg *agentdir.Config, sb access.Sandbox, stored agentdir.Secrets) (env []string, inject []sandboxnet.Injection, missing []string, err error) {
-	granted, missing := sb.Values(stored)
-	env, inject, err = injections(cfg, granted)
-	return env, inject, missing, err
-}
-
-// injections returns the environment of a container whose granted secrets
-// env holds, as NAME=value, and the headers its boundary adds under the
-// inject rules of cfg. A secret that a rule adds stays in the environment
-// as a placeholder, shaped like a key of its provider for a model key, so
-// that clients that need the variable start, and their requests to the
-// rule's host get the real header. A rule adds nothing to a container that
-// isn't granted all of its secrets.
-func injections(cfg *agentdir.Config, env []string) ([]string, []sandboxnet.Injection, error) {
-	if len(cfg.Inject) == 0 {
-		return env, nil, nil
-	}
 	values := map[string]string{}
-	for _, kv := range env {
-		name, value, _ := strings.Cut(kv, "=")
-		values[name] = value
+	for _, g := range sb.Secrets {
+		v, ok := stored[g.From]
+		if !ok {
+			missing = append(missing, g.From)
+			continue
+		}
+		values[g.Name] = v
 	}
 	placeholders := map[string]string{}
-	var out []sandboxnet.Injection
 	for _, r := range cfg.Inject {
 		h, err := r.HeaderRule()
 		if err != nil {
-			return nil, nil, fmt.Errorf("--%s %s: %w", r.Setting(), r.Entry(), err)
+			return nil, nil, nil, fmt.Errorf("--%s %s: %w", r.Setting(), r.Entry(), err)
 		}
-		names := r.Secrets()
-		if slices.ContainsFunc(names, func(n string) bool { _, ok := values[n]; return !ok }) {
+		secrets := r.Secrets()
+		for _, n := range secrets {
+			placeholders[n] = cmp.Or(placeholders[n], egress.Placeholder)
+		}
+		if slices.ContainsFunc(secrets, func(n string) bool { _, ok := values[n]; return !ok }) {
 			continue
 		}
-		inj := sandboxnet.Injection{Host: h.Host, Port: h.Port, Header: h.Name, Value: h.Expand(func(n string) string { return values[n] }), Secrets: names}
+		inj := sandboxnet.Injection{Host: h.Host, Port: h.Port, Header: h.Name, Value: h.Expand(func(n string) string { return values[n] }), Secrets: secrets}
 		if !httpguts.ValidHeaderFieldValue(inj.Value) {
-			return nil, nil, fmt.Errorf("--%s %s: the value of %s has a character that a header can't carry", r.Setting(), r.Entry(), strings.Join(names, " or "))
+			return nil, nil, nil, fmt.Errorf("--%s %s: the value of %s has a character that a header can't carry", r.Setting(), r.Entry(), strings.Join(secrets, " or "))
 		}
 		if r.IsModel() {
 			p, _ := egress.LookupProvider(r.Model)
-			inj.Placeholder, inj.Key, inj.QueryKey, inj.Endpoints = p.Placeholder(r.Key), values[r.Key], p.QueryKey, p.Endpoints
-			placeholders[r.Key] = inj.Placeholder
+			inj.Model, inj.QueryKey, inj.Endpoints = true, p.QueryKey, p.Endpoints
+			placeholders[r.Key] = p.Placeholder(r.Key)
 		}
-		out = append(out, inj)
+		inject = append(inject, inj)
 	}
 	injected := cfg.InjectedSecrets()
-	kept := make([]string, 0, len(env))
-	for _, kv := range env {
-		name, _, _ := strings.Cut(kv, "=")
+	for _, g := range sb.Secrets {
+		if _, ok := stored[g.From]; !ok {
+			continue
+		}
 		switch {
-		case placeholders[name] != "":
-			kept = append(kept, name+"="+placeholders[name])
-		case slices.Contains(injected, name):
-			kept = append(kept, name+"="+egress.Placeholder)
+		case placeholders[g.Name] != "":
+			env = append(env, g.Name+"="+placeholders[g.Name])
+		case slices.Contains(injected, g.From):
+			env = append(env, g.Name+"="+egress.Placeholder)
 		default:
-			kept = append(kept, kv)
+			env = append(env, g.Name+"="+values[g.Name])
 		}
 	}
-	return kept, out, nil
+	return env, inject, missing, nil
 }
 
 // injectHosts returns the hosts of the inject rules of cfg, which the
@@ -105,16 +107,14 @@ func injectHosts(cfg *agentdir.Config) []string {
 	return out
 }
 
-// injectAllow returns the egress rules that allow the hosts of the inject
-// rules of cfg, which a rule allows even with --egress allowlist.
-func injectAllow(cfg *agentdir.Config) []string {
-	var out []string
-	for _, r := range cfg.Inject {
-		h, err := r.HeaderRule()
-		if err != nil {
-			continue
-		}
-		out = append(out, h.Host+":"+fmt.Sprint(h.Port))
+// injectAllow returns the egress rules that allow the hosts of inject, the
+// headers a container's boundary adds, which a rule allows even with
+// --egress allowlist. A container without the secrets of a rule doesn't
+// get its host this way.
+func injectAllow(inject []sandboxnet.Injection) []string {
+	out := make([]string, 0, len(inject))
+	for _, inj := range inject {
+		out = append(out, net.JoinHostPort(inj.Host, strconv.Itoa(int(inj.Port))))
 	}
 	return out
 }

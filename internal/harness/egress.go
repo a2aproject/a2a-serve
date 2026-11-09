@@ -212,7 +212,8 @@ func StrictEgress(cfg *agentdir.Config) bool {
 }
 
 // noInject says why a container whose secrets the boundary adds can't
-// start.
+// start, and the ways out: fix the cause, or move the keys back into the
+// agent's environment.
 func noInject(cfg *agentdir.Config, why string) string {
 	var flags, unset []string
 	for _, r := range cfg.Inject {
@@ -221,7 +222,13 @@ func noInject(cfg *agentdir.Config, why string) string {
 			unset = append(unset, "`a2a-serve config unset "+r.Setting()+"`")
 		}
 	}
-	return fmt.Sprintf("%s can't apply: %s; the agent doesn't start, so that it can't read %s. Run the server on Linux with a release build, or remove the rules with %s, which removes their secrets too; then pass a key again with --secret to put it in the agent's environment", strings.Join(flags, " and "), why, strings.Join(cfg.InjectedSecrets(), ", "), strings.Join(unset, " and "))
+	secrets := cfg.InjectedSecrets()
+	var store strings.Builder
+	store.WriteString("`a2a-serve config set")
+	for _, name := range secrets {
+		store.WriteString(" --secret " + name + "=-")
+	}
+	return fmt.Sprintf("%s can't apply: %s. The agent doesn't start, so that it can't read %s. Fix that, or put the keys in the agent's environment: remove the rules with %s, then store the keys again with %s`", strings.Join(flags, " and "), why, strings.Join(secrets, ", "), strings.Join(unset, " and "), store.String())
 }
 
 // noAllowlistRules warns about an allowlist that allows nothing.

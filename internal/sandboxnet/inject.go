@@ -64,14 +64,13 @@ type Injection struct {
 	Port uint16
 	// Header is set to Value.
 	Header, Value string
-	// Placeholder is set for the key of a model provider: the container
-	// has Placeholder in place of Key. The boundary puts Key where a
-	// credential header carries the placeholder, removes the other
-	// credential headers and the query parameter QueryKey, and sets Header
-	// to Value when no header carries the placeholder. It does so only for
-	// Endpoints; other requests leave without credentials.
-	Placeholder, Key, QueryKey string
-	Endpoints                  []string
+	// Model is set for the key of a model provider. The boundary removes
+	// the credential headers and the query parameter QueryKey that the
+	// container sent, and sets Header only on the requests of Endpoints,
+	// so that the container can't pick how the key reaches the host.
+	Model     bool
+	QueryKey  string
+	Endpoints []string
 	// Secrets name the secrets in Value, for the log.
 	Secrets []string
 }
@@ -214,33 +213,20 @@ func (b *Boundary) forward(w http.ResponseWriter, r *http.Request, inj Injection
 
 // apply puts the header of inj on the outgoing request r.
 func (inj Injection) apply(r *http.Request) {
-	if inj.Placeholder == "" {
+	if !inj.Model {
 		r.Header.Del(inj.Header)
 		r.Header.Set(inj.Header, inj.Value)
 		return
 	}
-	endpoint := r.URL.RawPath == "" && plainPath(r.URL.Path) && egress.MatchEndpoint(inj.Endpoints, r.Method, r.URL.Path)
-	// The key goes where the container put the whole placeholder, once,
-	// so that the container can't shape what the host sees of the key,
-	// such as in an error that quotes a wrong key.
-	found := false
 	for _, name := range egress.CredentialHeaders {
-		values := r.Header.Values(name)
 		r.Header.Del(name)
-		for _, v := range values {
-			scheme, ok := strings.CutSuffix(v, inj.Placeholder)
-			if endpoint && !found && ok && (scheme == "" || strings.EqualFold(scheme, "Bearer ")) {
-				r.Header.Set(name, scheme+inj.Key)
-				found = true
-			}
-		}
 	}
 	if inj.QueryKey != "" && r.URL.Query().Has(inj.QueryKey) {
 		q := r.URL.Query()
 		q.Del(inj.QueryKey)
 		r.URL.RawQuery = q.Encode()
 	}
-	if endpoint && !found {
+	if r.URL.RawPath == "" && plainPath(r.URL.Path) && egress.MatchEndpoint(inj.Endpoints, r.Method, r.URL.Path) {
 		r.Header.Set(inj.Header, inj.Value)
 	}
 }

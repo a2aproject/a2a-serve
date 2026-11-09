@@ -610,7 +610,7 @@ var fields = []field{
 	{
 		access: str(func(c *Config) *string { return &c.Egress.Mode }, func(s *Settings) *string { return &s.Egress }),
 		flag:   "egress", path: "egress.mode", scope: scopeOwner, section: SectionSandbox,
-		usage:  "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet)",
+		usage:  "Where the Docker sandbox may connect, a `mode`: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet)",
 		values: egress.Modes,
 		def:    egress.ModeInternet,
 	},

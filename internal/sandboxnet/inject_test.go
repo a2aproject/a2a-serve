@@ -209,7 +209,7 @@ func TestBoundaryInjectsModelKey(t *testing.T) {
 	placeholder := p.Placeholder("GEMINI_API_KEY")
 	inj := Injection{
 		Host: injectHost, Port: port, Header: "X-Goog-Api-Key", Value: "AIza_real",
-		Placeholder: placeholder, Key: "AIza_real", QueryKey: "key", Endpoints: p.Endpoints,
+		Model: true, QueryKey: "key", Endpoints: p.Endpoints,
 	}
 	_, client := injectBoundary(t, inj, roots, &logRecords{}, false)
 	base := "https://" + net.JoinHostPort(injectHost, strconv.Itoa(int(port)))
@@ -229,7 +229,7 @@ func TestBoundaryInjectsModelKey(t *testing.T) {
 		{
 			name: "placeholder in another credential header", method: http.MethodPost, path: "/v1beta/models/g:generateContent",
 			header:      http.Header{"Authorization": {"Bearer " + placeholder}, "X-Api-Key": {"agent-own"}},
-			wantHeaders: map[string]string{"Authorization": "Bearer AIza_real"},
+			wantHeaders: map[string]string{"X-Goog-Api-Key": "AIza_real"},
 		},
 		{
 			name: "placeholder in the query", method: http.MethodPost, path: "/v1beta/models/g:generateContent?alt=sse&key=" + placeholder,
@@ -249,14 +249,14 @@ func TestBoundaryInjectsModelKey(t *testing.T) {
 			header: http.Header{"X-Goog-Api-Key": {placeholder}}, wantHeaders: map[string]string{},
 		},
 		{
-			name: "a placeholder inside other text", method: http.MethodPost, path: "/v1beta/models/g:generateContent",
+			name: "a placeholder inside other text in another header", method: http.MethodPost, path: "/v1beta/models/g:generateContent",
 			header:      http.Header{"Authorization": {"Bearer x" + placeholder}},
 			wantHeaders: map[string]string{"X-Goog-Api-Key": "AIza_real"},
 		},
 		{
 			name: "a repeated placeholder", method: http.MethodPost, path: "/v1beta/models/g:generateContent",
 			header:      http.Header{"X-Goog-Api-Key": {placeholder, placeholder}, "Authorization": {"Bearer " + placeholder}},
-			wantHeaders: map[string]string{"Authorization": "Bearer AIza_real"},
+			wantHeaders: map[string]string{"X-Goog-Api-Key": "AIza_real"},
 		},
 	}
 	for _, tc := range tests {

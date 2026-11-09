@@ -156,7 +156,7 @@ func TestDecideEgress(t *testing.T) {
 		{name: "forced relay", env: with(func(e *EgressEnv) { e.ForceRelay = true; e.Launcher = noLauncher }), boundary: true},
 		{name: "allowlist without a launcher", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist", Allow: []string{"nas.lan"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--egress allowlist can't apply: no launcher"},
 		{name: "allowlist without rules", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, env: linux, boundary: true, warning: "no --egress-allow rules"},
-		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher; the agent doesn't start, so that it can't read GH"},
+		{name: "inject without a launcher", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Host: "api.github.com", Header: "Authorization: Bearer $GH"}}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher }), warning: "--inject-header can't apply: no launcher. The agent doesn't start, so that it can't read GH."},
 		{name: "unrestricted", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "unrestricted"}}, env: with(func(e *EgressEnv) { e.Launcher = noLauncher })},
 		{name: "local", cfg: agentdir.Config{Sandbox: SandboxLocal}, env: linux},
 		{name: "local with rules", cfg: agentdir.Config{Sandbox: SandboxLocal, Egress: agentdir.EgressConfig{Allow: []string{"nas.lan"}}}, env: linux, warning: "have no effect with --sandbox local"},
@@ -217,7 +217,7 @@ func TestProbeFailed(t *testing.T) {
 		{name: "allowlist", cfg: agentdir.Config{Egress: agentdir.EgressConfig{Mode: "allowlist"}}, want: "--egress allowlist can't apply: the agent's container can't set up its network: operation not permitted"},
 		{
 			name: "inject", cfg: agentdir.Config{Inject: []agentdir.InjectRule{{Model: "openrouter", Key: "OPENROUTER_API_KEY"}}},
-			want: "--inject-model-key can't apply: the agent's container can't set up its network: operation not permitted; the agent doesn't start, so that it can't read OPENROUTER_API_KEY",
+			want: "--inject-model-key can't apply: the agent's container can't set up its network: operation not permitted. The agent doesn't start, so that it can't read OPENROUTER_API_KEY. Fix that, or put the keys in the agent's environment: remove the rules with `a2a-serve config unset inject-model-key`, then store the keys again with `a2a-serve config set --secret OPENROUTER_API_KEY=-`",
 		},
 	}
 	for _, tc := range tests {

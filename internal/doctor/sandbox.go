@@ -161,6 +161,8 @@ func checkEgress(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdir.
 	case cfg.Egress.Mode == egress.ModeUnrestricted:
 		r.Status, r.Message = StatusWarn, "--egress unrestricted: "+harness.UnrestrictedEffect
 		r.Fix = "a2a-serve config unset egress --restart"
+	case d.Problem != "" && harness.StrictEgress(cfg):
+		r.Status, r.Message = StatusFail, d.Warning
 	case d.Warning != "":
 		r.Status, r.Message = StatusWarn, d.Warning
 	case d.Boundary && env.CheckInternetRoute() != nil:

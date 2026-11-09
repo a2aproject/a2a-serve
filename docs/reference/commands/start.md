@@ -87,7 +87,7 @@ a2a-serve start acp --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the ACP agent, as shell words, such as "gemini --experimental-acp" |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
@@ -179,7 +179,7 @@ a2a-serve start claude --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |
@@ -343,7 +343,7 @@ a2a-serve start opencode --workspace ~/src/app --mount ~/docs:/docs:ro
 | Flag | Default | Description |
 |---|---|---|
 | `--command words` |  | Command line of the agent, as shell words, such as "cloudcode acp"; replaces its default command |
-| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
+| `--egress mode` |  | Where the Docker sandbox may connect, a mode: internet (the public internet and the --egress-allow hosts), allowlist (only the --egress-allow hosts and the hosts of --inject-header and --inject-model-key, which must include the API of the model provider) or unrestricted (Docker's own network, the LAN and the tailnet included) (default internet) |
 | `--egress-allow rule` |  | Host the Docker sandbox may also reach, private ones included: a rule such as nas.lan, \*.example.com, 192.168.1.20 or 192.168.1.0/24, with an optional :port (repeatable; commas also separate values) |
 | `--image string` |  | Container image of the agent; only applies to --sandbox docker |
 | `--inject-header host=Name: value` |  | Header the server adds to the Docker sandbox's HTTPS requests to a host, so that the agent doesn't see the secret in it: host=Name: value, with $NAME for a variable of your environment, stored in .a2a/state/secrets, such as 'api.github.com=Authorization: Bearer $GITHUB_TOKEN'; keyed by host (repeatable) |

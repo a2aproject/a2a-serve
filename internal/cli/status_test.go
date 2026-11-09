@@ -209,12 +209,17 @@ func TestPrintStatusInject(t *testing.T) {
 	}{
 		{
 			name:   "boundary",
-			egress: &controlapi.EgressStatus{Mode: "internet", Inject: []string{"openrouter.ai gets OPENROUTER_API_KEY", "api.github.com gets GH"}},
+			egress: &controlapi.EgressStatus{Mode: "internet", Inject: []controlapi.EgressInjection{{Host: "openrouter.ai", Secrets: []string{"OPENROUTER_API_KEY"}}, {Host: "api.github.com", Secrets: []string{"GH"}}}},
 			want:   "  egress   the internet; private networks blocked\n  inject   openrouter.ai gets OPENROUTER_API_KEY; api.github.com gets GH\n",
 		},
 		{
+			name:   "allowlist",
+			egress: &controlapi.EgressStatus{Mode: "allowlist", Inject: []controlapi.EgressInjection{{Host: "openrouter.ai", Secrets: []string{"OPENROUTER_API_KEY"}}}},
+			want:   "  egress   only openrouter.ai\n  inject   openrouter.ai gets OPENROUTER_API_KEY\n",
+		},
+		{
 			name:   "problem",
-			egress: &controlapi.EgressStatus{Mode: "internet", Problem: "--inject-model-key can't apply", Inject: []string{"openrouter.ai gets OPENROUTER_API_KEY"}},
+			egress: &controlapi.EgressStatus{Mode: "internet", Problem: "--inject-model-key can't apply", Inject: []controlapi.EgressInjection{{Host: "openrouter.ai", Secrets: []string{"OPENROUTER_API_KEY"}}}},
 			want:   "  egress   ! --inject-model-key can't apply\n  inject   openrouter.ai gets OPENROUTER_API_KEY\n",
 		},
 	}

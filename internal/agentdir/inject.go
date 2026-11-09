@@ -100,12 +100,6 @@ func (r InjectRule) Secrets() []string {
 	return h.Secrets()
 }
 
-// Show returns r for status and changes, with secret names only, such as
-// "openrouter.ai gets OPENROUTER_API_KEY".
-func (r InjectRule) Show() string {
-	return r.Target() + " gets " + strings.Join(r.Secrets(), ", ")
-}
-
 // InjectedSecrets returns the names of the secrets the inject rules of c
 // add, in the order of the rules.
 func (c *Config) InjectedSecrets() []string {
@@ -199,7 +193,7 @@ func mergeInject(model bool) func(s *Settings, cfg *Config, d Dir, secrets Secre
 				case v != "":
 					secrets[name] = v
 				case !slices.Contains(cfg.Secrets, name):
-					return fmt.Errorf("--%s %s: the environment variable %s is not set; set it, or store the secret first with `a2a-serve config set --secret %s`", flag, e, name, name)
+					return fmt.Errorf("--%s: the environment variable %s is not set; set it, or add --secret %s=- to this command to type the value", flag, name, name)
 				}
 				cfg.Secrets = putKeyed(cfg.Secrets, name, nil)
 			}
@@ -225,7 +219,7 @@ func parseInjectEntry(model bool, e string) (InjectRule, error) {
 	provider, key, ok := strings.Cut(strings.TrimSpace(e), "=")
 	provider, key = strings.TrimSpace(provider), strings.TrimSpace(key)
 	if !ok || !secretName.MatchString(key) {
-		return InjectRule{}, fmt.Errorf("invalid model key %q: want provider=NAME, such as openrouter=OPENROUTER_API_KEY, with NAME an environment variable", e)
+		return InjectRule{}, fmt.Errorf("invalid model key for %q: want provider=NAME, such as openrouter=OPENROUTER_API_KEY, with the name of an environment variable after =", provider)
 	}
 	if _, ok := egress.LookupProvider(provider); !ok {
 		return InjectRule{}, egress.UnknownProvider(provider)
@@ -257,7 +251,7 @@ func (c *Config) validateInject() []error {
 		targets[parsed.Target()] = r
 		for _, name := range parsed.Secrets() {
 			if !slices.Contains(c.Secrets, name) {
-				invalid("secret %s is not one of the agent's secrets; store it with `a2a-serve config set --secret %s`", name, name)
+				invalid("secret %s is not one of the agent's secrets; store it with `a2a-serve config set --secret %s`, or remove the rule with `a2a-serve config unset %s %s`", name, name, r.Setting(), injectKey(r.IsModel())(r.Entry()))
 			}
 		}
 	}
@@ -294,6 +288,18 @@ func (c *Config) checkInjectUnused(names []string) error {
 		}
 	}
 	return nil
+}
+
+// DroppedInjected returns the names of the secrets that inject rules of
+// old added and that next no longer has, whose stored values are deleted.
+func DroppedInjected(old, next *Config) []string {
+	var out []string
+	for _, name := range old.InjectedSecrets() {
+		if !slices.Contains(next.Secrets, name) {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 // dropInjectedSecrets removes from c the secrets of before, which inject

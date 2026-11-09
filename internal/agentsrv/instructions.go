@@ -112,7 +112,7 @@ func injectNote(cfg *agentdir.Config) string {
 		name, _, _ := strings.Cut(r.Header, ":")
 		hosts = append(hosts, fmt.Sprintf("%s (the %s header; %s holds a placeholder)", r.Target(), strings.TrimSpace(name), strings.Join(r.Secrets(), " and ")))
 	}
-	return "The server adds credentials to your HTTPS requests to these hosts, so send them without credentials: " + strings.Join(hosts, ", ") + ". A placeholder works only on its host."
+	return "The server adds the credentials of your HTTPS requests to these hosts: " + strings.Join(hosts, ", ") + ". Use the variables as they are; the server replaces their placeholders with the real values on these hosts, and the placeholders work nowhere else."
 }
 
 // callableAgents returns the built-in schedules agent, the contacts, the
