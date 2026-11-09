@@ -152,8 +152,10 @@ func (a *agentMesh) start(ctx context.Context) error {
 	if a.started.Load() {
 		return nil
 	}
+	var invite *inviteSwitch
 	if a.cfg.Token != "" {
-		if err := useInvite(a.cfg.StateDir, a.cfg.Token); err != nil {
+		var err error
+		if invite, err = useInvite(a.cfg.StateDir, a.cfg.Token); err != nil {
 			return fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err)
 		}
 	}
@@ -173,12 +175,10 @@ func (a *agentMesh) start(ctx context.Context) error {
 	}
 	st, err := srv.Up(ctx)
 	err = explainJoin(err)
-	if a.cfg.Token != "" {
-		srv, st, err = a.settleInvite(ctx, srv, st, err)
-	}
 	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
 		slog.Warn("recording the relay join", "error", rerr)
 	}
+	srv, st, err = a.settleInvite(ctx, invite, srv, st, err)
 	if err != nil {
 		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
 			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {

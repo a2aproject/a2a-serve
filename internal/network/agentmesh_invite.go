@@ -41,30 +41,45 @@ const inviteHashFile = "invite-hash"
 // got a new invite, until the relay accepts or refuses that invite.
 const setAsideCredentialFile = "set-aside-credential.json"
 
+// inviteSwitch is a join with an invite other than the one the agent last
+// joined with.
+type inviteSwitch struct {
+	stateDir string
+	hash     string
+	// recorded tells whether the agent recorded its last invite. Agents
+	// that joined before a2a-serve recorded invites didn't.
+	recorded bool
+}
+
 // useInvite prepares stateDir for a join with token. A new invite sets the
 // saved mesh credential aside and keeps the identity key, so the agent
 // enrolls again with the same peer ID. Routers keep refusing the credential
 // of a removed agent after the relay lets it back, and meshnet resumes a
-// saved credential before it looks at the token. An agent that joined
-// before its invite was recorded treats its invite as new.
-func useInvite(stateDir, token string) error {
+// saved credential before it looks at the token. useInvite returns nil
+// for the invite the agent last joined with.
+func useInvite(stateDir, token string) (*inviteSwitch, error) {
 	sum := sha256.Sum256([]byte(token))
-	hash := hex.EncodeToString(sum[:])
-	path := filepath.Join(stateDir, inviteHashFile)
-	saved, err := os.ReadFile(path)
+	sw := &inviteSwitch{stateDir: stateDir, hash: hex.EncodeToString(sum[:])}
+	saved, err := os.ReadFile(filepath.Join(stateDir, inviteHashFile))
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
-		return fmt.Errorf("reading the relay's last invite: %w", err)
+		return nil, fmt.Errorf("reading the relay's last invite: %w", err)
 	}
-	if err == nil && strings.TrimSpace(string(saved)) == hash {
-		return nil
+	sw.recorded = err == nil
+	if sw.recorded && strings.TrimSpace(string(saved)) == sw.hash {
+		return nil, nil
 	}
 	if err := setAsideMeshCredential(stateDir); err != nil {
-		return fmt.Errorf("setting aside the relay credential of the last invite: %w", err)
+		return nil, fmt.Errorf("setting aside the relay credential of the last invite: %w", err)
 	}
-	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+	return sw, nil
+}
+
+// record keeps the invite as the one the agent last joined with.
+func (sw *inviteSwitch) record() error {
+	if err := os.MkdirAll(sw.stateDir, 0o700); err != nil {
 		return err
 	}
-	return fsutil.WriteAtomic(path, []byte(hash+"\n"), 0o600)
+	return fsutil.WriteAtomic(filepath.Join(sw.stateDir, inviteHashFile), []byte(sw.hash+"\n"), 0o600)
 }
 
 func setAsideMeshCredential(stateDir string) error {
@@ -105,19 +120,26 @@ func restoreMeshCredential(stateDir string) (bool, error) {
 	return true, removeFile(path)
 }
 
-// settleInvite ends the switch to a new invite after the join srv tried. A
-// join drops the credential set aside for the invite. When the relay
-// refuses the invite, the agent joins again with that credential, which it
-// used before it got the invite, such as after a mistyped --relay-token.
-func (a *agentMesh) settleInvite(ctx context.Context, srv *meshnet.Server, st *meshnet.Status, err error) (*meshnet.Server, *meshnet.Status, error) {
+// settleInvite ends the invite switch sw after the join srv tried. A join
+// records the invite and drops the credential set aside for it. When the
+// relay refuses the invite, the agent joins again with that credential,
+// which it used before it got the invite, such as after a mistyped
+// --relay-token. An agent that never recorded its invite adopts it then:
+// it joined with that invite, which is used up.
+func (a *agentMesh) settleInvite(ctx context.Context, sw *inviteSwitch, srv *meshnet.Server, st *meshnet.Status, err error) (*meshnet.Server, *meshnet.Status, error) {
 	if err == nil {
+		if sw != nil {
+			if rerr := sw.record(); rerr != nil {
+				slog.Warn("recording the relay invite", "error", rerr)
+			}
+		}
 		if rerr := removeFile(filepath.Join(a.cfg.StateDir, setAsideCredentialFile)); rerr != nil {
 			slog.Warn("removing the relay credential of the last invite", "error", rerr)
 		}
 		return srv, st, nil
 	}
 	var invite *InviteError
-	if !errors.As(err, &invite) {
+	if sw == nil || !errors.As(err, &invite) {
 		return srv, st, err
 	}
 	restored, rerr := restoreMeshCredential(a.cfg.StateDir)
@@ -135,6 +157,12 @@ func (a *agentMesh) settleInvite(ctx context.Context, srv *meshnet.Server, st *m
 	if rerr != nil {
 		slog.Warn("joining the relay with the credential of the last invite", "error", rerr)
 		return srv, st, err
+	}
+	if !sw.recorded {
+		if rerr := errors.Join(sw.record(), RecordJoin(a.cfg.StateDir, nil)); rerr != nil {
+			slog.Warn("recording the relay invite", "error", rerr)
+		}
+		return srv, st, nil
 	}
 	slog.Warn("the relay refused the new invite; joined with the credential of the last invite", "problem", invite.Problem)
 	a.logf("! relay: %s; the agent joined with the credential of its last invite", invite.Problem)

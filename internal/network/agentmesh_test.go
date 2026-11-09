@@ -299,19 +299,31 @@ func TestHasMeshIdentity(t *testing.T) {
 	}
 }
 
+func recordInvite(t *testing.T, dir, token string) {
+	t.Helper()
+	sw, err := useInvite(dir, token)
+	if err != nil {
+		t.Fatalf("useInvite(%q) error = %v", token, err)
+	}
+	if err := sw.record(); err != nil {
+		t.Fatalf("inviteSwitch.record() error = %v", err)
+	}
+}
+
 func TestUseInvite(t *testing.T) {
 	t.Parallel()
 	enrolled := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}
 	setAside := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com"}
 	tests := []struct {
-		name      string
-		lastToken string
-		token     string
-		want      *api.MemberCredential
+		name       string
+		lastToken  string
+		token      string
+		wantSwitch bool
+		wantCred   *api.MemberCredential
 	}{
-		{name: "unrecorded token sets the credential aside", token: "invite-1", want: setAside},
-		{name: "same token keeps the credential", lastToken: "invite-1", token: "invite-1", want: enrolled},
-		{name: "new token sets the credential aside", lastToken: "invite-1", token: "invite-2", want: setAside},
+		{name: "unrecorded token sets the credential aside", token: "invite-1", wantSwitch: true, wantCred: setAside},
+		{name: "same token keeps the credential", lastToken: "invite-1", token: "invite-1", wantCred: enrolled},
+		{name: "new token sets the credential aside", lastToken: "invite-1", token: "invite-2", wantSwitch: true, wantCred: setAside},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -319,18 +331,23 @@ func TestUseInvite(t *testing.T) {
 			dir := t.TempDir()
 			key := marshalLibp2pEd25519Key(t)
 			if tc.lastToken != "" {
-				if err := useInvite(dir, tc.lastToken); err != nil {
-					t.Fatalf("useInvite(%q) error = %v", tc.lastToken, err)
-				}
+				recordInvite(t, dir, tc.lastToken)
 			}
 			if err := meshnet.WriteStateDir(dir, key, enrolled); err != nil {
 				t.Fatalf("meshnet.WriteStateDir() error = %v", err)
 			}
 
-			if err := useInvite(dir, tc.token); err != nil {
+			sw, err := useInvite(dir, tc.token)
+			if err != nil {
 				t.Fatalf("useInvite(%q) error = %v", tc.token, err)
 			}
 
+			if got := sw != nil; got != tc.wantSwitch {
+				t.Fatalf("useInvite(%q) switches = %v, want %v", tc.token, got, tc.wantSwitch)
+			}
+			if sw != nil && sw.recorded != (tc.lastToken != "") {
+				t.Fatalf("useInvite(%q) recorded = %v, want %v", tc.token, sw.recorded, tc.lastToken != "")
+			}
 			gotKey, gotCred, err := meshnet.ReadStateDir(dir)
 			if err != nil {
 				t.Fatalf("meshnet.ReadStateDir() error = %v", err)
@@ -338,7 +355,7 @@ func TestUseInvite(t *testing.T) {
 			if diff := cmp.Diff(key, gotKey); diff != "" {
 				t.Fatalf("meshnet.ReadStateDir() identity key wrong result (-want +got) diff = %s", diff)
 			}
-			if diff := cmp.Diff(tc.want, gotCred, protocmp.Transform()); diff != "" {
+			if diff := cmp.Diff(tc.wantCred, gotCred, protocmp.Transform()); diff != "" {
 				t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
 			}
 		})
@@ -349,9 +366,7 @@ func TestUseInviteWithoutState(t *testing.T) {
 	t.Parallel()
 	dir := filepath.Join(t.TempDir(), "relay")
 	for _, token := range []string{"invite-1", "invite-2"} {
-		if err := useInvite(dir, token); err != nil {
-			t.Fatalf("useInvite(%q) error = %v", token, err)
-		}
+		recordInvite(t, dir, token)
 	}
 	if hasMeshIdentity(dir) {
 		t.Fatalf("hasMeshIdentity() = true after invites without a join, want false")
@@ -365,14 +380,13 @@ func TestRestoreMeshCredential(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	enrolled := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}
-	if err := useInvite(dir, "invite-1"); err != nil {
-		t.Fatalf("useInvite() error = %v", err)
-	}
 	if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), enrolled); err != nil {
 		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
 	}
-	if err := useInvite(dir, "invite-2"); err != nil {
-		t.Fatalf("useInvite() error = %v", err)
+	for _, token := range []string{"invite-1", "invite-2"} {
+		if _, err := useInvite(dir, token); err != nil {
+			t.Fatalf("useInvite(%q) error = %v", token, err)
+		}
 	}
 
 	restored, err := restoreMeshCredential(dir)

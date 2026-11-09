@@ -442,6 +442,18 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	if inv.LetBack == nil {
 		t.Fatal("Client.Invite() let back no agent, want reviewer")
 	}
+	for range 2 {
+		mistyped := cfg
+		mistyped.Token = inv.Token[1:]
+		p, err := network.NewRelay(mistyped)
+		if err != nil {
+			t.Fatalf("network.NewRelay() error = %v", err)
+		}
+		var invite *network.InviteError
+		if _, _, err := p.ListenPrivate(t.Context()); !errors.As(err, &invite) {
+			t.Fatalf("joining with a mistyped invite: error = %v, want an invite error", err)
+		}
+	}
 	cfg.Token = inv.Token
 	back := serveAgent(t, cfg)
 	if back.privateURL != reviewer.privateURL {
@@ -474,14 +486,30 @@ func TestRelayKeepsAnAgentWhoseInviteIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for _, token := range []string{inv.Token, "not-an-invite"} {
-		cfg.Token = token
+	tests := []struct {
+		token       string
+		wantProblem bool
+	}{
+		{token: inv.Token},
+		{token: "not-an-invite", wantProblem: true},
+		{token: "not-an-invite", wantProblem: true},
+		{token: inv.Token},
+	}
+	for _, tc := range tests {
+		cfg.Token = tc.token
 		back := serveAgent(t, cfg)
 		if back.privateURL != reviewer.privateURL {
-			t.Fatalf("reviewer's private URL after a start with token %q = %s, want %s", token, back.privateURL, reviewer.privateURL)
+			t.Fatalf("reviewer's private URL after a start with token %q = %s, want %s", tc.token, back.privateURL, reviewer.privateURL)
 		}
 		if err := back.provider.Close(); err != nil {
 			t.Fatalf("closing reviewer: %v", err)
+		}
+		problem, err := network.InviteProblem(cfg.StateDir)
+		if err != nil {
+			t.Fatalf("network.InviteProblem() error = %v", err)
+		}
+		if got := problem != ""; got != tc.wantProblem {
+			t.Fatalf("network.InviteProblem() after a start with token %q = %q, want a problem: %v", tc.token, problem, tc.wantProblem)
 		}
 	}
 }
