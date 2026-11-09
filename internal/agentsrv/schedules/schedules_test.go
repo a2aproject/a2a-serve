@@ -206,12 +206,44 @@ func TestSchedulesPostDueRunWhileARetryWaits(t *testing.T) {
 	}
 	fx.sc.RunDue(fx.ctx)
 
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+	fx.sc.RunDue(fx.ctx)
+
 	posted := fx.turns.turns()
-	if len(posted) != 3 || posted[2].Key != posted[1].Key {
-		t.Fatalf("turns posted once the next run is due = %d, want the run posted with the key of the waiting retry", len(posted))
+	if len(posted) != 4 || posted[2].Key != posted[1].Key || posted[3].Key != posted[1].Key {
+		t.Fatalf("turns posted once two more runs are due = %d, want both runs posted with the key of the waiting retry", len(posted))
 	}
 	if next := fx.schedule(t, "hourly").NextRun; !next.After(time.Now()) {
-		t.Fatalf("Schedule().NextRun = %v, want the next time after the due run", next)
+		t.Fatalf("Schedule().NextRun = %v, want the next time after the due runs", next)
+	}
+	for _, p := range posted[1:] {
+		p.Accept(nil)
+	}
+	fx.sc.RunDue(fx.ctx)
+	if got := len(fx.turns.turns()); got != 4 {
+		t.Fatalf("turns posted after the merged retry was accepted = %d, want 4", got)
+	}
+}
+
+func TestSchedulesDueRunReplacesARefusedRun(t *testing.T) {
+	t.Parallel()
+	fx := newSchedulesFixture(t)
+	due := time.Now().Add(-time.Minute).Truncate(time.Second)
+	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
+	fx.sc.RunDue(fx.ctx)
+	fx.turns.turns()[0].Accept(errors.New("anna has 8 unfinished tasks"))
+	if err := fx.store.SetScheduleNextRun(fx.ctx, "hourly", due); err != nil {
+		t.Fatalf("SetScheduleNextRun() error = %v", err)
+	}
+
+	fx.sc.RunDue(fx.ctx)
+	fx.sc.RunDue(fx.ctx)
+
+	posted := fx.turns.turns()
+	if len(posted) != 2 || posted[1].Quiet {
+		t.Fatalf("turns posted = %+v, want the due run in place of the retry", posted)
 	}
 }
 

@@ -169,7 +169,11 @@ func (sc *Runner) RunDue(ctx context.Context) time.Duration {
 			slog.Error("saving the next run of a schedule", "schedule", s.Name, "error", err)
 			continue
 		}
-		sc.setRefused(s.Name, false)
+		// While a retry waits, it stays a retry, so that every due run
+		// merges into it.
+		if !sc.isPending(s.Name) {
+			sc.setRefused(s.Name, false)
+		}
 		runErr := sc.start(ctx, s, false, sc.retryRefused(s.Name))
 		sc.record(ctx, s.Name, now, cmp.Or(runErr, nextErr))
 		if !next.IsZero() {
