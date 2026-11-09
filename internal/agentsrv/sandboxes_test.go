@@ -292,6 +292,9 @@ func TestPruneWorkspaces(t *testing.T) {
 		{key: agentkey.User("email:new@example.com"), storage: agentdir.StorageOwn, used: time.Now()},
 		{key: agentkey.User(auth.PairPrincipal("ben")), storage: agentdir.StorageOwn, used: old},
 		{key: agentkey.Guest, storage: agentdir.StorageOwn, used: time.Now()},
+		{key: agentkey.Caller("email:old-agent@example.com", "m13"), storage: agentdir.StorageOwn, used: old},
+		{key: agentkey.Caller("email:new-agent@example.com", "m13"), storage: agentdir.StorageOwn, used: time.Now()},
+		{key: agentkey.Caller(auth.PairPrincipal("assistant"), "m13"), storage: agentdir.StorageOwn, used: old},
 	} {
 		id, _ := agentkey.UserOf(w.key)
 		name := workspaceName(w.key)
@@ -316,7 +319,7 @@ func TestPruneWorkspaces(t *testing.T) {
 		}
 	}
 	sort.Strings(got)
-	if diff := cmp.Diff([]string{"email:new@example.com", "pair:ben"}, got); diff != "" {
+	if diff := cmp.Diff([]string{"email:new-agent@example.com", "email:new@example.com", "pair:assistant", "pair:ben"}, got); diff != "" {
 		t.Fatalf("pruneWorkspaces() kept wrong workspaces (-want +got) diff = %s", diff)
 	}
 }

@@ -558,6 +558,9 @@ func (s *Server) pruneWorkspace(ctx context.Context, e workspaces.Entry) error {
 		return s.removeStorageBut(e, s.sandboxes.resolve(auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}).Storage)
 	}
 	key := agentkey.User(e.Principal)
+	if caller, ok := strings.CutPrefix(e.Name, agentdir.CallerName(e.Principal, "")); ok {
+		key = agentkey.CallerKey(e.Principal, caller)
+	}
 	pairing := strings.HasPrefix(e.Principal, auth.PairPrefix) || auth.IdentityOf(e.Principal).WebhookNode != ""
 	if e.Principal == "" || workspaceName(key) != e.Name || pairing || time.Since(e.Used) < unusedWorkspaceTTL {
 		return nil

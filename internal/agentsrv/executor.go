@@ -182,11 +182,11 @@ func (s *Server) startPoolAgent(ctx context.Context, agents *userAgents, key str
 		return nil, fmt.Errorf("unknown agent key %q", key)
 	}
 	if isUser && agentkey.CallerOf(key) != "" {
-		// Removing the user holds the start of its own process, which
-		// holds the starts of the processes of its callers too.
+		// Removing the user waits for the processes of its callers to start,
+		// and holds new ones until it ends.
 		base := agents.get(agentkey.User(id))
-		base.startMu.Lock()
-		defer base.startMu.Unlock()
+		base.callersMu.RLock()
+		defer base.callersMu.RUnlock()
 	}
 	ua := agents.get(key)
 	ua.startMu.Lock()
@@ -1077,13 +1077,10 @@ func (i *callerInterceptor) checkUserAgents(ctx context.Context, contextID strin
 	if err != nil {
 		return fmt.Errorf("looking up the session of conversation %s: %w", contextID, err)
 	}
-	if err := i.checkCallerHomes(key); err != nil {
-		return err
+	if _, ok := agentkey.UserOf(key); ok && !i.users.hasRoom(key) {
+		return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
 	}
-	if _, ok := agentkey.UserOf(key); !ok || i.users.hasRoom(key) {
-		return nil
-	}
-	return fmt.Errorf("%w: %w", a2a.ErrServerError, errAgentsBusy)
+	return i.checkCallerHomes(key)
 }
 
 // checkConversation refuses a message into a conversation that another

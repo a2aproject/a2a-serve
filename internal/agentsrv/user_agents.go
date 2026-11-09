@@ -48,6 +48,10 @@ type userAgent struct {
 	// startMu is held while the process starts and while its user is
 	// removed.
 	startMu sync.Mutex
+	// callersMu is held for reading while a process that the user has for
+	// the people behind its calls starts, and for writing while the user
+	// is removed.
+	callersMu sync.RWMutex
 	// proc, starting and turns are guarded by userAgents.mu. turns counts
 	// the turns that use the process, including those waiting for an answer.
 	proc     io.Closer
@@ -86,6 +90,22 @@ func (u *userAgents) callerKeys(id string) []string {
 		}
 	}
 	return out
+}
+
+// holdCallerStarts holds the starts of the processes that the users of
+// keys have for the people behind their calls, until release is called.
+func (u *userAgents) holdCallerStarts(keys ...string) (release func()) {
+	keys = slices.Sorted(slices.Values(keys))
+	held := make([]*userAgent, len(keys))
+	for i, key := range keys {
+		held[i] = u.get(key)
+		held[i].callersMu.Lock()
+	}
+	return func() {
+		for _, a := range held {
+			a.callersMu.Unlock()
+		}
+	}
 }
 
 // forget drops the entry of key if no process of it runs or starts and no
@@ -378,25 +398,22 @@ func (u stopUsers) Stop(ctx context.Context, principals ...string) (func(), erro
 			}
 		}
 	}
-	release, err := u.users.stop(keys...)
-	if err != nil {
-		return nil, err
-	}
-	// The processes of the users' callers start while holding the start of
-	// the user's own process, so none starts after this list is read.
+	// Holding the starts of the processes of the users' callers before
+	// they are listed keeps a new one from starting unseen.
+	releaseStarts := u.users.holdCallerStarts(keys...)
 	var callers []string
 	for _, p := range principals {
 		callers = append(callers, u.users.callerKeys(p)...)
 	}
-	releaseCallers, err := u.users.stop(callers...)
+	release, err := u.users.stop(append(keys, callers...)...)
 	if err != nil {
-		release()
+		releaseStarts()
 		return nil, err
 	}
 	u.sandboxes.forget(keys...)
 	return func() {
-		releaseCallers()
 		release()
+		releaseStarts()
 	}, nil
 }
 
