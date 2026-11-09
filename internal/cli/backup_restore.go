@@ -18,6 +18,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -92,13 +93,19 @@ on the old host before taking over.
 				}
 				snapshot = latest.Name
 			}
-			if err := backup.Restore(ctx, dest, snapshot, passphrase, dir, takeOver); err != nil {
+			notes, err := backup.Restore(ctx, dest, snapshot, passphrase, dir, takeOver)
+			if err != nil {
 				return deadlineError(err)
 			}
 			if cfg.IsJSON() {
-				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver})
+				return cfg.PrintJSON(map[string]any{"snapshot": snapshot, "dir": dir, "takeOver": takeOver, "notes": notes})
 			}
-			_, err = fmt.Fprintf(cfg.Out, "✓ restored %s into %s\n  check it with `a2a-serve doctor`, then start it with `a2a-serve start`\n", snapshot, dir)
+			var sb strings.Builder
+			fmt.Fprintf(&sb, "✓ restored %s into %s\n  check it with `a2a-serve doctor`, then start it with `a2a-serve start`\n", snapshot, dir)
+			for _, note := range notes {
+				fmt.Fprintf(&sb, "! %s\n", note)
+			}
+			_, err = fmt.Fprint(cfg.Out, sb.String())
 			return err
 		},
 	}

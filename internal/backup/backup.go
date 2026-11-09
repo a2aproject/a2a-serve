@@ -17,6 +17,7 @@
 package backup
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -180,37 +181,38 @@ var committedFiles = []string{pathRecipeLock, ".gitignore"}
 // place, so that a damaged snapshot or an interruption leaves no partial
 // agent behind. The network identity is restored only with takeOver, so
 // that the old and the new host don't run as the same machine. A .a2a that
-// holds only committed files keeps them.
-func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (err error) {
+// holds only committed files keeps them, and the returned notes say when
+// the snapshot holds another version of one.
+func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (notes []string, err error) {
 	if err := checkSnapshot(ctx, dest, name); err != nil {
-		return err
+		return nil, err
 	}
 	d, err := agentdir.Open(root)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if d.Exists() {
-		return agenterr.Conflictf("%s already has an agent; restore into another directory", root)
+		return nil, agenterr.Conflictf("%s already has an agent; restore into another directory", root)
 	}
 	entries, err := os.ReadDir(d.Path())
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
+		return nil, err
 	}
 	if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.Type().IsRegular() || !slices.Contains(committedFiles, e.Name()) }) {
-		return agenterr.Conflictf("%s is not empty; restore into another directory", d.Path())
+		return nil, agenterr.Conflictf("%s holds files other than %s; restore into another directory", d.Path(), strings.Join(committedFiles, " and "))
 	}
 	committed, err := readCommitted(d.Path(), entries)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	rc, err := dest.Get(ctx, name)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer closeLogged(rc)
 	plain, err := Decrypt(rc, key)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	created, err := fsutil.MkdirAll(d.Root)
 	if created != "" {
@@ -221,11 +223,11 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		}()
 	}
 	if err != nil {
-		return err
+		return nil, err
 	}
 	tmp, release, err := restoreDir(d)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer func() {
 		if err := os.RemoveAll(tmp); err != nil {
@@ -234,17 +236,24 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	}()
 	defer func() { err = errors.Join(err, release()) }()
 	if err := extractArchive(ctx, plain, tmp, takeOver); err != nil {
-		return err
+		return nil, err
 	}
 	for _, f := range committed {
+		restored, err := os.ReadFile(filepath.Join(tmp, f.name))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, err
+		}
+		if f.name == pathRecipeLock && !bytes.Equal(restored, f.data) {
+			notes = append(notes, "kept "+filepath.Join(agentdir.Name, f.name)+", which matches the workspace and differs from the snapshot's; the next `a2a-serve recipe` may keep settings of config.yaml that the recipe changed, so check its output")
+		}
 		if err := fsutil.WriteAtomic(filepath.Join(tmp, f.name), f.data, f.perm); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := agentdir.WriteGitignore(tmp); err != nil {
-		return err
+		return nil, err
 	}
-	return moveIntoPlace(tmp, d.Path(), committed)
+	return notes, moveIntoPlace(tmp, d.Path(), committed)
 }
 
 // committedFile is a file of committedFiles in .a2a before a restore.
