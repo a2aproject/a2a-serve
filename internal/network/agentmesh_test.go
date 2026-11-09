@@ -41,6 +41,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"google.golang.org/protobuf/encoding/protowire"
 	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/testing/protocmp"
 )
 
 type fakeMeshSession struct {
@@ -295,6 +296,64 @@ func TestHasMeshIdentity(t *testing.T) {
 				t.Fatalf("hasMeshIdentity(%q) = %v, want %v", tc.dir, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestUseInvite(t *testing.T) {
+	t.Parallel()
+	enrolled := &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com", Biscuit: []byte("biscuit")}
+	tests := []struct {
+		name      string
+		lastToken string
+		token     string
+		want      *api.MemberCredential
+	}{
+		{name: "first join with a token keeps the credential", token: "invite-1", want: enrolled},
+		{name: "same token keeps the credential", lastToken: "invite-1", token: "invite-1", want: enrolled},
+		{name: "new token drops the credential", lastToken: "invite-1", token: "invite-2", want: &api.MemberCredential{ControlPlaneUrl: "https://relay.example.com"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			key := marshalLibp2pEd25519Key(t)
+			if err := meshnet.WriteStateDir(dir, key, enrolled); err != nil {
+				t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+			}
+			if tc.lastToken != "" {
+				if err := useInvite(dir, tc.lastToken); err != nil {
+					t.Fatalf("useInvite(%q) error = %v", tc.lastToken, err)
+				}
+			}
+
+			if err := useInvite(dir, tc.token); err != nil {
+				t.Fatalf("useInvite(%q) error = %v", tc.token, err)
+			}
+
+			gotKey, gotCred, err := meshnet.ReadStateDir(dir)
+			if err != nil {
+				t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+			}
+			if diff := cmp.Diff(key, gotKey); diff != "" {
+				t.Fatalf("meshnet.ReadStateDir() identity key wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(tc.want, gotCred, protocmp.Transform()); diff != "" {
+				t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestUseInviteWithoutState(t *testing.T) {
+	t.Parallel()
+	dir := filepath.Join(t.TempDir(), "relay")
+	for _, token := range []string{"invite-1", "invite-2"} {
+		if err := useInvite(dir, token); err != nil {
+			t.Fatalf("useInvite(%q) error = %v", token, err)
+		}
+	}
+	if hasMeshIdentity(dir) {
+		t.Fatalf("hasMeshIdentity() = true after invites without a join, want false")
 	}
 }
 

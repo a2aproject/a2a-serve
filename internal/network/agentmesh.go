@@ -18,12 +18,16 @@ package network
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +39,7 @@ import (
 	"github.com/libp2p/go-libp2p/core/peer"
 
 	"github.com/a2aproject/a2a-serve/internal/agentmesh"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/names"
 )
 
@@ -133,11 +138,63 @@ func savedPeerID(stateDir string) string {
 	return id.String()
 }
 
+// inviteHashFile keeps a hash of the invite (--relay-token) the agent last
+// joined the relay with.
+const inviteHashFile = "invite-hash"
+
+// useInvite prepares stateDir for a join with token. A new invite drops the
+// saved mesh credential and keeps the identity key, so the agent enrolls
+// again with the same peer ID. Routers keep refusing the credential of a
+// removed agent after the relay lets it back, and meshnet resumes a saved
+// credential before it looks at the token.
+func useInvite(stateDir, token string) error {
+	sum := sha256.Sum256([]byte(token))
+	hash := hex.EncodeToString(sum[:])
+	path := filepath.Join(stateDir, inviteHashFile)
+	saved, err := os.ReadFile(path)
+	switch {
+	case errors.Is(err, os.ErrNotExist):
+		// An agent that joined before its invite was recorded keeps its
+		// credential: its invite may be used up.
+	case err != nil:
+		return fmt.Errorf("reading the relay's last invite: %w", err)
+	case strings.TrimSpace(string(saved)) == hash:
+		return nil
+	default:
+		if err := dropMeshCredential(stateDir); err != nil {
+			return fmt.Errorf("dropping the relay credential of the last invite: %w", err)
+		}
+	}
+	if err := os.MkdirAll(stateDir, 0o700); err != nil {
+		return err
+	}
+	return fsutil.WriteAtomic(path, []byte(hash+"\n"), 0o600)
+}
+
+func dropMeshCredential(stateDir string) error {
+	key, cred, err := meshnet.ReadStateDir(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if len(cred.GetBiscuit()) == 0 {
+		return nil
+	}
+	return meshnet.WriteStateDir(stateDir, key, &api.MemberCredential{ControlPlaneUrl: cred.GetControlPlaneUrl()})
+}
+
 func (a *agentMesh) start(ctx context.Context) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.started.Load() {
 		return nil
+	}
+	if a.cfg.Token != "" {
+		if err := useInvite(a.cfg.StateDir, a.cfg.Token); err != nil {
+			return fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err)
+		}
 	}
 	srv := &meshnet.Server{
 		StateDir:        a.cfg.StateDir,
