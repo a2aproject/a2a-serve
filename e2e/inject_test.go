@@ -107,14 +107,7 @@ func TestHarnessOpencodeInjectHeader(t *testing.T) {
 		answer: "Done.",
 	}, "Bearer "+key)
 	coder := owner.newAgent("coder")
-	writeJSON(t, filepath.Join(coder.dir, "opencode.json"), map[string]any{
-		"$schema": "https://opencode.ai/config.json",
-		"provider": map[string]any{"stub": map[string]any{
-			"npm":     "@ai-sdk/openai-compatible",
-			"options": map[string]any{"baseURL": model.url, "apiKey": "{env:STUB_KEY}"},
-			"models":  map[string]any{"scripted": map[string]any{}},
-		}},
-	})
+	coder.addStubProvider(model.url, "{env:STUB_KEY}")
 	target := strings.TrimSuffix(strings.TrimPrefix(model.url, "https://"), "/v1")
 	coder.start("opencode", "--sandbox", "docker", "--image", harnessImage, "--model", "stub/scripted", "--allow-tools", "execute",
 		"--inject-header", target+"=Authorization: Bearer $STUB_KEY")

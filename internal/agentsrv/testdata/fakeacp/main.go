@@ -286,6 +286,19 @@ func (a *agent) askTool(sessionID, toolCallID, title, command string) (string, b
 	return r.Outcome.OptionID, true
 }
 
+// configAllows reports whether the opencode.json of the working directory
+// allows tool, which then runs without asking, as with opencode.
+func (a *agent) configAllows(tool string) bool {
+	data, err := os.ReadFile(filepath.Join(a.dir, "opencode.json"))
+	if err != nil {
+		return false
+	}
+	var cfg struct {
+		Permission map[string]any `json:"permission"`
+	}
+	return json.Unmarshal(data, &cfg) == nil && cfg.Permission[tool] == "allow"
+}
+
 // sessionDirs are where sessions are kept: the working directory, or the
 // home directory when the workspace is read-only.
 func (a *agent) sessionDirs() []string {
@@ -556,6 +569,9 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 		remembered := a.runAlways
 		a.mu.Unlock()
 		option := "remembered"
+		if a.configAllows("bash") {
+			remembered, option = true, "allowed by opencode.json"
+		}
 		if !remembered {
 			var ok bool
 			if option, ok = a.askTool(sid, "t4", "whoami", "whoami"); !ok {

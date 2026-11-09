@@ -230,6 +230,10 @@ func (d Dir) LogPath() string { return filepath.Join(d.StateDir(), "server.log")
 // the workspace's .mcp.json.
 func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask.json") }
 
+// ConfigMaskPath is the empty configuration file which a sandbox mounts
+// over the agent's own configuration files in the workspace.
+func (d Dir) ConfigMaskPath() string { return filepath.Join(d.StateDir(), "config-mask.json") }
+
 // RecipeLockPath returns the path of the record of the recipe the agent
 // was created from.
 func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), RecipeLockFile) }

@@ -255,7 +255,7 @@ func entryOf(root *os.Root, name string) (*File, error) {
 
 // riskyFiles decide what the agent runs and approves: the MCP servers and
 // the agent's own configuration.
-var riskyFiles = append([]string{project.MCPFile}, agentConfigFiles...)
+var riskyFiles = append([]string{project.MCPFile}, project.AgentConfigFiles...)
 
 // IsRisky reports whether the file at p decides what the agent runs.
 func IsRisky(p string) bool {

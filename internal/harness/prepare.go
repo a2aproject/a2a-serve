@@ -83,6 +83,11 @@ type Spec struct {
 	// sandbox mounts over the workspace's .mcp.json, so that the harness
 	// gets MCP servers only from the server. Empty keeps .mcp.json visible.
 	MCPMask string
+	// ConfigMask is the host path of an empty configuration file, which a
+	// sandbox mounts over the agent's own configuration files in the
+	// workspace and the mounts, so that the agent's permissions come only
+	// from the server. Empty keeps them visible.
+	ConfigMask string
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 	// Model is the model of the harness, in its own format. Empty keeps
@@ -296,8 +301,16 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		}
 		dr.Mounts = append(dr.Mounts, masks...)
 	}
+	cm := configMasks{check: func() error { return nil }}
+	if spec.ConfigMask != "" {
+		if cm, err = maskAgentConfig(spec); err != nil {
+			return nil, err
+		}
+		dr.Mounts = append(dr.Mounts, cm.mounts...)
+		dr.Scratch = cm.scratch
+	}
 	closeEgress := func() error { return nil }
-	var warnings []string
+	warnings := slices.Clone(cm.warnings)
 	var egressProblem string
 	var fallback *DockerRunner
 	relay := false
@@ -396,6 +409,9 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 			return err
 		}
 		if err := checkNoNewAgents(spec); err != nil {
+			return err
+		}
+		if err := cm.check(); err != nil {
 			return err
 		}
 		if marker != "" {
