@@ -429,11 +429,20 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	if err := reviewer.provider.Close(); err != nil {
 		t.Fatalf("closing reviewer: %v", err)
 	}
-	// The relay's router loads the revoked credentials when it starts.
 	if err := r.stop(); err != nil {
 		t.Fatalf("relay.Run() error = %v", err)
 	}
 	r = startRelay(t, d, bin)
+	// Letting the agent back lifts the revocation of its credential. The
+	// router keeps refusing that credential only once it synced with the
+	// control plane while the agent was removed, which the restarted router
+	// does after it turns ready.
+	eventually(t, "the restarted relay refuses the removed reviewer", func() error {
+		if err := join(t, cfg); err == nil || !strings.Contains(err.Error(), "removed this agent") {
+			return fmt.Errorf("joining with the removed credential: error = %v, want the agent removed", err)
+		}
+		return nil
+	})
 
 	inv, err = r.client.Invite(t.Context(), control.InviteRequest{Name: "reviewer"})
 	if err != nil {
@@ -442,15 +451,11 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	if inv.LetBack == nil {
 		t.Fatal("Client.Invite() let back no agent, want reviewer")
 	}
+	mistyped := cfg
+	mistyped.Token = inv.Token[1:]
 	for range 2 {
-		mistyped := cfg
-		mistyped.Token = inv.Token[1:]
-		p, err := network.NewRelay(mistyped)
-		if err != nil {
-			t.Fatalf("network.NewRelay() error = %v", err)
-		}
 		var invite *network.InviteError
-		if _, _, err := p.ListenPrivate(t.Context()); !errors.As(err, &invite) {
+		if err := join(t, mistyped); !errors.As(err, &invite) {
 			t.Fatalf("joining with a mistyped invite: error = %v, want an invite error", err)
 		}
 	}
@@ -459,6 +464,23 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	if back.privateURL != reviewer.privateURL {
 		t.Fatalf("reviewer's private URL after it came back = %s, want %s", back.privateURL, reviewer.privateURL)
 	}
+}
+
+// join joins the relay with cfg, leaves it again, and returns the join
+// error.
+func join(t *testing.T, cfg network.RelayConfig) error {
+	t.Helper()
+	p, err := network.NewRelay(cfg)
+	if err != nil {
+		t.Fatalf("network.NewRelay() error = %v", err)
+	}
+	if _, _, err := p.ListenPrivate(t.Context()); err != nil {
+		return err
+	}
+	if err := p.Close(); err != nil {
+		t.Fatalf("closing the joined agent: %v", err)
+	}
+	return nil
 }
 
 func TestRelayKeepsAnAgentWhoseInviteIsRefused(t *testing.T) {
