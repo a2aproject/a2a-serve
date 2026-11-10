@@ -61,6 +61,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -380,7 +381,8 @@ func (a *agent) handle(m message) {
 			return
 		}
 		a.dir = p.Cwd
-		id := fmt.Sprintf("s%d", time.Now().UnixNano())
+		// Concurrent sessions can read the same clock value.
+		id := "s" + rand.Text()
 		s := &session{MCPServers: p.MCPServers, Dir: p.Cwd}
 		if err := a.save(id, s); err != nil {
 			a.fail(m.ID, err.Error())

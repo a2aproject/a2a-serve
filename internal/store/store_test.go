@@ -2011,7 +2011,9 @@ func TestReadsDoNotWaitForWrites(t *testing.T) {
 		})
 	}()
 	<-started
-	readCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+	// A read that waits for the write lock fails after the busy timeout of
+	// 5s; the deadline only ends a read that waits for the write itself.
+	readCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 
 	_, err := s.Schedules(readCtx)
