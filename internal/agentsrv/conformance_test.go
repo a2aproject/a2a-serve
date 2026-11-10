@@ -477,7 +477,7 @@ func TestConformanceHistoryLength(t *testing.T) {
 					Config:  &a2a.SendMessageConfig{HistoryLength: length},
 				})
 				if err != nil {
-					t.Fatalf("SendMessage() error = %v", err)
+					t.Fatalf("SendMessage() error = %v%s", err, taskStatus(c, task.ID))
 				}
 				return messageIDs(res.(*a2a.Task).History), storedHistory(t, c, task.ID)
 			},
