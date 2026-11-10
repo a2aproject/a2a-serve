@@ -144,6 +144,12 @@ chmod 700 "$DEMO_WORK/bin/git-credential-realhome"
 if [[ -z "${GIT_CONFIG_COUNT:-}" ]]; then
   export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=credential.helper GIT_CONFIG_VALUE_0=realhome
 fi
+# Go keeps its caches under HOME. Keep the real ones, so that a scenario that
+# installs a tool reuses the downloaded modules.
+if command -v go >/dev/null; then
+  GOPATH="$(go env GOPATH)" GOMODCACHE="$(go env GOMODCACHE)" GOCACHE="$(go env GOCACHE)"
+  export GOPATH GOMODCACHE GOCACHE
+fi
 export DEMO_REAL_HOME="$REAL_HOME" DEMO_PAUSE_SCALE
 export HOME="$DEMO_WORK/you"
 export BASH_SILENCE_DEPRECATION_WARNING=1

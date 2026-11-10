@@ -17,7 +17,12 @@
 prepare() {
   if ! command -v agentmesh-one >/dev/null; then
     log "installing agentmesh-one"
-    GOBIN="$DEMO_WORK/bin" CGO_ENABLED=0 go install github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0
+    # The module proxy occasionally resets streams.
+    for attempt in 1 2 3; do
+      GOBIN="$DEMO_WORK/bin" CGO_ENABLED=0 go install github.com/google/agentmesh/cmd/agentmesh-one@v0.2.0 && break
+      [[ $attempt -lt 3 ]] || die "installing agentmesh-one failed"
+      sleep $((attempt * 15))
+    done
   fi
   if curl -fsS -o /dev/null --max-time 2 http://127.0.0.1:8443/readyz 2>/dev/null; then
     die "port 8443 is in use; the example runs the relay there"
