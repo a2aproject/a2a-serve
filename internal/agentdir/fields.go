@@ -393,7 +393,7 @@ var fields = []field{
 			arg: func(s *Settings) any { return &s.Command },
 		},
 		flag: "command", path: "command", scope: scopeAgent, section: SectionSandbox, parse: parseCommand,
-		usage: "Command line of the agent, as shell `words`, such as \"cloudcode acp\"; replaces its default command",
+		usage: "Command line of the agent, as shell `words`, such as \"gemini --experimental-acp\"; replaces its default command",
 	},
 	{
 		access: str(func(c *Config) *string { return &c.Model }, func(s *Settings) *string { return &s.Model }),

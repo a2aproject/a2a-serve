@@ -54,7 +54,7 @@ private, then local. --url local, --url private and --url public pick one;
 --url=local does the same. --url local also works while the agent is
 stopped, once its first start picked its port.`,
 		Example: `  a2a-serve status
-  a2a send -a "$(a2a-serve status --url)" "hello"
+  a2a send -a "$(a2a-serve status --url=local)" "hello"
   a2a-serve status --url=private`,
 		Args: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 && scope == urlFurthest {

@@ -100,7 +100,7 @@ An `own` copy is made once, when the caller's container first starts. Nothing is
 - leaves out every `.a2a` directory;
 - holds at most 1 GiB in at most 200,000 entries. When the workspace is larger, the container fails to start with an error that suggests `read-only`;
 - lives in `.a2a/state/workspaces/`, and [backups](backups.md) leave it out;
-- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. `pair rm --dry-run` lists the copy and the rule it would delete. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
+- is deleted by `pair rm`, and after 30 days without use for callers without a pairing. The copy of a person behind another agent also goes when a new person takes their home, as [the access model](../advanced/access-model.md#agent-processes) describes. `pair rm --dry-run` lists the copy and the rule it would delete. The copies of guests and of your container are deleted once their rule no longer gives them `own` storage.
 
 The server keeps at most 100 copies. A caller whose copy would be the 101st gets an error that suggests `read-only` storage.
 

@@ -273,7 +273,7 @@ func TestLookup(t *testing.T) {
 		{name: "opencode", want: Command{Path: "opencode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "claude", want: Command{Path: "claude-agent-acp", Dir: "/w"}, image: ImageRepo + "claude:" + ImageTag},
-		{name: "opencode", command: []string{"cloudcode", "acp"}, want: Command{Path: "cloudcode", Args: []string{"acp"}, Dir: "/w", Env: opencodeEnv},
+		{name: "opencode", command: []string{"opencode", "acp", "--print-logs"}, want: Command{Path: "opencode", Args: []string{"acp", "--print-logs"}, Dir: "/w", Env: opencodeEnv},
 			image: ImageRepo + "opencode:" + ImageTag},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, want: Command{Path: "gemini", Args: []string{"--experimental-acp"}, Dir: "/w"}},
 		{name: "unknown", wantErr: true},
@@ -307,7 +307,7 @@ func TestSessionSettings(t *testing.T) {
 		want    map[string]any
 	}{
 		{name: "opencode", model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
-		{name: "opencode", command: []string{"cloudcode", "acp"}, model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
+		{name: "opencode", command: []string{"opencode", "acp", "--print-logs"}, model: "openrouter/a/b", want: map[string]any{"model": "openrouter/a/b"}},
 		{name: "opencode"},
 		{name: "claude", model: "sonnet"},
 		{name: "gemini", command: []string{"gemini", "--experimental-acp"}, model: "gemini-pro"},
