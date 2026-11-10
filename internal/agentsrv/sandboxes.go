@@ -241,6 +241,9 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 		}
 	}
 	counted, err := agents.admit(key, want, answer)
+	if errors.Is(err, errSandboxRestarting) {
+		counted, err = s.admitAfterEndedTurns(ctx, agents, key, want, execCtx)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -248,6 +251,30 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 		counted()
 		s.closeStale(ctx, key)
 	}, nil
+}
+
+// turnEndGrace bounds the wait of a turn for the turns of tasks that
+// ended to finish.
+const turnEndGrace = 5 * time.Second
+
+// admitAfterEndedTurns admits a turn that the container of an agent key
+// refused while turns used it, once they end, if none of its tasks is
+// unfinished. A turn ends a moment after its caller saw its task end, so
+// the caller's next message would be refused although no task holds the
+// container.
+func (s *Server) admitAfterEndedTurns(ctx context.Context, agents *userAgents, key string, want access.Sandbox, execCtx *a2asrv.ExecutorContext) (func(), error) {
+	ids, err := s.tasks.UnfinishedIn(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	var own a2a.TaskID
+	if execCtx != nil {
+		own = execCtx.TaskID
+	}
+	if slices.ContainsFunc(ids, func(id a2a.TaskID) bool { return id != own }) || !agents.waitIdle(ctx, key, turnEndGrace) {
+		return nil, errSandboxRestarting
+	}
+	return agents.admit(key, want, false)
 }
 
 // admitOther checks a caller's turn in the container of another agent key,
