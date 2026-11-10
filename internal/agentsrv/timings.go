@@ -76,6 +76,9 @@ type Timings struct {
 	// PairReadTimeout bounds reading the whole body of a pairing request or
 	// of an approval page, which callers send before they authenticate.
 	PairReadTimeout time.Duration
+	// DownloadTimeout bounds writing a whole download of a binary, which
+	// callers fetch before they authenticate.
+	DownloadTimeout time.Duration
 	// CardRefresh replaces --contact-refresh, the time between refreshes
 	// of the cards of contacts and peers, when set.
 	CardRefresh time.Duration
@@ -107,5 +110,6 @@ func (t Timings) withDefaults() Timings {
 	t.SandboxCheckInterval = cmp.Or(t.SandboxCheckInterval, 5*time.Second)
 	t.NarrowedCancelGrace = cmp.Or(t.NarrowedCancelGrace, 10*time.Second)
 	t.PairReadTimeout = cmp.Or(t.PairReadTimeout, jsonhttp.UnauthenticatedReadTimeout)
+	t.DownloadTimeout = cmp.Or(t.DownloadTimeout, 10*time.Minute)
 	return t
 }

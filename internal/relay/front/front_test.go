@@ -328,6 +328,11 @@ func TestFrontLimitsEachClient(t *testing.T) {
 		limit   int
 	}{
 		{name: "proxied", path: "/ingress/12D3/a2a/coder", proxied: true, limit: 64},
+		{name: "agent pairing", path: "/ingress/12D3/a2a/coder/pair", proxied: true, limit: 8},
+		{name: "agent sign-in", path: "/ingress/12D3/a2a/coder/oauth/token", proxied: true, limit: 8},
+		{name: "agent approval link", path: "/ingress/12D3/a2a/coder/hitl/abc", proxied: true, limit: 8},
+		{name: "agent download", path: "/ingress/12D3/a2a/coder/download/a2a-serve", proxied: true, limit: 8},
+		{name: "agent A2A route", path: "/ingress/12D3/a2a/coder/tasks", proxied: true, limit: 64},
 		{name: "sign-in", path: "/a2a-serve/signin/token", limit: 32},
 		{name: "control", path: "/a2a-serve/control/status", limit: 32},
 	}

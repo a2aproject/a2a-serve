@@ -18,6 +18,7 @@ package httpserver
 
 import (
 	"context"
+	"log/slog"
 	"net"
 	"net/http"
 	"sync"
@@ -108,7 +109,9 @@ type KeyedLimiter struct {
 }
 
 // NewKeyedLimiter returns a limiter of total requests at once, and of
-// perKey requests at once with the same key.
+// perKey requests at once with the same key. Requests with the empty key
+// come from clients that can't be told apart, and count only toward the
+// total.
 func NewKeyedLimiter(total, perKey int, key func(*http.Request) string) *KeyedLimiter {
 	return &KeyedLimiter{total: total, perKey: perKey, key: key, keys: map[string]int{}}
 }
@@ -137,13 +140,15 @@ func (l *KeyedLimiter) acquire(key string) int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	switch {
-	case l.keys[key] >= l.perKey:
+	case key != "" && l.keys[key] >= l.perKey:
 		return http.StatusTooManyRequests
 	case l.inUse >= l.total:
 		return http.StatusServiceUnavailable
 	}
 	l.inUse++
-	l.keys[key]++
+	if key != "" {
+		l.keys[key]++
+	}
 	return 0
 }
 
@@ -151,9 +156,34 @@ func (l *KeyedLimiter) release(key string) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.inUse--
+	if key == "" {
+		return
+	}
 	if l.keys[key]--; l.keys[key] == 0 {
 		delete(l.keys, key)
 	}
+}
+
+// WriteTimeout gives next d to write its whole response. Writes fail after
+// that, and the server closes the connection. It bounds how long a client
+// that doesn't read a large response holds the request.
+func WriteTimeout(d time.Duration, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rc := http.NewResponseController(w)
+		if err := rc.SetWriteDeadline(time.Now().Add(d)); err != nil {
+			slog.Debug("no write deadline for the response", "error", err)
+		}
+		next.ServeHTTP(w, r)
+		// The connection may serve the next request, so the deadline ends
+		// once the rest of the response is sent within it.
+		if err := rc.Flush(); err != nil {
+			slog.Debug("sending the response", "error", err)
+			return
+		}
+		if err := rc.SetWriteDeadline(time.Time{}); err != nil {
+			slog.Debug("clearing the write deadline of the response", "error", err)
+		}
+	})
 }
 
 // SetBusy sets the headers of a request refused for lack of room: try
