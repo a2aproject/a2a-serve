@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/fsutil"
+	"github.com/a2aproject/a2a-serve/internal/shellquote"
 )
 
 // Ext is the file extension of snapshots.
@@ -171,18 +172,19 @@ func checkSnapshot(ctx context.Context, dest Dest, name string) error {
 	return agenterr.WithHint(nf, agenterr.HintRestoreLatest, snaps[len(snaps)-1].Name)
 }
 
-// committedFiles are the files a repository can hold in .a2a without an
-// agent. Restore keeps them, since they belong to the files of the
-// repository's commit.
-var committedFiles = []string{pathRecipeLock, ".gitignore"}
+// committedFiles are the files a repository can hold in .a2a without the
+// agent's state. Restore keeps recipe.lock and .gitignore, since they belong
+// to the files of the repository's commit. It replaces config.yaml with the
+// snapshot's, which usually holds the settings changed after the commit.
+var committedFiles = []string{pathConfig, pathRecipeLock, ".gitignore"}
 
 // Restore recreates an agent's .a2a directory in root from a snapshot. It
 // extracts the snapshot into a directory next to .a2a and renames that into
 // place, so that a damaged snapshot or an interruption leaves no partial
 // agent behind. The network identity is restored only with takeOver, so
 // that the old and the new host don't run as the same machine. A .a2a that
-// holds only committed files keeps them, and the returned notes say when
-// the snapshot holds another version of one.
+// holds only committed files keeps them, except for config.yaml, and the
+// returned notes say when the snapshot holds another version of one.
 func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bool) (notes []string, err error) {
 	if err := checkSnapshot(ctx, dest, name); err != nil {
 		return nil, err
@@ -191,15 +193,16 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	if err != nil {
 		return nil, err
 	}
-	if d.Exists() {
-		return nil, agenterr.Conflictf("%s already has an agent; restore into another directory", root)
-	}
 	entries, err := os.ReadDir(d.Path())
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
 	if slices.ContainsFunc(entries, func(e fs.DirEntry) bool { return !e.Type().IsRegular() || !slices.Contains(committedFiles, e.Name()) }) {
-		return nil, agenterr.Conflictf("%s holds files other than %s; restore into another directory", d.Path(), strings.Join(committedFiles, " and "))
+		if d.Exists() {
+			return nil, agenterr.Conflictf("%s already has an agent; restore into another directory", root)
+		}
+		last := len(committedFiles) - 1
+		return nil, agenterr.Conflictf("%s holds files other than %s and %s; restore into another directory", d.Path(), strings.Join(committedFiles[:last], ", "), committedFiles[last])
 	}
 	committed, err := readCommitted(d.Path(), entries)
 	if err != nil {
@@ -240,8 +243,15 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 	}
 	for _, f := range committed {
 		restored, err := os.ReadFile(filepath.Join(tmp, f.name))
+		inSnapshot := err == nil
 		if err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, err
+		}
+		if f.name == pathConfig && inSnapshot {
+			if !bytes.Equal(restored, f.data) {
+				notes = append(notes, configNote(ctx, root))
+			}
+			continue
 		}
 		if f.name == pathRecipeLock && !bytes.Equal(restored, f.data) {
 			notes = append(notes, "kept "+filepath.Join(agentdir.Name, f.name)+", which matches the workspace and differs from the snapshot's; the next `a2a-serve recipe` may keep settings of config.yaml that the recipe changed, so check its output")
@@ -254,6 +264,17 @@ func Restore(ctx context.Context, dest Dest, name, key, root string, takeOver bo
 		return nil, err
 	}
 	return notes, moveIntoPlace(tmp, d.Path(), committed)
+}
+
+// configNote says that a restore replaced the committed config.yaml in
+// root, and names the command that shows the change when git tracks it.
+func configNote(ctx context.Context, root string) string {
+	path := filepath.Join(agentdir.Name, pathConfig)
+	note := "replaced " + path + " with the snapshot's, which differs from it"
+	if err := ExecRunner(ctx, nil, io.Discard, "git", "-C", root, "ls-files", "--error-unmatch", "--", path); err != nil {
+		return note
+	}
+	return note + "; review the change with `git -C " + shellquote.Quote(root) + " diff " + path + "`"
 }
 
 // committedFile is a file of committedFiles in .a2a before a restore.

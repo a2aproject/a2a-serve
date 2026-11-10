@@ -52,8 +52,10 @@ Recreate an agent's .a2a directory from a snapshot taken by
 recipe.lock and agent home directory. The latest snapshot is used unless
 --snapshot names one.
 
-The directory must have no .a2a, or a .a2a that holds only recipe.lock or
-.gitignore, such as those a repository commits. Restore keeps those files.
+The directory must have no .a2a, or a .a2a that holds only config.yaml,
+recipe.lock or .gitignore, such as those a repository commits. Restore keeps
+recipe.lock and .gitignore. It replaces config.yaml with the snapshot's, which
+usually holds the settings changed after the commit, and says so.
 
 The network identity (the tailnet machine or the Agent Mesh node) is restored
 only with --take-over, so the old and the new host don't run as the same

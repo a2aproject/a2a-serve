@@ -26,6 +26,7 @@ import (
 	"io/fs"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -241,8 +242,8 @@ func TestRestoreErrors(t *testing.T) {
 		t.Fatalf("Restore() with the wrong key left %s: %v", agentdir.Name, err)
 	}
 	existing := newAgent(t)
-	if _, err := Restore(ctx, dest, snap.Name, "k", existing.Root, false); err == nil {
-		t.Fatalf("Restore() into an existing agent error = nil, want error")
+	if _, err := Restore(ctx, dest, snap.Name, "k", existing.Root, false); err == nil || !strings.Contains(err.Error(), "already has an agent") {
+		t.Fatalf("Restore() into an existing agent error = %v, want it refused", err)
 	}
 	other := filepath.Join(t.TempDir(), agentdir.Name)
 	if err := os.Mkdir(other, 0o700); err != nil {
@@ -260,7 +261,7 @@ func TestRestoreErrors(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeFiles(t, withLock, map[string]string{"recipe.lock": "lock", "notes.txt": "mine"})
-	if _, err := Restore(ctx, dest, snap.Name, "k", filepath.Dir(withLock), false); err == nil || !strings.Contains(err.Error(), "holds files other than recipe.lock and .gitignore") {
+	if _, err := Restore(ctx, dest, snap.Name, "k", filepath.Dir(withLock), false); err == nil || !strings.Contains(err.Error(), "holds files other than config.yaml, recipe.lock and .gitignore") {
 		t.Fatalf("Restore() into %s with recipe.lock and another file error = %v, want it refused", agentdir.Name, err)
 	}
 	if diff := cmp.Diff(map[string]string{"recipe.lock": "lock", "notes.txt": "mine"}, files(t, withLock)); diff != "" {
@@ -275,16 +276,21 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	src := newAgent(t)
+	snap, err := Take(ctx, src, dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
 	if err != nil {
 		t.Fatalf("Take() error = %v", err)
+	}
+	snapConfig, err := os.ReadFile(src.ConfigPath())
+	if err != nil {
+		t.Fatal(err)
 	}
 
 	tests := []struct {
 		name      string
 		committed map[string]string
 		want      map[string]string
-		wantNote  bool
+		wantNotes []string
 	}{
 		{
 			name:      "same recipe.lock",
@@ -295,12 +301,23 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 			name:      "recipe.lock of another commit",
 			committed: map[string]string{"recipe.lock": "committed lock"},
 			want:      map[string]string{"recipe.lock": "committed lock", ".gitignore": "state/\n"},
-			wantNote:  true,
+			wantNotes: []string{"a2a-serve recipe"},
 		},
 		{
 			name:      "recipe.lock and .gitignore",
 			committed: map[string]string{"recipe.lock": "lock", ".gitignore": "state/\n*.recipe\n"},
 			want:      map[string]string{"recipe.lock": "lock", ".gitignore": "state/\n*.recipe\n"},
+		},
+		{
+			name:      "same config.yaml",
+			committed: map[string]string{"config.yaml": string(snapConfig), "recipe.lock": "lock", ".gitignore": "state/\n"},
+			want:      map[string]string{"recipe.lock": "lock", ".gitignore": "state/\n"},
+		},
+		{
+			name:      "config.yaml of another commit",
+			committed: map[string]string{"config.yaml": "name: coder\nharness: claude\n", ".gitignore": "state/\n"},
+			want:      map[string]string{"recipe.lock": "lock", ".gitignore": "state/\n"},
+			wantNotes: []string{"replaced .a2a/config.yaml with the snapshot's"},
 		},
 	}
 	for _, tc := range tests {
@@ -321,8 +338,13 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 				t.Fatalf("Restore() error = %v", err)
 			}
 
-			if gotNote := len(notes) == 1 && strings.Contains(notes[0], "a2a-serve recipe"); gotNote != tc.wantNote {
-				t.Fatalf("Restore() notes = %q, want a note about recipe.lock: %v", notes, tc.wantNote)
+			if len(notes) != len(tc.wantNotes) {
+				t.Fatalf("Restore() notes = %q, want notes containing %q", notes, tc.wantNotes)
+			}
+			for i, want := range tc.wantNotes {
+				if !strings.Contains(notes[i], want) {
+					t.Fatalf("Restore() notes = %q, want notes containing %q", notes, tc.wantNotes)
+				}
 			}
 			got := files(t, d.Path())
 			for name := range got {
@@ -333,8 +355,88 @@ func TestRestoreKeepsCommittedFiles(t *testing.T) {
 			if diff := cmp.Diff(tc.want, got); diff != "" {
 				t.Fatalf("Restore() wrong committed files (-want +got) diff = %s", diff)
 			}
-			if !d.Exists() {
-				t.Fatalf("Restore() didn't restore the agent")
+			gotConfig, err := os.ReadFile(d.ConfigPath())
+			if err != nil {
+				t.Fatalf("Restore() didn't restore the agent: %v", err)
+			}
+			if diff := cmp.Diff(string(snapConfig), string(gotConfig)); diff != "" {
+				t.Fatalf("Restore() wrong config.yaml (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
+func TestRestoreConfigNoteNamesGitDiffOfTrackedConfig(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+	ctx := context.Background()
+	dest, err := Open(t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, time.Now())
+	if err != nil {
+		t.Fatalf("Take() error = %v", err)
+	}
+	gitEnv := append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1", "GIT_PAGER=cat")
+	git := func(t *testing.T, dir string, args ...string) {
+		t.Helper()
+		cmd := exec.Command("git", append([]string{"-C", dir, "-c", "user.name=t", "-c", "user.email=t@example.com", "-c", "commit.gpgsign=false"}, args...)...)
+		cmd.Env = gitEnv
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("git %v error = %v: %s", args, err, out)
+		}
+	}
+
+	tests := []struct {
+		name     string
+		commit   bool
+		wantHint bool
+	}{
+		{name: "committed config.yaml", commit: true, wantHint: true},
+		{name: "untracked config.yaml", commit: false, wantHint: false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root := filepath.Join(t.TempDir(), "my app")
+			if err := os.MkdirAll(filepath.Join(root, agentdir.Name), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			writeFiles(t, filepath.Join(root, agentdir.Name), map[string]string{"config.yaml": "name: coder\nharness: claude\n", ".gitignore": "state/\n"})
+			git(t, root, "init", "-q")
+			if tc.commit {
+				git(t, root, "add", "-A")
+				git(t, root, "commit", "-q", "-m", "agent")
+			}
+
+			notes, err := Restore(ctx, dest, snap.Name, "k", root, false)
+			if err != nil {
+				t.Fatalf("Restore() error = %v", err)
+			}
+
+			if len(notes) != 1 {
+				t.Fatalf("Restore() notes = %q, want one note about config.yaml", notes)
+			}
+			_, rest, gotHint := strings.Cut(notes[0], "`")
+			if gotHint != tc.wantHint {
+				t.Fatalf("Restore() notes = %q, want a command in it: %v", notes, tc.wantHint)
+			}
+			if !gotHint {
+				return
+			}
+			command, _, _ := strings.Cut(rest, "`")
+			cmd := exec.Command("sh", "-c", command)
+			cmd.Dir = t.TempDir()
+			cmd.Env = gitEnv
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("running the note's command %q error = %v: %s", command, err, out)
+			}
+			if !strings.Contains(string(out), "-harness: claude") {
+				t.Fatalf("the note's command %q = %s, want the diff of config.yaml", command, out)
 			}
 		})
 	}
