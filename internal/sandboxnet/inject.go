@@ -220,7 +220,16 @@ func (b *Boundary) forward(w http.ResponseWriter, r *http.Request, inj Injection
 	if err := http.NewResponseController(w).EnableFullDuplex(); err != nil && !errors.Is(err, http.ErrNotSupported) {
 		b.log.write(slog.LevelWarn, "egress request may be cut off", "destination", target, "error", err)
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, maxInjectBody)
+	body := http.MaxBytesReader(w, r.Body, maxInjectBody)
+	// The proxy doesn't close the body, and when the host answered before
+	// the end of the body, a Go 1.26 server that drains it after the
+	// handler fails the next request of the connection.
+	defer func() {
+		if err := body.Close(); err != nil {
+			slog.Debug("closing an egress request body", "error", err)
+		}
+	}()
+	r.Body = body
 	proxy.ServeHTTP(w, r.WithContext(ctx))
 }
 
