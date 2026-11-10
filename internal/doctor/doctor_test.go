@@ -166,6 +166,62 @@ func TestCheckServeBinaryMissingFix(t *testing.T) {
 	}
 }
 
+func TestDockerFix(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		agent   bool
+		breakIt func(*fakeMachine)
+		want    string
+	}{
+		{
+			name:    "unreachable outside an agent",
+			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
+			want:    "start Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+		},
+		{
+			name:    "not installed outside an agent",
+			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
+			want:    "install Docker, or run a2a-serve start <agent> --sandbox local in your project directory",
+		},
+		{
+			name:    "unreachable in an agent",
+			agent:   true,
+			breakIt: func(m *fakeMachine) { m.fails["docker info --format {{.ServerVersion}}"] = true },
+			want:    "start Docker, or a2a-serve config set --sandbox local",
+		},
+		{
+			name:    "not installed in an agent",
+			agent:   true,
+			breakIt: func(m *fakeMachine) { delete(m.paths, "docker") },
+			want:    "install Docker, or a2a-serve config set --sandbox local",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := newFakeMachine(t)
+			tc.breakIt(m)
+			var opts Options
+			if tc.agent {
+				d := newAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+				opts.Dir = &d
+			}
+
+			for _, r := range Run(t.Context(), m.Env(), opts) {
+				if r.ID != "docker" {
+					continue
+				}
+				if r.Fix != tc.want {
+					t.Fatalf("Run() docker fix = %q, want %q", r.Fix, tc.want)
+				}
+				return
+			}
+			t.Fatal("Run() has no docker check")
+		})
+	}
+}
+
 func TestCheckRelayWithoutAgentMeshFix(t *testing.T) {
 	t.Parallel()
 	if network.AgentMeshBuilt {

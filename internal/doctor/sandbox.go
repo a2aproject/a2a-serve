@@ -26,7 +26,12 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
-const useLocalSandbox = "a2a-serve config set --sandbox local"
+// useLocalSandbox is the fix of a missing Docker in an agent, and
+// startLocalSandbox outside one, where there is no agent to configure.
+const (
+	useLocalSandbox   = "a2a-serve config set --sandbox local"
+	startLocalSandbox = "run a2a-serve start <agent> --sandbox local in your project directory"
+)
 
 // sandboxChecks checks Docker and the harness image, or the harness command
 // of an agent without a sandbox. cfg is nil outside an agent or when its
@@ -41,7 +46,11 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 			results = append(results, Result{ID: "egress", Status: StatusWarn, Message: w, Fix: "a2a-serve config set --sandbox docker"})
 		}
 	} else {
-		docker := checkDocker(ctx, env)
+		local := useLocalSandbox
+		if dir == nil {
+			local = startLocalSandbox
+		}
+		docker := checkDocker(ctx, env, local)
 		results = append(results, docker)
 		if docker.Status == StatusOK && cfg != nil {
 			if r, ok := checkImage(ctx, env, cfg, online); ok {
@@ -56,15 +65,17 @@ func sandboxChecks(ctx context.Context, env Env, dir *agentdir.Dir, cfg *agentdi
 	return results
 }
 
-func checkDocker(ctx context.Context, env Env) Result {
+// checkDocker checks that Docker answers. local is the fix that runs the
+// agent without a sandbox instead.
+func checkDocker(ctx context.Context, env Env, local string) Result {
 	r := Result{ID: "docker"}
 	if _, err := env.LookPath("docker"); err != nil {
-		r.Status, r.Message, r.Fix = StatusFail, "docker not installed", "install Docker, or "+useLocalSandbox
+		r.Status, r.Message, r.Fix = StatusFail, "docker not installed", "install Docker, or "+local
 		return r
 	}
 	out, err := env.Run(ctx, "docker", "info", "--format", "{{.ServerVersion}}")
 	if err != nil {
-		r.Status, r.Message, r.Fix = StatusFail, "docker daemon not reachable", "start Docker, or "+useLocalSandbox
+		r.Status, r.Message, r.Fix = StatusFail, "docker daemon not reachable", "start Docker, or "+local
 		if host, herr := env.Run(ctx, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}"); herr == nil && len(strings.TrimSpace(string(host))) > 0 {
 			r.Message += " at " + strings.TrimSpace(string(host))
 		}
