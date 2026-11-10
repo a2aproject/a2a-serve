@@ -63,11 +63,11 @@ func (r *Recipe) ServerVars(s project.MCPServer, provided func(name string) bool
 }
 
 // MissingMounts returns the sources of the mounts of cfg tied to the MCP
-// server, which don't exist.
-func (r *Recipe) MissingMounts(cfg *agentdir.Config, server string) []string {
+// server, which don't exist for the agent directory d.
+func (r *Recipe) MissingMounts(d agentdir.Dir, cfg *agentdir.Config, server string) []string {
 	var out []string
 	for _, spec := range cfg.Mounts {
-		m, err := agentdir.ParseMount(spec)
+		m, err := d.ParseMount(spec)
 		if err != nil || r.Manifest.MountServer(m.Dst) != server {
 			continue
 		}
