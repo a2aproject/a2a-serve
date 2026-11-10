@@ -562,7 +562,7 @@ func (cc *ContactClients) AnswerRemote(ctx context.Context, rec store.Question, 
 	if err != nil {
 		return err
 	}
-	msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, opt.ID)
+	msg, err := approvals.AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, opt.ID)
 	if err != nil {
 		return err
 	}

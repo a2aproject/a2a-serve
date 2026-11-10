@@ -28,6 +28,9 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentsrv/approvals"
 )
 
 func TestOwnerServesAndCallsAgent(t *testing.T) {
@@ -198,6 +201,38 @@ func TestOwnerAnswersApproval(t *testing.T) {
 				t.Fatalf("a2a send --task-id %s wrong result (-want +got) diff = %s", tc.answer, diff)
 			}
 		})
+	}
+}
+
+func TestRepeatedAnswerDoesNotAnswerTheNextQuestion(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	answer := func(task *a2a.Task, option string, seq int) *a2a.Task {
+		t.Helper()
+		return owner.mustSend(coder.url, "--task-id", string(task.ID), "--data-part", fmt.Sprintf(`{"option":%q,"seq":%d}`, option, seq))
+	}
+	task := owner.mustSend(coder.url, "ask twice")
+	if q := approvals.FromStatus(task.Status); q == nil || q.Seq != 1 {
+		t.Fatalf("a2a send ask twice status = %s (%v), want question 1", task.Status.State, task.Status.Message)
+	}
+
+	answer(task, "once", 1)
+	repeated := answer(task, "once", 1)
+
+	if q := approvals.FromStatus(repeated.Status); q == nil || q.Seq != 2 {
+		t.Fatalf("repeated answer status = %s (%v), want question 2 to wait", repeated.Status.State, repeated.Status.Message)
+	}
+	if text := a2atext.Message(repeated.Status.Message); !strings.Contains(text, "it answers question 1 of this task, which was already answered") {
+		t.Fatalf("repeated answer status text = %q, want it refused as an answer to an answered question", text)
+	}
+	got := resultOf(answer(task, "reject", 2))
+	want := taskResult{State: a2a.TaskStateCompleted, Text: "Pushed twice (allow, deny)."}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Fatalf("answer to question 2 wrong result (-want +got) diff = %s", diff)
+	}
+	if _, err := owner.send(coder.url, "--task-id", string(task.ID), "--data-part", `{"option":"once","seq":2}`); err == nil || !strings.Contains(err.Error(), "terminal state") {
+		t.Fatalf("answer to the completed task error = %v, want it refused for the task's state", err)
 	}
 }
 

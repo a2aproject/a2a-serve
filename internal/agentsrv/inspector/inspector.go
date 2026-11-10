@@ -25,6 +25,7 @@ import (
 	"math"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -181,8 +182,9 @@ type Approval struct {
 	// Action is where the answer is posted.
 	Action string
 	// Question is the ID of the task's question that the answer is for,
-	// set when the answer is posted on the task.
+	// and Seq its number, set when the answer is posted on the task.
 	Question string
+	Seq      int
 	Text     string
 	// ContextID is this agent's conversation the question belongs to, or
 	// empty if the inspector doesn't know it.
@@ -291,12 +293,12 @@ func (in *Inspector) PendingApprovals(ctx context.Context) ([]Approval, error) {
 	}
 	for _, t := range tasks {
 		q := approvals.FromStatus(t.Status)
-		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Question: q.ID, Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
+		a := Approval{Action: Path + "/tasks/" + string(t.ID) + "/answer", Question: q.ID, Seq: q.Seq, Text: q.Display(), ContextID: t.ContextID, Options: q.Options}
 		if t.Status.Timestamp != nil {
 			a.Created = *t.Status.Timestamp
 		}
 		if rec, ok := records[taskQuestion{string(t.ID), q.ID}]; ok {
-			a.Action, a.Question = Path+"/questions/"+rec.ID, ""
+			a.Action, a.Question, a.Seq = Path+"/questions/"+rec.ID, "", 0
 		}
 		out = append(out, a)
 	}
@@ -518,7 +520,12 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 		http.Error(w, "This task no longer waits for an answer. Reload the page.", http.StatusConflict)
 		return
 	}
-	if r.FormValue("question") != q.ID {
+	ref := approvals.Ref{ID: r.FormValue("question"), Seq: formSeq(r)}
+	switch m := q.Check(ref); {
+	case m == approvals.Earlier:
+		http.Error(w, "This question was already answered, and the task asks another one now. Reload the page to see it.", http.StatusConflict)
+		return
+	case ref.ID == "" || m != approvals.Matches:
 		http.Error(w, "This task asks a different question now. Reload the page to see it.", http.StatusConflict)
 		return
 	}
@@ -529,4 +536,19 @@ func (in *Inspector) handleTaskAnswer(w http.ResponseWriter, r *http.Request, _ 
 	}
 	out, err := in.deps.Approvals.AnswerTask(ctx, t.ID, t.ContextID, q, auth.Owner(), opt, "the inspector")
 	in.answered(w, r, out, err, "This task no longer waits for an answer. Reload the page.", "task", t.ID)
+}
+
+// formSeq is the number of the question in the form of an answer: 0 when
+// the form has none, as on a page loaded before questions had numbers, and
+// negative when it isn't a number.
+func formSeq(r *http.Request) int {
+	v := r.FormValue("seq")
+	if v == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil || n <= 0 {
+		return -1
+	}
+	return n
 }

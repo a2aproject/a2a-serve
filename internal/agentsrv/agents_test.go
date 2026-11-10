@@ -363,6 +363,30 @@ func TestRemoteApprovalIsAskedOnTheCallersTask(t *testing.T) {
 	}
 }
 
+func TestRepeatedAnswerToRemoteApprovalOnTheCallersTask(t *testing.T) {
+	t.Parallel()
+	coder := startServer(t, serverOpts{name: "coder"})
+	assistant := startServer(t, serverOpts{name: "assistant"})
+	addContact(t, assistant, coder, "coder", auth.RoleOwner)
+	c := assistant.client(assistant.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("call coder ask twice", "", ""))
+
+	send(t, c, numberedAnswer(task, "once", 1))
+	repeated := send(t, c, numberedAnswer(task, "once", 1))
+
+	q := approvals.FromStatus(repeated.Status)
+	if q == nil || q.Seq != 2 || !strings.Contains(q.Text, "coder wants to run git push") {
+		t.Fatalf("task status = %s (%s), want coder's second question to wait", repeated.Status.State, a2atext.Message(repeated.Status.Message))
+	}
+	if text := a2atext.Message(repeated.Status.Message); !strings.Contains(text, "it answers question 1 of this task, which was already answered") {
+		t.Fatalf("task status text = %q, want the repeated answer refused", text)
+	}
+	done := send(t, c, numberedAnswer(task, "once", 2))
+	if !slices.ContainsFunc(done.History, func(m *a2a.Message) bool { return strings.Contains(a2atext.Message(m), "Pushed twice (allow, allow).") }) {
+		t.Fatalf("task history = %v, want coder's result after one answer to each question", historyTexts(done))
+	}
+}
+
 func TestStopDoesNotWaitForRemoteResult(t *testing.T) {
 	t.Parallel()
 	coder := startServer(t, serverOpts{name: "coder"})
@@ -1188,6 +1212,7 @@ func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
 		wantState  a2a.TaskState
 		wantStatus string
 		answer     string
+		answerSeq  int
 		wantErr    string
 		wantResult string
 	}{
@@ -1222,6 +1247,16 @@ func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
 			wantState:  a2a.TaskStateInputRequired,
 			wantStatus: "coder wants to run git push",
 			answer:     "approve",
+			wantResult: "Pushed (allow).",
+		},
+		{
+			name:       "relayed question answered with its number",
+			prompt:     "call coder ask",
+			relay:      true,
+			wantState:  a2a.TaskStateInputRequired,
+			wantStatus: "coder wants to run git push",
+			answer:     "once",
+			answerSeq:  1,
 			wantResult: "Pushed (allow).",
 		},
 	}
@@ -1261,7 +1296,14 @@ func TestAnswerAfterRestartOfUnfinishedTask(t *testing.T) {
 				t.Fatalf("GetTask() status = %s (%s), want %s (%s)", got.Status.State, a2atext.Message(got.Status.Message), tc.wantState, tc.wantStatus)
 			}
 
-			res, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: userText(tc.answer, string(task.ID), task.ContextID), Config: &a2a.SendMessageConfig{HistoryLength: new(a2alimit.MaxHistoryLength)}})
+			answer := userText(tc.answer, string(task.ID), task.ContextID)
+			if tc.answerSeq != 0 {
+				if q := approvals.FromStatus(got.Status); q == nil || q.Seq != tc.answerSeq {
+					t.Fatalf("GetTask() question = %+v, want question %d", q, tc.answerSeq)
+				}
+				answer = numberedAnswer(task, tc.answer, tc.answerSeq)
+			}
+			res, err := c.SendMessage(ctx, &a2a.SendMessageRequest{Message: answer, Config: &a2a.SendMessageConfig{HistoryLength: new(a2alimit.MaxHistoryLength)}})
 			if tc.wantErr != "" {
 				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 					t.Fatalf("SendMessage() = %v, %v, want error containing %q", res, err, tc.wantErr)

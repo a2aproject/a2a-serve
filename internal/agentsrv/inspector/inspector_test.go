@@ -393,7 +393,10 @@ func TestInspectorAnswerRefusals(t *testing.T) {
 func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 	t.Parallel()
 	optionSchema := &jsonschema.Schema{Type: "string", OneOf: []*jsonschema.Schema{{Const: jsonschema.Ptr[any]("once"), Title: "Allow"}}}
-	part, err := structuredinput.NewSchemaPart("tool2", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{"option": optionSchema}})
+	part, err := structuredinput.NewSchemaPart("tool2", &jsonschema.Schema{Type: "object", Properties: map[string]*jsonschema.Schema{
+		"option": optionSchema,
+		"seq":    {Type: "integer", Const: jsonschema.Ptr[any](2)},
+	}})
 	if err != nil {
 		t.Fatalf("structuredinput.NewSchemaPart() error = %v", err)
 	}
@@ -402,13 +405,19 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 		name     string
 		task     string
 		question string
+		seq      string
 		sendErr  error
 		want     int
+		wantBody string
 		wantSent int
 	}{
-		{name: "current question", task: "t1", question: "tool2", want: http.StatusSeeOther, wantSent: 1},
-		{name: "another answer in progress", task: "t1", question: "tool2", sendErr: a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress"), want: http.StatusConflict},
+		{name: "current question", task: "t1", question: "tool2", seq: "2", want: http.StatusSeeOther, wantSent: 1},
+		{name: "form of a page without numbers", task: "t1", question: "tool2", want: http.StatusSeeOther, wantSent: 1},
+		{name: "another answer in progress", task: "t1", question: "tool2", seq: "2", sendErr: a2a.NewError(a2a.ErrUnsupportedOperation, "task execution is already in progress"), want: http.StatusConflict},
 		{name: "question changed", task: "t1", question: "tool1", want: http.StatusConflict},
+		{name: "answered question", task: "t1", question: "tool2", seq: "1", want: http.StatusConflict, wantBody: "already answered"},
+		{name: "question not asked yet", task: "t1", question: "tool2", seq: "3", want: http.StatusConflict},
+		{name: "number that isn't one", task: "t1", question: "tool2", seq: "two", want: http.StatusConflict},
 		{name: "no question in the form", task: "t1", want: http.StatusConflict},
 		{name: "nothing pending", task: "t2", question: "tool2", want: http.StatusConflict},
 	}
@@ -426,12 +435,15 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 				}
 			}
 			overview := ti.login(t)
-			if !strings.Contains(overview, `name="question" value="tool2"`) {
-				t.Fatalf("overview = %q, want the form to carry the question ID", overview)
+			if !strings.Contains(overview, `name="question" value="tool2"`) || !strings.Contains(overview, `name="seq" value="2"`) {
+				t.Fatalf("overview = %q, want the form to carry the question ID and number", overview)
 			}
 			form := url.Values{"csrf": {csrfField.FindStringSubmatch(overview)[1]}, "option": {"once"}}
 			if tc.question != "" {
 				form.Set("question", tc.question)
+			}
+			if tc.seq != "" {
+				form.Set("seq", tc.seq)
 			}
 
 			code, body := ti.post(t, inspector.Path+"/tasks/"+tc.task+"/answer", form)
@@ -439,11 +451,17 @@ func TestInspectorTaskAnswerChecksTheQuestion(t *testing.T) {
 			if code != tc.want {
 				t.Fatalf("POST task answer = %d %q, want %d", code, body, tc.want)
 			}
-			if code == http.StatusConflict && !strings.Contains(body, "Reload the page") {
-				t.Fatalf("POST task answer body = %q, want it to tell the owner to reload", body)
+			if code == http.StatusConflict && (!strings.Contains(body, "Reload the page") || !strings.Contains(body, tc.wantBody)) {
+				t.Fatalf("POST task answer body = %q, want it to tell the owner to reload, and contain %q", body, tc.wantBody)
 			}
-			if got := len(ti.sender.messages()); got != tc.wantSent {
-				t.Fatalf("POST task answer sent %d answers, want %d", got, tc.wantSent)
+			sent := ti.sender.messages()
+			if len(sent) != tc.wantSent {
+				t.Fatalf("POST task answer sent %d answers, want %d", len(sent), tc.wantSent)
+			}
+			for _, msg := range sent {
+				if diff := cmp.Diff(approvals.Ref{ID: "tool2", Seq: 2}, approvals.ReplyRef(msg)); diff != "" {
+					t.Fatalf("POST task answer sent an answer for the wrong question (-want +got) diff = %s", diff)
+				}
 			}
 		})
 	}

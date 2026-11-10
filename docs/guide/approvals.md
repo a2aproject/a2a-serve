@@ -20,6 +20,8 @@ While a task waits for an approval, a new message to its conversation is refused
 
 Clients can also answer with the [Structured Input extension](https://github.com/a2aproject/experimental-ext-structured-input), which the agent card advertises. A data part with an `option` field answers too, such as `a2a send --task-id <task> --data-part '{"option":"once"}'`.
 
+A task numbers its questions, and the input schema of each question holds its number as `seq`. An answer sent twice, such as a retry after a timeout, answers the next question of the task if the task asked one meanwhile. To prevent this, send the number with the answer, as in `a2a send --task-id <task> --data-part '{"option":"once","seq":2}'`. The server then refuses an answer to a question that was already answered, and the open question keeps waiting. Chat buttons, email links and the inspector answer only the question they show. [Approval Messages](../reference/approval-messages.md) describes the format.
+
 When a tool call is rejected or denied, the status message of the finished task says so, such as `Tool call rejected: git push.` or `Tool call denied by --deny-tools: git push.` `a2a-serve logs` has a line for each answer: who gave it, or which rule, preference or grant, and the option. The line leaves out the command and the tool input, which can hold secrets. For a preference or grant, the line shows only the program of the command, such as `command:printf ...`.
 
 ## Always allow

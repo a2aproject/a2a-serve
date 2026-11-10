@@ -659,6 +659,9 @@ func (e *observedExecutor) Cleanup(ctx context.Context, execCtx *a2asrv.Executor
 }
 
 func (e *observedExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorContext) iter.Seq2[a2a.Event, error] {
+	if note, ok := otherQuestionNote(execCtx); ok {
+		return e.observe(ctx, execCtx, askAgain(reask(execCtx, note)))
+	}
 	if id, ok := callerQuestionOf(execCtx.StoredTask); ok {
 		return e.observe(ctx, execCtx, e.answerCallerQuestion(ctx, execCtx, id))
 	}
@@ -873,9 +876,17 @@ func (e *observedExecutor) observe(ctx context.Context, execCtx *a2asrv.Executor
 		stopNotes := e.notes.start(execCtx.TaskID)
 		defer stopNotes()
 		closed := false
+		numbering := approvals.NewNumbering(execCtx.StoredTask)
 		for ev, err := range events {
 			if err != nil {
 				slog.Info("task failed", "task", execCtx.TaskID, "duration", time.Since(start).Round(time.Millisecond), "error", err)
+			}
+			if err == nil {
+				if numbered, nerr := numbering.Number(ev); nerr == nil {
+					ev = numbered
+				} else {
+					slog.Warn("numbering a question", "task", execCtx.TaskID, "error", nerr)
+				}
 			}
 			if state, ok := eventState(ev); ok && err == nil && state.Terminal() {
 				ev = withNotes(execCtx, ev, e.notes.take(execCtx.TaskID))

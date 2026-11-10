@@ -364,7 +364,7 @@ func (r *Records) Waiting(ctx context.Context, rec store.Question) (bool, error)
 		return false, fmt.Errorf("checking task %s: %w", rec.TaskID, err)
 	}
 	q := FromStatus(stored.Task.Status)
-	return q != nil && q.ID == rec.HitlID, nil
+	return q != nil && q.Check(Ref{ID: rec.HitlID, Seq: FromRecord(rec).Seq}) == Matches, nil
 }
 
 // CloseQuestions closes the unanswered questions of a task which no longer
@@ -501,7 +501,7 @@ func (s *Service) AnswerWith(ctx context.Context, rec store.Question, p auth.Pri
 		accepted(s.notifier.Follow(ctx, rec, p, func() error { return s.deliver(ctx, rec, q, p, option) }))
 		return out, outErr
 	}
-	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q.ID, option.ID)
+	msg, err := AnswerMessage(a2a.TaskID(rec.TaskID), rec.ContextID, q, option.ID)
 	if err != nil {
 		accepted(err)
 		return out, outErr
@@ -572,7 +572,7 @@ func (s *Service) AnswerTask(ctx context.Context, taskID a2a.TaskID, contextID s
 			return false, ErrNotApprover
 		}
 		open := FromStatus(stored.Task.Status)
-		return open != nil && open.ID == q.ID, nil
+		return open != nil && open.Check(Ref{ID: q.ID, Seq: q.Seq}) == Matches, nil
 	}
 	waiting, err := waits()
 	if err != nil {
@@ -603,7 +603,7 @@ func (s *Service) deliver(ctx context.Context, rec store.Question, q *Question, 
 
 // send sends p's answer option to q, a question of the agent's own task.
 func (s *Service) send(ctx context.Context, taskID a2a.TaskID, contextID string, q *Question, p auth.Principal, option Option) error {
-	msg, err := AnswerMessage(taskID, contextID, q.ID, option.ID)
+	msg, err := AnswerMessage(taskID, contextID, q, option.ID)
 	if err != nil {
 		return err
 	}

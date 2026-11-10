@@ -75,13 +75,7 @@ func askAgain(ev *a2a.TaskStatusUpdateEvent) iter.Seq2[a2a.Event, error] {
 
 // refusal is the status update of refuseReply.
 func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskStatusUpdateEvent {
-	ids := make([]string, len(q.Options))
-	for i, o := range q.Options {
-		ids[i] = o.ID
-	}
-	if answersOther(execCtx.Message, q) {
-		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: it answers another question, so this question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
-	}
+	ids := optionIDs(q)
 	reply, ok := replyText(execCtx.Message)
 	if !ok {
 		return reask(execCtx, fmt.Sprintf("I couldn't use the reply: its data has no \"option\" field, so the question still waits for an answer. Reply with one of: %s.\n", strings.Join(ids, ", ")))
@@ -93,13 +87,38 @@ func refusal(execCtx *a2asrv.ExecutorContext, q *approvals.Question) *a2a.TaskSt
 	return reask(execCtx, fmt.Sprintf("I couldn't use the reply %q: it isn't one of the options, so the question still waits for an answer. Reply with one of: %s.\n", string(quoted), strings.Join(ids, ", ")))
 }
 
-// answersOther reports whether a reply is structured input for another
-// question than q, such as one the task asked before.
-func answersOther(msg *a2a.Message, q *approvals.Question) bool {
-	return msg != nil && slices.ContainsFunc(msg.Parts, func(p *a2a.Part) bool {
-		meta, ok := structuredinput.GetPartMetadata(p)
-		return ok && meta.Type == structuredinput.PartTypeStructuredInput && meta.ID != q.ID
-	})
+// otherQuestionNote returns the note that refuses a reply to the question
+// the stored task asks, when the reply names another question: one the
+// task asked before, one it hasn't asked, or one of another ID.
+func otherQuestionNote(execCtx *a2asrv.ExecutorContext) (string, bool) {
+	if execCtx.StoredTask == nil {
+		return "", false
+	}
+	q := approvals.FromStatus(execCtx.StoredTask.Status)
+	if q == nil {
+		return "", false
+	}
+	ref := approvals.ReplyRef(execCtx.Message)
+	replies := "Reply with one of: " + strings.Join(optionIDs(q), ", ") + ".\n"
+	switch q.Check(ref) {
+	case approvals.Earlier:
+		return fmt.Sprintf("I couldn't use the reply: it answers question %d of this task, which was already answered. This is question %d, and it still waits for an answer. %s", ref.Seq, q.Seq, replies), true
+	case approvals.Later:
+		return fmt.Sprintf("I couldn't use the reply: it answers question %d of this task, which the task hasn't asked. This is question %d, and it still waits for an answer. %s", ref.Seq, q.Seq, replies), true
+	case approvals.Other:
+		return "I couldn't use the reply: it answers another question, so this question still waits for an answer. " + replies, true
+	case approvals.BadSeq:
+		return "I couldn't use the reply: its \"seq\" isn't a question number, so the question still waits for an answer. " + replies, true
+	}
+	return "", false
+}
+
+func optionIDs(q *approvals.Question) []string {
+	ids := make([]string, len(q.Options))
+	for i, o := range q.Options {
+		ids[i] = o.ID
+	}
+	return ids
 }
 
 // replyText is what a refusal quotes of a reply: its text, or else the
