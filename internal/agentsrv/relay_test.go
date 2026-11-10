@@ -50,6 +50,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/pairapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestRelaySameOwnerCallsAndApprovesWithoutPairingCode(t *testing.T) {
@@ -253,7 +254,7 @@ func (r joinFailingRelay) ListenPrivate(context.Context) (net.Listener, *url.URL
 
 func TestRelayRefusedInviteFailsBeforeAgentStarts(t *testing.T) {
 	t.Parallel()
-	dir, err := agentdir.Open(shortTempDir(t))
+	dir, err := agentdir.Open(testutil.ShortTempDir(t))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -37,6 +37,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // fakeNetwork is a host with the addresses and links of local, whose
@@ -293,10 +294,7 @@ func echoServer(t *testing.T) netip.AddrPort {
 
 func listen(t *testing.T, cfg BoundaryConfig) (*Boundary, string) {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "egress")
-	if err != nil {
-		t.Fatal(err)
-	}
+	dir := testutil.ShortTempDir(t)
 	sock := filepath.Join(dir, SocketName)
 	b, err := Listen(sock, cfg)
 	if err != nil {
@@ -305,9 +303,6 @@ func listen(t *testing.T, cfg BoundaryConfig) (*Boundary, string) {
 	t.Cleanup(func() {
 		if err := b.Close(); err != nil {
 			t.Errorf("Close() error = %v", err)
-		}
-		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("removing %s error = %v", dir, err)
 		}
 	})
 	return b, sock

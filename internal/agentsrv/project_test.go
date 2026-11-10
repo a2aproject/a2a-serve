@@ -30,6 +30,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/auth"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/project"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 const testMCPFile = `{"mcpServers": {
@@ -40,15 +41,7 @@ const testMCPFile = `{"mcpServers": {
 
 func startProjectServer(t *testing.T) *testServer {
 	t.Helper()
-	d, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("removing %s: %v", d, err)
-		}
-	})
+	d := testutil.ShortTempDir(t)
 	if err := os.WriteFile(filepath.Join(d, project.MCPFile), []byte(testMCPFile), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -156,7 +149,7 @@ func TestConversationContinuesAfterWorkspaceMoved(t *testing.T) {
 	wantResult(t, first, a2a.TaskStateCompleted, "OK.")
 	dir := ts.dir.Root
 	ts.stop()
-	moved := shortTempDir(t)
+	moved := testutil.ShortTempDir(t)
 	copyAgent(t, dir, moved)
 
 	ts = startServer(t, serverOpts{dir: moved})

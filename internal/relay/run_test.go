@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relaydir"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // fakeMeshEnv makes the test binary act as agentmesh-one. Its value is how
@@ -129,15 +130,7 @@ func holdPort(ln *net.TCPListener) error {
 func runFake(t *testing.T, exitAfter string) (relaydir.Dir, *control.Client, context.CancelFunc, <-chan error) {
 	t.Helper()
 	t.Setenv(fakeMeshEnv, exitAfter)
-	dir, err := os.MkdirTemp("", "relay")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	dir := testutil.ShortTempDir(t)
 	d := relaydir.Dir{Root: dir}
 	port, err := freePort()
 	if err != nil {

@@ -17,7 +17,6 @@ package agentsrv
 import (
 	"context"
 	"net/http"
-	"os"
 	"slices"
 	"testing"
 	"time"
@@ -27,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestSignOutRevokesGoogleSignIns(t *testing.T) {
@@ -56,15 +56,7 @@ func TestSignOutRevokesGoogleSignIns(t *testing.T) {
 
 func TestServerPrunesSignInsOfRemovedEmails(t *testing.T) {
 	t.Parallel()
-	d, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("removing %s: %v", d, err)
-		}
-	})
+	d := testutil.ShortTempDir(t)
 	dir, err := agentdir.Open(d)
 	if err != nil {
 		t.Fatal(err)

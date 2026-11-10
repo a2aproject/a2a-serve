@@ -19,7 +19,6 @@ import (
 	"errors"
 	"net"
 	"net/url"
-	"os"
 	"testing"
 	"time"
 
@@ -27,6 +26,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/network"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // loginProvider is a private network whose login waits until it is
@@ -49,15 +49,7 @@ func (p *loginProvider) Close() error { return nil }
 
 func TestRunCanceledDuringStartup(t *testing.T) {
 	t.Parallel()
-	root, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(root); err != nil {
-			t.Errorf("removing %s: %v", root, err)
-		}
-	})
+	root := testutil.ShortTempDir(t)
 	dir, err := agentdir.Open(root)
 	if err != nil {
 		t.Fatal(err)
@@ -105,15 +97,7 @@ func TestRunPortInUse(t *testing.T) {
 			t.Errorf("closing the listener: %v", err)
 		}
 	})
-	root, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(root); err != nil {
-			t.Errorf("removing %s: %v", root, err)
-		}
-	})
+	root := testutil.ShortTempDir(t)
 	dir, err := agentdir.Open(root)
 	if err != nil {
 		t.Fatal(err)

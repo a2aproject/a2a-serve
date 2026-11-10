@@ -19,7 +19,6 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -33,6 +32,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/schedule"
 	"github.com/a2aproject/a2a-serve/internal/schedulesvc"
 	"github.com/a2aproject/a2a-serve/internal/store"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestScheduleRunIsShownInChat(t *testing.T) {
@@ -243,15 +243,7 @@ func TestHarnessSchedulesAreLimited(t *testing.T) {
 
 func TestMissedScheduleRunsOnStart(t *testing.T) {
 	t.Parallel()
-	d, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(d); err != nil {
-			t.Errorf("removing %s: %v", d, err)
-		}
-	})
+	d := testutil.ShortTempDir(t)
 	dir, err := agentdir.Open(d)
 	if err != nil {
 		t.Fatal(err)

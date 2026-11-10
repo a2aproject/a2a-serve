@@ -34,6 +34,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/relay/control"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin"
 	"github.com/a2aproject/a2a-serve/internal/relay/meshadmin/meshtest"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 // testHTTP has a transport of its own: httptest.Server.Close closes the idle
@@ -97,15 +98,7 @@ func newServiceIn(m *meshtest.Mesh, removed string, allow ...string) *control.Se
 // needs. Its path is short enough for a Unix socket.
 func privateDir(t *testing.T) string {
 	t.Helper()
-	dir, err := os.MkdirTemp("", "relay")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Error(err)
-		}
-	})
+	dir := testutil.ShortTempDir(t)
 	return dir
 }
 

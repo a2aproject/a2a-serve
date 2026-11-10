@@ -23,13 +23,13 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/egress"
+	"github.com/a2aproject/a2a-serve/internal/testutil"
 )
 
 func TestRelayReachesTheBoundaryOfItsKey(t *testing.T) {
@@ -60,15 +60,7 @@ func TestRelayReachesTheBoundaryOfItsKey(t *testing.T) {
 	}
 	defer unregister()
 
-	dir, err := os.MkdirTemp("", "relay")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("removing %s error = %v", dir, err)
-		}
-	})
+	dir := testutil.ShortTempDir(t)
 	good, bad := filepath.Join(dir, "egress.sock"), filepath.Join(dir, "bad.sock")
 	ctx, cancel := context.WithCancel(context.Background())
 	var ready bytes.Buffer

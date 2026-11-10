@@ -46,19 +46,31 @@ import (
 
 var (
 	fakeACPOnce sync.Once
+	fakeACPDir  string
 	fakeACPPath string
 	fakeACPErr  error
 )
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if fakeACPDir != "" {
+		if err := os.RemoveAll(fakeACPDir); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+		}
+	}
+	os.Exit(code)
+}
 
 // buildFakeACP builds the scripted ACP agent of the agentsrv tests.
 func buildFakeACP(t *testing.T) string {
 	t.Helper()
 	fakeACPOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "fakeacp")
+		dir, err := testutil.MkdirShortTemp()
 		if err != nil {
 			fakeACPErr = err
 			return
 		}
+		fakeACPDir = dir
 		fakeACPPath = filepath.Join(dir, "fakeacp")
 		out, err := exec.Command("go", "build", "-o", fakeACPPath, "../agentsrv/testdata/fakeacp").CombinedOutput()
 		if err != nil {
@@ -145,15 +157,7 @@ func send(t *testing.T, creds *credstore.Store, url, text string) (string, error
 // and parallel tests with millisecond timeouts would time out.
 func TestServerPairAndSend(t *testing.T) {
 	fake := buildFakeACP(t)
-	dir, err := os.MkdirTemp("", "a2a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		if err := os.RemoveAll(dir); err != nil {
-			t.Errorf("removing %s: %v", dir, err)
-		}
-	})
+	dir := testutil.ShortTempDir(t)
 	creds := &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}
 
 	done := make(chan error, 1)
