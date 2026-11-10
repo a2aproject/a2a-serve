@@ -598,7 +598,7 @@ func TestContactClientsAnswerRemote(t *testing.T) {
 	if text := a2atext.Result(got); text != fakeContactAnswer {
 		t.Fatalf("remote task result = %q, want %q", text, fakeContactAnswer)
 	}
-	want, err := approvals.AnswerMessage(task.ID, task.ContextID, "tool1", "once")
+	want, err := approvals.AnswerMessage(task.ID, task.ContextID, q, "once")
 	if err != nil {
 		t.Fatalf("approvals.AnswerMessage() error = %v", err)
 	}

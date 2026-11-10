@@ -58,7 +58,11 @@ type Question struct {
 	Rule string
 	// AgentOptions map the server's options to the agent's.
 	AgentOptions map[string]string
-	// Data is the question as stored in records: id, type, title and options.
+	// Seq is the number of the question in its task, or 0 for a question
+	// without one, such as one asked before questions had numbers.
+	Seq int
+	// Data is the question as stored in records: id, type, title, options
+	// and seq.
 	Data map[string]any
 }
 
@@ -104,6 +108,11 @@ func FromMessage(msg *a2a.Message) *Question {
 	if rule, ok := msg.Metadata[ruleKey].(string); ok && rule != "" {
 		data["rule"] = rule
 	}
+	if s := req.Schema.Properties[seqField]; s != nil && s.Const != nil {
+		if seq, ok := seqOf(*s.Const); ok && seq > 0 {
+			data[seqField] = seq
+		}
+	}
 	q := fromData(data)
 	if m, ok := msg.Metadata[agentOptionsKey].(map[string]any); ok {
 		q.AgentOptions = map[string]string{}
@@ -145,6 +154,7 @@ func fromData(data map[string]any) *Question {
 	q.Type, _ = data["type"].(string)
 	q.Title, _ = data["title"].(string)
 	q.Rule, _ = data["rule"].(string)
+	q.Seq, _ = seqOf(data[seqField])
 	opts, _ := data["options"].([]any)
 	for _, o := range opts {
 		m, _ := o.(map[string]any)
@@ -255,9 +265,17 @@ func (q *Question) Words() string {
 	return strings.Join(words, ", ")
 }
 
-// AnswerMessage is the reply which selects an option, as structured input.
-func AnswerMessage(taskID a2a.TaskID, contextID, questionID, option string) (*a2a.Message, error) {
-	part, err := structuredinput.NewResponsePart(questionID, a2aacp.Answer{Option: option})
+// answer is the structured input that answers a question: the option and
+// the number of the question, if it has one.
+type answer struct {
+	Option string `json:"option"`
+	Seq    int    `json:"seq,omitempty"`
+}
+
+// AnswerMessage is the reply which selects an option of q, as structured
+// input.
+func AnswerMessage(taskID a2a.TaskID, contextID string, q *Question, option string) (*a2a.Message, error) {
+	part, err := structuredinput.NewResponsePart(q.ID, answer{Option: option, Seq: q.Seq})
 	if err != nil {
 		return nil, fmt.Errorf("building the answer: %w", err)
 	}

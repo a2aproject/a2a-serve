@@ -93,7 +93,7 @@ func TestConformanceApprovals(t *testing.T) {
 		{
 			name: "structured input",
 			answer: func(t *testing.T, task *a2a.Task, q *approvals.Question) *a2a.Message {
-				msg, err := approvals.AnswerMessage(task.ID, task.ContextID, q.ID, "once")
+				msg, err := approvals.AnswerMessage(task.ID, task.ContextID, q, "once")
 				if err != nil {
 					t.Fatalf("approvals.AnswerMessage() error = %v", err)
 				}

@@ -37,6 +37,7 @@ import (
 	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/a2aproject/a2a-serve/internal/a2aerr"
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
@@ -829,6 +830,121 @@ func TestDataPartReplyToApproval(t *testing.T) {
 			}
 		})
 	}
+}
+
+func numberedAnswer(task *a2a.Task, option string, seq int) *a2a.Message {
+	msg := a2a.NewMessage(a2a.MessageRoleUser, a2a.NewDataPart(map[string]any{"option": option, "seq": seq}))
+	msg.TaskID, msg.ContextID = task.ID, task.ContextID
+	return msg
+}
+
+func TestNumberedAnswerAnswersOnlyItsQuestion(t *testing.T) {
+	t.Parallel()
+	type answer struct {
+		option string
+		seq    int
+	}
+	tests := []struct {
+		name         string
+		answers      []answer
+		wantQuestion string
+		wantText     string
+	}{
+		{
+			name:         "repeated answer to an answered question",
+			answers:      []answer{{"once", 1}, {"once", 1}},
+			wantQuestion: "t3",
+			wantText:     "it answers question 1 of this task, which was already answered",
+		},
+		{
+			name:         "repeated always to an answered question",
+			answers:      []answer{{"once", 1}, {"always", 1}},
+			wantQuestion: "t3",
+			wantText:     "it answers question 1 of this task, which was already answered",
+		},
+		{
+			name:         "answer to a question not asked yet",
+			answers:      []answer{{"once", 2}},
+			wantQuestion: "t2",
+			wantText:     "it answers question 2 of this task, which the task hasn't asked",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			ts := startServer(t, serverOpts{})
+			c := ts.client(ts.pair("me", auth.RoleOwner))
+			task := send(t, c, userText("ask twice", "", ""))
+			for _, a := range tc.answers {
+				task = send(t, c, numberedAnswer(task, a.option, a.seq))
+			}
+
+			q := approvals.FromStatus(task.Status)
+			if q == nil || q.ID != tc.wantQuestion {
+				t.Fatalf("task status = %s (%s), want question %s to wait", task.Status.State, a2atext.Message(task.Status.Message), tc.wantQuestion)
+			}
+			if text := a2atext.Message(task.Status.Message); !strings.Contains(text, tc.wantText) {
+				t.Fatalf("task status text = %q, want it to contain %q", text, tc.wantText)
+			}
+			grants, err := ts.srv.store.ToolGrants(t.Context(), task.ContextID, "pair:me")
+			if err != nil {
+				t.Fatalf("ToolGrants() error = %v", err)
+			}
+			if len(grants) != 0 {
+				t.Fatalf("ToolGrants() = %q, want none: no answer chose always for an open question", grants)
+			}
+		})
+	}
+}
+
+func TestQuestionsOfATaskAreNumbered(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	seqOf := func(task *a2a.Task) int {
+		t.Helper()
+		q := approvals.FromStatus(task.Status)
+		if q == nil {
+			t.Fatalf("task status = %s (%s), want a question", task.Status.State, a2atext.Message(task.Status.Message))
+		}
+		return q.Seq
+	}
+
+	task := send(t, c, userText("ask twice", "", ""))
+	first := seqOf(task)
+	refused := seqOf(send(t, c, userText("aprove", string(task.ID), task.ContextID)))
+	second := seqOf(send(t, c, userText("approve", string(task.ID), task.ContextID)))
+
+	if diff := cmp.Diff([]int{1, 1, 2}, []int{first, refused, second}); diff != "" {
+		t.Fatalf("question numbers of the first question, its refused reply and the second question wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestConcurrentNumberedAnswersAnswerTheQuestionOnce(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{})
+	c := ts.client(ts.pair("me", auth.RoleOwner))
+	task := send(t, c, userText("ask twice", "", ""))
+
+	var wg sync.WaitGroup
+	errs := make([]error, 2)
+	for i := range errs {
+		wg.Go(func() {
+			_, errs[i] = c.SendMessage(t.Context(), &a2a.SendMessageRequest{Message: numberedAnswer(task, "once", 1)})
+		})
+	}
+	wg.Wait()
+	for _, err := range errs {
+		if err != nil && !a2aerr.ExecutionInProgress(err) {
+			t.Fatalf("SendMessage() error = %v, want nil or an answer in progress", err)
+		}
+	}
+
+	waiting := waitState(t, c, task.ID, a2a.TaskStateInputRequired)
+	if q := approvals.FromStatus(waiting.Status); q == nil || q.ID != "t3" {
+		t.Fatalf("task status = %s (%s), want the second question to wait", waiting.Status.State, a2atext.Message(waiting.Status.Message))
+	}
+	wantResult(t, send(t, c, numberedAnswer(task, "reject", 2)), a2a.TaskStateCompleted, "Pushed twice (allow, deny).")
 }
 
 // Not parallel: it replaces the default logger, which the server logs to.

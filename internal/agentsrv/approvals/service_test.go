@@ -233,6 +233,43 @@ func TestAnswerClosedQuestion(t *testing.T) {
 	}
 }
 
+func TestAnswerRecordChecksTheNumber(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		recordSeq int
+		taskSeq   int
+		want      Outcome
+	}{
+		{name: "record of the open question", recordSeq: 2, taskSeq: 2, want: Answered},
+		{name: "record from before questions had numbers", taskSeq: 2, want: Answered},
+		{name: "record of an earlier question with the same ID", recordSeq: 1, taskSeq: 2, want: Closed},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := &sendingHandler{}
+			svc := newService(t, h)
+			ctx := context.Background()
+			task := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: numberedMessage(t, "tool1", tc.taskSeq)}}
+			if _, err := svc.tasks.Create(ctx, task); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
+			q := FromMessage(numberedMessage(t, "tool1", tc.recordSeq))
+			rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
+			if err != nil {
+				t.Fatalf("NewRecord() error = %v", err)
+			}
+
+			out, err := svc.Answer(ctx, rec, auth.Owner(), q.Options[0], "owner")
+
+			if err != nil || out != tc.want {
+				t.Fatalf("Answer() = %v, %v, want %v", out, err, tc.want)
+			}
+		})
+	}
+}
+
 func TestCloseKeepsQuestionClosed(t *testing.T) {
 	t.Parallel()
 	h := &sendingHandler{}
@@ -578,6 +615,8 @@ func TestAnswerTask(t *testing.T) {
 		record     bool
 		answeredBy string
 		question   string
+		seq        int
+		taskSeq    int
 		sendErr    error
 		want       Outcome
 		wantSent   int
@@ -586,6 +625,8 @@ func TestAnswerTask(t *testing.T) {
 		{name: "open record", record: true, want: Answered, wantSent: 1},
 		{name: "record a person answered", record: true, answeredBy: "pair:anna", want: AlreadyAnswered},
 		{name: "task asks another question", question: "other", want: Closed},
+		{name: "task asks a later question", seq: 1, taskSeq: 2, want: Closed},
+		{name: "task asks the numbered question", seq: 2, taskSeq: 2, want: Answered, wantSent: 1},
 		{name: "task busy with another answer", sendErr: errInProgress, want: InProgress, wantSent: 1},
 	}
 	for _, tc := range tests {
@@ -594,7 +635,16 @@ func TestAnswerTask(t *testing.T) {
 			h := &scriptedHandler{errs: []error{tc.sendErr}}
 			svc := newService(t, h)
 			ctx := context.Background()
-			storeTask(t, svc, "t1", a2a.TaskStateInputRequired)
+			msg := permissionMessage(t)
+			if tc.taskSeq != 0 {
+				var err error
+				if msg, err = withSeq(msg, tc.taskSeq); err != nil {
+					t.Fatalf("withSeq() error = %v", err)
+				}
+			}
+			if _, err := svc.tasks.Create(ctx, &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: msg}}); err != nil {
+				t.Fatalf("Create() error = %v", err)
+			}
 			q := FromMessage(permissionMessage(t))
 			if tc.record {
 				rec, err := svc.NewRecord(ctx, "t1", "c1", "", "pair:anna", q)
@@ -611,6 +661,7 @@ func TestAnswerTask(t *testing.T) {
 			if tc.question != "" {
 				asked.ID = tc.question
 			}
+			asked.Seq = tc.seq
 			reject, ok := q.Match("reject")
 			if !ok {
 				t.Fatal("question has no option to reject it")

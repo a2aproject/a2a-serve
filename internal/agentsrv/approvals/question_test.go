@@ -19,7 +19,6 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/a2aproject/a2a-go/v2/a2aext/structuredinput"
-	"github.com/a2aproject/a2a-go/v2/integrations/executor/a2aacp"
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/jsonschema-go/jsonschema"
 
@@ -179,31 +178,51 @@ func TestMatch(t *testing.T) {
 
 func TestAnswerMessage(t *testing.T) {
 	t.Parallel()
-	msg, err := AnswerMessage("task", "ctx", "tool1", "once")
-	if err != nil {
-		t.Fatalf("AnswerMessage() error = %v", err)
+	type answer struct {
+		Option string `json:"option"`
+		Seq    int    `json:"seq"`
 	}
-	task := &a2a.Task{ID: "task", ContextID: "ctx", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage(t)}}
-	req, err := structuredinput.PendingRequest(task)
-	if err != nil {
-		t.Fatalf("structuredinput.PendingRequest() error = %v", err)
+	tests := []struct {
+		name string
+		q    *Question
+		want answer
+	}{
+		{name: "question without a number", q: &Question{ID: "tool1"}, want: answer{Option: "once"}},
+		{name: "numbered question", q: &Question{ID: "tool1", Seq: 2}, want: answer{Option: "once", Seq: 2}},
 	}
-	var p structuredinput.Processor
-	res, err := p.Process(t.Context(), req, msg)
-	if err != nil {
-		t.Fatalf("Processor.Process() error = %v", err)
-	}
-	if !res.Accepted() {
-		t.Fatalf("Processor.Process() outcome = %v, want accepted", res.Outcome)
-	}
-	var got a2aacp.Answer
-	if err := res.Decode(&got); err != nil {
-		t.Fatalf("ProcessorResult.Decode() error = %v", err)
-	}
-	if diff := cmp.Diff(a2aacp.Answer{Option: "once"}, got); diff != "" {
-		t.Fatalf("AnswerMessage() wrong result (-want +got) diff = %s", diff)
-	}
-	if msg.TaskID != "task" || msg.ContextID != "ctx" {
-		t.Fatalf("AnswerMessage() = task %q, context %q, want task, ctx", msg.TaskID, msg.ContextID)
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			msg, err := AnswerMessage("task", "ctx", tc.q, "once")
+			if err != nil {
+				t.Fatalf("AnswerMessage() error = %v", err)
+			}
+			task := &a2a.Task{ID: "task", ContextID: "ctx", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: permissionMessage(t)}}
+			req, err := structuredinput.PendingRequest(task)
+			if err != nil {
+				t.Fatalf("structuredinput.PendingRequest() error = %v", err)
+			}
+			var p structuredinput.Processor
+			res, err := p.Process(t.Context(), req, msg)
+			if err != nil {
+				t.Fatalf("Processor.Process() error = %v", err)
+			}
+			if !res.Accepted() {
+				t.Fatalf("Processor.Process() outcome = %v, want accepted", res.Outcome)
+			}
+			var got answer
+			if err := res.Decode(&got); err != nil {
+				t.Fatalf("ProcessorResult.Decode() error = %v", err)
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("AnswerMessage() wrong result (-want +got) diff = %s", diff)
+			}
+			if diff := cmp.Diff(Ref{ID: tc.q.ID, Seq: tc.q.Seq}, ReplyRef(msg)); diff != "" {
+				t.Fatalf("ReplyRef(AnswerMessage()) wrong result (-want +got) diff = %s", diff)
+			}
+			if msg.TaskID != "task" || msg.ContextID != "ctx" {
+				t.Fatalf("AnswerMessage() = task %q, context %q, want task, ctx", msg.TaskID, msg.ContextID)
+			}
+		})
 	}
 }

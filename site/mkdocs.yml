@@ -125,4 +125,5 @@ nav:
       - Configuration File: reference/configuration.md
       - Output and Exit Codes: reference/output.md
       - HTTP Routes: reference/http-routes.md
+      - Approval Messages: reference/approval-messages.md
       - The a2a CLI: reference/a2a-cli.md

@@ -59,7 +59,7 @@ Without Docker, install the agent on your machine and add `--sandbox local`. Fol
 | **Access & approvals** | [Approvals](guide/approvals.md) · [Inspector](guide/inspector.md) · [Identities](guide/identities.md) · [Email Sign-In](guide/email-sign-in.md) |
 | **Networks & chat** | [Networks](guide/networks.md) · [Relays](guide/relays.md) · [Messengers](guide/messengers.md) |
 | **Multi-agent** | [Agent2Agent](guide/agent2agent.md) · [Webhook Nodes](guide/webhook-nodes.md) |
-| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
+| **Architecture & reference** | [Architecture](advanced/architecture.md) · [Access Model](advanced/access-model.md) · [Security](advanced/security.md) · [Agent Mesh](advanced/agent-mesh.md) · [Agent Directory](advanced/agent-directory.md) · [Commands](reference/commands/a2a-serve.md) · [Config File](reference/configuration.md) · [HTTP Routes](reference/http-routes.md) · [Approval Messages](reference/approval-messages.md) · [Output](reference/output.md) · [a2a CLI](reference/a2a-cli.md) |
 
 ## Known Limitations
 
