@@ -33,43 +33,78 @@ const maxKillRounds = 5
 // environment to show one, as a process that starts a program does.
 const environWait = 250 * time.Millisecond
 
+// startWait bounds the scans of Kill for processes that stay in exec past
+// environWait, as they can on a loaded host. Such a process can be one of
+// the mark, so Kill scans again until it shows its environment.
+const startWait = 5 * time.Second
+
 // Kill kills the processes with the mark that still run.
 func (m ProcessMark) Kill() error {
-	env := append([]byte(m.Env()), 0)
-	for range maxKillRounds {
-		pids, findErr := m.find(env)
-		for _, pid := range pids {
-			if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
-				return err
-			}
-		}
-		if findErr != nil || len(pids) == 0 {
-			return findErr
-		}
+	s := markScan{proc: "/proc", signal: killProcess, environWait: environWait, startWait: startWait}
+	return s.kill(append([]byte(m.Env()), 0))
+}
+
+func killProcess(pid int) error {
+	if err := syscall.Kill(pid, syscall.SIGKILL); err != nil && !errors.Is(err, syscall.ESRCH) {
+		return err
 	}
 	return nil
 }
 
-// find returns the processes whose environment holds env, NUL-terminated,
-// and an error for those that didn't show their environment in time.
-// Processes of other users can't be read, and those that exit during the
-// scan are gone, so both are skipped.
-func (m ProcessMark) find(env []byte) ([]int, error) {
-	entries, err := os.ReadDir("/proc")
-	if err != nil {
-		return nil, err
+// markScan finds the processes of a /proc tree whose environment holds a
+// mark, and kills them with signal.
+type markScan struct {
+	proc        string
+	signal      func(pid int) error
+	environWait time.Duration
+	startWait   time.Duration
+}
+
+// kill kills the processes whose environment holds env, NUL-terminated.
+func (s markScan) kill(env []byte) error {
+	startDeadline := time.Now().Add(s.startWait)
+	var starting []error
+	for rounds := 0; rounds < maxKillRounds; {
+		var pids []int
+		var err error
+		pids, starting, err = s.find(env)
+		if err != nil {
+			return err
+		}
+		for _, pid := range pids {
+			if err := s.signal(pid); err != nil {
+				return err
+			}
+		}
+		if len(pids) > 0 {
+			rounds++
+			continue
+		}
+		if len(starting) == 0 || time.Now().After(startDeadline) {
+			break
+		}
 	}
-	deadline := time.Now().Add(environWait)
-	var pids []int
-	var errs []error
+	return errors.Join(starting...)
+}
+
+// find returns the processes whose environment holds env, and an error for
+// each process that didn't show its environment in time. Processes of other
+// users can't be read, and those that exit during the scan are gone, so
+// both are skipped.
+func (s markScan) find(env []byte) (pids []int, starting []error, err error) {
+	entries, err := os.ReadDir(s.proc)
+	if err != nil {
+		return nil, nil, err
+	}
+	deadline := time.Now().Add(s.environWait)
 	for _, e := range entries {
 		pid, err := strconv.Atoi(e.Name())
 		if err != nil || pid == os.Getpid() {
 			continue
 		}
-		data, err := environ(pid, deadline)
+		data, err := environ(s.proc, pid, deadline)
 		if errors.Is(err, errStarting) {
-			errs = append(errs, err)
+			starting = append(starting, err)
 			continue
 		}
 		if err != nil {
@@ -79,19 +114,19 @@ func (m ProcessMark) find(env []byte) ([]int, error) {
 			pids = append(pids, pid)
 		}
 	}
-	return pids, errors.Join(errs...)
+	return pids, starting, nil
 }
 
 var errStarting = errors.New("process is still starting a program")
 
-// environ returns the environment of a process. A process that starts a
-// program shows an empty environment until the kernel has copied it to the
-// program's stack, which can happen after its parent learns that the program
-// started. So environ waits until deadline for a live process to show one,
-// and then takes an empty environment for real once the kernel has set its
-// address.
-func environ(pid int, deadline time.Time) ([]byte, error) {
-	dir := "/proc/" + strconv.Itoa(pid)
+// environ returns the environment of a process in the proc tree. A process
+// that starts a program shows an empty environment until the kernel has
+// copied it to the program's stack, which can happen after its parent
+// learns that the program started. So environ waits until deadline for a
+// live process to show one, and then takes the environment as it reads
+// once the kernel has set its address.
+func environ(proc string, pid int, deadline time.Time) ([]byte, error) {
+	dir := proc + "/" + strconv.Itoa(pid)
 	for {
 		data, err := os.ReadFile(dir + "/environ")
 		if err != nil || len(data) > 0 {
@@ -105,7 +140,8 @@ func environ(pid int, deadline time.Time) ([]byte, error) {
 			if !envSet {
 				return nil, fmt.Errorf("process %d: %w", pid, errStarting)
 			}
-			return nil, nil
+			// The kernel may have set the environment since the read above.
+			return os.ReadFile(dir + "/environ")
 		}
 		time.Sleep(time.Millisecond)
 	}
