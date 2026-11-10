@@ -436,9 +436,11 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	// Letting the agent back lifts the revocation of its credential. The
 	// router keeps refusing that credential only once it synced with the
 	// control plane while the agent was removed, which the restarted router
-	// does after it turns ready.
+	// does after it turns ready. Its sync loads the bans a step before the
+	// revocations, and a join reports a refusal only after retrying for
+	// 14 seconds.
 	eventually(t, "the restarted relay refuses the removed reviewer", func() error {
-		if err := join(t, cfg); err == nil || !strings.Contains(err.Error(), "removed this agent") {
+		if err := tryJoin(t, cfg); err == nil || !strings.Contains(err.Error(), "removed this agent") {
 			return fmt.Errorf("joining with the removed credential: error = %v, want the agent removed", err)
 		}
 		return nil
@@ -455,7 +457,7 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	mistyped.Token = inv.Token[1:]
 	for range 2 {
 		var invite *network.InviteError
-		if err := join(t, mistyped); !errors.As(err, &invite) {
+		if err := tryJoin(t, mistyped); !errors.As(err, &invite) {
 			t.Fatalf("joining with a mistyped invite: error = %v, want an invite error", err)
 		}
 	}
@@ -466,9 +468,9 @@ func TestRelayLetsBackAnAgentRemovedBeforeARestart(t *testing.T) {
 	}
 }
 
-// join joins the relay with cfg, leaves it again, and returns the join
+// tryJoin joins the relay with cfg, leaves it again, and returns the join
 // error.
-func join(t *testing.T, cfg network.RelayConfig) error {
+func tryJoin(t *testing.T, cfg network.RelayConfig) error {
 	t.Helper()
 	p, err := network.NewRelay(cfg)
 	if err != nil {
