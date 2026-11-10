@@ -147,7 +147,8 @@ func (rd *renderer) onArtifact(a *a2a.Artifact, appendTo bool) {
 			if name == "" {
 				name = "file"
 			}
-			rd.files = append(rd.files, messenger.File{Name: name, MediaType: p.MediaType, Data: raw})
+			voice, _ := p.Metadata[speech.VoiceReplyKey].(bool)
+			rd.files = append(rd.files, messenger.File{Name: name, MediaType: p.MediaType, Data: raw, Voice: voice})
 		}
 	}
 	rd.progress = ""

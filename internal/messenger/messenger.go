@@ -183,6 +183,9 @@ type File struct {
 	Name      string
 	MediaType string
 	Data      []byte
+	// Voice marks a spoken reply, which messengers that have voice notes
+	// send as one.
+	Voice bool
 }
 
 // Action is a click on a question's button.

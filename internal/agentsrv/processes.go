@@ -428,16 +428,11 @@ func (e *splitExecutor) close(ctx context.Context) error {
 
 // failTask fails the task of execCtx with err.
 func failTask(execCtx *a2asrv.ExecutorContext, err error) iter.Seq2[a2a.Event, error] {
-	return failTaskWith(execCtx, err.Error())
-}
-
-// failTaskWith fails the task of execCtx with the message text.
-func failTaskWith(execCtx *a2asrv.ExecutorContext, text string) iter.Seq2[a2a.Event, error] {
 	return func(yield func(a2a.Event, error) bool) {
 		if execCtx.StoredTask == nil && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
 			return
 		}
-		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(text))), nil)
+		yield(a2a.NewStatusUpdateEvent(execCtx, a2a.TaskStateFailed, a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart(err.Error()))), nil)
 	}
 }
 

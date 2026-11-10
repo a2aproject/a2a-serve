@@ -59,18 +59,48 @@ func TestParseService(t *testing.T) {
 	}
 }
 
-// ogg returns an Ogg Opus stream whose last page ends at d.
-func ogg(d time.Duration) []byte {
-	page := func(granule int64, body []byte) []byte {
-		p := make([]byte, 27, 27+1+len(body))
+// ogg returns an Ogg Opus stream of d in 20 ms packets, whose last page
+// claims granule.
+func oggWithGranule(d time.Duration, granule int64) []byte {
+	page := func(granule int64, packets [][]byte) []byte {
+		p := make([]byte, 27)
 		copy(p, "OggS")
 		binary.LittleEndian.PutUint64(p[6:14], uint64(granule))
-		p[26] = 1
-		p = append(p, byte(len(body)))
-		return append(p, body...)
+		p[26] = byte(len(packets))
+		for _, pk := range packets {
+			p = append(p, byte(len(pk)))
+		}
+		for _, pk := range packets {
+			p = append(p, pk...)
+		}
+		return p
 	}
-	data := page(0, []byte("OpusHead\x01\x01\x38\x01\x80\xbb\x00\x00\x00\x00\x00"))
-	return append(data, page(int64(d/time.Second)*48000, []byte("audio"))...)
+	data := page(0, [][]byte{[]byte("OpusHead\x01\x01\x38\x01\x80\xbb\x00\x00\x00\x00\x00")})
+	data = append(data, page(0, [][]byte{[]byte("OpusTags")})...)
+	var audio [][]byte
+	for range d / (20 * time.Millisecond) {
+		audio = append(audio, []byte{0x08}) // SILK, 20 ms, one frame
+	}
+	for len(audio) > 0 {
+		n := min(len(audio), 255)
+		data = append(data, page(granule, audio[:n])...)
+		audio = audio[n:]
+	}
+	return data
+}
+
+func ogg(d time.Duration) []byte { return oggWithGranule(d, int64(d/time.Second)*48000) }
+
+// mp3 returns n MPEG-1 layer III frames at 128 kbit/s and 44.1 kHz, after
+// an ID3v2 tag.
+func mp3(n int) []byte {
+	data := []byte("ID3\x04\x00\x00\x00\x00\x00\x02ab")
+	for range n {
+		frame := make([]byte, 417)
+		copy(frame, []byte{0xFF, 0xFB, 0x90, 0x00})
+		data = append(data, frame...)
+	}
+	return data
 }
 
 // wav returns a WAV file of d at 8 kHz, 8 bits, mono.
@@ -100,9 +130,13 @@ func TestDuration(t *testing.T) {
 		wantOK bool
 	}{
 		{name: "ogg opus", audio: speech.Audio{MediaType: "audio/ogg", Data: ogg(14 * time.Second)}, want: 14 * time.Second, wantOK: true},
+		{name: "ogg opus whose granule claims less", audio: speech.Audio{MediaType: "audio/ogg", Data: oggWithGranule(6*time.Minute, 48000)}, want: 6 * time.Minute, wantOK: true},
 		{name: "wav", audio: speech.Audio{MediaType: "audio/wav", Data: wav(3 * time.Second)}, want: 3 * time.Second, wantOK: true},
-		{name: "mp3", audio: speech.Audio{MediaType: "audio/mpeg", Data: []byte("ID3\x03")}},
+		{name: "mp3", audio: speech.Audio{MediaType: "audio/mpeg", Data: mp3(100)}, want: 100 * (1152 * time.Second / 44100), wantOK: true},
+		{name: "mp3 without frames", audio: speech.Audio{MediaType: "audio/mpeg", Data: []byte("ID3\x03")}},
 		{name: "truncated ogg", audio: speech.Audio{MediaType: "audio/ogg", Data: []byte("OggS")}},
+		{name: "ogg with segments past its end", audio: speech.Audio{MediaType: "audio/ogg", Data: append([]byte("OggS"), append(make([]byte, 22), 200)...)}},
+		{name: "m4a", audio: speech.Audio{MediaType: "audio/mp4", Data: []byte("\x00\x00\x00\x20ftypM4A ")}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -113,6 +147,16 @@ func TestDuration(t *testing.T) {
 			}
 		})
 	}
+}
+
+func FuzzDuration(f *testing.F) {
+	f.Add(ogg(time.Second))
+	f.Add(wav(time.Second))
+	f.Add(mp3(3))
+	f.Add(append([]byte("OggS"), append(make([]byte, 42), 200)...))
+	f.Fuzz(func(t *testing.T, data []byte) {
+		speech.Duration(speech.Audio{Data: data})
+	})
 }
 
 func TestTranscribe(t *testing.T) {

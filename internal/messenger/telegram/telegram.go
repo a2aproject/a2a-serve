@@ -515,20 +515,19 @@ func (c *Messenger) Send(ctx context.Context, m messenger.Outbound) (messenger.R
 	return ref, nil
 }
 
-// sendFile sends f, as a voice note that plays in the chat if it is Ogg
-// Opus or MP3 audio.
+// sendFile sends f, a spoken reply as a voice note that plays in the chat.
 func (c *Messenger) sendFile(ctx context.Context, chat int64, thread int, f messenger.File) (*models.Message, error) {
-	if f.MediaType == "audio/ogg" || f.MediaType == "audio/mpeg" {
+	if f.Voice {
 		msg, err := c.bot.SendVoice(ctx, &bot.SendVoiceParams{
 			ChatID: chat, MessageThreadID: thread,
 			Voice: &models.InputFileUpload{Filename: f.Name, Data: bytes.NewReader(f.Data)},
 		})
-		var limit *bot.TooManyRequestsError
-		if err == nil || errors.As(err, &limit) {
+		// People can refuse voice notes in their privacy settings; they
+		// still get the reply as a file.
+		if err == nil || !strings.Contains(err.Error(), "VOICE_MESSAGES_FORBIDDEN") {
 			return msg, wrapAPIError("sendVoice", err)
 		}
-		// People can refuse voice notes in their privacy settings.
-		slog.Debug("telegram: sending a voice note; sending it as a file", "error", err)
+		slog.Debug("telegram: the person refuses voice notes; sending the voice reply as a file")
 	}
 	msg, err := c.bot.SendDocument(ctx, &bot.SendDocumentParams{
 		ChatID: chat, MessageThreadID: thread,

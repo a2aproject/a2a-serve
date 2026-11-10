@@ -88,6 +88,10 @@ func Describe(service string) string {
 	return u.Scheme + "://" + u.Host + u.Path
 }
 
+// VoiceReplyKey is the metadata key that marks the file part of a spoken
+// reply, which messengers send as a voice note.
+const VoiceReplyKey = "a2a-serve/voice-reply"
+
 // TranscriptKey is the metadata key of the status message that shows what a
 // recording said, with the transcript as its value.
 const TranscriptKey = "a2a-serve/transcript"

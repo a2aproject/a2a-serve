@@ -108,7 +108,7 @@ The server speaks the prose of the reply. It leaves out code blocks, tables, lin
 
 ## When speech fails
 
-A voice note that can't be transcribed fails the task before the agent runs:
+A voice note that can't be transcribed fails the task before the agent runs. A voice note that answers a question of the agent leaves the question waiting, so that you can answer again:
 
 ```
 bot → I couldn't transcribe the voice note: the speech service timed out. Send it again or type it.
@@ -121,6 +121,7 @@ bot → I couldn't transcribe the voice note: the speech service timed out. Send
 | `couldn't reach the speech service` | The service is down or the URL is wrong. The owner can check with `a2a-serve doctor --online`. |
 | `the recording is longer than 5 minutes` | See [Limits](#limits). |
 | `the speech service heard no words` | The recording was silent or unclear. |
+| `the recording isn't Ogg Opus, MP3 or WAV` | See [Limits](#limits). |
 | `the speech service is over its rate limit or quota` | The service refused the call because the account used up its limit. |
 | `you reached the limit of 60 speech calls an hour` | See [Limits](#limits). |
 | `too many people use voice right now; try again later` | Many people used voice within the same hour. Try again later. |
@@ -132,7 +133,8 @@ When speaking a reply fails, the text still arrives, followed by a note such as 
 | Limit | Value |
 |---|---|
 | Size of a recording | 25 MiB, and 20 MiB to download from Telegram |
-| Length of a recording | 5 minutes, checked for Ogg and WAV |
+| Length of a recording | 5 minutes |
+| Format of a recording | Ogg Opus, MP3 or WAV, the formats whose length the server reads; owners can also send other formats |
 | One call of the speech service | 60 seconds |
 | Recordings in one message | 10 |
 | Speech calls per person | 60 an hour, transcriptions and replies together; owners have no limit |

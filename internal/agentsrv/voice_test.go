@@ -93,9 +93,19 @@ func stateWord(s a2a.TaskState) string {
 	return strings.ToLower(strings.TrimPrefix(string(s), "TASK_STATE_"))
 }
 
+// voiceNote is an Ogg Opus recording of 20 ms.
 func voiceNote() *a2a.Part {
-	p := a2a.NewRawPart([]byte("OggS voice"))
+	page := func(packet string) string {
+		return "OggS\x00\x00" + strings.Repeat("\x00", 20) + "\x01" + string(rune(len(packet))) + packet
+	}
+	p := a2a.NewRawPart([]byte(page("OpusHead\x01\x01\x38\x01\x80\xbb\x00\x00\x00\x00\x00") + page("OpusTags") + page("\x08")))
 	p.MediaType, p.Filename = "audio/ogg", "voice.ogg"
+	return p
+}
+
+func m4aNote() *a2a.Part {
+	p := a2a.NewRawPart([]byte("\x00\x00\x00\x20ftypM4A "))
+	p.MediaType, p.Filename = "audio/mp4", "memo.m4a"
 	return p
 }
 
@@ -131,6 +141,12 @@ func TestVoiceTurn(t *testing.T) {
 			fake:  &speechtest.Fake{TranscribeErr: &speech.Error{Reason: "the speech service timed out"}},
 			parts: []*a2a.Part{voiceNote()},
 			want:  []string{"task:submitted", "status:failed:I couldn't transcribe the voice note: the speech service timed out. Send it again or type it."},
+		},
+		{
+			name:  "unmeasured format from a member",
+			fake:  &speechtest.Fake{Transcript: "hi"},
+			parts: []*a2a.Part{m4aNote()},
+			want:  []string{"task:submitted", "status:failed:I couldn't transcribe the voice note: the recording isn't Ogg Opus, MP3 or WAV. Send it again or type it."},
 		},
 		{
 			name:      "reply spoken when accepted",
@@ -283,7 +299,7 @@ func TestChatVoiceTurn(t *testing.T) {
 	ts.ch.WaitFor(t, "dm1", messengertest.HasText("Voice replies are on."))
 	ts.ch.Write("telegram:1", "dm1", "scheduled again")
 	_, voice := ts.ch.WaitFor(t, "dm1", func(m messenger.Outbound) bool { return len(m.Files) > 0 })
-	want := []messenger.File{{Name: "reply.ogg", MediaType: "audio/ogg", Data: speechtest.Speech}}
+	want := []messenger.File{{Name: "reply.ogg", MediaType: "audio/ogg", Data: speechtest.Speech, Voice: true}}
 	if diff := cmp.Diff(want, voice.Files); diff != "" {
 		t.Fatalf("voice reply wrong files (-want +got) diff = %s", diff)
 	}
@@ -295,5 +311,28 @@ func TestChatVoiceTurn(t *testing.T) {
 	}
 	if diff := cmp.Diff([]string{"ran scheduled again."}, spoken); diff != "" {
 		t.Fatalf("spoken texts wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+func TestVoiceAnswerThatFailsAsksAgain(t *testing.T) {
+	t.Parallel()
+	v := newVoiceTurns(&speechtest.Fake{TranscribeErr: &speech.Error{Reason: "the speech service timed out"}}, nil, time.Now)
+	question := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?"))
+	stored := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: question}}
+	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, voiceNote()), TaskID: "t1", ContextID: "c1", StoredTask: stored}
+	agent := &scriptedTurn{reply: "unused"}
+	var got []a2a.Event
+	for ev, err := range v.turn(auth.WithPrincipal(t.Context(), auth.Owner()), execCtx, agent.run) {
+		if err != nil {
+			t.Fatalf("voiceTurns.turn() error = %v", err)
+		}
+		got = append(got, ev)
+	}
+	want := []string{"status:input_required:I couldn't transcribe the voice note: the speech service timed out. The question still waits for an answer; send it again or type it.\nWhich branch?"}
+	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
+		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
+	}
+	if agent.calls != 0 {
+		t.Fatalf("agent turns = %d, want 0", agent.calls)
 	}
 }

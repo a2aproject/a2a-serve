@@ -17,6 +17,7 @@ package chat
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"sync"
@@ -327,6 +328,7 @@ func TestRendererRepliesWithTranscriptAndSendsVoiceReply(t *testing.T) {
 	transcript.Metadata = map[string]any{speech.TranscriptKey: "what changed?"}
 	voice := a2a.NewRawPart([]byte("OggS"))
 	voice.Filename, voice.MediaType = "reply.ogg", "audio/ogg"
+	voice.Metadata = map[string]any{speech.VoiceReplyKey: true}
 	for _, ev := range []a2a.Event{
 		a2a.NewStatusUpdateEvent(task, a2a.TaskStateWorking, transcript),
 		a2a.NewArtifactEvent(task, a2a.NewTextPart("I gave each case its own buffer.")),
@@ -339,14 +341,14 @@ func TestRendererRepliesWithTranscriptAndSendsVoiceReply(t *testing.T) {
 	for _, m := range ch.Transcript() {
 		line := m.Text
 		for _, f := range m.Files {
-			line += "[" + f.Name + " " + f.MediaType + "]"
+			line += fmt.Sprintf("[%s %s voice=%v]", f.Name, f.MediaType, f.Voice)
 		}
 		if m.ReplyTo != voiceNote {
 			line += " (not a reply)"
 		}
 		got = append(got, line)
 	}
-	want := []string{`🎤 "what changed?"`, "I gave each case its own buffer.", "[reply.ogg audio/ogg]"}
+	want := []string{`🎤 "what changed?"`, "I gave each case its own buffer.", "[reply.ogg audio/ogg voice=true]"}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("renderer sent wrong messages (-want +got) diff = %s", diff)
 	}

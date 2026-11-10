@@ -554,23 +554,34 @@ func TestSendFiles(t *testing.T) {
 		name      string
 		file      messenger.File
 		failVoice bool
+		voiceErr  string
 		want      telegramtest.Message
 	}{
 		{
 			name: "voice note",
-			file: messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS")},
+			file: messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
 			want: telegramtest.Message{ID: 1, ChatID: 42, Voice: "reply.ogg"},
 		},
 		{
 			name: "mp3 voice note",
-			file: messenger.File{Name: "reply.mp3", MediaType: "audio/mpeg", Data: []byte("ID3")},
+			file: messenger.File{Name: "reply.mp3", MediaType: "audio/mpeg", Data: []byte("ID3"), Voice: true},
 			want: telegramtest.Message{ID: 1, ChatID: 42, Voice: "reply.mp3"},
 		},
 		{
+			name: "audio file",
+			file: messenger.File{Name: "song.mp3", MediaType: "audio/mpeg", Data: []byte("ID3")},
+			want: telegramtest.Message{ID: 1, ChatID: 42, Document: "song.mp3"},
+		},
+		{
 			name:      "voice notes refused",
-			file:      messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS")},
+			file:      messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
 			failVoice: true,
 			want:      telegramtest.Message{ID: 1, ChatID: 42, Document: "reply.ogg"},
+		},
+		{
+			name:     "voice note failing otherwise",
+			file:     messenger.File{Name: "reply.ogg", MediaType: "audio/ogg", Data: []byte("OggS"), Voice: true},
+			voiceErr: "Bad Request: chat not found",
 		},
 		{
 			name: "document",
@@ -585,9 +596,19 @@ func TestSendFiles(t *testing.T) {
 			if tc.failVoice {
 				api.Fail("sendVoice", telegramtest.Failure{Status: http.StatusBadRequest, Body: `{"ok":false,"error_code":400,"description":"Bad Request: VOICE_MESSAGES_FORBIDDEN"}`})
 			}
+			if tc.voiceErr != "" {
+				api.Fail("sendVoice", telegramtest.Failure{Status: http.StatusBadRequest, Body: `{"ok":false,"error_code":400,"description":"` + tc.voiceErr + `"}`})
+			}
 			c := New("123:abc", nil)
 			c.ServerURL = api.URL
-			if _, err := c.Send(t.Context(), messenger.Outbound{Conv: "42", Files: []messenger.File{tc.file}}); err != nil {
+			_, err := c.Send(t.Context(), messenger.Outbound{Conv: "42", Files: []messenger.File{tc.file}})
+			if tc.voiceErr != "" {
+				if err == nil || len(api.Messages()) != 0 {
+					t.Fatalf("Send() error = %v, messages %v, want the error and no file sent", err, api.Messages())
+				}
+				return
+			}
+			if err != nil {
 				t.Fatalf("Send() error = %v, want nil", err)
 			}
 			if diff := cmp.Diff([]telegramtest.Message{tc.want}, api.Messages()); diff != "" {
