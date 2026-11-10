@@ -96,6 +96,9 @@ type Spec struct {
 	// sandbox, such as for the agents of members and guests, who could
 	// otherwise change the permissions that the owner set for them.
 	LockHome bool
+	// EnvDir is the host directory for the env files of a container, which
+	// hold Env. A sandbox must not mount it. Docker only.
+	EnvDir string
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 	// Model is the model of the harness, in its own format. Empty keeps
@@ -297,6 +300,7 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		WorkspaceSrc: spec.WorkspaceSrc,
 		Hidden:       spec.Hidden,
 		Home:         spec.Home,
+		EnvDir:       spec.EnvDir,
 		Env:          withoutEgressCA(cliEnv(spec.Env)),
 		Limits:       spec.Limits,
 		Labels:       spec.Labels,

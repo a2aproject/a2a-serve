@@ -18,6 +18,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -42,6 +43,71 @@ func TestDockerRunnerStopSurvivesCancelledContext(t *testing.T) {
 	if diff := cmp.Diff("rm -f a2a-coder\n", string(data)); diff != "" {
 		t.Fatalf("DockerRunner.Stop() wrong docker calls (-want +got) diff = %s", diff)
 	}
+}
+
+func TestDockerRunnerStopRemovesEnvFiles(t *testing.T) {
+	fakeDocker(t, "exit 0")
+	envDir := t.TempDir()
+	r := &DockerRunner{Name: "a2a-coder", Image: "img", EnvDir: envDir, Env: []string{"KEY=secret"}}
+	if _, err := r.Command(context.Background(), Command{Path: "opencode"}); err != nil {
+		t.Fatalf("DockerRunner.Command() error = %v", err)
+	}
+	if got := dirNames(t, envDir); len(got) != 1 {
+		t.Fatalf("env directory has %v, want one env file", got)
+	}
+
+	if err := r.Stop(context.Background()); err != nil {
+		t.Fatalf("DockerRunner.Stop() error = %v", err)
+	}
+
+	if diff := cmp.Diff([]string(nil), dirNames(t, envDir)); diff != "" {
+		t.Fatalf("DockerRunner.Stop() left env files (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPruneEnvFiles(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	for _, name := range []string{"a2a-env-1", "a2a-env-2", "other"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("KEY=secret\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	n, err := PruneEnvFiles(dir)
+	if err != nil {
+		t.Fatalf("PruneEnvFiles() error = %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("PruneEnvFiles() = %d, want 2", n)
+	}
+	if diff := cmp.Diff([]string{"other"}, dirNames(t, dir)); diff != "" {
+		t.Fatalf("PruneEnvFiles() left wrong files (-want +got) diff = %s", diff)
+	}
+}
+
+func TestPruneEnvFilesWithoutDirectory(t *testing.T) {
+	t.Parallel()
+	n, err := PruneEnvFiles(filepath.Join(t.TempDir(), "missing"))
+	if err != nil {
+		t.Fatalf("PruneEnvFiles() error = %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("PruneEnvFiles() = %d, want 0", n)
+	}
+}
+
+func dirNames(t *testing.T, dir string) []string {
+	t.Helper()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("os.ReadDir() error = %v", err)
+	}
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	return names
 }
 
 func TestPruneContainers(t *testing.T) {

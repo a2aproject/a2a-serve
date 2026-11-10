@@ -59,6 +59,7 @@ func (s *Server) newExecutor(ctx context.Context, harnessLog, imageProgress io.W
 	if err := s.pruneContainers(ctx); err != nil {
 		return nil, nil, err
 	}
+	s.pruneEnvFiles()
 	h, err := s.prepareHarness(ctx, imageProgress, "")
 	if err != nil {
 		return nil, nil, err
@@ -105,6 +106,19 @@ func (s *Server) pruneContainers(ctx context.Context) error {
 		slog.Info("removed containers left by an earlier run", "count", n)
 	}
 	return nil
+}
+
+// pruneEnvFiles removes the env files of containers that an earlier server
+// left behind. It runs while the server holds the lock of the agent
+// directory and before any container starts.
+func (s *Server) pruneEnvFiles() {
+	n, err := harness.PruneEnvFiles(s.dir.EnvFilesDir())
+	if err != nil {
+		slog.Warn("removing env files left by an earlier run", "error", err)
+	}
+	if n > 0 {
+		slog.Info("removed env files left by an earlier run", "count", n)
+	}
 }
 
 // newGuestExecutor runs the conversations of guests in one
@@ -295,6 +309,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 		Sandbox:    cfg.Sandbox,
 		Mounts:     mounts,
 		Home:       s.dir.HomeDir(),
+		EnvDir:     s.dir.EnvFilesDir(),
 		Hidden:     s.hidden(),
 		Pins:       s.pins,
 		MCPMask:    s.dir.MCPMaskPath(),

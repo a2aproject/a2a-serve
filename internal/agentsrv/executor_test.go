@@ -639,7 +639,7 @@ func TestPrepareHarnessRefusesReplacedAgentDirectoryBeforeWritingHome(t *testing
 			for _, e := range entries {
 				names = append(names, e.Name())
 			}
-			if diff := cmp.Diff([]string{"home"}, names); diff != "" {
+			if diff := cmp.Diff([]string{"home", "run"}, names); diff != "" {
 				t.Fatalf("Server.prepareHarness() wrote into the state directory (-want +got) diff = %s", diff)
 			}
 			home, err := os.ReadDir(dir.HomeDir())
@@ -964,5 +964,27 @@ func TestExplainFailure(t *testing.T) {
 				t.Fatalf("explainFailure(%q) = %q, want %q", tc.reported, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestPruneEnvFilesRemovesLeftoversOfEarlierRun(t *testing.T) {
+	t.Parallel()
+	dir, err := agentdir.Open(filepath.Join(t.TempDir(), "proj"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dir.Init(); err != nil {
+		t.Fatal(err)
+	}
+	leftover := filepath.Join(dir.EnvFilesDir(), "a2a-env-123")
+	if err := os.WriteFile(leftover, []byte("KEY=secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s := &Server{dir: dir}
+
+	s.pruneEnvFiles()
+
+	if _, err := os.Stat(leftover); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("os.Stat(%s) error = %v, want %v after Server.pruneEnvFiles()", leftover, err, os.ErrNotExist)
 	}
 }
