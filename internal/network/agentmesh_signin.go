@@ -35,9 +35,9 @@ const routersRefused = "failed to authenticate with any router"
 // its saved credential: it sets the credential aside, keeps the identity
 // key, and enrolls again with the agent's sign-in. Routers keep refusing
 // the credential of a removed agent for a day after the relay lets it back,
-// and meshnet resumes a saved credential before it signs in. When the new
-// enrollment fails too, the agent keeps its saved credential.
-func (a *agentMesh) signInAgain(ctx context.Context, resumed bool, srv *meshnet.Server, st *meshnet.Status, err error) (*meshnet.Server, *meshnet.Status, error) {
+// and meshnet resumes a saved credential before it signs in. When the relay
+// doesn't enroll the agent again, it keeps its saved credential.
+func (a *agentMesh) signInAgain(ctx context.Context, resumed bool, srv meshServer, st *meshnet.Status, err error) (meshServer, *meshnet.Status, error) {
 	if a.cfg.Token != "" {
 		return srv, st, err
 	}
@@ -68,8 +68,17 @@ func (a *agentMesh) signInAgain(ctx context.Context, resumed bool, srv *meshnet.
 		return srv, st, nil
 	}
 	slog.Warn("signing in to the relay again", "error", rerr)
-	if _, xerr := restoreMeshCredential(a.cfg.StateDir); xerr != nil {
-		return srv, st, errors.Join(err, rerr, fmt.Errorf("restoring the saved relay credential: %w", xerr))
+	err = errors.Join(err, fmt.Errorf("signing in again: %w", explainJoin(rerr)))
+	// The relay renews only the newest credential it gave the agent, so a
+	// sign-in that enrolled keeps the new credential though the join failed.
+	if hasMeshIdentity(a.cfg.StateDir) {
+		if xerr := removeFile(filepath.Join(a.cfg.StateDir, setAsideCredentialFile)); xerr != nil {
+			slog.Warn("removing the refused relay credential", "error", xerr)
+		}
+		return srv, st, err
 	}
-	return srv, st, errors.Join(err, fmt.Errorf("signing in again: %w", explainJoin(rerr)))
+	if _, xerr := restoreMeshCredential(a.cfg.StateDir); xerr != nil {
+		return srv, st, errors.Join(err, fmt.Errorf("restoring the saved relay credential: %w", xerr))
+	}
+	return srv, st, err
 }

@@ -731,6 +731,8 @@ func TestRelayLetsBackASignedInAgentRemovedBeforeARestart(t *testing.T) {
 		t.Fatalf("relay.Run() error = %v", err)
 	}
 
+	// The restarted router refuses the coder's credential for a day when it
+	// syncs before the relay lets the coder back, which is likely under load.
 	r = startRelayWith(t, d, bin, g.Endpoints())
 	back := serveAgent(t, cfg)
 	if back.privateURL != coder.privateURL {
