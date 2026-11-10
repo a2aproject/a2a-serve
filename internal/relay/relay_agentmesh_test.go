@@ -665,6 +665,11 @@ func TestRelaySignIn(t *testing.T) {
 	if want := "sign-in (*@example.com) and invites"; st.Join != want {
 		t.Fatalf("Client.Status() join = %q, want %q", st.Join, want)
 	}
+	// While the relay refuses anna, a running coder would reconnect and print
+	// a sign-in link, which the browser fails to approve.
+	if err := coder.provider.Close(); err != nil {
+		t.Fatalf("closing coder: %v", err)
+	}
 
 	restartAllowing := func(allow string) {
 		t.Helper()
