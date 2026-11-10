@@ -81,10 +81,34 @@ func Detach(u Unit) (pid int, exited <-chan struct{}, err error) {
 	return cmd.Process.Pid, done, closeErr
 }
 
+// System is the service manager of this machine: systemd on Linux and
+// launchd on macOS.
+type System struct{}
+
+// Installed reports whether the service name exists.
+func (System) Installed(name string) bool { return Installed(name) }
+
+// MainPID returns the PID of the process that the service name runs, or
+// zero if it doesn't run.
+func (System) MainPID(name string) (int, error) { return MainPID(name) }
+
 func run(name string, args ...string) error {
 	out, err := exec.Command(name, args...).CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, strings.TrimSpace(string(out)))
 	}
 	return nil
+}
+
+// output runs a command and returns its standard output.
+func output(name string, args ...string) (string, error) {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		var stderr string
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
+			stderr = strings.TrimSpace(string(ee.Stderr))
+		}
+		return "", fmt.Errorf("%s %s: %w: %s", name, strings.Join(args, " "), err, stderr)
+	}
+	return string(out), nil
 }

@@ -19,6 +19,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 func newRestartCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -40,7 +41,7 @@ restarted there: press Ctrl-C and run ` + "`a2a-serve start`" + ` again.`,
 			}
 			ctx := cmd.Context()
 			client := sf.controlClient(d)
-			if err := lifecycle.Restart(ctx, d, client, quiet, cfg.progress()); err != nil {
+			if err := lifecycle.Restart(ctx, d, client, service.System{}, quiet, cfg.progress()); err != nil {
 				return err
 			}
 			if !cfg.IsJSON() {

@@ -101,6 +101,17 @@ func Installed(name string) bool {
 	return err == nil
 }
 
+// MainPID returns the PID of the process of the launchd agent, or zero if it
+// doesn't run or isn't loaded.
+func MainPID(name string) (int, error) {
+	out, err := output("launchctl", "print", domain()+"/"+label(name))
+	if err != nil {
+		slog.Debug("launchd agent not loaded", "label", label(name), "error", err)
+		return 0, nil
+	}
+	return launchdPID(out), nil
+}
+
 // Uninstall unloads and removes the service.
 func Uninstall(name string) error {
 	path, err := plistPath(name)
