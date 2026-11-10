@@ -16,10 +16,10 @@ curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.s
 ```
 
 <details markdown="1">
-<summary>Build from <code>main</code> with Go 1.26+ (required before <code>v0.1.0</code> is released)</summary>
+<summary>Build from <code>main</code> with Go 1.26+</summary>
 
 ```bash
-CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@latest &&
+CGO_ENABLED=0 go install github.com/a2aproject/a2a-serve@main &&
   go install github.com/a2aproject/a2a-cli@latest &&
   mv "$(command -v a2a-cli)" "$(dirname "$(command -v a2a-cli)")/a2a" &&
   a2a-serve doctor --fix

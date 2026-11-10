@@ -30,7 +30,7 @@ Without Homebrew:
 curl -fsSL https://raw.githubusercontent.com/a2aproject/a2a-serve/main/install.sh | sh
 ```
 
-To build from `main` with Go 1.26+ (required before `v0.1.0` is released), see [Getting Started](getting-started.md#install).
+To build from `main` with Go 1.26+, see [Getting Started](getting-started.md#install).
 
 Start an agent in your project directory and send it a task:
 
