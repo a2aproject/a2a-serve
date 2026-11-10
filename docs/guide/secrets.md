@@ -102,7 +102,9 @@ What the rules don't protect:
 
 ## Tokens for the server
 
-Flags that give the server a token or password, such as `messenger add --token` or `config set --tailscale-authkey`, store the value in `state/secrets` too. The agent never sees these values.
+Flags that give the server a token or password, such as `messenger add --token`, `config set --tailscale-authkey` or `config set --voice-key`, store the value in `state/secrets` too. The agent never sees these values.
+
+`--voice-key` is the API key of the [speech service](voice.md). `--voice-key env:OPENAI_API_KEY` stores the value under the name `OPENAI_API_KEY`, and a plain value is stored as `VOICE_API_KEY`. `--voice-key secret:NAME` reuses a secret that is already stored, such as the key you passed with `--secret`. The agent keeps its own copy of that secret, and the voice setting doesn't change what it gets.
 
 ### Value forms
 

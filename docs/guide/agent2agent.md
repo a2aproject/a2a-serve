@@ -39,6 +39,14 @@ card:
 
 Edit them with `a2a-serve config edit`. A running agent serves the new card at once. The [configuration reference](../reference/configuration.md#card-skills) lists the rules. The server doesn't read skills from the project's skill folders, because the agent can write those files.
 
+## Audio
+
+When a [speech service](voice.md) is set up, callers can send audio and ask for audio back. The agent card then lists `audio/ogg`, `audio/mpeg` and `audio/wav` in `defaultInputModes`, and `audio/ogg` in `defaultOutputModes`.
+
+A message with an `audio/*` file part that holds raw bytes is transcribed before the agent sees it. The transcript arrives as the first `working` status of the task. Its message text is `🎤 "<transcript>"`, and its metadata has the transcript under the key `a2a-serve/transcript`.
+
+A caller that lists `audio/ogg` in the `acceptedOutputModes` of its request gets the reply as an extra artifact named "Voice reply", before the task completes. The artifact has one file part, `reply.ogg` with the type `audio/ogg`. A caller that accepts only `audio/mpeg` or `audio/wav` gets `reply.mp3` or `reply.wav`. `audio/*` is accepted too. The speech calls of a caller count against the [limits](voice.md#limits) of that caller.
+
 ## Cards of other agents
 
 `a2a-serve contact add` fetches the contact's agent card, keeps its description and skills, and prints them. The server fetches the cards of contacts again every hour, and the cards of the agents on the private network too. Change the period with `a2a-serve config set --contact-refresh 30m`, or refresh the contacts now with `a2a-serve contact refresh [name]`.

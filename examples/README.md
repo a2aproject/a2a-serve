@@ -21,3 +21,7 @@ Create an agent from a recipe that answers questions about production with your 
 ### 5. Relay on Cloud Run: [`05-relay-cloud-run/`](05-relay-cloud-run/)
 
 Run a relay on Google Cloud Run, with its data in Cloud SQL and its secrets in Secret Manager. Invite agents, change its settings, and upgrade it to a newer release.
+
+### 6. Talk to Your Agent on Telegram: [`06-telegram-voice/`](06-telegram-voice/)
+
+Connect the agent to a Telegram bot and give the server a speech service, either an OpenAI key or speaches on your machine. Send voice notes, check what the agent heard, turn on voice replies with `/voice`, and see how the agent card lists audio for A2A callers.
