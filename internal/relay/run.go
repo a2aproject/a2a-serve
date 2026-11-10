@@ -172,6 +172,7 @@ func (r *Relay) run(ctx context.Context) (err error) {
 			URL: publicURL, Secret: conf.AdminToken, AllowEmails: conf.AllowEmails,
 			ClientID: conf.GoogleClientID, ClientSecret: conf.GoogleClientSecret,
 			Google: r.opts.Google, HTTP: &http.Client{Timeout: 30 * time.Second}, Now: r.opts.Now,
+			Client: front.Client,
 		})
 		if err != nil {
 			return err

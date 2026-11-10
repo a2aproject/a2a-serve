@@ -205,6 +205,12 @@ func onboarding(p string) bool {
 	return false
 }
 
+// Client identifies the client of a request for the limits of the handlers
+// the front serves, as the front's own limits do.
+func Client(r *http.Request) string {
+	return client(r)
+}
+
 // client identifies the client of a request for its limits. A tunnel or a
 // reverse proxy, such as cloudflared or Cloud Run's, connects from the
 // relay's machine or a private network and appends the address it got the
