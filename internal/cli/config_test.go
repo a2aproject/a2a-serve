@@ -35,6 +35,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/output"
 )
 
@@ -682,8 +683,21 @@ func TestConfigSetCreatesAgentWithHarness(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Fatalf("a2a-serve config set --agent wrong config (-want +got) diff = %s", diff)
 	}
-	if _, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g"); !errors.Is(err, agentdir.ErrNotFound) {
+}
+
+func TestConfigSetWithoutAgentHintsAtAgentFlag(t *testing.T) {
+	t.Parallel()
+	_, err := runCMD(t, "config", "set", "--dir", t.TempDir(), "--memory", "8g")
+	if !errors.Is(err, agentdir.ErrNotFound) {
 		t.Fatalf("a2a-serve config set without --agent in a new directory error = %v, want %v", err, agentdir.ErrNotFound)
+	}
+	got := clierr.Classify(err)
+	if got.Exit != 7 {
+		t.Fatalf("a2a-serve config set without --agent in a new directory exit = %d, want 7", got.Exit)
+	}
+	want := "add --agent <agent> (" + strings.Join(harness.ProfileNames(), ", ") + ") to create one here"
+	if got.Hint != want {
+		t.Fatalf("a2a-serve config set without --agent in a new directory hint = %q, want %q", got.Hint, want)
 	}
 }
 

@@ -77,6 +77,7 @@ a2a-serve relay invite ci-bot
 invite ci-bot for https://relay.example.com, one agent, until 2026-11-06 09:00 UTC:
   mesh-bt-72fb0175…
 on that agent: a2a-serve config set --private https://relay.example.com --public https://relay.example.com --relay-token -
+on a new agent: a2a-serve config set --agent <agent> --private https://relay.example.com --public https://relay.example.com --relay-token -
 ```
 
 The name has up to 64 letters, digits, dots, hyphens or underscores, and starts with a letter or digit. The token is printed once. An unused invite expires after a day, or after `--expires`, up to a week. To revoke it sooner, such as after it leaked into a log, run `a2a-serve relay remove ci-bot`. An invited agent keeps its place on the relay while it is away, even for days, until you remove it. An agent that stays away longer than 30 days needs a new invite.
