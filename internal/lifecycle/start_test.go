@@ -246,6 +246,54 @@ func TestStartDetachedWhileRunning(t *testing.T) {
 	}
 }
 
+func TestStartServiceWhileRunning(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("unix sockets are not used on this platform")
+	}
+	type result struct {
+		Out, Message, Hint string
+		Exit               int
+	}
+	tests := []struct {
+		name     string
+		services fakeServices
+		want     result
+	}{
+		{
+			name:     "service installed",
+			services: fakeServices{installed: true},
+			want:     result{Out: "✓ coder is already running (a2a-serve status)\n"},
+		},
+		{
+			name: "no service",
+			want: result{
+				Message: "coder is already running without a user service",
+				Hint:    "run `a2a-serve stop`, then `a2a-serve start --service`",
+				Exit:    2,
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			serveControl(t, dir, &fakeControl{})
+
+			var out strings.Builder
+			err := Start(t.Context(), dir, StartOptions{Mode: Service, Quiet: true, Out: &out, Services: tc.services})
+			got := result{Out: out.String()}
+			if err != nil {
+				ce := clierr.Classify(err)
+				got.Message, got.Hint, got.Exit = ce.Message, ce.Hint, ce.Exit
+			}
+			if diff := cmp.Diff(tc.want, got); diff != "" {
+				t.Fatalf("Start() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestWaitReadyIgnoresStopRecordOfAnotherServer(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {

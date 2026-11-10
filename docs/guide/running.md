@@ -23,6 +23,8 @@ Commands that only change stored data, such as `pair`, `contact add --url`, `con
 
 `start --detach` and `start --service` return once the agent serves. If the server stops with an error first, they fail and show the end of the log. A service that failed this way stays installed, and the service manager keeps restarting it until you run `a2a-serve stop --uninstall`.
 
+`start --service` fails while the agent runs without a service, in the background or in a terminal. Stop it with `a2a-serve stop`, then run `a2a-serve start --service`.
+
 `restart` checks the settings first, so a misconfigured agent keeps running. A stopped agent starts as a user service if one is installed, and in the background otherwise. To restart an agent running in the foreground of another terminal, press Ctrl-C there and run `a2a-serve start` again.
 
 A stop fails the tasks that still run, with a message to send them again. Callers that follow such a task get this failed status as the final event. The server also stops when its `.a2a/state` directory is deleted.
