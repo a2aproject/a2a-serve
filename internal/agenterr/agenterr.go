@@ -115,10 +115,13 @@ const (
 	HintStartOrURL Hint = "start-or-url"
 	// HintRelayRun starts the relay.
 	HintRelayRun Hint = "relay-run"
-	// HintPairInvite pairs a user first.
+	// HintPairInvite pairs the user Arg first.
 	HintPairInvite Hint = "pair-invite"
-	// HintLinkChat links a chat account with a pairing code.
+	// HintLinkChat links a chat account of the pairing Arg with a code.
 	HintLinkChat Hint = "link-chat"
+	// HintLinkChatOwner links a chat account of the owner with the owner
+	// link.
+	HintLinkChatOwner Hint = "link-chat-owner"
 	// HintPairSet changes the pairing Arg.
 	HintPairSet Hint = "pair-set"
 	// HintPairSetOwner makes the pairing Arg an owner.

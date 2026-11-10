@@ -140,9 +140,9 @@ func TestSchedulesRecordErrorHints(t *testing.T) {
 	fx.addSchedule(t, store.Schedule{Name: "hourly", Cron: "@hourly", NextRun: due})
 
 	fx.sc.RunDue(fx.ctx)
-	fx.turns.turns()[0].Accept(agenterr.WithHint(agenterr.Invalidf("anna has no chat on telegram"), agenterr.HintLinkChat, ""))
+	fx.turns.turns()[0].Accept(agenterr.WithHint(agenterr.Invalidf("anna has no chat on telegram"), agenterr.HintLinkChat, "anna"))
 
-	want := "anna has no chat on telegram: link it with a code from `a2a-serve pair invite`"
+	want := "anna has no chat on telegram: link it with a code from `a2a-serve pair invite anna`"
 	if got := fx.schedule(t, "hourly").LastError; got != want {
 		t.Fatalf("Schedule().LastError = %q, want %q", got, want)
 	}

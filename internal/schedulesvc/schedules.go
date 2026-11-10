@@ -212,5 +212,10 @@ func ResolveUser(ctx context.Context, st *store.Store, who string) (string, erro
 }
 
 func unknownUser(who string) error {
-	return agenterr.WithHint(agenterr.Invalidf("unknown user %s", auth.DisplayPrincipal(who)), agenterr.HintPairInvite, "")
+	err := agenterr.Invalidf("unknown user %s", auth.DisplayPrincipal(who))
+	name, ok := auth.PrincipalPairing(who)
+	if !ok {
+		return err
+	}
+	return agenterr.WithHint(err, agenterr.HintPairInvite, name)
 }

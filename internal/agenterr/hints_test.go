@@ -28,7 +28,7 @@ func TestText(t *testing.T) {
 	}{
 		{name: "nil", err: nil, want: ""},
 		{name: "without a hint", err: errors.New("boom"), want: "boom"},
-		{name: "with a hint", err: WithHint(Invalidf("anna has no chat on telegram"), HintLinkChat, ""), want: "anna has no chat on telegram: link it with a code from `a2a-serve pair invite`"},
+		{name: "with a hint", err: WithHint(Invalidf("anna has no chat on telegram"), HintLinkChat, "anna"), want: "anna has no chat on telegram: link it with a code from `a2a-serve pair invite anna`"},
 		{name: "with a hint argument", err: WithHint(Conflictf("anna is already paired"), HintPairRm, "anna"), want: "anna is already paired: pick another name, or run `a2a-serve pair rm anna` first"},
 	}
 	for _, tc := range tests {

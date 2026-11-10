@@ -24,6 +24,9 @@ import (
 	"testing"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
+
+	"github.com/a2aproject/a2a-serve/internal/messenger/telegram"
+	"github.com/a2aproject/a2a-serve/internal/messenger/telegram/telegramtest"
 )
 
 var quotedCommand = regexp.MustCompile("`((?:a2a|a2a-serve) [^`]+)`")
@@ -236,5 +239,51 @@ func TestConfigEditDraftHintWorksAsPrinted(t *testing.T) {
 	}
 	if !strings.Contains(string(saved), "description: from the draft") {
 		t.Fatalf("config.yaml = %q, want the fixed draft saved", saved)
+	}
+}
+
+func TestScheduleUnknownUserHintWorksAsPrinted(t *testing.T) {
+	t.Parallel()
+	owner := newUser(t)
+	coder := owner.startAgent("coder")
+	add := []string{"a2a", "serve", "schedule", "add", "t9", "--prompt", "hi", "--cron", "@daily", "--as", "nobody"}
+
+	_, err := owner.exec(coder.dir, add...)
+	if err == nil {
+		t.Fatalf("a2a-serve schedule add --as nobody error = nil, want it refused")
+	}
+
+	owner.run(coder.dir, serveCommand(printedCommands(t, err.Error(), "a2a-serve pair invite")[0])...)
+	owner.run(coder.dir, add...)
+}
+
+func TestScheduleNoChatHintsWorkAsPrinted(t *testing.T) {
+	t.Parallel()
+	api := telegramtest.NewServer(t, telegramtest.Options{})
+	owner := newUser(t)
+	owner.env = append(owner.env, telegram.EnvServerURL+"="+api.URL, "E2E_BOT_TOKEN=123:abc")
+	coder := owner.startAgent("coder")
+	coder.invite("anna")
+	coder.serve("messenger", "add", "telegram", "--token", "env:E2E_BOT_TOKEN")
+
+	_, err := owner.exec(coder.dir, "a2a", "serve", "schedule", "add", "t9", "--prompt", "hi", "--cron", "@daily", "--chat", "telegram:anna")
+	if err == nil {
+		t.Fatalf("a2a-serve schedule add --chat telegram:anna error = nil, want it refused")
+	}
+	var code struct {
+		Code string `json:"code"`
+	}
+	owner.runJSON(coder.dir, &code, serveCommand(printedCommands(t, err.Error(), "a2a-serve pair invite")[0])...)
+	if code.Code == "" {
+		t.Fatalf("the printed pair invite returned no code")
+	}
+
+	_, err = owner.exec(coder.dir, "a2a", "serve", "schedule", "add", "t9", "--prompt", "hi", "--cron", "@daily", "--chat", "telegram")
+	if err == nil {
+		t.Fatalf("a2a-serve schedule add --chat telegram error = nil, want it refused")
+	}
+	out := owner.run(coder.dir, serveCommand(printedCommands(t, err.Error(), "a2a-serve restart")[0])...)
+	if !strings.Contains(out, "link yourself as owner: ") {
+		t.Fatalf("the printed restart output = %q, want the owner link", out)
 	}
 }
