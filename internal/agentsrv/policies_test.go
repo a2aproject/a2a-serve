@@ -23,23 +23,19 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func TestPoliciesKeepServersOfEarlierSessions(t *testing.T) {
 	t.Parallel()
 	dir := agentdir.Dir{Root: t.TempDir()}
-	profile, err := harness.Lookup("claude", nil)
-	if err != nil {
-		t.Fatalf("harness.Lookup() error = %v", err)
-	}
+	cfg := &agentdir.Config{Harness: "claude", Approvals: agentdir.ApprovalsConfig{Deny: []string{"command:git push *"}}}
 	p := newPolicies(dir)
 
 	for _, w := range []struct {
 		lockHome bool
 		servers  []string
 	}{{false, []string{"github"}}, {true, []string{"grafana"}}, {false, nil}} {
-		if _, err := p.write(profile, w.lockHome, w.servers); err != nil {
+		if _, err := p.write(cfg, w.lockHome, w.servers); err != nil {
 			t.Fatalf("policies.write() error = %v", err)
 		}
 	}

@@ -183,6 +183,15 @@ func (r Rules) Decide(c Call) (Decision, bool) {
 // Empty reports whether there are no entries.
 func (r Rules) Empty() bool { return len(r.Allow) == 0 && len(r.Deny) == 0 }
 
+// DeniesCommands reports whether an entry of deny can deny a shell command:
+// a command entry, or a kind entry that matches execute.
+func DeniesCommands(deny []string) bool {
+	return slices.ContainsFunc(deny, func(s string) bool {
+		e, err := Parse(s)
+		return err == nil && (e.form == formCommand || e.form == formKind && glob(e.pattern, KindExecute))
+	})
+}
+
 // Match returns the first of entries that matches c.
 func Match(entries []string, c Call) (string, bool) {
 	for _, s := range entries {

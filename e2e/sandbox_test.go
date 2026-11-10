@@ -130,12 +130,13 @@ func TestDockerSandboxPolicy(t *testing.T) {
 	read := "read /etc/claude-code/managed-settings.json"
 
 	got := resultOf(owner.mustSend(coder.url, read)).Text
-	if !strings.Contains(got, `"Bash"`) || strings.Contains(got, "strictPluginOnlyCustomization") {
-		t.Fatalf("a2a send %s as the owner = %q, want ask rules and the MCP servers of the home kept", read, got)
+	if !strings.Contains(got, `"Edit"`) || strings.Contains(got, `"Bash"`) || strings.Contains(got, "strictPluginOnlyCustomization") {
+		t.Fatalf("a2a send %s as the owner = %q, want ask rules without Bash and the MCP servers of the home kept", read, got)
 	}
 	writeFile(t, filepath.Join(coder.dir, ".mcp.json"), `{"mcpServers": {"docs": {"command": "docs-mcp"}}}`)
-	if got := resultOf(owner.mustSend(coder.url, read)).Text; !strings.Contains(got, `"mcp__docs"`) {
-		t.Fatalf("a2a send %s after adding an MCP server = %q, want its ask rule", read, got)
+	coder.serve("config", "set", "--deny-tools", "execute")
+	if got := resultOf(owner.mustSend(coder.url, read)).Text; !strings.Contains(got, `"mcp__docs"`) || !strings.Contains(got, `"Bash"`) {
+		t.Fatalf("a2a send %s after adding an MCP server and denying execute = %q, want their ask rules", read, got)
 	}
 	if got := resultOf(anna.mustSend(coder.url, read)).Text; !strings.Contains(got, `"mcp__docs"`) || !strings.Contains(got, "strictPluginOnlyCustomization") {
 		t.Fatalf("a2a send %s as a member = %q, want ask rules and the MCP servers of the home ignored", read, got)

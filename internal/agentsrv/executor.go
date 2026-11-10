@@ -319,7 +319,7 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	}
 	if cfg.Sandbox != harness.SandboxLocal {
 		spec.LockHome = key != ""
-		if spec.PolicyDir, err = s.policies.write(profile, spec.LockHome, s.mcpServerNames()); err != nil {
+		if spec.PolicyDir, err = s.policies.write(cfg, spec.LockHome, s.mcpServerNames()); err != nil {
 			return nil, fmt.Errorf("writing the agent's policy: %w", err)
 		}
 	}

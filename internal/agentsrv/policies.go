@@ -20,6 +20,7 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/harness"
+	"github.com/a2aproject/a2a-serve/internal/toolrules"
 )
 
 // policies writes the settings that the agent processes in containers
@@ -37,10 +38,15 @@ type policies struct {
 
 func newPolicies(dir agentdir.Dir) *policies { return &policies{dir: dir} }
 
-// write writes the policy of the agent processes of profile, those of
-// members and guests with lockHome, adding mcpServers, and returns its
-// folder.
-func (p *policies) write(profile harness.Profile, lockHome bool, mcpServers []string) (string, error) {
+// write writes the policy of the agent processes of cfg, those of members
+// and guests with lockHome, adding mcpServers, and returns its folder. The
+// agent asks before every shell command while the rules deny some, since
+// it would run read-only ones, and those that a skill allows, itself.
+func (p *policies) write(cfg *agentdir.Config, lockHome bool, mcpServers []string) (string, error) {
+	profile, err := harness.Lookup(cfg.Harness, cfg.Command)
+	if err != nil {
+		return "", err
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	for _, name := range mcpServers {
@@ -49,5 +55,9 @@ func (p *policies) write(profile harness.Profile, lockHome bool, mcpServers []st
 		}
 	}
 	dir := p.dir.PolicyDir(lockHome)
-	return dir, harness.WritePolicy(profile, dir, lockHome, p.mcp)
+	return dir, harness.WritePolicy(profile, dir, harness.Policy{
+		LockHome:    lockHome,
+		AskCommands: toolrules.DeniesCommands(cfg.Approvals.Deny),
+		MCPServers:  slices.Clone(p.mcp),
+	})
 }

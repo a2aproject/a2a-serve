@@ -32,38 +32,56 @@ const claudePolicyDir = "/etc/claude-code"
 
 const claudePolicyFile = "managed-settings.json"
 
-// claudeAskTools are the tools of Claude Code that run commands, change
-// files or reach the network.
-var claudeAskTools = []string{"Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"}
+// claudeAskTools are the tools of Claude Code that change files or reach
+// the network, which it asks about in its default mode too.
+var claudeAskTools = []string{"Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"}
+
+// Policy is what the settings that the agent can't override cover.
+type Policy struct {
+	// LockHome keeps the configuration of the agent's home from adding
+	// what it runs, for the agents of members and guests.
+	LockHome bool
+	// AskCommands makes the agent ask before every shell command, also the
+	// read-only ones it would run itself, for when the server's rules deny
+	// some.
+	AskCommands bool
+	// MCPServers are the MCP servers whose tools the agent asks about.
+	MCPServers []string
+}
 
 // policyReader is a profile that reads settings which override its others.
 type policyReader interface {
 	// policyPath returns the container folder where it reads them, and the
 	// name of their file.
 	policyPath() (dir, file string)
-	policy(lockHome bool, mcpServers []string) ([]byte, error)
+	policy(p Policy) ([]byte, error)
 }
 
 func (claude) policyPath() (string, string) { return claudePolicyDir, claudePolicyFile }
 
-// policy makes Claude Code ask before the tools that change things and the
-// tools of mcpServers, whatever its other rules allow: a skill's
-// allowed-tools and a slash command add rules that would skip the server.
-// Claude Code checks ask rules for a whole tool before allow rules. With
-// lockHome, it also ignores the MCP servers of ~/.claude.json, which it
-// writes itself, and keeps those the server passes.
-func (claude) policy(lockHome bool, mcpServers []string) ([]byte, error) {
-	ask := slices.Clone(claudeAskTools)
-	for _, name := range mcpServers {
+// policy makes Claude Code ask before the tools that change things, and
+// run no hooks but its own, whatever its other settings allow: a skill's
+// allowed-tools and a slash command add rules that would skip the server,
+// and skills and agents can bring hooks that run commands. Claude Code
+// checks ask rules for a whole tool before allow rules. With p.LockHome, it
+// also ignores the MCP servers of ~/.claude.json, which it writes itself,
+// and keeps those the server passes.
+func (claude) policy(p Policy) ([]byte, error) {
+	var ask []string
+	if p.AskCommands {
+		ask = append(ask, "Bash")
+	}
+	ask = append(ask, claudeAskTools...)
+	for _, name := range p.MCPServers {
 		if rule := "mcp__" + claudeServerName(name); !slices.Contains(ask, rule) {
 			ask = append(ask, rule)
 		}
 	}
-	p := map[string]any{"permissions": map[string]any{"ask": ask}}
-	if lockHome {
-		p["strictPluginOnlyCustomization"] = []string{"mcp"}
+	settings := map[string]any{"permissions": map[string]any{"ask": ask}, "allowManagedHooksOnly": true}
+	if p.LockHome {
+		settings["strictPluginOnlyCustomization"] = []string{"mcp"}
 	}
-	data, err := json.MarshalIndent(p, "", "  ")
+	data, err := json.MarshalIndent(settings, "", "  ")
 	if err != nil {
 		return nil, err
 	}
@@ -73,10 +91,11 @@ func (claude) policy(lockHome bool, mcpServers []string) ([]byte, error) {
 var claudeNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // claudeServerName is the server part of the names that Claude Code gives
-// the tools of the MCP server name. Its rules end the server part at the
-// first "__", so a rule for that part covers every tool of the server.
+// the tools of the MCP server name, mcp__<server>__<tool>. Its rules end
+// the server part at the first "__" of the tool name, so a rule for that
+// part covers every tool of the server.
 func claudeServerName(name string) string {
-	server, _, _ := strings.Cut(claudeNameChars.ReplaceAllString(name, "_"), "__")
+	server, _, _ := strings.Cut(claudeNameChars.ReplaceAllString(name, "_")+"__", "__")
 	return server
 }
 
@@ -94,17 +113,14 @@ func policyOf(p Profile) (policyReader, bool) {
 }
 
 // WritePolicy writes into dir the settings that the agent of p can't
-// override, which [Spec.PolicyDir] mounts in a sandbox: the rules that make
-// it ask before the tools that change things and the tools of mcpServers,
-// and with lockHome, those that keep the configuration of its home from
-// adding what it runs. It writes nothing for an agent without such
-// settings.
-func WritePolicy(p Profile, dir string, lockHome bool, mcpServers []string) error {
+// override, which [Spec.PolicyDir] mounts in a sandbox. It writes nothing
+// for an agent without such settings.
+func WritePolicy(p Profile, dir string, policy Policy) error {
 	r, ok := policyOf(p)
 	if !ok {
 		return nil
 	}
-	data, err := r.policy(lockHome, mcpServers)
+	data, err := r.policy(policy)
 	if err != nil {
 		return err
 	}

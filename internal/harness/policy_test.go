@@ -31,35 +31,48 @@ import (
 
 func TestWritePolicy(t *testing.T) {
 	t.Parallel()
-	ask := []any{"Bash", "Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"}
+	ask := []any{"Edit", "Write", "NotebookEdit", "WebFetch", "WebSearch"}
 	tests := []struct {
-		name     string
-		profile  Profile
-		lockHome bool
-		mcp      []string
-		want     map[string]any
+		name    string
+		profile Profile
+		policy  Policy
+		want    map[string]any
 	}{
 		{
 			name:    "claude",
 			profile: claude{},
-			mcp:     []string{"github", "my server", "a__b", "github"},
-			want: map[string]any{"permissions": map[string]any{
-				"ask": append(slices.Clone(ask), "mcp__github", "mcp__my_server", "mcp__a"),
-			}},
+			policy:  Policy{MCPServers: []string{"github", "my server", "a__b", "docs.", "github"}},
+			want: map[string]any{
+				"permissions":           map[string]any{"ask": append(slices.Clone(ask), "mcp__github", "mcp__my_server", "mcp__a", "mcp__docs")},
+				"allowManagedHooksOnly": true,
+			},
 		},
 		{
-			name:     "claude with a locked home",
-			profile:  claude{},
-			lockHome: true,
+			name:    "claude with commands denied",
+			profile: claude{},
+			policy:  Policy{AskCommands: true},
+			want: map[string]any{
+				"permissions":           map[string]any{"ask": append([]any{"Bash"}, ask...)},
+				"allowManagedHooksOnly": true,
+			},
+		},
+		{
+			name:    "claude with a locked home",
+			profile: claude{},
+			policy:  Policy{LockHome: true},
 			want: map[string]any{
 				"permissions":                   map[string]any{"ask": ask},
+				"allowManagedHooksOnly":         true,
 				"strictPluginOnlyCustomization": []any{"mcp"},
 			},
 		},
 		{
 			name:    "agent of unknown kind",
 			profile: custom{name: "acp", argv: []string{"fakeacp"}},
-			want:    map[string]any{"permissions": map[string]any{"ask": ask}},
+			want: map[string]any{
+				"permissions":           map[string]any{"ask": ask},
+				"allowManagedHooksOnly": true,
+			},
 		},
 		{
 			name:    "opencode",
@@ -71,7 +84,7 @@ func TestWritePolicy(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join(t.TempDir(), "policy")
 
-			if err := WritePolicy(tc.profile, dir, tc.lockHome, tc.mcp); err != nil {
+			if err := WritePolicy(tc.profile, dir, tc.policy); err != nil {
 				t.Fatalf("WritePolicy() error = %v", err)
 			}
 
@@ -110,7 +123,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			ws, policy := t.TempDir(), filepath.Join(t.TempDir(), "policy")
-			if err := WritePolicy(tc.profile, policy, false, nil); err != nil {
+			if err := WritePolicy(tc.profile, policy, Policy{}); err != nil {
 				t.Fatalf("WritePolicy() error = %v", err)
 			}
 
