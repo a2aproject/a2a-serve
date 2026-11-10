@@ -24,6 +24,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/time/rate"
+
 	"github.com/a2aproject/a2a-serve/internal/cryptoutil"
 	"github.com/a2aproject/a2a-serve/internal/googleauth"
 	"github.com/a2aproject/a2a-serve/internal/jsonhttp"
@@ -34,10 +36,11 @@ import (
 // letters that look like digits.
 const userCodeAlphabet = "BCDFGHJKLMNPQRSTVWXZ"
 
-// device is a sign-in an agent started. tokens or denied is set when the
-// person answered.
+// device is a sign-in an agent started from client. tokens or denied is
+// set when the person answered.
 type device struct {
 	userCode string
+	client   string
 	// link is the secret of the printed link, which needs no limit on
 	// guesses, unlike the user code people type.
 	link     string
@@ -81,24 +84,22 @@ func (i *Issuer) authorize(w http.ResponseWriter, r *http.Request) {
 		oauthError(w, http.StatusUnauthorized, "invalid_client", "unknown client_id; want "+ClientID)
 		return
 	}
-	if !i.starts.Allow() {
-		oauthError(w, http.StatusServiceUnavailable, "slow_down", "too many sign-ins start at once; try again in a minute")
-		return
-	}
 	now := i.opts.Now()
+	client := i.opts.Client(r)
 	deviceCode := cryptoutil.RandomString(43, cryptoutil.Alphanumeric)
 	i.mu.Lock()
 	i.prune(now)
-	if len(i.devices) >= MaxPending {
+	if status, msg := i.admitStart(client, now); status != 0 {
 		i.mu.Unlock()
-		oauthError(w, http.StatusServiceUnavailable, "slow_down", "too many sign-ins are in progress; try again in a few minutes")
+		oauthError(w, status, "slow_down", msg)
 		return
 	}
 	userCode := i.newUserCode()
 	link := cryptoutil.RandomString(32, cryptoutil.Alphanumeric)
-	i.devices[deviceCode] = &device{userCode: userCode, link: link, expires: now.Add(DeviceTTL), interval: PollInterval, nextPoll: now.Add(PollInterval)}
+	i.devices[deviceCode] = &device{userCode: userCode, link: link, client: client, expires: now.Add(DeviceTTL), interval: PollInterval, nextPoll: now.Add(PollInterval)}
 	i.byUser[userCode] = deviceCode
 	i.byLink[link] = deviceCode
+	i.byClient[client]++
 	i.mu.Unlock()
 	page := i.url + devicePath
 	w.Header().Set("Cache-Control", "no-store")
@@ -110,6 +111,31 @@ func (i *Issuer) authorize(w http.ResponseWriter, r *http.Request) {
 		"expires_in":                int(DeviceTTL / time.Second),
 		"interval":                  int(PollInterval / time.Second),
 	})
+}
+
+// admitStart takes a start of a sign-in of client, or returns the status
+// and the message of its refusal. A client over its share is refused before
+// it takes from the relay's limits, so it can't use them up. i.mu is held.
+func (i *Issuer) admitStart(client string, now time.Time) (int, string) {
+	if i.byClient[client] >= MaxPendingPerClient {
+		return http.StatusTooManyRequests, "too many sign-ins of this client are in progress; try again in a few minutes"
+	}
+	lim := i.clientStarts[client]
+	if lim != nil && !lim.AllowN(now, 1) {
+		return http.StatusTooManyRequests, "this client starts too many sign-ins; try again in a minute"
+	}
+	if len(i.devices) >= MaxPending {
+		return http.StatusServiceUnavailable, "too many sign-ins are in progress; try again in a few minutes"
+	}
+	if !i.starts.AllowN(now, 1) {
+		return http.StatusServiceUnavailable, "too many sign-ins start at once; try again in a minute"
+	}
+	if lim == nil {
+		lim = rate.NewLimiter(rate.Every(clientStartEvery), clientStartBurst)
+		lim.AllowN(now, 1)
+		i.clientStarts[client] = lim
+	}
+	return 0, ""
 }
 
 // newUserCode returns an unused user code such as BCDF-GHJK. i.mu is held.
@@ -144,6 +170,9 @@ func (i *Issuer) forget(deviceCode string, d *device) {
 	delete(i.devices, deviceCode)
 	delete(i.byUser, d.userCode)
 	delete(i.byLink, d.link)
+	if i.byClient[d.client]--; i.byClient[d.client] <= 0 {
+		delete(i.byClient, d.client)
+	}
 }
 
 // prune drops what expired. i.mu is held.
@@ -161,6 +190,11 @@ func (i *Issuer) prune(now time.Time) {
 	for k, a := range i.approvals {
 		if now.After(a.expires) {
 			delete(i.approvals, k)
+		}
+	}
+	for k, lim := range i.clientStarts {
+		if lim.TokensAt(now) >= clientStartBurst {
+			delete(i.clientStarts, k)
 		}
 	}
 }

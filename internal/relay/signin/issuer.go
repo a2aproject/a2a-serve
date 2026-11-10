@@ -23,6 +23,7 @@
 package signin
 
 import (
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -55,10 +56,19 @@ const (
 	PollInterval = 5 * time.Second
 	// MaxPending bounds the sign-ins in progress. Each has at most three
 	// trips to Google and approvals open.
-	MaxPending = 1000
+	MaxPending = 5000
+	// MaxPendingPerClient bounds the sign-ins in progress that one client
+	// started.
+	MaxPendingPerClient = 20
 
 	maxBody     = 64 << 10
 	maxParamLen = 4096
+
+	// The starts of sign-ins of one client, and of all clients together.
+	clientStartEvery = 3 * time.Second
+	clientStartBurst = MaxPendingPerClient
+	startEvery       = 100 * time.Millisecond
+	startBurst       = 200
 )
 
 const (
@@ -86,6 +96,9 @@ type Options struct {
 	Google                 googleauth.Endpoints
 	HTTP                   *http.Client
 	Now                    func() time.Time
+	// Client identifies the client of a request for the limits on the
+	// sign-ins it starts. Nil identifies it by its remote address.
+	Client func(*http.Request) string
 }
 
 // Issuer is the identity provider of a relay.
@@ -95,9 +108,12 @@ type Issuer struct {
 	url      string
 	keys     *keys
 	verifier *googleauth.Verifier
-	// starts bounds new sign-ins and refreshes the calls to Google that
-	// renewals make; agents behind the relay's proxy share one address.
+	// starts bounds the new sign-ins of all clients, and refreshes the
+	// calls to Google that renewals make.
 	starts, refreshes *rate.Limiter
+	// clientStarts bounds the new sign-ins of each client. A client leaves
+	// it once its limiter refills.
+	clientStarts map[string]*rate.Limiter
 	// lookups slows down guessing of user codes.
 	lookups *backoff.Failures
 
@@ -105,6 +121,7 @@ type Issuer struct {
 	devices   map[string]*device
 	byUser    map[string]string
 	byLink    map[string]string
+	byClient  map[string]int
 	signins   map[string]*pendingSignIn
 	approvals map[string]*approval
 	seq       uint64
@@ -124,20 +141,25 @@ func New(opts Options) (*Issuer, error) {
 	if opts.HTTP == nil {
 		opts.HTTP = &http.Client{Timeout: 30 * time.Second}
 	}
+	if opts.Client == nil {
+		opts.Client = remoteHost
+	}
 	i := &Issuer{
-		opts:        opts,
-		url:         URL(opts.URL),
-		keys:        k,
-		verifier:    &googleauth.Verifier{Endpoints: opts.Google, HTTP: opts.HTTP, Now: opts.Now},
-		starts:      rate.NewLimiter(rate.Every(500*time.Millisecond), 100),
-		refreshes:   rate.NewLimiter(rate.Every(100*time.Millisecond), 100),
-		lookups:     backoff.NewFailures(time.Second, 10*time.Second, opts.Now),
-		devices:     map[string]*device{},
-		byUser:      map[string]string{},
-		byLink:      map[string]string{},
-		signins:     map[string]*pendingSignIn{},
-		approvals:   map[string]*approval{},
-		lastRefresh: map[string]time.Time{},
+		opts:         opts,
+		url:          URL(opts.URL),
+		keys:         k,
+		verifier:     &googleauth.Verifier{Endpoints: opts.Google, HTTP: opts.HTTP, Now: opts.Now},
+		starts:       rate.NewLimiter(rate.Every(startEvery), startBurst),
+		refreshes:    rate.NewLimiter(rate.Every(100*time.Millisecond), 100),
+		clientStarts: map[string]*rate.Limiter{},
+		lookups:      backoff.NewFailures(time.Second, 10*time.Second, opts.Now),
+		devices:      map[string]*device{},
+		byUser:       map[string]string{},
+		byLink:       map[string]string{},
+		byClient:     map[string]int{},
+		signins:      map[string]*pendingSignIn{},
+		approvals:    map[string]*approval{},
+		lastRefresh:  map[string]time.Time{},
 	}
 	i.handler = jsonhttp.LimitUnauthenticatedBody(maxBody, http.HandlerFunc(i.serve))
 	return i, nil
@@ -224,6 +246,14 @@ func (i *Issuer) issue(c googleauth.Claims) (string, error) {
 func oauthError(w http.ResponseWriter, status int, code, desc string) {
 	w.Header().Set("Cache-Control", "no-store")
 	jsonhttp.Write(w, status, map[string]string{"error": code, "error_description": desc})
+}
+
+func remoteHost(r *http.Request) string {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
 }
 
 // longParam reports the first of names whose form value is too long.
