@@ -36,8 +36,9 @@ func (s *Store) SetTaskTTL(ttl time.Duration) { s.taskTTL.Store(int64(ttl)) }
 // conversations, agent sessions, handles, call tasks, grants and suggestions
 // of contexts left without tasks; the call tasks of deleted tasks in the
 // contexts that remain; the counts of taps on "Always allow" older
-// than their retention; and the dedup keys of messages older than the
-// retention.
+// than their retention; the dedup keys of messages older than the
+// retention; and the attachments of the oldest finished guest tasks over
+// the cap of guest attachments.
 func (s *Store) Prune(ctx context.Context) error {
 	now := s.now()
 	cutoff := now.Add(-time.Duration(s.taskTTL.Load())).UnixNano()
@@ -80,7 +81,10 @@ func (s *Store) Prune(ctx context.Context) error {
 			AND NOT EXISTS (SELECT 1 FROM watches WHERE watches.contact = questions.contact AND watches.task_id = questions.task_id)`, cutoff); err != nil {
 			return err
 		}
-		return deleteOrphans(ctx, tx)
+		if err := deleteOrphans(ctx, tx); err != nil {
+			return err
+		}
+		return trimGuestBlobs(ctx, tx, s.guestAttachmentCap)
 	})
 }
 

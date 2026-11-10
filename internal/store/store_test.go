@@ -2043,6 +2043,92 @@ func TestMissingBlobDoesNotFailReads(t *testing.T) {
 	}
 }
 
+func TestGuestAttachmentsOverCap(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name    string
+		cap     int64
+		enforce func(ctx context.Context, s *Store) error
+	}{
+		{
+			name:    "when a guest task finishes",
+			cap:     10,
+			enforce: func(context.Context, *Store) error { return nil },
+		},
+		{
+			name: "on prune",
+			cap:  maxGuestAttachmentBytes,
+			enforce: func(ctx context.Context, s *Store) error {
+				s.guestAttachmentCap = 10
+				return s.Prune(ctx)
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			s := openStore(t)
+			ctx := context.Background()
+			now := time.Now()
+			s.now = func() time.Time {
+				now = now.Add(time.Second)
+				return now
+			}
+			s.guestAttachmentCap = tc.cap
+			if err := s.Sessions().Put(ctx, "c-chat-guest", a2aacp.Session{ID: "s1", AgentKey: GuestID}); err != nil {
+				t.Fatalf("Sessions().Put() error = %v", err)
+			}
+			ts := s.Tasks("", testViewer)
+			stored := []struct {
+				id, user, attachment string
+				finished             bool
+			}{
+				{id: "owner", user: "owner", attachment: "shared", finished: true},
+				{id: "guest-shared", user: GuestID, attachment: "shared", finished: true},
+				{id: "guest-old", user: GuestID, attachment: "old!", finished: true},
+				{id: "chat-guest", user: "telegram:1", attachment: "chat", finished: true},
+				{id: "guest-running", user: GuestID, attachment: "run!"},
+				{id: "member", user: "pair:anna", attachment: "anna", finished: true},
+				{id: "guest-new", user: GuestID, attachment: "new!", finished: true},
+			}
+			for _, st := range stored {
+				task := newTask(st.id, "c-"+st.id)
+				task.History = []*a2a.Message{a2a.NewMessage(a2a.MessageRoleUser, a2a.NewRawPart([]byte(st.attachment)))}
+				var events []a2a.Event
+				if st.finished {
+					events = append(events, a2a.NewStatusUpdateEvent(task, a2a.TaskStateCompleted, nil))
+				}
+				applyEvents(t, ts, st.user, task, events...)
+			}
+
+			if err := tc.enforce(ctx, s); err != nil {
+				t.Fatalf("enforcing the cap error = %v", err)
+			}
+
+			got := map[string]*a2a.Part{}
+			for _, st := range stored {
+				task, err := ts.Get(asUser("owner"), a2a.TaskID(st.id))
+				if err != nil {
+					t.Fatalf("Get(%s) error = %v", st.id, err)
+				}
+				got[st.id] = task.Task.History[0].Parts[0]
+			}
+			want := map[string]*a2a.Part{
+				"owner":         a2a.NewRawPart([]byte("shared")),
+				"guest-shared":  a2a.NewRawPart([]byte("shared")),
+				"guest-old":     a2a.NewTextPart(missingBlobText),
+				"chat-guest":    a2a.NewTextPart(missingBlobText),
+				"guest-running": a2a.NewRawPart([]byte("run!")),
+				"member":        a2a.NewRawPart([]byte("anna")),
+				"guest-new":     a2a.NewRawPart([]byte("new!")),
+			}
+			if diff := cmp.Diff(want, got); diff != "" {
+				t.Fatalf("Get() wrong result (-want +got) diff = %s", diff)
+			}
+		})
+	}
+}
+
 func TestReadsDoNotWaitForWrites(t *testing.T) {
 	t.Parallel()
 	s := openStore(t)

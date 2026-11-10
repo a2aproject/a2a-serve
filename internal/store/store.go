@@ -46,6 +46,9 @@ type Store struct {
 	now   func() time.Time
 	// taskTTL is how long finished tasks are kept after their last update.
 	taskTTL atomic.Int64
+	// guestAttachmentCap is how many bytes of attachments the tasks of
+	// guests keep in all.
+	guestAttachmentCap int64
 
 	// Close waits for writes in progress: a transaction keeps its connection
 	// past sql.DB.Close and could commit after the next server opened the
@@ -96,7 +99,7 @@ func Open(path string) (*Store, error) {
 // newStore migrates db and wraps it. reads serves the read-only queries, and
 // is db itself or a pool of read-only connections.
 func newStore(db, reads *sql.DB, path string) (*Store, error) {
-	s := &Store{db: db, reads: reads, now: time.Now}
+	s := &Store{db: db, reads: reads, now: time.Now, guestAttachmentCap: maxGuestAttachmentBytes}
 	s.SetTaskTTL(DefaultTaskTTL)
 	if err := s.migrate(context.Background()); err != nil {
 		err = fmt.Errorf("migrating %s: %w", path, err)
