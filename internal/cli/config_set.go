@@ -23,7 +23,9 @@ import (
 
 	"github.com/a2aproject/a2a-serve/internal/agentctl"
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/clierr"
 	"github.com/a2aproject/a2a-serve/internal/flagparse"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func newConfigSetCmd(cfg *globalConfig, sf *serverFlags) *cobra.Command {
@@ -57,6 +59,9 @@ alters who may call the agent, it prints who may call afterwards.
 			if errors.Is(err, agentdir.ErrNotFound) && flags.s.Harness != "" {
 				d, err = harnessDir(sf.dir)
 			}
+			if errors.Is(err, agentdir.ErrNotFound) && flags.s.Harness == "" {
+				return withCreateHint(err)
+			}
 			if err != nil {
 				return err
 			}
@@ -80,8 +85,17 @@ alters who may call the agent, it prints who may call afterwards.
 	return cmd
 }
 
+// withCreateHint adds to the no-agent error of `config set` that --agent
+// creates the agent.
+func withCreateHint(err error) error {
+	ce := clierr.NoAgent(err)
+	ce.Hint = "add --agent <agent> (" + strings.Join(harness.ProfileNames(), ", ") + ") to create one here"
+	return ce
+}
+
 // configSetOnlyHint points an unknown flag of `start`, given in msg, at
-// `config set` if it takes the flag, or returns "".
+// `config set` if it takes the flag, or returns "". Where `start` finds no
+// agent, `config set` needs --agent to create it first.
 func configSetOnlyHint(cmd *cobra.Command, msg string) string {
 	name, ok := strings.CutPrefix(msg, "unknown flag: --")
 	if !ok || (cmd.Name() != "start" && (!cmd.HasParent() || cmd.Parent().Name() != "start")) {
@@ -91,5 +105,18 @@ func configSetOnlyHint(cmd *cobra.Command, msg string) string {
 	if err != nil || set.Flags().Lookup(name) == nil {
 		return ""
 	}
-	return fmt.Sprintf("--%s is a setting of `%s`: run `%s --%s <value>`, then `%s`", name, set.CommandPath(), set.CommandPath(), name, cmd.CommandPath())
+	var dir, dirFlag string
+	if f := cmd.Flags().Lookup("dir"); f != nil && f.Changed {
+		dir = f.Value.String()
+		dirFlag = " " + agentdir.ShellJoin([]string{"--dir", dir})
+	}
+	d, err := harnessDir(dir)
+	if err != nil || d.Exists() {
+		return fmt.Sprintf("--%s is a setting of `%s`: run `%s --%s <value>%s`, then `%s%s`", name, set.CommandPath(), set.CommandPath(), name, dirFlag, cmd.CommandPath(), dirFlag)
+	}
+	agent := "<agent>"
+	if cmd.Name() != "start" {
+		agent = cmd.Name()
+	}
+	return fmt.Sprintf("--%s is a setting of `%s`: run `%s --agent %s --%s <value>%s` to create the agent, then `%s%s`", name, set.CommandPath(), set.CommandPath(), agent, name, dirFlag, cmd.CommandPath(), dirFlag)
 }

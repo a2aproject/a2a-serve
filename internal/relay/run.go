@@ -232,6 +232,7 @@ func (r *Relay) run(ctx context.Context) (err error) {
 	if conf.SignIn() {
 		r.printf("→ people sign in from their agents (allowed: %s):", strings.Join(conf.AllowEmails, ", "))
 		r.printf("  a2a-serve config set --private %s --public %s", publicURL, publicURL)
+		r.printf("  on a new agent: a2a-serve config set --agent <agent> --private %s --public %s", publicURL, publicURL)
 	}
 	r.printf("→ invite an agent: a2a-serve relay invite <name>")
 

@@ -24,6 +24,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/shlex"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/clierr"
@@ -60,15 +61,18 @@ func TestVerboseEnablesDebugLogs(t *testing.T) {
 func TestUsageHints(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
-		name string
-		file string
-		args []string
-		want string
+		name    string
+		file    string
+		noAgent bool
+		args    []string
+		want    string
 	}{
 		{name: "unknown flag of a subcommand", args: []string{"pair", "rm", "--bogus"}, want: "run `a2a-serve pair rm --help` for its flags"},
 		{name: "unknown flag of a command", args: []string{"status", "--bogus"}, want: "run `a2a-serve status --help` for its flags"},
-		{name: "config set flag on start", args: []string{"start", "opencode", "--tailscale-authkey", "x", "--dir", "{dir}"}, want: "--tailscale-authkey is a setting of `a2a-serve config set`: run `a2a-serve config set --tailscale-authkey <value>`, then `a2a-serve start opencode`"},
-		{name: "config set flag with a value on start", args: []string{"start", "claude", "--memory=8g", "--dir", "{dir}"}, want: "--memory is a setting of `a2a-serve config set`: run `a2a-serve config set --memory <value>`, then `a2a-serve start claude`"},
+		{name: "config set flag on start", args: []string{"start", "opencode", "--dir", "{dir}", "--tailscale-authkey", "x"}, want: "--tailscale-authkey is a setting of `a2a-serve config set`: run `a2a-serve config set --tailscale-authkey <value> --dir {dir}`, then `a2a-serve start opencode --dir {dir}`"},
+		{name: "config set flag with a value on start", args: []string{"start", "claude", "--dir", "{dir}", "--memory=8g"}, want: "--memory is a setting of `a2a-serve config set`: run `a2a-serve config set --memory <value> --dir {dir}`, then `a2a-serve start claude --dir {dir}`"},
+		{name: "config set flag on start of a new agent", noAgent: true, args: []string{"start", "opencode", "--dir", "{dir}", "--tailscale-authkey", "x"}, want: "--tailscale-authkey is a setting of `a2a-serve config set`: run `a2a-serve config set --agent opencode --tailscale-authkey <value> --dir {dir}` to create the agent, then `a2a-serve start opencode --dir {dir}`"},
+		{name: "config set flag on start without an agent", noAgent: true, args: []string{"start", "--dir", "{dir}", "--memory", "8g"}, want: "--memory is a setting of `a2a-serve config set`: run `a2a-serve config set --agent <agent> --memory <value> --dir {dir}` to create the agent, then `a2a-serve start --dir {dir}`"},
 		{name: "unknown command", args: []string{"bogus"}, want: clierr.UsageHint},
 		{name: "unknown pairing", args: []string{"pair", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve pair list` to see the pairings"},
 		{name: "unknown contact", args: []string{"contact", "rm", "nobody", "--dir", "{dir}"}, want: "run `a2a-serve contact list` to see the contacts"},
@@ -91,7 +95,11 @@ func TestUsageHints(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode"})
+			conf := &agentdir.Config{Name: "coder", Harness: "opencode"}
+			if tc.noAgent {
+				conf = nil
+			}
+			d := newTestAgent(t, conf)
 			if tc.file != "" {
 				if err := os.WriteFile(d.ConfigPath(), []byte(tc.file), 0o644); err != nil {
 					t.Fatal(err)
@@ -103,6 +111,7 @@ func TestUsageHints(t *testing.T) {
 					args[i] = d.Root
 				}
 			}
+			want := strings.ReplaceAll(tc.want, "{dir}", d.Root)
 			cfg := &globalConfig{credentials: &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}}
 			cfg.Printer = output.NewPrinter(io.Discard, output.ModeText)
 			root := newRootCmd(cfg)
@@ -116,8 +125,60 @@ func TestUsageHints(t *testing.T) {
 			if got.Exit != 2 {
 				t.Fatalf("a2a-serve %s exit = %d, want 2", strings.Join(tc.args, " "), got.Exit)
 			}
-			if got.Hint != tc.want {
-				t.Fatalf("a2a-serve %s hint = %q, want %q", strings.Join(tc.args, " "), got.Hint, tc.want)
+			if got.Hint != want {
+				t.Fatalf("a2a-serve %s hint = %q, want %q", strings.Join(tc.args, " "), got.Hint, want)
+			}
+		})
+	}
+}
+
+func TestConfigSetOnlyHintCommandRuns(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "harness", args: []string{"start", "opencode", "--dir", "{dir}", "--tailscale-authkey", "x"}},
+		{name: "without a harness", args: []string{"start", "--dir", "{dir}", "--tailscale-authkey", "x"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := newTestAgent(t, nil)
+			args := slices.Clone(tc.args)
+			args[slices.Index(args, "{dir}")] = d.Root
+			cfg := &globalConfig{credentials: &credstore.Store{Path: filepath.Join(t.TempDir(), "credentials.json")}}
+			cfg.Printer = output.NewPrinter(io.Discard, output.ModeText)
+			root := newRootCmd(cfg)
+			root.SetOut(io.Discard)
+			root.SetArgs(args)
+			cmd, err := root.ExecuteC()
+			if err == nil {
+				t.Fatalf("a2a-serve %s error = nil, want an unknown flag", strings.Join(args, " "))
+			}
+			hint := classify(err, cmd).Hint
+			_, rest, _ := strings.Cut(hint, "run `")
+			printed, _, _ := strings.Cut(rest, "`")
+			words, err := shlex.Split(printed)
+			if err != nil {
+				t.Fatalf("shlex.Split(%q) error = %v", printed, err)
+			}
+			for i, w := range words {
+				switch w {
+				case "<value>":
+					words[i] = "secret"
+				case "<agent>":
+					words[i] = "opencode"
+				}
+			}
+			if words[0] != "a2a-serve" {
+				t.Fatalf("hint command = %q, want a2a-serve command", printed)
+			}
+			if _, err := runCMD(t, words[1:]...); err != nil {
+				t.Fatalf("%s error = %v", printed, err)
+			}
+			if !d.Exists() {
+				t.Fatalf("%s left no agent in %s", printed, d.Root)
 			}
 		})
 	}
