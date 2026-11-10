@@ -44,7 +44,7 @@ const OwnerID = "user:owner"
 // IDs of their tasks and conversations, which the server generates, prove
 // what is theirs. Tasks and conversations store it, so it keeps the name
 // of the role before guests were called guests.
-const GuestID = "anonymous"
+const GuestID = store.GuestID
 
 // OwnerName names the user running the agent where a pairing name is
 // expected, such as in the owner chat setting and schedules. No pairing can

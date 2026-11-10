@@ -31,8 +31,9 @@ import (
 )
 
 // Guest is the key of the agent process of guests. Sessions store it, so
-// it keeps the name of the role before guests were called guests.
-const Guest = "anonymous"
+// it keeps the name of the role before guests were called guests, and the
+// store finds the tasks of guests by it.
+const Guest = auth.GuestID
 
 const userPrefix = "user:"
 

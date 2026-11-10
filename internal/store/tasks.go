@@ -117,6 +117,7 @@ func (ts *TaskStore) Create(ctx context.Context, task *a2a.Task) (taskstore.Task
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
+	var trim bool
 	err = ts.s.inTx(ctx, func(tx *sql.Tx) error {
 		res, err := tx.ExecContext(ctx, `INSERT INTO tasks (id, scope, context_id, owner, version, state, status_time, updated, data)
 			VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -127,10 +128,17 @@ func (ts *TaskStore) Create(ctx context.Context, task *a2a.Task) (taskstore.Task
 		if n, err := res.RowsAffected(); err != nil || n == 0 {
 			return errors.Join(taskstore.ErrTaskAlreadyExists, err)
 		}
-		return ts.insertEvent(ctx, tx, task.ID, 1, ev)
+		if err := ts.insertEvent(ctx, tx, task.ID, 1, ev); err != nil {
+			return err
+		}
+		trim, err = finishedGuestTask(ctx, tx, ts.scope, task.ID)
+		return err
 	})
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
+	}
+	if trim {
+		ts.s.trimGuestAttachments(ctx)
 	}
 	return 1, nil
 }
@@ -150,7 +158,10 @@ func (ts *TaskStore) Update(ctx context.Context, req *taskstore.UpdateRequest) (
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
 	}
-	var next taskstore.TaskVersion
+	var (
+		next taskstore.TaskVersion
+		trim bool
+	)
 	err = ts.s.inTx(ctx, func(tx *sql.Tx) error {
 		h, err := ts.row(ctx, tx, req.Task.ID, user, all)
 		if err != nil {
@@ -160,11 +171,18 @@ func (ts *TaskStore) Update(ctx context.Context, req *taskstore.UpdateRequest) (
 			return taskstore.ErrConcurrentModification
 		}
 		v, err := ts.append(ctx, tx, h, ev)
+		if err != nil {
+			return err
+		}
 		next = taskstore.TaskVersion(v)
+		trim, err = finishedGuestTask(ctx, tx, ts.scope, req.Task.ID)
 		return err
 	})
 	if err != nil {
 		return taskstore.TaskVersionMissing, err
+	}
+	if trim {
+		ts.s.trimGuestAttachments(ctx)
 	}
 	return next, nil
 }

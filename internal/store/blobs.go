@@ -21,6 +21,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"slices"
 
@@ -35,6 +36,15 @@ const blobKey = "a2a-serve.blob"
 
 // missingBlobText stands in for an attachment whose bytes are no longer stored.
 const missingBlobText = "[attachment unavailable]"
+
+// GuestID is the principal that the tasks of guests who proved nothing
+// store, and the agent key that the sessions of all guest conversations
+// store.
+const GuestID = "anonymous"
+
+// maxGuestAttachmentBytes is how many bytes of attachments the tasks of
+// guests keep in all. Over it, the oldest finished guest tasks lose theirs.
+const maxGuestAttachmentBytes = 1 << 30
 
 type blob struct {
 	hash string
@@ -209,4 +219,107 @@ func (s *Store) loadBlobsUpTo(ctx context.Context, limit int, tasks ...*a2a.Task
 		}
 	}
 	return nil
+}
+
+// guestTask is true for the tasks of guests, aliased t: the ones that
+// guests who proved nothing created, and the ones of conversations that run
+// in the agent process of guests.
+const guestTask = `(t.owner = '` + GuestID + `' OR t.context_id IN (SELECT context_id FROM sessions WHERE agent_key = '` + GuestID + `'))`
+
+// finishedGuestTask reports whether the task is a guest task with
+// attachments that is in a terminal state.
+func finishedGuestTask(ctx context.Context, tx *sql.Tx, scope string, taskID a2a.TaskID) (bool, error) {
+	var ok bool
+	err := tx.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM tasks t WHERE t.scope = ? AND t.id = ? AND t.state IN (?, ?, ?, ?) AND `+guestTask+`
+		AND EXISTS (SELECT 1 FROM task_blobs WHERE scope = t.scope AND task_id = t.id))`,
+		append([]any{scope, string(taskID)}, terminalStates()...)...).Scan(&ok)
+	return ok, err
+}
+
+// trimGuestAttachments is [trimGuestBlobs] in a transaction of its own, for
+// after a guest task finished. A failure leaves it to [Store.Prune].
+func (s *Store) trimGuestAttachments(ctx context.Context) {
+	err := s.inTx(ctx, func(tx *sql.Tx) error { return trimGuestBlobs(ctx, tx, s.guestAttachmentCap) })
+	if err != nil {
+		slog.Warn("trimming the attachments of guest tasks", "error", err)
+	}
+}
+
+// trimGuestBlobs deletes the attachments of the oldest finished guest tasks
+// until the blobs that only guest tasks refer to take up to limit bytes.
+func trimGuestBlobs(ctx context.Context, tx *sql.Tx, limit int64) error {
+	var size int64
+	if err := tx.QueryRowContext(ctx, `WITH guest AS (SELECT t.scope, t.id FROM tasks t WHERE `+guestTask+`)
+		SELECT coalesce(sum(length(b.data)), 0) FROM blobs b
+		WHERE b.hash IN (SELECT hash FROM task_blobs WHERE (scope, task_id) IN (SELECT scope, id FROM guest))
+		AND NOT EXISTS (SELECT 1 FROM task_blobs o WHERE o.hash = b.hash AND (o.scope, o.task_id) NOT IN (SELECT scope, id FROM guest))`).Scan(&size); err != nil {
+		return err
+	}
+	if size <= limit {
+		return nil
+	}
+	rows, err := tx.QueryContext(ctx, `SELECT t.scope, t.id FROM tasks t WHERE `+guestTask+` AND t.state IN (?, ?, ?, ?)
+		AND EXISTS (SELECT 1 FROM task_blobs WHERE scope = t.scope AND task_id = t.id)
+		ORDER BY t.updated, t.rowid`, terminalStates()...)
+	if err != nil {
+		return err
+	}
+	type task struct{ scope, id string }
+	var tasks []task
+	for rows.Next() {
+		var t task
+		if err := rows.Scan(&t.scope, &t.id); err != nil {
+			return errors.Join(err, rows.Close())
+		}
+		tasks = append(tasks, t)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	for _, t := range tasks {
+		if size <= limit {
+			return nil
+		}
+		freed, err := dropTaskBlobs(ctx, tx, t.scope, t.id)
+		if err != nil {
+			return err
+		}
+		size -= freed
+	}
+	return nil
+}
+
+// dropTaskBlobs deletes the references of a task to its blobs, and the blobs
+// no other task refers to, and returns their size. The task shows
+// missingBlobText for each blob that is gone.
+func dropTaskBlobs(ctx context.Context, tx *sql.Tx, scope, taskID string) (int64, error) {
+	rows, err := tx.QueryContext(ctx, `DELETE FROM task_blobs WHERE scope = ? AND task_id = ? RETURNING hash`, scope, taskID)
+	if err != nil {
+		return 0, err
+	}
+	var hashes []string
+	for rows.Next() {
+		var h string
+		if err := rows.Scan(&h); err != nil {
+			return 0, errors.Join(err, rows.Close())
+		}
+		hashes = append(hashes, h)
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return 0, err
+	}
+	var freed int64
+	for _, h := range hashes {
+		var size int64
+		err := tx.QueryRowContext(ctx, `DELETE FROM blobs WHERE hash = ? AND NOT EXISTS (SELECT 1 FROM task_blobs WHERE hash = ?)
+			RETURNING length(data)`, h, h).Scan(&size)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		freed += size
+	}
+	return freed, nil
 }
