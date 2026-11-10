@@ -35,6 +35,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 )
 
 // newAgent creates an agent directory with a database, secrets, a harness
@@ -768,5 +769,54 @@ func TestPrune(t *testing.T) {
 	latest, err := Latest(ctx, dest)
 	if err != nil || latest.Name != "coder-20261109T120000Z.a2abak" {
 		t.Fatalf("Latest() = %+v, %v, want the newest snapshot", latest, err)
+	}
+}
+
+// undeletableDest stores and lists snapshots but refuses to delete them,
+// like a bucket the credentials can only write to.
+type undeletableDest struct{ Dest }
+
+func (undeletableDest) Delete(_ context.Context, name string) error {
+	return errors.New("AccessDeniedException: no storage.objects.delete access to " + name)
+}
+
+func TestTakeReportsFailedRetention(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	dir := t.TempDir()
+	inner, err := Open(dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{"coder-20261101T120000Z.a2abak", "coder-20261102T120000Z.a2abak"} {
+		if err := os.WriteFile(filepath.Join(dir, name), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	dest := undeletableDest{inner}
+
+	snap, err := Take(ctx, newAgent(t), dest, Config{Agent: "coder", Key: "k", Retention: time.Hour}, now)
+
+	var retention *RetentionError
+	if !errors.As(err, &retention) {
+		t.Fatalf("Take() error = %v, want a *RetentionError", err)
+	}
+	want := Snapshot{Name: "coder-20261110T120000Z.a2abak", Agent: "coder", Taken: now}
+	if diff := cmp.Diff(want, snap); diff != "" {
+		t.Fatalf("Take() snapshot wrong result (-want +got) diff = %s", diff)
+	}
+	if diff := cmp.Diff(want, retention.Snapshot); diff != "" {
+		t.Fatalf("Take() RetentionError.Snapshot wrong result (-want +got) diff = %s", diff)
+	}
+	if got := err.Error(); !strings.Contains(got, want.Name) || !strings.Contains(got, "AccessDeniedException") || !strings.Contains(got, "(and 1 more)") || strings.Contains(got, "\n") {
+		t.Fatalf("Take() error = %q, want one line with the snapshot, the first delete failure and the count of the others", got)
+	}
+	if got := agenterr.HintText(err); !strings.Contains(got, "permission to delete") {
+		t.Fatalf("Take() error hint = %q, want it to name the delete permission", got)
+	}
+	snaps, err := List(ctx, inner, "coder")
+	if err != nil || len(snaps) != 3 {
+		t.Fatalf("List() = %v, %v, want the new snapshot and the two old ones", snaps, err)
 	}
 }

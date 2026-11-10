@@ -131,6 +131,9 @@ const (
 	HintPairInviteWebhook Hint = "pair-invite-webhook"
 	// HintRestoreLatest restores the latest snapshot Arg.
 	HintRestoreLatest Hint = "restore-latest"
+	// HintBackupDelete grants the backup destination permission to delete
+	// snapshots.
+	HintBackupDelete Hint = "backup-delete"
 	// HintDamagedDB restores the agent, or moves its damaged database Arg
 	// aside.
 	HintDamagedDB Hint = "damaged-db"

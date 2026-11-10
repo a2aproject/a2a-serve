@@ -30,6 +30,7 @@ var hintTexts = map[Hint]string{
 	HintPairRmLocal:       "`a2a-serve pair rm %s` revokes its token and chat links, and the next start issues a new token",
 	HintPairInviteWebhook: "webhook nodes come from `a2a-serve pair invite --webhook`",
 	HintRestoreLatest:     "omit --snapshot to restore the latest one, %s",
+	HintBackupDelete:      "the backup destination needs permission to delete old snapshots; grant it, and the next `a2a-serve backup now` removes them",
 	HintDamagedDB:         "the database is damaged; restore the agent into a new directory with `a2a-serve backup restore`, or move %s aside to start with an empty one, which loses its pairings, contacts and tasks",
 	HintPortInUse:         "another process uses the port; pick another with `a2a-serve config set --port <port>`, or a free one with `a2a-serve config unset port`",
 	HintConfigUnset:       "fix it with `a2a-serve config unset %s`",

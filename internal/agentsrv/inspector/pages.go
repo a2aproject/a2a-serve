@@ -61,7 +61,7 @@ button{font-size:.95rem;margin:.2rem .2rem 0 0;padding:.3rem .8rem}a{color:#0b57
 {{if .Status.Public}}<tr><th>Public</th><td>{{.Status.Public}}</td></tr>{{end}}
 <tr><th>Tasks</th><td>{{range $state, $n := .Status.Tasks}}{{$n}} {{$state}} &nbsp;{{else}}none{{end}}</td></tr>
 {{if .Status.Owners}}<tr><th>Owner</th><td>{{range .Status.Owners}}{{.}} {{end}}</td></tr>{{end}}
-{{with .Status.Backup}}<tr><th>Backup</th><td>{{.To}}, {{if .Last.IsZero}}none yet{{else}}last {{when .Last}}{{end}}, next {{when .Next}}{{if .LastError}} <span class="err">the last snapshot failed: {{.LastError}}</span>{{end}}</td></tr>{{end}}
+{{with .Status.Backup}}<tr><th>Backup</th><td>{{.To}}, {{if .Last.IsZero}}none yet{{else}}last {{when .Last}}{{end}}, next {{when .Next}}{{if .LastError}} <span class="err">the last backup failed: {{.LastError}}</span>{{end}}</td></tr>{{end}}
 </table>
 
 <h2>Pending approvals</h2>

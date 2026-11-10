@@ -95,8 +95,23 @@ type Config struct {
 	Retention time.Duration
 }
 
+// RetentionError reports that Take stored Snapshot but couldn't remove the
+// old snapshots, so storage grows until the destination allows deleting.
+type RetentionError struct {
+	Snapshot Snapshot
+	Err      error
+}
+
+func (e *RetentionError) Error() string {
+	return fmt.Sprintf("took snapshot %s, but removing old snapshots failed: %v", e.Snapshot.Name, e.Err)
+}
+
+func (e *RetentionError) Unwrap() error { return e.Err }
+
 // Take stores a snapshot of the agent in d to dest, then removes snapshots
-// older than the retention, always keeping the latest one.
+// older than the retention, always keeping the latest one. When removing
+// fails, Take returns the stored snapshot with a *RetentionError, which
+// carries a hint at the missing permission.
 func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.Time) (Snapshot, error) {
 	snap := Snapshot{Name: snapshotName(cfg.Agent, now), Agent: cfg.Agent, Taken: now.UTC().Truncate(time.Second)}
 	pr, pw := io.Pipe()
@@ -122,7 +137,7 @@ func Take(ctx context.Context, d agentdir.Dir, dest Dest, cfg Config, now time.T
 		return Snapshot{}, fmt.Errorf("storing %s: %w", snap.Name, err)
 	}
 	if err := Prune(ctx, dest, cfg.Agent, now, cfg.Retention); err != nil {
-		slog.Warn("removing old backup snapshots", "error", err)
+		return snap, agenterr.WithHint(&RetentionError{Snapshot: snap, Err: err}, agenterr.HintBackupDelete, "")
 	}
 	return snap, nil
 }
@@ -140,7 +155,14 @@ func Prune(ctx context.Context, dest Dest, agent string, now time.Time, retentio
 			errs = append(errs, dest.Delete(ctx, s.Name))
 		}
 	}
-	return errors.Join(errs...)
+	errs = slices.DeleteFunc(errs, func(err error) bool { return err == nil })
+	switch len(errs) {
+	case 0:
+		return nil
+	case 1:
+		return errs[0]
+	}
+	return fmt.Errorf("%w (and %d more)", errs[0], len(errs)-1)
 }
 
 // Latest returns the newest snapshot in dest, of any agent.
