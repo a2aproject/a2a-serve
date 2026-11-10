@@ -37,7 +37,7 @@ a2a-serve config set --public-allow-incoming anyone            # anyone on the p
 a2a-serve config unset allow-email '*@example.com'
 ```
 
-- Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with `a2a-serve pair invite --owner`.
+- Only owner pairings and linked owner chat accounts add owners. To make another account of yours an owner, pair it with a name of its own, such as `a2a-serve pair invite laptop --owner`.
 - A call that comes through another agent gets at most the member role, even when the calling agent is yours.
 - Each member gets a separate container with a home of their own. What it gets of the workspace and the secrets follows the [sandbox defaults and rules](sandbox.md#what-each-callers-container-gets) ([Access Model](../advanced/access-model.md#agent-processes)).
 - `--private-allow-incoming` and `--public-allow-incoming` take `everyone` and `anyone` as the same word: `--private-allow-incoming anyone` is `everyone`, and `--public-allow-incoming everyone` is `anyone`.

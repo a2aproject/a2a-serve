@@ -672,3 +672,25 @@ func TestRemoveNodeNotifiesChangeWhenWithdrawFails(t *testing.T) {
 		t.Fatalf("Changed called %d times after the removal, want 1", *changes)
 	}
 }
+
+func TestDirectConvWithoutChatHints(t *testing.T) {
+	t.Parallel()
+	s := newService(t)
+	tests := []struct {
+		user string
+		want string
+	}{
+		{user: auth.OwnerID, want: "owner has no chat on telegram: link it with the owner link that `a2a-serve restart` prints"},
+		{user: auth.PairPrincipal("anna"), want: "anna has no chat on telegram: link it with a code from `a2a-serve pair invite anna`"},
+		{user: auth.NodePrincipal("grok"), want: "grok has no chat on telegram"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.user, func(t *testing.T) {
+			t.Parallel()
+			_, err := DirectConv(context.Background(), s.deps.Store, "telegram", tc.user)
+			if got := agenterr.Text(err); got != tc.want {
+				t.Fatalf("DirectConv(%q) error = %q, want %q", tc.user, got, tc.want)
+			}
+		})
+	}
+}

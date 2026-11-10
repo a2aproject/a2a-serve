@@ -142,3 +142,25 @@ func TestAddScheduleWithinLimits(t *testing.T) {
 		})
 	}
 }
+
+func TestResolveUserUnknownHints(t *testing.T) {
+	t.Parallel()
+	s := openStore(t)
+	tests := []struct {
+		who  string
+		want string
+	}{
+		{who: "nobody", want: "unknown user nobody: pair them first with `a2a-serve pair invite nobody`"},
+		{who: "pair:nobody", want: "unknown user nobody: pair them first with `a2a-serve pair invite nobody`"},
+		{who: "email:anna@example.com", want: "unknown user anna@example.com"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.who, func(t *testing.T) {
+			t.Parallel()
+			_, err := ResolveUser(context.Background(), s, tc.who)
+			if got := agenterr.Text(err); got != tc.want {
+				t.Fatalf("ResolveUser(%q) error = %q, want %q", tc.who, got, tc.want)
+			}
+		})
+	}
+}
