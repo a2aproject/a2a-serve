@@ -40,6 +40,11 @@ The run lives in `/tmp/a2a-sim` (`--root` or `SIM_ROOT` change it).
   a working agent waste the whole budget.
 - The model must work with the key. Check it with `a2a-serve start ... --model`
   in the smoke test, since an unknown model fails every turn.
+- A round writes several GB: npm caches in agent homes, Go caches in
+  users' homes. `/tmp` is often a tmpfs that other work shares. Check
+  `df -h /tmp` first, and delete the runs of earlier rounds with
+  `tools/sim/cleanup.sh --root <dir> --delete`. A full disk fails tasks
+  in ways that look like product bugs.
 
 ## 2. Pick the lanes
 
@@ -62,7 +67,9 @@ two of these every round, and record the choices in `run.md`:
 
 - **Chaos.** Run `tools/sim/chaos.sh` in the background during the lanes.
   It kills, pauses and cuts the network of agent containers, and freezes,
-  restarts and kills servers, at random intervals. It logs each fault to
+  restarts and kills servers, at random intervals. Behind the egress
+  boundary, a cut freezes the container's `a2a-init`, which carries all
+  of the agent's connections. It logs each fault to
   `chaos.log`, with the seed, so a round can be replayed with `--seed`.
   Faults are scoped to the run, so it never touches other agents.
 - **Personas.** Give each lane a persona that drives how it uses the
@@ -153,12 +160,17 @@ or a denial of service.
 ## 6. Clean up
 
 ```bash
-tools/sim/cleanup.sh
+tools/sim/cleanup.sh            # keeps the lane files
+tools/sim/cleanup.sh --delete   # once the issues are filed
 ```
 
-It stops every agent of the run and lists containers that still mount the
-run directory. Stop `chaos.sh` first if it still runs. Delete the run
-directory when you no longer need the lane files.
+It stops every agent of the run and the processes that run from its
+directory, such as relays and webhook servers, and lists containers that
+still mount it. Stop `chaos.sh` first if it still runs. `--delete` then
+removes the run directory, unless something is still running. Run it for
+every run directory of the round, including the chaos one. `env.sh` points
+`TMPDIR` into the run directory, so this also removes what killed servers
+leave in it, such as the env files that hold the model key.
 
 Then append one line to `tools/sim/rounds.md`: the date, commit, lanes,
 novelty choices with the chaos seed, and the number of findings and issues
@@ -176,6 +188,10 @@ by the harness contract tests proposed in #148.
 
 - Every shell must `source env.sh`. A command run with the real `HOME`
   talks to the user's own agents and credentials.
+- After `source env.sh`, `~` is the simulated user's home. Write paths to
+  the checkout in full, and chain commands with `&&` or `set -e`: a failed
+  `cd` leaves the shell in the checkout, and `sim_start` then makes an
+  agent there.
 - The agent must be started from the same `HOME` that calls it as the
   owner. The server writes the owner token to the `HOME` it starts in.
 - Lanes share the model key. Many parallel lanes can hit rate limits.

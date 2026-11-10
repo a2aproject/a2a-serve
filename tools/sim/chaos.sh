@@ -109,10 +109,24 @@ inject() {
       docker unpause "$target" >/dev/null 2>&1 || log "unpause $target failed" ;;
     net-cut)
       target="$(pick $(containers))" || { log "skip $fault: no containers"; return; }
-      log "$fault $target for ${hold}s"
-      docker network disconnect bridge "$target" >/dev/null 2>&1 || { log "skip $fault: $target isn't on the bridge network"; return; }
+      if docker network disconnect bridge "$target" >/dev/null 2>&1; then
+        log "$fault $target for ${hold}s"
+        sleep "$hold"
+        docker network connect bridge "$target" >/dev/null 2>&1 || log "reconnect $target failed"
+        return
+      fi
+      # A container behind the egress boundary has no network. Its PID 1,
+      # a2a-init, carries every connection of the agent to the boundary, and
+      # the agent's stdio and server socket bypass it. Freezing it stalls
+      # open connections and new ones, as a cut network does.
+      local init
+      init="$(docker inspect --format '{{.State.Pid}}' "$target" 2>/dev/null)"
+      [[ -n "$init" && "$(tr '\0' ' ' < "/proc/$init/cmdline" 2>/dev/null)" == *a2a-init* ]] ||
+        { log "skip $fault: $target has no bridge network and no a2a-init"; return; }
+      log "$fault $target for ${hold}s (froze a2a-init, pid $init)"
+      kill -STOP "$init"
       sleep "$hold"
-      docker network connect bridge "$target" >/dev/null 2>&1 || log "reconnect $target failed" ;;
+      kill -CONT "$init" 2>/dev/null || log "resume a2a-init of $target failed" ;;
     server-freeze)
       target="$(pick $(servers))" || { log "skip $fault: no servers"; return; }
       log "$fault pid $target ($(server_dir "$target")) for ${hold}s"
