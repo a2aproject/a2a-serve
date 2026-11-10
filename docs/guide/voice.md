@@ -137,4 +137,4 @@ When speaking a reply fails, the text still arrives, followed by a note such as 
 | Format of a recording | Ogg Opus, MP3 or WAV, the formats whose length the server reads; owners can also send other formats |
 | One call of the speech service | 60 seconds |
 | Recordings in one message | 10 |
-| Speech calls per person | 60 an hour, transcriptions and replies together; owners have no limit |
+| Speech calls per person | 60 an hour, transcriptions and replies together; guests share one limit, and owners have none |

@@ -489,7 +489,7 @@ func (s *Server) build(ctx context.Context, closers *stack, opts Options) error 
 	if err := s.buildExecutor(ctx, closers, opts); err != nil {
 		return err
 	}
-	if s.voice, err = s.buildVoice(opts.Now); err != nil {
+	if s.voice, err = s.buildVoice(ctx, opts.Now); err != nil {
 		return err
 	}
 

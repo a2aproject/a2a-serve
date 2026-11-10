@@ -113,20 +113,34 @@ func opusSamples(packet []byte) (uint64, bool) {
 	return uint64(packet[1]&0x3F) * frame, true
 }
 
-// mp3Duration adds up the durations of the MPEG audio frames after an
-// ID3v2 tag.
+// mp3Duration adds up the durations of the MPEG audio frames, which must
+// make up all of the data but an ID3v2 tag at the start, zero padding, and
+// an ID3v1 or APE tag or a cut frame at the end. Other data could hold
+// audio the server doesn't count.
 func mp3Duration(data []byte) (time.Duration, bool) {
 	off := 0
 	if len(data) >= 10 && bytes.HasPrefix(data, []byte("ID3")) {
 		off = 10 + (int(data[6]&0x7F)<<21 | int(data[7]&0x7F)<<14 | int(data[8]&0x7F)<<7 | int(data[9]&0x7F))
 	}
+	for off < len(data) && data[off] == 0 {
+		off++
+	}
 	var total time.Duration
 	frames := 0
-	for off+4 <= len(data) {
-		length, d, ok := mp3Frame(data[off : off+4])
+	for off < len(data) {
+		rest := data[off:]
+		if len(rest) < 4 {
+			break
+		}
+		length, d, ok := mp3Frame(rest[:4])
 		if !ok {
-			off++
-			continue
+			if bytes.HasPrefix(rest, []byte("TAG")) && len(rest) == 128 || bytes.HasPrefix(rest, []byte("APETAGEX")) {
+				break
+			}
+			return 0, false
+		}
+		if length > len(rest) {
+			break
 		}
 		total += d
 		frames++
@@ -190,25 +204,42 @@ func mp3Frame(h []byte) (int, time.Duration, bool) {
 	return length, samples(uint64(frameSamples), uint64(rate)), true
 }
 
-// wavDuration divides the size of the data chunk by the byte rate.
+// wavFormats are the WAV sample formats whose byte rate follows from the
+// sample rate and block size: PCM, float, A-law and mu-law.
+var wavFormats = map[uint16]bool{1: true, 3: true, 6: true, 7: true}
+
+// wavDuration divides the size of the data chunk by the byte rate that the
+// sample rate and block size give, which is what decoders play.
 func wavDuration(data []byte) (time.Duration, bool) {
-	byteRate := uint32(0)
+	byteRate := uint64(0)
 	for off := 12; off+8 <= len(data); {
 		id, size := string(data[off:off+4]), binary.LittleEndian.Uint32(data[off+4:off+8])
 		body := off + 8
 		switch id {
 		case "fmt ":
-			if body+12 > len(data) {
+			if body+16 > len(data) {
 				return 0, false
 			}
-			byteRate = binary.LittleEndian.Uint32(data[body+8 : body+12])
+			format := binary.LittleEndian.Uint16(data[body:])
+			// WAVE_FORMAT_EXTENSIBLE names the format in its subformat.
+			if format == 0xFFFE {
+				if body+26 > len(data) {
+					return 0, false
+				}
+				format = binary.LittleEndian.Uint16(data[body+24:])
+			}
+			rate, align := binary.LittleEndian.Uint32(data[body+4:]), binary.LittleEndian.Uint16(data[body+12:])
+			if !wavFormats[format] || rate < 1000 || rate > 384000 || align == 0 || align > 64 {
+				return 0, false
+			}
+			byteRate = uint64(rate) * uint64(align)
 		case "data":
 			if byteRate == 0 {
 				return 0, false
 			}
 			// Streamed WAV files may give the data chunk the largest size.
 			n := min(uint64(size), uint64(len(data)-body))
-			return samples(n, uint64(byteRate)), true
+			return samples(n, byteRate), true
 		}
 		off = body + int(size) + int(size%2)
 	}

@@ -191,7 +191,7 @@ func TestVoiceTurn(t *testing.T) {
 			if tc.noSpeaker {
 				speaker = nil
 			}
-			v := newVoiceTurns(tc.fake, speaker, time.Now)
+			v := newVoiceTurns(tc.fake, speaker, time.Now, context.Background())
 			msg := a2a.NewMessage(a2a.MessageRoleUser, tc.parts...)
 			execCtx := &a2asrv.ExecutorContext{Message: msg, TaskID: "t1", ContextID: "c1"}
 			agent := &scriptedTurn{reply: "Fixed it."}
@@ -224,7 +224,7 @@ func TestVoiceTurn(t *testing.T) {
 
 func TestVoiceTurnKeepsAudioInTaskHistory(t *testing.T) {
 	t.Parallel()
-	v := newVoiceTurns(&speechtest.Fake{Transcript: "hello"}, nil, time.Now)
+	v := newVoiceTurns(&speechtest.Fake{Transcript: "hello"}, nil, time.Now, context.Background())
 	msg := a2a.NewMessage(a2a.MessageRoleUser, voiceNote())
 	execCtx := &a2asrv.ExecutorContext{Message: msg, TaskID: "t1", ContextID: "c1"}
 	agent := &scriptedTurn{reply: "hi"}
@@ -246,6 +246,38 @@ func TestVoiceTurnKeepsAudioInTaskHistory(t *testing.T) {
 	if got := msg.Parts[0].MediaType; got != "audio/ogg" {
 		t.Fatalf("message part media type = %q after the turn, want audio/ogg", got)
 	}
+}
+
+func TestVoiceTurnFailsTaskWhenServerStops(t *testing.T) {
+	t.Parallel()
+	stopping, stop := context.WithCancel(t.Context())
+	fake := &blockingTranscriber{started: make(chan struct{})}
+	v := newVoiceTurns(fake, nil, time.Now, stopping)
+	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, voiceNote()), TaskID: "t1", ContextID: "c1"}
+	go func() {
+		<-fake.started
+		stop()
+	}()
+	var got []a2a.Event
+	for ev, err := range v.turn(auth.WithPrincipal(t.Context(), auth.Owner()), execCtx, (&scriptedTurn{}).run) {
+		if err != nil {
+			t.Fatalf("voiceTurns.turn() error = %v", err)
+		}
+		got = append(got, ev)
+	}
+	want := []string{"task:submitted", "status:failed:" + stoppedMessage}
+	if diff := cmp.Diff(want, describeVoice(got)); diff != "" {
+		t.Fatalf("voiceTurns.turn() wrong events (-want +got) diff = %s", diff)
+	}
+}
+
+// blockingTranscriber transcribes until its context ends.
+type blockingTranscriber struct{ started chan struct{} }
+
+func (b *blockingTranscriber) Transcribe(ctx context.Context, _ speech.Audio) (string, error) {
+	close(b.started)
+	<-ctx.Done()
+	return "", &speech.Error{Reason: "the call of the speech service was canceled"}
 }
 
 func TestSpeechBudget(t *testing.T) {
@@ -316,7 +348,7 @@ func TestChatVoiceTurn(t *testing.T) {
 
 func TestVoiceAnswerThatFailsAsksAgain(t *testing.T) {
 	t.Parallel()
-	v := newVoiceTurns(&speechtest.Fake{TranscribeErr: &speech.Error{Reason: "the speech service timed out"}}, nil, time.Now)
+	v := newVoiceTurns(&speechtest.Fake{TranscribeErr: &speech.Error{Reason: "the speech service timed out"}}, nil, time.Now, context.Background())
 	question := a2a.NewMessage(a2a.MessageRoleAgent, a2a.NewTextPart("Which branch?"))
 	stored := &a2a.Task{ID: "t1", ContextID: "c1", Status: a2a.TaskStatus{State: a2a.TaskStateInputRequired, Message: question}}
 	execCtx := &a2asrv.ExecutorContext{Message: a2a.NewMessage(a2a.MessageRoleUser, voiceNote()), TaskID: "t1", ContextID: "c1", StoredTask: stored}

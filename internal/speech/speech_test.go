@@ -104,13 +104,21 @@ func mp3(n int) []byte {
 }
 
 // wav returns a WAV file of d at 8 kHz, 8 bits, mono.
-func wav(d time.Duration) []byte {
+func wav(d time.Duration) []byte { return wavWithFormat(d, 1) }
+
+func wavWithByteRate(d time.Duration, byteRate uint32) []byte {
+	data := wav(d)
+	binary.LittleEndian.PutUint32(data[28:], byteRate)
+	return data
+}
+
+func wavWithFormat(d time.Duration, format uint16) []byte {
 	n := int(d / time.Second * 8000)
 	data := make([]byte, 44, 44+n)
 	copy(data, "RIFF")
 	copy(data[8:], "WAVEfmt ")
 	binary.LittleEndian.PutUint32(data[16:], 16)
-	binary.LittleEndian.PutUint16(data[20:], 1)
+	binary.LittleEndian.PutUint16(data[20:], format)
 	binary.LittleEndian.PutUint16(data[22:], 1)
 	binary.LittleEndian.PutUint32(data[24:], 8000)
 	binary.LittleEndian.PutUint32(data[28:], 8000)
@@ -136,6 +144,10 @@ func TestDuration(t *testing.T) {
 		{name: "mp3 without frames", audio: speech.Audio{MediaType: "audio/mpeg", Data: []byte("ID3\x03")}},
 		{name: "truncated ogg", audio: speech.Audio{MediaType: "audio/ogg", Data: []byte("OggS")}},
 		{name: "ogg with segments past its end", audio: speech.Audio{MediaType: "audio/ogg", Data: append([]byte("OggS"), append(make([]byte, 22), 200)...)}},
+		{name: "wav whose byte rate claims more", audio: speech.Audio{MediaType: "audio/wav", Data: wavWithByteRate(3*time.Second, 0xFFFFFFFF)}, want: 3 * time.Second, wantOK: true},
+		{name: "wav of an unknown format", audio: speech.Audio{MediaType: "audio/wav", Data: wavWithFormat(3*time.Second, 0x55)}},
+		{name: "mp3 frame among other data", audio: speech.Audio{MediaType: "audio/mpeg", Data: append([]byte{0xFF, 0xF1, 0x50, 0x80}, append(make([]byte, 1000), mp3(1)[12:]...)...)}},
+		{name: "mp3 with an id3v1 tag", audio: speech.Audio{MediaType: "audio/mpeg", Data: append(mp3(10), append([]byte("TAG"), make([]byte, 125)...)...)}, want: 10 * (1152 * time.Second / 44100), wantOK: true},
 		{name: "m4a", audio: speech.Audio{MediaType: "audio/mp4", Data: []byte("\x00\x00\x00\x20ftypM4A ")}},
 	}
 	for _, tc := range tests {
@@ -153,6 +165,7 @@ func FuzzDuration(f *testing.F) {
 	f.Add(ogg(time.Second))
 	f.Add(wav(time.Second))
 	f.Add(mp3(3))
+	f.Add(wavWithByteRate(time.Second, 0xFFFFFFFF))
 	f.Add(append([]byte("OggS"), append(make([]byte, 42), 200)...))
 	f.Fuzz(func(t *testing.T, data []byte) {
 		speech.Duration(speech.Audio{Data: data})

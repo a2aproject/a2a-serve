@@ -39,12 +39,14 @@ type voiceTurns struct {
 	// speaker is nil for a service that only transcribes.
 	speaker speech.Speaker
 	budget  *speechBudget
+	// stopping ends when the server stops, which ends transcriptions.
+	stopping context.Context
 }
 
 // newVoiceTurns returns the voice turns of a speech service. speaker may be
-// nil.
-func newVoiceTurns(transcriber speech.Transcriber, speaker speech.Speaker, now func() time.Time) *voiceTurns {
-	return &voiceTurns{transcriber: transcriber, speaker: speaker, budget: newSpeechBudget(now)}
+// nil. Transcriptions end when stopping does.
+func newVoiceTurns(transcriber speech.Transcriber, speaker speech.Speaker, now func() time.Time, stopping context.Context) *voiceTurns {
+	return &voiceTurns{transcriber: transcriber, speaker: speaker, budget: newSpeechBudget(now), stopping: stopping}
 }
 
 // maxAudioParts bounds the recordings of one message.
@@ -68,8 +70,17 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 		if created && !yield(a2a.NewSubmittedTask(execCtx, execCtx.Message), nil) {
 			return
 		}
-		textCtx, transcript, err := v.transcribe(ctx, execCtx)
+		textCtx, transcript, err := v.transcribeUntilStop(ctx, execCtx)
 		if err != nil {
+			if v.stopping.Err() != nil {
+				for ev, err := range failStopped(execCtx, true) {
+					if !yield(ev, err) {
+						return
+					}
+				}
+				return
+			}
+			// A canceled task ends with the cancel.
 			if ctx.Err() != nil {
 				return
 			}
@@ -103,6 +114,15 @@ func (v *voiceTurns) turn(ctx context.Context, execCtx *a2asrv.ExecutorContext, 
 			}
 		}
 	}
+}
+
+// transcribeUntilStop is transcribe, which a stop of the server ends.
+func (v *voiceTurns) transcribeUntilStop(ctx context.Context, execCtx *a2asrv.ExecutorContext) (*a2asrv.ExecutorContext, string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	stop := context.AfterFunc(v.stopping, cancel)
+	defer stop()
+	return v.transcribe(ctx, execCtx)
 }
 
 // transcriptionFailed is the event that ends a turn whose recordings
@@ -398,7 +418,7 @@ func (b *speechBudget) prune(now time.Time) {
 
 // buildVoice returns the voice turns of the configured speech service, or
 // nil when voice isn't set up.
-func (s *Server) buildVoice(now func() time.Time) (*voiceTurns, error) {
+func (s *Server) buildVoice(ctx context.Context, now func() time.Time) (*voiceTurns, error) {
 	v := s.rt.Config().Voice
 	if !v.On() {
 		return nil, nil
@@ -412,5 +432,5 @@ func (s *Server) buildVoice(now func() time.Time) (*voiceTurns, error) {
 		return nil, fmt.Errorf("--voice: %w", err)
 	}
 	s.logf("✓ voice    %s", speech.Describe(v.Service))
-	return newVoiceTurns(transcriber, speaker, now), nil
+	return newVoiceTurns(transcriber, speaker, now, ctx), nil
 }
