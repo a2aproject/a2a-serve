@@ -405,6 +405,39 @@ func TestRestoreMeshCredential(t *testing.T) {
 	}
 }
 
+func TestSignedInAgentKeepsItsCredentialWhenSigningInAgainFails(t *testing.T) {
+	t.Parallel()
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(relay.Close)
+	dir := t.TempDir()
+	enrolled := &api.MemberCredential{ControlPlaneUrl: relay.URL, Biscuit: []byte("biscuit")}
+	if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), enrolled); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+	// A start that stopped while signing in again.
+	if err := setAsideMeshCredential(dir); err != nil {
+		t.Fatalf("setAsideMeshCredential() error = %v", err)
+	}
+	p, err := NewRelay(RelayConfig{AgentName: "coder", URL: relay.URL, StateDir: dir, Private: true})
+	if err != nil {
+		t.Fatalf("NewRelay() error = %v", err)
+	}
+
+	if err := p.(Joiner).Join(t.Context()); err == nil {
+		t.Fatal("agentMesh.Join() error = nil, want the unavailable relay")
+	}
+
+	_, got, err := meshnet.ReadStateDir(dir)
+	if err != nil {
+		t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+	}
+	if diff := cmp.Diff(enrolled, got, protocmp.Transform()); diff != "" {
+		t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSavedPeerID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -134,7 +134,7 @@ func savedPeerID(stateDir string) string {
 }
 
 func (a *agentMesh) newMeshServer() *meshnet.Server {
-	return &meshnet.Server{
+	srv := &meshnet.Server{
 		StateDir:        a.cfg.StateDir,
 		ControlPlaneURL: a.cfg.URL,
 		BootstrapToken:  a.cfg.Token,
@@ -144,6 +144,13 @@ func (a *agentMesh) newMeshServer() *meshnet.Server {
 			a.logf("! relay: credential lapsed (%v)", err)
 		},
 	}
+	// Without a token, the agent signs in with an account; the first run
+	// prints the link, later runs use the stored identity.
+	if a.cfg.Token == "" {
+		login := &RelayLogin{RelayURL: a.cfg.URL, StateDir: a.cfg.StateDir, HTTP: &http.Client{Timeout: 30 * time.Second}, Logf: a.cfg.Logf, Poll: time.Second}
+		srv.TokenSource = login.Token
+	}
+	return srv
 }
 
 func (a *agentMesh) start(ctx context.Context) error {
@@ -159,20 +166,17 @@ func (a *agentMesh) start(ctx context.Context) error {
 			return fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err)
 		}
 	}
-	srv := a.newMeshServer()
-	// Without a token, the agent signs in with an account; the first run
-	// prints the link, later runs use the stored identity.
+	resumed := hasMeshIdentity(a.cfg.StateDir)
 	if a.cfg.Token == "" {
-		login := &RelayLogin{RelayURL: a.cfg.URL, StateDir: a.cfg.StateDir, HTTP: &http.Client{Timeout: 30 * time.Second}, Logf: a.cfg.Logf, Poll: time.Second}
-		srv.TokenSource = login.Token
 		refresh, err := savedRefreshToken(a.cfg.StateDir)
 		if err != nil {
 			slog.Warn("reading the relay's refresh token", "error", err)
 		}
-		if !hasMeshIdentity(a.cfg.StateDir) && refresh.Token == "" {
+		if !resumed && refresh.Token == "" {
 			a.logf("… joining the relay %s; this needs a sign-in on the first run (or --relay-token)", a.cfg.URL)
 		}
 	}
+	srv := a.newMeshServer()
 	st, err := srv.Up(ctx)
 	err = explainJoin(err)
 	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
@@ -182,9 +186,12 @@ func (a *agentMesh) start(ctx context.Context) error {
 	if err != nil {
 		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
 			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {
-				err = rerr
+				return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, rerr), srv.Close())
 			}
 		}
+		srv, st, err = a.signInAgain(ctx, resumed, srv, st, err)
+	}
+	if err != nil {
 		return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err), srv.Close())
 	}
 	opts := meshnet.A2AOptions{Name: a.cfg.AgentName, Description: a.cfg.Description, Public: a.cfg.Public}
