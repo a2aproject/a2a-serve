@@ -36,6 +36,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/harness"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
+	"github.com/a2aproject/a2a-serve/internal/service"
 	"github.com/a2aproject/a2a-serve/internal/wizard"
 )
 
@@ -259,7 +260,7 @@ func runAgent(ctx context.Context, cfg *globalConfig, d agentdir.Dir, m runMode)
 		if m.service {
 			mode = lifecycle.Service
 		}
-		return lifecycle.Start(ctx, d, lifecycle.StartOptions{Mode: mode, Quiet: m.quiet, Out: cfg.Out})
+		return lifecycle.Start(ctx, d, lifecycle.StartOptions{Mode: mode, Quiet: m.quiet, Out: cfg.Out, Services: service.System{}})
 	}
 	ctx, stop := signalContext(ctx)
 	defer stop()
