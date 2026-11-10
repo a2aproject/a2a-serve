@@ -73,16 +73,22 @@ type egressSockets struct {
 	probeErr error
 }
 
-// probeOnce runs probe, the check of a container's egress setup, at the
-// first call, and returns its result to every call. Each start of the
-// server checks again.
+// probeOnce runs probe, the check of a container's egress setup, and
+// returns its result to every later call once it passed or found that the
+// setup can't work on this host. Other failures, such as an error of the
+// Docker daemon, aren't kept, and the next call checks again. Each start
+// of the server checks again.
 func (e *egressSockets) probeOnce(probe func() error) error {
 	e.probeMu.Lock()
 	defer e.probeMu.Unlock()
-	if !e.probed {
-		e.probeErr, e.probed = probe(), true
+	if e.probed {
+		return e.probeErr
 	}
-	return e.probeErr
+	err := probe()
+	if _, setup := errors.AsType[*harness.EgressSetupError](err); err == nil || setup {
+		e.probeErr, e.probed = err, true
+	}
+	return err
 }
 
 // watch adds fellBack, which tells whether a container fell back to

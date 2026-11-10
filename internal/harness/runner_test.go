@@ -166,3 +166,57 @@ func TestPruneContainersWithoutAnswer(t *testing.T) {
 		t.Fatalf("pruneContainers() error = %v, want %v", err, ErrDockerNoAnswer)
 	}
 }
+
+const (
+	tunMissing       = `echo 'docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory' >&2; exit 127`
+	netAdminRefused  = `echo 'Error: requested capability NET_ADMIN is not allowed' >&2; exit 125`
+	launcherNoTUN    = `echo "a2a-init: setting up the sandbox's network: no tun" >&2; exit 121`
+	daemonError      = `echo 'docker: Error response from daemon: failed to create task for container: EOF' >&2; exit 125`
+	launcherCrashTUN = `echo 'panic: opening /dev/net/tun' >&2; exit 2`
+)
+
+func TestDockerRunnerProbe(t *testing.T) {
+	flag := filepath.Join(t.TempDir(), "failed-once")
+	tests := []struct {
+		name      string
+		run       string
+		wantRuns  int
+		wantSetup string
+		wantErr   string
+	}{
+		{name: "setup works", run: "exit 0", wantRuns: 1},
+		{name: "launcher can't set up the network", run: launcherNoTUN, wantRuns: 1, wantSetup: "no tun"},
+		{name: "runtime refuses the TUN device", run: tunMissing, wantRuns: 1, wantSetup: `docker: Error response from daemon: error gathering device information while adding custom device "/dev/net/tun": no such file or directory`},
+		{name: "runtime refuses NET_ADMIN", run: netAdminRefused, wantRuns: 1, wantSetup: "Error: requested capability NET_ADMIN is not allowed"},
+		{name: "daemon error", run: daemonError, wantRuns: probeAttempts, wantErr: "failed to create task for container: EOF"},
+		{name: "launcher crash naming the device", run: launcherCrashTUN, wantRuns: probeAttempts, wantErr: "panic: opening /dev/net/tun"},
+		{name: "daemon error once", run: `[ -e ` + flag + ` ] && exit 0; touch ` + flag + `; ` + daemonError, wantRuns: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			log := fakeDocker(t, `[ "$1" = run ] || exit 0`+"\n"+tc.run)
+			r := &DockerRunner{Name: "a2a-coder-1", Image: "img:1", Egress: &DockerEgress{Socket: "/s/egress.sock", Launcher: "/bin/a2a-serve"}}
+			err := r.Probe(context.Background())
+			data, rerr := os.ReadFile(log)
+			if rerr != nil {
+				t.Fatal(rerr)
+			}
+			if got := strings.Count(string(data), "run --name a2a-coder-1-check "); got != tc.wantRuns {
+				t.Fatalf("DockerRunner.Probe() ran %d checks, want %d", got, tc.wantRuns)
+			}
+			setupErr, isSetup := errors.AsType[*EgressSetupError](err)
+			switch {
+			case tc.wantSetup != "":
+				if !isSetup || setupErr.Error() != tc.wantSetup {
+					t.Fatalf("DockerRunner.Probe() error = %v, want an egress setup error %q", err, tc.wantSetup)
+				}
+			case tc.wantErr != "":
+				if err == nil || isSetup || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("DockerRunner.Probe() error = %v, want a non-setup error containing %q", err, tc.wantErr)
+				}
+			case err != nil:
+				t.Fatalf("DockerRunner.Probe() error = %v, want nil", err)
+			}
+		})
+	}
+}

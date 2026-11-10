@@ -22,6 +22,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -986,5 +987,77 @@ func TestWithoutEgressCA(t *testing.T) {
 	got := withoutEgressCA([]string{"A=1", sandboxnet.EnvEgressCA + "=from-a-recipe", "B=2"})
 	if diff := cmp.Diff([]string{"A=1", "B=2"}, got); diff != "" {
 		t.Fatalf("withoutEgressCA() wrong result (-want +got) diff = %s", diff)
+	}
+}
+
+// relayDocker runs the egress container, and runs the check with check.
+func relayDocker(check string) string {
+	return `case "$1 $2" in
+"info "*) echo "[name=seccomp,profile=builtin]" ;;
+"image inspect") echo "amd64 null" ;;
+"rm "*|"run -d") ;;
+"logs "*) echo "` + sandboxnet.RelayReady + `" ;;
+"inspect "*) echo "true 0 0" ;;
+"run --name") ` + check + ` ;;
+*) echo "fake docker: $1 failed" >&2; exit 1 ;;
+esac
+`
+}
+
+func TestPrepareDockerEgressCheck(t *testing.T) {
+	tests := []struct {
+		name        string
+		check       string
+		wantEgress  bool
+		wantProblem string
+		wantErr     string
+	}{
+		{name: "check passes", check: "exit 0", wantEgress: true},
+		{name: "launcher can't set up the network", check: launcherNoTUN, wantProblem: "egress control is off: the agent's container can't set up its network: no tun"},
+		{name: "daemon error", check: daemonError, wantErr: "failed to create task for container: EOF"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			fakeDocker(t, relayDocker(tc.check))
+			t.Setenv(EnvForceRelay, "1")
+			t.Setenv(EnvRelayImage, "example.com/egress:test")
+			ws, home, sockDir := t.TempDir(), t.TempDir(), t.TempDir()
+			var closed atomic.Bool
+			p, err := Prepare(context.Background(), Spec{
+				Profile: claude{},
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    home,
+				EnvDir:  t.TempDir(),
+				Name:    "a2a-test",
+				Socket:  filepath.Join(sockDir, "a2a.sock"),
+				CLI:     "/opt/a2a/bin/a2a",
+				OpenEgress: func(HostGatewayFunc, bool) (EgressEndpoint, error) {
+					return EgressEndpoint{RelayAddr: "tcp://127.0.0.1:1", RelayKey: "key", Close: func() error {
+						closed.Store(true)
+						return nil
+					}}, nil
+				},
+			})
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("Prepare() error = %v, want %q", err, tc.wantErr)
+				}
+				if !closed.Load() {
+					t.Fatalf("Prepare() error = %v left the egress boundary open", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+			if p.Egress != tc.wantEgress || !strings.HasPrefix(p.EgressProblem, tc.wantProblem) || (tc.wantProblem == "") != (p.EgressProblem == "") {
+				t.Fatalf("Prepare() = egress %v, problem %q, want egress %v, problem %q", p.Egress, p.EgressProblem, tc.wantEgress, tc.wantProblem)
+			}
+		})
 	}
 }

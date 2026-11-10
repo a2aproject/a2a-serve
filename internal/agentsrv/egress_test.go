@@ -15,12 +15,14 @@
 package agentsrv
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
 	"testing"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 // TestLauncherCopyRunsAsAnotherUser checks the modes that let container
@@ -55,5 +57,43 @@ func TestLauncherCopyRunsAsAnotherUser(t *testing.T) {
 	}
 	if got := e.launcher(); got != launcher {
 		t.Fatalf("second launcher() = %q, want the same copy %q", got, launcher)
+	}
+}
+
+func TestEgressProbeOnce(t *testing.T) {
+	t.Parallel()
+	setupErr := &harness.EgressSetupError{Reason: "no tun"}
+	tests := []struct {
+		name      string
+		first     error
+		wantCalls int
+		wantErr   error
+	}{
+		{name: "check passes", wantCalls: 1},
+		{name: "setup fails", first: setupErr, wantCalls: 1, wantErr: setupErr},
+		{name: "docker fails", first: errors.New("docker: Error response from daemon: EOF"), wantCalls: 2},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newEgressSockets(t.TempDir(), func() *agentdir.Config { return &agentdir.Config{} })
+			calls := 0
+			probe := func() error {
+				calls++
+				if calls == 1 {
+					return tc.first
+				}
+				return nil
+			}
+			if err := e.probeOnce(probe); !errors.Is(err, tc.first) {
+				t.Fatalf("egressSockets.probeOnce() error = %v, want %v", err, tc.first)
+			}
+			if err := e.probeOnce(probe); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("second egressSockets.probeOnce() error = %v, want %v", err, tc.wantErr)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("egressSockets.probeOnce() ran the check %d times, want %d", calls, tc.wantCalls)
+			}
+		})
 	}
 }
