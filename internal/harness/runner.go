@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/fsutil"
 	"github.com/a2aproject/a2a-serve/internal/sandboxnet"
 )
 
@@ -76,6 +77,10 @@ type DockerRunner struct {
 	Scratch []string
 	// Home is the host directory mounted at /home/agent.
 	Home string
+	// EnvDir is the host directory for the env files, which hold the secrets
+	// in Env until [DockerRunner.Stop]. A server that is killed leaves them
+	// there, for [PruneEnvFiles]. It must not be visible in the container.
+	EnvDir string
 	// Env holds NAME=value pairs passed into the container. Values are passed
 	// in a private env file, not in the arguments or the environment of the
 	// docker CLI, so they neither show up in process listings nor change
@@ -203,6 +208,35 @@ func (r *DockerRunner) Probe(ctx context.Context) error {
 	return errors.New(reasonOf(string(out)))
 }
 
+// envFilePrefix starts the names of the env files.
+const envFilePrefix = "a2a-env-"
+
+// PruneEnvFiles removes the env files that an earlier server left in dir,
+// such as after a crash or a kill, and returns how many it removed. Call it
+// only while no container of the agent starts.
+func PruneEnvFiles(dir string) (int, error) {
+	entries, err := os.ReadDir(dir)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	var errs []error
+	n := 0
+	for _, e := range entries {
+		if !strings.HasPrefix(e.Name(), envFilePrefix) || e.IsDir() {
+			continue
+		}
+		if err := os.Remove(filepath.Join(dir, e.Name())); err != nil && !errors.Is(err, os.ErrNotExist) {
+			errs = append(errs, err)
+			continue
+		}
+		n++
+	}
+	return n, errors.Join(errs...)
+}
+
 // writeEnvFile writes env to a file only the user can read, for docker run
 // --env-file. It returns "" when env is empty.
 func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
@@ -220,7 +254,13 @@ func (r *DockerRunner) writeEnvFile(env []string) (string, error) {
 	if buf.Len() == 0 {
 		return "", nil
 	}
-	f, err := os.CreateTemp("", "a2a-env-*")
+	if r.EnvDir == "" {
+		return "", errors.New("creating the container env file: no directory for it")
+	}
+	if err := fsutil.MkdirReal(r.EnvDir); err != nil {
+		return "", fmt.Errorf("creating the container env file: %w", err)
+	}
+	f, err := os.CreateTemp(r.EnvDir, envFilePrefix+"*")
 	if err != nil {
 		return "", fmt.Errorf("creating the container env file: %w", err)
 	}

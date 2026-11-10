@@ -132,6 +132,7 @@ func TestPrepareDockerMountsPolicy(t *testing.T) {
 				Name:      "a2a-test",
 				Mounts:    []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:      t.TempDir(),
+				EnvDir:    t.TempDir(),
 				Image:     "img:1",
 				PolicyDir: policy,
 			})
@@ -161,6 +162,7 @@ func TestPrepareDockerRefusesMissingPolicy(t *testing.T) {
 		Name:      "a2a-test",
 		Mounts:    []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:      t.TempDir(),
+		EnvDir:    t.TempDir(),
 		PolicyDir: policy,
 	})
 

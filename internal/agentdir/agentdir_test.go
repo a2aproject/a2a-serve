@@ -93,6 +93,29 @@ func TestFindInRelayDir(t *testing.T) {
 	}
 }
 
+func TestInitCreatesPrivateEnvFilesDirOutsideHome(t *testing.T) {
+	t.Parallel()
+	d, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatalf("Open() error = %v", err)
+	}
+	if err := d.Init(); err != nil {
+		t.Fatalf("Init() error = %v", err)
+	}
+	fi, err := os.Stat(d.EnvFilesDir())
+	if err != nil {
+		t.Fatalf("os.Stat() error = %v", err)
+	}
+	if got := fi.Mode().Perm(); runtime.GOOS != "windows" && got != 0o700 {
+		t.Fatalf("env files directory mode = %v, want %v", got, os.FileMode(0o700))
+	}
+	for _, mounted := range []string{d.HomeDir(), d.GuestHomeDir(), d.UserHomesDir(), d.WorkspacesDir()} {
+		if rel, err := filepath.Rel(mounted, d.EnvFilesDir()); err == nil && !strings.HasPrefix(rel, "..") {
+			t.Fatalf("EnvFilesDir() = %s is inside %s, which a container mounts", d.EnvFilesDir(), mounted)
+		}
+	}
+}
+
 func TestFindWithState(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()

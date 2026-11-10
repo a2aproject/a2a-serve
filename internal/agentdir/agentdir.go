@@ -185,6 +185,15 @@ func (d Dir) AgentMeshDir() string { return filepath.Join(d.StateDir(), "agentme
 // HomeDir returns the harness home, mounted at /home/agent in a container.
 func (d Dir) HomeDir() string { return filepath.Join(d.StateDir(), "home") }
 
+// RunDir holds what the server's processes write while they run and the
+// sandbox must not see. It is never mounted into a container.
+func (d Dir) RunDir() string { return filepath.Join(d.StateDir(), "run") }
+
+// EnvFilesDir holds the env files of the containers, which carry their
+// secrets. The server empties it at start, since a container that was
+// killed leaves its file behind.
+func (d Dir) EnvFilesDir() string { return filepath.Join(d.RunDir(), "env") }
+
 // GuestHomeDir is the home of the separate agent process of guests. It
 // keeps the name it had before guests were called guests.
 func (d Dir) GuestHomeDir() string { return filepath.Join(d.StateDir(), "home-anonymous") }
@@ -384,8 +393,8 @@ func (d Dir) ID() string {
 func (d Dir) ServiceName() string { return "a2a-" + d.ID() }
 
 // Init creates the .a2a and state directories and the .gitignore which keeps
-// state out of version control. The state directory and the harness home
-// must be real directories, since a cloned repository could ship them as
+// state out of version control. The state directory, the harness home and the run
+// directories must be real directories, since a cloned repository could ship them as
 // symlinks.
 func (d Dir) Init() error {
 	if d.HasRelay() {
@@ -394,8 +403,10 @@ func (d Dir) Init() error {
 	if err := d.mkdirState(); err != nil {
 		return err
 	}
-	if err := fsutil.MkdirReal(d.HomeDir()); err != nil {
-		return err
+	for _, dir := range []string{d.HomeDir(), d.RunDir(), d.EnvFilesDir()} {
+		if err := fsutil.MkdirReal(dir); err != nil {
+			return err
+		}
 	}
 	return WriteGitignore(d.Path())
 }

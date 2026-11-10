@@ -34,9 +34,11 @@ import (
 
 func TestDockerRunnerCommand(t *testing.T) {
 	t.Parallel()
+	envDir := t.TempDir()
 	r := &DockerRunner{
-		Name:  "a2a-coder-123",
-		Image: "img:1",
+		Name:   "a2a-coder-123",
+		Image:  "img:1",
+		EnvDir: envDir,
 		Mounts: []agentdir.Mount{
 			{Src: "/src/app", Dst: "/src/app"},
 			{Src: "/home/u/docs", Dst: "/docs", ReadOnly: true},
@@ -49,6 +51,9 @@ func TestDockerRunnerCommand(t *testing.T) {
 		t.Fatalf("Command() error = %v", err)
 	}
 	envFile := argAfter(cmd.Args, "--env-file")
+	if got := filepath.Dir(envFile); got != envDir {
+		t.Fatalf("env file directory = %q, want %q", got, envDir)
+	}
 	t.Cleanup(func() {
 		if err := os.Remove(envFile); err != nil {
 			t.Errorf("removing %s error = %v", envFile, err)
@@ -92,9 +97,17 @@ func TestDockerRunnerCommand(t *testing.T) {
 	}
 }
 
+func TestDockerRunnerCommandRequiresEnvDirForEnv(t *testing.T) {
+	t.Parallel()
+	r := &DockerRunner{Name: "n", Image: "img", Env: []string{"KEY=secret"}}
+	if _, err := r.Command(context.Background(), Command{Path: "opencode"}); err == nil {
+		t.Fatalf("DockerRunner.Command() error = nil, want an error")
+	}
+}
+
 func TestDockerRunnerCommandRejectsMultilineEnv(t *testing.T) {
 	t.Parallel()
-	r := &DockerRunner{Name: "n", Image: "img", Env: []string{"KEY=line1\nline2"}}
+	r := &DockerRunner{Name: "n", Image: "img", EnvDir: t.TempDir(), Env: []string{"KEY=line1\nline2"}}
 	if _, err := r.Command(context.Background(), Command{Path: "opencode"}); err == nil {
 		t.Fatalf("Command() error = nil, want an error")
 	}

@@ -165,7 +165,7 @@ func TestPrepareDockerRefusesSymlinksInWritableMounts(t *testing.T) {
 			if home == "" {
 				home = t.TempDir()
 			}
-			_, err := startDocker(t, Spec{Mounts: mounts, Hidden: hidden, Home: home})
+			_, err := startDocker(t, Spec{Mounts: mounts, Hidden: hidden, Home: home, EnvDir: t.TempDir()})
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("Prepare() error = %v, want nil", err)
@@ -197,7 +197,7 @@ func TestPrepareDockerNamesResolvedMountSource(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, err = startDocker(t, Spec{Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: shared, Dst: "/shared"}}, Home: t.TempDir()})
+	_, err = startDocker(t, Spec{Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: shared, Dst: "/shared"}}, Home: t.TempDir(), EnvDir: t.TempDir()})
 
 	if want := "use the resolved path " + resolved + " instead"; err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Prepare() error = %v, want %q", err, want)
@@ -223,7 +223,7 @@ func newAgentLayout(t *testing.T) agentLayout {
 
 func (l agentLayout) spec(t *testing.T, pins *Pins, home string) Spec {
 	t.Helper()
-	return Spec{Mounts: []agentdir.Mount{{Src: l.ws, Dst: l.ws}}, Hidden: []string{l.a2a}, Home: home, Pins: pins}
+	return Spec{Mounts: []agentdir.Mount{{Src: l.ws, Dst: l.ws}}, Hidden: []string{l.a2a}, Home: home, EnvDir: t.TempDir(), Pins: pins}
 }
 
 func (l agentLayout) pins(t *testing.T) *Pins {

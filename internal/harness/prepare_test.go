@@ -43,6 +43,7 @@ func TestPrepareLocal(t *testing.T) {
 		Sandbox: SandboxLocal,
 		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:    home,
+		EnvDir:  t.TempDir(),
 		Env:     []string{"API_KEY=k"},
 		Socket:  "/run/agent/a2a.sock",
 		CLI:     "/opt/a2a/bin/a2a",
@@ -143,6 +144,7 @@ func TestPrepareModel(t *testing.T) {
 				Sandbox: SandboxLocal,
 				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
+				EnvDir:  t.TempDir(),
 				Model:   tc.model,
 			})
 			if err != nil {
@@ -176,6 +178,7 @@ func TestPrepareDocker(t *testing.T) {
 		Profile: claude{},
 		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:    home,
+		EnvDir:  t.TempDir(),
 		Name:    "a2a-test",
 		Socket:  filepath.Join(sockDir, "a2a.sock"),
 		CLI:     "/opt/a2a/bin/a2a",
@@ -230,6 +233,7 @@ func TestPrepareDockerRelayGetsMissingImage(t *testing.T) {
 		Profile: claude{},
 		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:    home,
+		EnvDir:  t.TempDir(),
 		Name:    "a2a-test",
 		Socket:  filepath.Join(sockDir, "a2a.sock"),
 		CLI:     "/opt/a2a/bin/a2a",
@@ -276,6 +280,7 @@ func TestPrepareCLITimeout(t *testing.T) {
 				Sandbox: SandboxLocal,
 				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:    t.TempDir(),
+				EnvDir:  t.TempDir(),
 				Env:     tc.env,
 			})
 			if err != nil {
@@ -339,6 +344,7 @@ func TestPrepareDockerHidesNestedAgents(t *testing.T) {
 		Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
 		Hidden: []string{own},
 		Home:   t.TempDir(),
+		EnvDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -374,6 +380,7 @@ func TestPrepareDockerSkipsAllowedBroadMount(t *testing.T) {
 		Mounts: []agentdir.Mount{{Src: ws, Dst: ws}, {Src: "/", Dst: "/host", ReadOnly: true}},
 		Hidden: []string{own},
 		Home:   t.TempDir(),
+		EnvDir: t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -395,6 +402,7 @@ func TestPrepareLocalWarnsAboutNestedAgents(t *testing.T) {
 		Sandbox: SandboxLocal,
 		Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:    t.TempDir(),
+		EnvDir:  t.TempDir(),
 	})
 	if err != nil {
 		t.Fatalf("Prepare() error = %v", err)
@@ -430,6 +438,7 @@ func TestPrepareDockerMasksMCP(t *testing.T) {
 				Profile: claude{},
 				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}, {Src: ws, Dst: "/copy", ReadOnly: true}},
 				Home:    home,
+				EnvDir:  t.TempDir(),
 				Name:    "a2a-test",
 				MCPMask: mask,
 			})
@@ -551,6 +560,7 @@ func TestPrepareDockerMasksAgentConfig(t *testing.T) {
 				Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}, {Src: docs, Dst: "/docs", ReadOnly: true}},
 				Hidden:     []string{hidden},
 				Home:       t.TempDir(),
+				EnvDir:     t.TempDir(),
 				ConfigMask: mask,
 			}
 			if tc.copy {
@@ -613,6 +623,7 @@ func TestPrepareDockerMasksAgentConfigAboveTheWorkspace(t *testing.T) {
 		Name:       "a2a-test",
 		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}, {Src: repo, Dst: repo}},
 		Home:       t.TempDir(),
+		EnvDir:     t.TempDir(),
 		ConfigMask: mask,
 	})
 	if err != nil {
@@ -650,6 +661,7 @@ func TestPrepareDockerAgentConfigSymlinksInMounts(t *testing.T) {
 		Name:       "a2a-test",
 		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}, {Src: dotfiles, Dst: "/dotfiles"}},
 		Home:       t.TempDir(),
+		EnvDir:     t.TempDir(),
 		ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
 	}
 
@@ -728,6 +740,7 @@ func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 				Name:       "a2a-test",
 				Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:       t.TempDir(),
+				EnvDir:     t.TempDir(),
 				ConfigMask: filepath.Join(t.TempDir(), "config-mask.json"),
 			})
 
@@ -816,6 +829,7 @@ func TestPrepareDockerLocksHomeConfig(t *testing.T) {
 				Name:     "a2a-test",
 				Mounts:   []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:     home,
+				EnvDir:   t.TempDir(),
 				Image:    "img:1",
 				LockHome: tc.lock,
 			}
@@ -897,6 +911,7 @@ func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
 				Name:     "a2a-test",
 				Mounts:   []agentdir.Mount{{Src: ws, Dst: ws}},
 				Home:     home,
+				EnvDir:   t.TempDir(),
 				LockHome: true,
 			})
 			if err != nil {
@@ -941,6 +956,7 @@ func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
 		Name:     "a2a-test",
 		Mounts:   []agentdir.Mount{{Src: ws, Dst: ws}},
 		Home:     home,
+		EnvDir:   t.TempDir(),
 		LockHome: true,
 	})
 
