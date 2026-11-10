@@ -16,6 +16,8 @@ package cli
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -108,5 +110,49 @@ func TestBackupRestoreHelpDescribesDir(t *testing.T) {
 	}
 	if bad := "nearest directory with .a2a"; strings.Contains(out, bad) {
 		t.Fatalf("a2a-serve backup restore --help = %q, want no %q", out, bad)
+	}
+}
+
+// TestBackupNowReportsFailedRetention can't run in parallel because of t.Setenv.
+func TestBackupNowReportsFailedRetention(t *testing.T) {
+	bin := t.TempDir()
+	store := t.TempDir()
+	script := `#!/bin/sh
+case "$2" in
+cp) cat > "$FAKE_BUCKET/$(basename "$4")" ;;
+ls) ls "$FAKE_BUCKET" | sed "s|^|$3/|" ;;
+rm) echo "AccessDeniedException: 403 no storage.objects.delete access" >&2; exit 1 ;;
+esac
+`
+	if err := os.WriteFile(filepath.Join(bin, "gcloud"), []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("FAKE_BUCKET", store)
+	if err := os.WriteFile(filepath.Join(store, "coder-20200101T000000Z.a2abak"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	d := newTestAgent(t, &agentdir.Config{Name: "coder", Harness: "opencode", Backup: agentdir.BackupConfig{To: "gs://bucket/coder", Key: "secret:BACKUP_KEY"}})
+	if err := d.SaveSecrets(agentdir.Secrets{"BACKUP_KEY": "k"}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := runCMD(t, "backup", "now", "--dir", d.Root)
+
+	ce := clierr.Classify(err)
+	if err == nil || ce.Exit != 1 {
+		t.Fatalf("a2a-serve backup now error = %v with exit %d, want exit 1", err, ce.Exit)
+	}
+	for _, want := range []string{"took snapshot coder-", "AccessDeniedException"} {
+		if !strings.Contains(ce.Message, want) {
+			t.Fatalf("a2a-serve backup now error = %q, want it to contain %q", ce.Message, want)
+		}
+	}
+	if !strings.Contains(ce.Hint, "permission to delete old snapshots") {
+		t.Fatalf("a2a-serve backup now error hint = %q, want it to name the delete permission", ce.Hint)
+	}
+	entries, err := os.ReadDir(store)
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("os.ReadDir(bucket) = %v, %v, want the new snapshot and the old one", entries, err)
 	}
 }

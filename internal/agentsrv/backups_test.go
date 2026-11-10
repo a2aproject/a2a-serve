@@ -16,10 +16,14 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -62,5 +66,51 @@ func TestServerTakesBackups(t *testing.T) {
 	snaps, err := backup.List(ctx, dest, "coder")
 	if err != nil || len(snaps) != 1 {
 		t.Fatalf("List() = %v, %v, want one snapshot", snaps, err)
+	}
+}
+
+func TestBackupsRecord(t *testing.T) {
+	t.Parallel()
+	taken := time.Date(2026, 11, 10, 12, 0, 0, 0, time.UTC)
+	earlier := taken.Add(-time.Hour)
+	snap := backup.Snapshot{Name: "coder-20261110T120000Z.a2abak", Agent: "coder", Taken: taken}
+	retention := agenterr.WithHint(&backup.RetentionError{Snapshot: snap, Err: errors.New("access denied")}, agenterr.HintBackupDelete, "")
+	tests := []struct {
+		name   string
+		before controlapi.BackupStatus
+		err    error
+		want   controlapi.BackupStatus
+	}{
+		{
+			name:   "stored",
+			before: controlapi.BackupStatus{To: "gs://b", Last: earlier, LastError: "old"},
+			want:   controlapi.BackupStatus{To: "gs://b", Last: taken},
+		},
+		{
+			name:   "failed to store",
+			before: controlapi.BackupStatus{To: "gs://b", Last: earlier},
+			err:    errors.New("storing: boom"),
+			want:   controlapi.BackupStatus{To: "gs://b", Last: earlier, LastError: "storing: boom"},
+		},
+		{
+			name:   "stored but retention failed",
+			before: controlapi.BackupStatus{To: "gs://b", Last: earlier},
+			err:    retention,
+			want: controlapi.BackupStatus{
+				To:        "gs://b",
+				Last:      taken,
+				LastError: "took snapshot coder-20261110T120000Z.a2abak, but removing old snapshots failed: access denied: the backup destination needs permission to delete old snapshots; grant it, and the next `a2a-serve backup now` removes them",
+			},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			b := &backups{status: tc.before}
+			b.record(snap, tc.err)
+			if diff := cmp.Diff(&tc.want, b.get()); diff != "" {
+				t.Fatalf("backups.get() after record() wrong result (-want +got) diff = %s", diff)
+			}
+		})
 	}
 }

@@ -430,7 +430,7 @@ func printStatus(cfg *globalConfig, st *controlapi.Status, pending []string, nex
 		}
 		fmt.Fprintf(&sb, "  backup   %s, %s, next %s\n", b.To, last, b.Next.Local().Format("2006-01-02 15:04"))
 		if b.LastError != "" {
-			fmt.Fprintf(&sb, "  %-8s ! the last snapshot failed: %s\n", "", b.LastError)
+			fmt.Fprintf(&sb, "  %-8s ! the last backup failed: %s\n", "", b.LastError)
 		}
 	}
 	if len(pending) > 0 {

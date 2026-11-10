@@ -16,11 +16,13 @@ package agentsrv
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
+	"github.com/a2aproject/a2a-serve/internal/agenterr"
 	"github.com/a2aproject/a2a-serve/internal/backup"
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
@@ -46,6 +48,19 @@ func (b *backups) update(fn func(*controlapi.BackupStatus)) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	fn(&b.status)
+}
+
+// record remembers the outcome of Take. A snapshot stored with a failed
+// retention still counts as the last one.
+func (b *backups) record(snap backup.Snapshot, err error) {
+	var retention *backup.RetentionError
+	stored := err == nil || errors.As(err, &retention)
+	b.update(func(st *controlapi.BackupStatus) {
+		st.LastError = agenterr.Text(err)
+		if stored {
+			st.Last = snap.Taken
+		}
+	})
 }
 
 // startBackups reports the backup destination in status right away, and
@@ -92,14 +107,7 @@ func (s *Server) runBackups(ctx context.Context, cfg *agentdir.Config, dest back
 		if ctx.Err() != nil {
 			return
 		}
-		s.backups.update(func(st *controlapi.BackupStatus) {
-			st.LastError = ""
-			if err != nil {
-				st.LastError = err.Error()
-				return
-			}
-			st.Last = snap.Taken
-		})
+		s.backups.record(snap, err)
 		if err != nil {
 			slog.Error("taking a backup snapshot", "to", cfg.Backup.To, "error", err)
 		}
