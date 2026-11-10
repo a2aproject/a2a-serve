@@ -215,6 +215,22 @@ func TestFetchErrors(t *testing.T) {
 	}
 }
 
+func TestFetchRunsNoOptionLikeRef(t *testing.T) {
+	t.Parallel()
+	repo := newGitRepo(t)
+	repo.commit(map[string]string{"AGENTS.md": "v1"})
+	marker := filepath.Join(t.TempDir(), "ran")
+
+	_, err := Fetcher{Git: ExecGit(false)}.Fetch(t.Context(), Source{Repo: repo.url(), Ref: "--upload-pack=touch " + marker}, t.TempDir())
+
+	if err == nil {
+		t.Fatalf("Fetcher.Fetch() error = nil, want an error for the ref")
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Lstat(%s) error = %v, want the ref's command not run", marker, err)
+	}
+}
+
 func TestFetchLocal(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
@@ -267,7 +283,7 @@ func TestFetchResolvesTreeRest(t *testing.T) {
 			if diff := cmp.Diff(want, got, cmp.AllowUnexported(Source{})); diff != "" {
 				t.Fatalf("Fetcher.resolve() wrong result (-want +got) diff = %s", diff)
 			}
-			if diff := cmp.Diff([]string{"ls-remote --heads --tags https://github.com/acme/agents.git"}, calls); diff != "" {
+			if diff := cmp.Diff([]string{"ls-remote --heads --tags --end-of-options https://github.com/acme/agents.git"}, calls); diff != "" {
 				t.Fatalf("Fetcher.resolve() wrong git calls (-want +got) diff = %s", diff)
 			}
 		})

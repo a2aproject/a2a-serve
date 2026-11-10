@@ -15,6 +15,7 @@
 package cli
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -253,6 +254,25 @@ func TestRecipeUpdateRefuses(t *testing.T) {
 	}
 	if _, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", newTestRecipe(t), "--dir", plain.Root, "--yes"); err == nil || !strings.Contains(err.Error(), "wasn't created from a recipe") {
 		t.Fatalf("a2a-serve recipe <source> into an agent without a record error = %v, want it refused", err)
+	}
+}
+
+func TestRecipeUpdateDryRunRunsNoOptionLikeRefInRecord(t *testing.T) {
+	t.Parallel()
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git is not installed")
+	}
+	_, target := newRecipeAgent(t, nil)
+	marker := filepath.Join(t.TempDir(), "ran")
+	writeTestFile(t, target, ".a2a/recipe.lock", "repo: .\nref: \"--upload-pack=touch "+marker+"\"\n")
+
+	_, err := runCMDWith(t, recipeConfig(false, nil, nil), "recipe", "--dir", target, "--dry-run")
+
+	if err == nil || !strings.Contains(err.Error(), "invalid recipe source") {
+		t.Fatalf("a2a-serve recipe --dry-run error = %v, want the record refused", err)
+	}
+	if _, err := os.Lstat(marker); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Lstat(%s) error = %v, want the ref's command not run", marker, err)
 	}
 }
 
