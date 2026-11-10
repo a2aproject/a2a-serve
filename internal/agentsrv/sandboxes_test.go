@@ -462,3 +462,31 @@ func TestMessengerTurnsSaveTheIdentityOfTheirUser(t *testing.T) {
 		t.Fatalf("UserIdentity() after a messenger turn error = %v, want nil", err)
 	}
 }
+
+func TestTurnRightAfterTheLastTaskEndedRestartsTheContainer(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	st := openStore(t)
+	rules := []agentdir.SandboxRule{{Match: []string{"pairing:ann"}, Secrets: []string{"KEY"}}}
+	s := &Server{
+		sandboxes: newSandboxes(func() *agentdir.Config {
+			return &agentdir.Config{Secrets: []string{"KEY"}, Policy: agentdir.PolicyConfig{Sandbox: rules}}
+		}, st),
+		tasks: st.Tasks("", func(context.Context) (string, bool, error) { return "", true, nil }),
+	}
+	ann := auth.Principal{ID: auth.PairPrincipal("ann"), Role: auth.RoleMember, Identity: auth.Identity{Pairing: "ann"}}
+	key := agentkey.User(ann.ID)
+	proc := &countingCloser{}
+	s.users.started(s.users.get(key), proc, access.Sandbox{Storage: s.sandboxes.resolve(ann).Storage})
+	time.AfterFunc(50*time.Millisecond, s.users.turn(key))
+
+	release, err := s.admitTurn(auth.InProcess(ctx, ann), key, nil)
+
+	if err != nil {
+		t.Fatalf("admitTurn() while the turn of an ended task finishes error = %v, want nil", err)
+	}
+	release()
+	if proc.closed != 1 {
+		t.Fatalf("admitTurn() closed the container %d times, want 1", proc.closed)
+	}
+}

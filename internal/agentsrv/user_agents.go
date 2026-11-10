@@ -21,6 +21,7 @@ import (
 	"io"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 
@@ -57,6 +58,8 @@ type userAgent struct {
 	proc     io.Closer
 	starting bool
 	turns    int
+	// idle is closed when turns drops to zero, for waitIdle.
+	idle chan struct{}
 	// sandbox is what the running process got when it started.
 	sandbox access.Sandbox
 }
@@ -156,14 +159,48 @@ func (u *userAgents) turn(key string) (end func()) {
 	u.mu.Lock()
 	a.turns++
 	u.mu.Unlock()
+	return u.endTurnOnce(a)
+}
+
+// endTurnOnce returns a function that ends a turn of a once.
+func (u *userAgents) endTurnOnce(a *userAgent) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
 			u.mu.Lock()
 			defer u.mu.Unlock()
 			a.turns--
+			if a.turns == 0 && a.idle != nil {
+				close(a.idle)
+				a.idle = nil
+			}
 		})
 	}
+}
+
+// waitIdle waits up to d for the turns in the process of key to end, and
+// reports whether they did.
+func (u *userAgents) waitIdle(ctx context.Context, key string, d time.Duration) bool {
+	a := u.get(key)
+	u.mu.Lock()
+	if a.turns == 0 {
+		u.mu.Unlock()
+		return true
+	}
+	if a.idle == nil {
+		a.idle = make(chan struct{})
+	}
+	idle := a.idle
+	u.mu.Unlock()
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-idle:
+		return true
+	case <-t.C:
+	case <-ctx.Done():
+	}
+	return false
 }
 
 // hasRoom reports whether a turn in the process of key can run now: the
@@ -235,10 +272,19 @@ func (u *userAgents) admit(key string, want access.Sandbox, answer bool) (releas
 		a.startMu.Unlock() //nolint:staticcheck // waits for a close in progress
 		u.mu.Lock()
 	}
-	if a.proc != nil && !a.sandbox.Equal(want) && !answer {
-		if a.turns > 0 || !a.startMu.TryLock() {
+	for a.proc != nil && !a.sandbox.Equal(want) && !answer {
+		if a.turns > 0 {
 			u.mu.Unlock()
 			return nil, errSandboxRestarting
+		}
+		if !a.startMu.TryLock() {
+			// A closer or a start holds the process; look again once it
+			// is done.
+			u.mu.Unlock()
+			a.startMu.Lock()
+			a.startMu.Unlock() //nolint:staticcheck // waits for a close or start in progress
+			u.mu.Lock()
+			continue
 		}
 		proc := a.proc
 		a.proc = nil
@@ -252,14 +298,7 @@ func (u *userAgents) admit(key string, want access.Sandbox, answer bool) (releas
 	}
 	a.turns++
 	u.mu.Unlock()
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			u.mu.Lock()
-			defer u.mu.Unlock()
-			a.turns--
-		})
-	}, nil
+	return u.endTurnOnce(a), nil
 }
 
 // closeStale closes the process of key if it runs with another sandbox than
