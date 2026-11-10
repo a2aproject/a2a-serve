@@ -103,10 +103,13 @@ func (s *Server) routes(l listener) http.Handler {
 		writeBody(w, strings.ReplaceAll(skills.A2AMailbox, "{{BASE}}", base(baseURL, r)))
 	})
 	// Routes that serve callers before they authenticate share a pool of
-	// their own, limited for each client.
+	// their own, limited for each client that the server can tell apart.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, func(r *http.Request) string { return s.pairClient(r, l) })
-	mux.Handle("GET /download/a2a", unauthenticated.Handler(http.HandlerFunc(handleDownloadCLI)))
-	mux.Handle("GET /download/a2a-serve", unauthenticated.Handler(http.HandlerFunc(handleDownloadServe)))
+	download := func(h http.HandlerFunc) http.Handler {
+		return unauthenticated.Handler(httpserver.WriteTimeout(s.timings.DownloadTimeout, h))
+	}
+	mux.Handle("GET /download/a2a", download(handleDownloadCLI))
+	mux.Handle("GET /download/a2a-serve", download(handleDownloadServe))
 	mux.Handle("POST "+pairapi.Path, unauthenticated.Handler(jsonhttp.RequireJSON(jsonhttp.Limit{Max: maxPairBody, Total: s.timings.PairReadTimeout}.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { s.handlePair(w, r, base(baseURL, r), l) })))))
 	mux.Handle("/hitl/{token}", unauthenticated.Handler(jsonhttp.Limit{Max: maxHITLBody, Total: s.timings.PairReadTimeout}.Handler(http.HandlerFunc(s.approvals.HandlePage))))
 	if l.kind == network.ListenerPublic {
@@ -353,7 +356,9 @@ func (s *Server) handlePair(w http.ResponseWriter, r *http.Request, baseURL stri
 // failed attempts, and of unauthenticated requests for their limit on
 // concurrent ones: the source of a Funnel connection, the verified peer of
 // a relay connection, or the remote address of a direct one. Other
-// tunneled clients can't be told apart, so they get "".
+// tunneled clients can't be told apart, so they get "". Their concurrent
+// requests count only toward the total, as one client could otherwise
+// take the share of all of them; the relay limits them for each address.
 func (s *Server) pairClient(r *http.Request, l listener) string {
 	if src, ok := r.Context().Value(funnelSourceKey{}).(string); ok {
 		return src

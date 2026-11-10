@@ -45,6 +45,9 @@ type Front struct {
 	signIn  http.Handler
 	proxy   atomic.Pointer[httputil.ReverseProxy]
 	proxied *httpserver.KeyedLimiter
+	// onboarding limits the requests to the routes of agents that serve
+	// callers before they authenticate.
+	onboarding *httpserver.KeyedLimiter
 	// transport is shared by the proxies of each Open, so a reopened front
 	// reuses its connections.
 	transport *http.Transport
@@ -53,6 +56,13 @@ type Front struct {
 // maxProxiedPerClient is how many requests to Agent Mesh one client may
 // have open, WebSockets of agents included.
 const maxProxiedPerClient = 64
+
+// maxOnboardingPerClient is how many requests one client may have open to
+// the routes where agents serve callers before they authenticate, such as
+// pairing and sign-in. An agent can't tell apart the callers the relay
+// forwards, so the relay limits each of them well below the agent's limit
+// for one client.
+const maxOnboardingPerClient = 8
 
 // New returns the front of a relay that reports info and serves control,
 // which checks the admin token itself, at [control.RemotePath], and signIn
@@ -63,10 +73,11 @@ func New(info agentmesh.Info, ctl, signIn http.Handler) *Front {
 	// authenticate, so they share a pool of their own.
 	unauthenticated := httpserver.NewKeyedLimiter(httpserver.MaxUnauthenticated, httpserver.MaxUnauthenticatedPerClient, client)
 	f := &Front{
-		info:      info,
-		control:   unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
-		proxied:   httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
-		transport: upstreamTransport(),
+		info:       info,
+		control:    unauthenticated.Handler(http.StripPrefix(control.RemotePath, ctl)),
+		proxied:    httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxProxiedPerClient, client),
+		onboarding: httpserver.NewKeyedLimiter(httpserver.MaxConcurrent, maxOnboardingPerClient, client),
+		transport:  upstreamTransport(),
 	}
 	if signIn != nil {
 		f.signIn = unauthenticated.Handler(http.StripPrefix(signin.Path, signIn))
@@ -165,7 +176,33 @@ func (f *Front) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		jsonhttp.Error(w, http.StatusServiceUnavailable, "the relay is starting")
 		return
 	}
-	f.proxied.Handler(proxy).ServeHTTP(w, r)
+	h := f.proxied.Handler(proxy)
+	if onboarding(p) {
+		h = f.onboarding.Handler(h)
+	}
+	h.ServeHTTP(w, r)
+}
+
+// onboarding reports whether p reaches, through ingress, a route where an
+// a2a-serve agent serves callers before they authenticate: pairing,
+// sign-in, approval links and downloads.
+func onboarding(p string) bool {
+	rest, ok := strings.CutPrefix(p, "/ingress/")
+	if !ok {
+		return false
+	}
+	// The path is /ingress/<peer>/<service type>/<service name>/<route>.
+	parts := strings.SplitN(rest, "/", 4)
+	if len(parts) < 4 {
+		return false
+	}
+	route := "/" + parts[3]
+	for _, prefix := range []string{"/pair", "/oauth", "/hitl", "/download"} {
+		if under(route, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 // client identifies the client of a request for its limits. A tunnel or a

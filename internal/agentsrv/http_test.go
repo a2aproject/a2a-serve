@@ -473,6 +473,89 @@ func TestUnauthenticatedClientLimit(t *testing.T) {
 	}
 }
 
+// startRequest sends the request line and headers of method and path on
+// a new connection to u, which stays open until the test ends, and returns
+// the head of the first response without reading further.
+func startRequest(t *testing.T, u, method, path string, header http.Header) *http.Response {
+	t.Helper()
+	parsed, err := url.Parse(u)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conn, err := net.Dial("tcp", parsed.Host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := conn.Close(); err != nil {
+			t.Errorf("closing the connection: %v", err)
+		}
+	})
+	var lines strings.Builder
+	if err := header.Write(&lines); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := fmt.Fprintf(conn, "%s %s HTTP/1.1\r\nHost: %s\r\n%s\r\n", method, path, parsed.Host, lines.String()); err != nil {
+		t.Fatal(err)
+	}
+	if err := conn.SetReadDeadline(time.Now().Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.ReadResponse(bufio.NewReader(conn), nil)
+	if err != nil {
+		t.Fatalf("reading the response to %s %s: %v", method, path, err)
+	}
+	return resp
+}
+
+// holdPair starts a pairing request on a new connection to u whose body
+// never comes, and returns once the server waits for it.
+func holdPair(t *testing.T, u string) {
+	t.Helper()
+	resp := startRequest(t, u, http.MethodPost, "/pair", http.Header{"Content-Type": {"application/json"}, "Content-Length": {"100"}, "Expect": {"100-continue"}})
+	if resp.StatusCode != http.StatusContinue {
+		t.Fatalf("POST /pair waiting for its body status = %d, want %d", resp.StatusCode, http.StatusContinue)
+	}
+}
+
+func TestRelayCallersShareOnlyTheTotalUnauthenticatedLimit(t *testing.T) {
+	t.Parallel()
+	relay := &fakeProvider{net: &fakeNet{agents: map[string]string{}}, name: "coder", kind: network.ProviderRelay, unidentified: true}
+	ts := startServer(t, serverOpts{public: relay, timings: func(tm *Timings) { tm.PairReadTimeout = time.Hour }})
+	code, err := controlapi.NewClient(ts.dir).Pair(context.Background(), controlapi.PairCodeRequest{Name: "anna"})
+	if err != nil {
+		t.Fatalf("Pair() error = %v", err)
+	}
+	for range httpserver.MaxUnauthenticatedPerClient {
+		holdPair(t, ts.publicURL())
+	}
+
+	got := statusOf(t, http.MethodPost, ts.publicURL()+"/pair", `{"code":"`+code.Code+`"}`, http.Header{"Content-Type": {"application/json"}})
+
+	if got != http.StatusOK {
+		t.Fatalf("POST /pair through the relay while another caller holds %d pairing requests status = %d, want %d", httpserver.MaxUnauthenticatedPerClient, got, http.StatusOK)
+	}
+}
+
+func TestUnreadDownloadsGiveBackTheirRequests(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadTimeout = 100 * time.Millisecond }})
+	for range httpserver.MaxUnauthenticatedPerClient {
+		if resp := startRequest(t, ts.localURL(), http.MethodGet, "/download/a2a-serve", nil); resp.StatusCode != http.StatusOK {
+			t.Fatalf("GET /download/a2a-serve status = %d, want %d", resp.StatusCode, http.StatusOK)
+		}
+	}
+
+	got := http.StatusTooManyRequests
+	for deadline := time.Now().Add(30 * time.Second); got == http.StatusTooManyRequests && time.Now().Before(deadline); {
+		got = statusOf(t, http.MethodGet, ts.localURL()+"/hitl/unknown", "", nil)
+	}
+
+	if got == http.StatusTooManyRequests {
+		t.Fatalf("GET /hitl/unknown after the client's unread downloads timed out status = %d, want them to give back their requests", got)
+	}
+}
+
 func TestMembersAndGuestsLeaveRequestsToTheOwner(t *testing.T) {
 	t.Parallel()
 	ts := startPublicServer(t, nil)

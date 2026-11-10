@@ -39,7 +39,7 @@ Every A2A request needs a known caller. These routes are public: the agent card,
 
 The server limits failed attempts to redeem a code for each caller, on `/pair` and with `join <code>` in a chat. Through Funnel and the relay, it tells callers apart by their own address or relay identity. Callers that the relay doesn't identify, and callers over their limit, share one short backoff. A valid code from an address over its limit goes through after that backoff. `pair join` saves a node token only if it is for a node of the agent it joined.
 
-The public routes also limit the open requests of each caller and the size and send time of their bodies. This keeps capacity free for callers who authenticate. Members and guests each get a share of the open requests, so they can't take the requests of the owner, and guests can't take those of members ([request limits](../reference/http-routes.md#request-limits)).
+The public routes also limit the open requests of each caller, the size and send time of their bodies, and the time a download may take. The relay limits the open requests of the callers it doesn't identify for each of their addresses. This keeps capacity free for callers who authenticate. Members and guests each get a share of the open requests, so they can't take the requests of the owner, and guests can't take those of members ([request limits](../reference/http-routes.md#request-limits)).
 
 A web page open in your browser can't make requests that change state on the agent, because the server refuses cross-site requests and needs a JSON body ([browser requests](../reference/http-routes.md#browser-requests)).
 
