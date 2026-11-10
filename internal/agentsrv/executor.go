@@ -314,13 +314,14 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	case isUser:
 		spec.Home = s.userHomeDir(key)
 	}
-	// The agents of members and guests could otherwise change the
-	// permissions that the owner set for them.
-	if key != "" {
-		spec.HomePolicy = s.dir.HomePolicyPath()
-	}
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
+	}
+	if cfg.Sandbox != harness.SandboxLocal {
+		spec.LockHome = key != ""
+		if spec.PolicyDir, err = s.policies.write(cfg, spec.LockHome, s.mcpServerNames()); err != nil {
+			return nil, fmt.Errorf("writing the agent's policy: %w", err)
+		}
 	}
 	sb, err := s.sandboxes.of(ctx, key)
 	if err != nil {

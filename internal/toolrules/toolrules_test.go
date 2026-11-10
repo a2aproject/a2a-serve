@@ -279,3 +279,28 @@ func TestRedact(t *testing.T) {
 		})
 	}
 }
+
+func TestDeniesCommands(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		deny []string
+		want bool
+	}{
+		{name: "none"},
+		{name: "other kinds and tools", deny: []string{"edit", "fetch", "tool:gmail.*"}},
+		{name: "execute", deny: []string{"edit", "execute"}, want: true},
+		{name: "every kind", deny: []string{"*"}, want: true},
+		{name: "kind glob", deny: []string{"exec*"}, want: true},
+		{name: "command", deny: []string{"command:git push *"}, want: true},
+		{name: "invalid entry", deny: []string{"command:"}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := DeniesCommands(tc.deny); got != tc.want {
+				t.Fatalf("DeniesCommands(%q) = %v, want %v", tc.deny, got, tc.want)
+			}
+		})
+	}
+}

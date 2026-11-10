@@ -140,6 +140,9 @@ type Server struct {
 	// pins are the agent directory, .a2a, state and the homes as the server
 	// first saw them, which containers of agent processes are checked against.
 	pins *harness.Pins
+	// policies writes the settings that the agent processes in containers
+	// can't override.
+	policies *policies
 	// egress opens the egress sockets of containers.
 	egress *egressSockets
 	// existed is set when the agent's database existed before this start,
@@ -298,6 +301,7 @@ func Run(ctx context.Context, opts Options) error {
 		cardRefreshChanged: make(chan struct{}, 1),
 	}
 	s.stalls = newStallGuard(s.timings.TurnStallTimeout, s.timings.ToolStallTimeout)
+	s.policies = newPolicies(s.dir)
 	s.workspaces = workspaces.New(s.dir.WorkspacesDir())
 	s.egress = newEgressSockets(s.dir.HarnessSocketDir(), s.rt.Config)
 	if _, err := os.Stat(s.dir.DBPath()); err == nil {

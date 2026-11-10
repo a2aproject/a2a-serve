@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/a2aproject/a2a-serve/internal/a2atext"
+	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentops"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/control"
 	"github.com/a2aproject/a2a-serve/internal/agentsrv/inspector"
@@ -175,6 +176,15 @@ func (s *Server) reloadConfig(ctx context.Context) error {
 		select {
 		case s.cardRefreshChanged <- struct{}{}:
 		default:
+		}
+	}
+	// Claude Code reloads its policy in open sessions too, so the agent asks
+	// about shell commands as soon as the rules deny some.
+	if cfg := s.rt.Config(); cfg.Sandbox != agentdir.SandboxLocal {
+		for _, lockHome := range []bool{false, true} {
+			if _, err := s.policies.write(cfg, lockHome, nil); err != nil {
+				return fmt.Errorf("writing the agent's policy: %w", err)
+			}
 		}
 	}
 	return s.answerWaiting(ctx, nil)

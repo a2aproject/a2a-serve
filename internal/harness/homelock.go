@@ -23,7 +23,6 @@ import (
 	"strings"
 
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
-	"github.com/a2aproject/a2a-serve/internal/fsutil"
 )
 
 // The configuration of the agents in their homes which can change what they
@@ -35,14 +34,6 @@ var (
 	opencodeHomeConfig = []string{".config/opencode/", ".opencode/", ".local/share/opencode/auth.json"}
 )
 
-// claudePolicyPath is where Claude Code reads the managed settings, which
-// take precedence over every other source.
-const claudePolicyPath = "/etc/claude-code/managed-settings.json"
-
-// claudePolicy makes Claude Code ignore the MCP servers of ~/.claude.json,
-// which it writes itself, and keep those the server passes.
-const claudePolicy = `{"strictPluginOnlyCustomization": ["mcp"]}` + "\n"
-
 // opencodeGitignore is what opencode writes into a configuration folder
 // that lacks a .gitignore; it exits when it can't.
 const opencodeGitignore = "node_modules\npackage.json\npackage-lock.json\nbun.lock\n.gitignore"
@@ -53,15 +44,10 @@ type homeConfigReader interface {
 	// resetPermissions puts the server's permission settings back into the
 	// config file of home that the server writes.
 	resetPermissions(home string) error
-	// policy returns the container path and content of settings that
-	// override those of the home, or "" for none.
-	policy() (path, content string)
 }
 
-func (opencode) homeConfig() []string     { return opencodeHomeConfig }
-func (opencode) policy() (string, string) { return "", "" }
-func (claude) homeConfig() []string       { return claudeHomeConfig }
-func (claude) policy() (string, string)   { return claudePolicyPath, claudePolicy }
+func (opencode) homeConfig() []string { return opencodeHomeConfig }
+func (claude) homeConfig() []string   { return claudeHomeConfig }
 
 // lockHomeConfig returns the mounts that make the agent's configuration in
 // its home read-only. It creates the missing entries, since docker would
@@ -91,7 +77,6 @@ func lockHomeConfig(spec Spec) ([]agentdir.Mount, error) {
 			mounts = append(mounts, agentdir.Mount{Src: filepath.Join(spec.Home, rel), Dst: dst, ReadOnly: readOnly})
 		}
 	}
-	var policies []agentdir.Mount
 	for _, r := range readers {
 		for _, entry := range r.homeConfig() {
 			name, isDir := strings.CutSuffix(entry, "/")
@@ -112,14 +97,6 @@ func lockHomeConfig(spec Spec) ([]agentdir.Mount, error) {
 		if err := r.resetPermissions(spec.Home); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return nil, fmt.Errorf("resetting the permissions in %s: %w", spec.Home, err)
 		}
-		path, content := r.policy()
-		if path == "" {
-			continue
-		}
-		if err := fsutil.WriteAtomic(spec.HomePolicy, []byte(content), 0o644); err != nil {
-			return nil, fmt.Errorf("writing %s: %w", spec.HomePolicy, err)
-		}
-		policies = append(policies, agentdir.Mount{Src: spec.HomePolicy, Dst: path, ReadOnly: true})
 	}
-	return append(mounts, policies...), nil
+	return mounts, nil
 }

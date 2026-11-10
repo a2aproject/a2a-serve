@@ -42,6 +42,7 @@
 //	env <name>       replies with the variable name and its value, or unset
 //	write <file>     writes file and replies whether it could
 //	rename <a> <b>   renames a to b and replies whether it could
+//	read <file>      replies with the content of file
 //	scheduled ...    replies with "ran" and the prompt, for schedule runs
 //	markdown         replies with Markdown that uses most of the syntax
 //	call <agent> <t> sends t to an agent through the agents URL of the prompt
@@ -714,6 +715,13 @@ func (a *agent) prompt(m message, canceled chan struct{}) {
 			a.chunk(sid, "write error: "+err.Error())
 		} else {
 			a.chunk(sid, "write ok")
+		}
+		end("end_turn")
+	case "read":
+		if data, err := os.ReadFile(arg); err != nil {
+			a.chunk(sid, "read error: "+err.Error())
+		} else {
+			a.chunk(sid, string(data))
 		}
 		end("end_turn")
 	case "rename":

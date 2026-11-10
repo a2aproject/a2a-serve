@@ -19,7 +19,7 @@ Each agent keeps its settings and state in `.a2a` in its project directory.
         ├── homes/         # a home for the agent process of each member
         ├── home-anonymous/ # the home of the agent process for guests, named as in older versions
         ├── mcp-mask.json  # the .mcp.json with no servers that the sandbox shows the agent
-        ├── home-policy.json # the settings that the agents of members and guests can't override
+        ├── policy/        # the settings that the agent can't override in its containers
         ├── server.log     # rotated at 10 MB; the previous log is server.log.1
         ├── server.pid     # PID of the running server, so that stop works while it starts
         ├── server.lock    # held by the running server
