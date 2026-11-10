@@ -27,22 +27,45 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 )
 
+// fakeServices is a service manager with one service.
+type fakeServices struct {
+	installed bool
+	mainPID   int
+	err       error
+}
+
+func (f fakeServices) Installed(string) bool { return f.installed }
+
+func (f fakeServices) MainPID(string) (int, error) { return f.mainPID, f.err }
+
 func TestRestartForeground(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
 		t.Skip("unix sockets are not used on this platform")
 	}
-	dir := newAgent(t)
-	f := &fakeControl{pid: os.Getpid()}
-	serveControl(t, dir, f)
-
-	err := Restart(t.Context(), dir, controlapi.NewClient(dir), false, io.Discard)
-	const want = "press Ctrl-C there and run `a2a-serve start` again"
-	if err == nil || !strings.Contains(err.Error(), want) {
-		t.Fatalf("Restart() error = %v, want %q", err, want)
+	tests := []struct {
+		name     string
+		services fakeServices
+	}{
+		{name: "no service"},
+		{name: "service installed", services: fakeServices{installed: true}},
 	}
-	if slices.Contains(f.Calls(), "POST /stop") {
-		t.Fatalf("Restart() stopped the agent")
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := newAgent(t)
+			f := &fakeControl{pid: os.Getpid()}
+			serveControl(t, dir, f)
+
+			err := Restart(t.Context(), dir, controlapi.NewClient(dir), tc.services, false, io.Discard)
+			const want = "press Ctrl-C there and run `a2a-serve start` again"
+			if err == nil || !strings.Contains(err.Error(), want) {
+				t.Fatalf("Restart() error = %v, want %q", err, want)
+			}
+			if slices.Contains(f.Calls(), "POST /stop") {
+				t.Fatalf("Restart() stopped the agent")
+			}
+		})
 	}
 }
 
@@ -61,7 +84,7 @@ func TestRestartChecksSecretsBeforeStopping(t *testing.T) {
 	f := &fakeControl{pid: os.Getpid()}
 	serveControl(t, dir, f)
 
-	err := Restart(t.Context(), dir, controlapi.NewClient(dir), false, io.Discard)
+	err := Restart(t.Context(), dir, controlapi.NewClient(dir), fakeServices{}, false, io.Discard)
 	const want = "the value of MULTI has a line break"
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Restart() error = %v, want %q", err, want)
@@ -79,7 +102,7 @@ func TestRestartServerThatIsStarting(t *testing.T) {
 	dir := newAgent(t)
 	proc := startingServer(t, dir)
 
-	err := Restart(t.Context(), dir, controlapi.NewClient(dir), false, io.Discard)
+	err := Restart(t.Context(), dir, controlapi.NewClient(dir), fakeServices{}, false, io.Discard)
 	want := fmt.Sprintf("coder (pid %d) can't be restarted", proc.pid)
 	if err == nil || !strings.Contains(err.Error(), want) {
 		t.Fatalf("Restart() error = %v, want %q", err, want)

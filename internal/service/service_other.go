@@ -22,6 +22,9 @@ func Install(Unit) (string, error) { return "", ErrUnsupported }
 // Installed reports false on this platform.
 func Installed(string) bool { return false }
 
+// MainPID reports zero on this platform.
+func MainPID(string) (int, error) { return 0, nil }
+
 // Uninstall is not supported on this platform.
 func Uninstall(string) error { return ErrUnsupported }
 

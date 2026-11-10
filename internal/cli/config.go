@@ -29,6 +29,7 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/controlapi"
 	"github.com/a2aproject/a2a-serve/internal/lifecycle"
 	"github.com/a2aproject/a2a-serve/internal/output"
+	"github.com/a2aproject/a2a-serve/internal/service"
 )
 
 // outputYAML is the -o value only `config show` supports.
@@ -93,7 +94,7 @@ func printConfigChange(ctx context.Context, cfg *globalConfig, sf *serverFlags, 
 	if !restart || len(res.Restart) == 0 {
 		return nil
 	}
-	return lifecycle.Restart(ctx, d, sf.controlClient(d), false, cfg.progress())
+	return lifecycle.Restart(ctx, d, sf.controlClient(d), service.System{}, false, cfg.progress())
 }
 
 // printConfigResult prints the diff of a change, and whether it applies now

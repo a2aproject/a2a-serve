@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -109,6 +110,20 @@ func Installed(name string) bool {
 	}
 	_, err = os.Stat(path)
 	return err == nil
+}
+
+// MainPID returns the PID of the main process of the service, or zero if it
+// doesn't run.
+func MainPID(name string) (int, error) {
+	out, err := output("systemctl", "--user", "show", "--property=MainPID", "--value", name+".service")
+	if err != nil {
+		return 0, err
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(out))
+	if err != nil {
+		return 0, fmt.Errorf("the MainPID of %s.service: %w", name, err)
+	}
+	return pid, nil
 }
 
 // Uninstall stops and removes the service.
