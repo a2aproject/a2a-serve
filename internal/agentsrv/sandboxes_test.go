@@ -217,6 +217,7 @@ func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
 	behindAgent := member("assistant")
 	behindAgent.Caller, behindAgent.Hops = "m13", 1
 	guest := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}
+	demotedToGuest := auth.Principal{ID: "email:anna@example.com", Role: auth.RoleGuest, Identity: auth.Identity{Email: "anna@example.com"}}
 	tests := []struct {
 		name    string
 		caller  auth.Principal
@@ -231,6 +232,7 @@ func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
 		{name: "member into the owner's container", caller: member("anna"), key: "", wantErr: errOtherContainer},
 		{name: "member into another member's container", caller: member("anna"), key: agentkey.User(auth.PairPrincipal("ben")), wantErr: errOtherContainer},
 		{name: "guest into a member's container", caller: guest, key: agentkey.User(auth.PairPrincipal("anna")), wantErr: errOtherContainer},
+		{name: "member turned guest into their container as a member", caller: demotedToGuest, key: agentkey.User(demotedToGuest.ID), wantErr: errOtherContainer},
 		{name: "posted turn of a member into the owner's container", caller: member("anna"), via: auth.Posted, key: "", wantErr: errOtherContainer},
 		{name: "member in a group chat into the owner's container", caller: member("anna"), via: auth.InGroupChat, key: ""},
 	}
