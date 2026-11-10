@@ -219,6 +219,9 @@ func (c *ChatTurns) handle(ctx context.Context, in messenger.Inbound, t *convTic
 	if ch == nil {
 		return
 	}
+	if !in.Direct {
+		ctx = auth.InGroupChat(ctx)
+	}
 	if in.Action != nil {
 		if c.firstSeen(ctx, in) {
 			c.handleAction(ctx, ch, in)

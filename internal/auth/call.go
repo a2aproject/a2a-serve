@@ -73,3 +73,17 @@ func IsPosted(ctx context.Context) bool {
 	posted, _ := ctx.Value(postedKey{}).(bool)
 	return posted
 }
+
+type groupChatKey struct{}
+
+// InGroupChat marks ctx as coming from a group chat, whose conversation the
+// server shares with the people in the chat.
+func InGroupChat(ctx context.Context) context.Context {
+	return context.WithValue(ctx, groupChatKey{}, true)
+}
+
+// IsGroupChat reports whether ctx comes from [InGroupChat].
+func IsGroupChat(ctx context.Context) bool {
+	group, _ := ctx.Value(groupChatKey{}).(bool)
+	return group
+}
