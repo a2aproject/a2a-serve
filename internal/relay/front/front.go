@@ -216,7 +216,8 @@ func Client(r *http.Request) string {
 // relay's machine or a private network and appends the address it got the
 // request from to X-Forwarded-For. The client is the last address there
 // that isn't such a proxy. A header that reaches the relay from a public
-// address may be forged, so the client is the remote address then.
+// address may be forged, so the client is the remote address then. IPv6
+// clients are told apart by their /64.
 func client(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
@@ -234,7 +235,13 @@ func client(r *http.Request) string {
 		}
 		ip = next
 	}
-	return ip.Unmap().String()
+	ip = ip.Unmap()
+	if ip.Is6() {
+		// One subscriber usually holds a whole /64, so its addresses are one
+		// client.
+		return netip.PrefixFrom(ip, 64).Masked().String()
+	}
+	return ip.String()
 }
 
 // isProxy reports whether a connection from ip may come from a tunnel or a

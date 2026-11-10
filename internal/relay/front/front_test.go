@@ -418,6 +418,23 @@ func TestFrontTellsClientsApart(t *testing.T) {
 			next: client{remoteAddr: "203.0.113.6:1000"},
 		},
 		{
+			name:     "direct IPv6 clients in one /64",
+			held:     client{remoteAddr: "[2001:db8:1:2::1]:1000"},
+			next:     client{remoteAddr: "[2001:db8:1:2:ffff::9]:1000"},
+			wantSame: true,
+		},
+		{
+			name: "direct IPv6 clients in different /64s",
+			held: client{remoteAddr: "[2001:db8:1:2::1]:1000"},
+			next: client{remoteAddr: "[2001:db8:1:3::1]:1000"},
+		},
+		{
+			name:     "IPv6 clients in one /64 behind a local proxy",
+			held:     client{remoteAddr: "127.0.0.1:1000", forwardedFor: "2001:db8:1:2::1"},
+			next:     client{remoteAddr: "127.0.0.1:1001", forwardedFor: "2001:db8:1:2::2"},
+			wantSame: true,
+		},
+		{
 			name:     "local clients without a header",
 			held:     client{remoteAddr: "127.0.0.1:1000"},
 			next:     client{remoteAddr: "127.0.0.1:1001"},
