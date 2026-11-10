@@ -252,6 +252,8 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 			var admitted func()
 			if admitted, err = e.admit(ctx, key, execCtx); err == nil {
 				defer admitted()
+			} else if answersWaiting(execCtx) {
+				cancelRefused(ctx, exec, execCtx)
 			}
 		}
 		if err != nil {
@@ -285,6 +287,17 @@ func (e *splitExecutor) Execute(ctx context.Context, execCtx *a2asrv.ExecutorCon
 		}
 		if !final && e.stopped() {
 			failStopped(execCtx, sent)(yield)
+		}
+	}
+}
+
+// cancelRefused ends the turn of a waiting task in the agent once an answer
+// to it is refused, which fails the task; the agent would otherwise keep
+// its session waiting for the answer.
+func cancelRefused(ctx context.Context, exec a2asrv.AgentExecutor, execCtx *a2asrv.ExecutorContext) {
+	for _, err := range exec.Cancel(ctx, execCtx) {
+		if err != nil {
+			slog.Warn("canceling a waiting task whose answer was refused", "task", execCtx.TaskID, "error", err)
 		}
 	}
 }

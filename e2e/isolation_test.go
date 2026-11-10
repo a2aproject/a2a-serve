@@ -28,6 +28,8 @@ import (
 
 	"github.com/a2aproject/a2a-go/v2/a2a"
 	"github.com/google/go-cmp/cmp"
+
+	"github.com/a2aproject/a2a-serve/internal/a2atext"
 )
 
 func TestPairedUserCantReachOwnerTasks(t *testing.T) {
@@ -80,6 +82,27 @@ func TestPairedUserRunsInOwnAgentProcess(t *testing.T) {
 	}
 	if got := resultOf(anna.mustSend(coder.url, "pid")).Text; got != annaPID {
 		t.Fatalf("a2a send pid in anna's second conversation = %q, want her process %q", got, annaPID)
+	}
+}
+
+func TestDemotedOwnerStartsANewConversation(t *testing.T) {
+	t.Parallel()
+	owner, anna := newUser(t), newUser(t)
+	coder := owner.startAgent("coder")
+	anna.pairJoin(coder.url, coder.invite("anna", "--owner"))
+	first := anna.mustSend(coder.url, "remember red")
+	waiting := anna.mustSend(coder.url, "ask")
+
+	coder.serve("pair", "set", "anna", "--owner=false")
+
+	for _, args := range [][]string{{"--context-id", first.ContextID, "recall"}, {"--task-id", string(waiting.ID), "once"}} {
+		got := anna.mustSend(coder.url, args...)
+		if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "start a new conversation") {
+			t.Fatalf("a2a send %v after the role change = %v %q, want it failed with a hint to start a new conversation", args, got.Status.State, a2atext.Message(got.Status.Message))
+		}
+	}
+	if got := resultOf(anna.mustSend(coder.url, "recall")); got.Text != "You said: " {
+		t.Fatalf("a2a send recall in a new conversation = %+v, want her own conversation", got)
 	}
 }
 

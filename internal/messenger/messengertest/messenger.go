@@ -163,8 +163,13 @@ func (c *Messenger) WaitReady(t testing.TB) {
 
 // Click presses option of the question message ref.
 func (c *Messenger) Click(identity, conv string, ref string, q *messenger.Question, option int) {
-	<-c.ready
-	c.in <- messenger.Inbound{Messenger: c.name, MessageID: "cb" + nextID(), Identity: identity, Conv: messenger.ConvKey(conv), Direct: true,
+	c.Deliver(c.ClickMessage(identity, conv, ref, q, option))
+}
+
+// ClickMessage returns a press of option of the question message ref in a
+// direct chat without delivering it.
+func (c *Messenger) ClickMessage(identity, conv string, ref string, q *messenger.Question, option int) messenger.Inbound {
+	return messenger.Inbound{Messenger: c.name, MessageID: "cb" + nextID(), Identity: identity, Conv: messenger.ConvKey(conv), Direct: true,
 		Action: &messenger.Action{QuestionID: q.ID, Option: option}, Authentic: true, ReplyTo: messenger.Ref{Conv: messenger.ConvKey(conv), ID: ref}}
 }
 

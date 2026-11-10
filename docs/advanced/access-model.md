@@ -116,6 +116,8 @@ Each member's conversations run in an agent process of their own. Your conversat
 
 A conversation stays in the process of the user who started it. When someone else sends a message there, the agent calls other agents and the schedules agent as the user who started it, or as the sender if the sender may do less.
 
+Only owners, and the people in a group chat, send messages into the process of another user. A conversation stays in the process of the role it started under, so after a change from owner to member, the pairing can't continue the conversations it started as an owner. Its messages, its answers to approvals and the runs of its schedules in them fail with an error that asks for a new conversation. A refused answer ends its task. After a change from member to owner, the pairing continues its conversations.
+
 With `--sandbox local`, the processes run on the host as you, and nothing separates them. The server warns at start when others may call such an agent.
 
 ## Data model reference

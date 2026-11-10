@@ -33,6 +33,8 @@ import (
 	"github.com/a2aproject/a2a-serve/internal/agentdir"
 	"github.com/a2aproject/a2a-serve/internal/agentkey"
 	"github.com/a2aproject/a2a-serve/internal/auth"
+	"github.com/a2aproject/a2a-serve/internal/controlapi"
+	"github.com/a2aproject/a2a-serve/internal/messenger"
 	"github.com/a2aproject/a2a-serve/internal/messenger/messengertest"
 	"github.com/a2aproject/a2a-serve/internal/network"
 	"github.com/a2aproject/a2a-serve/internal/store"
@@ -141,6 +143,167 @@ func TestMessageIntoARicherContainerIsRefused(t *testing.T) {
 	if got.Status.State != a2a.TaskStateFailed || !strings.Contains(a2atext.Message(got.Status.Message), "start a conversation of your own") {
 		t.Fatalf("SendMessage() into a richer conversation = %v %q, want it failed with a hint to start a conversation", got.Status.State, a2atext.Message(got.Status.Message))
 	}
+}
+
+func setOwner(t *testing.T, ts *testServer, name string, owner bool) {
+	t.Helper()
+	if _, err := controlapi.NewClient(ts.dir).UpdatePairing(context.Background(), name, controlapi.PairingUpdate{Owner: &owner}); err != nil {
+		t.Fatalf("UpdatePairing(%s) error = %v", name, err)
+	}
+}
+
+func TestConversationOfAnotherRoleAfterARoleChange(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		startedAs string
+		first     string
+		answer    bool
+		wantState a2a.TaskState
+	}{
+		{name: "demoted owner sends a message", startedAs: auth.RoleOwner, first: "hello", wantState: a2a.TaskStateFailed},
+		{name: "demoted owner answers an approval", startedAs: auth.RoleOwner, first: "ask", answer: true, wantState: a2a.TaskStateFailed},
+		{name: "promoted member sends a message", startedAs: auth.RoleMember, first: "hello", wantState: a2a.TaskStateCompleted},
+		{name: "promoted member answers an approval", startedAs: auth.RoleMember, first: "ask", answer: true, wantState: a2a.TaskStateCompleted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ts := sandboxServer(t)
+			anna := ts.client(ts.pair("anna", tt.startedAs))
+			first := send(t, anna, userText(tt.first, "", ""))
+
+			setOwner(t, ts, "anna", tt.startedAs != auth.RoleOwner)
+			next := userText("hello", "", first.ContextID)
+			if tt.answer {
+				next = userText("once", string(first.ID), first.ContextID)
+			}
+			got := send(t, anna, next)
+
+			if got.Status.State != tt.wantState {
+				t.Fatalf("SendMessage() after the role change state = %v %q, want %v", got.Status.State, a2atext.Message(got.Status.Message), tt.wantState)
+			}
+			if tt.wantState == a2a.TaskStateFailed && !strings.Contains(a2atext.Message(got.Status.Message), "start a new conversation") {
+				t.Fatalf("SendMessage() after the role change = %q, want a hint to start a new conversation", a2atext.Message(got.Status.Message))
+			}
+		})
+	}
+}
+
+func TestRefusedAnswerEndsTheWaitingTurnOfTheAgent(t *testing.T) {
+	t.Parallel()
+	ts := sandboxServer(t)
+	owner := ts.client(ts.pair("phone", auth.RoleOwner))
+	anna := ts.client(ts.pair("anna", auth.RoleOwner))
+	waiting := send(t, anna, userText("ask", "", ""))
+	setOwner(t, ts, "anna", false)
+	if got := send(t, anna, userText("once", string(waiting.ID), waiting.ContextID)); got.Status.State != a2a.TaskStateFailed {
+		t.Fatalf("SendMessage() answering after the role change state = %v, want %v", got.Status.State, a2a.TaskStateFailed)
+	}
+
+	next := sendAsync(t, owner, userText("hello", "", waiting.ContextID))
+
+	if got := waitState(t, owner, next.ID, a2a.TaskStateCompleted); got.Status.State != a2a.TaskStateCompleted {
+		t.Fatalf("owner's task after the refused answer state = %v, want %v", got.Status.State, a2a.TaskStateCompleted)
+	}
+}
+
+func TestAdmitTurnOfAnotherUsersContainer(t *testing.T) {
+	t.Parallel()
+	s := &Server{sandboxes: newSandboxes(func() *agentdir.Config { return &agentdir.Config{} }, openStore(t))}
+	member := func(name string) auth.Principal {
+		return auth.Principal{ID: auth.PairPrincipal(name), Role: auth.RoleMember, Identity: auth.Identity{Pairing: name}}
+	}
+	behindAgent := member("assistant")
+	behindAgent.Caller, behindAgent.Hops = "m13", 1
+	guest := auth.Principal{ID: auth.GuestID, Role: auth.RoleGuest}
+	tests := []struct {
+		name    string
+		caller  auth.Principal
+		via     func(context.Context) context.Context
+		key     string
+		wantErr error
+	}{
+		{name: "member into their own container", caller: member("anna"), key: agentkey.User(auth.PairPrincipal("anna"))},
+		{name: "caller behind an agent into the agent's container", caller: behindAgent, key: agentkey.User(auth.PairPrincipal("assistant"))},
+		{name: "agent into the container of a caller behind it", caller: member("assistant"), key: agentkey.Caller(auth.PairPrincipal("assistant"), "m13")},
+		{name: "owner into a member's container", caller: auth.Owner(), key: agentkey.User(auth.PairPrincipal("anna"))},
+		{name: "member into the owner's container", caller: member("anna"), key: "", wantErr: errOtherContainer},
+		{name: "member into another member's container", caller: member("anna"), key: agentkey.User(auth.PairPrincipal("ben")), wantErr: errOtherContainer},
+		{name: "guest into a member's container", caller: guest, key: agentkey.User(auth.PairPrincipal("anna")), wantErr: errOtherContainer},
+		{name: "posted turn of a member into the owner's container", caller: member("anna"), via: auth.Posted, key: "", wantErr: errOtherContainer},
+		{name: "member in a group chat into the owner's container", caller: member("anna"), via: auth.InGroupChat, key: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := context.Background()
+			if tt.via != nil {
+				ctx = tt.via(ctx)
+			}
+			release, err := s.admitTurn(auth.InProcess(ctx, tt.caller), tt.key, nil)
+			if !errors.Is(err, tt.wantErr) {
+				t.Fatalf("admitTurn() error = %v, want %v", err, tt.wantErr)
+			}
+			if err == nil {
+				release()
+			}
+		})
+	}
+}
+
+func TestDemotedOwnerInAChatStartsANewConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
+	linkAs(t, ts, "anna", auth.RoleOwner, "telegram:2", "dm2")
+	ts.ch.Write("telegram:2", "dm2", "remember red")
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("OK."))
+
+	setOwner(t, ts, "anna", false)
+	ts.ch.Write("telegram:2", "dm2", "recall")
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("start a new conversation"))
+	ts.ch.Write("telegram:2", "dm2", "/new")
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("Started a new conversation."))
+	ts.ch.Write("telegram:2", "dm2", "recall")
+
+	ts.ch.WaitFor(t, "dm2", func(m messenger.Outbound) bool { return m.Text == "You said: " })
+}
+
+func TestMemberContinuesAGroupConversationTheOwnerStarted(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
+	linkOwner(t, ts, "telegram:1", "dm1")
+	linkAs(t, ts, "anna", auth.RoleMember, "telegram:2", "dm2")
+	inGroup := func(identity, text string) {
+		in := ts.ch.Message(identity, "grp", text)
+		in.Direct = false
+		ts.ch.Deliver(in)
+	}
+	inGroup("telegram:1", "remember red")
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("OK."))
+
+	inGroup("telegram:2", "ask")
+	ref, q := ts.ch.WaitFor(t, "grp", messengertest.HasQuestion)
+	click := ts.ch.ClickMessage("telegram:2", "grp", ref, q.Question, 0)
+	click.Direct = false
+	ts.ch.Deliver(click)
+
+	ts.ch.WaitFor(t, "grp", messengertest.HasText("Pushed (allow)."))
+}
+
+func TestScheduleOfADemotedOwnerFailsInItsConversation(t *testing.T) {
+	t.Parallel()
+	ts := startServer(t, serverOpts{messenger: messengertest.NewMessenger("fake")})
+	linkAs(t, ts, "anna", auth.RoleOwner, "telegram:2", "dm2")
+	ts.ch.Write("telegram:2", "dm2", `call schedules add brief --cron @daily --prompt "brief me"`)
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("Scheduled brief"))
+
+	setOwner(t, ts, "anna", false)
+	if _, err := controlapi.NewClient(ts.dir).RunSchedule(context.Background(), "brief"); err != nil {
+		t.Fatalf("RunSchedule() error = %v", err)
+	}
+
+	ts.ch.WaitFor(t, "dm2", messengertest.HasText("start a new conversation"))
 }
 
 func TestMCPServersNeedTheSecretsOfTheContainer(t *testing.T) {

@@ -185,8 +185,9 @@ func (s *sandboxes) resolve(p auth.Principal) access.Sandbox {
 	return access.SandboxPolicyOf(s.config()).Resolve(p)
 }
 
-// Refusals of turns by the sandbox rules.
+// Refusals of turns in agent containers.
 var (
+	errOtherContainer    = errors.New("this conversation runs in the agent container of another user, or of a role you had before; start a new conversation")
 	errSandboxCovers     = errors.New("this conversation runs in the agent container of the user who started it, which gets more storage or secrets than your sandbox rule gives you; start a conversation of your own")
 	errSandboxPrivate    = errors.New("this conversation runs in the private workspace of the user who started it; start a conversation of your own")
 	errSandboxRestarting = errors.New("the sandbox rules of this conversation changed, and its agent container restarts with them once its current tasks end; send the message again then")
@@ -196,9 +197,11 @@ var (
 // admitTurn lets the turn of execCtx by the caller in ctx run in the
 // container of an agent key, and counts it there until release:
 //
-//   - a caller from another container needs a sandbox that covers what this
-//     container gets now and got when it started, and only an owner may
-//     write into another user's private workspace;
+//   - only an owner, or someone in a group chat, may write into the
+//     container of another user, such as one of a role the caller had
+//     before. They need a sandbox that covers what this container gets now
+//     and got when it started, and only an owner may write into another
+//     user's private workspace;
 //   - a container whose rules now give less ends its tasks and stops, so
 //     that the turn starts it with the rules in force;
 //   - a container whose rules changed otherwise stops if it is idle. If it
@@ -216,6 +219,11 @@ func (s *Server) admitTurn(ctx context.Context, key string, execCtx *a2asrv.Exec
 		return nil, err
 	}
 	if ok && !sameProcessUser(key, agentkey.Of(caller, ok)) {
+		// The people in a group chat share its conversation, which runs in
+		// the container of whoever started it.
+		if !caller.IsOwner() && !auth.IsGroupChat(ctx) {
+			return nil, errOtherContainer
+		}
 		if err := s.admitOther(ctx, caller, key, want); err != nil {
 			return nil, err
 		}
