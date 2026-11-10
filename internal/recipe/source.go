@@ -211,6 +211,9 @@ func parseGit(s string) (Source, error) {
 		}
 	}
 	ref, p, _ := strings.Cut(frag, ":")
+	if strings.HasPrefix(ref, "-") {
+		return Source{}, fmt.Errorf("invalid recipe source %q: the ref starts with -", s)
+	}
 	clean, err := cleanPath(p)
 	if err != nil {
 		return Source{}, fmt.Errorf("invalid recipe source %q: %w", s, err)

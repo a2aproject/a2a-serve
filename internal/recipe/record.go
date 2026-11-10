@@ -97,6 +97,16 @@ func ReadRecord(d agentdir.Dir) (*Record, error) {
 	if (r.Repo == "") == (r.Dir == "") {
 		return nil, fmt.Errorf("%s names neither a repository nor a directory", d.RecipeLockPath())
 	}
+	// The record can come with a cloned repository, so its source must be
+	// one that [ParseSource] accepts and reads back unchanged.
+	src := r.Source()
+	parsed, err := ParseSource(src.String())
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", d.RecipeLockPath(), err)
+	}
+	if parsed != src {
+		return nil, fmt.Errorf("%s: invalid recipe source %q", d.RecipeLockPath(), src.String())
+	}
 	return &r, nil
 }
 

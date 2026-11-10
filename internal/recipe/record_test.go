@@ -103,6 +103,11 @@ func TestReadRecordErrors(t *testing.T) {
 		{name: "no source", content: "commit: abc\n", wantErr: "names neither a repository nor a directory"},
 		{name: "both sources", content: "repo: x\ndir: /y\n", wantErr: "names neither a repository nor a directory"},
 		{name: "not yaml", content: "repo: [\n", wantErr: "parsing"},
+		{name: "option-like ref of the current directory", content: "repo: .\nref: --upload-pack=touch x\n", wantErr: "invalid recipe source"},
+		{name: "option-like ref", content: "repo: file:///tmp/agents\nref: --upload-pack=touch x\n", wantErr: "invalid recipe source"},
+		{name: "option-like repository", content: "repo: --upload-pack=touch x\n", wantErr: "invalid recipe source"},
+		{name: "path out of the repository", content: "repo: https://github.com/acme/agents.git\npath: ../x\n", wantErr: "leaves the repository"},
+		{name: "relative directory", content: "dir: o11y\n", wantErr: "invalid recipe source"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
