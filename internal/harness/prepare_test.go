@@ -16,6 +16,7 @@ package harness
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -741,6 +742,216 @@ func TestPrepareDockerRefusesAgentConfigSymlinks(t *testing.T) {
 				t.Fatalf("Prepare() wrote %s out of the workspace", entries[0].Name())
 			}
 		})
+	}
+}
+
+func TestPrepareDockerLocksHomeConfig(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	claudeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".claude") + ":" + filepath.Join(ContainerHome, ".claude"),
+			filepath.Join(home, ".claude", "settings.json") + ":" + filepath.Join(ContainerHome, ".claude", "settings.json") + ":ro",
+			filepath.Join(home, ".claude", "agents") + ":" + filepath.Join(ContainerHome, ".claude", "agents") + ":ro",
+			filepath.Join(home, ".claude", "commands") + ":" + filepath.Join(ContainerHome, ".claude", "commands") + ":ro",
+			filepath.Join(home, ".claude", "skills") + ":" + filepath.Join(ContainerHome, ".claude", "skills") + ":ro",
+		}
+	}
+	opencodeWant := func(home string) []string {
+		return []string{
+			filepath.Join(home, ".config") + ":" + filepath.Join(ContainerHome, ".config"),
+			filepath.Join(home, ".config", "opencode") + ":" + filepath.Join(ContainerHome, ".config", "opencode") + ":ro",
+			filepath.Join(home, ".opencode") + ":" + filepath.Join(ContainerHome, ".opencode") + ":ro",
+			filepath.Join(home, ".local") + ":" + filepath.Join(ContainerHome, ".local"),
+			filepath.Join(home, ".local", "share") + ":" + filepath.Join(ContainerHome, ".local", "share"),
+			filepath.Join(home, ".local", "share", "opencode") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode"),
+			filepath.Join(home, ".local", "share", "opencode", "auth.json") + ":" + filepath.Join(ContainerHome, ".local", "share", "opencode", "auth.json") + ":ro",
+		}
+	}
+	claudePolicy := func(policy string) string { return policy + ":/etc/claude-code/managed-settings.json:ro" }
+	tests := []struct {
+		name    string
+		profile Profile
+		lock    bool
+		want    func(home, policy string) []string
+		// wantCreated are the files the home gets, relative to it.
+		wantCreated []string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			lock:    true,
+			want:    func(home, _ string) []string { return opencodeWant(home) },
+			wantCreated: []string{
+				filepath.Join(".config", "opencode", ".gitignore"),
+				filepath.Join(".opencode", ".gitignore"),
+				filepath.Join(".local", "share", "opencode", "auth.json"),
+			},
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			lock:    true,
+			want: func(home, policy string) []string {
+				return append(claudeWant(home), claudePolicy(policy))
+			},
+			wantCreated: []string{filepath.Join(".claude", "agents"), filepath.Join(".claude", "commands"), filepath.Join(".claude", "skills")},
+		},
+		{
+			name:    "agent of unknown kind",
+			profile: custom{name: "acp", argv: []string{"fakeacp"}},
+			lock:    true,
+			want: func(home, policy string) []string {
+				return append(append(claudeWant(home), opencodeWant(home)...), claudePolicy(policy))
+			},
+			wantCreated: []string{filepath.Join(".claude", "settings.json"), filepath.Join(".opencode", ".gitignore")},
+		},
+		{
+			name:    "owner's home",
+			profile: claude{},
+			want:    func(string, string) []string { return nil },
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			policy := filepath.Join(t.TempDir(), "home-policy.json")
+			spec := Spec{
+				Profile: tc.profile,
+				Name:    "a2a-test",
+				Mounts:  []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:    home,
+				Image:   "img:1",
+			}
+			if tc.lock {
+				spec.HomePolicy = policy
+			}
+
+			p, err := Prepare(context.Background(), spec)
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+
+			var mounts []string
+			for _, m := range bindMounts(p.Args) {
+				if m != ws+":"+ws && m != home+":"+ContainerHome {
+					mounts = append(mounts, m)
+				}
+			}
+			if diff := cmp.Diff(tc.want(home, policy), mounts); diff != "" {
+				t.Fatalf("Prepare() mounts wrong result (-want +got) diff = %s", diff)
+			}
+			for _, name := range tc.wantCreated {
+				if _, err := os.Lstat(filepath.Join(home, name)); err != nil {
+					t.Fatalf("Prepare() didn't create %s in the home: %v", name, err)
+				}
+			}
+		})
+	}
+}
+
+func TestPrepareDockerResetsLockedHomePermissions(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	tests := []struct {
+		name    string
+		profile Profile
+		file    string
+		content string
+		key     string
+		want    string
+		kept    string
+	}{
+		{
+			name:    "opencode",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: `{"permission": {"*": "ask", "bash": "allow"}, "provider": {"stub": {}}}`,
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
+			name:    "opencode with comments",
+			profile: opencode{},
+			file:    filepath.Join(".config", "opencode", "opencode.json"),
+			content: "{\n  // the stub model\n  \"provider\": {\"stub\": {}},\n  \"permission\": {\"bash\": \"allow\"},\n}",
+			key:     "permission",
+			want:    opencodePermission,
+			kept:    "provider",
+		},
+		{
+			name:    "claude",
+			profile: claude{},
+			file:    filepath.Join(".claude", "settings.json"),
+			content: `{"permissions": {"defaultMode": "acceptEdits", "allow": ["Bash"]}, "model": "opus"}`,
+			key:     "permissions",
+			want:    `{"defaultMode": "default"}`,
+			kept:    "model",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			ws, home := t.TempDir(), t.TempDir()
+			writeTestFile(t, filepath.Join(home, tc.file), tc.content)
+
+			p, err := Prepare(context.Background(), Spec{
+				Profile:    tc.profile,
+				Name:       "a2a-test",
+				Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
+				Home:       home,
+				HomePolicy: filepath.Join(t.TempDir(), "home-policy.json"),
+			})
+			if err != nil {
+				t.Fatalf("Prepare() error = %v", err)
+			}
+			t.Cleanup(func() {
+				if err := p.Stop(context.Background()); err != nil {
+					t.Errorf("Stop() error = %v", err)
+				}
+			})
+
+			data, err := os.ReadFile(filepath.Join(home, tc.file))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var got, want map[string]any
+			if err := json.Unmarshal(data, &got); err != nil {
+				t.Fatalf("json.Unmarshal(%s) error = %v", tc.file, err)
+			}
+			if err := json.Unmarshal([]byte(tc.want), &want); err != nil {
+				t.Fatal(err)
+			}
+			if diff := cmp.Diff(want, got[tc.key]); diff != "" {
+				t.Fatalf("Prepare() %s of %s wrong result (-want +got) diff = %s", tc.key, tc.file, diff)
+			}
+			if _, ok := got[tc.kept]; !ok {
+				t.Fatalf("Prepare() left %s = %s, want %s kept", tc.file, data, tc.kept)
+			}
+		})
+	}
+}
+
+func TestPrepareDockerRefusesHomeConfigSymlinks(t *testing.T) {
+	fakeDocker(t, runningDocker)
+	ws, home := t.TempDir(), t.TempDir()
+	mkdir(t, filepath.Join(home, "agents"))
+	mkdir(t, filepath.Join(home, ".claude"))
+	symlink(t, filepath.Join("..", "agents"), filepath.Join(home, ".claude", "agents"))
+
+	_, err := Prepare(context.Background(), Spec{
+		Profile:    claude{},
+		Name:       "a2a-test",
+		Mounts:     []agentdir.Mount{{Src: ws, Dst: ws}},
+		Home:       home,
+		HomePolicy: filepath.Join(t.TempDir(), "home-policy.json"),
+	})
+
+	if want := filepath.Join(home, ".claude", "agents") + " is a symlink"; err == nil || !strings.Contains(err.Error(), want) {
+		t.Fatalf("Prepare() error = %v, want it to contain %q", err, want)
 	}
 }
 

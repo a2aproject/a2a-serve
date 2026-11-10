@@ -269,6 +269,10 @@ func (d Dir) MCPMaskPath() string { return filepath.Join(d.StateDir(), "mcp-mask
 // over the agent's own configuration files in the workspace.
 func (d Dir) ConfigMaskPath() string { return filepath.Join(d.StateDir(), "config-mask.json") }
 
+// HomePolicyPath is the file of the settings which a sandbox gives the
+// agents of members and guests in place of those they could change.
+func (d Dir) HomePolicyPath() string { return filepath.Join(d.StateDir(), "home-policy.json") }
+
 // RecipeLockPath returns the path of the record of the recipe the agent
 // was created from.
 func (d Dir) RecipeLockPath() string { return filepath.Join(d.Path(), RecipeLockFile) }

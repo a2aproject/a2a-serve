@@ -314,6 +314,11 @@ func (s *Server) prepareHarness(ctx context.Context, imageProgress io.Writer, ke
 	case isUser:
 		spec.Home = s.userHomeDir(key)
 	}
+	// The agents of members and guests could otherwise change the
+	// permissions that the owner set for them.
+	if key != "" {
+		spec.HomePolicy = s.dir.HomePolicyPath()
+	}
 	if err := s.checkHome(cfg, mounts, spec.Home); err != nil {
 		return nil, err
 	}

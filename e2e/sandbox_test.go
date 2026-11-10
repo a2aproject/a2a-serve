@@ -26,6 +26,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/a2aproject/a2a-serve/internal/harness"
 )
 
 func TestDockerSandboxMounts(t *testing.T) {
@@ -87,6 +89,35 @@ func TestDockerSandboxMasksAgentConfig(t *testing.T) {
 
 	if got, want := resultOf(owner.mustSend(coder.url, "whoami")).Text, "whoami denied."; got != want {
 		t.Fatalf("a2a send whoami with opencode.json allowing bash = %q, want %q", got, want)
+	}
+}
+
+func TestDockerSandboxLocksMemberHomeConfig(t *testing.T) {
+	t.Parallel()
+	requireDocker(t)
+	owner, anna := newUser(t), newUser(t)
+	coder := owner.startAgent("coder", "--deny-tools", "execute")
+	anna.pairJoin(coder.url, coder.invite("anna"))
+	home := harness.ContainerHome
+
+	for _, name := range []string{
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".config", "opencode", "opencode.json"),
+		filepath.Join(".local", "share", "opencode", "auth.json"),
+	} {
+		path := filepath.Join(home, name)
+		if got := resultOf(anna.mustSend(coder.url, "write "+path)).Text; !strings.HasPrefix(got, "write error: ") {
+			t.Fatalf("a2a send write %s as a member = %q, want a write error", name, got)
+		}
+	}
+	if got := resultOf(anna.mustSend(coder.url, "rename "+filepath.Join(home, ".config")+" "+filepath.Join(home, ".config-old"))).Text; !strings.HasPrefix(got, "rename error: ") {
+		t.Fatalf("a2a send rename .config as a member = %q, want a rename error", got)
+	}
+	if got, want := resultOf(anna.mustSend(coder.url, "write "+filepath.Join(home, "notes.txt"))).Text, "write ok"; got != want {
+		t.Fatalf("a2a send write notes.txt as a member = %q, want %q", got, want)
+	}
+	if got, want := resultOf(owner.mustSend(coder.url, "write "+filepath.Join(home, ".claude", "settings.json"))).Text, "write ok"; got != want {
+		t.Fatalf("a2a send write .claude/settings.json as the owner = %q, want %q", got, want)
 	}
 }
 

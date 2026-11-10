@@ -88,6 +88,11 @@ type Spec struct {
 	// workspace and the mounts, so that the agent's permissions come only
 	// from the server. Empty keeps them visible.
 	ConfigMask string
+	// HomePolicy is the host path of a file where the server writes the
+	// settings that the agent can't override, for a sandbox that keeps the
+	// agent from changing its own configuration in Home, such as for the
+	// agents of members and guests. Empty leaves it writable.
+	HomePolicy string
 	// Env holds NAME=value pairs for the harness, such as API keys.
 	Env []string
 	// Model is the model of the harness, in its own format. Empty keeps
@@ -308,6 +313,13 @@ func prepareDocker(ctx context.Context, spec Spec, ws Workspace) (*Prepared, err
 		}
 		dr.Mounts = append(dr.Mounts, cm.mounts...)
 		dr.Scratch = cm.scratch
+	}
+	if spec.HomePolicy != "" {
+		locks, err := lockHomeConfig(spec)
+		if err != nil {
+			return nil, err
+		}
+		dr.Mounts = append(dr.Mounts, locks...)
 	}
 	closeEgress := func() error { return nil }
 	warnings := slices.Clone(cm.warnings)
