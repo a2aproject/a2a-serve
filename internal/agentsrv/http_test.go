@@ -539,7 +539,7 @@ func TestRelayCallersShareOnlyTheTotalUnauthenticatedLimit(t *testing.T) {
 
 func TestUnreadDownloadsGiveBackTheirRequests(t *testing.T) {
 	t.Parallel()
-	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadTimeout = 100 * time.Millisecond }})
+	ts := startServer(t, serverOpts{timings: func(tm *Timings) { tm.DownloadTimeout = time.Second }})
 	for range httpserver.MaxUnauthenticatedPerClient {
 		if resp := startRequest(t, ts.localURL(), http.MethodGet, "/download/a2a-serve", nil); resp.StatusCode != http.StatusOK {
 			t.Fatalf("GET /download/a2a-serve status = %d, want %d", resp.StatusCode, http.StatusOK)

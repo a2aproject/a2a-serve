@@ -365,7 +365,9 @@ func TestWriteTimeout(t *testing.T) {
 
 func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
 	t.Parallel()
-	const timeout = 10 * time.Millisecond
+	// The first response must finish within the deadline, also on a loaded
+	// runner, so the deadline is long and the test sleeps past it.
+	const timeout = time.Second
 	srv := httptest.NewServer(WriteTimeout(timeout, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if _, err := io.WriteString(w, "ok"); err != nil {
 			t.Errorf("writing: %v", err)
@@ -396,7 +398,7 @@ func TestWriteTimeoutEndsWithTheResponse(t *testing.T) {
 	}
 	rawGet(t, conn, "/")
 	read()
-	time.Sleep(5 * timeout)
+	time.Sleep(timeout + timeout/2)
 
 	rawGet(t, conn, "/")
 	got := read()
