@@ -126,7 +126,7 @@ func restoreMeshCredential(stateDir string) (bool, error) {
 // which it used before it got the invite, such as after a mistyped
 // --relay-token. An agent that never recorded its invite adopts it then:
 // it joined with that invite, which is used up.
-func (a *agentMesh) settleInvite(ctx context.Context, sw *inviteSwitch, srv *meshnet.Server, st *meshnet.Status, err error) (*meshnet.Server, *meshnet.Status, error) {
+func (a *agentMesh) settleInvite(ctx context.Context, sw *inviteSwitch, srv meshServer, st *meshnet.Status, err error) (meshServer, *meshnet.Status, error) {
 	if err == nil {
 		if sw != nil {
 			if rerr := sw.record(); rerr != nil {

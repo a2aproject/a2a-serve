@@ -405,6 +405,152 @@ func TestRestoreMeshCredential(t *testing.T) {
 	}
 }
 
+// fakeMeshRelay joins agents like meshnet: a join resumes the credential in the
+// state directory, and enrolls when there is none.
+type fakeMeshRelay struct {
+	stateDir string
+	// revoked is the credential routers refuse.
+	revoked []byte
+	// enrolled is the credential an enrollment saves, or nil when the relay
+	// refuses it.
+	enrolled []byte
+	// joinErr fails a join after it enrolled.
+	joinErr error
+	joins   atomic.Int32
+}
+
+func (r *fakeMeshRelay) serve(*meshnet.Server) meshServer { return &fakeJoin{relay: r} }
+
+type fakeJoin struct {
+	fakeMeshSession
+	relay *fakeMeshRelay
+}
+
+func (j *fakeJoin) Up(context.Context) (*meshnet.Status, error) {
+	r := j.relay
+	r.joins.Add(1)
+	key, cred, err := meshnet.ReadStateDir(r.stateDir)
+	if err != nil {
+		return nil, err
+	}
+	switch {
+	case len(cred.GetBiscuit()) > 0 && string(cred.GetBiscuit()) == string(r.revoked):
+		return nil, errors.New("failed to authenticate with any router: all connection attempts failed")
+	case len(cred.GetBiscuit()) > 0:
+		return &meshnet.Status{}, nil
+	case r.enrolled == nil:
+		return nil, errors.New("the relay refused the sign-in")
+	}
+	if err := meshnet.WriteStateDir(r.stateDir, key, &api.MemberCredential{ControlPlaneUrl: cred.GetControlPlaneUrl(), Biscuit: r.enrolled}); err != nil {
+		return nil, err
+	}
+	return &meshnet.Status{}, r.joinErr
+}
+
+func (j *fakeJoin) ListenA2A(context.Context, meshnet.A2AOptions) (*meshnet.Endpoints, error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, err
+	}
+	return &meshnet.Endpoints{PrivateListener: ln, PrivateURL: &url.URL{Scheme: "http", Host: AgentMeshHost}, Close: func() error { return nil }}, nil
+}
+
+func TestSignedInAgentSignsInAgainWhenRoutersRefuseItsCredential(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name      string
+		token     string
+		saved     string
+		enrolled  string
+		joinErr   error
+		wantErr   bool
+		wantCred  string
+		wantJoins int32
+	}{
+		{name: "refused credential is replaced", saved: "revoked", enrolled: "new", wantCred: "new", wantJoins: 2},
+		{name: "refused sign-in keeps the saved credential", saved: "revoked", wantErr: true, wantCred: "revoked", wantJoins: 2},
+		{name: "failed join after the sign-in keeps the new credential", saved: "revoked", enrolled: "new", joinErr: errors.New("the relay is restarting"), wantErr: true, wantCred: "new", wantJoins: 2},
+		{name: "admitted credential is kept", saved: "valid", enrolled: "new", wantCred: "valid", wantJoins: 1},
+		{name: "invited agent doesn't sign in", token: "invite", saved: "revoked", enrolled: "new", wantErr: true, wantCred: "revoked", wantJoins: 1},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			relay := httptest.NewServer(http.NotFoundHandler())
+			t.Cleanup(relay.Close)
+			dir := t.TempDir()
+			if tc.token != "" {
+				recordInvite(t, dir, tc.token)
+			}
+			if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), &api.MemberCredential{ControlPlaneUrl: relay.URL, Biscuit: []byte(tc.saved)}); err != nil {
+				t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+			}
+			fake := &fakeMeshRelay{stateDir: dir, revoked: []byte("revoked"), joinErr: tc.joinErr}
+			if tc.enrolled != "" {
+				fake.enrolled = []byte(tc.enrolled)
+			}
+			a := newAgentMesh(RelayConfig{AgentName: "coder", URL: relay.URL, StateDir: dir, Token: tc.token, Private: true}, fake.serve)
+			t.Cleanup(func() {
+				if err := a.Close(); err != nil {
+					t.Errorf("agentMesh.Close() error = %v", err)
+				}
+			})
+
+			err := a.Join(t.Context())
+
+			if gotErr := err != nil; gotErr != tc.wantErr {
+				t.Fatalf("agentMesh.Join() error = %v, want error: %v", err, tc.wantErr)
+			}
+			if got := fake.joins.Load(); got != tc.wantJoins {
+				t.Fatalf("agentMesh.Join() joins = %d, want %d", got, tc.wantJoins)
+			}
+			_, cred, err := meshnet.ReadStateDir(dir)
+			if err != nil {
+				t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+			}
+			if got := string(cred.GetBiscuit()); got != tc.wantCred {
+				t.Fatalf("meshnet.ReadStateDir() credential = %q, want %q", got, tc.wantCred)
+			}
+			if _, err := os.Stat(filepath.Join(dir, setAsideCredentialFile)); !errors.Is(err, os.ErrNotExist) {
+				t.Fatalf("os.Stat(%s) error = %v, want the set-aside credential removed", setAsideCredentialFile, err)
+			}
+		})
+	}
+}
+
+func TestSignedInAgentKeepsItsCredentialWhenSigningInAgainFails(t *testing.T) {
+	t.Parallel()
+	relay := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(relay.Close)
+	dir := t.TempDir()
+	enrolled := &api.MemberCredential{ControlPlaneUrl: relay.URL, Biscuit: []byte("biscuit")}
+	if err := meshnet.WriteStateDir(dir, marshalLibp2pEd25519Key(t), enrolled); err != nil {
+		t.Fatalf("meshnet.WriteStateDir() error = %v", err)
+	}
+	// A start that stopped while signing in again.
+	if err := setAsideMeshCredential(dir); err != nil {
+		t.Fatalf("setAsideMeshCredential() error = %v", err)
+	}
+	p, err := NewRelay(RelayConfig{AgentName: "coder", URL: relay.URL, StateDir: dir, Private: true})
+	if err != nil {
+		t.Fatalf("NewRelay() error = %v", err)
+	}
+
+	if err := p.(Joiner).Join(t.Context()); err == nil {
+		t.Fatal("agentMesh.Join() error = nil, want the unavailable relay")
+	}
+
+	_, got, err := meshnet.ReadStateDir(dir)
+	if err != nil {
+		t.Fatalf("meshnet.ReadStateDir() error = %v", err)
+	}
+	if diff := cmp.Diff(enrolled, got, protocmp.Transform()); diff != "" {
+		t.Fatalf("meshnet.ReadStateDir() credential wrong result (-want +got) diff = %s", diff)
+	}
+}
+
 func TestSavedPeerID(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()

@@ -701,3 +701,44 @@ func TestRelaySignIn(t *testing.T) {
 		t.Fatalf("banned members after allowing anna@example.com again = %v, want none", got)
 	}
 }
+
+func TestRelayLetsBackASignedInAgentRemovedBeforeARestart(t *testing.T) {
+	bin := agentmeshOne(t)
+	g := googletest.New(t, googletest.Account{Subject: "anna-id", Email: "anna@example.com", Verified: true, HostedDomain: "example.com"})
+	port := freePort(t)
+	d, err := relaydir.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.SaveSettings(relaydir.Settings{
+		URL: fmt.Sprintf("http://127.0.0.1:%d", port), Listen: fmt.Sprintf("127.0.0.1:%d", port),
+		AllowEmails: []string{"*@example.com"}, GoogleClientID: "relay-app", GoogleClientSecret: g.Secret,
+	}); err != nil {
+		t.Fatalf("SaveSettings() error = %v", err)
+	}
+	r := startRelayWith(t, d, bin, g.Endpoints())
+	b := &browser{t: t, relay: r.url, hc: &http.Client{Timeout: 30 * time.Second}}
+	cfg := network.RelayConfig{AgentName: "coder", URL: r.url, StateDir: t.TempDir(), Private: true, Public: true, Logf: b.logf}
+	coder := serveAgent(t, cfg)
+	eventually(t, "members lists coder", func() error {
+		_, err := r.client.Remove(t.Context(), control.RemoveRequest{Target: "coder"})
+		return err
+	})
+	if err := coder.provider.Close(); err != nil {
+		t.Fatalf("closing coder: %v", err)
+	}
+	if err := r.stop(); err != nil {
+		t.Fatalf("relay.Run() error = %v", err)
+	}
+
+	// The restarted router refuses the coder's credential for a day when it
+	// syncs before the relay lets the coder back, which is likely under load.
+	r = startRelayWith(t, d, bin, g.Endpoints())
+	back := serveAgent(t, cfg)
+	if back.privateURL != coder.privateURL {
+		t.Fatalf("coder's private URL after it came back = %s, want %s", back.privateURL, coder.privateURL)
+	}
+	if got := b.links.Load(); got != 1 {
+		t.Fatalf("sign-in links printed after coder came back = %d, want 1: it signs in again with its refresh token", got)
+	}
+}

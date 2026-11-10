@@ -52,12 +52,23 @@ type meshSession interface {
 	Close() error
 }
 
+// meshServer is what the provider uses of a [meshnet.Server] to join the
+// relay.
+type meshServer interface {
+	meshSession
+	Up(ctx context.Context) (*meshnet.Status, error)
+	ListenA2A(ctx context.Context, opts meshnet.A2AOptions) (*meshnet.Endpoints, error)
+}
+
 // agentMesh is a [Provider] which joins an Agent Mesh relay in-process with
 // meshnet: private streams between agents on the relay, verified caller
 // identity, discovery, and a public URL on the relay which forwards
 // requests unchanged, so pairing codes and Google sign-in keep working.
 type agentMesh struct {
 	cfg RelayConfig
+	// serve returns the server that joins the relay with the settings of
+	// srv.
+	serve func(srv *meshnet.Server) meshServer
 
 	mu         sync.Mutex
 	started    atomic.Bool
@@ -80,7 +91,11 @@ func NewRelay(cfg RelayConfig) (Provider, error) {
 	if err := agentmesh.CheckRelayURL(cfg.URL); err != nil {
 		return nil, fmt.Errorf("invalid relay URL %q: %w", cfg.URL, err)
 	}
-	return &agentMesh{cfg: cfg, cards: newCardCache()}, nil
+	return newAgentMesh(cfg, func(srv *meshnet.Server) meshServer { return srv }), nil
+}
+
+func newAgentMesh(cfg RelayConfig, serve func(*meshnet.Server) meshServer) *agentMesh {
+	return &agentMesh{cfg: cfg, serve: serve, cards: newCardCache()}
 }
 
 func (a *agentMesh) Name() string { return ProviderRelay }
@@ -133,8 +148,8 @@ func savedPeerID(stateDir string) string {
 	return id.String()
 }
 
-func (a *agentMesh) newMeshServer() *meshnet.Server {
-	return &meshnet.Server{
+func (a *agentMesh) newMeshServer() meshServer {
+	srv := &meshnet.Server{
 		StateDir:        a.cfg.StateDir,
 		ControlPlaneURL: a.cfg.URL,
 		BootstrapToken:  a.cfg.Token,
@@ -144,6 +159,13 @@ func (a *agentMesh) newMeshServer() *meshnet.Server {
 			a.logf("! relay: credential lapsed (%v)", err)
 		},
 	}
+	// Without a token, the agent signs in with an account; the first run
+	// prints the link, later runs use the stored identity.
+	if a.cfg.Token == "" {
+		login := &RelayLogin{RelayURL: a.cfg.URL, StateDir: a.cfg.StateDir, HTTP: &http.Client{Timeout: 30 * time.Second}, Logf: a.cfg.Logf, Poll: time.Second}
+		srv.TokenSource = login.Token
+	}
+	return a.serve(srv)
 }
 
 func (a *agentMesh) start(ctx context.Context) error {
@@ -159,20 +181,17 @@ func (a *agentMesh) start(ctx context.Context) error {
 			return fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err)
 		}
 	}
-	srv := a.newMeshServer()
-	// Without a token, the agent signs in with an account; the first run
-	// prints the link, later runs use the stored identity.
+	resumed := hasMeshIdentity(a.cfg.StateDir)
 	if a.cfg.Token == "" {
-		login := &RelayLogin{RelayURL: a.cfg.URL, StateDir: a.cfg.StateDir, HTTP: &http.Client{Timeout: 30 * time.Second}, Logf: a.cfg.Logf, Poll: time.Second}
-		srv.TokenSource = login.Token
 		refresh, err := savedRefreshToken(a.cfg.StateDir)
 		if err != nil {
 			slog.Warn("reading the relay's refresh token", "error", err)
 		}
-		if !hasMeshIdentity(a.cfg.StateDir) && refresh.Token == "" {
+		if !resumed && refresh.Token == "" {
 			a.logf("… joining the relay %s; this needs a sign-in on the first run (or --relay-token)", a.cfg.URL)
 		}
 	}
+	srv := a.newMeshServer()
 	st, err := srv.Up(ctx)
 	err = explainJoin(err)
 	if rerr := RecordJoin(a.cfg.StateDir, err); rerr != nil {
@@ -182,9 +201,12 @@ func (a *agentMesh) start(ctx context.Context) error {
 	if err != nil {
 		if peerID := savedPeerID(a.cfg.StateDir); peerID != "" {
 			if rerr := relayRemoval(ctx, &http.Client{Timeout: 10 * time.Second}, a.cfg, peerID); rerr != nil {
-				err = rerr
+				return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, rerr), srv.Close())
 			}
 		}
+		srv, st, err = a.signInAgain(ctx, resumed, srv, st, err)
+	}
+	if err != nil {
 		return errors.Join(fmt.Errorf("joining the relay %s: %w", a.cfg.URL, err), srv.Close())
 	}
 	opts := meshnet.A2AOptions{Name: a.cfg.AgentName, Description: a.cfg.Description, Public: a.cfg.Public}

@@ -108,7 +108,7 @@ Removing an agent that signed in bans the Google account behind it, so the perso
 
 The removed agent's server logs the removal. On that agent, `a2a-serve status` and `a2a-serve doctor` report it, and `status` leaves out the private and public URLs.
 
-For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email.
+For people who sign in, `--allow-email` decides. When the relay starts, it removes the agents of people the list no longer admits, and lets back removed people it admits. So dropping a person from the list takes effect with the restart that applies it, and adding them back undoes a removal. Their agents come back with their identities when they restart. To keep someone out, drop them from `--allow-email` too. A `*@example.com` entry admits everyone of that domain, so to keep out one person of it, list the others by email.
 
 To let a removed invited agent back, invite its name again:
 
