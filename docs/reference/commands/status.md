@@ -17,7 +17,7 @@ a2a-serve status [flags]
 
 ```bash
 a2a-serve status
-a2a send -a "$(a2a-serve status --url)" "hello"
+a2a send -a "$(a2a-serve status --url=local)" "hello"
 a2a-serve status --url=private
 ```
 

@@ -8,7 +8,7 @@ references such as `secret:TELEGRAM_BOT_TOKEN`. [Config](../guide/config.md#whic
 name: coder
 description: Writes and reviews the Go services of this repository.
 agent: opencode
-command: [cloudcode, acp]        # optional: replaces the profile's command
+command: [opencode, acp, --print-logs] # optional: replaces the profile's command
 sandbox: docker                  # or local
 workspace: /home/u/src/app       # optional: default the directory holding .a2a
 mounts: [/home/u/docs:/docs:ro]  # besides the workspace

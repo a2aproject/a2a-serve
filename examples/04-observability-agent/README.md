@@ -87,7 +87,7 @@ The agent reads `ENVIRONMENT.md` before every investigation. Fill in `~/o11y/ENV
 cd ~/o11y
 a2a-serve start --detach
 export A2ACLI_TIMEOUT=5m
-a2a send --history 0 -a "$(a2a-serve status --url)" "Learn the environment."
+a2a send --history 0 -a "$(a2a-serve status --url=local)" "Learn the environment."
 ```
 
 It answers with a proposed `ENVIRONMENT.md`. Review it, then save it to the file. The agent can't edit its workspace.
@@ -123,9 +123,9 @@ a2a-serve schedule add morning-digest --cron "0 9 * * 1-5" \
 ## 6. Ask it
 
 ```bash
-a2a send --history 0 -a "$(a2a-serve status --url)" "Why is checkout slow since 14:00?"
-a2a send --history 0 -a "$(a2a-serve status --url)" "Which services return the most errors this hour?"
-a2a send --history 0 -a "$(a2a-serve status --url)" "Did yesterday's deploy change the memory use of api?"
+a2a send --history 0 -a "$(a2a-serve status --url=local)" "Why is checkout slow since 14:00?"
+a2a send --history 0 -a "$(a2a-serve status --url=local)" "Which services return the most errors this hour?"
+a2a send --history 0 -a "$(a2a-serve status --url=local)" "Did yesterday's deploy change the memory use of api?"
 ```
 
 Each answer starts with the conclusion, followed by the queries, time ranges and Grafana links behind it.

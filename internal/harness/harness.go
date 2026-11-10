@@ -232,13 +232,12 @@ func opencodeConfigEnv(model string) []string {
 	if err != nil {
 		panic(err)
 	}
-	return []string{"OPENCODE_CONFIG_CONTENT=" + string(data), "CLOUDCODE_CONFIG_CONTENT=" + string(data)}
+	return []string{"OPENCODE_CONFIG_CONTENT=" + string(data)}
 }
 
 // opencodeEnv configures opencode on every start.
 var opencodeEnv = append([]string{
 	"OPENCODE_PERMISSION=" + opencodePermission,
-	"CLOUDCODE_PERMISSION=" + opencodePermission,
 }, opencodeConfigEnv("")...)
 
 type opencode struct{}
