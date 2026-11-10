@@ -70,6 +70,7 @@ Each entry gives the finding and the reason it was dropped. Locations refer to c
 - **A2A request bodies have a 30-second idle timeout and no total read deadline.** #115 chose this.
 - **`card-skills` can be set only with `config edit`, and `config unset` can clear it.** `docs/reference/configuration.md` documents this.
 - **The guests' home directory and stored IDs keep the name `anonymous`** (from the role rename: `state/home-anonymous`, `auth.GuestID`, `agentkey.Guest`). Tasks, conversations, ACP sessions and existing agent directories store them. Renaming them needs a migration of each and changes no behavior.
+- **Hints that name a command leave out `--dir`, even when the user passed it** (from #454: ``run `a2a-serve stop`, then `a2a-serve start --service` ``). The hints work as printed in the agent directory, where users run them, and the other hints about the user's own agent are written the same way. Only a hint about another agent names its `--dir`.
 
 ### User simulation
 
